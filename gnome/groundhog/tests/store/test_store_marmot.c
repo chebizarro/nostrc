@@ -2208,6 +2208,7 @@ make_v1_store(const TestAccount *account)
    * v4 (W18) the arrival order, read, timer and inbox columns and two
    * triggers; v5 (W25) the MLS source epoch, attachment identities and
    * group pictures. */
+  sql_exec(store, "DROP TABLE reactions");
   sql_exec(store, "DROP TABLE group_images");
   sql_exec(store, "DROP TABLE message_media");
   sql_exec(store, "ALTER TABLE messages DROP COLUMN mls_epoch");
@@ -2262,7 +2263,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 6);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 7);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
@@ -2297,12 +2298,13 @@ test_migration_v6_scrubs_messages(void)
   sqlite3_free(rows);
   /* Back to schema 5. */
   sql_exec(store, "DROP INDEX mls_messages_by_epoch");
-  sql_exec(store, "DELETE FROM schema_migrations WHERE version = 6");
+  sql_exec(store, "DROP TABLE reactions");
+  sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 6");
   sql_exec(store, "PRAGMA user_version = 5");
   gh_store_close(store);
 
   store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
-  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 6);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
   g_autofree gchar *kept = sql_text(store, "SELECT content FROM mls_messages WHERE "
                                            "id = x'0101010101010101010101010101010101010101010101"
                                            "010101010101010101'");

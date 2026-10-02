@@ -13,6 +13,8 @@
 #include "gh-store-marmot.h"
 #include "gh-store-mls.h"
 #include "gh-store-mls-identity.h"
+#include "gh-reaction.h"
+#include "gh-reaction-store.h"
 
 #include <nostr-event.h>
 #include <nostr-filter.h>
@@ -240,6 +242,7 @@ struct _GhMlsService {
   GhAccountController *accounts;
   GhAuthPolicy *policy;
   GhConversationStore *conversations;
+  GhReactionStore *reactions;          /* nullable; W26 slice B */
   guint max_backfill_events;       /* per group (review B4) */
   gsize max_backfill_bytes;
   gint64 backfill_quiet_us;        /* a relay silent this long stops holding a flush */
@@ -2603,7 +2606,61 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
         }
       }
     }
-    /* Another kind (a reaction, a deletion) is read but not shown yet. */
+    /* W26 slice B (nostrc-191r): kind-7 reaction or kind-5 deletion.
+     * The inner event is an unsigned rumor: parse it to check its kind,
+     * and route to the reaction store when present. */
+    if (!message && self->reactions && result.app_msg.inner_event_json) {
+      NostrEvent *inner = nostr_event_new();
+      if (inner && nostr_event_deserialize_unsigned(inner, result.app_msg.inner_event_json,
+                                                     NULL) == NOSTR_EVENT_VALIDATION_OK) {
+        int inner_kind = nostr_event_get_kind(inner);
+        if (inner_kind == 7) {
+          /* NIP-25 reaction: e-tag is the target message, content is emoji. */
+          NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
+          const gchar *target_id = NULL;
+          if (tags) {
+            for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
+              NostrTag *tag = nostr_tags_get(tags, ti);
+              if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
+                  nostr_tag_get_value(tag)) {
+                target_id = nostr_tag_get_value(tag);
+                break;   /* MDK v0.11: one e-tag */
+              }
+            }
+          }
+          if (target_id && result.app_msg.sender_pubkey_hex) {
+            const gchar *emoji = nostr_event_get_content(inner);
+            if (!emoji || !*emoji)
+              emoji = "+";
+            gchar rumor_id[65] = { 0 };
+            if ((inner->id ? nostr_event_validate_id(inner, rumor_id)
+                           : nostr_event_compute_id(inner, rumor_id)) ==
+                              NOSTR_EVENT_VALIDATION_OK) {
+              g_autoptr(GhReaction) reaction =
+                gh_reaction_new(target_id, rumor_id,
+                                result.app_msg.sender_pubkey_hex,
+                                emoji, nostr_event_get_created_at(inner),
+                                group->room_id);
+              if (reaction)
+                gh_reaction_store_admit(self->reactions, reaction, NULL);
+            }
+          }
+        } else if (inner_kind == 5) {
+          /* NIP-25 deletion: each e-tag names a reaction to remove. */
+          NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
+          if (tags) {
+            for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
+              NostrTag *tag = nostr_tags_get(tags, ti);
+              if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
+                  nostr_tag_get_value(tag))
+                gh_reaction_store_remove(self->reactions, nostr_tag_get_value(tag), NULL);
+            }
+          }
+        }
+      }
+      if (inner)
+        nostr_event_free(inner);
+    }
     accepted = TRUE;
     /* W24b slice H re-review R4: a member's message of the epoch a refused
      * Commit would have ended, dated after that Commit, says the member did
@@ -7643,6 +7700,7 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
   self->backfill_quiet_us = (gint64)GH_MLS_SERVICE_BACKFILL_QUIET_S * G_USEC_PER_SEC;
   self->pending_shown_us = (gint64)GH_MLS_SERVICE_PENDING_SHOWN_S * G_USEC_PER_SEC;
   self->conversations = g_object_ref(config->conversations);
+  self->reactions = config->reactions ? g_object_ref(config->reactions) : NULL;
   self->account_relays = config->account_relays ? g_object_ref(config->account_relays) : NULL;
   self->inboxes = config->inboxes ? g_object_ref(config->inboxes) : NULL;
   self->settings = config->settings ? g_object_ref(config->settings) : NULL;
@@ -8096,6 +8154,7 @@ gh_mls_service_finalize(GObject *object)
   g_clear_object(&self->accounts);
   g_clear_object(&self->policy);
   g_clear_object(&self->conversations);
+  g_clear_object(&self->reactions);
   g_clear_object(&self->account_relays);
   g_clear_object(&self->inboxes);
   g_clear_object(&self->settings);

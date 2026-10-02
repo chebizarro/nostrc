@@ -6,6 +6,8 @@
 #include "gh-nip11.h"
 #include "gh-nip29-template.h"
 #include "gh-store-nip29.h"
+#include "gh-reaction.h"
+#include "gh-reaction-store.h"
 
 #include <json-glib/json-glib.h>
 #include <nostr-event.h>
@@ -147,6 +149,7 @@ struct _GhNip29Service {
   GhAccountController *accounts;
   GhAuthPolicy *policy;
   GhConversationStore *conversations;
+  GhReactionStore *reactions;          /* nullable; W26 slice B */
   GhStoreNip29 *rooms_store;
   GhNip29Outbox *outbox;
   gulong op_handler;
@@ -1089,6 +1092,42 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
     if (room && kind >= NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE &&
         kind <= NOSTR_KIND_SIMPLE_GROUP_REPLY) {
       room_admit_message(room, event, json, backfill);
+    } else if (room && room->service->reactions && kind == 7) {
+      /* W26 slice B (nostrc-191r): NIP-25 reaction in a NIP-29 group. */
+      NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+      const gchar *target_id = NULL;
+      if (tags) {
+        for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
+          NostrTag *tag = nostr_tags_get(tags, ti);
+          if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag)) {
+            target_id = nostr_tag_get_value(tag);
+            break;
+          }
+        }
+      }
+      if (target_id) {
+        const gchar *emoji = nostr_event_get_content(event);
+        if (!emoji || !*emoji)
+          emoji = "+";
+        gchar id[65] = { 0 };
+        if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
+          g_autoptr(GhReaction) reaction =
+            gh_reaction_new(target_id, id, nostr_event_get_pubkey(event),
+                            emoji, nostr_event_get_created_at(event), room->room_id);
+          if (reaction)
+            gh_reaction_store_admit(room->service->reactions, reaction, NULL);
+        }
+      }
+    } else if (room && room->service->reactions && kind == 5) {
+      /* W26 slice B: NIP-25 deletion in a NIP-29 group. */
+      NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+      if (tags) {
+        for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
+          NostrTag *tag = nostr_tags_get(tags, ti);
+          if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag))
+            gh_reaction_store_remove(room->service->reactions, nostr_tag_get_value(tag), NULL);
+        }
+      }
     } else if (room && (kind == NOSTR_KIND_SIMPLE_GROUP_ADD_USER ||
                         kind == NOSTR_KIND_SIMPLE_GROUP_REMOVE_USER ||
                         kind == NOSTR_KIND_SIMPLE_GROUP_DELETE_EVENT)) {
@@ -1624,6 +1663,7 @@ gh_nip29_service_new(const GhNip29ServiceConfig *config, GError **error)
   self->accounts = g_object_ref(config->accounts);
   self->policy = g_object_ref(gh_auth_policy_get_for_accounts(config->accounts));
   self->conversations = g_object_ref(config->conversations);
+  self->reactions = config->reactions ? g_object_ref(config->reactions) : NULL;
   self->network = g_object_ref(config->network ? config->network
                                                : g_network_monitor_get_default());
   if (config->scope_transport) {
@@ -2392,6 +2432,7 @@ gh_nip29_service_dispose(GObject *object)
   g_clear_object(&self->network);
   g_clear_object(&self->http);
   g_clear_object(&self->conversations);
+  g_clear_object(&self->reactions);
   G_OBJECT_CLASS(gh_nip29_service_parent_class)->dispose(object);
 }
 

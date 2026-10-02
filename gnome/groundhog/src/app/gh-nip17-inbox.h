@@ -110,7 +110,12 @@ typedef enum {
    * tags are libmarmot's to judge; it has no p tags, so recipients is the
    * account alone and self_copy FALSE. The Welcome itself is validated only
    * by libmarmot (marmot_process_welcome()). */
-  GH_NIP17_UNWRAP_WELCOMES = 1 << 0
+  GH_NIP17_UNWRAP_WELCOMES = 1 << 0,
+  /* W26 slice B (nostrc-191r): admit kind-7 NIP-25 reaction and kind-5
+   * deletion rumors. A GhNip17Message with kind 7 or 5, same validation
+   * as kind 14 (unsigned, sender authenticated by seal). The caller
+   * routes the result to the reaction store. */
+  GH_NIP17_UNWRAP_REACTIONS = 1 << 1
 } GhNip17UnwrapFlags;
 
 /* gh_nip17_unwrap_async() with flags; finish with gh_nip17_unwrap_finish(). */

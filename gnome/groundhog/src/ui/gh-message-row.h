@@ -42,6 +42,11 @@ const gchar *gh_message_row_get_summary(GhMessageRow *self);
  * Pass NULL to remove it. */
 void gh_message_row_set_poll_widget(GhMessageRow *self, GtkWidget *poll_card);
 
+/* W26 slice B (nostrc-191r): binds the reaction bar to a live-updated
+ * summary from the reaction store. NULL clears it. */
+typedef struct _GhReactionSummary GhReactionSummary;
+void gh_message_row_set_reaction_summary(GhMessageRow *self, GhReactionSummary *summary);
+
 /* The name shown for a pubkey (lowercase hex): its abbreviated npub
  * ("npub1abcde…wxyz"). Profile names are not fetched (charter PT-8). */
 gchar *gh_message_row_display_name(const gchar *pubkey_hex);

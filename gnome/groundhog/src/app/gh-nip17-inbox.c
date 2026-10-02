@@ -397,7 +397,12 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
     welcome_rumor(task, rumor);
     return;
   }
-  if (nostr_event_get_kind(rumor) != 14 && nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND) {
+  /* W26 slice B (nostrc-191r): kind-7 reaction or kind-5 deletion rumor.
+   * Accepted when GH_NIP17_UNWRAP_REACTIONS is set; the caller routes it. */
+  gboolean is_reaction = (nostr_event_get_kind(rumor) == 7 || nostr_event_get_kind(rumor) == 5) &&
+                          (unwrap->flags & GH_NIP17_UNWRAP_REACTIONS);
+  if (nostr_event_get_kind(rumor) != 14 && nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND &&
+      !is_reaction) {
     nostr_event_free(rumor);
     reject(task, GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND,
            "Only kind-14 chat and kind-15 file NIP-17 messages are accepted");

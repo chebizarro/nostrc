@@ -8,6 +8,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct _GhReactionStore GhReactionStore;
+
 /*
  * GhNip29Service: one account's NIP-29 relay groups (privacy charter §4.3,
  * §4.4, §7.10, §8.2 G20a; plan W5), GTK-free, over that account's open
@@ -199,6 +201,7 @@ typedef struct {
   /* network-mode for the relays' NIP-11 documents (GhNetHttp, gh-nip11.h),
    * fetched only for groups the user joined or opened; NULL: "system". */
   GSettings *settings;
+  GhReactionStore *reactions;            /* nullable: NIP-25 reaction store (W26 slice B) */
 } GhNip29ServiceConfig;
 
 #define GH_TYPE_NIP29_SERVICE (gh_nip29_service_get_type())

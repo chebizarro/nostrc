@@ -210,6 +210,16 @@ typedef gboolean (*GhDmInboxWelcomeFunc)(gpointer data, const GhNip17Message *we
                                          const gchar *relay_url, GError **error);
 void gh_dm_inbox_set_welcome_sink(GhDmInbox *self, GhDmInboxWelcomeFunc func, gpointer data);
 
+/* W26 slice B (nostrc-191r): NIP-25 reaction sink. When set, unwraps with
+ * GH_NIP17_UNWRAP_REACTIONS and hands each verified reaction rumor
+ * (message->kind 7 or 5) to the sink instead of the conversation store.
+ * The sink processes the reaction (admit or remove) and returns TRUE;
+ * FALSE with error defers the wrap. data is borrowed: clear the sink
+ * (func NULL) before it goes away. */
+typedef gboolean (*GhDmInboxReactionFunc)(gpointer data, const GhNip17Message *message,
+                                         const gchar *relay_url, GError **error);
+void gh_dm_inbox_set_reaction_sink(GhDmInbox *self, GhDmInboxReactionFunc func, gpointer data);
+
 /* 1 (the default) to GH_DM_INBOX_MAX_IN_FLIGHT; applies to the next unwrap. */
 void gh_dm_inbox_set_max_in_flight(GhDmInbox *self, guint max_in_flight);
 /* The REQ limit (1 to GH_DM_INBOX_REQ_LIMIT, the default; e.g. a relay's

@@ -17,6 +17,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct _GhReactionStore GhReactionStore;
+
 /*
  * GhMlsService: one account's Marmot (MLS) encrypted groups (nostrc-qp24.13
  * part 1; privacy charter §2.2, §3.9 D5, §4.3, §4.4, §7.9-§7.10; Marmot
@@ -649,6 +651,7 @@ typedef struct {
    * does (nostrc-lf62): for tests (Groundhog accounts then make MDK 0.8
    * groups with each other) and diagnostics. */
   gboolean legacy_key_packages_only;
+  GhReactionStore *reactions;            /* nullable: NIP-25 reaction store (W26 slice B) */
 } GhMlsServiceConfig;
 
 #define GH_TYPE_MLS_SERVICE (gh_mls_service_get_type())

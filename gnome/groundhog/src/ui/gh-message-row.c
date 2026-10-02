@@ -1,5 +1,6 @@
 #include "gh-message-row.h"
 #include "gh-attachment-card.h"
+#include "gh-reaction-bar.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
@@ -26,6 +27,7 @@ struct _GhMessageRow {
   GPtrArray *extra_cards;   /* an encrypted group message's files 1.. (W25) */
   GtkBox *poll_slot;
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
+  GhReactionBar *reaction_bar;
   GtkBox *preview_box;
   GtkButton *preview_button;
   GtkLabel *preview_title;
@@ -591,6 +593,13 @@ gh_message_row_get_summary(GhMessageRow *self)
   return self->summary;
 }
 
+void
+gh_message_row_set_reaction_summary(GhMessageRow *self, GhReactionSummary *summary)
+{
+  g_return_if_fail(GH_IS_MESSAGE_ROW(self));
+  gh_reaction_bar_set_summary(self->reaction_bar, summary);
+}
+
 static void
 gh_message_row_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
 {
@@ -704,6 +713,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_title);

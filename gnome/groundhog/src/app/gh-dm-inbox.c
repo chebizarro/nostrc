@@ -112,6 +112,10 @@ struct _GhDmInbox {
   /* Marmot Welcomes go here instead of the store (qp24.13); borrowed. */
   GhDmInboxWelcomeFunc welcome_func;
   gpointer welcome_data;
+
+  /* NIP-25 reactions go here instead of the store (W26 slice B); borrowed. */
+  GhDmInboxReactionFunc reaction_func;
+  gpointer reaction_data;
 };
 
 enum { PROP_0, PROP_STATE, N_PROPS };
@@ -287,9 +291,12 @@ pump(GhDmInbox *self)
     call->session = self->session;
     call->job = job;
     self->counters.in_flight++;
-    gh_nip17_unwrap_full_async(self->accounts, job->wrap_json,
-                               self->welcome_func ? GH_NIP17_UNWRAP_WELCOMES
-                                                  : GH_NIP17_UNWRAP_DEFAULT,
+    GhNip17UnwrapFlags flags = GH_NIP17_UNWRAP_DEFAULT;
+    if (self->welcome_func)
+      flags |= GH_NIP17_UNWRAP_WELCOMES;
+    if (self->reaction_func)
+      flags |= GH_NIP17_UNWRAP_REACTIONS;
+    gh_nip17_unwrap_full_async(self->accounts, job->wrap_json, flags,
                                self->cancellable, unwrap_done, call);
   }
 }
@@ -449,6 +456,14 @@ gh_dm_inbox_set_welcome_sink(GhDmInbox *self, GhDmInboxWelcomeFunc func, gpointe
   self->welcome_data = func ? data : NULL;
 }
 
+void
+gh_dm_inbox_set_reaction_sink(GhDmInbox *self, GhDmInboxReactionFunc func, gpointer data)
+{
+  g_return_if_fail(GH_IS_DM_INBOX(self));
+  self->reaction_func = func;
+  self->reaction_data = func ? data : NULL;
+}
+
 static void
 unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -470,6 +485,17 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
   g_hash_table_remove(self->pending_ids, call->job->wrap_id);
   if (message && message->kind == GH_NIP17_WELCOME_KIND) {
     welcome(self, message, call->job->relay_url);
+  } else if (message && (message->kind == 7 || message->kind == 5) && self->reaction_func) {
+    /* W26 slice B: NIP-25 reaction or deletion. */
+    g_autoptr(GError) rxn_error = NULL;
+    if (self->reaction_func(self->reaction_data, message, call->job->relay_url, &rxn_error))
+      self->counters.admitted++;
+    else {
+      g_message("Groundhog could not store a NIP-17 reaction: %s",
+                rxn_error ? rxn_error->message : "unknown error");
+      self->counters.deferred++;
+      self->hold_checkpoint = TRUE;
+    }
   } else if (message) {
     admit(self, message, call->job->relay_url);
   } else if (error->domain == GH_NIP17_INBOX_ERROR) {

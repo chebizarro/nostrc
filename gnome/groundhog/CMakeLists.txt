@@ -271,7 +271,7 @@ if (TARGET nostr AND TARGET nip19)
   pkg_check_modules(GROUNDHOG_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.72)
   add_library(groundhog-conversations STATIC
     src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c
-    src/app/gh-message-status.c)
+    src/app/gh-message-status.c src/app/gh-reaction.c src/app/gh-reaction-store.c)
   target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO)
@@ -284,6 +284,12 @@ if (TARGET nostr AND TARGET nip19)
     set_tests_properties(groundhog-conversations PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
   endif()
+    add_executable(test-groundhog-reactions tests/app/test_reactions.c)
+    target_link_libraries(test-groundhog-reactions PRIVATE groundhog-conversations)
+    target_compile_options(test-groundhog-reactions PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-reactions COMMAND test-groundhog-reactions)
+    set_tests_properties(groundhog-reactions PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 endif()
 
 # GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQs on its
@@ -746,7 +752,8 @@ endif()
 # link set is unchanged.
 if (TARGET groundhog-store AND TARGET groundhog-conversations)
   message(STATUS "Groundhog store conversations: enabled")
-  add_library(groundhog-store-conversations STATIC src/store/gh-store-conversations.c)
+  add_library(groundhog-store-conversations STATIC src/store/gh-store-conversations.c
+    src/store/gh-store-reactions.c)
   target_include_directories(groundhog-store-conversations PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-store-conversations PUBLIC groundhog-store
@@ -896,7 +903,8 @@ if (BUILD_TESTING)
 endif()
 if (TARGET groundhog-conversation-ui)
   target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-conversation-view.c
-    src/ui/gh-message-row.c src/ui/gh-delivery-indicator.c)
+    src/ui/gh-message-row.c src/ui/gh-delivery-indicator.c
+    src/ui/gh-reaction-bar.c src/ui/gh-reaction-picker.c)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-link-policy)
   # Bubbles, runs, day separators, delivery indicator and details, links,
   # previews behind consent, scrolling, paging, expiry and the §7.15 states

@@ -80,6 +80,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
+      <object class="GhReactionBar" id="reaction_bar">
+        <property name="visible">false</property>
+      </object>
+    </child>
+    <child>
       <object class="GtkBox" id="preview_box">
         <property name="visible">false</property>
         <property name="orientation">1</property>

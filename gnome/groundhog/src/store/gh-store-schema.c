@@ -366,6 +366,26 @@ static const gchar schema_v6[] =
   "  WHERE content IS NOT NULL OR tags_json IS NOT NULL OR event_json IS NOT NULL;"
   "CREATE INDEX mls_messages_by_epoch ON mls_messages (mls_group_id, epoch);";
 
+/* Schema v7 (W26 slice B, nostrc-191r): NIP-25 reactions.
+ *
+ * Reactions (kind 7) on messages across all three backends (MLS, NIP-17,
+ * NIP-29). Each row is one reaction by one sender on one message.
+ * Deletions (kind 5) remove the row. The conversation_id foreign key ties
+ * reactions to the conversation they belong to; ON DELETE CASCADE cleans up
+ * when a conversation is forgotten. */
+static const gchar schema_v7[] =
+  "CREATE TABLE reactions ("
+  "  id              INTEGER PRIMARY KEY,"
+  "  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,"
+  "  target_msg_id   TEXT NOT NULL,"
+  "  reaction_msg_id TEXT NOT NULL UNIQUE,"
+  "  sender_pubkey   TEXT NOT NULL,"
+  "  emoji           TEXT NOT NULL,"
+  "  created_at      INTEGER NOT NULL,"
+  "  room_id         TEXT NOT NULL);"
+  "CREATE INDEX reactions_by_target ON reactions (conversation_id, target_msg_id);"
+  "CREATE INDEX reactions_by_sender ON reactions (conversation_id, sender_pubkey, target_msg_id);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -373,6 +393,7 @@ static const GhStoreMigration migrations[] = {
   { 4, "Read state by arrival, timer changes, recipients without an inbox (W18)", schema_v4 },
   { 5, "Encrypted group attachments and pictures (W25)", schema_v5 },
   { 6, "No plaintext in libmarmot's message rows; messages by epoch (W25)", schema_v6 },
+  { 7, "NIP-25 reactions on messages (W26 slice B, nostrc-191r)", schema_v7 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);
