@@ -157,6 +157,33 @@ static void on_closed(AdwDialog *dialog, gpointer user_data) {
   ((Fixture *)user_data)->closed = TRUE;
 }
 
+static gboolean on_timeout(gpointer user_data);
+
+static gboolean count_frame(GtkWidget *w, GdkFrameClock *clock, gpointer user_data) {
+  (void)w; (void)clock;
+  guint *frames = user_data;
+  return ++*frames < 2 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+
+/* Run the main loop until @w is on screen: mapped and two frames drawn (or
+ * 10 s pass). A user only clicks a dialog they can see; and libadwaita 1.5
+ * drops a close requested before the dialog's first frames (on X11, where
+ * mapping is asynchronous, ::closed then never comes). */
+static void wait_shown(GtkWidget *w) {
+  gboolean timed_out = FALSE;
+  guint frames = 0;
+  guint id = g_timeout_add_seconds(10, on_timeout, &timed_out);
+  while (!gtk_widget_get_mapped(w) && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_true(gtk_widget_get_mapped(w));
+  gtk_widget_add_tick_callback(w, count_frame, &frames, NULL);
+  while (frames < 2 && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!timed_out)
+    g_source_remove(id);
+  g_assert_cmpuint(frames, >=, 2);
+}
+
 static void fixture_setup(Fixture *f, gconstpointer data) {
   GPtrArray *(*list)(void) = (GPtrArray *(*)(void))data;
   reset_stubs();
@@ -167,9 +194,14 @@ static void fixture_setup(Fixture *f, gconstpointer data) {
   g_object_ref_sink(f->dlg);
   gnostr_approval_dialog_set_callback(f->dlg, on_decision, &f->d);
   g_signal_connect(f->dlg, "closed", G_CALLBACK(on_closed), f);
-  f->win = gtk_window_new();
+  /* An AdwWindow hosts the dialog in-window; a plain GtkWindow would make
+   * it a separate toplevel, whose close never completes on WM-less Xvfb. */
+  f->win = adw_window_new();
+  /* Room for the floating dialog the app shows (not a bottom sheet). */
+  gtk_window_set_default_size(GTK_WINDOW(f->win), 800, 600);
   gtk_window_present(GTK_WINDOW(f->win));
   adw_dialog_present(ADW_DIALOG(f->dlg), f->win);
+  wait_shown(GTK_WIDGET(f->dlg));
 }
 
 static void fixture_teardown(Fixture *f, gconstpointer data) {
