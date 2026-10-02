@@ -5625,6 +5625,10 @@ invite_of(const MarmotWelcome *welcome)
     if (welcome->group_relays[i])
       g_strv_builder_add(relays, welcome->group_relays[i]);
   invite->relays = g_strv_builder_end(relays);
+  /* The DM shape: no name and exactly two members (the inviter and this
+   * account). White Noise creates DMs as 2-member groups with an empty name. */
+  invite->is_dm = (!welcome->group_name || !*welcome->group_name) &&
+                  welcome->member_count == 2;
   return invite;
 }
 

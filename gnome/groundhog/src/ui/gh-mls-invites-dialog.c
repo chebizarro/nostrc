@@ -86,24 +86,40 @@ refresh(GhMlsInvitesDialog *self)
     GhMlsInvite *invite = g_ptr_array_index(invites, i);
     GhMlsInviteRow *row = g_object_new(GH_TYPE_MLS_INVITE_ROW, NULL);
     row->wrapper_id = g_strdup(invite->wrapper_id);
-    const gchar *group = invite->group_name && *invite->group_name ? invite->group_name
-                                                                   : _("Unnamed Group");
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), group);
-    adw_avatar_set_text(row->avatar, group);
     /* PD-8: only a contact's cached name; a stranger is their npub. */
     gboolean contact = gh_mls_is_contact(self->context.model, invite->inviter);
     const gchar *name = contact && self->context.display_name
       ? self->context.display_name(invite->inviter, self->context.names_data) : NULL;
     g_autofree gchar *npub = gh_recipient_npub_short(invite->inviter);
-    g_autofree gchar *subtitle = gh_mls_invite_subtitle(npub, name, contact,
-                                                        invite->member_count);
+    /* DM invites (2-member, no name) show the person, not "Unnamed Group". */
+    g_autofree gchar *group_label = NULL;
+    if (invite->is_dm) {
+      group_label = name && *name ? g_strdup(name) : g_strdup(npub);
+    } else {
+      group_label = invite->group_name && *invite->group_name
+        ? g_strdup(invite->group_name) : g_strdup(_("Unnamed Group"));
+    }
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), group_label);
+    adw_avatar_set_text(row->avatar, group_label);
+    g_autofree gchar *subtitle = NULL;
+    if (invite->is_dm) {
+      subtitle = contact
+        ? g_strdup(_("Marmot private message"))
+        : g_strdup_printf(_("Marmot private message · %s, not in your contacts"), npub);
+    } else {
+      subtitle = gh_mls_invite_subtitle(npub, name, contact, invite->member_count);
+    }
     adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(row->accept_button), "s",
                                      invite->wrapper_id);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(row->decline_button), "s",
                                      invite->wrapper_id);
-    g_autofree gchar *accept = g_strdup_printf(_("Accept the invitation to %s"), group);
-    g_autofree gchar *decline = g_strdup_printf(_("Decline the invitation to %s"), group);
+    g_autofree gchar *accept = invite->is_dm
+      ? g_strdup_printf(_("Accept the message from %s"), group_label)
+      : g_strdup_printf(_("Accept the invitation to %s"), group_label);
+    g_autofree gchar *decline = invite->is_dm
+      ? g_strdup_printf(_("Decline the message from %s"), group_label)
+      : g_strdup_printf(_("Decline the invitation to %s"), group_label);
     gtk_accessible_update_property(GTK_ACCESSIBLE(row->accept_button),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, accept, -1);
     gtk_accessible_update_property(GTK_ACCESSIBLE(row->decline_button),

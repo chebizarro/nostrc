@@ -618,6 +618,7 @@ typedef struct {
   gchar *group_name;   /* from the Welcome (the inviter's claim until joined) */
   guint member_count;  /* at invite time */
   GStrv relays;        /* the group relays the Welcome names */
+  gboolean is_dm;      /* the Welcome has the DM shape: no name, 2 members */
 } GhMlsInvite;
 
 void gh_mls_invite_free(GhMlsInvite *invite);

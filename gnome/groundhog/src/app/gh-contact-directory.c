@@ -1110,12 +1110,25 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
     guint n = g_list_model_get_n_items(G_LIST_MODEL(self->model));
     for (guint i = 0; i < n; i++) {
       g_autoptr(GhConversation) room = g_list_model_get_item(G_LIST_MODEL(self->model), i);
-      if (gh_conversation_get_backend(room) != GH_CONVERSATION_BACKEND_NIP17)
+      GhConversationBackend backend = gh_conversation_get_backend(room);
+      /* NIP-17 conversations and Marmot DMs both contribute accepted contacts.
+       * Marmot DMs (is_direct) are the WN DM shape; their peers are contacts
+       * the same way NIP-17 peers are. Non-DM MLS groups don't: the person
+       * you share a group with is not necessarily a contact (PT-8). */
+      gboolean is_dm = backend == GH_CONVERSATION_BACKEND_NIP17 ||
+                       (backend == GH_CONVERSATION_BACKEND_MLS &&
+                        gh_conversation_get_is_direct(room));
+      if (!is_dm)
         continue;
       if (!g_signal_handler_find(room, G_SIGNAL_MATCH_FUNC | G_SIGNAL_MATCH_DATA, 0, 0, NULL,
-                                 on_room_request_changed, self))
+                                 on_room_request_changed, self)) {
         g_signal_connect_object(room, "notify::is-request", G_CALLBACK(on_room_request_changed),
                                 self, 0);
+        /* MLS conversations may transition to DM when their members arrive;
+         * rescan so their peers become accepted contacts. */
+        g_signal_connect_object(room, "notify::is-direct", G_CALLBACK(on_room_request_changed),
+                                self, 0);
+      }
       if (gh_conversation_get_is_request(room))
         continue;
       const gchar *const *peers = gh_conversation_get_peers(room);
