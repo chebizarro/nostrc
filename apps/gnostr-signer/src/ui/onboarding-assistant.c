@@ -396,11 +396,8 @@ typedef struct {
 static void create_profile_ctx_free(CreateProfileCtx *ctx) {
   if (!ctx) return;
   g_free(ctx->display_name);
-  if (ctx->passphrase) {
-    /* Securely clear passphrase */
-    memset(ctx->passphrase, 0, strlen(ctx->passphrase));
-    g_free(ctx->passphrase);
-  }
+  /* Secure memory from gn_secure_entry_get_text(); wipes and frees it. */
+  gn_secure_entry_free_text(ctx->passphrase);
   g_free(ctx);
 }
 
@@ -657,10 +654,9 @@ static void import_profile_ctx_free(ImportProfileCtx *ctx) {
     memset(ctx->data, 0, strlen(ctx->data));
     g_free(ctx->data);
   }
-  if (ctx->passphrase) {
-    memset(ctx->passphrase, 0, strlen(ctx->passphrase));
-    g_free(ctx->passphrase);
-  }
+  /* Secure memory from gn_secure_entry_get_text(); wipes and frees it.
+   * g_free() here aborted every NIP-49 / passphrase import (n98j review 2). */
+  gn_secure_entry_free_text(ctx->passphrase);
   g_free(ctx);
 }
 

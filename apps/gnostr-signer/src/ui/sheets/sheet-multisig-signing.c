@@ -451,7 +451,7 @@ void sheet_multisig_signing_complete(SheetMultisigSigning *self,
   if (success) {
     /* Store signature */
     if (signature) {
-      g_free(self->final_signature);
+      gn_secure_strfree(self->final_signature);
       self->final_signature = gn_secure_strdup(signature);
     }
 
