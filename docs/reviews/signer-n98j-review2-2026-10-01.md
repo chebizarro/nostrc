@@ -113,3 +113,35 @@ It is clean, with no warnings in the touched files.
 6 `nostr_signer_webext_host_*` tests show Not Run because those binaries
 are outside the targets I built. `test-approval-dialog` run directly on
 macOS: 5/5 ok.
+
+## Addendum: `9acd502c` verified. Final verdict: APPROVE
+
+`9acd502c` fixes all three §1 findings correctly:
+
+- `import_profile_ctx_free()` and `create_profile_ctx_free()` free the
+  passphrase with `gn_secure_entry_free_text()`, which is NULL-safe, with no
+  `memset` before it.
+- `sheet-multisig-signing.c:454` frees with `gn_secure_strfree()`.
+
+A re-grep finds no `g_free` on a secure field anywhere in the signer. The
+fixed files build clean on macOS, and the same 17 gnostr-signer ctest tests
+pass. `test-approval-dialog` run directly passes 5/5.
+
+I reran the import probe on the real `ImportProfileCtx` and
+`import_profile_ctx_free()`, extracted verbatim from the source, with the
+passphrase taken from a real `GnSecureEntry` via `gn_secure_entry_get_text()`:
+
+| Version | Result |
+|---|---|
+| `9acd502c` (fixed) | exits 0; 3 passphrase frees and 1 NULL free; no secure-memory critical; nothing outstanding beyond the live entry's own buffer |
+| `86290094` (control) | SIGABRT (exit 134) |
+
+I accept leaving out the confirm-delete `finished` flag, with one
+correction to the reasoning. The callback can't fire twice, but a second
+Delete click is not entirely free of side effects: at CRITICAL severity it
+re-runs `gn_session_manager_authenticate()`, and it calls
+`adw_dialog_close()` again, which logs an Adwaita critical. Neither is a
+second decision, and the dialog has no callers, so this stays a nit.
+
+Hygiene note: `9acd502c` also carries 59 lines of unrelated
+`.beads/issues.jsonl` churn. Consider splitting it out before merge.
