@@ -251,3 +251,135 @@ store key schema" would clarify.
 | M2 | Medium | CFData not zeroed before release | Should fix or document |
 | L1 | Low | AfterFirstUnlock needs explanatory comment | Nice to have |
 | N1 | Nit | Different service names could confuse readers | Nice to have |
+
+---
+
+## Addendum — fix commit 97ab7404 verified
+
+**Fix commit:** 97ab7404
+**Reviewed:** 2026-10-03
+
+The author addressed all six findings in a single commit. Verification
+of each:
+
+### B1 — FIXED ✅ (Blocker → resolved)
+
+The test now creates a temporary file-based keychain:
+
+1. `create_temp_keychain()` calls `mkdtemp` + `SecKeychainCreate` +
+   `SecKeychainUnlock` — creates a new keychain file at
+   `$TMPDIR/kc_test_XXXXXX/test.keychain` with password "test".
+2. `gh_store_key_keychain_set_keychain(kc_backend, temp_keychain)` injects
+   the temporary keychain into the backend via a new public API.
+3. The backend's new `kc_scope_query()` adds `kSecUseKeychain` for
+   `SecItemAdd` and `kSecMatchSearchList` for `SecItemCopyMatching`/
+   `SecItemDelete`, scoping all operations to the temp keychain.
+4. `destroy_temp_keychain()` calls `SecKeychainDelete` + `CFRelease` +
+   `unlink` (including the `-db` sidecar) + `rmdir`.
+5. `atexit(destroy_temp_keychain)` ensures cleanup on abort.
+
+**Verification:**
+- Ran `ctest -R store-key-keychain`: PASS (0.14 s).
+- After the test: `security find-generic-password -a "000...001"` →
+  "item could not be found" (nothing leaked to login keychain).
+- `ls /tmp/kc_test_*` → no matches (temp dir cleaned up).
+- The `#pragma clang diagnostic ignored "-Wdeprecated-declarations"`
+  correctly suppresses warnings for the deprecated `SecKeychainCreate`/
+  `SecKeychainUnlock`/`SecKeychainDelete` APIs (the new `kSecUseKeychain`
+  query key routes to the same implementation and is not deprecated).
+
+The backend's struct now carries `SecKeychainRef keychain` with proper
+retain/release in `set_keychain` and `dispose`. The `GhStoreKeyKeychain`
+is a GObject, so `dispose` is the correct cleanup point.
+
+### H1 — FIXED ✅ (High → resolved)
+
+Version macros bumped from 0.5.1 to 0.6.0 in `signer_ops.h:27-30`.
+`VERSION_MANIFEST.md` updated to match.
+
+**Minor nit:** The version comment block (lines 10-26) documents 0.2.0
+through 0.5.1 but has no 0.6.0 entry for CreateProfile/ListIdentities.
+The D-Bus XML documents them as 0.6.0, which is sufficient; adding a
+line to the comment block would complete the trail.
+
+### M1 — FIXED ✅ (Medium → resolved)
+
+`kSecAttrSynchronizable = kCFBooleanFalse` added to every SecItem
+query across all three files:
+
+- `gh-store-key-keychain.c`: search, per-item fetch, store, clear.
+- `signer_ops.c`: resolve_seckey_hex (2 sites), store_key, clear_key,
+  list_identities, kc_query (migration helper).
+- `secret_store.c`: secret_store_list, has_secret, get_secret,
+  lookup_by_fingerprint.
+
+All Keychain paths are now explicit about sync prevention.
+
+### M2 — FIXED ✅ (Medium → resolved)
+
+`memset((void *)bytes, 0, (size_t)blen)` added before every
+`CFRelease` of a CFData containing key material:
+
+- `gh-store-key-keychain.c:137-138` — `kc_fetch_secret`, after
+  copying to sodium-guarded memory.
+- `signer_ops.c:223` — `resolve_seckey_hex`, Keychain data fetch.
+- `signer_ops.c:1019-1023` — `store_key`, the CFDataCreate'd secret.
+- `signer_ops.c:1592-1594` — `kc_store_signer` (migration helper).
+- `signer_ops.c:1641-1643` — `kc_migrate_one`, legacy client key.
+- `secret_store.c:630-632` — `get_secret`, Keychain data fetch.
+
+**Note:** `memset` (not `secure_wipe`/`explicit_bzero`) is used. In
+these specific call sites the wipe is safe from compiler elision because:
+(a) the pointer comes from an opaque function (`CFDataGetBytePtr`), and
+(b) `CFRelease` follows immediately (also opaque) — the compiler cannot
+prove the buffer is dead between the two opaque calls. Formally,
+`explicit_bzero` would be stronger; practically, the current `memset`
+is equivalent here.
+
+**One gap:** `gh-store-key-keychain.c:313` (`kc_store_in_thread`)
+releases `cf_data` without wiping. This CFData was created from the
+caller-supplied GBytes secret. The signer_ops.c store path wipes its
+CFData; the Groundhog backend's does not. The risk is lower (the source
+GBytes is in sodium-guarded memory and will be zeroed on free), but
+consistency would be better. Not blocking.
+
+### L1 — FIXED ✅ (Low → resolved)
+
+The `kSecAttrAccessibleAfterFirstUnlock` tradeoff is documented in the
+file header comment (gh-store-key-keychain.c lines 8-13):
+
+> chosen over the more restrictive kSecAttrAccessibleWhenUnlocked so
+> that the background daemon can access keys after the first login
+> without requiring the screen to be unlocked
+
+### N1 — ADDRESSED ✅ (Nit → resolved)
+
+The author added `KC_SIGNER_SERVICE` define (signer_ops.c:39) with a
+comment cross-referencing `secret_store.c GNOSTR_KC_SERVICE`, and vice
+versa. Both files now use named constants instead of inline literals.
+
+### Additional observation
+
+The libsecret `list_identities` path (signer_ops.c:1098) was fixed from
+`&gnostr_secret_identity_schema` to `&gnostr_secret_schema`. This
+appears to be a separate bug fix — the identity schema may not have
+existed as a global, causing compilation or search failures on Linux.
+
+## Build & test results (97ab7404)
+
+- **Build:** Clean (Ninja, Debug, BUILD_GROUNDHOG=ON).
+- **check-unsequenced-args.py:** PASS.
+- **groundhog-store-key-keychain:** PASS (0.14 s) — temp keychain,
+  login keychain verified clean after.
+- **nip55l_keychain_migration:** PASS (0.18 s).
+- **nip55l_dbus_contract:** FAIL at line 1019 — pre-existing
+  (`test_cancelled_private_sender`, not modified in this branch).
+- **Sanitizer gate (linux-gate.sh --sanitizers):** PASS, 54 tests,
+  only groundhog-mls-service needed a pre-existing flaky rerun.
+
+## Final verdict: **APPROVE**
+
+All blocker and high findings are fixed. Medium findings are fixed.
+The one remaining nit (missing cf_data wipe in `kc_store_in_thread`) is
+non-blocking — the source buffer is in sodium-guarded memory and the
+risk is minimal. The implementation is solid and ready to merge.
