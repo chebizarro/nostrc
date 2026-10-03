@@ -247,7 +247,10 @@ session_bus_responds(guint timeout_ms)
    * sends. A live daemon responds with "REJECTED ..." within
    * milliseconds. A stalled socket (launchd placeholder) never answers. */
   char nul = '\0';
-  (void)write(fd, &nul, 1);
+  if (write(fd, &nul, 1) < 0) {
+    close(fd);
+    return FALSE;
+  }
 
   /* Wait for any response. */
   pfd.events = POLLIN;
