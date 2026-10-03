@@ -17,6 +17,7 @@
 #include "gh-test-signer.h"
 #include "gh-window.h"
 #include "fake-secret.h"
+#include "nostrc-test-gdk-frame.h"
 
 #include "nostr-tag.h"
 #include "nostr/nip59/nip59.h"
@@ -1665,6 +1666,7 @@ main(int argc, char **argv)
   /* No accessibility bus to find on a test bus. */
   g_setenv("GTK_A11Y", "none", TRUE);
   g_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
 #ifdef __APPLE__
   /* CLI test runners may not own a macOS WindowServer session. */
   display_available = g_strcmp0(g_getenv("GROUNDHOG_RUN_GUI_SMOKE"), "1") == 0;

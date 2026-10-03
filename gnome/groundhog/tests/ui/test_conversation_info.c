@@ -24,7 +24,7 @@
 #include "gh-timeline-row.h"
 #include "gh-expiry.h"
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 #include "gh-notifier.h"
 #include "gh-privacy-summary.h"
 #include "gh-store-contacts.h"
@@ -1514,7 +1514,7 @@ main(int argc, char **argv)
     g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024, "gtk-enable-animations",
                  FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
     g_test_init(&argc, &argv, NULL);
-    gh_test_tolerate_gdk_frame_warning();
+    nostrc_test_tolerate_gdk_frame_warning();
     g_test_add_func("/groundhog/conversation-info-gui/st9-forget", test_gui_forget);
     g_test_add_func("/groundhog/conversation-info-gui/mute-in-database", test_gui_mute);
     g_test_add_func("/groundhog/conversation-info-gui/block", test_gui_block);

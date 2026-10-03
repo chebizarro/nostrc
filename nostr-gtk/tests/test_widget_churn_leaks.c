@@ -11,7 +11,7 @@
 #include <gtk/gtk.h>
 #include <glib.h>
 
-#include "gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 /* Track how many mock items are currently alive (not finalized) */
 static gint g_live_item_count = 0;
@@ -218,7 +218,7 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
-    gh_test_tolerate_gdk_frame_warning();
+    nostrc_test_tolerate_gdk_frame_warning();
 
     g_test_add_func("/nostr-gtk/churn/model-churn-no-item-leak",
                     test_model_churn_no_item_leak);

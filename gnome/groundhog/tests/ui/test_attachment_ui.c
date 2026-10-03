@@ -37,7 +37,7 @@
 
 #include <string.h>
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 #define DISCOVERY "wss://discovery.test.invalid"
 #define INBOX_A   "wss://inbox-a.test.invalid"   /* the account's own (key 1) */
@@ -1672,7 +1672,7 @@ main(int argc, char **argv)
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
   stack_keys_init();
 #define ADD(path, func) nostrc_test_bus_add_func("/groundhog/attachment-ui/" path, func)
   ADD("attach-send", test_attach_send);

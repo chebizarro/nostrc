@@ -13,7 +13,7 @@
 #include "gh-account-ui.h"
 #include "gh-identity.h"
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 void groundhog_register_resource(void);
 
@@ -407,7 +407,7 @@ main(int argc, char **argv)
                "gtk-enable-animations", FALSE, NULL);
 
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/groundhog/account-ui/focus-and-announce-only-on-transition",
                   test_focus_and_announce_only_on_transition);
   g_test_add_func("/groundhog/account-ui/header-title-fits", test_header_title_fits);

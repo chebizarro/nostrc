@@ -25,7 +25,7 @@
 
 #include <glib/gstdio.h>
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 void groundhog_register_resource(void);
 
@@ -1265,7 +1265,7 @@ main(int argc, char **argv)
     hex[key] = gh_test_pub(key);
   }
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
 #define ADD(path, func, current) \
   g_test_add("/groundhog/onboarding/" path, Fixture, current, fixture_setup, func, \
              fixture_teardown)

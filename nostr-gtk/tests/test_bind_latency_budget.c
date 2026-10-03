@@ -11,6 +11,7 @@
 
 #include <gtk/gtk.h>
 #include <glib.h>
+#include "nostrc-test-gdk-frame.h"
 
 /* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
  * Scale timing budgets accordingly to avoid CI flakes.
@@ -291,6 +292,7 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
+    nostrc_test_tolerate_gdk_frame_warning();
 
     g_test_add_func("/nostr-gtk/latency/bind-within-budget",
                     test_bind_latency_within_budget);

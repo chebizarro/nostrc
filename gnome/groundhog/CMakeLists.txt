@@ -135,15 +135,16 @@ if (BUILD_TESTING)
   set_tests_properties(groundhog-resource PROPERTIES TIMEOUT 10
     ENVIRONMENT "G_DEBUG=fatal-criticals")
 
-  # gh-test-gdk-frame.h tolerance test (nostrc-ykxf): the forgiven warning
+  # nostrc-test-gdk-frame.h tolerance test (nostrc-ykxf): the forgiven warning
   # does not abort; any other warning still does. No display needed.
   add_executable(test-groundhog-gdk-frame-tolerance tests/test_gdk_frame_tolerance.c)
-  target_include_directories(test-groundhog-gdk-frame-tolerance PRIVATE tests)
+  target_include_directories(test-groundhog-gdk-frame-tolerance PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
   target_compile_options(test-groundhog-gdk-frame-tolerance PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(test-groundhog-gdk-frame-tolerance PRIVATE PkgConfig::GROUNDHOG_DEPS)
   add_test(NAME groundhog-gdk-frame-tolerance COMMAND test-groundhog-gdk-frame-tolerance)
   set_tests_properties(groundhog-gdk-frame-tolerance PROPERTIES TIMEOUT 10
-    ENVIRONMENT "G_DEBUG=fatal-criticals")
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
 
   # Layout/accessibility check for the shell templates: instantiates the
   # compiled GhWindow/GhSidebarPage/GhContentPage from the GResource (no
@@ -293,6 +294,22 @@ if (TARGET nostr AND TARGET nip19)
     add_test(NAME groundhog-conversations COMMAND test-groundhog-conversations)
     set_tests_properties(groundhog-conversations PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
   endif()
     add_executable(test-groundhog-reactions tests/app/test_reactions.c)
     target_link_libraries(test-groundhog-reactions PRIVATE groundhog-conversations)
@@ -300,6 +317,22 @@ if (TARGET nostr AND TARGET nip19)
     add_test(NAME groundhog-reactions COMMAND test-groundhog-reactions)
     set_tests_properties(groundhog-reactions PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
 
     # W26 slice B (nostrc-191r): NIP-17 reaction/deletion rumor builders.
     if (TARGET groundhog-account-relays)
@@ -311,6 +344,22 @@ if (TARGET nostr AND TARGET nip19)
       add_test(NAME groundhog-reaction-send COMMAND test-groundhog-reaction-send)
       set_tests_properties(groundhog-reaction-send PROPERTIES TIMEOUT 20
         ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
     endif()
 endif()
 
@@ -382,6 +431,22 @@ if (TARGET nostr AND TARGET nip19)
     add_test(NAME groundhog-nip29 COMMAND test-groundhog-nip29)
     set_tests_properties(groundhog-nip29 PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
   endif()
 else()
   message(STATUS "Groundhog NIP-29 core unavailable: in-tree nostr and nip19 targets required")
@@ -616,6 +681,22 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
     add_test(NAME groundhog-store-key COMMAND test-groundhog-store-key)
     set_tests_properties(groundhog-store-key PROPERTIES TIMEOUT 30
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
     # KC-6: a real gnome-keyring on a private bus (or, with
     # GH_STORE_KEY_TEST_SESSION_KEYRING=1, the session's). Skips (77) only
     # when gnome-keyring-daemon or dbus-daemon is not installed.
@@ -922,6 +1003,22 @@ if (BUILD_TESTING)
   add_test(NAME groundhog-link-policy COMMAND test-groundhog-link-policy)
   set_tests_properties(groundhog-link-policy PROPERTIES TIMEOUT 20
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
 endif()
 if (TARGET groundhog-conversation-ui)
   target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-conversation-view.c
@@ -1477,6 +1574,22 @@ if (BUILD_TESTING)
   add_test(NAME groundhog-privacy-summary COMMAND test-groundhog-privacy-summary)
   set_tests_properties(groundhog-privacy-summary PROPERTIES TIMEOUT 20
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+  # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
+  # (which carries tests/common as a PUBLIC include directory).
+  foreach(_gdk_frame_test
+    test-groundhog-shell
+    test-groundhog-account-ui
+    test-groundhog-conversation-list
+    test-groundhog-conversation-view
+    test-groundhog-conversation-menu
+    test-groundhog-preferences
+  )
+    if(TARGET ${_gdk_frame_test})
+      target_include_directories(${_gdk_frame_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common)
+    endif()
+  endforeach()
 endif()
 set(GROUNDHOG_CONVERSATION_INFO_SOURCES src/ui/gh-conversation-info-dialog.c
   src/app/gh-conversation-actions.c src/store/gh-store-contacts.c)
@@ -2660,3 +2773,19 @@ if (TARGET test-groundhog-preferences)
   endforeach()
 endif()
 # --- end W13c preference gates ---
+
+# Tests that include nostrc-test-gdk-frame.h (nostrc-ykxf) but do not link
+# nostrc-test-bus (which carries tests/common as a PUBLIC include directory).
+foreach(_gdk_frame_test
+  test-groundhog-shell
+  test-groundhog-account-ui
+  test-groundhog-conversation-list
+  test-groundhog-conversation-view
+  test-groundhog-conversation-menu
+  test-groundhog-preferences
+)
+  if(TARGET ${_gdk_frame_test})
+    target_include_directories(${_gdk_frame_test} PRIVATE
+      ${CMAKE_SOURCE_DIR}/tests/common)
+  endif()
+endforeach()

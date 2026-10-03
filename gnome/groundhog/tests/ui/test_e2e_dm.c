@@ -30,7 +30,7 @@
 #include <libsoup/soup.h>
 #include <string.h>
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 static GhTestBus bus;
 static GhTestSigner signer;
@@ -571,7 +571,7 @@ main(int argc, char **argv)
   groundhog_register_resource();
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
   stack_keys_init();
   nostrc_test_bus_add_func("/groundhog/e2e-dm/two-accounts", test_two_accounts);
   int status = g_test_run();

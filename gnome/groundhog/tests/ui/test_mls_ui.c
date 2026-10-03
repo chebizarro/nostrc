@@ -50,6 +50,7 @@
 #include "mls-world.h"
 #include "blossom-fixture.h"
 #include "gh-attachment-card.h"
+#include "nostrc-test-gdk-frame.h"
 #include "gh-mls-attachments.h"
 
 #include <glib/gi18n.h>
@@ -2261,6 +2262,7 @@ main(int argc, char **argv)
     groundhog_register_resource();
     g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
     g_test_init(&argc, &argv, NULL);
+    nostrc_test_tolerate_gdk_frame_warning();
     /* mls_world_init() beside GTK: GTK keeps the session bus it was given. */
     g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
     g_log_set_fatal_mask(NULL, G_LOG_FATAL_MASK | G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL);

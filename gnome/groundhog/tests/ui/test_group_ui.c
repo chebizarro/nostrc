@@ -24,7 +24,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 #include "gh-group-copy.h"
 #include "gh-group-info-dialog.h"
 #include "gh-group-join-dialog.h"
@@ -1786,7 +1786,7 @@ main(int argc, char **argv)
     g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024, "gtk-enable-animations",
                  FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
     g_test_init(&argc, &argv, NULL);
-    gh_test_tolerate_gdk_frame_warning();
+    nostrc_test_tolerate_gdk_frame_warning();
     /* As send-stack.h: GTK keeps the session bus it was given. */
     gh_test_bus_up_beside_gtk(&shared_bus);
     g_test_add_func("/groundhog/group-ui-gui/join", test_gui_join);

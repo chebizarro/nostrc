@@ -24,7 +24,7 @@
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 #include "gh-conversation-view.h"
 #include "gh-expiry.h"
 #include "gh-shell.h"
@@ -965,7 +965,7 @@ main(int argc, char **argv)
     g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024, "gtk-enable-animations",
                  FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
     g_test_init(&argc, &argv, NULL);
-    gh_test_tolerate_gdk_frame_warning();
+    nostrc_test_tolerate_gdk_frame_warning();
     g_test_add_func("/groundhog/conversation-menu-gui/menu", test_gui_menu);
     g_test_add_func("/groundhog/conversation-menu-gui/menu-states", test_gui_menu_states);
     g_test_add_func("/groundhog/conversation-menu-gui/contact-title", test_gui_contact_title);

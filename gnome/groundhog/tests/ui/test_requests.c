@@ -33,7 +33,7 @@
 #include "gh-requests-view.h"
 #include "gh-store-conversations.h"
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 #include "gh-test-signer.h"
 
 #include "nostr-tag.h"
@@ -1449,7 +1449,7 @@ main(int argc, char **argv)
                  "gtk-enable-animations", FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
   }
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
   hex_alice = gh_test_pub(1);
   npub_alice = gh_test_npub(1);
   for (guint i = 0; i < N_PEOPLE; i++) {

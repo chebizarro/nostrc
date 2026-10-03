@@ -21,7 +21,7 @@
 
 #include <string.h>
 
-#include "../gh-test-gdk-frame.h"
+#include "nostrc-test-gdk-frame.h"
 
 #define DISCOVERY "wss://discovery.test.invalid"
 #define INBOX_A   "wss://inbox-a.test.invalid"   /* the account's own (key 1) */
@@ -2250,7 +2250,7 @@ main(int argc, char **argv)
   g_object_set(gtk_settings_get_default(), "gtk-xft-dpi", 96 * 1024,
                "gtk-enable-animations", FALSE, "gtk-decoration-layout", "appmenu:close", NULL);
   g_test_init(&argc, &argv, NULL);
-  gh_test_tolerate_gdk_frame_warning();
+  nostrc_test_tolerate_gdk_frame_warning();
   stack_keys_init();
 
 #define ADD(path, func) nostrc_test_bus_add_func("/groundhog/composer/" path, func)

@@ -434,9 +434,11 @@ if(BUILD_TESTING)
       test_nostr_gtk_note_card_measure
       test_nostr_gtk_widget_churn_leaks
       test_nostr_gtk_thread_view_bounded
+      test_nostr_gtk_bind_latency_budget
+      test_nostr_gtk_listview_recycle_stress
     )
       target_include_directories(${_gtk_widget_test} PRIVATE
-        ${CMAKE_SOURCE_DIR}/gnome/groundhog/tests)
+        ${CMAKE_SOURCE_DIR}/tests/common)
     endforeach()
 
     set_tests_properties(
@@ -445,6 +447,8 @@ if(BUILD_TESTING)
       test_nostr_gtk_widget_churn_leaks
       test_nostr_gtk_bind_latency_budget
       test_nostr_gtk_thread_view_bounded
+      test_nostr_gtk_bind_latency_budget
+      test_nostr_gtk_listview_recycle_stress
       PROPERTIES
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
   endif()

@@ -20,6 +20,7 @@
 
 #include <gtk/gtk.h>
 #include <glib.h>
+#include "nostrc-test-gdk-frame.h"
 
 /*
  * Minimal mock object implementing enough of GnNostrEventItem's interface
@@ -529,6 +530,7 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
+    nostrc_test_tolerate_gdk_frame_warning();
 
     g_test_add_func("/nostr-gtk/listview/basic-bind-unbind",
                     test_basic_bind_unbind);

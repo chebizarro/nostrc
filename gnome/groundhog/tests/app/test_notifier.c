@@ -15,6 +15,7 @@
 #include "gh-store-conversations.h"
 #include "fake-gtk-notifications.h"
 #include "nostrc-test-bus.h"
+#include "nostrc-test-gdk-frame.h"
 
 #include "nostr-event.h"
 #include "nostr-tag.h"
@@ -1361,6 +1362,7 @@ main(int argc, char **argv)
     g_test_init(&argc, &argv, NULL);
   else
     g_test_init(&argc, &argv, G_TEST_OPTION_ISOLATE_DIRS, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   ACCOUNT_A = hex_of("account-a");
   ACCOUNT_B = hex_of("account-b");
   for (guint i = 0; i < G_N_ELEMENTS(PEER); i++) {
