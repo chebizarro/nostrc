@@ -412,6 +412,10 @@ test_member_lookups_on_demand_only(void)
   gh_mls_service_add_members_async(alice->service, ga, carol, NULL, on_changed, &added);
   spin_until(op_done, &added, "Alice's Add of Carol");
   g_assert_no_error(added.error);
+  /* Drain deferred callbacks from Alice's Add before snapshotting: the
+   * broadened counter may catch an asynchronous REQ that the kind-specific
+   * counter missed, producing a race under the sanitizer gate. */
+  drain();
   guint asked = member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL);
   wait_members(gb, 3);
   wait_live(gb);
