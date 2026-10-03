@@ -456,6 +456,23 @@ update_all(GhMessageRow *self)
   update_summary(self);
 }
 
+/* ---- reactions ------------------------------------------------------------------ */
+
+/* W26 slice B (nostrc-191r): relay the reaction bar's toggle to the
+ * conversation view's conversation.react action. */
+static void
+on_reaction_toggled(GhReactionBar *bar, const gchar *emoji, gboolean add, GhMessageRow *self)
+{
+  (void)bar;
+  if (!self->message)
+    return;
+  const gchar *rumor_id = gh_message_get_rumor_id(self->message);
+  if (!rumor_id)
+    return;
+  gtk_widget_activate_action(GTK_WIDGET(self), "conversation.react", "(ssb)",
+                             rumor_id, emoji, add);
+}
+
 /* ---- links and the enclosing view ------------------------------------------------ */
 
 /* Every click on a link goes through the view's policy; GTK's default
@@ -750,6 +767,8 @@ gh_message_row_init(GhMessageRow *self)
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", "");
   self->run_start = TRUE;
+  g_signal_connect(self->reaction_bar, "reaction-toggled",
+                   G_CALLBACK(on_reaction_toggled), self);
   self->run_end = TRUE;
   self->summary = g_strdup("");
   g_signal_connect_swapped(self->body_label, "activate-link", G_CALLBACK(on_activate_link),

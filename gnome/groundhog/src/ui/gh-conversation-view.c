@@ -678,6 +678,9 @@ struct _GhConversationView {
 
   /* W26 slice B: reactions */
   GhReactionStore *reactions;
+  GhConversationViewReactFunc react_func;
+  gpointer react_data;
+  GDestroyNotify react_destroy;
 
   guint announcements[3];
   gchar *last_announcement;
@@ -1692,6 +1695,24 @@ action_retry(GtkWidget *widget, const char *name, GVariant *parameter)
     g_signal_emit(self, signals[SIGNAL_RETRY_REQUESTED], 0, message);
 }
 
+/* W26 slice B (nostrc-191r): the user toggled a reaction chip (add or
+ * remove). Parameters: (target_rumor_id, emoji, add). */
+static void
+action_react(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  (void)name;
+  if (!self->react_func || !self->conversation)
+    return;
+  const gchar *rumor_id = NULL, *emoji = NULL;
+  gboolean add = FALSE;
+  g_variant_get(parameter, "(&s&sb)", &rumor_id, &emoji, &add);
+  GhMessage *message = gh_conversation_lookup_message(self->conversation, rumor_id);
+  if (!message)
+    return;
+  self->react_func(self->conversation, message, emoji, add, self->react_data);
+}
+
 static void
 action_jump(GtkWidget *widget, const char *name, GVariant *parameter)
 {
@@ -1789,6 +1810,19 @@ gh_conversation_view_set_reaction_store(GhConversationView *self, GhReactionStor
 }
 
 void
+gh_conversation_view_set_reaction_func(GhConversationView *self,
+                                       GhConversationViewReactFunc func,
+                                       gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->react_destroy)
+    self->react_destroy(self->react_data);
+  self->react_func = func;
+  self->react_data = user_data;
+  self->react_destroy = destroy;
+}
+
+void
 gh_conversation_view_set_settings(GhConversationView *self, GSettings *settings)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
@@ -1873,6 +1907,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_history_loader(self, NULL, NULL, NULL);
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
+  gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
   g_clear_object(&self->settings);
   g_clear_object(&self->reactions);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONVERSATION_VIEW);
@@ -1953,6 +1988,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_install_action(widget_class, "conversation.show-preview", "s",
                                   action_show_preview);
   gtk_widget_class_install_action(widget_class, "conversation.retry-message", "s", action_retry);
+  gtk_widget_class_install_action(widget_class, "conversation.react", "(ssb)", action_react);
   gtk_widget_class_install_action(widget_class, "conversation.jump-to-latest", NULL,
                                   action_jump);
   gtk_widget_class_install_action(widget_class, "conversation.unlock-messages", NULL,

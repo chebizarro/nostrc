@@ -103,6 +103,19 @@ void gh_conversation_view_set_settings(GhConversationView *self, GSettings *sett
 typedef struct _GhReactionStore GhReactionStore;
 void gh_conversation_view_set_reaction_store(GhConversationView *self,
                                              GhReactionStore *store);
+
+/* W26 slice B (nostrc-191r): the callback invoked when the user toggles a
+ * reaction chip (add or remove their emoji on a message). The caller
+ * dispatches to the appropriate backend (NIP-17, NIP-29 or MLS). */
+typedef void (*GhConversationViewReactFunc)(GhConversation *conversation,
+                                            GhMessage *target,
+                                            const gchar *emoji,
+                                            gboolean add,
+                                            gpointer user_data);
+void gh_conversation_view_set_reaction_func(GhConversationView *self,
+                                            GhConversationViewReactFunc func,
+                                            gpointer user_data,
+                                            GDestroyNotify destroy);
 gboolean gh_conversation_view_get_compact(GhConversationView *self);
 /* The visible timeline: a GListModel (and GtkSectionModel) of GhTimelineItem:
  * the conversation's messages and, after the messages written at or before
