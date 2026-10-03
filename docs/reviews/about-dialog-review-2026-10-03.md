@@ -148,3 +148,43 @@ the standard GNOME HIG convention.
 | `groundhog-launch` | Skipped (no display — expected on macOS) |
 | `check-unsequenced-args.py` | ✅ Passed |
 | `linux-gate.sh` | ✅ 453 tests passed |
+
+---
+
+## Addendum: B1 fix verified (a1395538)
+
+**Commit**: a1395538 `ci(groundhog): build and require the About tests
+(about-dialog review B1)`
+
+The fix adds two lines to `.github/workflows/groundhog-ci.yml`:
+
+1. `test-groundhog-about` appended to the build target list (after
+   `test-groundhog-mls-files`, before `test-groundhog-mls-poll`).
+2. `'groundhog-about', 'groundhog-about-gui'` appended to the Python
+   `required` set (after `'groundhog-mls-files'`, before
+   `'groundhog-mls-poll'`).
+
+**Sanitizer job**: correctly omitted. The sanitizer job uses an explicit
+`GROUNDHOG_SANITIZER_TESTS` list with a strict `^(t1|t2|…)$` regex, so
+omitting `groundhog-about` causes no "Not Run" failure. The About test
+does no meaningful heap work — it decodes PNG resources via
+`gdk_pixbuf_new_from_resource` and reads GTK property getters — so
+sanitizer coverage adds negligible value. This matches the pattern: tests
+like `groundhog-mls-files` are in the sanitizer set because they exercise
+MLS/store allocations; the About test does not.
+
+**Verification**:
+
+- Fresh configure + build with the fix: `test-groundhog-about` builds
+  successfully as a CI build-target dependency.
+- `groundhog-about` and `groundhog-about-gui` both registered in cmake
+  and present in the updated `required` set.
+- Both tests pass (0.20 s headless, 0.74 s GUI).
+- `linux-gate.sh` passes 453 tests (run against the original commit;
+  the CI-only fix changes no compiled code).
+
+**N1** (mnemonic nit) remains open — low-priority, no action required.
+
+## Final verdict: APPROVE
+
+B1 is resolved. The two-commit branch is ready to merge.
