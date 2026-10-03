@@ -43,6 +43,15 @@ gh_about_dialog_new(void)
         "unless you ask."));
   /* Translators: put your name here, one per line, if you translated Groundhog. */
   adw_about_dialog_set_translator_credits(about, _("translator-credits"));
+
+  /* Adwaita icon theme attribution (nostrc-9juh). */
+  adw_about_dialog_add_legal_section(about,
+      "Adwaita Icon Theme",
+      /* TRANSLATORS: short attribution shown in About > Legal. */
+      _("Symbolic icons from the GNOME Project's Adwaita icon theme."),
+      GTK_LICENSE_LGPL_3_0,
+      NULL);
+
   return dialog;
 }
 

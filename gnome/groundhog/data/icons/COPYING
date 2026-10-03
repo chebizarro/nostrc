@@ -1,0 +1,18 @@
+The symbolic icons in this directory are from the Adwaita icon theme
+(https://gitlab.gnome.org/GNOME/adwaita-icon-theme), part of the GNOME
+project, with two exceptions noted below.
+
+Adwaita icons are licensed under either of:
+  • Creative Commons Attribution-ShareAlike 3.0 United States (CC-BY-SA 3.0 US)
+  • GNU Lesser General Public License v3 or later (LGPL-3.0-or-later)
+
+See https://gitlab.gnome.org/GNOME/adwaita-icon-theme/-/blob/master/COPYING
+for the full licence texts and the GNOME Project attribution.
+
+Groundhog bundles these icons so that symbolic icon names resolve on
+desktops that do not ship the Adwaita icon theme (macOS, non-GNOME Linux).
+No modification was made to the Adwaita SVGs.
+
+Exceptions — hand-drawn for Groundhog, MIT-licensed like the rest of the app:
+  emblem-ok-symbolic.svg
+  emblem-synchronizing-symbolic.svg
