@@ -238,6 +238,7 @@ particular:
 - Keep **Latest release** and **Release tag** unchanged for unreleased work.
 - When publishing a release, use the tag
   `<component>-v<MAJOR>.<MINOR>.<PATCH>[-<PRERELEASE>]` (for example,
+| W27 slice E UI follow-ups (nostrc-zjkv, -9juh, -tmib, -pszz, -fwq7): NIP-29 reply rendering, Adwaita icon bundling, poll vote withdrawal, SelfRemove leave nits, privacy test broadening | groundhog | 0.12.0 | No bump: all changes folded into unreleased 0.12.0. The `libmarmot/src/commits.c` edit is comment-only (no libmarmot change). |
   `libnostr-v1.2.3` or `gnostr-v0.1.0-preview`) and then record that exact
   release version and tag here. Prereleases retain the base declared version
   in their authoritative build sources.
