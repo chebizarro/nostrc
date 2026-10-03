@@ -14,6 +14,8 @@
  */
 
 #include <gtk/gtk.h>
+
+#include "gh-test-gdk-frame.h"
 #include <adwaita.h>
 #include <glib.h>
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
@@ -894,6 +896,7 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
+    gh_test_tolerate_gdk_frame_warning();
     g_resources_register(nostr_gtk_get_resource());
     gnostr_identity_init("org.gnostr.Client");
 

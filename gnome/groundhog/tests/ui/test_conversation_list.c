@@ -27,6 +27,8 @@
 #include "nostr-utils.h"
 #include "nostr/nip19/nip19.h"
 
+#include "../gh-test-gdk-frame.h"
+
 #include <glib/gstdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1157,6 +1159,7 @@ main(int argc, char **argv)
   init_keys();
 
   g_test_init(&argc, &argv, NULL);
+  gh_test_tolerate_gdk_frame_warning();
 #define ADD(path, func) \
   g_test_add("/groundhog/conversation-list/" path, Fixture, NULL, fixture_setup, func, \
              fixture_teardown)

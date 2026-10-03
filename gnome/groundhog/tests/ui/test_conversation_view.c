@@ -18,6 +18,8 @@
  */
 #include "gh-attachment-card.h"
 #include "gh-conversation-list.h"
+
+#include "../gh-test-gdk-frame.h"
 #include "gh-conversation-private.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
@@ -1917,6 +1919,7 @@ main(int argc, char **argv)
   init_keys();
 
   g_test_init(&argc, &argv, NULL);
+  gh_test_tolerate_gdk_frame_warning();
 #define ADD(path, func) \
   g_test_add("/groundhog/conversation-view/" path, Fixture, NULL, fixture_setup, func, \
              fixture_teardown)

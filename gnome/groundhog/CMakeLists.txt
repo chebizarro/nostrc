@@ -135,6 +135,16 @@ if (BUILD_TESTING)
   set_tests_properties(groundhog-resource PROPERTIES TIMEOUT 10
     ENVIRONMENT "G_DEBUG=fatal-criticals")
 
+  # gh-test-gdk-frame.h tolerance test (nostrc-ykxf): the forgiven warning
+  # does not abort; any other warning still does. No display needed.
+  add_executable(test-groundhog-gdk-frame-tolerance tests/test_gdk_frame_tolerance.c)
+  target_include_directories(test-groundhog-gdk-frame-tolerance PRIVATE tests)
+  target_compile_options(test-groundhog-gdk-frame-tolerance PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(test-groundhog-gdk-frame-tolerance PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  add_test(NAME groundhog-gdk-frame-tolerance COMMAND test-groundhog-gdk-frame-tolerance)
+  set_tests_properties(groundhog-gdk-frame-tolerance PROPERTIES TIMEOUT 10
+    ENVIRONMENT "G_DEBUG=fatal-criticals")
+
   # Layout/accessibility check for the shell templates: instantiates the
   # compiled GhWindow/GhSidebarPage/GhContentPage from the GResource (no
   # GSettings or signer). It needs a GTK display connection, so it self-skips

@@ -19,6 +19,8 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 
+#include "gh-test-gdk-frame.h"
+
 /* Maximum thread events — mirrors app-level constraint.
  * Thread views should never load more than this many items. */
 #define MAX_THREAD_EVENTS 200
@@ -355,6 +357,7 @@ int
 main(int argc, char *argv[])
 {
   g_test_init(&argc, &argv, NULL);
+  gh_test_tolerate_gdk_frame_warning();
 
   g_test_add_func("/nostr-gtk/thread-view/bounded-model-count",
                    test_bounded_model_count);

@@ -429,6 +429,16 @@ if(BUILD_TESTING)
       TIMEOUT 120
     )
 
+    # GTK 4.24 macOS frame-timing tolerance (nostrc-ykxf): shared header.
+    foreach(_gtk_widget_test
+      test_nostr_gtk_note_card_measure
+      test_nostr_gtk_widget_churn_leaks
+      test_nostr_gtk_thread_view_bounded
+    )
+      target_include_directories(${_gtk_widget_test} PRIVATE
+        ${CMAKE_SOURCE_DIR}/gnome/groundhog/tests)
+    endforeach()
+
     set_tests_properties(
       test_nostr_gtk_listview_recycle_stress
       test_nostr_gtk_note_card_measure

@@ -25,6 +25,8 @@
 #include "nostr-tag.h"
 #include "nostr/nip59/nip59.h"
 
+#include "../gh-test-gdk-frame.h"
+
 #include <fcntl.h>
 #include <glib/gstdio.h>
 #include <limits.h>
@@ -1803,6 +1805,7 @@ main(int argc, char **argv)
     g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
   }
   g_test_init(&argc, &argv, NULL);
+  gh_test_tolerate_gdk_frame_warning();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     npub[key] = gh_test_npub(key);
     hex[key] = gh_test_pub(key);

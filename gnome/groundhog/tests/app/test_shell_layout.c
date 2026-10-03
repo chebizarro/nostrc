@@ -17,6 +17,8 @@
 
 #include <string.h>
 
+#include "../gh-test-gdk-frame.h"
+
 void groundhog_register_resource(void);
 
 #define APP_ID "org.nostr.Groundhog"
@@ -802,6 +804,7 @@ main(int argc, char **argv)
   g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", "appmenu:close", NULL);
 
   g_test_init(&argc, &argv, NULL);
+  gh_test_tolerate_gdk_frame_warning();
   g_test_add_func("/groundhog/shell/sidebar-page-structure", test_sidebar_page_structure);
   g_test_add_func("/groundhog/shell/sidebar-list-states", test_sidebar_list_states);
   g_test_add_func("/groundhog/shell/sidebar-search-states", test_sidebar_search_states);
