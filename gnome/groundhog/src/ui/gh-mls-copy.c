@@ -435,6 +435,17 @@ gh_mls_verify_result_copy(GhMlsMemberIdentity identity, const GError *error, con
     /* TRANSLATORS: %s is the member's name or short npub. */
     return g_strdup_printf(_("Verified: %s published this device’s key."), name);
   /* TRANSLATORS: %s is the member's name or short npub. */
-  return g_strdup_printf(_("%s hasn’t published a key for this device. Their identity stays "
+  return g_strdup_printf(_("%s hasn't published a key for this device. Their identity stays "
                            "unverified."), name);
+}
+
+gchar *
+gh_mls_fallback_note(const gchar *who)
+{
+  if (!who || !*who)
+    return g_strdup(_("This chat uses NIP-17 because encrypted-group "
+                      "messaging is not available for this contact."));
+  /* Translators: %s is a person's name or npub. */
+  return g_strdup_printf(_("%s’s app doesn’t support encrypted-group messages "
+                           "yet, so this chat uses NIP-17."), who);
 }

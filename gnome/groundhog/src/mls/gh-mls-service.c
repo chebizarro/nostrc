@@ -1838,7 +1838,12 @@ group_refresh(GhMlsGroup *group)
   }
   if (g_strcmp0(group->name, g->name) != 0) {
     g_free(group->name);
-    group->name = g_strdup(g->name && *g->name ? g->name : NULL);
+    /* Normalise empty and whitespace-only names to NULL, matching WN's
+     * name.trim().is_empty() in groups.rs (N1, review w26-wn-dms). */
+    const gchar *trimmed = g->name;
+    while (trimmed && g_ascii_isspace(*trimmed))
+      trimmed++;
+    group->name = g_strdup(trimmed && *trimmed ? g->name : NULL);
     name_changed = TRUE;
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_NAME]);
   }

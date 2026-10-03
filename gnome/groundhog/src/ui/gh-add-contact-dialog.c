@@ -275,8 +275,7 @@ static void
 on_contact_added(GhAddContactDialog *dialog, GhConversation *room, gpointer data)
 {
   (void)dialog;
-  AddContactAttachment *a = data;
-  gh_window_open_item(a->window, room);
+  gh_window_open_item(GH_WINDOW(data), room);
 }
 
 static void
@@ -286,7 +285,8 @@ present_add_contact(GSimpleAction *action, GVariant *parameter, gpointer data)
   (void)parameter;
   AddContactAttachment *a = data;
   GhAddContactDialog *dialog = gh_add_contact_dialog_new(&a->config);
-  g_signal_connect(dialog, "contact-added", G_CALLBACK(on_contact_added), a);
+  g_signal_connect_object(dialog, "contact-added", G_CALLBACK(on_contact_added),
+                          a->window, 0);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(a->window));
 }
 

@@ -668,6 +668,19 @@ test_dm_shape(void)
   const gchar *nip29_badge = gh_privacy_summary_kind(GH_PRIVACY_BACKEND_NIP29, FALSE);
   g_assert_cmpstr(nip29_badge, ==, "Relay group, not end-to-end encrypted");
 
+  /* ---- NIP-17 fallback note (L1, review w26-wn-dms) ----------------------
+   * When Marmot DM creation fails, the dialog shows honest copy. */
+  {
+    g_autofree gchar *note_named = gh_mls_fallback_note("Alice");
+    g_assert_nonnull(note_named);
+    g_assert_nonnull(strstr(note_named, "NIP-17"));
+    g_assert_nonnull(strstr(note_named, "Alice"));
+
+    g_autofree gchar *note_anon = gh_mls_fallback_note(NULL);
+    g_assert_nonnull(note_anon);
+    g_assert_nonnull(strstr(note_anon, "NIP-17"));
+  }
+
   /* ---- Default DM protocol setting -------------------------------------- */
   g_autoptr(GSettingsBackend) settings_backend = g_memory_settings_backend_new();
   g_autoptr(GSettings) dm_settings =

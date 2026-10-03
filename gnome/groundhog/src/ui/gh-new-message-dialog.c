@@ -827,6 +827,22 @@ marmot_dm_done(GObject *source, GAsyncResult *result, gpointer data)
       g_strv_builder_add(builder, item->pubkey);
     }
     g_auto(GStrv) peers = g_strv_builder_end(builder);
+    /* L1: honest copy when falling back (brief + nostrc-txnu review).
+     * The same gettext strings live in gh_mls_fallback_note() for testing. */
+    const gchar *peer_name = peers[0] ? name_of(self, peers[0]) : NULL;
+    const gchar *who = peer_name ? peer_name : peers[0];
+    g_autofree gchar *note = who && *who
+      /* Translators: %s is a person's name or npub. */
+      ? g_strdup_printf(_("%s’s app doesn’t support encrypted-group "
+                          "messages yet, so this chat uses NIP-17."), who)
+      : g_strdup(_("This chat uses NIP-17 because encrypted-group "
+                    "messaging is not available for this contact."));
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    if (root && GH_IS_WINDOW(root)) {
+      AdwToast *toast = adw_toast_new(note);
+      adw_toast_set_timeout(toast, 5);
+      adw_toast_overlay_add_toast(gh_window_get_toasts(GH_WINDOW(root)), toast);
+    }
     g_debug("Marmot DM creation failed; falling back to NIP-17 for %s",
             peers[0] ? peers[0] : "(no peer)");
     start_nip17(self, peers);

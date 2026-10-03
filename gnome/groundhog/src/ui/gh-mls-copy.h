@@ -111,5 +111,10 @@ gchar *gh_mls_invite_subtitle(const gchar *inviter_npub_short, const gchar *invi
  * for a loopback or .onion host. NULL with error (plain words). */
 gchar *gh_mls_parse_relay(const gchar *text, GError **error);
 
+/* The NIP-17 fallback note, shown when Marmot DM creation fails and the
+ * dialog opens a NIP-17 room instead (L1, brief's "honest copy"). `who`
+ * is the peer's display name or short pubkey (transfer full). */
+gchar *gh_mls_fallback_note(const gchar *who);
+
 G_END_DECLS
 #endif
