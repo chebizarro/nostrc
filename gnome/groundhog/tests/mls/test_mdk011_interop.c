@@ -1591,6 +1591,114 @@ test_white_noise_media(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- White Noise DM shape: 2-member group with empty name (W26 slice A) ------------- */
+
+/* MDK 0.11 creates a DM (marmot-app's create_group("", &[peer]): empty name,
+ * 2 members); Groundhog joins it and sees it as a direct message (is_direct).
+ * Then Groundhog creates a Marmot DM (create_group with "" name) and MDK
+ * joins.  Messages flow both ways in each direction. */
+static void
+test_white_noise_dm(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage (her proof enrolled)");
+  accept_contact(alice, CAROL);
+  mdk_peer("carol", CAROL);
+
+  /* ---- Direction 1: MDK creates a WN DM → Groundhog joins ---- */
+
+  g_autoptr(JsonObject) view = NULL;
+  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, &view);
+  g_assert_true(json_object_get_boolean_member(view, "parsed"));
+
+  /* Carol (MDK) creates a DM: empty name, 2 members = WN's DM shape. */
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"\","
+    "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
+    "\"white_noise\":true,\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], hex[ALICE], alice_kp, w.x.url);
+  g_autofree gchar *group1 = g_strdup(json_object_get_string_member(made, "group"));
+
+  /* Groundhog joins the DM. */
+  GhMlsGroup *ga1 = join(alice, CAROL);
+  g_autofree gchar *room1 = g_strdup(gh_mls_group_get_room_id(ga1));
+
+  /* The group has no name (empty → NULL) and is detected as a DM. */
+  g_assert_null(gh_mls_group_get_name(ga1));
+  g_auto(GStrv) members1 = gh_mls_group_dup_members(ga1);
+  g_assert_cmpuint(g_strv_length(members1), ==, 2);
+
+  /* The conversation model has is_direct set by group_is_dm → group_list_room. */
+  GhConversation *conv1 = gh_conversation_store_lookup(alice->model, room1);
+  g_assert_nonnull(conv1);
+  g_assert_true(gh_conversation_get_is_direct(conv1));
+
+  /* Messages both ways. */
+  mdk_send("carol", group1, "dm from white noise");
+  wait_message(alice, room1, "dm from white noise");
+  send_accepted(alice, ga1, "dm from groundhog");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group1);
+    g_assert_true(synced_message(synced, hex[ALICE], "dm from groundhog"));
+  }
+
+  /* ---- Direction 2: Groundhog creates a Marmot DM → MDK joins ---- */
+
+  g_autofree gchar *on_w = g_strdup_printf("\"%s\"", w.w.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", on_w);
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+
+  /* Groundhog creates a DM with Carol: "" name (the WN DM shape). */
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait created = { 0 };
+  gh_mls_service_create_group_async(alice->service, "", NULL, relays, people,
+                                    NULL, on_created, &created);
+  spin_until(op_done, &created, "the Marmot DM creation");
+  g_assert_no_error(created.error);
+  g_assert_nonnull(created.result);
+  GhMlsGroup *ga2 = created.result;
+  g_object_unref(ga2);   /* the service keeps it */
+  g_autofree gchar *room2 = g_strdup(gh_mls_group_get_room_id(ga2));
+
+  /* Empty name stored as NULL: the DM shape. */
+  g_assert_null(gh_mls_group_get_name(ga2));
+  g_auto(GStrv) members2 = gh_mls_group_dup_members(ga2);
+  g_assert_cmpuint(g_strv_length(members2), ==, 2);
+
+  /* The conversation model has is_direct set. */
+  GhConversation *conv2 = gh_conversation_store_lookup(alice->model, room2);
+  g_assert_nonnull(conv2);
+  g_assert_true(gh_conversation_get_is_direct(conv2));
+
+  /* MDK joins from the Welcome. */
+  spin_until(welcomes_sent, ga2, "the Welcome accepted by Carol's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group2 = json_object_get_string_member(joined, "group");
+
+  /* MDK sees it as adopted, with the same empty name. */
+  g_assert_cmpstr(json_object_get_string_member(joined, "name"), ==, "");
+
+  /* Messages both ways on Groundhog's DM. */
+  send_accepted(alice, ga2, "groundhog dm hello");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group2, before_join);
+    g_assert_true(synced_message(synced, hex[ALICE], "groundhog dm hello"));
+  }
+  mdk_send("carol", group2, "mdk dm hello");
+  wait_message(alice, room2, "mdk dm hello");
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* ---- concurrent Commits: Groundhog and MDK 0.11 converge (nostrc-w1m0) -------------- */
 
 typedef struct {
@@ -1909,6 +2017,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/white-noise-media", test_white_noise_media);
   g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
   g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
+  g_test_add_func("/groundhog/mdk011-interop/white-noise-dm", test_white_noise_dm);
   g_test_add_func("/groundhog/mdk011-interop/concurrent-commits", test_concurrent_commits);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();

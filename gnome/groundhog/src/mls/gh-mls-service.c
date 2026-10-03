@@ -4505,7 +4505,10 @@ create_group(GhMlsService *self, const gchar *name, const gchar *description,
     g_object_unref(task);
     return;
   }
-  if (!name || !*name || !g_utf8_validate(name, -1, NULL) ||
+  /* A DM (Marmot DM, WN's shape) has no name (empty string → stored as
+   * NULL, checked by group_is_dm()); a group must have one. NULL name is
+   * always rejected; empty is allowed (the caller decides). */
+  if (!name || (*name && !g_utf8_validate(name, -1, NULL)) ||
       (description && !g_utf8_validate(description, -1, NULL))) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "A group needs a name");

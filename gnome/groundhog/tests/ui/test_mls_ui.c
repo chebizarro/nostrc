@@ -46,6 +46,7 @@
 #include "gh-test-dialog.h"
 #include "group-send-stub.h"
 #include "gh-recipient.h"
+#include "gh-privacy-summary.h"
 #include "mls-world.h"
 #include "blossom-fixture.h"
 #include "gh-attachment-card.h"
@@ -577,6 +578,137 @@ test_view_model(void)
   g_assert_no_error(error);
   g_autofree gchar *left = gh_mls_send_reason(bob->service, gb, NULL);
   g_assert_cmpstr(left, ==, "You left this group.");
+  world_down(&w);
+}
+
+/* ---- default mode: DM shape, request routing, co-members, badges, protocol -- */
+
+/* W26 slice A tests (nostrc-fmbt, nostrc-txnu, nostrc-57o8, nostrc-e92q):
+ * Marmot DM shape detection (2-member group with empty name), request
+ * routing (stranger DMs are requests, known contacts are auto-accepted),
+ * group co-members in the invitee list, protocol badge strings, and the
+ * default-dm-protocol setting. */
+
+static void
+test_dm_shape(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+
+  /* ---- DM shape detection ------------------------------------------------
+   * A 2-member group with empty name is a Marmot DM: is_direct=TRUE. */
+  accept_contact(alice, BOB);
+  GhMlsGroup *dm_group = create_group(alice, "", (const guint[]){ BOB }, 1);
+  g_assert_null(gh_mls_group_get_name(dm_group));
+  const gchar *dm_room_id = gh_mls_group_get_room_id(dm_group);
+  GhConversation *dm_conv = gh_conversation_store_lookup(alice->model, dm_room_id);
+  g_assert_nonnull(dm_conv);
+  g_assert_true(gh_conversation_get_is_direct(dm_conv));
+  g_assert_cmpint(gh_conversation_get_backend(dm_conv), ==, GH_CONVERSATION_BACKEND_MLS);
+
+  /* Alice created it: never a request. */
+  g_assert_false(gh_conversation_get_is_request(dm_conv));
+
+  /* ---- Request routing (nostrc-57o8) ------------------------------------
+   * Bob joins the DM. He has no prior accepted DM with Alice, so the
+   * incoming Marmot DM is a message request (stranger). */
+  GhMlsGroup *bob_dm = join(bob, ALICE);
+  GhConversation *bob_dm_conv = gh_conversation_store_lookup(
+    bob->model, gh_mls_group_get_room_id(bob_dm));
+  g_assert_nonnull(bob_dm_conv);
+  g_assert_true(gh_conversation_get_is_direct(bob_dm_conv));
+  g_assert_true(gh_conversation_get_is_request(bob_dm_conv));
+
+  /* Accept it: Alice is now a known contact of Bob. */
+  gh_conversation_accept(bob_dm_conv);
+  g_assert_false(gh_conversation_get_is_request(bob_dm_conv));
+
+  /* A named group with the same members is not a DM, and never a request. */
+  GhMlsGroup *named = create_group(alice, "Chat", (const guint[]){ BOB }, 1);
+  GhConversation *named_conv = gh_conversation_store_lookup(
+    alice->model, gh_mls_group_get_room_id(named));
+  g_assert_nonnull(named_conv);
+  g_assert_false(gh_conversation_get_is_direct(named_conv));
+  g_assert_false(gh_conversation_get_is_request(named_conv));
+
+  GhMlsGroup *bob_named = join(bob, ALICE);
+  GhConversation *bob_named_conv = gh_conversation_store_lookup(
+    bob->model, gh_mls_group_get_room_id(bob_named));
+  g_assert_nonnull(bob_named_conv);
+  g_assert_false(gh_conversation_get_is_direct(bob_named_conv));
+  g_assert_false(gh_conversation_get_is_request(bob_named_conv));
+
+  /* ---- Auto-accept from known contact -----------------------------------
+   * A second DM from Alice: Bob already accepted Alice, so it is
+   * auto-accepted (not a request). */
+  GhMlsGroup *dm2 = create_group(alice, "", (const guint[]){ BOB }, 1);
+  (void)dm2;
+  GhMlsGroup *bob_dm2 = join(bob, ALICE);
+  GhConversation *bob_dm2_conv = gh_conversation_store_lookup(
+    bob->model, gh_mls_group_get_room_id(bob_dm2));
+  g_assert_nonnull(bob_dm2_conv);
+  g_assert_true(gh_conversation_get_is_direct(bob_dm2_conv));
+  g_assert_false(gh_conversation_get_is_request(bob_dm2_conv));
+
+  /* ---- Group co-members as invitable contacts (nostrc-y4wm) ------------- */
+  g_auto(GStrv) alice_contacts = gh_mls_contacts_dup(alice->model);
+  g_assert_true(strv_has((const gchar *const *)alice_contacts, hex[BOB]));
+  g_assert_false(strv_has((const gchar *const *)alice_contacts, hex[ALICE]));
+
+  /* ---- Protocol badge strings ------------------------------------------- */
+  const gchar *marmot_badge = gh_privacy_summary_kind(GH_PRIVACY_BACKEND_MLS, TRUE);
+  g_assert_cmpstr(marmot_badge, ==, "Marmot private message");
+  const gchar *mls_group_badge = gh_privacy_summary_kind(GH_PRIVACY_BACKEND_MLS, FALSE);
+  g_assert_cmpstr(mls_group_badge, ==, "Encrypted group");
+  const gchar *nip17_badge = gh_privacy_summary_kind(GH_PRIVACY_BACKEND_NIP17, TRUE);
+  g_assert_cmpstr(nip17_badge, ==, "Private conversation");
+  const gchar *nip29_badge = gh_privacy_summary_kind(GH_PRIVACY_BACKEND_NIP29, FALSE);
+  g_assert_cmpstr(nip29_badge, ==, "Relay group, not end-to-end encrypted");
+
+  /* ---- Default DM protocol setting -------------------------------------- */
+  g_autoptr(GSettingsBackend) settings_backend = g_memory_settings_backend_new();
+  g_autoptr(GSettings) dm_settings =
+    g_settings_new_with_backend("org.nostr.Groundhog", settings_backend);
+  g_autofree gchar *default_val = g_settings_get_string(dm_settings, "default-dm-protocol");
+  g_assert_cmpstr(default_val, !=, "nip17");
+  g_settings_set_string(dm_settings, "default-dm-protocol", "nip17");
+  g_autofree gchar *nip17_val = g_settings_get_string(dm_settings, "default-dm-protocol");
+  g_assert_cmpstr(nip17_val, ==, "nip17");
+  g_settings_set_string(dm_settings, "default-dm-protocol", "marmot");
+  g_autofree gchar *marmot_val = g_settings_get_string(dm_settings, "default-dm-protocol");
+  g_assert_cmpstr(marmot_val, ==, "marmot");
+
+  /* ---- Recipient input parsing for the picker npub entry ---------------- */
+  g_autoptr(GhRecipientInput) valid = gh_recipient_input_parse(npub[BOB]);
+  g_assert_cmpint(valid->kind, ==, GH_RECIPIENT_INPUT_PUBKEY);
+  g_assert_cmpstr(valid->pubkey, ==, hex[BOB]);
+
+  g_autofree gchar *nostr_uri = g_strdup_printf("nostr:%s", npub[BOB]);
+  g_autoptr(GhRecipientInput) with_prefix = gh_recipient_input_parse(nostr_uri);
+  g_assert_cmpint(with_prefix->kind, ==, GH_RECIPIENT_INPUT_PUBKEY);
+
+  /* Raw hex is classified as TEXT by the input parser; the picker's
+   * on_add_entry_apply handles it via gh_recipient_is_pubkey() instead. */
+  g_assert_true(gh_recipient_is_pubkey(hex[BOB]));
+  g_assert_false(gh_recipient_is_pubkey("not-a-key"));
+  g_assert_false(gh_recipient_is_pubkey(NULL));
+
+  g_autoptr(GhRecipientInput) secret = gh_recipient_input_parse(
+    "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5");
+  g_assert_cmpint(secret->kind, ==, GH_RECIPIENT_INPUT_SECRET);
+
+  g_autoptr(GhRecipientInput) garbage = gh_recipient_input_parse("hello world");
+  g_assert_cmpint(garbage->kind, ==, GH_RECIPIENT_INPUT_TEXT);
+
+  g_autoptr(GhRecipientInput) empty_text = gh_recipient_input_parse("");
+  g_assert_cmpint(empty_text->kind, ==, GH_RECIPIENT_INPUT_EMPTY);
+
+  g_autoptr(GhRecipientInput) nip05 = gh_recipient_input_parse("bob@example.com");
+  g_assert_cmpint(nip05->kind, ==, GH_RECIPIENT_INPUT_NIP05);
+
   world_down(&w);
 }
 
@@ -2093,6 +2225,7 @@ main(int argc, char **argv)
     mls_world_init();
     g_test_add_func("/groundhog/mls-ui/copy", test_copy);
     g_test_add_func("/groundhog/mls-ui/view-model", test_view_model);
+    g_test_add_func("/groundhog/mls-ui/dm-shape", test_dm_shape);
   }
   status = g_test_run();
   mls_world_finish();
