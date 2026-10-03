@@ -646,6 +646,10 @@ struct _GhConversationView {
   /* Charter §7.15 state 11 (nostrc-lff5: a room too). */
   gchar *no_inbox_name;
   gboolean no_inbox_room;
+
+  /* Row enricher (W26 polls). */
+  GhConversationViewRowEnricher enricher;
+  gpointer enricher_data;
 };
 
 enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
@@ -1768,6 +1772,24 @@ gh_conversation_view_set_property(GObject *object, guint id, const GValue *value
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
+}
+
+void
+gh_conversation_view_set_row_enricher(GhConversationView *self,
+                                     GhConversationViewRowEnricher enricher,
+                                     gpointer data)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->enricher = enricher;
+  self->enricher_data = data;
+}
+
+void
+gh_conversation_view_enrich_row(GhConversationView *self, GhMessageRow *row)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->enricher)
+    self->enricher(row, gh_message_row_get_message(row), self->enricher_data);
 }
 
 static void

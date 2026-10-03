@@ -166,11 +166,12 @@ gh_create_poll_dialog_class_init(GhCreatePollDialogClass *klass)
 
   signals[SIG_POLL_CREATED] =
     g_signal_new("poll-created", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST,
-                 0, NULL, NULL, NULL, G_TYPE_NONE, 4,
+                 0, NULL, NULL, NULL, G_TYPE_NONE, 5,
                  G_TYPE_STRING,    /* question */
                  G_TYPE_POINTER,   /* option_labels (const gchar **) */
                  G_TYPE_UINT,      /* n_options */
-                 G_TYPE_INT64);    /* ends_at; poll_type is folded in */
+                 G_TYPE_INT,       /* poll_type (GhMlsPollType) */
+                 G_TYPE_INT64);    /* ends_at */
 
   gtk_widget_class_set_template_from_resource(widget_class,
     "/org/nostr/Groundhog/ui/gh-create-poll-dialog.ui");

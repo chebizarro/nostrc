@@ -1,6 +1,11 @@
 #include "gh-mls-ui.h"
 
 #include "gh-mls-attachments.h"
+#include "gh-composer.h"
+#include "gh-create-poll-dialog.h"
+#include "gh-message-row.h"
+#include "gh-poll-card.h"
+#include "gh-shell.h"
 
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
@@ -35,7 +40,12 @@ typedef struct {
   guint invitations;
   GhConversationView *view; /* a reference: the list may keep it past the window */
   gulong view_handler;
+  gulong poll_requested_handler;
 } MlsUi;
+
+/* Forward declarations for poll wiring (W26). */
+static void rebuild_polls(MlsUi *ui);
+static void sync_poll_button(MlsUi *ui);
 
 static MlsUi *
 ui_of(GhWindow *window)
@@ -172,6 +182,8 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
   sync_unreadable(ui);
   gh_conversation_list_refresh_title(ui->window);
   gh_send_ui_refresh(ui->window);
+  rebuild_polls(ui);
+  sync_poll_button(ui);
 }
 
 static void
@@ -366,6 +378,138 @@ static const GhSendUiDelegate mls_delegate = {
   .report = NULL,
 };
 
+
+/* ---- polls (W26 slice C, nostrc-skc7) ------------------------------------------------- */
+
+/* Rebuild poll state from stored messages when switching to a group, so polls
+ * survive a restart without a schema change: poll definitions and votes are
+ * already in the messages table (kind 1068 / 1018). */
+static void
+rebuild_polls(MlsUi *ui)
+{
+  GhMlsService *service = current(ui);
+  if (!service || !ui->shown || !ui->view) return;
+  GListModel *timeline = gh_conversation_view_get_timeline(ui->view);
+  if (!timeline) return;
+  const gchar *gid = gh_mls_group_get_group_id(ui->shown);
+  guint n = g_list_model_get_n_items(timeline);
+  /* Two passes: polls first (kind 1068), then votes (kind 1018), so every
+   * poll exists before its votes are applied. */
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GObject) obj = g_list_model_get_item(timeline, i);
+    if (!GH_IS_TIMELINE_ITEM(obj)) continue;
+    GhMessage *msg = gh_timeline_item_get_message(GH_TIMELINE_ITEM(obj));
+    if (msg && gh_message_get_kind(msg) == GH_MLS_POLL_KIND)
+      gh_mls_service_rebuild_poll_from_stored(service, gid, msg);
+  }
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GObject) obj = g_list_model_get_item(timeline, i);
+    if (!GH_IS_TIMELINE_ITEM(obj)) continue;
+    GhMessage *msg = gh_timeline_item_get_message(GH_TIMELINE_ITEM(obj));
+    if (msg && gh_message_get_kind(msg) == GH_MLS_POLL_VOTE_KIND)
+      gh_mls_service_rebuild_poll_from_stored(service, gid, msg);
+  }
+}
+
+/* Row enricher: called by GhMessageRow when its message changes. For kind-1068
+ * messages, injects a GhPollCard bound to the GhMlsPoll; for any other kind,
+ * removes the poll card. */
+static void
+on_poll_vote_cast(GhPollCard *card, const gchar **option_ids, guint n_options, gpointer data)
+{
+  MlsUi *ui = data;
+  GhMlsService *service = current(ui);
+  GhMlsPoll *poll = gh_poll_card_get_poll(card);
+  if (!service || !ui->shown || !poll) return;
+  const gchar *poll_event_id = gh_mls_poll_get_event_id(poll);
+  g_autoptr(GError) error = NULL;
+  gh_mls_service_cast_vote(service, ui->shown, poll_event_id,
+                            option_ids, n_options, &error);
+  if (error)
+    g_message("Groundhog: could not cast vote: %s", error->message);
+}
+
+static void
+poll_enricher(GhMessageRow *row, GhMessage *message, gpointer data)
+{
+  MlsUi *ui = data;
+  if (!message || !ui->shown) {
+    gh_message_row_set_poll_widget(row, NULL);
+    return;
+  }
+  gint kind = gh_message_get_kind(message);
+  if (kind != GH_MLS_POLL_KIND) {
+    gh_message_row_set_poll_widget(row, NULL);
+    return;
+  }
+  GhMlsService *service = current(ui);
+  if (!service) {
+    gh_message_row_set_poll_widget(row, NULL);
+    return;
+  }
+  const gchar *rumor_id = gh_message_get_rumor_id(message);
+  const gchar *group_id = gh_mls_group_get_group_id(ui->shown);
+  GhMlsPoll *poll = gh_mls_service_lookup_poll(service, group_id, rumor_id);
+  /* Lazy rebuild: the message was stored before this session. */
+  if (!poll) {
+    gh_mls_service_rebuild_poll_from_stored(service, group_id, message);
+    poll = gh_mls_service_lookup_poll(service, group_id, rumor_id);
+  }
+  if (!poll) {
+    gh_message_row_set_poll_widget(row, NULL);
+    return;
+  }
+  GtkWidget *card = gh_poll_card_new();
+  gh_poll_card_set_poll(GH_POLL_CARD(card), poll);
+  g_signal_connect(card, "vote-cast", G_CALLBACK(on_poll_vote_cast), ui);
+  gh_message_row_set_poll_widget(row, card);
+}
+
+static void
+on_poll_created(GhCreatePollDialog *dialog, const gchar *question,
+                const gchar **option_labels, guint n_options,
+                gint poll_type, gint64 ends_at, gpointer data)
+{
+  (void) dialog;
+  MlsUi *ui = data;
+  GhMlsService *service = current(ui);
+  if (!service || !ui->shown) return;
+  g_autoptr(GError) error = NULL;
+  gh_mls_service_create_poll(service, ui->shown, question, option_labels,
+                              n_options, (GhMlsPollType) poll_type, ends_at,
+                              &error);
+  if (error) {
+    g_message("Groundhog: could not create poll: %s", error->message);
+    adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window),
+                                adw_toast_new(_("The poll couldn’t be created")));
+  }
+}
+
+static void
+on_poll_requested(GhComposer *composer, gpointer data)
+{
+  (void) composer;
+  MlsUi *ui = data;
+  GhMlsService *service = current(ui);
+  if (!service || !ui->shown) return;
+  GtkWidget *dialog = gh_create_poll_dialog_new();
+  g_signal_connect(dialog, "poll-created", G_CALLBACK(on_poll_created), ui);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
+}
+
+static void
+sync_poll_button(MlsUi *ui)
+{
+  GhContentPage *content = gh_window_get_content(ui->window);
+  if (!content) return;
+  GhComposer *composer = gh_content_page_get_composer(content);
+  if (!composer) return;
+  gboolean can_poll = ui->shown != NULL &&
+                      gh_mls_group_get_active(ui->shown) &&
+                      !gh_mls_group_get_leaving(ui->shown);
+  gh_composer_set_can_create_poll(composer, can_poll);
+}
+
 /* ---- dialogs ------------------------------------------------------------------------------ */
 
 void
@@ -439,7 +583,15 @@ mls_ui_free(gpointer data)
   if (ui->shown)
     g_signal_handlers_disconnect_by_data(ui->shown, ui);
   g_clear_object(&ui->shown);
+  if (ui->poll_requested_handler) {
+    GhContentPage *content = gh_window_get_content(ui->window);
+    GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
+    if (composer)
+      g_clear_signal_handler(&ui->poll_requested_handler, composer);
+    ui->poll_requested_handler = 0;
+  }
   if (ui->view) {
+    gh_conversation_view_set_row_enricher(ui->view, NULL, NULL);
     g_clear_signal_handler(&ui->view_handler, ui->view);
     g_clear_object(&ui->view);
   }
@@ -490,5 +642,14 @@ gh_mls_ui_attach(GhWindow *window, const GhMlsUiConfig *config)
   gh_conversation_list_set_member_count_func(window, member_count, ui, NULL);
   gh_send_ui_add_delegate(window, &mls_delegate, ui);
   gh_group_ui_set_new_group_extension(window, gh_mls_ui_extend_new_group, NULL);
+  if (ui->view)
+    gh_conversation_view_set_row_enricher(ui->view, poll_enricher, ui);
+  {
+    GhContentPage *content = gh_window_get_content(window);
+    GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
+    if (composer)
+      ui->poll_requested_handler = g_signal_connect(composer, "poll-requested",
+                                                     G_CALLBACK(on_poll_requested), ui);
+  }
   sync_service(ui);
 }

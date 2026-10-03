@@ -7,6 +7,8 @@
 
 G_BEGIN_DECLS
 
+typedef struct _GhMessageRow GhMessageRow;
+
 /* One entry of a conversation's timeline: a message and how it sits among
  * its neighbours. A run is consecutive messages from one sender on one local
  * day, each within 5 minutes of the previous (charter §7.6): its first shows
@@ -196,6 +198,21 @@ const gchar *gh_conversation_view_get_unreadable_reason(GhConversationView *self
 guint gh_conversation_view_get_announcements(GhConversationView *self,
                                              GtkAccessibleAnnouncementPriority priority);
 const gchar *gh_conversation_view_get_last_announcement(GhConversationView *self);
+
+
+/* Row enricher (W26 polls): called by GhMessageRow when its message changes,
+ * so the MLS UI layer can inject a poll card without a dependency from the
+ * conversation UI to MLS types. The enricher receives the row, its current
+ * message (nullable), and its data; it should call
+ * gh_message_row_set_poll_widget() as needed. */
+typedef void (*GhConversationViewRowEnricher)(GhMessageRow *row, GhMessage *message,
+                                              gpointer data);
+void gh_conversation_view_set_row_enricher(GhConversationView *self,
+                                           GhConversationViewRowEnricher enricher,
+                                           gpointer data);
+/* Called by GhMessageRow after it updates its message (update_all).
+ * Invokes the registered enricher, if any. */
+void gh_conversation_view_enrich_row(GhConversationView *self, GhMessageRow *row);
 
 G_END_DECLS
 #endif

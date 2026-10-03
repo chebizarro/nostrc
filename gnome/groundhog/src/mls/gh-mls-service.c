@@ -7945,6 +7945,48 @@ vote_fail:
   return NULL;
 }
 
+void
+gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
+                                        const gchar *group_id_hex,
+                                        GhMessage *message)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  g_return_if_fail(group_id_hex != NULL);
+  g_return_if_fail(GH_IS_MESSAGE(message));
+
+  gint kind = gh_message_get_kind(message);
+  const gchar *raw = gh_message_get_rumor_json(message);
+  if (!raw) return;
+
+  if (kind == GH_MLS_POLL_KIND) {
+    const gchar *rumor_id = gh_message_get_rumor_id(message);
+    if (!rumor_id) return;
+    g_autofree gchar *key = g_strdup_printf("%s:%s", group_id_hex, rumor_id);
+    /* Skip if already tracked. */
+    if (g_hash_table_contains(self->polls, key)) return;
+    g_autoptr(GError) err = NULL;
+    GhMlsPoll *poll = gh_mls_poll_new_from_event(
+      rumor_id, gh_message_get_sender(message),
+      gh_message_get_created_at(message), raw, &err);
+    if (poll) {
+      gh_mls_poll_set_local_account(poll, self->account);
+      g_hash_table_replace(self->polls, g_steal_pointer(&key), poll);
+    }
+  } else if (kind == GH_MLS_POLL_VOTE_KIND) {
+    g_autoptr(GError) err = NULL;
+    g_autofree gchar *target_id = NULL;
+    g_auto(GStrv) option_ids = NULL;
+    if (gh_mls_poll_parse_vote(raw, &target_id, &option_ids, &err)) {
+      g_autofree gchar *key = g_strdup_printf("%s:%s", group_id_hex, target_id);
+      GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
+      if (poll)
+        gh_mls_poll_apply_vote(poll, gh_message_get_sender(message),
+                               (const gchar **) option_ids,
+                               gh_message_get_created_at(message));
+    }
+  }
+}
+
 static GType
 list_get_item_type(GListModel *model)
 {

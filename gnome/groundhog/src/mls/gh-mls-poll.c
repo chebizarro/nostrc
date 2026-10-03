@@ -315,13 +315,15 @@ gh_mls_poll_new_from_event(const gchar *event_id, const gchar *sender,
     }
   }
 
+  /* Copy borrowed pointer before freeing the event. */
+  g_autofree gchar *question_copy = g_strdup(question);
   nostr_event_free(event);
 
   /* Build the GhMlsPoll. */
   GhMlsPoll *self = g_object_new(GH_TYPE_MLS_POLL, NULL);
   self->event_id = g_strdup(event_id);
   self->creator = g_strdup(sender);
-  self->question = g_strdup(question);
+  self->question = g_steal_pointer(&question_copy);
   self->poll_type = poll_type;
   self->ends_at = ends_at;
   self->created_at = created_at;

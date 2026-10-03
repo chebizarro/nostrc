@@ -900,6 +900,14 @@ GhMessage *gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
                                     const gchar **option_ids, guint n_options,
                                     GError **error);
 
+/* Rebuild a poll or vote from a stored message (persistence: polls survive
+ * restart). For kind-1068 messages, creates the poll if not already tracked.
+ * For kind-1018 messages, applies the vote to the matching poll.
+ * Uses gh_message_get_rumor_json() for the inner event JSON. */
+void gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
+                                             const gchar *group_id_hex,
+                                             GhMessage *message);
+
 /* Pending invitations, oldest first (GhMlsInvite). Transfer full. */
 GPtrArray *gh_mls_service_list_invites(GhMlsService *self, GError **error);
 /* Joins the group of a pending invitation: its room is listed and read.

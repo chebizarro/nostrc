@@ -401,6 +401,11 @@ update_all(GhMessageRow *self)
   gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message ||
                          (message && !self->undecryptable && !withdrawn &&
                           gh_message_get_rejected_attachments(message) > 0));
+  /* Row enricher (W26 polls): the conversation view's enricher can inject
+   * or remove a poll card based on the message kind, without the message
+   * row knowing about MLS poll types. */
+  if (self->view)
+    gh_conversation_view_enrich_row(self->view, self);
   /* Poll card: visible only when a poll widget has been set on this row. */
   gboolean is_poll = self->poll_card != NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), is_poll);

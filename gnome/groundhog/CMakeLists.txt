@@ -1630,6 +1630,17 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
     set_tests_properties(groundhog-mls-service PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # NIP-88 poll model unit tests (nostrc-efa8): parse/validate, create,
+    # vote, change vote, closed poll, bounds, malformed, privacy.
+    add_executable(test-groundhog-mls-poll tests/mls/test_mls_poll.c
+      src/mls/gh-mls-poll.c)
+    target_include_directories(test-groundhog-mls-poll PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)
+    target_link_libraries(test-groundhog-mls-poll PRIVATE nostr PkgConfig::GROUNDHOG_GIO)
+    target_compile_options(test-groundhog-mls-poll PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-mls-poll COMMAND test-groundhog-mls-poll)
+    set_tests_properties(groundhog-mls-poll PROPERTIES TIMEOUT 30
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
     # KeyPackage transport lifecycle (nostrc-0bdg): kind-10002 write relays
     # only (a read/write split), lookup privacy, the d slot kept, ACK-tied
     # retirement of old init keys, the delayed-Welcome trade-off and failed
