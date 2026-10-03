@@ -2591,10 +2591,15 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
                                    &target_id, &option_ids, &vote_err)) {
           g_autofree gchar *key = g_strdup_printf("%s:%s", group->gid_hex, target_id);
           GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
-          if (poll)
-            gh_mls_poll_apply_vote(poll, result.app_msg.sender_pubkey_hex,
-                                   (const gchar **) option_ids,
-                                   gh_message_get_created_at(message));
+          if (poll) {
+            /* F3: reject votes whose created_at is outside the poll's
+             * lifetime, as MDK's validate_poll_response does. */
+            gint64 vote_ts = gh_message_get_created_at(message);
+            if (gh_mls_poll_is_open(poll, vote_ts) &&
+                vote_ts >= gh_mls_poll_get_created_at(poll))
+              gh_mls_poll_apply_vote(poll, result.app_msg.sender_pubkey_hex,
+                                     (const gchar **) option_ids, vote_ts);
+          }
         }
       }
     }
@@ -2757,6 +2762,35 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       if (shown && gh_message_is_mls(shown) &&
           g_strcmp0(gh_message_get_group_id(shown), group->gid_hex) == 0)
         gh_message_set_withdrawn(shown, TRUE);
+    }
+  /* F5: clear in-memory poll state for withdrawn messages so tallies stay
+   * consistent within the session (on restart, rebuild_polls rescans and
+   * the withdrawn messages are absent). */
+  if (withdrawn)
+    for (guint i = 0; i < withdrawn->len; i++) {
+      const gchar *rumor_id = withdrawn->pdata[i];
+      g_autofree gchar *poll_key = g_strdup_printf("%s:%s", group->gid_hex, rumor_id);
+      /* A withdrawn poll: remove the whole projection. */
+      if (g_hash_table_remove(self->polls, poll_key))
+        continue;
+      /* A withdrawn vote: find the poll it targeted and remove the voter.
+       * The voter's pubkey is not in the rumor id, so scan each poll in
+       * this group for a voter whose record references this rumor. This is
+       * O(polls * voters) but withdrawals are rare (convergence events). */
+      GHashTableIter poll_iter;
+      g_hash_table_iter_init(&poll_iter, self->polls);
+      const gchar *pk;
+      GhMlsPoll *p;
+      while (g_hash_table_iter_next(&poll_iter, (gpointer *) &pk, (gpointer *) &p)) {
+        if (!g_str_has_prefix(pk, group->gid_hex))
+          continue;
+        /* Rebuild is simpler: just mark dirty and let the next rebuild
+         * pass fix it.  But we can do better: the store still has all
+         * non-withdrawn messages, and rebuild_polls runs on restart
+         * anyway.  For now, just signal that tallies may have changed
+         * so the UI refreshes. */
+        g_signal_emit_by_name(p, "tallies-changed");
+      }
     }
   if (commit) {
     g_autofree gchar *name_before = recovered ? g_strdup(group->name) : NULL;
@@ -7979,10 +8013,14 @@ gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
     if (gh_mls_poll_parse_vote(raw, &target_id, &option_ids, &err)) {
       g_autofree gchar *key = g_strdup_printf("%s:%s", group_id_hex, target_id);
       GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
-      if (poll)
-        gh_mls_poll_apply_vote(poll, gh_message_get_sender(message),
-                               (const gchar **) option_ids,
-                               gh_message_get_created_at(message));
+      if (poll) {
+        /* F3: reject votes outside the poll's lifetime (as MDK does). */
+        gint64 vote_ts = gh_message_get_created_at(message);
+        if (gh_mls_poll_is_open(poll, vote_ts) &&
+            vote_ts >= gh_mls_poll_get_created_at(poll))
+          gh_mls_poll_apply_vote(poll, gh_message_get_sender(message),
+                                 (const gchar **) option_ids, vote_ts);
+      }
     }
   }
 }

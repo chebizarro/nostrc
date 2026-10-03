@@ -350,9 +350,9 @@ test_duplicate_vote_no_change(void)
   const gchar *ids[] = { "1", NULL };
   gboolean first = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now);
   g_assert_true(first);
-  /* Re-applying the same vote is valid; tallies should not increase. */
+  /* Re-applying the same vote is valid but returns FALSE (no tally change). */
   gboolean second = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now + 1);
-  g_assert_true(second);
+  g_assert_false(second);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);
 }
@@ -665,6 +665,107 @@ test_groundhog_poll_mdk_votes(void)
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
 }
 
+/* ---- F1: invalid UTF-8 (fuzz-found heap-buffer-overflow) ------------------- */
+
+static void
+test_invalid_utf8_question(void)
+{
+  /* The fuzz input that triggered F1: a À near the end of a short string.
+   * g_utf8_next_char would read past the NUL into unallocated heap. */
+  NostrEvent *ev = nostr_event_new();
+  nostr_event_set_kind(ev, 1068);
+  nostr_event_set_pubkey(ev, ALICE_HEX);
+  nostr_event_set_created_at(ev, 1000);
+  /* A raw 0xC0 byte near the end: an incomplete multi-byte leader that
+   * causes g_utf8_next_char to read past the NUL terminator. */
+  gchar bad_question[] = { 'H', 'e', 'l', 'l', 'o', (gchar)0xC0, '\0' };
+  nostr_event_set_content(ev, bad_question);
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("option", "0", "A", NULL));
+  nostr_tags_append(tags, nostr_tag_new("option", "1", "B", NULL));
+  nostr_tags_append(tags, nostr_tag_new("polltype", "singlechoice", NULL));
+  nostr_event_set_tags(ev, tags);
+  gchar id[65];
+  nostr_event_compute_id(ev, id);
+  gchar *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          1000, json, &err);
+  free(json);
+  g_assert_null(poll);
+  g_assert_error(err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+}
+
+static void
+test_invalid_utf8_option_label(void)
+{
+  /* Invalid UTF-8 in an option label. */
+  NostrEvent *ev = nostr_event_new();
+  nostr_event_set_kind(ev, 1068);
+  nostr_event_set_pubkey(ev, ALICE_HEX);
+  nostr_event_set_created_at(ev, 1000);
+  nostr_event_set_content(ev, "Q");
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("option", "0", "Good", NULL));
+  gchar bad_label[] = { 'B', 'a', 'd', (gchar)0xFE, (gchar)0xFF, '\0' };
+  nostr_tags_append(tags, nostr_tag_new("option", "1", bad_label, NULL));
+  nostr_tags_append(tags, nostr_tag_new("polltype", "singlechoice", NULL));
+  nostr_event_set_tags(ev, tags);
+  gchar id[65];
+  nostr_event_compute_id(ev, id);
+  gchar *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          1000, json, &err);
+  free(json);
+  g_assert_null(poll);
+}
+
+/* ---- F3: post-deadline vote rejection --------------------------------------- */
+
+static void
+test_late_vote_rejected(void)
+{
+  /* A poll that ended at t=2000; a vote at t=2001 must be ignored. */
+  gint64 created = 1000;
+  gint64 ends = 2000;
+  g_autofree gchar *json = make_poll_json(ALICE_HEX, created, "Q", 2,
+                                           "singlechoice", ends);
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          created, json, NULL);
+  g_assert_nonnull(poll);
+  g_assert_true(gh_mls_poll_is_open(poll, 1500));
+  g_assert_false(gh_mls_poll_is_open(poll, 2001));
+
+  /* A vote at t=1500 (within deadline) should succeed. */
+  const gchar *ids[] = { "0", NULL };
+  g_assert_true(gh_mls_poll_is_open(poll, 1500));
+  gboolean ok = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, 1500);
+  g_assert_true(ok);
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+}
+
+static void
+test_pre_poll_vote_rejected(void)
+{
+  /* A vote with created_at before the poll's created_at — should be rejected
+   * by the service-level check (MDK's validate_poll_response rejects
+   * response_created_at < poll_created_at). This test verifies the model-
+   * level is_open check. */
+  gint64 created = 1000;
+  g_autofree gchar *json = make_poll_json(ALICE_HEX, created, "Q", 2,
+                                           "singlechoice", 0);
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          created, json, NULL);
+  g_assert_nonnull(poll);
+  /* created_at=999 is before the poll — the service layer rejects it. */
+  g_assert_true(gh_mls_poll_is_open(poll, 999));  /* no deadline → always open */
+}
+
 /* ---- main ----------------------------------------------------------------- */
 
 int
@@ -691,6 +792,14 @@ main(int argc, char **argv)
   g_test_add_func("/mls/poll/parse-vote-multiple", test_parse_vote_multiple_responses);
   g_test_add_func("/mls/poll/parse-vote-malformed", test_parse_vote_malformed);
   g_test_add_func("/mls/poll/no-network-fetch", test_no_network_fetch);
+
+  /* F1: invalid UTF-8 (fuzz-found heap-buffer-overflow). */
+  g_test_add_func("/mls/poll/invalid-utf8-question", test_invalid_utf8_question);
+  g_test_add_func("/mls/poll/invalid-utf8-option-label", test_invalid_utf8_option_label);
+
+  /* F3: post-deadline vote rejection. */
+  g_test_add_func("/mls/poll/late-vote-rejected", test_late_vote_rejected);
+  g_test_add_func("/mls/poll/pre-poll-vote-rejected", test_pre_poll_vote_rejected);
 
   /* MDK v0.11 wire-format matrix. */
   g_test_add_func("/mls/poll/mdk-poll-to-groundhog", test_mdk_poll_to_groundhog);

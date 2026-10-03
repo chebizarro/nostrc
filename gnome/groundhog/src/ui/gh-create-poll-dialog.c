@@ -36,7 +36,11 @@ static gboolean
 is_valid(GhCreatePollDialog *self)
 {
   const gchar *q = gtk_editable_get_text(GTK_EDITABLE(self->question_row));
-  if (!q || !g_strstrip(g_strdup(q))[0]) return FALSE;
+  /* F4: the g_strdup was leaked on every keystroke. */
+  if (!q || !*q) return FALSE;
+  g_autofree gchar *stripped = g_strdup(q);
+  g_strstrip(stripped);
+  if (!*stripped) return FALSE;
 
   /* Count non-empty options. */
   guint filled = 0;

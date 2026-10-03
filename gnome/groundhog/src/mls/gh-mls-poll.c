@@ -75,6 +75,9 @@ valid_display_text(const gchar *s, gsize max_bytes)
   if (!s || !*s) return FALSE;
   gsize len = strlen(s);
   if (len > max_bytes) return FALSE;
+  /* g_utf8_next_char() requires valid UTF-8; reject invalid sequences first
+   * (F1: fuzz-found heap-buffer-overflow on 0xC0 near end of string). */
+  if (!g_utf8_validate(s, len, NULL)) return FALSE;
   /* No leading/trailing whitespace. */
   if (g_ascii_isspace(s[0]) || g_ascii_isspace(s[len - 1])) return FALSE;
   /* No control characters or bidi overrides. */
@@ -458,6 +461,19 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
   guint n_selected = g_strv_length((gchar **) option_ids);
   if (self->poll_type == GH_MLS_POLL_SINGLE_CHOICE && n_selected != 1)
     return FALSE;
+
+  /* F7: detect whether tallies actually change (an identical re-vote does
+   * not). Check the existing record before replacing it. */
+  GhMlsPollVoterRecord *existing = g_hash_table_lookup(self->voters, voter_pubkey);
+  if (existing && existing->option_ids) {
+    gboolean same = g_strv_length(existing->option_ids) == n_selected;
+    if (same) {
+      for (guint i = 0; i < n_selected && same; i++)
+        same = g_strcmp0(existing->option_ids[i], option_ids[i]) == 0;
+    }
+    if (same)
+      return FALSE;
+  }
 
   GhMlsPollVoterRecord *rec = g_new0(GhMlsPollVoterRecord, 1);
   rec->voter_pubkey = g_strdup(voter_pubkey);
