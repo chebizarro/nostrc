@@ -264,3 +264,96 @@ ctest -R "groundhog-nip29-service"                                 1/1 passed   
 ctest -R "groundhog-store-marmot"                                  1/1 passed     ✓
 python3 scripts/check-unsequenced-args.py                          clean          ✓
 ```
+
+---
+
+## Addendum — re-review after author fixes (2026-10-03)
+
+**Author fix commits:**
+- f97848cd — `fix(groundhog): address W26 slice B review findings F1–F6 (nostrc-191r)`
+- d3076de0 — `test: add white-noise-reactions MDK 0.11 Docker interop case`
+
+**Branch tip:** d3076de0 (6 commits total)
+
+### Finding verification
+
+| ID | Status | Notes |
+|----|--------|-------|
+| F1 | ✅ Fixed | `VERSION_MANIFEST.md` now correctly states "store schema 6 → 7 (forward migration: reactions table)" |
+| F2 | ✅ Fixed | `gh_nip29_service_send_deletion()` sends kind 5 via `room_enqueue` (not admin kind 9005). Template `gh_nip29_template_deletion()` builds kind 5 with e-tag + h-tag. `on_react()` calls the new function. Regular members can now un-react without admin permissions. |
+| F3 | ✅ Fixed | All three receive paths (MLS, NIP-17, NIP-29) now look up the reaction sender via `gh_reaction_store_get_sender()` and reject deletions where `sender != reaction_author`. New test `test_store_forged_deletion` covers the malicious case. `test_store_get_sender_unknown` covers the unknown-reaction case. |
+| F4 | ✅ Fixed | `on_react()` in `gh-app-services.c` now checks `gh_reaction_summary_own_reaction_id(summary, emoji)` before adding. If non-NULL, it recursively calls itself with `add=FALSE` to toggle (remove) the existing reaction. New test `test_store_double_add_toggle` verifies the behavior. |
+| F5 | ✅ Fixed | `gh_reaction_store_suspend_delegate()` / `gh_reaction_store_resume_delegate()` API added. The restore loop in `gh_store_reactions_attach()` suspends the delegate before loading, resumes after. New test `test_store_suspend_delegate` verifies no delegate calls during suspend. Zero wasted INSERTs at startup. |
+| F6 | ✅ Fixed | The "behind the existing reaction store (W25)" clause is removed from `VERSION_MANIFEST.md`. |
+
+### MDK / White Noise rumor ID investigation
+
+The author's commit message for d3076de0 states "the driver's `sync` returns
+the MLS message_id as 'id'". This is **inaccurate**. Investigation of
+`/tmp/mdk-v0.11.0` source (line 1112 of `main.rs`) confirms:
+
+```rust
+"id": app.id, /* canonical NIP-01 event ID, not MLS message_id */
+```
+
+`MarmotAppEvent.id` = `canonical_event_id()` =
+`sha256([0, pubkey, created_at, kind, tags, content])` — the NIP-01 event hash.
+The driver also returns `"mls_message_id"` as a separate field.
+
+**However, the fix is still valid:** the test now targets the NIP-01 rumor ID
+computed locally by Groundhog (the same algorithm as MDK), avoiding a
+dependency on consuming the sync response. Both MDK and Groundhog compute the
+same canonical NIP-01 event ID from the same inner rumor fields, so the e-tag
+match is correct.
+
+### Live interop test
+
+```
+$ docker build -t nostrc-mdk-interop:0.11.0-w26-reactions tests/interop/mdk/driver-0.11
+  → image built (cached layers, 0.0s export)
+
+$ cmake .. -DBUILD_MDK011_INTEROP=ON \
+           -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:0.11.0-w26-reactions
+
+$ ctest -R groundhog-mdk011-interop-white-noise-reactions --output-on-failure
+  groundhog-mdk011-interop-white-noise-reactions ... Passed   1.64 sec    ✓
+```
+
+The test exercises: Carol (MDK driver) reacts to a message → Groundhog
+receives the kind-7 inner event, matches the NIP-01 rumor ID e-tag, and admits
+the reaction; Alice (Groundhog) reacts → MDK receives via sync with matching
+NIP-01 event ID. Both directions pass.
+
+### Sanitizer gate
+
+```
+$ scripts/linux-gate.sh --sanitizers /tmp/rv-w26-reactions
+  ==> Sanitizer gate (arm64): image nostrc-linux-ci:arm64
+  ==> configured, built groundhog + sanitizer tests (0m35s build)
+  ==> 53 tests, 2 at a time
+  ==> sanitizer tests passed, 53 run (2m42s)                              ✓
+```
+
+No ASan/UBSan/LSan reports. All 53 sanitizer-instrumented tests pass clean.
+
+### Unit tests
+
+```
+ctest -R "groundhog-reactions"              4/4 passed (15 tests total)    ✓
+ctest -R "groundhog-reaction-send"          1/1 passed (3 tests)           ✓
+ctest -R "groundhog-nip29-group"            1/1 passed                     ✓
+ctest -R "groundhog-store-marmot"           1/1 passed                     ✓
+python3 scripts/check-unsequenced-args.py   clean                          ✓
+```
+
+### Merge risk assessment (unchanged)
+
+Low merge risk with slices A and C. The MLS kind-7/5 dispatch, reaction store,
+and UI reaction bar are independent additions. No conflicts expected.
+
+---
+
+## Final verdict: APPROVED
+
+All six findings are resolved. The interop test passes under a private Docker
+image tag. The sanitizer gate is clean. The code is ready to merge.
