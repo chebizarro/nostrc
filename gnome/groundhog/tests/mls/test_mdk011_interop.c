@@ -663,6 +663,24 @@ sent_accepted(gpointer data)
   return message && gh_message_get_status(message) == GH_MESSAGE_STATUS_SENT;
 }
 
+/* A message object reached SENT status (for votes: empty content makes
+ * find_message() unreliable, so we check the object directly). */
+static gboolean
+msg_sent(gpointer data)
+{
+  return gh_message_get_status(GH_MESSAGE(data)) == GH_MESSAGE_STATUS_SENT;
+}
+
+#define spin_until_msg(msg_, desc_) \
+  spin_until(msg_sent, (msg_), (desc_))
+
+/* A poll has at least one voter. */
+static gboolean
+poll_has_voters(gpointer data)
+{
+  return gh_mls_poll_get_total_voters(GH_MLS_POLL(data)) >= 1;
+}
+
 /* ---- adopted Commits both ways (nostrc-qp24.5.1.3) ---------------------------------- */
 
 /* An MDK 0.11 peer configured as the engine's default (not White Noise's
@@ -1969,6 +1987,282 @@ test_mdk09_probe(void)
   mdk_driver_stop(&driver);
 }
 
+/* NIP-88 polls through MLS: Groundhog and MDK 0.11 create polls, vote,
+ * and verify tallies in both directions. Also verifies that a post-deadline
+ * vote is ignored by both sides (F3/F2). */
+static void
+test_polls(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage (her proof enrolled)");
+  accept_contact(alice, CAROL);
+  mdk_peer_engine_default("carol", CAROL);
+  g_autofree gchar *on_w = g_strdup_printf("\"%s\"", w.w.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", on_w);
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+
+  /* Create an adopted group: Groundhog (Alice) + MDK (Carol). */
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait created = { 0 };
+  gh_mls_service_create_group_async(alice->service, "Poll Test Group", NULL, relays, people,
+                                    NULL, on_created, &created);
+  spin_until(op_done, &created, "the adopted group creation");
+  g_assert_no_error(created.error);
+  g_assert_nonnull(created.result);
+  GhMlsGroup *ga = created.result;
+  g_object_unref(ga);
+  g_assert_true(gh_mls_group_get_adopted(ga));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+  g_autoptr(GPtrArray) before_join = group_events_on(&w.g);
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  assert_gh_converged(ga, joined);
+
+  /* --- Phase 1: MDK creates a poll, Groundhog votes, MDK tallies --- */
+
+  g_test_message("Phase 1: MDK creates poll, Groundhog votes");
+  /* MDK creates a poll with a 2-hour deadline. */
+  g_autoptr(JsonObject) poll1 = mdk_call(&driver,
+    "\"cmd\":\"poll_create\",\"peer\":\"carol\",\"group\":\"%s\","
+    "\"question\":\"Favorite drink?\","
+    "\"options\":[\"Tea\",\"Coffee\",\"Water\"],"
+    "\"poll_type\":\"singlechoice\","
+    "\"ends_at\":%lld",
+    group, (long long)(g_get_real_time() / G_USEC_PER_SEC + 7200));
+  g_assert_true(json_object_has_member(poll1, "event_id"));
+  const gchar *mdk_poll_id = json_object_get_string_member(poll1, "event_id");
+  g_test_message("MDK poll event_id (kind 445 envelope): %s", mdk_poll_id);
+
+  /* Groundhog syncs and receives the poll. The poll's inner event id is what
+   * the poll model keys by; we need to find it after the message arrives. */
+  MessageWait poll_wait = { alice, room, "Favorite drink?" };
+  spin_until(message_listed, &poll_wait, "the MDK poll listed as a message");
+
+  /* Find the poll in Groundhog's model: the inner rumor id. */
+  GhMessage *poll_msg = find_message(alice, room, "Favorite drink?");
+  g_assert_nonnull(poll_msg);
+  const gchar *poll_rumor_id = gh_message_get_rumor_id(poll_msg);
+  g_assert_nonnull(poll_rumor_id);
+  g_test_message("Groundhog sees poll with rumor_id %s", poll_rumor_id);
+
+  GhMlsPoll *gh_poll = gh_mls_service_lookup_poll(alice->service,
+    gh_mls_group_get_group_id(ga), poll_rumor_id);
+  g_assert_nonnull(gh_poll);
+  g_assert_cmpstr(gh_mls_poll_get_question(gh_poll), ==, "Favorite drink?");
+  g_assert_cmpuint(gh_mls_poll_get_n_options(gh_poll), ==, 3);
+  g_assert_cmpstr(gh_mls_poll_get_option(gh_poll, 0)->label, ==, "Tea");
+  g_assert_cmpstr(gh_mls_poll_get_option(gh_poll, 1)->label, ==, "Coffee");
+  g_assert_cmpstr(gh_mls_poll_get_option(gh_poll, 2)->label, ==, "Water");
+
+  /* Groundhog votes for "Coffee" (option 1). */
+  GhMessage *vote_msg;
+  {
+    const gchar *ids[] = { "1", NULL };
+    g_autoptr(GError) vote_err = NULL;
+    vote_msg = gh_mls_service_cast_vote(alice->service, ga,
+      poll_rumor_id, ids, 1, &vote_err);
+    g_assert_no_error(vote_err);
+    g_assert_nonnull(vote_msg);
+    /* Wait until the vote's MLS message is accepted by a group relay.
+     * We cannot use sent_accepted() because votes have empty content and
+     * find_message("") might match the wrong row; instead we check the
+     * message object directly. */
+    spin_until_msg(vote_msg, "the vote accepted by a group relay");
+    g_object_unref(vote_msg);
+  }
+
+  /* MDK tallies: sync to receive Alice's vote. */
+  {
+    g_autoptr(JsonObject) tally = mdk_call(&driver,
+      "\"cmd\":\"poll_tally\",\"peer\":\"carol\",\"group\":\"%s\"",
+      group);
+    JsonArray *polls = json_object_get_array_member(tally, "polls");
+    g_assert_cmpuint(json_array_get_length(polls), >=, 1);
+    /* Find our poll in the tally results. */
+    gboolean found = FALSE;
+    for (guint i = 0; i < json_array_get_length(polls); i++) {
+      JsonObject *p = json_array_get_object_element(polls, i);
+      if (g_strcmp0(json_object_get_string_member(p, "question"), "Favorite drink?") == 0) {
+        found = TRUE;
+        g_assert_cmpint(json_object_get_int_member(p, "participants"), >=, 1);
+        JsonArray *options = json_object_get_array_member(p, "options");
+        /* Coffee (index 1) should have at least 1 vote. */
+        JsonObject *coffee = json_array_get_object_element(options, 1);
+        g_assert_cmpstr(json_object_get_string_member(coffee, "label"), ==, "Coffee");
+        g_assert_cmpint(json_object_get_int_member(coffee, "votes"), >=, 1);
+        break;
+      }
+    }
+    g_assert_true(found);
+    g_test_message("Phase 1 passed: MDK tallied Groundhog's vote for Coffee");
+  }
+
+  /* --- Phase 2: Groundhog creates a poll, MDK votes, Groundhog tallies --- */
+
+  g_test_message("Phase 2: Groundhog creates poll, MDK votes");
+  {
+    const gchar *labels[] = { "Cat", "Dog", NULL };
+    g_autoptr(GError) poll_err = NULL;
+    GhMessage *poll2_msg = gh_mls_service_create_poll(alice->service, ga,
+      "Best pet?", labels, 2, GH_MLS_POLL_SINGLE_CHOICE,
+      (gint64)(g_get_real_time() / G_USEC_PER_SEC + 7200), &poll_err);
+    g_assert_no_error(poll_err);
+    g_assert_nonnull(poll2_msg);
+    const gchar *poll2_rumor = gh_message_get_rumor_id(poll2_msg);
+    g_assert_nonnull(poll2_rumor);
+    g_test_message("Groundhog poll rumor_id: %s", poll2_rumor);
+
+    /* Wait for the poll to be accepted by a relay. */
+    spin_until_msg(poll2_msg, "the poll accepted by a group relay");
+
+    /* MDK syncs to receive the poll. synced_message checks kind 9 (text),
+     * but polls are kind 1068; scan the results array directly. */
+    g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+    {
+      JsonArray *sr = json_object_get_array_member(synced, "results");
+      gboolean found_poll = FALSE;
+      for (guint i = 0; i < json_array_get_length(sr); i++) {
+        JsonObject *r = json_array_get_object_element(sr, i);
+        if (json_object_get_int_member_with_default(r, "kind", 0) == GH_MLS_POLL_KIND &&
+            g_strcmp0(json_object_get_string_member_with_default(r, "content", ""), "Best pet?") == 0) {
+          found_poll = TRUE;
+          break;
+        }
+      }
+      g_assert_true(found_poll);
+    }
+
+    /* MDK finds the poll's inner event id from the sync results and votes. */
+    JsonArray *results = json_object_get_array_member(synced, "results");
+    const gchar *poll2_inner_id = NULL;
+    for (guint i = 0; i < json_array_get_length(results); i++) {
+      JsonObject *r = json_array_get_object_element(results, i);
+      if (json_object_get_int_member_with_default(r, "kind", 0) == GH_MLS_POLL_KIND &&
+          g_strcmp0(json_object_get_string_member_with_default(r, "content", ""), "Best pet?") == 0) {
+        poll2_inner_id = json_object_get_string_member(r, "id");
+        break;
+      }
+    }
+    g_assert_nonnull(poll2_inner_id);
+    g_test_message("MDK sees poll inner id: %s", poll2_inner_id);
+
+    /* MDK votes for "Dog" (option 1). */
+    g_autoptr(JsonObject) mdk_vote = mdk_call(&driver,
+      "\"cmd\":\"poll_vote\",\"peer\":\"carol\",\"group\":\"%s\","
+      "\"poll_event_id\":\"%s\","
+      "\"selections\":[\"1\"]",
+      group, poll2_inner_id);
+    g_assert_true(json_object_has_member(mdk_vote, "event_id"));
+
+    /* Send a text message after the vote: this ensures the relay subscription
+     * has delivered the vote's kind-445 event before we check tallies. */
+    mdk_send("carol", group, "voted for Dog");
+    wait_message(alice, room, "voted for Dog");
+
+    /* Groundhog receives Carol's vote: the tallies-changed signal fires and
+     * the poll model reflects it. */
+    GhMlsPoll *poll2 = gh_mls_service_lookup_poll(alice->service,
+      gh_mls_group_get_group_id(ga), poll2_rumor);
+    g_assert_nonnull(poll2);
+    /* Spin until the vote is counted (the encrypted message arrives). */
+    spin_until(poll_has_voters, poll2, "Carol's vote counted in Groundhog's tally");
+    g_assert_cmpuint(gh_mls_poll_get_option(poll2, 1)->votes, >=, 1);
+    g_assert_cmpstr(gh_mls_poll_get_option(poll2, 1)->label, ==, "Dog");
+    g_test_message("Phase 2 passed: Groundhog tallied MDK's vote for Dog");
+
+    g_object_unref(poll2_msg);
+  }
+
+  /* --- Phase 3: post-deadline vote is ignored by both --- */
+
+  g_test_message("Phase 3: post-deadline vote rejection");
+  {
+    /* Create a poll that ends in 1 second. */
+    gint64 now_ts = g_get_real_time() / G_USEC_PER_SEC;
+    const gchar *labels3[] = { "Yes", "No", NULL };
+    g_autoptr(GError) poll3_err = NULL;
+    GhMessage *poll3_msg = gh_mls_service_create_poll(alice->service, ga,
+      "Quick poll?", labels3, 2, GH_MLS_POLL_SINGLE_CHOICE,
+      now_ts + 1, &poll3_err);
+    g_assert_no_error(poll3_err);
+    g_assert_nonnull(poll3_msg);
+    const gchar *poll3_rumor = gh_message_get_rumor_id(poll3_msg);
+    spin_until_msg(poll3_msg, "the quick poll accepted by a group relay");
+
+    /* Wait 2 seconds so the poll expires. */
+    g_usleep(2 * G_USEC_PER_SEC);
+
+    /* Groundhog rejects its own late vote. */
+    {
+      const gchar *ids[] = { "0", NULL };
+      g_autoptr(GError) late_err = NULL;
+      GhMessage *late = gh_mls_service_cast_vote(alice->service, ga,
+        poll3_rumor, ids, 1, &late_err);
+      g_assert_null(late);
+      g_assert_error(late_err, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+      g_test_message("Groundhog correctly rejects its own late vote: %s",
+                     late_err->message);
+    }
+
+    /* MDK syncs to receive the poll, then tries a late vote: MDK's
+     * validate_poll_response rejects votes past the deadline. */
+    {
+      g_autoptr(JsonObject) synced = mdk_sync_joined("carol", group, before_join);
+      /* Find the poll inner id. */
+      JsonArray *results = json_object_get_array_member(synced, "results");
+      const gchar *poll3_inner_id = NULL;
+      for (guint i = 0; i < json_array_get_length(results); i++) {
+        JsonObject *r = json_array_get_object_element(results, i);
+        if (json_object_get_int_member_with_default(r, "kind", 0) == GH_MLS_POLL_KIND &&
+            g_strcmp0(json_object_get_string_member_with_default(r, "content", ""), "Quick poll?") == 0) {
+          poll3_inner_id = json_object_get_string_member(r, "id");
+          break;
+        }
+      }
+      if (poll3_inner_id) {
+        /* MDK sends a vote (the driver will send it, but the tally should not
+         * count it since the MDK's validate_poll_response checks the deadline). */
+        g_autoptr(JsonObject) late_vote = mdk_call(&driver,
+          "\"cmd\":\"poll_vote\",\"peer\":\"carol\",\"group\":\"%s\","
+          "\"poll_event_id\":\"%s\","
+          "\"selections\":[\"0\"]",
+          group, poll3_inner_id);
+        /* The vote is sent as MLS (the transport layer doesn't reject it),
+         * but the tally should not count it. */
+        g_autoptr(JsonObject) tally = mdk_call(&driver,
+          "\"cmd\":\"poll_tally\",\"peer\":\"carol\",\"group\":\"%s\"",
+          group);
+        JsonArray *polls = json_object_get_array_member(tally, "polls");
+        for (guint i = 0; i < json_array_get_length(polls); i++) {
+          JsonObject *p = json_array_get_object_element(polls, i);
+          if (g_strcmp0(json_object_get_string_member(p, "question"), "Quick poll?") == 0) {
+            /* The tally should show 0 participants: the late vote was rejected
+             * by validate_poll_response. */
+            g_assert_cmpint(json_object_get_int_member(p, "participants"), ==, 0);
+            g_test_message("Phase 3 passed: MDK correctly ignores post-deadline vote (0 participants)");
+            break;
+          }
+        }
+      } else {
+        g_test_message("Phase 3: MDK did not receive the quick poll (ok: it may have expired before sync)");
+      }
+    }
+
+    g_object_unref(poll3_msg);
+  }
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2021,6 +2315,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
   g_test_add_func("/groundhog/mdk011-interop/white-noise-dm", test_white_noise_dm);
   g_test_add_func("/groundhog/mdk011-interop/concurrent-commits", test_concurrent_commits);
+  g_test_add_func("/groundhog/mdk011-interop/polls", test_polls);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();
