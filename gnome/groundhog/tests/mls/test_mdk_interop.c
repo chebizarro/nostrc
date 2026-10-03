@@ -1202,6 +1202,15 @@ test_groundhog_leaves_mdk_admin(void)
   /* F2 (nostrc-pszz): a second press now leaves on this device, not via
    * the admin who never processed the request. */
   g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_DEVICE);
+  /* The second press leaves on this device (not re-requesting via admin). */
+  {
+    g_autoptr(GError) e2 = NULL;
+    g_assert_true(gh_mls_service_leave(alice->service, ga, &e2));
+    g_assert_no_error(e2);
+    g_assert_cmpint(gh_mls_group_get_end(ga), ==, GH_MLS_GROUP_END_LEFT_DEVICE);
+    g_assert_false(gh_mls_group_get_leaving(ga));
+    g_assert_false(gh_mls_group_get_active(ga));
+  }
 
   /* Nothing more: no request, so MDK commits nothing. */
   guint stored = w.g.stored->len;

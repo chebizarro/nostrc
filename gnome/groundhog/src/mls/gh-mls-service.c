@@ -6468,11 +6468,14 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
   /* F3: clear the persisted miss counter on a fresh leave. */
   { g_autofree gchar *ms = leave_misses_scope(group);
     gh_store_set_cursor(self->store, ms, "", 0, NULL); }
+  /* F2: after NOT_PROCESSED (the admin never acted on our Remove request),
+   * a second press should leave on this device — don't re-request. */
+  gboolean device_only = group->leave_failure == GH_MLS_LEAVE_FAILURE_NOT_PROCESSED;
   if (group->leave_failure != GH_MLS_LEAVE_FAILURE_NONE) {
     group->leave_failure = GH_MLS_LEAVE_FAILURE_NONE;
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
   }
-  if (!group->leaving) {
+  if (!group->leaving && !device_only) {
     MarmotError check = marmot_can_self_remove(self->marmot, &group->gid, NULL);
     if (check == MARMOT_ERR_OWN_COMMIT_PENDING) {
       g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_BUSY,
