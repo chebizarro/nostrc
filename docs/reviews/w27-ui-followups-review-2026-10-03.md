@@ -33,3 +33,38 @@
 - `python3 scripts/check-unsequenced-args.py` and `git diff --check`: **passed**.
 - Four fix-removal spot-checks: NIP-29 reply extraction, MLS reply extraction, one icon resource entry, and vote withdrawal lookup each made the corresponding test fail. All temporary mutations were restored and the affected targets rebuilt.
 - The icon registration uses GTK's resource path, which [GTK documents as part of the hicolor theme](https://docs.gtk.org/gtk4/method.IconTheme.set_resource_path.html); this should not outrank an active user theme's own icon. There is no actual-theme precedence test, but no precedence defect identified here.
+
+## Addendum — re-review at `3f472953` (2026-10-03)
+
+**Final verdict: CHANGES-REQUIRED.** The nine follow-up commits were reviewed after rebasing this review branch onto their tip. The original fatal leave assertion is fixed and the sanitizer gate is green, but the checked-in MDK test is now red, the “empty admin Commit” predicate is still incomplete, and the manifest row is misplaced.
+
+### Disposition of all ten original findings
+
+| # | Status | Verification |
+|---|---|---|
+| 1 — fatal store commit | **Fixed** | `gh-mls-service.c:4322-4326` no longer commits without a transaction. `gh_store_set_cursor()` executes a standalone SQLite statement in autocommit mode. The MDK reproduction passed the former fatal point and reached its later assertions. Cursor write failures are still ignored, so the restart-bound guarantee could be lost on I/O error; this needs error handling. |
+| 2 — second press | **Behavior fixed; test broken** | `gh-mls-service.c:6471-6478` captures `device_only` before clearing `leave_failure`; the MDK case passed its new `LEFT_DEVICE`, `!leaving`, `!active` assertions. It then failed on a stale send assertion; see R1 below. |
+| 3 — icon attribution | **Addressed** | `data/icons/COPYING` records GNOME/Adwaita provenance and the artwork's separate licence choices; About > Legal names Adwaita and presents LGPL 3. MIT remains the app's code licence. Ensure the icon notice travels with packaged distributions. |
+| 4 — icon coverage | **Current audit addressed; test contract partial** | Six further SVGs were bundled. A fresh comparison of the 41 symbolic names referenced in Blueprint/C found none outside the bundle plus the declared GTK-builtin list. `test_icons.c` still tests a manually maintained array and cannot detect a newly referenced, omitted icon; see R3. |
+| 5 — local vote withdrawal | **Fixed in code** | `gh-mls-service.c:8313-8315` passes the already-computed inner event ID, so the convergence search can find the local voter. No service-level withdrawal regression was added. |
+| 6 — same-choice re-vote | **Fixed** | `gh-mls-poll.c:467-480` updates the event ID without changing tallies; the new test checks withdrawal of both old and new IDs. |
+| 7 — empty admin Commit | **Not fixed** | Excluding `routing_changed` is insufficient; see R2. |
+| 8 — reply target | **Substantially addressed** | Marked `e` mentions no longer fall through to positional reply parsing, with a regression test. A missing/inaccessible target now gets “Original message not loaded”; the action remains scoped to the current conversation and performs no cross-conversation fetch. No content leak found. |
+| 9 — privacy sanitizer | **Fixed in observed run** | The test drains deferred callbacks before its REQ snapshot. The required sanitizer gate ran all 54 tests successfully, including `groundhog-privacy-mls`. |
+| 10 — version decision | **Not fixed** | The row was added, but inside the maintenance prose rather than the version table; see R4. |
+
+### Remaining findings
+
+- **R1 — High: the updated MDK leave test fails after validating the fix.** `gnome/groundhog/tests/mls/test_mdk_interop.c:1205-1228`: the new assertions prove that Alice left on this device and `ga` is inactive, then the old `send_accepted(alice, ga, "still here")` assumes she is still active. The direct `/groundhog/mdk-interop/groundhog-leaves-mdk-admin` run failed at `mls-world.h:788` with “A message needs text or files and an active group it is not leaving.” Temporarily removing only lines 1223-1228 made the complete case pass; the original file and target were restored. Move the send assertion before the confirmed device-only leave, or replace it with a post-leave refusal assertion. The MDK suite cannot be green as committed.
+- **R2 — Medium: an Add-only admin Commit still counts as a leave miss.** `gnome/groundhog/src/mls/gh-mls-service.c:2712-2723`: `departed_count == 0 && !routing_changed` also matches a Commit adding a member/device, changing name/admins/image, or other non-routing work. In a busy group, two such Commits while a Remove request waits can exhaust `GH_MLS_SERVICE_LEAVE_REQUESTS` and falsely label an active admin as not processing requests. Compare the pre/post group state (or expose a true empty-Commit signal from libmarmot) and test a nonempty Add Commit. The comment's “no other visible work” claim is not what the predicate implements.
+- **R3 — Medium: the icon test still cannot enforce “every referenced icon resolves.”** `gnome/groundhog/tests/ui/test_icons.c:7-24,75-85`: it probes only `BUNDLED_ICONS`, and the GTK-builtin list is only a comment; neither is derived from current Blueprint/C references. Adding `icon-name: "new-icon-symbolic"` to a Blueprint file without bundling it leaves this test green. The comment that a missing GTK resource will make the test fail is also false unless that name is first manually added to the array. Compare extracted referenced names with bundled names plus an explicit fallback allowlist as part of the test; optionally test the allowlist with a deliberately minimal icon theme.
+- **R4 — Medium: the manifest entry is not a manifest entry.** `VERSION_MANIFEST.md:239-242`: the new pipe-delimited row splits a prose bullet and its example tag, below the table and under `## Maintenance`. No component/version table or parser will see the decision, and the maintenance instructions are rendered incorrectly. Move the row into the component change table above `## Maintenance`.
+- **R5 — Low: miss-counter persistence silently fails on store errors.** `gnome/groundhog/src/mls/gh-mls-service.c:4324-4325` ignores `gh_store_set_cursor()`'s result. If the encrypted store is read-only/full during a miss, the in-memory count advances and the retry continues; after restart the old count is restored and the advertised bound can be exceeded. Fail or surface the storage error rather than treating an unpersisted miss as durable.
+
+### Re-review checks
+
+- macOS 27 clean Ninja build with `BUILD_GROUNDHOG=ON`, `BUILD_MDK_INTEROP=ON`: passed.
+- Nine touched macOS CTest suites: 9/9 passed. `python3 scripts/check-unsequenced-args.py` and `git diff --check`: passed.
+- Required `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-ui-followups-r2`: **54/54 passed** (arm64; no sanitizer report).
+- MDK 0.8 admin-leave reproduction, with the checked-in test: **failed at the obsolete post-leave send**, not at the former `gh_store_commit` assertion. Temporary omission of only that obsolete send block: **passed**. All temporary edits were restored and the test target rebuilt.
+- The shared ASAN Docker volume predates both reviews; this review created no Docker volume and left no command running.
