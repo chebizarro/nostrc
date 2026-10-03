@@ -229,6 +229,9 @@ typedef struct {
   GhRelayPublish *publish;
   guint8 ref[32];                    /* KeyPackageRef of the one in flight */
   gboolean in_flight;                /* ...until its first relay OK confirms it */
+  gboolean keep_old_keys;            /* nostrc-cyxb: a forced companion publish does not
+                                      * retire the held slot's keys (pending invitations
+                                      * made with them still open when the Welcome arrives) */
 } KeyPackageSlot;
 
 struct _GhMlsService {
@@ -7271,17 +7274,25 @@ key_package_confirm(KeyPackageSlot *slot)
     g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
     return;
   }
-  MarmotError err = marmot_key_package_confirm_published(self->marmot, self->account_key,
-                                                         slot->ref);
-  if (err != MARMOT_OK) {
-    marmot_fail(self, err, "Retiring the old KeyPackage", &error);
+  /* nostrc-cyxb: a legacy KeyPackage forced out alongside an adopted one keeps
+   * the previous keys (the pending invitation's Welcome still needs them).
+   * The next non-forced confirm retires them together with the skipped one. */
+  if (slot->keep_old_keys) {
+    slot->keep_old_keys = FALSE;
     gh_store_rollback(self->store);
-    g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
-    return;
-  }
-  if (!gh_store_commit(self->store, &error)) {
-    gh_store_rollback(self->store);
-    g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+  } else {
+    MarmotError err = marmot_key_package_confirm_published(self->marmot, self->account_key,
+                                                           slot->ref);
+    if (err != MARMOT_OK) {
+      marmot_fail(self, err, "Retiring the old KeyPackage", &error);
+      gh_store_rollback(self->store);
+      g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+      return;
+    }
+    if (!gh_store_commit(self->store, &error)) {
+      gh_store_rollback(self->store);
+      g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+    }
   }
 }
 
@@ -7805,6 +7816,21 @@ key_package_maybe_publish(GhMlsService *self)
                                key_package_cursor_key(GH_MLS_KEY_PACKAGE_FORMAT_LEGACY), 0, &error))
         g_message("Groundhog could not record a due KeyPackage: %s", error->message);
     }
+  }
+  /* nostrc-cyxb: MDK 0.8 and 0.9 are slot-blind — they take the newest
+   * kind 30443 event regardless of d-tag. If only the adopted one goes out
+   * (the legacy slot is held for a pending invitation), the adopted event
+   * becomes the newest and slot-blind readers fail on parse_key_package.
+   * Override the hold: publish a fresh legacy KeyPackage alongside the
+   * adopted one.  The held one's private keys remain in libmarmot's store
+   * (marmot_key_package_retire_profile is never called here) so the
+   * pending invitation still opens when its Welcome arrives. */
+  if (go[GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED] &&
+      key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY) &&
+      !go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY]) {
+    self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].held = FALSE;
+    self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].keep_old_keys = TRUE;
+    go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY] = TRUE;
   }
   key_package_hold_apply(self, ended, wake);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)

@@ -34,8 +34,9 @@
  *    consented kind 10002 included) and invite each other; an existing 10002
  *    is never offered for replacement nor replaced.
  *
- *  - upgrade-companion-held (review M1): an MDK 0.8 KeyPackage owed with an
- *    adopted one goes out once its hold ends, even after a restart.
+ *  - upgrade-companion-held (review M1, nostrc-cyxb): an MDK 0.8 KeyPackage
+ *    owed with an adopted one goes out alongside it, overriding the hold
+ *    (the old keys stay in libmarmot's store for the pending invitation).
  *  - legacy-switched-off (review L1): the MDK 0.8 format switched off is
  *    withdrawn, its keys retired only after a relay accepted the request,
  *    which covers its newest version by date and by id (re-review M4).
@@ -1126,12 +1127,14 @@ format_confirmed(gpointer data)
   return gh_mls_service_get_key_package_id_for_format(wait->app->service, wait->format) != NULL;
 }
 
-/* Review M1 (the reviewer's case): Bob upgrades with an invitation pending.
- * His first adopted KeyPackage has nothing to protect and goes out; the MDK
- * 0.8 one it brings along is held for the invitation, so for now the
- * adopted event is his newest kind 30443. The MDK 0.8 one stays owed --
- * across a restart too -- and goes out once the hold ends (here the
- * invitation is declined): the MDK 0.8 event is the newest again. */
+/* Review M1, updated for nostrc-cyxb: Bob upgrades with an invitation
+ * pending. His first adopted KeyPackage has nothing to protect (no adopted
+ * KP was published before) and goes out. nostrc-cyxb: MDK 0.8 and 0.9 are
+ * slot-blind and would pick the adopted event as the newest kind 30443. So
+ * the MDK 0.8 companion is forced out alongside the adopted one even though
+ * the pending invitation creates a hold: key_package_publish creates new
+ * keys and the old ones remain in libmarmot's store, so the pending
+ * invitation still opens when its Welcome arrives. */
 static void
 test_upgrade_companion_held(void)
 {
@@ -1154,30 +1157,19 @@ test_upgrade_companion_held(void)
 
   world_legacy_only = FALSE;  /* the upgrade */
   app_restart(bob);
-  FormatCountWait adopted = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, 1 };
-  spin_until(format_count_reached, &adopted, "Bob's first adopted KeyPackage");
-  /* Its OK handled: the adopted format is not due any more. */
+  /* nostrc-cyxb: both formats go out; the MDK 0.8 one stays the newest. */
+  FormatCountWait legacy = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy, "the MDK 0.8 KeyPackage forced alongside adopted");
   FormatPublishedWait confirmed = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
   spin_until(format_confirmed, &confirmed, "Bob's adopted KeyPackage confirmed");
-  g_assert_true(gh_mls_service_get_key_package_held(bob->service));
-  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
-  g_autoptr(GPtrArray) legacy_before = stored_key_packages_of(&w.w, BOB,
-                                                              GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
-  g_assert_cmpuint(legacy_before->len, ==, 1);
-
-  /* Still owed after a restart. */
-  app_restart(bob);
-  StateWait published = { bob, GH_MLS_KEY_PACKAGE_PUBLISHED };
-  spin_until(state_is, &published, "Bob's KeyPackage state after a restart");
-  g_assert_true(gh_mls_service_get_key_package_held(bob->service));
-
-  g_assert_true(gh_mls_service_decline_invite(bob->service, wrapper, &error));
-  g_assert_no_error(error);
-  FormatCountWait legacy = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
-  spin_until(format_count_reached, &legacy, "the MDK 0.8 KeyPackage that was owed");
-  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
   wait_published(bob);
   g_assert_false(gh_mls_service_get_key_package_held(bob->service));
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_cmpint(newest_key_package_format(&w.h, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+
+  /* The pending invitation still opens: the old legacy keys are in the store. */
+  g_assert_nonnull(gh_mls_service_accept_invite(bob->service, wrapper, &error));
+  g_assert_no_error(error);
   world_down(&w);
 }
 
