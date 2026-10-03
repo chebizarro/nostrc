@@ -1036,9 +1036,11 @@ gh_conversation_get_is_request(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
   /* A group is listed because the account joined it, never as a request. */
-  /* An encrypted group is listed once the account accepted its invitation. */
-  if (self->backend == GH_CONVERSATION_BACKEND_NIP29 ||
-      self->backend == GH_CONVERSATION_BACKEND_MLS)
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP29)
+    return FALSE;
+  /* A Marmot DM from a stranger is a request (charter §7.9: strangers
+   * go to Requests). Non-DM MLS groups are never requests. */
+  if (self->backend == GH_CONVERSATION_BACKEND_MLS && !self->is_direct)
     return FALSE;
   return !self->accepted && !self->has_own_message;
 }

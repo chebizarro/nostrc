@@ -279,6 +279,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <attribute name="action">win.new-group</attribute>
         <attribute name="hidden-when">action-missing</attribute>
       </item>
+      <item>
+        <attribute name="label" translatable="yes">_Add Contact…</attribute>
+        <attribute name="action">win.add-contact</attribute>
+        <attribute name="hidden-when">action-missing</attribute>
+      </item>
     </section>
     <section>
       <item>

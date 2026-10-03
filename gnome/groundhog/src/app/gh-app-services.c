@@ -47,6 +47,7 @@
 #endif
 #if GROUNDHOG_HAVE_NEW_MESSAGE
 #include "gh-new-message-dialog.h"
+#include "gh-add-contact-dialog.h"
 #endif
 
 /* G20b: NIP-29 relay groups (gh-group-ui.h). */
@@ -1391,6 +1392,89 @@ directory_claimed_nip05(gpointer data, const gchar *pubkey)
 }
 #endif
 
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_MLS_UI
+/* ---- Marmot DM creation (nostrc-fmbt) -----------------------------------------
+ * New Message creates a 2-member MLS group with empty name (WN's DM shape)
+ * when the default-dm-protocol is "marmot". The callback gets the MLS
+ * service from the outbox, uses the account's write relays, and returns a
+ * GhConversation for the new DM. On failure, the dialog falls back to
+ * NIP-17 (gh-new-message-dialog.c marmot_dm_done()). */
+
+typedef struct {
+  GhAppServices *services;   /* borrowed through the window's lifetime */
+  GTask *task;
+  gchar *pubkey;
+} MarmotDmCreate;
+
+static void
+marmot_dm_create_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  MarmotDmCreate *ctx = data;
+  GhMlsService *mls = GH_MLS_SERVICE(source);
+  g_autoptr(GError) error = NULL;
+  GhMlsGroup *group = gh_mls_service_create_group_finish(mls, result, &error);
+  if (!group) {
+    g_task_return_error(ctx->task, g_steal_pointer(&error));
+  } else {
+    /* The group_list_room() call inside create_group already ensured a
+     * GhConversation with is_direct=TRUE in the store. Look it up. */
+    const gchar *room_id = gh_mls_group_get_room_id(group);
+    GhConversation *conv = room_id
+      ? gh_conversation_store_lookup(ctx->services->conversations, room_id)
+      : NULL;
+    if (conv)
+      g_task_return_pointer(ctx->task, g_object_ref(conv), g_object_unref);
+    else
+      g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "Marmot DM group created but no conversation found");
+  }
+  g_object_unref(ctx->task);
+  g_free(ctx->pubkey);
+  g_free(ctx);
+}
+
+static void
+app_create_marmot_dm(const gchar *pubkey, GCancellable *cancellable,
+                     GAsyncReadyCallback callback, gpointer user_data,
+                     gpointer config_data)
+{
+  GhAppServices *self = config_data;
+  GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  g_task_set_source_tag(task, app_create_marmot_dm);
+
+  GhMlsService *mls = mls_ui_service(self);
+  if (!mls) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                            "Encrypted messaging is not available");
+    g_object_unref(task);
+    return;
+  }
+
+  const gchar *const *write_relays =
+    gh_account_relays_get_write_relays(self->relays);
+  if (!write_relays || !write_relays[0]) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                            "No write relays configured");
+    g_object_unref(task);
+    return;
+  }
+
+  MarmotDmCreate *ctx = g_new0(MarmotDmCreate, 1);
+  ctx->services = self;
+  ctx->task = task;
+  ctx->pubkey = g_strdup(pubkey);
+
+  const gchar *invitees[] = { pubkey, NULL };
+  /* WN DM shape: empty name, no description, the account's write relays,
+   * one invitee (the peer). The resulting group has 2 members, empty name,
+   * so group_is_dm() returns TRUE and group_list_room() sets is_direct. */
+  gh_mls_service_create_group_async(mls, "", NULL,
+                                     write_relays, invitees,
+                                     cancellable,
+                                     marmot_dm_create_done, ctx);
+}
+#endif
+
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
 /* Message Requests' Delete and Block (charter §7.9, G18) on the open store:
  * local only, nothing is published. */
@@ -1598,7 +1682,26 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     new_message.names_data = directory;
   }
 #endif
+#if GROUNDHOG_HAVE_MLS_UI
+  new_message.create_marmot_dm = app_create_marmot_dm;
+  new_message.create_dm_data = self;
+#endif
   gh_new_message_attach(window, &new_message);
+  /* Add Contact (nostrc-txnu): a separate dialog to add a contact by
+   * npub / nostr: URI / NIP-05 without composing a message. */
+  {
+    GhAddContactConfig add_contact = {
+      .conversations = self->conversations,
+      .nip05 = self->nip05,
+    };
+#if GROUNDHOG_HAVE_OUTBOX
+    if (directory) {
+      add_contact.display_name = directory_display_name;
+      add_contact.names_data = directory;
+    }
+#endif
+    gh_add_contact_attach(window, &add_contact);
+  }
 #endif
 #if GROUNDHOG_HAVE_ACCOUNT_STORE
   gh_store_status_attach(gh_window_get_status(window), self->account_store);

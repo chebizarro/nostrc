@@ -33,6 +33,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
+  gh-add-contact-dialog
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
@@ -1367,7 +1368,7 @@ if (TARGET groundhog-conversation-ui AND TARGET groundhog-recipient)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-recipient)
 endif()
 if (TARGET groundhog-conversation-ui AND TARGET groundhog-net AND GROUNDHOG_DM_SEND_SOURCES)
-  add_library(groundhog-new-message STATIC src/ui/gh-new-message-dialog.c)
+  add_library(groundhog-new-message STATIC src/ui/gh-new-message-dialog.c src/ui/gh-add-contact-dialog.c)
   target_link_libraries(groundhog-new-message PUBLIC groundhog-conversation-ui groundhog-net)
   target_compile_options(groundhog-new-message PRIVATE -Wall -Wextra -Werror)
   # gh-inbox-resolver.c (the directory's interface) is one of the

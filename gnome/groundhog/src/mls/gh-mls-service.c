@@ -1223,6 +1223,35 @@ group_list_room(GhMlsGroup *group)
       gh_conversation_set_is_direct(conv, dm);
       if (group->members)
         gh_conversation_set_mls_peers(conv, (const gchar *const *)group->members);
+      /* A Marmot DM from a known contact is auto-accepted (not a request).
+       * A DM from a stranger stays as a request (charter §7.9). Groups
+       * we created ourselves get has_own_message when we send the first
+       * message, so they are never requests. */
+      if (dm && gh_conversation_get_is_request(conv)) {
+        /* Check whether any peer is already an accepted contact (a peer
+         * of another accepted DM). Walk the conversation store inline
+         * to avoid a link dependency on groundhog-mls-ui. */
+        const gchar *const *dm_peers = gh_conversation_get_peers(conv);
+        gboolean from_contact = FALSE;
+        guint n = g_list_model_get_n_items(G_LIST_MODEL(self->conversations));
+        for (guint k = 0; !from_contact && dm_peers && dm_peers[0] && k < n; k++) {
+          g_autoptr(GhConversation) other = g_list_model_get_item(G_LIST_MODEL(self->conversations), k);
+          if (other == conv)
+            continue;
+          GhConversationBackend b = gh_conversation_get_backend(other);
+          gboolean is_dm_source = b == GH_CONVERSATION_BACKEND_NIP17 ||
+                                  (b == GH_CONVERSATION_BACKEND_MLS &&
+                                   gh_conversation_get_is_direct(other));
+          if (!is_dm_source || gh_conversation_get_is_request(other))
+            continue;
+          const gchar *const *other_peers = gh_conversation_get_peers(other);
+          for (guint j = 0; other_peers && other_peers[j]; j++)
+            if (g_ascii_strcasecmp(other_peers[j], dm_peers[0]) == 0)
+              from_contact = TRUE;
+        }
+        if (from_contact)
+          gh_conversation_accept(conv);
+      }
     }
   }
 }

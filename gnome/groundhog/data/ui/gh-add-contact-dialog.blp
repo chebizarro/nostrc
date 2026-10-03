@@ -1,0 +1,91 @@
+using Gtk 4.0;
+using Adw 1;
+
+// Add Contact (nostrc-txnu, charter §7.9, PT-8): a person by npub,
+// nostr: URI, hex pubkey or NIP-05 address. Nothing touches the network
+// before the user acts. The parsed result is shown; NIP-05 needs an
+// explicit lookup consent row. "Add" creates an accepted DM conversation,
+// making the person an accepted contact.
+template $GhAddContactDialog: Adw.Dialog {
+  title: _("Add Contact");
+  content-width: 400;
+  content-height: -1;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        description: _("Paste an npub, nostr: address, hex public key, or name@domain address.");
+
+        Adw.EntryRow input_row {
+          title: _("Public Key or Address");
+          use-markup: false;
+          show-apply-button: true;
+        }
+      }
+
+      Adw.PreferencesGroup result_group {
+        visible: false;
+
+        Adw.ActionRow result_row {
+          use-markup: false;
+
+          [prefix]
+          Adw.Avatar result_avatar {
+            size: 40;
+            accessible-role: presentation;
+          }
+        }
+
+        // NIP-05 consent: shown when input is a NIP-05 address, hidden
+        // once looked up or when input is a pubkey.
+        Adw.ActionRow lookup_row {
+          visible: false;
+          title: _("Look Up This Address");
+          activatable: true;
+          use-markup: false;
+
+          [prefix]
+          Image {
+            icon-name: "network-server-symbolic";
+            accessible-role: presentation;
+          }
+
+          [suffix]
+          Spinner lookup_spinner {
+            visible: false;
+            valign: center;
+          }
+        }
+      }
+
+      Adw.PreferencesGroup {
+        Label error_label {
+          visible: false;
+          wrap: true;
+          xalign: 0;
+          use-markup: false;
+
+          styles [
+            "error",
+          ]
+        }
+
+        Button add_button {
+          label: _("_Add Contact");
+          use-underline: true;
+          halign: center;
+          sensitive: false;
+          action-name: "add-contact.add";
+
+          styles [
+            "pill",
+            "suggested-action",
+          ]
+        }
+      }
+    };
+  };
+}
