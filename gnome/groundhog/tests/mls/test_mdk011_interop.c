@@ -1617,11 +1617,13 @@ test_white_noise_dm(void)
   g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, &view);
   g_assert_true(json_object_get_boolean_member(view, "parsed"));
 
-  /* Carol (MDK) creates a DM: empty name, 2 members = WN's DM shape. */
+  /* Carol (MDK) creates a DM: empty name, 2 members = WN's DM shape.
+   * white_noise requires media_endpoints (marmot-app's EncryptedMediaPolicyV2). */
   g_autoptr(JsonObject) made = mdk_call(&driver,
     "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"\","
     "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
-    "\"white_noise\":true,\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
+    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
     w.g.url, hex[CAROL], hex[ALICE], alice_kp, w.x.url);
   g_autofree gchar *group1 = g_strdup(json_object_get_string_member(made, "group"));
 
