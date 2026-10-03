@@ -1571,6 +1571,7 @@ if (BUILD_TESTING AND TARGET groundhog-account-store AND TARGET groundhog-notifi
     ${GROUNDHOG_DM_SEND_SOURCES} ${GROUNDHOG_EXPIRY_SOURCES} ${GROUNDHOG_DIRECTORY_SOURCES})
   target_include_directories(test-groundhog-privacy-e2e PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy
     ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(test-groundhog-privacy-e2e PRIVATE groundhog-account-store
@@ -1884,6 +1885,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     target_include_directories(test-groundhog-mls-service PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy
       ${CMAKE_CURRENT_SOURCE_DIR}/../../libmarmot/src)
     target_link_libraries(test-groundhog-mls-service PRIVATE groundhog-store-testhooks marmot
@@ -1898,6 +1900,44 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
     set_tests_properties(groundhog-mls-service PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # nostrc-sjl1: two-instance MLS acceptance test.  A test harness binary
+    # embeds the MLS service (compiled with test hooks) behind a D-Bus
+    # control interface; the acceptance test spawns two harness processes
+    # and drives them through create, invite, accept, messages, rename,
+    # remove, re-add, leave, restart and history verification.
+    add_executable(groundhog-test-harness tests/app/gh-test-harness.c
+      ${GROUNDHOG_MLS_SERVICE_SOURCES}
+      src/store/gh-store-marmot.c src/store/gh-mls-commits.c
+      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
+      ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(groundhog-test-harness PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(groundhog-test-harness PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core
+      PkgConfig::GROUNDHOG_GIO)
+    target_compile_options(groundhog-test-harness PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(groundhog-test-harness PRIVATE GH_MLS_TEST_HOOKS=1
+      ${GROUNDHOG_MLS_SERVICE_DEFS})
+    groundhog_store_link_sqlcipher_first(groundhog-test-harness)
+    add_dependencies(groundhog-test-harness groundhog-test-schemas)
+
+    add_executable(test-groundhog-two-instance-acceptance
+      tests/app/test_two_instance_acceptance.c)
+    target_include_directories(test-groundhog-two-instance-acceptance PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+    target_link_libraries(test-groundhog-two-instance-acceptance PRIVATE
+      nostrc-test-bus nostr nip19 nostr_nip44_core PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
+    target_compile_options(test-groundhog-two-instance-acceptance PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-two-instance-acceptance groundhog-test-harness)
+    add_test(NAME groundhog-two-instance-acceptance
+      COMMAND test-groundhog-two-instance-acceptance)
+    set_tests_properties(groundhog-two-instance-acceptance PROPERTIES TIMEOUT 300
+      ENVIRONMENT "HARNESS_BIN=$<TARGET_FILE:groundhog-test-harness>;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+
     # NIP-88 poll model unit tests (nostrc-efa8): parse/validate, create,
     # vote, change vote, closed poll, bounds, malformed, privacy.
     add_executable(test-groundhog-mls-poll tests/mls/test_mls_poll.c
@@ -1930,6 +1970,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       target_include_directories(test-${groundhog_kp_name} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
       target_link_libraries(test-${groundhog_kp_name} PRIVATE groundhog-store-testhooks marmot
         groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
@@ -1972,6 +2013,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     target_include_directories(test-groundhog-privacy-mls PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls)
     target_link_libraries(test-groundhog-privacy-mls PRIVATE groundhog-store-testhooks marmot
       groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
@@ -2082,6 +2124,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       ${GROUNDHOG_DM_SEND_SOURCES} tests/media/blossom-fixture.c)
     target_include_directories(test-groundhog-mdk011-interop PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
     target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-mls-ui marmot
@@ -2431,6 +2474,7 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
       src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES} tests/media/blossom-fixture.c)
     target_include_directories(test-groundhog-mls-ui PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/mls ${CMAKE_CURRENT_SOURCE_DIR}/tests/ui
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
     target_link_libraries(test-groundhog-mls-ui PRIVATE groundhog-mls-ui marmot
