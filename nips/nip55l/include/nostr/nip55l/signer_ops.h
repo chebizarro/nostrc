@@ -163,6 +163,11 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
 int nostr_nip55l_store_key(const char *key, const char *identity);
 int nostr_nip55l_clear_key(const char *identity);
 
+/* List all stored identity npubs.
+ * Caller frees each string with free() and the array with free().
+ * Returns 0 on success; *out_count is the number of entries. */
+int nostr_nip55l_list_identities(char ***out_npubs, int *out_count);
+
 /* Optional Unix owner metadata (no enforcement). Selector is key_id or npub. */
 /* Returns 0 on success, NOT_FOUND if libsecret unavailable or item missing. */
 #include <sys/types.h>

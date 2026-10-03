@@ -1489,6 +1489,45 @@ static void test_typed_approval_errors(Ctx *ctx, const char *swap_sk) {
   free(peer_pk);
 }
 
+/* Expired approval: ApproveRequest for a request that timed out returns
+ * Error.NotFound, not ok=FALSE (nostrc-dsoz). */
+static void test_expired_approve_request(Ctx *ctx) {
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  GError *err = NULL;
+
+  /* Trigger a gated call so the daemon parks a request. */
+  g_usleep(120 * 1000);
+  Watch w;
+  watch_start(ctx, &w);
+  w.a.pending_replies++;
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "NIP04Encrypt",
+      g_variant_new("(sss)", "hi", peer_pk, ""), G_VARIANT_TYPE("(s)"),
+      G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  char *req_id = g_strdup(w.a.req_id);
+  CHECK(req_id && *req_id);
+
+  /* Let the request expire (TTL=1s + margin). */
+  g_usleep(2 * G_USEC_PER_SEC);
+
+  /* Now try to approve the expired request: must get Error.NotFound. */
+  GVariant *ok = approve_call(ctx, req_id, TRUE, FALSE, &err);
+  CHECK(ok == NULL);
+  expect_remote_error(err, ERR_NOT_FND);
+  g_clear_error(&err);
+
+  /* The original caller should have received the timeout error. */
+  watch_wait_replies(&w);
+  CHECK(w.a.errors->len >= 1);
+
+  watch_stop(ctx, &w);
+  g_free(req_id);
+  free(peer_sk);
+  free(peer_pk);
+}
+
 /* An untrusted process cannot answer (or inspect) approval requests. */
 static void test_untrusted_approver(Ctx *ctx) {
   if (!ctx->attested) {
@@ -1986,6 +2025,75 @@ static void test_store_key_denied_without_flag(Ctx *ctx) {
   g_clear_error(&err);
 }
 
+/* CreateProfile must be denied without NOSTR_SIGNER_ALLOW_KEY_MUTATIONS. */
+static void test_create_profile_denied_without_flag(Ctx *ctx) {
+  GError *err = NULL;
+  GVariant *ret = call(ctx->bus, "CreateProfile",
+                       g_variant_new("(ssssb)", "test", "", "", "", FALSE),
+                       "(bs)", &err);
+  CHECK(ret == NULL && err != NULL);
+  expect_remote_error(err, ERR_PERM);
+  g_clear_error(&err);
+}
+
+/* CreateProfile + ListIdentities round-trip. Returns TRUE if successful,
+ * FALSE if the backend is unavailable (macOS login keychain or no libsecret). */
+static gboolean try_create_profile_and_list(Ctx *ctx) {
+#ifdef __APPLE__
+  (void)ctx;
+  g_printerr("SKIP: CreateProfile round-trip: macOS Keychain is the login keychain\n");
+  return FALSE;
+#endif
+  GError *err = NULL;
+  GVariant *ret = call(ctx->bus, "CreateProfile",
+                       g_variant_new("(ssssb)", "test-profile", "", "", "", FALSE),
+                       "(bs)", &err);
+  if (!ret) {
+    gchar *remote = err ? g_dbus_error_get_remote_error(err) : NULL;
+    g_printerr("SKIP: CreateProfile backend unavailable: %s\n",
+               remote ? remote : (err ? err->message : "?"));
+    g_free(remote); g_clear_error(&err);
+    return FALSE;
+  }
+  gboolean ok = FALSE; const char *npub = NULL;
+  g_variant_get(ret, "(bs)", &ok, &npub);
+  CHECK(ok);
+  CHECK(npub != NULL && g_str_has_prefix(npub, "npub1"));
+  char *created_npub = g_strdup(npub);
+  g_variant_unref(ret);
+
+  /* ListIdentities must include the just-created npub. */
+  ret = call(ctx->bus, "ListIdentities", NULL, "(as)", &err);
+  CHECK(ret != NULL);
+  GVariantIter *iter = NULL;
+  g_variant_get(ret, "(as)", &iter);
+  gboolean found = FALSE;
+  const char *entry = NULL;
+  while (g_variant_iter_next(iter, "&s", &entry)) {
+    if (g_strcmp0(entry, created_npub) == 0) { found = TRUE; break; }
+  }
+  g_variant_iter_free(iter);
+  g_variant_unref(ret);
+  CHECK(found);
+
+  /* Clean up: ClearKey the created identity. */
+  ret = call(ctx->bus, "ClearKey",
+             g_variant_new("(s)", created_npub),
+             "(b)", &err);
+  if (ret) {
+    gboolean cleared = FALSE;
+    g_variant_get(ret, "(b)", &cleared);
+    CHECK(cleared);
+    g_variant_unref(ret);
+  } else {
+    g_printerr("WARN: ClearKey after CreateProfile failed: %s\n",
+               err ? err->message : "?");
+    g_clear_error(&err);
+  }
+  g_free(created_npub);
+  return TRUE;
+}
+
 /* StoreKey → GetPublicKey → ClearKey when libsecret is functional. Returns
  * TRUE if the whole chain ran; FALSE if libsecret was unavailable so the
  * outer test could log-and-skip rather than fail. */
@@ -2412,6 +2520,7 @@ int main(void) {
     test_selector_not_key_material(&ctx);
     test_get_relays_paths(&ctx, /*expect_ok=*/FALSE);
     test_store_key_denied_without_flag(&ctx);
+    test_create_profile_denied_without_flag(&ctx);
     ctx_teardown(&ctx);
     g_print("PASS phase 1 (no mutations, no relays.conf)\n");
   }
@@ -2459,6 +2568,17 @@ int main(void) {
     free(swap_sk);
     g_print("PASS typed approval errors (timeout/no-agent/identity-changed typed after opt-in, "
             "unawaited opt-in ordered, ApprovalDenied for denial and for legacy callers)\n");
+  }
+
+  /* Expired approval: ApproveRequest after TTL returns Error.NotFound (nostrc-dsoz). */
+  {
+    Ctx ctx;
+    g_setenv("NOSTR_SIGNER_TEST_PENDING_TTL_S", "1", TRUE);
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    g_unsetenv("NOSTR_SIGNER_TEST_PENDING_TTL_S");
+    test_expired_approve_request(&ctx);
+    ctx_teardown(&ctx);
+    g_print("PASS expired ApproveRequest returns Error.NotFound (nostrc-dsoz)\n");
   }
 
   /* An approval agent is present but this process is not a trusted one. */
@@ -2511,6 +2631,10 @@ int main(void) {
     ctx_setup(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/TRUE);
     test_get_relays_paths(&ctx, /*expect_ok=*/TRUE);
     g_usleep(600 * 1000); /* phase 1's StoreKey probe used this sender's mutation slot */
+    gboolean created = try_create_profile_and_list(&ctx);
+    if (created)
+      g_print("PASS CreateProfile + ListIdentities round-trip (nostrc-jvbl)\n");
+    g_usleep(600 * 1000); /* wait for rate limiter after CreateProfile */
     gboolean stored = try_store_and_clear_key(&ctx);
     if (!stored) {
       g_print("PARTIAL phase 2: libsecret unavailable, "

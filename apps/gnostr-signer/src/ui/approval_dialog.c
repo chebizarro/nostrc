@@ -892,7 +892,7 @@ void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *
   gtk_widget_set_visible(GTK_WIDGET(self->identity_selector_box), FALSE);
 }
 
-void gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
+GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
                                          const char *kind, const char *app_display,
                                          const char *claimed_app_id, gboolean verified,
                                          const char *preview, AccountsStore *as,
@@ -904,6 +904,7 @@ void gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity
   gnostr_approval_dialog_set_request(dialog, kind, app_display, claimed_app_id, verified, preview);
   gnostr_approval_dialog_set_callback(dialog, cb, user_data);
   adw_dialog_present(ADW_DIALOG(dialog), parent);
+  return dialog;
 }
 
 /**

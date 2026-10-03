@@ -8,6 +8,7 @@
 #include "nostr/nip19/nip19.h"
 #include <keys.h>
 #include <nostr-utils.h>
+#include <secure_buf.h>
 #include "signer_dbus.h"
 #include "nostr/nip55l/error.h"
 #include "nip55l_dbus_names.h"
@@ -828,7 +829,12 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
 {
   if (!require_approver(invocation)) return TRUE;
   Pending *p = (pending && request_id) ? g_hash_table_lookup(pending, request_id) : NULL;
-  if (!p) { nostr_signer_complete_approve_request(object, invocation, FALSE); return TRUE; }
+  if (!p) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
+      "This request expired; ask the app to try again");
+    return TRUE;
+  }
   if (!pending_bus_sender_alive(p)) {
     g_hash_table_steal(pending, request_id);
     pending_fail(p, ORG_NOSTR_SIGNER_ERR_APPROVAL, "caller disconnected");
@@ -1190,6 +1196,109 @@ static void start_keyring_migration(void) {
   g_once_init_leave(&started, 1);
 }
 
+/* ---------------------------------------------------------------------------
+ * CreateProfile (nostrc-jvbl): generate a new random keypair, store it, return npub.
+ * Requires NOSTR_SIGNER_ALLOW_KEY_MUTATIONS.
+ * Signature: (ssssb) -> (bs)
+ *   in:  display_name, passphrase, recovery_hint, label, use_hardware_key
+ *   out: ok, npub
+ * passphrase, recovery_hint, label and use_hardware_key are reserved.
+ * ------------------------------------------------------------------------- */
+static gboolean handle_create_profile(NostrSigner *object, GDBusMethodInvocation *invocation,
+                                       const gchar *display_name, const gchar *passphrase,
+                                       const gchar *recovery_hint, const gchar *label,
+                                       gboolean use_hardware_key)
+{
+  (void)passphrase; (void)recovery_hint; (void)label; (void)use_hardware_key;
+  const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
+  if (!signer_mutations_allowed()) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION,
+      "Key mutations disabled (set NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 to enable)");
+    return TRUE;
+  }
+  if (!rate_limit_ok(sender)) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited");
+    return TRUE;
+  }
+
+  /* Generate a new random keypair */
+  char *sk_hex = nostr_key_generate_private();
+  if (!sk_hex) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      "failed to generate key");
+    return TRUE;
+  }
+
+  /* Store the key; use display_name as the identity selector if provided */
+  const char *sel = (display_name && *display_name) ? display_name : "";
+  int rc = nostr_nip55l_store_key(sk_hex, sel);
+  if (rc != 0) {
+    secure_wipe(sk_hex, strlen(sk_hex));
+    free(sk_hex);
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      "failed to store generated key");
+    return TRUE;
+  }
+
+  /* Derive npub for the response */
+  char *pk_hex = nostr_key_get_public(sk_hex);
+  secure_wipe(sk_hex, strlen(sk_hex));
+  free(sk_hex);
+  if (!pk_hex) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      "failed to derive public key");
+    return TRUE;
+  }
+
+  uint8_t pk[32];
+  if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) {
+    free(pk_hex);
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      "failed to encode public key");
+    return TRUE;
+  }
+  free(pk_hex);
+
+  char *npub = NULL;
+  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      "failed to encode npub");
+    return TRUE;
+  }
+
+  g_message("CreateProfile: ok=true npub=%s", npub);
+  nostr_signer_complete_create_profile(object, invocation, TRUE, npub);
+  free(npub);
+  return TRUE;
+}
+
+/* ---------------------------------------------------------------------------
+ * ListIdentities (nostrc-oh0s): return all stored identity npubs.
+ * No approval gating. Signature: () -> (as)
+ * ------------------------------------------------------------------------- */
+static gboolean handle_list_identities(NostrSigner *object, GDBusMethodInvocation *invocation)
+{
+  char **npubs = NULL;
+  int count = 0;
+  int rc = nostr_nip55l_list_identities(&npubs, &count);
+  if (rc != 0) {
+    const gchar *empty[] = { NULL };
+    nostr_signer_complete_list_identities(object, invocation, empty);
+    return TRUE;
+  }
+  /* Build a null-terminated string array for the D-Bus response */
+  const gchar **arr = g_new0(const gchar*, count + 1);
+  for (int i = 0; i < count; i++)
+    arr[i] = npubs[i];
+  arr[count] = NULL;
+  nostr_signer_complete_list_identities(object, invocation, arr);
+  for (int i = 0; i < count; i++)
+    free(npubs[i]);
+  free(npubs);
+  g_free(arr);
+  return TRUE;
+}
+
 static guint name_owner_sub = 0;
 
 guint signer_export(GDBusConnection *conn, const char *object_path) {
@@ -1224,6 +1333,8 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-get-relays-for-app",            G_CALLBACK(handle_get_relays_for_app) },
     { "handle-store-key",                     G_CALLBACK(handle_store_key) },
     { "handle-clear-key",                     G_CALLBACK(handle_clear_key) },
+    { "handle-create-profile",                G_CALLBACK(handle_create_profile) },
+    { "handle-list-identities",               G_CALLBACK(handle_list_identities) },
   };
   for (gsize i = 0; i < G_N_ELEMENTS(handlers); i++)
     g_signal_connect(signer_skel, handlers[i].signal, handlers[i].cb, NULL);

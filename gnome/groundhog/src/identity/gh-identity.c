@@ -3,6 +3,7 @@
 #include "nostr/nip19/nip19.h"
 
 #include <string.h>
+#include <gio/gio.h>
 
 void
 gh_identity_info_free(GhIdentityInfo *info)
@@ -35,6 +36,49 @@ compare_identity(gconstpointer a, gconstpointer b)
 GPtrArray *
 gh_identity_list(GError **error)
 {
+#ifdef __APPLE__
+  /* On macOS, ask the signer daemon for identities via D-Bus rather than
+   * reading the signer's keyring directly (the daemon owns the Keychain
+   * items, and Groundhog may not have access). */
+  GError *bus_err = NULL;
+  GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &bus_err);
+  GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  if (!bus) {
+    g_debug("gh_identity_list: no session bus: %s", bus_err ? bus_err->message : "?");
+    g_clear_error(&bus_err);
+    if (error) g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                                   "session bus unavailable");
+    return result;
+  }
+  GVariant *ret = g_dbus_connection_call_sync(bus,
+    "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
+    "ListIdentities", NULL, G_VARIANT_TYPE("(as)"),
+    G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &bus_err);
+  g_object_unref(bus);
+  if (!ret) {
+    g_debug("gh_identity_list: ListIdentities failed: %s", bus_err ? bus_err->message : "?");
+    g_clear_error(&bus_err);
+    return result;
+  }
+  GVariantIter *iter = NULL;
+  g_variant_get(ret, "(as)", &iter);
+  const gchar *npub_val = NULL;
+  g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
+  while (g_variant_iter_next(iter, "&s", &npub_val)) {
+    if (!npub_val || !*npub_val || g_hash_table_contains(seen, npub_val)) continue;
+    g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub_val);
+    if (!pubkey) continue;
+    GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+    info->npub = g_strdup(npub_val);
+    info->label = NULL; /* ListIdentities returns npubs only */
+    g_hash_table_add(seen, info->npub);
+    g_ptr_array_add(result, info);
+  }
+  g_variant_iter_free(iter);
+  g_variant_unref(ret);
+  g_ptr_array_sort(result, compare_identity);
+  return result;
+#else
   g_autoptr(GHashTable) attrs = gnostr_secret_store_find_all(error);
   if (error && *error) return NULL;
   GPtrArray *result = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
@@ -55,6 +99,7 @@ gh_identity_list(GError **error)
   }
   g_ptr_array_sort(result, compare_identity);
   return result;
+#endif
 }
 
 static gboolean

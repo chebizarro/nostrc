@@ -670,9 +670,16 @@ endif()
 pkg_check_modules(GROUNDHOG_STORE_KEY_DEPS QUIET IMPORTED_TARGET
   glib-2.0>=2.66 gio-2.0 libsecret-1 libsodium)
 if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
-  add_library(groundhog-store-key STATIC src/store/gh-store-key.c)
+  set(STORE_KEY_SOURCES src/store/gh-store-key.c)
+  if(APPLE)
+    list(APPEND STORE_KEY_SOURCES src/store/gh-store-key-keychain.c)
+  endif()
+  add_library(groundhog-store-key STATIC ${STORE_KEY_SOURCES})
   target_include_directories(groundhog-store-key PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-store-key PUBLIC PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
+  if(APPLE)
+    target_link_libraries(groundhog-store-key PUBLIC "-framework Security" "-framework CoreFoundation")
+  endif()
   target_compile_options(groundhog-store-key PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     # KC-1..KC-5 against the in-process FakeSecret backend, plus the libsecret
@@ -710,6 +717,18 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
     add_test(NAME groundhog-store-key-keyring COMMAND test-groundhog-store-key-keyring)
     set_tests_properties(groundhog-store-key-keyring PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 90
       ENVIRONMENT "G_DEBUG=fatal-criticals")
+
+    # KC-MAC: GhStoreKeyKeychain on a temporary keychain (macOS only).
+    # CRITICAL: never touches the user's login keychain.
+    if(APPLE)
+      add_executable(test-groundhog-store-key-keychain
+        tests/store/test_store_key_keychain.c)
+      target_link_libraries(test-groundhog-store-key-keychain PRIVATE groundhog-store-key)
+      target_compile_options(test-groundhog-store-key-keychain PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-store-key-keychain COMMAND test-groundhog-store-key-keychain)
+      set_tests_properties(groundhog-store-key-keychain PROPERTIES TIMEOUT 30
+        ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+    endif()
   endif()
 else()
   message(STATUS "Groundhog store key unavailable: libsecret-1 and libsodium are required")

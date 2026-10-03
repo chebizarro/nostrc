@@ -257,6 +257,28 @@
       <arg type="s" name="request_id" />
       <arg type="b" name="decision" />
     </signal>
+    <!-- CreateProfile (nip55l 0.6.0, additive, approval UI only): generates a
+         new random Nostr keypair, stores the secret key in the backend
+         (libsecret or Keychain), and returns the npub. Requires
+         NOSTR_SIGNER_ALLOW_KEY_MUTATIONS; without it, Error.PermissionDenied.
+         display_name is stored as the key's label; passphrase, recovery_hint
+         and label are reserved for future use (pass "" for each).
+         use_hardware_key is reserved (pass FALSE). -->
+    <method name="CreateProfile">
+      <arg type="s" direction="in" name="display_name" />
+      <arg type="s" direction="in" name="passphrase" />
+      <arg type="s" direction="in" name="recovery_hint" />
+      <arg type="s" direction="in" name="label" />
+      <arg type="b" direction="in" name="use_hardware_key" />
+      <arg type="b" direction="out" name="ok" />
+      <arg type="s" direction="out" name="npub" />
+    </method>
+    <!-- ListIdentities (nip55l 0.6.0, additive): returns all stored identity
+         npubs as a string array. On macOS these come from Keychain; on Linux
+         from libsecret. No approval gating. -->
+    <method name="ListIdentities">
+      <arg type="as" direction="out" name="npubs" />
+    </method>
   </interface>
 </node>
 

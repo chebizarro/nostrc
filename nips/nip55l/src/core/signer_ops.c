@@ -1066,6 +1066,100 @@ int nostr_nip55l_clear_key(const char *identity){
 #endif
 }
 
+/* ---------------------------------------------------------------------------
+ * List all stored identity npubs.
+ * Returns 0 on success. Caller frees each string and the array with free().
+ * ------------------------------------------------------------------------- */
+int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
+  if (!out_npubs || !out_count) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npubs = NULL;
+  *out_count = 0;
+
+#ifdef NIP55L_HAVE_LIBSECRET
+  GError *gerr = NULL;
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &gerr);
+  if (!service) { if (gerr) g_error_free(gerr); return NOSTR_SIGNER_ERROR_BACKEND; }
+
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  GList *items = secret_service_search_sync(service, &gnostr_secret_identity_schema, attrs,
+                                            SECRET_SEARCH_ALL, NULL, &gerr);
+  g_hash_table_unref(attrs);
+  if (gerr) { g_error_free(gerr); g_object_unref(service); return NOSTR_SIGNER_ERROR_BACKEND; }
+
+  int n = g_list_length(items);
+  char **npubs = calloc(n + 1, sizeof(char*));
+  if (!npubs) { g_list_free_full(items, g_object_unref); g_object_unref(service); return NOSTR_SIGNER_ERROR_BACKEND; }
+
+  int idx = 0;
+  for (GList *it = items; it; it = it->next) {
+    SecretItem *item = SECRET_ITEM(it->data);
+    GHashTable *ia = secret_item_get_attributes(item);
+    const char *np = g_hash_table_lookup(ia, "npub");
+    if (np && *np) npubs[idx++] = strdup(np);
+    g_hash_table_unref(ia);
+  }
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  *out_npubs = npubs;
+  *out_count = idx;
+  return 0;
+
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
+  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  if (service) CFDictionarySetValue(q, kSecAttrService, service);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
+  CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
+  CFTypeRef result = NULL;
+  OSStatus st = SecItemCopyMatching(q, &result);
+  if (service) CFRelease(service);
+  CFRelease(q);
+  if (st != errSecSuccess || !result) {
+    if (result) CFRelease(result);
+    /* No items is not an error */
+    *out_npubs = calloc(1, sizeof(char*));
+    *out_count = 0;
+    return 0;
+  }
+  CFArrayRef items = (CFArrayRef)result;
+  CFIndex count = CFArrayGetCount(items);
+  char **npubs = calloc((size_t)count + 1, sizeof(char*));
+  if (!npubs) { CFRelease(result); return NOSTR_SIGNER_ERROR_BACKEND; }
+  int idx = 0;
+  for (CFIndex i = 0; i < count; i++) {
+    CFDictionaryRef item = CFArrayGetValueAtIndex(items, i);
+    /* The comment field stores the npub; account field stores key_id/npub */
+    CFStringRef comment = CFDictionaryGetValue(item, kSecAttrComment);
+    CFStringRef account = CFDictionaryGetValue(item, kSecAttrAccount);
+    CFStringRef src = comment ? comment : account;
+    if (!src) continue;
+    CFIndex len = CFStringGetLength(src);
+    CFIndex maxSize = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
+    char *buf = malloc((size_t)maxSize);
+    if (buf && CFStringGetCString(src, buf, maxSize, kCFStringEncodingUTF8)) {
+      /* Only include bech32 npub strings */
+      if (strncmp(buf, "npub1", 5) == 0) {
+        npubs[idx++] = buf;
+      } else {
+        free(buf);
+      }
+    } else {
+      free(buf);
+    }
+  }
+  CFRelease(result);
+  *out_npubs = npubs;
+  *out_count = idx;
+  return 0;
+
+#else
+  return NOSTR_SIGNER_ERROR_NOT_FOUND;
+#endif
+}
+
 #ifdef NIP55L_HAVE_LIBSECRET
 static SecretItem *find_identity_item(const char *selector){
   if (!selector || !*selector) return NULL;

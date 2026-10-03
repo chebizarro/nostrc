@@ -134,10 +134,13 @@ typedef struct {
   gboolean decision;
   gboolean remember;
   guint64 ttl_seconds;
+  GnostrApprovalDialog *dialog;  /* approval dialog (if shown) */
+  guint expiry_timer_id;         /* closes stale dialog after TTL */
 } ApproveCtx;
 
 static void approve_ctx_free(ApproveCtx *c) {
   if (!c) return;
+  if (c->expiry_timer_id) { g_source_remove(c->expiry_timer_id); c->expiry_timer_id = 0; }
   g_free(c->request_id); g_free(c->app_id); g_free(c->identity);
   g_free(c->kind); g_free(c->preview);
   g_free(c);
@@ -188,9 +191,13 @@ static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_
   (void)source;
   GError *err=NULL; GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
   gboolean ok = TRUE;
+  gboolean expired = FALSE;
   if (err) {
     g_warning("ApproveRequest failed: %s", err->message);
     ok = FALSE;
+    g_autofree gchar *remote = g_dbus_error_get_remote_error(err);
+    if (g_strcmp0(remote, "org.nostr.Signer.Error.NotFound") == 0)
+      expired = TRUE;
     g_clear_error(&err);
   }
   if (ret) {
@@ -198,10 +205,22 @@ static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_
     g_variant_unref(ret);
   }
   ApproveCtx *ctx = (ApproveCtx*)user_data;
-  g_message("approve_call_done: request_id=%s ok=%s", ctx && ctx->request_id?ctx->request_id:"(null)", ok?"true":"false");
+  g_message("approve_call_done: request_id=%s ok=%s expired=%s",
+            ctx && ctx->request_id?ctx->request_id:"(null)",
+            ok?"true":"false", expired?"true":"false");
   /* Done with this request_id: allow future prompts for same id */
   if (ctx && ctx->ui && ctx->ui->pending && ctx->request_id) {
     g_hash_table_remove(ctx->ui->pending, ctx->request_id);
+  }
+  /* Expired request: the daemon no longer has this pending request.
+   * Show a clear message instead of the confusing import dialog. */
+  if (expired && ctx && ctx->ui && ctx->ui->win) {
+    GtkAlertDialog *dlg = gtk_alert_dialog_new(
+      "%s", "This request expired; ask the app to try again.");
+    gtk_alert_dialog_show(dlg, ctx->ui->win);
+    g_object_unref(dlg);
+    approve_ctx_free(ctx);
+    return;
   }
   /* The import-and-retry path is for a signature the signer could not make
    * (no key); other kinds fail for reasons an import does not fix. */
@@ -280,12 +299,56 @@ static void on_user_decision_with_identity(gboolean decision, gboolean remember,
   on_user_decision(decision, remember, ctx);
 }
 
+/* Timer: close stale approval dialog after the daemon's TTL + grace period.
+ * The daemon's PENDING_TTL_S is 300 s; we add 5 s for signal propagation. */
+#define APPROVAL_EXPIRY_GRACE_S 305
+
+static gboolean on_request_expired_timer(gpointer user_data) {
+  ApproveCtx *ctx = (ApproveCtx *)user_data;
+  ctx->expiry_timer_id = 0;  /* source is removed after returning G_SOURCE_REMOVE */
+  g_message("approval dialog expiry timer: request_id=%s",
+            ctx->request_id ? ctx->request_id : "(null)");
+  if (ctx->dialog) {
+    gnostr_approval_dialog_set_callback(ctx->dialog, NULL, NULL);
+    adw_dialog_force_close(ADW_DIALOG(ctx->dialog));
+    ctx->dialog = NULL;
+  }
+  if (ctx->ui && ctx->ui->pending && ctx->request_id)
+    g_hash_table_remove(ctx->ui->pending, ctx->request_id);
+  if (ctx->ui && ctx->ui->win) {
+    GtkAlertDialog *dlg = gtk_alert_dialog_new(
+      "%s", "This request expired; ask the app to try again.");
+    gtk_alert_dialog_show(dlg, ctx->ui->win);
+    g_object_unref(dlg);
+  }
+  approve_ctx_free(ctx);
+  return G_SOURCE_REMOVE;
+}
+
 static void show_request_dialog(ApproveCtx *ctx, const gchar *claimed, gboolean verified) {
+  /* If the request was already resolved (expired or answered elsewhere),
+   * do not show a dialog that would immediately become stale. */
+  if (ctx->ui && ctx->ui->pending && ctx->request_id &&
+      !g_hash_table_contains(ctx->ui->pending, ctx->request_id)) {
+    g_message("show_request_dialog: request_id=%s already resolved, skipping",
+              ctx->request_id);
+    if (ctx->ui->win) {
+      GtkAlertDialog *dlg = gtk_alert_dialog_new(
+        "%s", "This request expired; ask the app to try again.");
+      gtk_alert_dialog_show(dlg, ctx->ui->win);
+      g_object_unref(dlg);
+    }
+    approve_ctx_free(ctx);
+    return;
+  }
   g_autofree gchar *display = signer_principal_display_name(ctx->app_id);
-  gnostr_show_approval_request_dialog(ctx->ui->win ? GTK_WIDGET(ctx->ui->win) : NULL,
-                                      ctx->identity, ctx->kind, display, claimed, verified,
-                                      ctx->preview, ctx->ui->accounts,
-                                      on_user_decision_with_identity, ctx);
+  ctx->dialog = gnostr_show_approval_request_dialog(
+      ctx->ui->win ? GTK_WIDGET(ctx->ui->win) : NULL,
+      ctx->identity, ctx->kind, display, claimed, verified,
+      ctx->preview, ctx->ui->accounts,
+      on_user_decision_with_identity, ctx);
+  ctx->expiry_timer_id = g_timeout_add_seconds(APPROVAL_EXPIRY_GRACE_S,
+                                               on_request_expired_timer, ctx);
 }
 
 static void on_approval_info(GObject *source, GAsyncResult *res, gpointer user_data) {

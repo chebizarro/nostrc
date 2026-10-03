@@ -211,7 +211,7 @@ void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *
                                         const char *app_display, const char *claimed_app_id,
                                         gboolean verified, const char *preview);
 
-void gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
+GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
                                          const char *kind, const char *app_display,
                                          const char *claimed_app_id, gboolean verified,
                                          const char *preview, AccountsStore *as,

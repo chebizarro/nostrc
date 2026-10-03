@@ -1,4 +1,7 @@
 #include "gh-store-key.h"
+#ifdef __APPLE__
+#include "gh-store-key-keychain.h"
+#endif
 
 #include <libsecret/secret.h>
 #include <sodium.h>
@@ -716,8 +719,13 @@ gh_store_key_new(GhStoreKeyBackend *backend)
 {
   g_return_val_if_fail(backend == NULL || GH_IS_STORE_KEY_BACKEND(backend), NULL);
   GhStoreKey *self = g_object_new(GH_TYPE_STORE_KEY, NULL);
+#ifdef __APPLE__
+  self->backend = backend ? g_object_ref(backend)
+                          : g_object_new(GH_TYPE_STORE_KEY_KEYCHAIN, NULL);
+#else
   self->backend = backend ? g_object_ref(backend)
                           : g_object_new(GH_TYPE_STORE_KEY_SECRET_SERVICE, NULL);
+#endif
   return self;
 }
 
