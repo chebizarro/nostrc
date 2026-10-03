@@ -1,3 +1,4 @@
+#include "gh-about-dialog.h"
 #include "gh-app-services.h"
 
 #if GROUNDHOG_HAVE_ACCOUNTS
@@ -158,6 +159,7 @@ struct _GhAppServices {
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS
   GSimpleAction *preferences_action;
+  GSimpleAction *about_action;
   GSimpleAction *network_settings_action;
   GhPreferencesDialog *preferences_dialog; /* weak: the one that is open */
 #endif
@@ -1534,6 +1536,35 @@ preferences_teardown(GhAppServices *self)
 }
 #endif
 
+/* app.about (the primary menu): the About dialog, over the active window.
+ * It reads only build-time constants and contacts no network. */
+static void
+on_about(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  GhAppServices *self = data;
+  (void)action;
+  (void)parameter;
+  GtkWindow *window = gtk_application_get_active_window(self->app);
+  gh_about_dialog_present(window ? GTK_WIDGET(window) : NULL);
+}
+
+static gboolean
+about_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->about_action = g_simple_action_new("about", NULL);
+  g_signal_connect(self->about_action, "activate", G_CALLBACK(on_about), self);
+  g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(self->about_action));
+  return TRUE;
+}
+
+static void
+about_teardown(GhAppServices *self)
+{
+  g_action_map_remove_action(G_ACTION_MAP(self->app), "about");
+  g_clear_object(&self->about_action);
+}
+
 #if GROUNDHOG_HAVE_NEW_MESSAGE
 /* NIP-05 lookups for New Message (charter §7.9, G18): one HTTPS GET per
  * lookup the user chose, in the configured network mode. Nothing is
@@ -1765,6 +1796,7 @@ static const GhAppService services[] = {
 #if GROUNDHOG_HAVE_ATTACHMENTS
   { "attachments", attachments_init, attachments_teardown },
 #endif
+  { "about", about_init, about_teardown },
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "preferences", preferences_init, preferences_teardown },
 #endif

@@ -95,7 +95,8 @@ add_custom_command(
           ${GROUNDHOG_DATA}/groundhog.gresource.xml
   DEPENDS ${GROUNDHOG_DATA}/groundhog.gresource.xml
           ${GROUNDHOG_DATA}/style.css
-          ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
+          ${GROUNDHOG_DATA}/icons/512x512/apps/org.nostr.Groundhog.png
+          ${GROUNDHOG_DATA}/icons/256x256/apps/org.nostr.Groundhog.png
           ${GROUNDHOG_DATA}/relay-suggestions.json
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
@@ -601,8 +602,10 @@ install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
-install(FILES ${GROUNDHOG_DATA}/icons/org.nostr.Groundhog.svg
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+install(FILES ${GROUNDHOG_DATA}/icons/512x512/apps/org.nostr.Groundhog.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps)
+install(FILES ${GROUNDHOG_DATA}/icons/256x256/apps/org.nostr.Groundhog.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
 
 if (BUILD_TESTING)
   add_test(NAME groundhog-version COMMAND groundhog --version)
@@ -1129,6 +1132,28 @@ target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_D
 target_link_libraries(groundhog-preferences PUBLIC groundhog-ui)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
+
+# The About dialog (app.about): the app icon from the resource bundle, the
+# version, the licence and the project links; no network, no settings.
+add_library(groundhog-about STATIC src/ui/gh-about-dialog.c)
+target_include_directories(groundhog-about PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+target_link_libraries(groundhog-about PUBLIC PkgConfig::GROUNDHOG_DEPS)
+target_compile_definitions(groundhog-about PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
+target_compile_options(groundhog-about PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(groundhog PRIVATE groundhog-about)
+if (BUILD_TESTING)
+  # Default mode (no display): the bundled app icon exists at the hicolor
+  # resource layout and decodes; --gui: the dialog shows the icon, version,
+  # licence and links, and self-skips (77) without a display.
+  add_executable(test-groundhog-about tests/ui/test_about.c ${GROUNDHOG_RESOURCE_C})
+  target_link_libraries(test-groundhog-about PRIVATE groundhog-about)
+  target_compile_definitions(test-groundhog-about PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
+  target_compile_options(test-groundhog-about PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-about COMMAND test-groundhog-about)
+  add_test(NAME groundhog-about-gui COMMAND test-groundhog-about --gui)
+  set_tests_properties(groundhog-about groundhog-about-gui PROPERTIES TIMEOUT 60
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings" SKIP_RETURN_CODE 77)
+endif()
 if (BUILD_TESTING)
   # Every row bound to its key both ways (memory GSettings backend), the rows
   # of this build gated as src/app/gh-features.h says, the Tor row hidden

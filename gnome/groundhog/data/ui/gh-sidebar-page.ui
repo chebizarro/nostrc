@@ -294,6 +294,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <attribute name="label" translatable="yes">_Keyboard Shortcuts</attribute>
         <attribute name="action">win.show-help-overlay</attribute>
       </item>
+      <item>
+        <attribute name="label" translatable="yes">_About Groundhog</attribute>
+        <attribute name="action">app.about</attribute>
+      </item>
     </section>
     <section>
       <item>

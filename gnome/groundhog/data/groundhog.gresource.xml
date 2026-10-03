@@ -2,7 +2,9 @@
 <gresources>
   <gresource prefix="/org/nostr/Groundhog">
     <file>style.css</file>
-    <file>icons/org.nostr.Groundhog.svg</file>
+    <!-- The app icon (About, the window icon): the hicolor layout under icons/. -->
+    <file>icons/512x512/apps/org.nostr.Groundhog.png</file>
+    <file>icons/256x256/apps/org.nostr.Groundhog.png</file>
     <!-- Bundled symbolic icons (the icon theme's resource path). -->
     <file>icons/scalable/actions/send-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic-rtl.svg</file>

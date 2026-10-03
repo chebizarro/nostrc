@@ -149,8 +149,14 @@ UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggesti
               "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
-# Empty: nothing in Groundhog needs an exception today.
 EXCEPTIONS = {
+    # The About dialog's project links: build-time constants shown as text in
+    # AdwAboutDialog, opened in the browser only when the user activates one
+    # (a user action, P1); Groundhog itself never fetches them.
+    ("url-literal", "src/ui/gh-about-dialog.c", "https://github.com/chebizarro/nostrc"):
+        "the About dialog's website link, opened only when the user clicks it",
+    ("url-literal", "src/ui/gh-about-dialog.c", "https://github.com/chebizarro/nostrc/issues"):
+        "the About dialog's issue-tracker link, opened only when the user clicks it",
     # nostrc-u7cb review L6: the runtime directory is only located to find the
     # GVfs FUSE mount ($XDG_RUNTIME_DIR/gvfs) and refuse to read files under
     # it (gvfsd would fetch them outside GhNetHttp and Tor); nothing is ever

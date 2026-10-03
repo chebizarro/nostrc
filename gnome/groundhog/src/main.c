@@ -1,3 +1,4 @@
+#include "ui/gh-about-dialog.h"
 #include <adwaita.h>
 #include <glib-unix.h>
 #include <signal.h>
@@ -132,6 +133,8 @@ activate(GApplication *app, gpointer user_data)
     gtk_style_context_add_provider_for_display(gdk_display_get_default(),
                                                GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    gh_about_dialog_register_icons();
+    gtk_window_set_default_icon_name(GROUNDHOG_APP_ID);
     window = GTK_WINDOW(create_window(ADW_APPLICATION(app)));
   }
   gtk_window_present(window);

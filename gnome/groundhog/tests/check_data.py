@@ -50,8 +50,12 @@ assert keys["discovery-relays"].findtext("default") == "[]"
 resources = ET.parse(data / "groundhog.gresource.xml").getroot()
 files = {node.text for node in resources.iter("file")}
 assert "style.css" in files
-assert f"icons/{app_id}.svg" in files
-assert ET.parse(data / "icons" / f"{app_id}.svg").getroot().tag.endswith("svg")
+# The app icon: the hicolor layout the icon theme reads from the resource path
+# (About, the window icon), at the two sizes GNOME uses for app icons.
+for size in ("512x512", "256x256"):
+    assert f"icons/{size}/apps/{app_id}.png" in files
+    assert (data / "icons" / size / "apps" / f"{app_id}.png").stat().st_size > 0
+assert f"icons/{app_id}.svg" not in files
 # All UI is Blueprint: every .blp has its committed compiled .ui fallback, no
 # .ui lacks a .blp source, and each is bundled.
 blueprints = {path.stem for path in (data / "ui").glob("*.blp")}
