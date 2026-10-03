@@ -477,8 +477,8 @@ mod negatives {
     use std::collections::BTreeSet;
 
     const CS: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
-    /// libmarmot's adopted leaf advertisement (MLS_ADOPTED_SUPPORTED_COMPONENTS + 0x0001).
-    const LEAF_COMPONENTS: [u16; 6] = [0x0001, 0x8001, 0x8003, 0x8004, 0x8009, 0x800c];
+    /// libmarmot's adopted leaf advertisement (MLS_ADOPTED_SUPPORTED_COMPONENTS + 0x0001); 0x8002/0x8007 added nostrc-l2ln.
+    const LEAF_COMPONENTS: [u16; 10] = [0x0001, 0x8001, 0x8002, 0x8003, 0x8004, 0x8006, 0x8007, 0x8009, 0x800b, 0x800c];
     const REQUIRED_COMPONENTS: [u16; 5] = [0x8001, 0x8003, 0x8004, 0x8009, 0x800c];
 
     #[derive(Clone, Copy, Debug)]

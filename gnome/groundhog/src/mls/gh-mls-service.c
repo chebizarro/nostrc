@@ -4783,6 +4783,31 @@ create_group_now(GTask *task)
     : marmot_create_group(self->marmot, self->account_key, NULL, 0, &config, &created);
   if (err == MARMOT_OK)
     err = marmot_merge_pending_commit(self->marmot, &created.group->mls_group_id);
+  /* nostrc-46k7: bake the creator's Blossom servers into the new adopted
+   * group as its 0x800b media policy, so members know where to fetch and
+   * upload the group picture and attachments.  The user consented to these
+   * servers (Preferences → Attachments); we never inject a built-in default
+   * (privacy charter D6).  The commit is merged locally before anyone sees
+   * the group -- the Add (below) is the first published event. */
+  if (err == MARMOT_OK && op->adopted && self->settings) {
+    g_auto(GStrv) servers = g_settings_get_strv(self->settings, "blossom-servers");
+    guint n_servers = servers ? g_strv_length(servers) : 0;
+    if (n_servers > 0) {
+      g_autofree MarmotMediaBlobEndpoint *eps = g_new0(MarmotMediaBlobEndpoint, n_servers);
+      for (guint i = 0; i < n_servers; i++) {
+        eps[i].locator_kind = (char *)MARMOT_MEDIA_LOCATOR_BLOSSOM_V1;
+        eps[i].base_url = servers[i];
+      }
+      char *kinds[] = { (char *)MARMOT_MEDIA_LOCATOR_BLOSSOM_V1, NULL };
+      MarmotGroupMediaPolicy policy = { kinds, 1, eps, n_servers };
+      g_autofree char *policy_json = NULL;
+      err = marmot_update_group_media_policy(self->marmot,
+                                             &created.group->mls_group_id,
+                                             &policy, &policy_json);
+      if (err == MARMOT_OK)
+        err = marmot_merge_pending_commit(self->marmot, &created.group->mls_group_id);
+    }
+  }
   g_autofree gchar *gid_hex = err == MARMOT_OK
     ? to_hex(created.group->mls_group_id.data, created.group->mls_group_id.len) : NULL;
   if (err != MARMOT_OK ||
@@ -5117,7 +5142,6 @@ gh_mls_service_set_image_async(GhMlsService *self, GhMlsGroup *group,
   stage_change(task, group, produce_image, op);
 }
 
-#ifdef GH_MLS_TEST_HOOKS
 static MarmotError
 produce_media_policy(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **out)
 {
@@ -5134,7 +5158,7 @@ produce_media_policy(Marmot *marmot, const MarmotGroupId *gid, gpointer data, ch
 }
 
 void
-gh_mls_service_test_set_media_policy_async(GhMlsService *self, GhMlsGroup *group,
+gh_mls_service_set_media_policy_async(GhMlsService *self, GhMlsGroup *group,
                                            const gchar *const *endpoints,
                                            GCancellable *cancellable,
                                            GAsyncReadyCallback callback, gpointer user_data)
@@ -5152,7 +5176,6 @@ gh_mls_service_test_set_media_policy_async(GhMlsService *self, GhMlsGroup *group
   op->relays = g_strdupv((gchar **)endpoints);
   stage_change(task, group, produce_media_policy, op);
 }
-#endif
 
 void
 gh_mls_service_clear_avatar_url_async(GhMlsService *self, GhMlsGroup *group,

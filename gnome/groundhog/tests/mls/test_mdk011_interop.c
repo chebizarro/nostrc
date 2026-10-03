@@ -937,7 +937,7 @@ test_groundhog_invites_mdk(void)
 
   /* New Group's check row: ready, newer-format groups only. */
   CheckWait check = { 0 };
-  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, NULL, on_checked,
                              &check);
   spin_until(check_done, &check, "the KeyPackage check");
   g_test_message("New Group check row for a White Noise user: state %d, \"%s\"", check.state,
@@ -1297,8 +1297,9 @@ white_noise_group(World *w_, gchar **out_group)
   g_assert_cmpstr(json_object_get_string_member(view, "profile"), ==, "Current");
   static const gchar *const want_ext[] = { "0x0006", "0xf2d1" };
   static const gchar *const want_prop[] = { "0x0008", "0x000a" };
-  static const gchar *const want_comp[] = { "0x8001", "0x8003", "0x8004", "0x8006",
-                                            "0x8009", "0x800b", "0x800c" };
+  static const gchar *const want_comp[] = { "0x8001", "0x8002", "0x8003", "0x8004",
+                                            "0x8006", "0x8007", "0x8009", "0x800b",
+                                            "0x800c" };
   assert_has_all(json_object_get_array_member(view, "mls_extensions"), want_ext,
                  G_N_ELEMENTS(want_ext));
   assert_has_all(json_object_get_array_member(view, "mls_proposals"), want_prop,
@@ -2084,7 +2085,7 @@ test_mdk09_probe(void)
   g_test_message("libmarmot account-proof check of an MDK 0.9.0 KeyPackage: %s, proven %d",
                  marmot_error_string(proof), proven);
   CheckWait check = { 0 };
-  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, NULL, on_checked,
                              &check);
   spin_until(check_done, &check, "the KeyPackage check");
   g_test_message("New Group check row for an MDK 0.9.0 user: state %d, \"%s\"", check.state,

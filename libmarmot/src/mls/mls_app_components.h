@@ -69,9 +69,10 @@
  * same list is what libmarmot's adopted leaves advertise.  Since 0.12.0
  * (nostrc-qp24.5.2) it covers what every White Noise group requires:
  * the agent text stream (0x8006, receive role only) and encrypted media v2
- * (0x800b).
+ * (0x800b).  0x8002 (Blossom image) and 0x8007 (avatar URL) are also
+ * advertised (nostrc-l2ln).
  */
-#define MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT 7
+#define MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT 9
 extern const uint16_t MLS_ADOPTED_SUPPORTED_COMPONENTS[MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT];
 
 /*

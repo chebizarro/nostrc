@@ -67,7 +67,9 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
 
 void
 gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
-                           const gchar *pubkey, guint deadline, GCancellable *cancellable,
+                           const gchar *pubkey, guint deadline,
+                           const gchar *const *group_relays,
+                           GCancellable *cancellable,
                            GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
@@ -78,7 +80,10 @@ gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
    * the lookup skips any URL it can't use. */
   g_auto(GStrv) sources = settings ? g_settings_get_strv(settings, "discovery-relays")
                                    : g_new0(gchar *, 1);
-  gh_mls_key_package_lookup_async(accounts, (const gchar *const *)sources, NULL, pubkey,
+  /* @group_relays (nostrc-c0yo): skip the new group's relays, exactly as
+   * look_up_invitees() does at Create.  Without this an invitee whose only
+   * write relay is also a group relay shows Ready but Create fails. */
+  gh_mls_key_package_lookup_async(accounts, (const gchar *const *)sources, group_relays, pubkey,
                                   deadline, cancellable, lookup_done, task);
 }
 

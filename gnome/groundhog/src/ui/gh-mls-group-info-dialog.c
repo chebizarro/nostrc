@@ -535,6 +535,10 @@ action_add_members(GtkWidget *widget, const gchar *action, GVariant *parameter)
   g_auto(GStrv) members = gh_mls_group_dup_members(self->group);
   gh_mls_invitee_picker_setup(self->add_picker, &self->context,
                               (const gchar *const *)members);
+  /* Skip the group's relays when checking invitees (nostrc-c0yo). */
+  g_auto(GStrv) group_relays = gh_mls_group_dup_read_relays(self->group);
+  gh_mls_invitee_picker_set_group_relays(self->add_picker,
+                                         (const gchar *const *)group_relays);
   sync_add_reason(self);
   adw_navigation_view_push_by_tag(self->navigation, "add");
 }

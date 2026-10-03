@@ -699,7 +699,7 @@ test_adopted_picture(void)
   /* An admin names the group's media server (the loopback fixture). */
   const gchar *endpoints[] = { blossom_fixture_url(blossom), NULL };
   OpWait policy = { 0 };
-  gh_mls_service_test_set_media_policy_async(alice->service, ga, endpoints, NULL, on_changed,
+  gh_mls_service_set_media_policy_async(alice->service, ga, endpoints, NULL, on_changed,
                                              &policy);
   spin_until(op_done, &policy, "the media policy Commit");
   g_assert_no_error(policy.error);
@@ -731,7 +731,7 @@ test_adopted_picture(void)
    * uploaded and the confirmation must be shown again, naming both. */
   const gchar *two[] = { blossom_fixture_url(blossom), "https://blossom.example.com", NULL };
   OpWait changed = { 0 };
-  gh_mls_service_test_set_media_policy_async(alice->service, ga, two, NULL, on_changed,
+  gh_mls_service_set_media_policy_async(alice->service, ga, two, NULL, on_changed,
                                              &changed);
   spin_until(op_done, &changed, "the second media policy Commit");
   g_assert_no_error(changed.error);

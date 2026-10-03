@@ -176,15 +176,23 @@ on_checked(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static GhMlsInviteeState
-check_with(App *app, GSettings *settings, guint key, GCancellable *cancellable, GError **error)
+check_with_relays(App *app, GSettings *settings, guint key,
+                  const gchar *const *group_relays,
+                  GCancellable *cancellable, GError **error)
 {
   CheckWait wait = { 0 };
-  gh_mls_invitee_check_async(app->accounts, settings, hex[key], 20, cancellable, on_checked,
-                             &wait);
+  gh_mls_invitee_check_async(app->accounts, settings, hex[key], 20, group_relays, cancellable,
+                             on_checked, &wait);
   spin_until(check_done, &wait, "the KeyPackage check");
   if (wait.error)
     g_propagate_error(error, wait.error);
   return wait.state;
+}
+
+static GhMlsInviteeState
+check_with(App *app, GSettings *settings, guint key, GCancellable *cancellable, GError **error)
+{
+  return check_with_relays(app, settings, key, NULL, cancellable, error);
 }
 
 static GhMlsInviteeState
@@ -542,6 +550,34 @@ test_view_model(void)
   check_with(alice, alice->settings, BOB, cancelled, &error);
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
   g_clear_error(&error);
+
+  /* nostrc-c0yo: when the group relay IS the invitee's write relay, the
+   * lookup must exclude it (privacy: the group relay must not learn who is
+   * being added).  Without the fix, check() would still say READY because
+   * the lookup fetches the KeyPackage from the group relay. */
+  const gchar *shared_relays[] = { w.w.url, NULL };
+  g_assert_cmpint(
+      check_with_relays(alice, alice->settings, BOB, shared_relays, NULL, NULL),
+      ==, GH_MLS_INVITEE_NOT_SET_UP);
+
+  /* nostrc-46k7: an adopted group made by a user who has Blossom servers
+   * carries those servers as the 0x800b media policy, so admins can set a
+   * group picture and members know where to fetch attachments. */
+  const gchar *blossom[] = { "https://blossom.example.com/", NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", blossom);
+  GhMlsGroup *gm = create_group(alice, "Media", (const guint[]){ BOB }, 1);
+  MarmotGroupComponents mc;
+  memset(&mc, 0, sizeof mc);
+  g_assert_true(gh_mls_service_get_components(alice->service, gm, &mc, NULL));
+  g_assert_true(mc.has_media_policy);
+  g_assert_cmpuint(mc.media_policy.default_blob_endpoint_count, ==, 1);
+  g_assert_cmpstr(mc.media_policy.default_blob_endpoints[0].base_url, ==,
+                  "https://blossom.example.com/");
+  g_assert_cmpstr(mc.media_policy.default_blob_endpoints[0].locator_kind, ==,
+                  MARMOT_MEDIA_LOCATOR_BLOSSOM_V1);
+  marmot_group_components_clear(&mc);
+  g_settings_reset(alice->settings, "blossom-servers");
+  join(bob, ALICE);  /* accept the Media invite so it does not interfere */
 
   /* Roles: the creator is the Owner; a second admin is an Admin. */
   GhMlsGroup *ga = create_group(alice, "Roles", (const guint[]){ BOB }, 1);

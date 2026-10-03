@@ -252,6 +252,16 @@ set_status(GhMlsNewGroupPage *self, const gchar *icon, gboolean busy, const gcha
 
 static void on_relay_remove(GhMlsRelayRow *row, gpointer data);
 
+/* Tell the invitee picker which relays the new group will use, so its
+ * KeyPackage lookups honestly skip them (nostrc-c0yo). */
+static void
+sync_picker_relays(GhMlsNewGroupPage *self)
+{
+  g_auto(GStrv) relays = gh_mls_new_group_page_dup_relays(self);
+  gh_mls_invitee_picker_set_group_relays(self->picker,
+                                         (const gchar *const *)relays);
+}
+
 static gboolean
 has_relay(GhMlsNewGroupPage *self, const gchar *url)
 {
@@ -268,6 +278,7 @@ append_relay(GhMlsNewGroupPage *self, const gchar *url)
   g_signal_connect(row, "remove", G_CALLBACK(on_relay_remove), self);
   adw_preferences_group_add(self->relays_group, GTK_WIDGET(row));
   g_ptr_array_add(self->relay_rows, row);
+  sync_picker_relays(self);
 }
 
 static void
@@ -277,6 +288,7 @@ on_relay_remove(GhMlsRelayRow *row, gpointer data)
   if (!g_ptr_array_remove(self->relay_rows, row))
     return;
   adw_preferences_group_remove(self->relays_group, GTK_WIDGET(row));
+  sync_picker_relays(self);
   sync_create(self);
   gtk_widget_grab_focus(GTK_WIDGET(self->relay_entry));
 }

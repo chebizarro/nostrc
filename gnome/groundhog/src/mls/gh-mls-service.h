@@ -704,16 +704,17 @@ guint gh_mls_service_test_leave_attempts(void);
  * above). */
 void gh_mls_service_test_set_permissive_groups(gboolean permissive);
 void gh_mls_service_test_set_upgrade_window(guint min_ms, guint max_ms, guint stagger_ms);
-/* Test hook (W25): an admin's Commit of the adopted group's 0x800b media
- * policy, blossom-v1 with `endpoints` as its default blob endpoints
- * (marmot_update_group_media_policy()), as an MDK admin would set it.
- * Finish with gh_mls_service_change_finish(). */
-void gh_mls_service_test_set_media_policy_async(GhMlsService *self, GhMlsGroup *group,
-                                                const gchar *const *endpoints,
-                                                GCancellable *cancellable,
-                                                GAsyncReadyCallback callback,
-                                                gpointer user_data);
 #endif
+/* nostrc-46k7: an admin's Commit of the adopted group's 0x800b media
+ * policy, blossom-v1 with @endpoints as its default blob endpoints
+ * (marmot_update_group_media_policy()).  The creator sets this at creation
+ * (create_group_now()); admins change it in Group Info.
+ * Finish with gh_mls_service_change_finish(). */
+void gh_mls_service_set_media_policy_async(GhMlsService *self, GhMlsGroup *group,
+                                           const gchar *const *endpoints,
+                                           GCancellable *cancellable,
+                                           GAsyncReadyCallback callback,
+                                           gpointer user_data);
 const gchar *gh_mls_service_get_account(GhMlsService *self);
 /* libmarmot, for tests and diagnostics (borrowed; one thread). */
 Marmot *gh_mls_service_get_marmot(GhMlsService *self);

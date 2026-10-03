@@ -46,6 +46,11 @@ gboolean gh_mls_invitee_picker_set_selected(GhMlsInviteePicker *self, const gcha
 /* Checks every chosen person again (e.g. their KeyPackages changed since
  * they were checked). */
 void gh_mls_invitee_picker_check_again(GhMlsInviteePicker *self);
+/* The relays the new group will use (nullable).  The lookup skips them so
+ * that a Ready result honestly reflects what the service's Create will find
+ * (nostrc-c0yo).  Re-checks every chosen person. */
+void gh_mls_invitee_picker_set_group_relays(GhMlsInviteePicker *self,
+                                           const gchar *const *relays);
 /* The row of a listed person (tests: its words and widgets), or NULL. */
 AdwActionRow *gh_mls_invitee_picker_get_row(GhMlsInviteePicker *self, const gchar *pubkey);
 

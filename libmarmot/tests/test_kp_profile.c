@@ -197,13 +197,14 @@ static void test_create_and_validate(void) {
     /* The leaf's private-use components only, as MDK 0.11 requires: the
      * adopted components libmarmot supports, the White Noise set
      * (nostrc-qp24.5.1, nostrc-qp24.5.2). */
-    static const char *const comps[] = {"0x8001", "0x8003", "0x8004", "0x8006",
-                                        "0x8009", "0x800b", "0x800c"};
+    static const char *const comps[] = {"0x8001", "0x8002", "0x8003", "0x8004",
+                                        "0x8006", "0x8007", "0x8009", "0x800b",
+                                        "0x800c"};
     NostrTag *t = first_tag(ev, "app_components");
-    bool comps_ok = t && nostr_tag_size(t) == 8;
-    for (size_t i = 0; comps_ok && i < 7; i++)
+    bool comps_ok = t && nostr_tag_size(t) == 10;
+    for (size_t i = 0; comps_ok && i < 9; i++)
         comps_ok = strcmp(nostr_tag_get(t, i + 1), comps[i]) == 0;
-    CHECK(comps_ok, "app_components [0x8001,0x8003,0x8004,0x8006,0x8009,0x800b,0x800c]");
+    CHECK(comps_ok, "app_components [0x8001,0x8002,0x8003,0x8004,0x8006,0x8007,0x8009,0x800b,0x800c]");
     t = first_tag(ev, "mls_extensions");
     CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0006") == 0 &&
           strcmp(nostr_tag_get(t, 2), "0xf2d1") == 0,

@@ -61,14 +61,19 @@ GhMlsInviteeState gh_mls_invitee_classify(const GhMlsKeyPackage *key_package,
 
 /* Checks pubkey (hex) with the discovery-relays of settings, and its
  * "only-join-verified-mls-groups" (deadline:
- * seconds per phase, 0: the lookup's default). Consent is the caller's:
+ * seconds per phase, 0: the lookup's default).  @group_relays (nullable):
+ * relay URLs the new group will use -- the lookup skips them so that the
+ * result honestly reflects what the service's Create will find (nostrc-c0yo:
+ * without this, an invitee whose only write relay is also a group relay
+ * shows Ready but Create fails).  Consent is the caller's:
  * only ever for a gh_mls_contacts_dup() person. finish: the state, or
  * CHECKING with error G_IO_ERROR_CANCELLED (the cancellable or an account
  * switch). */
 void gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
-                                const gchar *pubkey, guint deadline,
-                                GCancellable *cancellable, GAsyncReadyCallback callback,
-                                gpointer user_data);
+                               const gchar *pubkey, guint deadline,
+                               const gchar *const *group_relays,
+                               GCancellable *cancellable, GAsyncReadyCallback callback,
+                               gpointer user_data);
 GhMlsInviteeState gh_mls_invitee_check_finish(GAsyncResult *result, GError **error);
 
 /* The accepted contacts of model's account (lowercase hex, sorted, unique;

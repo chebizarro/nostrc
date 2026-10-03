@@ -737,8 +737,8 @@ test_groundhog_invites_mdk_strict(void)
 
   /* New Group's KeyPackage check row (charter §7.9). */
   CheckWait check = { 0 };
-  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
-                             &check);
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, NULL,
+                             on_checked, &check);
   spin_until(check_done, &check, "the KeyPackage check");
   g_test_message("New Group check row for an MDK 0.8 user: state %d, \"%s\", can invite %d",
                  check.state, gh_mls_invitee_copy(check.state),
@@ -788,8 +788,8 @@ test_groundhog_invites_mdk_default(void)
 
   /* The New Group check row: she can be invited (nostrc-6ukh). */
   CheckWait check = { 0 };
-  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, on_checked,
-                             &check);
+  gh_mls_invitee_check_async(alice->accounts, alice->settings, hex[CAROL], 20, NULL, NULL,
+                             on_checked, &check);
   spin_until(check_done, &check, "the KeyPackage check");
   g_assert_cmpint(check.state, ==, GH_MLS_INVITEE_READY_UNPROVEN);
   g_assert_true(gh_mls_invitee_can_invite(check.state));

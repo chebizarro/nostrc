@@ -130,6 +130,7 @@ struct _GhMlsInviteePicker {
 
   GhMlsUiContext context;   /* objects referenced */
   GPtrArray *rows;          /* GhMlsInviteeRow, listed order */
+  GStrv group_relays;       /* nullable: relays the new group uses (nostrc-c0yo) */
   gulong accounts_handler;
   guint64 generation;
 };
@@ -205,7 +206,9 @@ start_check(GhMlsInviteePicker *self, GhMlsInviteeRow *row)
   check->row = row;
   check->cancellable = g_object_ref(row->checking);
   gh_mls_invitee_check_async(self->context.accounts, self->context.settings, row->pubkey,
-                             self->context.lookup_deadline, row->checking, check_done, check);
+                             self->context.lookup_deadline,
+                             (const gchar *const *)self->group_relays,
+                             row->checking, check_done, check);
   row_sync(row);
 }
 
@@ -383,6 +386,22 @@ gh_mls_invitee_picker_check_again(GhMlsInviteePicker *self)
 }
 
 void
+gh_mls_invitee_picker_set_group_relays(GhMlsInviteePicker *self,
+                                       const gchar *const *relays)
+{
+  g_return_if_fail(GH_IS_MLS_INVITEE_PICKER(self));
+  g_strfreev(self->group_relays);
+  self->group_relays = g_strdupv((gchar **)relays);
+  /* Re-check every chosen person with the new exclusion (nostrc-c0yo). */
+  for (guint i = 0; i < self->rows->len; i++) {
+    GhMlsInviteeRow *row = g_ptr_array_index(self->rows, i);
+    if (row_selected(row))
+      start_check(self, row);
+  }
+  changed(self);
+}
+
+void
 gh_mls_invitee_picker_setup(GhMlsInviteePicker *self, const GhMlsUiContext *context,
                             const gchar *const *members)
 {
@@ -544,6 +563,7 @@ gh_mls_invitee_picker_finalize(GObject *object)
 {
   GhMlsInviteePicker *self = GH_MLS_INVITEE_PICKER(object);
   g_ptr_array_unref(self->rows);
+  g_strfreev(self->group_relays);
   G_OBJECT_CLASS(gh_mls_invitee_picker_parent_class)->finalize(object);
 }
 

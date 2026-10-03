@@ -1896,10 +1896,11 @@ test_adopted_key_package_white_noise_shape(void)
     size_t ne = 0;
     CHECK(marmot_app_data_dict_parse(dict, dlen, &e, &ne) == 0 && ne == 3 &&
               e[0].component_id == 0x0001, "entries");
-    static const uint8_t want_list[] = {0x10, 0x00, 0x01, 0x80, 0x01, 0x80, 0x03, 0x80, 0x04,
-                                        0x80, 0x06, 0x80, 0x09, 0x80, 0x0b, 0x80, 0x0c};
+    static const uint8_t want_list[] = {0x14, 0x00, 0x01, 0x80, 0x01, 0x80, 0x02, 0x80, 0x03,
+                                        0x80, 0x04, 0x80, 0x06, 0x80, 0x07, 0x80, 0x09,
+                                        0x80, 0x0b, 0x80, 0x0c};
     CHECK(e[0].len == sizeof(want_list) && memcmp(e[0].data, want_list, sizeof(want_list)) == 0,
-          "app_components [0x0001 0x8001 0x8003 0x8004 0x8006 0x8009 0x800b 0x800c]");
+          "app_components [0x0001 0x8001 0x8002 0x8003 0x8004 0x8006 0x8007 0x8009 0x800b 0x800c]");
     free(e);
 
     /* The kind:30443 tags say the same. */
@@ -1912,10 +1913,10 @@ test_adopted_key_package_white_noise_shape(void)
     CHECK(t && nostr_tag_size(t) == 3 && strcmp(nostr_tag_get(t, 1), "0x0008") == 0 &&
               strcmp(nostr_tag_get(t, 2), "0x000a") == 0, "mls_proposals tag");
     t = tag(ev, "app_components");
-    static const char *want_tag[] = {"0x8001", "0x8003", "0x8004", "0x8006",
-                                     "0x8009", "0x800b", "0x800c"};
-    CHECK(t && nostr_tag_size(t) == 8, "app_components tag");
-    for (size_t i = 0; i < 7; i++)
+    static const char *want_tag[] = {"0x8001", "0x8002", "0x8003", "0x8004", "0x8006",
+                                     "0x8007", "0x8009", "0x800b", "0x800c"};
+    CHECK(t && nostr_tag_size(t) == 10, "app_components tag");
+    for (size_t i = 0; i < 9; i++)
         CHECK(strcmp(nostr_tag_get(t, i + 1), want_tag[i]) == 0, "app_components[%zu]", i);
     nostr_event_free(ev);
 

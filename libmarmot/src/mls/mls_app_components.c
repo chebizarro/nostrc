@@ -13,9 +13,11 @@
 
 const uint16_t MLS_ADOPTED_SUPPORTED_COMPONENTS[MLS_ADOPTED_SUPPORTED_COMPONENT_COUNT] = {
     MARMOT_COMPONENT_GROUP_PROFILE_V1,   /* 0x8001 marmot.group.profile.v1 */
+    MLS_COMPONENT_BLOSSOM_IMAGE_V1,      /* 0x8002 marmot.group.blossom-image.v1 (nostrc-l2ln) */
     MARMOT_COMPONENT_ADMIN_POLICY_V1,    /* 0x8003 marmot.group.admin-policy.v1 */
     MARMOT_COMPONENT_NOSTR_ROUTING_V1,   /* 0x8004 marmot.transport.nostr.routing.v1 */
     MLS_COMPONENT_AGENT_TEXT_STREAM_V1,  /* 0x8006 agent-text-stream.quic.v1 (receive) */
+    MLS_COMPONENT_AVATAR_URL_V1,         /* 0x8007 marmot.group.avatar-url.v1 (nostrc-l2ln) */
     MLS_COMPONENT_ACCOUNT_PROOF_V2,      /* 0x8009 (LeafNode only) */
     MLS_COMPONENT_ENCRYPTED_MEDIA_V2,    /* 0x800b marmot.group.encrypted-media.v2 */
     MARMOT_COMPONENT_GROUP_LIFECYCLE_V1, /* 0x800c marmot.group.lifecycle.v1 (active) */
