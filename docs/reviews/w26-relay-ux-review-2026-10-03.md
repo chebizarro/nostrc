@@ -137,3 +137,85 @@ ninja -C build                                   # OK (2554 targets)
 ctest -R 'groundhog-(inbox-setup|preferences|onboarding|conversation-menu)' # 5/5 pass
 python3 scripts/check-unsequenced-args.py        # clean
 ```
+
+---
+
+## Addendum — e6cd8bcd verified, APPROVE
+
+**Fix commit:** e6cd8bcd  
+**Date:** 2026-10-03
+
+All five findings addressed. Verification below.
+
+### F1 (Blocker → fixed): 10050 inline edit uses inbox base event
+
+**Verified.** New `gh_account_relays_get_inbox_event_id()` and
+`gh_account_relays_get_inbox_created_at()` expose the `Revision inbox`
+fields. `on_edit_relay()` now branches on `kind == 10050` and calls them
+instead of `base_event_info(NULL, …)`. The root cause (NULL base_id,
+zero base_created_at) is eliminated.
+
+The `test_edit_inbox_add` test delivers the user's own existing 10050
+during both checks, asserts `state != SKIPPED` after each, and confirms
+the full check → sign → check → publish pipeline reaches DONE with
+one acceptance. `test_edit_inbox_remove` confirms the same pattern for
+removal. Both tests exercise the new accessors and would regress to
+SKIPPED or hang if the app-layer wiring reverted to NULL/0.
+
+### F2 (Medium → fixed): 10050 add/remove tests added
+
+**Verified.** Three new test cases: `edit-inbox-add`,
+`edit-inbox-remove`, `edit-same-timestamp-skipped`. All pass.
+`edit-inbox-add` is a thorough end-to-end: both pre-sign and post-sign
+checks, signer round-trip, publish acceptance.
+
+### F3 (Medium → fixed): VERSION_MANIFEST.md entry added
+
+**Verified.** New row: "W26 slice E relay and signer UX … | groundhog |
+0.12.0 | No further bump (unreleased 0.12.0): new Preferences UI, no
+public API, storage or wire-format change."
+
+### F4 (Low → fixed): NIP-01 same-timestamp tie-breaking
+
+**Verified.** `other_list()` now handles equal timestamps with proper
+NIP-01 ordering: the lower event id is authoritative. The logic at
+line 370–374:
+
+```c
+if (created_at != self->base_created_at)
+  return created_at > self->base_created_at;
+return g_strcmp0(event_id, self->base_id) < 0;
+```
+
+This is correct: when the discovered id is lexicographically lower
+(it wins the NIP-01 tie), `other_list()` returns TRUE → SKIPPED. When
+our base id is lower (ours wins), it returns FALSE → proceed.
+
+`test_edit_same_timestamp_skipped` arranges the discovered event to
+have the lower id and asserts SKIPPED. Spot-check confirmed: changing
+the return to `FALSE` (never skip on tie) causes the test to time out
+waiting for a terminal state.
+
+**Note:** The test only exercises the "discovered wins" branch. The
+"base wins" branch (discovered has higher id → proceed) is not directly
+tested but is covered by the `edit-inbox-add` and `edit-inbox-remove`
+tests where the existing event has the same id as the base (line 368
+returns FALSE before reaching the tie-break). The logic is
+straightforward and visually verified.
+
+### F5 (Nit → fixed): Remote branch deleted
+
+**Verified.** `git branch -r | grep w26-relay` returns nothing after
+`git fetch origin`.
+
+### Build and test verification
+
+```
+source /tmp/nostrc-macos27-env.sh
+cmake -G Ninja -DBUILD_GROUNDHOG=ON -B build            # OK
+ninja -C build                                            # OK
+ctest -R 'groundhog-(inbox-setup|preferences|onboarding  # 6/6 pass
+          |conversation-menu|account-relays)'
+python3 scripts/check-unsequenced-args.py                 # clean
+scripts/linux-gate.sh --sanitizers /tmp/rv-w26-relay-ux   # 53/53 pass
+```
