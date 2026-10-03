@@ -1612,6 +1612,119 @@ test_white_noise_media(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- nostrc-46k7: Groundhog creates a group with media policy, MDK uses it ------- */
+
+/* Groundhog creates the group with blossom-servers set: the group gets a
+ * media policy (0x800b).  MDK joins, sends a picture using that server,
+ * and Groundhog receives it.  This is the live MDK 0.11 case for the
+ * consent-copy brief: the policy the admin saw at creation is the one
+ * the group uses. */
+static void
+test_media_policy(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackages");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *to = g_strdup_printf("\"%s\",\"%s\"", w.w.url, w.x.url);
+  g_autofree gchar *carol_kp = mdk_publish_key_package("carol", to);
+  g_autofree gchar *carol_kp_id = event_id_of(carol_kp);
+  accept_contact(alice, CAROL);
+
+  /* Set blossom-servers BEFORE creating the group: create_group_now bakes
+   * the media policy. */
+  BlossomFixture *blossom = blossom_fixture_new();
+  const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", servers);
+
+  /* Alice creates the group (adopted, with media policy). */
+  const gchar *relays[] = { w.g.url, NULL };
+  const gchar *people[] = { hex[CAROL], NULL };
+  OpWait created = { 0 };
+  gh_mls_service_create_group_async(alice->service, "Media Policy", NULL, relays, people, NULL,
+                                    on_created, &created);
+  spin_until(op_done, &created, "the group creation");
+  g_assert_no_error(created.error);
+  GhMlsGroup *ga = created.result;
+  g_assert_nonnull(ga);
+  g_object_unref(ga);
+  g_assert_true(gh_mls_group_get_adopted(ga));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+
+  /* The group has the media policy baked at creation.  The Marmot API
+   * normalises endpoint URLs with a trailing slash. */
+  g_autofree gchar *expected_url = g_strconcat(blossom_fixture_url(blossom), "/", NULL);
+  MarmotGroupComponents mc;
+  memset(&mc, 0, sizeof mc);
+  g_assert_true(gh_mls_service_get_components(alice->service, ga, &mc, NULL));
+  g_assert_true(mc.has_media_policy);
+  g_assert_cmpuint(mc.media_policy.default_blob_endpoint_count, ==, 1);
+  g_assert_cmpstr(mc.media_policy.default_blob_endpoints[0].base_url, ==,
+                  expected_url);
+  marmot_group_components_clear(&mc);
+  spin_until(welcomes_sent, ga, "the Welcome accepted by Carol's inbox");
+
+  /* MDK joins. */
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", ALICE, carol_kp_id);
+  const gchar *group = json_object_get_string_member(joined, "group");
+  assert_gh_converged(ga, joined);
+
+  /* MDK sends a picture through the policy's Blossom server. */
+  g_autoptr(GBytes) photo = tiny_png();
+  g_autofree gchar *photo_b64 = g_base64_encode(g_bytes_get_data(photo, NULL),
+                                                g_bytes_get_size(photo));
+  g_autoptr(JsonObject) sent = mdk_call(&driver,
+    "\"cmd\":\"send_media\",\"peer\":\"carol\",\"group\":\"%s\",\"file\":\"%s\","
+    "\"mime\":\"image/png\",\"filename\":\"policy.png\",\"blossom\":\"%s\","
+    "\"caption\":\"policy test\",\"dim\":\"1x1\"",
+    group, photo_b64, blossom_fixture_url(blossom));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+
+  /* Groundhog receives it. */
+  wait_message(alice, room, "policy test");
+  GhMessage *received = find_message(alice, room, "policy test");
+  g_assert_cmpstr(gh_message_get_sender(received), ==, hex[CAROL]);
+  g_assert_cmpuint(gh_message_get_n_attachments(received), ==, 1);
+  const GhMessageAttachment *theirs = gh_message_get_attachment(received, 0);
+  g_assert_cmpstr(theirs->media_type, ==, "image/png");
+
+  /* Groundhog opens (downloads) the picture. */
+  g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
+  g_autoptr(GSettings) dl_settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
+  g_settings_set_strv(dl_settings, "blossom-servers", servers);
+  g_settings_set_string(dl_settings, "network-mode", "none");
+  g_autoptr(GhNetHttp) http = gh_net_http_new(dl_settings);
+  GhAttachmentsConfig config = { .settings = dl_settings, .http = http };
+  GhAttachments *attachments = gh_attachments_new(&config);
+  gh_attachments_set_allow_private_hosts(attachments, TRUE);
+  gh_attachments_set_store(attachments, alice->store);
+  GhMlsAttachments *files = gh_mls_attachments_new(attachments);
+  gh_mls_attachments_set_service(files, alice->service);
+
+  GhAttachmentTransfer *transfer = gh_mls_attachments_lookup(files, received, 0);
+  g_assert_nonnull(transfer);
+  gh_mls_attachments_download(files, transfer);
+  spin_until(transfer_settled, transfer, "Groundhog opening MDK's photo");
+  g_assert_cmpstr(gh_attachment_transfer_get_error(transfer), ==, NULL);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==, GH_ATTACHMENT_STATE_READY);
+  g_assert_true(g_bytes_equal(gh_attachment_transfer_get_plaintext(transfer), photo));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "GET"), ==, 1);
+
+  g_settings_reset(alice->settings, "blossom-servers");
+  g_object_unref(files);
+  gh_attachments_set_store(attachments, NULL);
+  g_object_unref(attachments);
+  drain();
+  blossom_fixture_free(blossom);
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* ---- White Noise DM shape: 2-member group with empty name (W26 slice A) ------------- */
 
 /* MDK 0.11 creates a DM (marmot-app's create_group("", &[peer]): empty name,
@@ -2438,6 +2551,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/white-noise-media", test_white_noise_media);
   g_test_add_func("/groundhog/mdk011-interop/adopted-commits", test_adopted_commits);
   g_test_add_func("/groundhog/mdk011-interop/routing-rotation", test_routing_rotation);
+  g_test_add_func("/groundhog/mdk011-interop/media-policy", test_media_policy);
   g_test_add_func("/groundhog/mdk011-interop/white-noise-dm", test_white_noise_dm);
   g_test_add_func("/groundhog/mdk011-interop/concurrent-commits", test_concurrent_commits);
   g_test_add_func("/groundhog/mdk011-interop/polls", test_polls);

@@ -246,6 +246,36 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
+                          <object class="AdwPreferencesGroup" id="media_group">
+                            <property name="visible">false</property>
+                            <property name="title" translatable="yes">File Storage</property>
+                            <child>
+                              <object class="AdwActionRow" id="media_policy_row">
+                                <property name="use-markup">false</property>
+                                <property name="subtitle-lines">4</property>
+                                <child type="prefix">
+                                  <object class="GtkImage">
+                                    <property name="icon-name">folder-remote-symbolic</property>
+                                    <property name="accessible-role">43</property>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="update_media_button">
+                                <property name="visible">false</property>
+                                <property name="label" translatable="yes">Update from _My Servers</property>
+                                <property name="use-underline">true</property>
+                                <property name="halign">3</property>
+                                <property name="action-name">mls-group.update-media</property>
+                                <style>
+                                  <class name="pill"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                        <child>
                           <object class="AdwPreferencesGroup" id="relays_group">
                             <property name="title" translatable="yes">Group Relays</property>
                             <property name="description" translatable="yes">They keep the group’s encrypted messages. They see when the group is active, but not who is in it or what is said.</property>

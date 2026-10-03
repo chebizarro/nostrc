@@ -149,6 +149,9 @@ struct _GhMlsGroupInfoDialog {
   AdwPreferencesGroup *members_group;
   GtkWidget *add_member_button;
   AdwPreferencesGroup *admin_group;
+  AdwPreferencesGroup *media_group;        /* nostrc-46k7: file storage */
+  AdwActionRow *media_policy_row;
+  GtkWidget *update_media_button;
   AdwPreferencesGroup *relays_group;
   GtkWidget *leave_button;
   GhMlsInviteePicker *add_picker;
@@ -255,6 +258,92 @@ fill_privacy(GhMlsGroupInfoDialog *self)
   add_privacy_rows(self->unprotected_row, (const gchar *const *)summary->unprotected);
 }
 
+/* nostrc-46k7: show the group's media policy (which Blossom servers store its
+ * files). Admins can update it from their own blossom-servers setting. */
+static void
+sync_media_policy(GhMlsGroupInfoDialog *self)
+{
+  gboolean adopted = gh_mls_group_get_adopted(self->group);
+  if (!adopted || !self->context.service) {
+    gtk_widget_set_visible(GTK_WIDGET(self->media_group), FALSE);
+    return;
+  }
+  MarmotGroupComponents mc;
+  memset(&mc, 0, sizeof mc);
+  GError *error = NULL;
+  if (!gh_mls_service_get_components(self->context.service, self->group, &mc, &error)) {
+    g_clear_error(&error);
+    gtk_widget_set_visible(GTK_WIDGET(self->media_group), FALSE);
+    return;
+  }
+  if (!mc.has_media_policy || mc.media_policy.default_blob_endpoint_count == 0) {
+    marmot_group_components_clear(&mc);
+    /* Show the group when admin can add one. */
+    gboolean manage = can_manage(self);
+    if (manage) {
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_policy_row),
+                                    _("No file servers configured"));
+      adw_action_row_set_subtitle(self->media_policy_row,
+                                  _("Pictures and files can't be shared until an admin sets the servers."));
+      gtk_widget_set_visible(GTK_WIDGET(self->media_group), TRUE);
+      gtk_widget_set_visible(self->update_media_button, TRUE);
+    } else {
+      gtk_widget_set_visible(GTK_WIDGET(self->media_group), FALSE);
+    }
+    return;
+  }
+  g_autoptr(GString) list = g_string_new(NULL);
+  for (size_t i = 0; i < mc.media_policy.default_blob_endpoint_count; i++) {
+    if (list->len > 0)
+      g_string_append(list, ", ");
+    g_string_append(list, mc.media_policy.default_blob_endpoints[i].base_url);
+  }
+  guint n = (guint)mc.media_policy.default_blob_endpoint_count;
+  g_autofree gchar *title = g_strdup_printf(
+    ngettext("Files stored on %u server", "Files stored on %u servers", n), n);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_policy_row), title);
+  adw_action_row_set_subtitle(self->media_policy_row, list->str);
+  gtk_widget_set_visible(GTK_WIDGET(self->media_group), TRUE);
+  gtk_widget_set_visible(self->update_media_button, can_manage(self));
+  marmot_group_components_clear(&mc);
+}
+
+static void
+on_media_updated(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhMlsGroupInfoDialog *self = data;
+  GError *error = NULL;
+  if (gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error)) {
+    toast(self, _("File servers updated"));
+    sync_media_policy(self);
+  } else {
+    toast(self, error->message);
+    g_error_free(error);
+  }
+}
+
+static void
+action_update_media(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(widget);
+  if (!can_manage(self))
+    return;
+  GSettings *settings = self->context.settings;
+  if (!settings)
+    return;
+  g_auto(GStrv) servers = g_settings_get_strv(settings, "blossom-servers");
+  guint n = servers ? g_strv_length(servers) : 0;
+  if (n == 0) {
+    toast(self, _("No Blossom servers configured in your settings"));
+    return;
+  }
+  gh_mls_service_set_media_policy_async(self->context.service, self->group,
+                                        (const gchar *const *)servers, NULL,
+                                        on_media_updated, self);
+}
+
 static void
 sync_status(GhMlsGroupInfoDialog *self)
 {
@@ -299,6 +388,7 @@ sync_status(GhMlsGroupInfoDialog *self)
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.add-members", manage);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.rename", manage);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.save-rename", manage);
+  sync_media_policy(self);
   gtk_widget_set_visible(self->leave_button, active);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-group.leave", active);
 }
@@ -1263,6 +1353,9 @@ gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
   BIND(members_group);
   BIND(add_member_button);
   BIND(admin_group);
+  BIND(media_group);
+  BIND(media_policy_row);
+  BIND(update_media_button);
   BIND(relays_group);
   BIND(leave_button);
   BIND(add_picker);
@@ -1296,6 +1389,8 @@ gh_mls_group_info_dialog_class_init(GhMlsGroupInfoDialogClass *klass)
                                   action_set_picture);
   gtk_widget_class_install_action(widget_class, "mls-group.remove-picture", NULL,
                                   action_remove_picture);
+  gtk_widget_class_install_action(widget_class, "mls-group.update-media", NULL,
+                                  action_update_media);
 }
 
 static void

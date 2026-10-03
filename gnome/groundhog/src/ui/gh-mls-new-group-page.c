@@ -98,6 +98,7 @@ struct _GhMlsNewGroupPage {
   GtkLabel *create_reason;
   GtkLabel *format_notice;
   GtkWidget *format_choice;
+  AdwActionRow *media_row;      /* nostrc-46k7: consent copy for file storage servers */
   GtkImage *status_icon;
   GtkSpinner *status_spinner;
   GtkLabel *status_title;
@@ -140,6 +141,34 @@ identity_state(GhMlsNewGroupPage *self)
 {
   return self->context.service ? gh_mls_service_get_identity_state(self->context.service)
                                : GH_MLS_IDENTITY_NONE;
+}
+
+/* nostrc-46k7: the consent copy for file storage. When the user has Blossom
+ * servers configured, the group will get a media policy at creation (see
+ * create_group_now), and the user should see which servers before Create. */
+static void
+sync_media_notice(GhMlsNewGroupPage *self)
+{
+  GSettings *settings = self->context.settings;
+  g_auto(GStrv) servers = settings ? g_settings_get_strv(settings, "blossom-servers") : NULL;
+  guint n = servers ? g_strv_length(servers) : 0;
+  if (n == 0) {
+    gtk_widget_set_visible(GTK_WIDGET(self->media_row), FALSE);
+    return;
+  }
+  g_autoptr(GString) list = g_string_new(NULL);
+  for (guint i = 0; i < n; i++) {
+    if (list->len > 0)
+      g_string_append(list, ", ");
+    g_string_append(list, servers[i]);
+  }
+  g_autofree gchar *title = g_strdup_printf(
+    ngettext("Files stored on %u server", "Files stored on %u servers", n), n);
+  g_autofree gchar *subtitle = g_strdup_printf(
+    _("Pictures and files shared in this group will be stored on %s."), list->str);
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_row), title);
+  adw_action_row_set_subtitle(self->media_row, subtitle);
+  gtk_widget_set_visible(GTK_WIDGET(self->media_row), TRUE);
 }
 
 /* Create runs only when everything is ready; otherwise the first reason why
@@ -196,6 +225,7 @@ sync_create(GhMlsNewGroupPage *self)
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-new.keep-legacy", mixed);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "mls-new.create",
                                 reason == NULL && !self->creating);
+  sync_media_notice(self);
 }
 
 static void
@@ -624,6 +654,7 @@ gh_mls_new_group_page_class_init(GhMlsNewGroupPageClass *klass)
   BIND(create_reason);
   BIND(format_notice);
   BIND(format_choice);
+  BIND(media_row);
   BIND(status_icon);
   BIND(status_spinner);
   BIND(status_title);

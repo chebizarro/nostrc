@@ -120,6 +120,19 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
                 accessible-role: presentation;
               }
             }
+
+            // nostrc-46k7: which Blossom servers store the group's files.
+            Adw.ActionRow media_row {
+              visible: false;
+              use-markup: false;
+              subtitle-lines: 4;
+
+              [prefix]
+              Image {
+                icon-name: "folder-remote-symbolic";
+                accessible-role: presentation;
+              }
+            }
           }
 
           Adw.PreferencesGroup {

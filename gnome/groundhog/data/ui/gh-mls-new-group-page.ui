@@ -125,6 +125,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwActionRow" id="media_row">
+                            <property name="visible">false</property>
+                            <property name="use-markup">false</property>
+                            <property name="subtitle-lines">4</property>
+                            <child type="prefix">
+                              <object class="GtkImage">
+                                <property name="icon-name">folder-remote-symbolic</property>
+                                <property name="accessible-role">43</property>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <child>

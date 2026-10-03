@@ -243,6 +243,37 @@ template $GhMlsGroupInfoDialog: Adw.Dialog {
               }
             }
 
+            // nostrc-46k7: media policy (file storage). Visible when the
+            // group has a media policy or the admin can set one; admins
+            // see a button to update the servers from their own settings.
+            Adw.PreferencesGroup media_group {
+              visible: false;
+              title: _("File Storage");
+
+              Adw.ActionRow media_policy_row {
+                use-markup: false;
+                subtitle-lines: 4;
+
+                [prefix]
+                Image {
+                  icon-name: "folder-remote-symbolic";
+                  accessible-role: presentation;
+                }
+              }
+
+              Button update_media_button {
+                visible: false;
+                label: _("Update from _My Servers");
+                use-underline: true;
+                halign: center;
+                action-name: "mls-group.update-media";
+
+                styles [
+                  "pill",
+                ]
+              }
+            }
+
             // One $GhMlsRelayRow per group relay (from C).
             Adw.PreferencesGroup relays_group {
               title: _("Group Relays");
