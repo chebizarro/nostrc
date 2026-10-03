@@ -8,6 +8,11 @@
  *   kSecAttrLabel       ← item label
  *   kSecValueData       ← 32-byte secret key
  *   kSecAttrAccessible  ← kSecAttrAccessibleAfterFirstUnlock
+ *                         (chosen over the more restrictive
+ *                          kSecAttrAccessibleWhenUnlocked so that the
+ *                          background daemon can access keys after the
+ *                          first login without requiring the screen to
+ *                          be unlocked)
  *
  * All operations are synchronous SecItem calls wrapped in GTask so the
  * GhStoreKey policy layer sees the same async API as with libsecret.
@@ -19,17 +24,45 @@
 #include <Security/Security.h>
 #include <sodium.h>
 
-struct _GhStoreKeyKeychain { GObject parent_instance; };
+struct _GhStoreKeyKeychain {
+  GObject parent_instance;
+  SecKeychainRef keychain; /* NULL = default; test-only: a temporary keychain */
+};
 
 static void keychain_backend_init(GhStoreKeyBackendInterface *iface);
 G_DEFINE_TYPE_WITH_CODE(GhStoreKeyKeychain, gh_store_key_keychain, G_TYPE_OBJECT,
   G_IMPLEMENT_INTERFACE(GH_TYPE_STORE_KEY_BACKEND, keychain_backend_init))
 
 static void
-gh_store_key_keychain_class_init(GhStoreKeyKeychainClass *klass) { (void)klass; }
+gh_store_key_keychain_dispose(GObject *object)
+{
+  GhStoreKeyKeychain *self = GH_STORE_KEY_KEYCHAIN(object);
+  if (self->keychain) { CFRelease(self->keychain); self->keychain = NULL; }
+  G_OBJECT_CLASS(gh_store_key_keychain_parent_class)->dispose(object);
+}
 
 static void
-gh_store_key_keychain_init(GhStoreKeyKeychain *self) { (void)self; }
+gh_store_key_keychain_class_init(GhStoreKeyKeychainClass *klass)
+{
+  G_OBJECT_CLASS(klass)->dispose = gh_store_key_keychain_dispose;
+}
+
+static void
+gh_store_key_keychain_init(GhStoreKeyKeychain *self) { self->keychain = NULL; }
+
+/* ---- public API ------------------------------------------------------- */
+
+void
+gh_store_key_keychain_set_keychain(GhStoreKeyKeychain *self,
+                                   SecKeychainRef      keychain)
+{
+  g_return_if_fail(GH_IS_STORE_KEY_KEYCHAIN(self));
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  if (self->keychain) CFRelease(self->keychain);
+  self->keychain = keychain ? (SecKeychainRef)CFRetain(keychain) : NULL;
+#pragma clang diagnostic pop
+}
 
 /* Helper: copy a CFString to a g_strdup'd C string, or NULL. */
 static gchar *
@@ -46,23 +79,44 @@ cfstring_to_gchar(CFStringRef s)
   return buf;
 }
 
+/* Apply the test keychain to a SecItem query: kSecUseKeychain for add,
+ * kSecMatchSearchList for search/delete. */
+static void
+kc_scope_query(GhStoreKeyKeychain *self, CFMutableDictionaryRef q, gboolean for_add)
+{
+  if (!self->keychain) return;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  if (for_add)
+    CFDictionarySetValue(q, kSecUseKeychain, self->keychain);
+  else {
+    CFArrayRef list = CFArrayCreate(NULL, (const void *[]){self->keychain}, 1,
+                                    &kCFTypeArrayCallBacks);
+    CFDictionarySetValue(q, kSecMatchSearchList, list);
+    CFRelease(list);
+  }
+#pragma clang diagnostic pop
+}
+
 /* ---- search ----------------------------------------------------------- */
 
 /* Fetch the secret data for a single item identified by service + account +
  * store-id.  On macOS 26+ kSecReturnData with kSecMatchLimitAll returns
  * errSecParam, so we fetch data per-item with kSecMatchLimitOne. */
 static GBytes *
-kc_fetch_secret(CFStringRef service, CFStringRef cf_acct, CFStringRef cf_sid)
+kc_fetch_secret(GhStoreKeyKeychain *self, CFStringRef service,
+                CFStringRef cf_acct, CFStringRef cf_sid)
 {
   CFMutableDictionaryRef q = CFDictionaryCreateMutable(
       kCFAllocatorDefault, 0,
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(q, kSecAttrService, service);
   if (cf_acct) CFDictionarySetValue(q, kSecAttrAccount, cf_acct);
   if (cf_sid) CFDictionarySetValue(q, kSecAttrDescription, cf_sid);
   CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
-  /* kSecMatchLimitOne is the default — safe with kSecReturnData. */
+  kc_scope_query(self, q, FALSE);
 
   CFTypeRef result = NULL;
   OSStatus st = SecItemCopyMatching(q, &result);
@@ -77,6 +131,11 @@ kc_fetch_secret(CFStringRef service, CFStringRef cf_acct, CFStringRef cf_sid)
   CFIndex blen = CFDataGetLength(data);
   if (bytes && blen > 0)
     secret = gh_store_key_secret_new(bytes, (gsize)blen);
+  /* Wipe key material from the CF-owned buffer before releasing.
+   * The cast is intentional: we own the sole reference and are about
+   * to release it, so zeroing prevents the secret lingering on the heap. */
+  if (bytes && blen > 0)
+    memset((void *)bytes, 0, (size_t)blen);
   CFRelease(result);
   return secret;
 }
@@ -85,7 +144,8 @@ static void
 kc_search_in_thread(GTask *task, gpointer source, gpointer task_data,
                     GCancellable *cancel)
 {
-  (void)source; (void)cancel;
+  (void)cancel;
+  GhStoreKeyKeychain *self = GH_STORE_KEY_KEYCHAIN(source);
   GHashTable *attrs = task_data;
 
   CFStringRef service = CFStringCreateWithCString(NULL, GH_STORE_KEY_SCHEMA_NAME,
@@ -97,9 +157,11 @@ kc_search_in_thread(GTask *task, gpointer source, gpointer task_data,
       kCFAllocatorDefault, 0,
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(q, kSecAttrService, service);
   CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
   CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
+  kc_scope_query(self, q, FALSE);
 
   /* Filter by account if requested. */
   const gchar *acct = attrs ? g_hash_table_lookup(attrs, GH_STORE_KEY_ATTR_ACCOUNT) : NULL;
@@ -153,7 +215,7 @@ kc_search_in_thread(GTask *task, gpointer source, gpointer task_data,
     /* Fetch secret data per-item (kSecMatchLimitOne + kSecReturnData). */
     CFStringRef cf_item_acct = CFDictionaryGetValue(d, kSecAttrAccount);
     CFStringRef cf_item_sid = CFDictionaryGetValue(d, kSecAttrDescription);
-    GBytes *secret = kc_fetch_secret(service, cf_item_acct, cf_item_sid);
+    GBytes *secret = kc_fetch_secret(self, service, cf_item_acct, cf_item_sid);
 
     GhStoreKeyItem *item = gh_store_key_item_new(ia, /* locked= */ FALSE, secret);
     g_ptr_array_add(out, item);
@@ -206,7 +268,8 @@ static void
 kc_store_in_thread(GTask *task, gpointer source, gpointer task_data,
                    GCancellable *cancel)
 {
-  (void)source; (void)cancel;
+  (void)cancel;
+  GhStoreKeyKeychain *self = GH_STORE_KEY_KEYCHAIN(source);
   StoreData *sd = task_data;
 
   const gchar *acct = g_hash_table_lookup(sd->attributes, GH_STORE_KEY_ATTR_ACCOUNT);
@@ -220,6 +283,7 @@ kc_store_in_thread(GTask *task, gpointer source, gpointer task_data,
   CFStringRef cf_service = CFStringCreateWithCString(NULL, GH_STORE_KEY_SCHEMA_NAME,
                                                      kCFStringEncodingUTF8);
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(q, kSecAttrService, cf_service);
 
   CFStringRef cf_acct = acct ? CFStringCreateWithCString(NULL, acct, kCFStringEncodingUTF8) : NULL;
@@ -237,6 +301,7 @@ kc_store_in_thread(GTask *task, gpointer source, gpointer task_data,
   CFDataRef cf_data = CFDataCreate(NULL, sdata, (CFIndex)slen);
   CFDictionarySetValue(q, kSecValueData, cf_data);
   CFDictionarySetValue(q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
+  kc_scope_query(self, q, TRUE);
 
   OSStatus st = SecItemAdd(q, NULL);
 
@@ -287,7 +352,8 @@ static void
 kc_clear_in_thread(GTask *task, gpointer source, gpointer task_data,
                    GCancellable *cancel)
 {
-  (void)source; (void)cancel;
+  (void)cancel;
+  GhStoreKeyKeychain *self = GH_STORE_KEY_KEYCHAIN(source);
   GHashTable *attrs = task_data;
 
   CFMutableDictionaryRef q = CFDictionaryCreateMutable(
@@ -306,6 +372,7 @@ kc_clear_in_thread(GTask *task, gpointer source, gpointer task_data,
     CFDictionarySetValue(q, kSecAttrAccount, cf_acct);
   }
 
+  kc_scope_query(self, q, FALSE);
   OSStatus st = SecItemDelete(q);
   CFRelease(cf_service);
   if (cf_acct) CFRelease(cf_acct);

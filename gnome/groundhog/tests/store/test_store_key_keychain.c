@@ -1,8 +1,8 @@
 /* test_store_key_keychain.c — GhStoreKeyKeychain backend tests.
  *
- * Uses a synthetic test-only account pubkey
- * ("0000…01") that cannot collide with real identities.
- * All items are cleaned up on exit via atexit() and per-test destroy.
+ * All operations are scoped to a temporary file-based keychain created
+ * with SecKeychainCreate in a mkdtemp directory.  The login keychain is
+ * never touched.
  *
  * Tests:
  *   KC-MAC-1: store + search + verify secret
@@ -17,41 +17,75 @@
 #include <Security/Security.h>
 #include <sodium.h>
 #include <glib.h>
+#include <unistd.h>
 
-/* Test-only synthetic pubkey — all zeros except last byte = 01.
- * Cannot correspond to a real x-only secp256k1 pubkey. */
-#define TEST_ACCOUNT \
-  "0000000000000000000000000000000000000000000000000000000000000001"
-#define TEST_ACCOUNT_2 \
-  "0000000000000000000000000000000000000000000000000000000000000002"
+/* ---- Temporary keychain management -------------------------------------- */
 
-/* ---- Cleanup guarantee ------------------------------------------------ */
+static SecKeychainRef temp_keychain = NULL;
+static char           temp_dir[256] = { 0 };
+static char           temp_kc_path[512] = { 0 };
 
-/* Remove any items left by a crashed previous run. We delete by service
- * name + account, which is the same query the backend uses. */
-static void
-cleanup_test_items(void)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
+/* Create a temporary file-based keychain. */
+static gboolean
+create_temp_keychain(void)
 {
-  const char *accounts[] = { TEST_ACCOUNT, TEST_ACCOUNT_2, NULL };
-  for (int i = 0; accounts[i]; i++) {
-    CFMutableDictionaryRef q = CFDictionaryCreateMutable(
-        kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-    CFStringRef service = CFStringCreateWithCString(NULL,
-        GH_STORE_KEY_SCHEMA_NAME, kCFStringEncodingUTF8);
-    CFStringRef acct = CFStringCreateWithCString(NULL, accounts[i],
-        kCFStringEncodingUTF8);
-    CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-    CFDictionarySetValue(q, kSecAttrService, service);
-    CFDictionarySetValue(q, kSecAttrAccount, acct);
-    SecItemDelete(q); /* ignore errors */
-    CFRelease(acct);
-    CFRelease(service);
-    CFRelease(q);
+  /* mkdtemp for the keychain file. */
+  g_snprintf(temp_dir, sizeof(temp_dir), "%s/kc_test_XXXXXX",
+             g_get_tmp_dir());
+  if (!mkdtemp(temp_dir)) {
+    g_printerr("mkdtemp failed: %s\n", g_strerror(errno));
+    return FALSE;
+  }
+
+  g_snprintf(temp_kc_path, sizeof(temp_kc_path), "%s/test.keychain", temp_dir);
+
+  OSStatus st = SecKeychainCreate(temp_kc_path, /* pathName */
+                                  4, "test",    /* password */
+                                  FALSE,        /* promptUser */
+                                  NULL,         /* initialAccess */
+                                  &temp_keychain);
+  if (st != errSecSuccess) {
+    g_printerr("SecKeychainCreate failed: %d\n", (int)st);
+    return FALSE;
+  }
+
+  /* Unlock the temporary keychain so SecItemAdd doesn't prompt. */
+  st = SecKeychainUnlock(temp_keychain, 4, "test", TRUE);
+  if (st != errSecSuccess)
+    g_printerr("SecKeychainUnlock warning: %d\n", (int)st);
+
+  return TRUE;
+}
+
+/* Remove the temporary keychain and its directory. */
+static void
+destroy_temp_keychain(void)
+{
+  if (temp_keychain) {
+    SecKeychainDelete(temp_keychain);
+    CFRelease(temp_keychain);
+    temp_keychain = NULL;
+  }
+  if (temp_kc_path[0]) {
+    unlink(temp_kc_path);
+    /* macOS may also create <path>-db */
+    char dbpath[600];
+    g_snprintf(dbpath, sizeof(dbpath), "%s-db", temp_kc_path);
+    unlink(dbpath);
+    temp_kc_path[0] = '\0';
+  }
+  if (temp_dir[0]) {
+    rmdir(temp_dir);
+    temp_dir[0] = '\0';
   }
 }
 
-/* ---- Test helpers ----------------------------------------------------- */
+#pragma clang diagnostic pop
+
+/* ---- Test helpers ------------------------------------------------------- */
 
 static GMainLoop *loop;
 
@@ -90,7 +124,12 @@ on_lookup_only_done(GObject *source, GAsyncResult *res, gpointer user_data)
   g_main_loop_quit(loop);
 }
 
-/* ---- Tests ------------------------------------------------------------ */
+/* ---- Tests -------------------------------------------------------------- */
+
+#define TEST_ACCOUNT \
+  "0000000000000000000000000000000000000000000000000000000000000001"
+#define TEST_ACCOUNT_2 \
+  "0000000000000000000000000000000000000000000000000000000000000002"
 
 static void
 test_store_search_verify(void)
@@ -100,12 +139,17 @@ test_store_search_verify(void)
     return;
   }
 
-  /* Pre-clean in case a previous run crashed. */
-  cleanup_test_items();
+  if (!create_temp_keychain()) {
+    g_test_skip("could not create temporary keychain");
+    return;
+  }
 
-  GhStoreKeyBackend *backend = g_object_new(GH_TYPE_STORE_KEY_KEYCHAIN, NULL);
-  GhStoreKey *sk = gh_store_key_new(backend);
-  g_object_unref(backend);
+  /* Create backend and inject our temporary keychain. */
+  GhStoreKeyKeychain *kc_backend = g_object_new(GH_TYPE_STORE_KEY_KEYCHAIN, NULL);
+  gh_store_key_keychain_set_keychain(kc_backend, temp_keychain);
+
+  GhStoreKey *sk = gh_store_key_new(GH_STORE_KEY_BACKEND(kc_backend));
+  g_object_unref(kc_backend);
 
   /* KC-MAC-1: lookup_or_create stores a new key and returns it. */
   LookupResult r1 = { 0 };
@@ -161,22 +205,20 @@ test_store_search_verify(void)
   g_clear_error(&r4.error);
   g_main_loop_unref(loop);
   g_object_unref(sk);
+
+  destroy_temp_keychain();
 }
 
 int
 main(int argc, char *argv[])
 {
-  /* Guarantee cleanup even on abort/crash. */
-  atexit(cleanup_test_items);
+  /* Safety net: clean up temp keychain even on abort. */
+  atexit(destroy_temp_keychain);
 
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/store-key-keychain/store-search-verify",
                   test_store_search_verify);
-  int result = g_test_run();
-
-  /* Explicit cleanup after all tests. */
-  cleanup_test_items();
-  return result;
+  return g_test_run();
 }
 
 #else /* !__APPLE__ */

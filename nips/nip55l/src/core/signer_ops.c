@@ -37,6 +37,9 @@
 #ifdef NIP55L_HAVE_KEYCHAIN
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
+/* kSecAttrService value shared with the GUI (secret_store.c
+ * GNOSTR_KC_SERVICE) so both processes see the same items. */
+#define KC_SIGNER_SERVICE        "Gnostr Identity Key"
 #endif
 
 static int is_hex_64(const char *s) {
@@ -200,7 +203,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
       if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
       CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-      CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+      CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
+      CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
       if (service) { CFDictionarySetValue(q, kSecAttrService, service); }
       CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
       CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
@@ -217,6 +221,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
           if (hex) { *out_sk_hex = hex; rc_kc = 0; }
           else rc_kc = NOSTR_SIGNER_ERROR_BACKEND;
         }
+        /* Wipe key material from the CF buffer before release. */
+        if (bytes && blen > 0) memset((void *)bytes, 0, (size_t)blen);
         CFRelease(d);
         return rc_kc;
       }
@@ -317,7 +323,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
     CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-    CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+    CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
+    CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
     if (service) CFDictionarySetValue(q, kSecAttrService, service);
     /* Try account == selector */
     CFStringRef account = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
@@ -988,13 +995,14 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   if (!query) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_BACKEND; }
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
   CFStringRef account = CFStringCreateWithCString(NULL, key_id_attr, kCFStringEncodingUTF8);
   CFStringRef label = CFStringCreateWithCString(NULL, "Gnostr Identity", kCFStringEncodingUTF8);
   CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
   CFDataRef secretData = CFDataCreate(NULL, skb, (CFIndex)sizeof(skb));
   secure_wipe(skb, sizeof skb);
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(query, kSecAttrService, service);
   CFDictionarySetValue(query, kSecAttrAccount, account);
   CFDictionarySetValue(query, kSecAttrLabel, label);
@@ -1008,7 +1016,13 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (account) CFRelease(account);
   if (label) CFRelease(label);
   if (comment) CFRelease(comment);
-  if (secretData) CFRelease(secretData);
+  /* Wipe key material from the CF buffer before release. */
+  if (secretData) {
+    const UInt8 *sd_bytes = CFDataGetBytePtr(secretData);
+    CFIndex sd_len = CFDataGetLength(secretData);
+    if (sd_bytes && sd_len > 0) memset((void *)sd_bytes, 0, (size_t)sd_len);
+    CFRelease(secretData);
+  }
   if (query) CFRelease(query);
   /* Populate in-process cache; see the libsecret branch for rationale. */
   if (st == errSecSuccess) signer_cache_set(sk_hex, npub);
@@ -1044,7 +1058,8 @@ int nostr_nip55l_clear_key(const char *identity){
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
+  CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
   if (service) CFDictionarySetValue(q, kSecAttrService, service);
   if (identity && *identity) {
     CFStringRef account = CFStringCreateWithCString(NULL, identity, kCFStringEncodingUTF8);
@@ -1081,7 +1096,7 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
   if (!service) { if (gerr) g_error_free(gerr); return NOSTR_SIGNER_ERROR_BACKEND; }
 
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
-  GList *items = secret_service_search_sync(service, &gnostr_secret_identity_schema, attrs,
+  GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                             SECRET_SEARCH_ALL, NULL, &gerr);
   g_hash_table_unref(attrs);
   if (gerr) { g_error_free(gerr); g_object_unref(service); return NOSTR_SIGNER_ERROR_BACKEND; }
@@ -1108,8 +1123,9 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
   CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
   if (service) CFDictionarySetValue(q, kSecAttrService, service);
   CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
   CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
@@ -1450,7 +1466,6 @@ out:
  * probe never prompts; reading a legacy secret may raise the Keychain's
  * access prompt (the item belongs to GNostr), and a dismissed prompt only
  * postpones that item to the next start. */
-#define KC_SIGNER_SERVICE        "Gnostr Identity Key"
 #define KC_LEGACY_CLIENT_SERVICE "org.gnostr.Client"
 #define KC_MARKER_SERVICE        "Gnostr Signer Migration"
 #define KC_MARKER_ACCOUNT        "legacy-client-keys-v1"
@@ -1484,6 +1499,7 @@ static CFMutableDictionaryRef kc_query(const char *service, CFStringRef attr, co
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   if (!q) return NULL;
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
   CFStringRef svc = CFStringCreateWithCString(NULL, service, kCFStringEncodingUTF8);
   CFDictionarySetValue(q, kSecAttrService, svc);
   CFRelease(svc);
@@ -1574,6 +1590,9 @@ static int kc_store_signer(const char *sk_hex, const char *npub){
   CFDictionarySetValue(q, kSecValueData, data);
   CFDictionarySetValue(q, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlock);
   OSStatus st = SecItemAdd(q, NULL);
+  /* Wipe key material from the CF buffer before release. */
+  { const UInt8 *db = CFDataGetBytePtr(data); CFIndex dl = CFDataGetLength(data);
+    if (db && dl > 0) memset((void *)db, 0, (size_t)dl); }
   CFRelease(label); CFRelease(comment); CFRelease(data); CFRelease(q);
   return st == errSecSuccess;
 }
@@ -1618,7 +1637,11 @@ static kc_mig_result kc_migrate_one(const char *account){
             account, (int)st);
     return KC_MIG_RETRY;
   }
-  char *sk_hex = kc_text_to_sk_hex(CFDataGetBytePtr((CFDataRef)res), CFDataGetLength((CFDataRef)res));
+  const UInt8 *mig_bytes = CFDataGetBytePtr((CFDataRef)res);
+  CFIndex mig_len = CFDataGetLength((CFDataRef)res);
+  char *sk_hex = kc_text_to_sk_hex(mig_bytes, mig_len);
+  /* Wipe secret material from the CF buffer before release. */
+  if (mig_bytes && mig_len > 0) memset((void *)mig_bytes, 0, (size_t)mig_len);
   CFRelease(res);
   char *npub = sk_hex ? kc_npub_from_sk_hex(sk_hex) : NULL;
   kc_mig_result r = KC_MIG_RETRY;

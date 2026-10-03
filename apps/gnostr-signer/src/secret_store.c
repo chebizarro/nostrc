@@ -33,6 +33,9 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 #define GNOSTR_HAVE_KEYCHAIN 1
+/* kSecAttrService value shared with the daemon (signer_ops.c
+ * KC_SIGNER_SERVICE) so both processes see the same items. */
+#define GNOSTR_KC_SERVICE "Gnostr Identity Key"
 #endif
 
 /* Internal helpers */
@@ -311,9 +314,10 @@ GPtrArray *secret_store_list(void) {
   /* macOS: Query all items with our service name */
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef service = CFStringCreateWithCString(NULL, GNOSTR_KC_SERVICE, kCFStringEncodingUTF8);
 
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(query, kSecAttrService, service);
   CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
   CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
@@ -517,9 +521,10 @@ gboolean secret_store_has_secret(const gchar *selector) {
 #elif defined(GNOSTR_HAVE_KEYCHAIN)
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef service = CFStringCreateWithCString(NULL, GNOSTR_KC_SERVICE, kCFStringEncodingUTF8);
   CFStringRef account = CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8);
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(query, kSecAttrService, service);
   CFDictionarySetValue(query, kSecAttrAccount, account);
   CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
@@ -585,10 +590,11 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
 #elif defined(GNOSTR_HAVE_KEYCHAIN)
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFStringRef service = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef service = CFStringCreateWithCString(NULL, GNOSTR_KC_SERVICE, kCFStringEncodingUTF8);
   CFStringRef account = selector ? CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8) : NULL;
 
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(query, kSecAttrService, service);
   if (account) CFDictionarySetValue(query, kSecAttrAccount, account);
   CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
@@ -622,6 +628,9 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
       memset(sk_hex, 0, 64);
       g_free(sk_hex);
     }
+    /* Wipe key material from the CF buffer before releasing. */
+    if (bytes && len > 0)
+      memset((void *)bytes, 0, (size_t)len);
     CFRelease(result);
     return *out_nsec ? SECRET_STORE_OK : SECRET_STORE_ERR_BACKEND;
   }
@@ -747,9 +756,10 @@ SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
   /* macOS: Query all items and filter by fingerprint */
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFStringRef svc = CFStringCreateWithCString(NULL, "Gnostr Identity Key", kCFStringEncodingUTF8);
+  CFStringRef svc = CFStringCreateWithCString(NULL, GNOSTR_KC_SERVICE, kCFStringEncodingUTF8);
 
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
   CFDictionarySetValue(query, kSecAttrService, svc);
   CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
   CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
