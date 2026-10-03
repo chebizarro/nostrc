@@ -79,6 +79,7 @@ jobs:
             test-groundhog-media-cache-binding \
             test-groundhog-attachments test-groundhog-attachment-ui \
             test-groundhog-mls-media test-groundhog-mls-files \
+            test-groundhog-about \
             test-groundhog-mls-poll
 
       - name: Require complete Groundhog test registration
@@ -118,6 +119,7 @@ jobs:
               'groundhog-media-cache-binding',
               'groundhog-attachments', 'groundhog-attachment-ui',
               'groundhog-mls-media', 'groundhog-mls-files',
+              'groundhog-about', 'groundhog-about-gui',
               'groundhog-mls-poll',
           }
           missing = required - found
