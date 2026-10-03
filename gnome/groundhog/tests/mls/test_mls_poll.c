@@ -258,7 +258,7 @@ test_build_vote_event(void)
   /* Parse back. */
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
-  gboolean ok = gh_mls_poll_parse_vote(json, &target, &options, &err);
+  gboolean ok = gh_mls_poll_parse_vote(json, &target, &options, NULL, &err);
   g_assert_no_error(err);
   g_assert_true(ok);
   g_assert_cmpstr(target, ==, POLL_ID);
@@ -279,7 +279,7 @@ test_vote_single(void)
   gh_mls_poll_set_local_account(poll, BOB_HEX);
 
   const gchar *ids[] = { "1", NULL };
-  gboolean changed = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now);
+  gboolean changed = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now, NULL);
   g_assert_true(changed);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
 
@@ -305,12 +305,12 @@ test_change_vote(void)
   g_assert_nonnull(poll);
 
   const gchar *ids1[] = { "0", NULL };
-  gh_mls_poll_apply_vote(poll, BOB_HEX, ids1, now);
+  gh_mls_poll_apply_vote(poll, BOB_HEX, ids1, now, NULL);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
 
   /* Change vote from option 0 to option 2. */
   const gchar *ids2[] = { "2", NULL };
-  gboolean changed = gh_mls_poll_apply_vote(poll, BOB_HEX, ids2, now + 1);
+  gboolean changed = gh_mls_poll_apply_vote(poll, BOB_HEX, ids2, now + 1, NULL);
   g_assert_true(changed);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 0);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 2)->votes, ==, 1);
@@ -328,9 +328,9 @@ test_multiple_voters(void)
 
   const gchar *ids0[] = { "0", NULL };
   const gchar *ids1[] = { "1", NULL };
-  gh_mls_poll_apply_vote(poll, ALICE_HEX, ids0, now);
-  gh_mls_poll_apply_vote(poll, BOB_HEX, ids0, now);
-  gh_mls_poll_apply_vote(poll, CAROL_HEX, ids1, now);
+  gh_mls_poll_apply_vote(poll, ALICE_HEX, ids0, now, NULL);
+  gh_mls_poll_apply_vote(poll, BOB_HEX, ids0, now, NULL);
+  gh_mls_poll_apply_vote(poll, CAROL_HEX, ids1, now, NULL);
 
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 3);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 2);
@@ -348,10 +348,10 @@ test_duplicate_vote_no_change(void)
   g_assert_nonnull(poll);
 
   const gchar *ids[] = { "1", NULL };
-  gboolean first = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now);
+  gboolean first = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now, NULL);
   g_assert_true(first);
   /* Re-applying the same vote is valid but returns FALSE (no tally change). */
-  gboolean second = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now + 1);
+  gboolean second = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, now + 1, NULL);
   g_assert_false(second);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);
@@ -382,7 +382,7 @@ test_parse_vote_valid(void)
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
   g_autoptr(GError) err = NULL;
-  g_assert_true(gh_mls_poll_parse_vote(json, &target, &options, &err));
+  g_assert_true(gh_mls_poll_parse_vote(json, &target, &options, NULL, &err));
   g_assert_no_error(err);
   g_assert_cmpstr(target, ==, POLL_ID);
   g_assert_cmpstr(options[0], ==, "0");
@@ -396,7 +396,7 @@ test_parse_vote_multiple_responses(void)
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
   g_autoptr(GError) err = NULL;
-  g_assert_true(gh_mls_poll_parse_vote(json, &target, &options, &err));
+  g_assert_true(gh_mls_poll_parse_vote(json, &target, &options, NULL, &err));
   g_assert_no_error(err);
   g_assert_cmpstr(target, ==, POLL_ID);
   g_assert_cmpstr(options[0], ==, "0");
@@ -410,7 +410,7 @@ test_parse_vote_malformed(void)
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
   g_autoptr(GError) err = NULL;
-  g_assert_false(gh_mls_poll_parse_vote("not json", &target, &options, &err));
+  g_assert_false(gh_mls_poll_parse_vote("not json", &target, &options, NULL, &err));
 }
 
 /* ---- privacy: nothing fetched --------------------------------------------- */
@@ -436,7 +436,7 @@ test_no_network_fetch(void)
   g_assert_nonnull(vote_json);
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
-  g_assert_true(gh_mls_poll_parse_vote(vote_json, &target, &options, NULL));
+  g_assert_true(gh_mls_poll_parse_vote(vote_json, &target, &options, NULL, NULL));
 }
 
 /* ---- MDK v0.11 wire-format compatibility (nostrc-a36s matrix case) -------- */
@@ -565,7 +565,7 @@ test_mdk_vote_to_groundhog(void)
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
   g_autoptr(GError) err = NULL;
-  g_assert_true(gh_mls_poll_parse_vote(MDK_VOTE_JSON, &target, &options, &err));
+  g_assert_true(gh_mls_poll_parse_vote(MDK_VOTE_JSON, &target, &options, NULL, &err));
   g_assert_no_error(err);
   g_assert_cmpstr(target, ==, POLL_ID);
   g_assert_cmpstr(options[0], ==, "0");
@@ -627,13 +627,13 @@ test_mdk_poll_groundhog_votes(void)
 
   /* Groundhog casts a vote for option 1 ("Coffee"). */
   const gchar *ids[] = { "1", NULL };
-  gh_mls_poll_apply_vote(poll, BOB_HEX, ids, 2000);
+  gh_mls_poll_apply_vote(poll, BOB_HEX, ids, 2000, NULL);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);
 
   /* Another voter from Groundhog also votes Tea. */
   const gchar *ids0[] = { "0", NULL };
-  gh_mls_poll_apply_vote(poll, CAROL_HEX, ids0, 2001);
+  gh_mls_poll_apply_vote(poll, CAROL_HEX, ids0, 2001, NULL);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 2);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);
@@ -658,9 +658,9 @@ test_groundhog_poll_mdk_votes(void)
   /* Apply an MDK-formatted vote. */
   g_autofree gchar *target = NULL;
   g_auto(GStrv) options = NULL;
-  g_assert_true(gh_mls_poll_parse_vote(MDK_VOTE_JSON, &target, &options, &err));
+  g_assert_true(gh_mls_poll_parse_vote(MDK_VOTE_JSON, &target, &options, NULL, &err));
   g_assert_cmpstr(target, ==, POLL_ID);
-  gh_mls_poll_apply_vote(poll, BOB_HEX, (const gchar **) options, 2000);
+  gh_mls_poll_apply_vote(poll, BOB_HEX, (const gchar **) options, 2000, NULL);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
 }
@@ -744,7 +744,7 @@ test_late_vote_rejected(void)
   /* A vote at t=1500 (within deadline) should succeed. */
   const gchar *ids[] = { "0", NULL };
   g_assert_true(gh_mls_poll_is_open(poll, 1500));
-  gboolean ok = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, 1500);
+  gboolean ok = gh_mls_poll_apply_vote(poll, BOB_HEX, ids, 1500, NULL);
   g_assert_true(ok);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
 }
@@ -764,6 +764,54 @@ test_pre_poll_vote_rejected(void)
   g_assert_nonnull(poll);
   /* created_at=999 is before the poll — the service layer rejects it. */
   g_assert_true(gh_mls_poll_is_open(poll, 999));  /* no deadline → always open */
+}
+
+/* ---- vote withdrawal (F5) ------------------------------------------------- */
+
+static void
+test_vote_withdrawal(void)
+{
+  /* F5 / nostrc-tmib: withdrawing a vote (convergence) removes the voter
+   * record in-session, not just on restart.  The voter record stores the
+   * vote_event_id so remove_voter_by_event_id can find it. */
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *json = make_poll_json(ALICE_HEX, now, "Best color?",
+                                           3, "singlechoice", 0);
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          now, json, NULL);
+  g_assert_nonnull(poll);
+
+  /* Bob and Carol vote (with known vote event ids). */
+  const gchar *ids0[] = { "0", NULL };
+  const gchar *ids1[] = { "1", NULL };
+  g_assert_true(gh_mls_poll_apply_vote(poll, BOB_HEX, ids0, now,
+                                        "bbbb000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_true(gh_mls_poll_apply_vote(poll, CAROL_HEX, ids1, now,
+                                        "cccc000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 2);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);
+
+  /* Withdraw Bob's vote by its event id (as convergence would). */
+  g_assert_true(gh_mls_poll_remove_voter_by_event_id(
+      poll, "bbbb000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 0);  /* Bob's vote gone */
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 1);  /* Carol's unchanged */
+
+  /* Withdrawing a non-existent event id returns FALSE. */
+  g_assert_false(gh_mls_poll_remove_voter_by_event_id(
+      poll, "dddd000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+
+  /* Also test remove_voter by pubkey (Carol). */
+  g_assert_true(gh_mls_poll_remove_voter(poll, CAROL_HEX));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 0);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 0);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 0);
+
+  /* Removing an already-removed voter returns FALSE. */
+  g_assert_false(gh_mls_poll_remove_voter(poll, CAROL_HEX));
 }
 
 /* ---- main ----------------------------------------------------------------- */
@@ -800,6 +848,9 @@ main(int argc, char **argv)
   /* F3: post-deadline vote rejection. */
   g_test_add_func("/mls/poll/late-vote-rejected", test_late_vote_rejected);
   g_test_add_func("/mls/poll/pre-poll-vote-rejected", test_pre_poll_vote_rejected);
+
+  /* F5 / nostrc-tmib: vote withdrawal removes voter record in-session. */
+  g_test_add_func("/mls/poll/vote-withdrawal", test_vote_withdrawal);
 
   /* MDK v0.11 wire-format matrix. */
   g_test_add_func("/mls/poll/mdk-poll-to-groundhog", test_mdk_poll_to_groundhog);

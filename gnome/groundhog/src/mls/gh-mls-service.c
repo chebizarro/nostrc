@@ -646,6 +646,20 @@ welcome_time_scope(const guint8 wrapper[32])
   return g_strdup_printf("mls/w/%.32s", g_checksum_get_string(sum));
 }
 
+/* Where the group's leave-miss counter is kept (F3): "mls/m/" + 32 hex
+ * of SHA-256(domain || group id).  Persisted across restarts so a leave
+ * bounded at GH_MLS_SERVICE_LEAVE_REQUESTS misses stays bounded per
+ * leave, not per session. */
+static gchar *
+leave_misses_scope(GhMlsGroup *group)
+{
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  static const guchar domain[] = "groundhog/mls-leave-misses/v1";
+  g_checksum_update(sum, domain, sizeof domain);
+  g_checksum_update(sum, group->gid.data, (gssize)group->gid.len);
+  return g_strdup_printf("mls/m/%.32s", g_checksum_get_string(sum));
+}
+
 /* Where the group's join floor is kept: "mls/j/" + 32 hex of
  * SHA-256(domain || group id). */
 static gchar *
@@ -2130,6 +2144,14 @@ ensure_group(GhMlsService *self, const MarmotGroupId *gid)
     g_message("Groundhog could not read an encrypted group's cursor: %s", error->message);
   g_autofree gchar *floor = floor_scope(group);
   gh_store_get_cursor(self->store, floor, "", &group->floor, NULL);
+  /* F3: restore the leave-miss counter from storage so the leave bound
+   * survives a restart. */
+  if (group->leaving) {
+    gint64 stored_misses = 0;
+    g_autofree gchar *ms = leave_misses_scope(group);
+    if (gh_store_get_cursor(self->store, ms, "", &stored_misses, NULL) && stored_misses > 0)
+      group->leave_misses = (guint)stored_misses;
+  }
   g_signal_emit(self, signals[SIGNAL_GROUP_ADDED], 0, group);
   return group;
 }
@@ -2589,9 +2611,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       } else if (inner_kind == GH_MLS_POLL_VOTE_KIND) {
         g_autoptr(GError) vote_err = NULL;
         g_autofree gchar *target_id = NULL;
+        g_autofree gchar *vote_event_id = NULL;
         g_auto(GStrv) option_ids = NULL;
         if (gh_mls_poll_parse_vote(result.app_msg.inner_event_json,
-                                   &target_id, &option_ids, &vote_err)) {
+                                   &target_id, &option_ids, &vote_event_id,
+                                   &vote_err)) {
           g_autofree gchar *key = g_strdup_printf("%s:%s", group->gid_hex, target_id);
           GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
           if (poll) {
@@ -2601,7 +2625,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
             if (gh_mls_poll_is_open(poll, vote_ts) &&
                 vote_ts >= gh_mls_poll_get_created_at(poll))
               gh_mls_poll_apply_vote(poll, result.app_msg.sender_pubkey_hex,
-                                     (const gchar **) option_ids, vote_ts);
+                                     (const gchar **) option_ids, vote_ts,
+                                     vote_event_id);
           }
         }
       }
@@ -2685,8 +2710,13 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       if (g_strcmp0(result.commit.departed_pubkey_hexes[i], self->account) != 0)
         g_hash_table_add(group->leavers, g_strdup(result.commit.departed_pubkey_hexes[i]));
     /* Re-review R1: an admin's Commit while our Remove request waits
-     * (group->admins still lists the admins it was judged against). */
+     * (group->admins still lists the admins it was judged against).
+     * F1: count only Commits that processed no departure proposals as
+     * misses.  An admin who committed another member's leave, or any
+     * other work, may still process ours next.  MDK 0.8's auto-commit
+     * that drops a Remove request always has departed_count == 0. */
     if (group->leaving && group->leave_via_admin && result.commit.committer_pubkey_hex &&
+        result.commit.departed_count == 0 &&
         g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex))
       group->leave_admin_commit = TRUE;
     /* Who added the devices the Commit brings (nostrc-6ukh). Our own,
@@ -2838,10 +2868,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       /* A withdrawn poll: remove the whole projection. */
       if (g_hash_table_remove(self->polls, poll_key))
         continue;
-      /* A withdrawn vote: find the poll it targeted and remove the voter.
-       * The voter's pubkey is not in the rumor id, so scan each poll in
-       * this group for a voter whose record references this rumor. This is
-       * O(polls * voters) but withdrawals are rare (convergence events). */
+      /* A withdrawn vote: find the poll it targeted and remove the voter
+       * by the vote's inner event id.  The voter record stores the
+       * vote_event_id set at apply time; scan each poll in this group
+       * and remove the matching record.  O(polls × voters) but
+       * withdrawals are rare (convergence events). */
       GHashTableIter poll_iter;
       g_hash_table_iter_init(&poll_iter, self->polls);
       const gchar *pk;
@@ -2849,12 +2880,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
       while (g_hash_table_iter_next(&poll_iter, (gpointer *) &pk, (gpointer *) &p)) {
         if (!g_str_has_prefix(pk, group->gid_hex))
           continue;
-        /* Rebuild is simpler: just mark dirty and let the next rebuild
-         * pass fix it.  But we can do better: the store still has all
-         * non-withdrawn messages, and rebuild_polls runs on restart
-         * anyway.  For now, just signal that tallies may have changed
-         * so the UI refreshes. */
-        g_signal_emit_by_name(p, "tallies-changed");
+        if (gh_mls_poll_remove_voter_by_event_id(p, rumor_id))
+          break;   /* a vote belongs to exactly one poll */
       }
     }
   if (commit) {
@@ -3850,6 +3877,7 @@ stage_change(GTask *task, GhMlsGroup *group, GhMlsCommitProducer producer, gpoin
 /* ---- Leaving and others' leaves (nostrc-2um6) ------------------------------------------ */
 
 static gboolean held_awaits_proposal(GhMlsGroup *group);
+static gboolean departures_blocked(GhMlsGroup *group);
 static GTask *op_task(GhMlsService *self, OpKind kind, GhMlsGroup *group,
                       GCancellable *cancellable, GAsyncReadyCallback callback,
                       gpointer user_data, gpointer tag);
@@ -3912,8 +3940,8 @@ departures_fired(gpointer data)
   group->departures_source = 0;
   /* Re-checked now: another member's Commit may have consumed it, or a
    * change of ours is still out (after_commit() schedules again). */
-  if (!running(self) || !group->active || group->leaving || group->round ||
-      group->pending_commit || held_awaits_proposal(group) || !departures_committable(group))
+  if (!running(self) || !group->active || group->leaving ||
+      departures_blocked(group) || !departures_committable(group))
     return G_SOURCE_REMOVE;
   GTask *task = op_task(self, OP_DEPARTURES, group, NULL, departures_done, NULL,
                         gh_mls_service_change_finish);
@@ -3935,6 +3963,11 @@ check_departures(GhMlsService *self, GhMlsGroup *group, GError **error)
   if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active || group->leaving) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                         "Not an active group of this account");
+    return FALSE;
+  }
+  if (departures_blocked(group)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_BUSY,
+                        "Another change is in flight");
     return FALSE;
   }
   if (!departures_committable(group)) {
@@ -3959,6 +3992,14 @@ held_awaits_proposal(GhMlsGroup *group)
   return FALSE;
 }
 
+/* Whether departure-commit is blocked: a round, a pending Commit, or a
+ * held Commit awaiting its proposal would race with or consume the leave. */
+static gboolean
+departures_blocked(GhMlsGroup *group)
+{
+  return group->round || group->pending_commit || held_awaits_proposal(group);
+}
+
 /* The jitter window grows with the group (review L5): with N members
  * online, about 1 + (N-1)*latency/window of them fire before the first
  * Commit is seen. */
@@ -3976,7 +4017,7 @@ departures_schedule(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
   if (group->departures_source || !running(self) || !group->active || group->leaving ||
-      group->retrying || held_awaits_proposal(group) || !departures_committable(group))
+      group->retrying || departures_blocked(group) || !departures_committable(group))
     return;
   gint64 ms = gh_clock_random_range(self->clock, GH_MLS_SERVICE_DEPARTURE_JITTER_MIN_MS,
                                     departures_window_ms(group));
@@ -4252,6 +4293,9 @@ leave_give_up(GhMlsGroup *group, GhMlsLeaveFailure why)
   group->leave_failure = why;
   group->leave_misses = 0;
   group->leave_admin_commit = FALSE;
+  /* F3: clear the persisted miss counter. */
+  g_autofree gchar *ms = leave_misses_scope(group);
+  gh_store_set_cursor(self->store, ms, "", 0, NULL);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
   group_refresh(group);
 }
@@ -4273,16 +4317,22 @@ leave_continue(GhMlsGroup *group)
       leave_give_up(group, GH_MLS_LEAVE_FAILURE_NOT_PROCESSED);
       return;
     }
+    /* F3: persist the miss counter so it survives restarts. */
+    g_autofree gchar *ms = leave_misses_scope(group);
+    gh_store_set_cursor(self->store, ms, "", (gint64)group->leave_misses, NULL);
+    gh_store_commit(self->store, NULL);
   }
   char *json = NULL;
   MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
   if (err == MARMOT_OK && json) {
     leave_start(group, json);
   } else if (err == MARMOT_ERR_ADMIN_CANNOT_LEAVE || err == MARMOT_ERR_UNSUPPORTED ||
-             err == MARMOT_ERR_USE_AFTER_EVICTION) {
-    /* Definitive (review L3, N4): this leave cannot go on (e.g. the
-     * account was made an admin). Say so and stop blocking sends, rather
-     * than "waiting" for a Commit that cannot come. */
+             err == MARMOT_ERR_USE_AFTER_EVICTION || err == MARMOT_ERR_OWN_LEAF_NOT_FOUND ||
+             err == MARMOT_ERR_GROUP_NOT_FOUND || err == MARMOT_ERR_DESERIALIZATION) {
+    /* Definitive (review L3, N4, F4): this leave cannot go on.  The last
+     * three are persistent in practice (our leaf was blanked, the group
+     * was dropped, or the leave record is corrupted).  Say so and stop
+     * blocking sends, rather than retrying forever. */
     g_message("Groundhog stopped leaving an encrypted group: %s", marmot_error_string(err));
     leave_give_up(group, GH_MLS_LEAVE_FAILURE_CANNOT_CONTINUE);
   } else {
@@ -6413,6 +6463,9 @@ gh_mls_service_leave(GhMlsService *self, GhMlsGroup *group, GError **error)
    * "leaving" until a member commits it. Leaving again gives up waiting. */
   group->leave_misses = 0;
   group->leave_admin_commit = FALSE;
+  /* F3: clear the persisted miss counter on a fresh leave. */
+  { g_autofree gchar *ms = leave_misses_scope(group);
+    gh_store_set_cursor(self->store, ms, "", 0, NULL); }
   if (group->leave_failure != GH_MLS_LEAVE_FAILURE_NONE) {
     group->leave_failure = GH_MLS_LEAVE_FAILURE_NONE;
     g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
@@ -6458,6 +6511,10 @@ gh_mls_service_leave_kind(GhMlsService *self, GhMlsGroup *group)
     return GH_MLS_LEAVE_DEVICE;
   if (group->leaving)
     return GH_MLS_LEAVE_DEVICE_WAITING;
+  /* F2: if the admin-based leave failed (NOT_PROCESSED), a second press
+   * should leave on this device instead of re-requesting via the admin. */
+  if (group->leave_failure == GH_MLS_LEAVE_FAILURE_NOT_PROCESSED)
+    return GH_MLS_LEAVE_DEVICE;
   MarmotLeaveKind kind = MARMOT_LEAVE_SELF_REMOVE;
   switch (marmot_can_self_remove(self->marmot, &group->gid, &kind)) {
   case MARMOT_OK:
@@ -8248,8 +8305,10 @@ gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
   send_listed(self, group, message, outbox_id, entry, out.event_json);
   marmot_outgoing_message_free(&out);
 
-  /* Apply the vote to the local poll. */
-  gh_mls_poll_apply_vote(poll, self->account, option_ids, now);
+  /* Apply the vote to the local poll.  For local votes the vote_event_id is
+   * set once the message has a rumor id, but poll withdrawal for our own
+   * messages is handled by the poll-key path above, so NULL is fine. */
+  gh_mls_poll_apply_vote(poll, self->account, option_ids, now, NULL);
 
   return g_steal_pointer(&message);
 
@@ -8290,7 +8349,7 @@ gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
     g_autoptr(GError) err = NULL;
     g_autofree gchar *target_id = NULL;
     g_auto(GStrv) option_ids = NULL;
-    if (gh_mls_poll_parse_vote(raw, &target_id, &option_ids, &err)) {
+    if (gh_mls_poll_parse_vote(raw, &target_id, &option_ids, NULL, &err)) {
       g_autofree gchar *key = g_strdup_printf("%s:%s", group_id_hex, target_id);
       GhMlsPoll *poll = g_hash_table_lookup(self->polls, key);
       if (poll) {
@@ -8299,7 +8358,8 @@ gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
         if (gh_mls_poll_is_open(poll, vote_ts) &&
             vote_ts >= gh_mls_poll_get_created_at(poll))
           gh_mls_poll_apply_vote(poll, gh_message_get_sender(message),
-                                 (const gchar **) option_ids, vote_ts);
+                                 (const gchar **) option_ids, vote_ts,
+                                 gh_message_get_rumor_id(message));
       }
     }
   }

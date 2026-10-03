@@ -41,6 +41,7 @@ gh_mls_poll_voter_record_free(GhMlsPollVoterRecord *rec)
   if (!rec) return;
   g_free(rec->voter_pubkey);
   g_strfreev(rec->option_ids);
+  g_free(rec->vote_event_id);
   g_free(rec);
 }
 
@@ -441,7 +442,8 @@ gh_mls_poll_set_local_account(GhMlsPoll *self, const gchar *account_pubkey)
 
 gboolean
 gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
-                       const gchar **option_ids, gint64 vote_created_at)
+                       const gchar **option_ids, gint64 vote_created_at,
+                       const gchar *vote_event_id)
 {
   g_return_val_if_fail(GH_IS_MLS_POLL(self), FALSE);
   (void) vote_created_at;
@@ -478,12 +480,46 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
   GhMlsPollVoterRecord *rec = g_new0(GhMlsPollVoterRecord, 1);
   rec->voter_pubkey = g_strdup(voter_pubkey);
   rec->option_ids = g_strdupv((gchar **) option_ids);
+  rec->vote_event_id = g_strdup(vote_event_id);
   g_hash_table_replace(self->voters, rec->voter_pubkey, rec);
 
   recompute_tallies(self);
   update_local_selection(self);
   g_signal_emit(self, signals[SIG_TALLIES_CHANGED], 0);
   return TRUE;
+}
+
+gboolean
+gh_mls_poll_remove_voter(GhMlsPoll *self, const gchar *voter_pubkey)
+{
+  g_return_val_if_fail(GH_IS_MLS_POLL(self), FALSE);
+  if (!voter_pubkey || !g_hash_table_remove(self->voters, voter_pubkey))
+    return FALSE;
+  recompute_tallies(self);
+  update_local_selection(self);
+  g_signal_emit(self, signals[SIG_TALLIES_CHANGED], 0);
+  return TRUE;
+}
+
+gboolean
+gh_mls_poll_remove_voter_by_event_id(GhMlsPoll *self, const gchar *event_id)
+{
+  g_return_val_if_fail(GH_IS_MLS_POLL(self), FALSE);
+  if (!event_id)
+    return FALSE;
+  GHashTableIter iter;
+  g_hash_table_iter_init(&iter, self->voters);
+  GhMlsPollVoterRecord *rec;
+  while (g_hash_table_iter_next(&iter, NULL, (gpointer *) &rec)) {
+    if (g_strcmp0(rec->vote_event_id, event_id) == 0) {
+      g_hash_table_iter_remove(&iter);
+      recompute_tallies(self);
+      update_local_selection(self);
+      g_signal_emit(self, signals[SIG_TALLIES_CHANGED], 0);
+      return TRUE;
+    }
+  }
+  return FALSE;
 }
 
 /* ---- builders ----------------------------------------------------------- */
@@ -629,11 +665,14 @@ gh_mls_poll_build_vote_event(const gchar *account_pubkey, const gchar *nostr_gro
 gboolean
 gh_mls_poll_parse_vote(const gchar *inner_event_json,
                        gchar **out_target_poll_id, gchar ***out_option_ids,
+                       gchar **out_event_id,
                        GError **error)
 {
   g_return_val_if_fail(inner_event_json && out_target_poll_id && out_option_ids, FALSE);
   *out_target_poll_id = NULL;
   *out_option_ids = NULL;
+  if (out_event_id)
+    *out_event_id = NULL;
 
   NostrEvent *event = nostr_event_new();
   if (!event) {
@@ -692,6 +731,14 @@ gh_mls_poll_parse_vote(const gchar *inner_event_json,
     }
   }
 
+  /* Extract the event id before freeing (for vote withdrawal lookup). */
+  if (out_event_id) {
+    char *eid = nostr_event_get_id(event);
+    if (eid) {
+      *out_event_id = g_strdup(eid);
+      free(eid);
+    }
+  }
   nostr_event_free(event);
 
   if (parse_error || !target || selections->len == 0) {

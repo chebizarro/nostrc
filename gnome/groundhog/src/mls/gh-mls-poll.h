@@ -62,6 +62,7 @@ void gh_mls_poll_tally_free(GhMlsPollTally *tally);
 typedef struct {
   gchar  *voter_pubkey;
   gchar **option_ids;   /* NULL-terminated */
+  gchar  *vote_event_id;  /* inner event id of the vote (for withdrawal) */
 } GhMlsPollVoterRecord;
 
 void gh_mls_poll_voter_record_free(GhMlsPollVoterRecord *rec);
@@ -103,7 +104,17 @@ gboolean            gh_mls_poll_has_voted(GhMlsPoll *self);
 gboolean gh_mls_poll_apply_vote(GhMlsPoll     *self,
                                 const gchar   *voter_pubkey,
                                 const gchar  **option_ids,
-                                gint64         vote_created_at);
+                                gint64         vote_created_at,
+                                const gchar   *vote_event_id);
+
+/* Remove a voter's record by pubkey.  Returns TRUE and emits
+ * "tallies-changed" if the voter was present. */
+gboolean gh_mls_poll_remove_voter(GhMlsPoll *self, const gchar *voter_pubkey);
+
+/* Remove the voter whose vote has this inner event id.  Returns TRUE and
+ * emits "tallies-changed" if found.  Used by the withdrawal path, which
+ * only knows the rumor id. */
+gboolean gh_mls_poll_remove_voter_by_event_id(GhMlsPoll *self, const gchar *event_id);
 
 /* Mark a pubkey as the local account (its votes are the local selection). */
 void gh_mls_poll_set_local_account(GhMlsPoll *self, const gchar *account_pubkey);
@@ -138,6 +149,7 @@ gchar *gh_mls_poll_build_vote_event(const gchar   *account_pubkey,
 gboolean gh_mls_poll_parse_vote(const gchar  *inner_event_json,
                                 gchar       **out_target_poll_id,
                                 gchar      ***out_option_ids,
+                                gchar       **out_event_id,
                                 GError      **error);
 
 G_END_DECLS
