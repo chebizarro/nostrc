@@ -4317,10 +4317,10 @@ leave_continue(GhMlsGroup *group)
       leave_give_up(group, GH_MLS_LEAVE_FAILURE_NOT_PROCESSED);
       return;
     }
-    /* F3: persist the miss counter so it survives restarts. */
+    /* F3: persist the miss counter so it survives restarts.  The cursor
+     * statement auto-commits; no gh_store_begin() is active here. */
     g_autofree gchar *ms = leave_misses_scope(group);
     gh_store_set_cursor(self->store, ms, "", (gint64)group->leave_misses, NULL);
-    gh_store_commit(self->store, NULL);
   }
   char *json = NULL;
   MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);
