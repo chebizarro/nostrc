@@ -367,7 +367,11 @@ other_list(GhRelayListSetup *self, const gchar *event_json, const gchar *event_i
   /* ADD_WRITE and EDIT: the base event is ours; a newer one is another client's. */
   if (g_strcmp0(event_id, self->base_id) == 0)
     return FALSE;
-  return created_at >= self->base_created_at;
+  if (created_at != self->base_created_at)
+    return created_at > self->base_created_at;
+  /* Same timestamp: NIP-01 says the lower id is authoritative.  Only skip
+   * when the discovered id is lower (it wins the tie-break). */
+  return g_strcmp0(event_id, self->base_id) < 0;
 }
 
 static void

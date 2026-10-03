@@ -1157,6 +1157,258 @@ test_edit_never_clobbers_newer(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->rec.pubs->len, ==, 0);
 }
 
+/* The account's own 10002 and 10050 found on discovery relay D. */
+static void
+discover_own_lists_and_inbox(Fixture *f)
+{
+  const gchar *discovery[] = { DISC_D, NULL };
+  g_settings_set_strv(f->settings, "discovery-relays", discovery);
+  ScopeOpen *own = NULL;
+  for (guint i = 0; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && !open->closed && g_str_equal(open->url, DISC_D))
+      own = open;
+  }
+  g_assert_nonnull(own);
+  g_autofree gchar *list = signed_event(1, 10002, nostr_tags_new(2,
+    nostr_tag_new("r", WRITE_W, "write", NULL), nostr_tag_new("r", READ_R, "read", NULL)));
+  gh_relay_scope_event(own->scope, DISC_D, list);
+  g_autofree gchar *inbox = signed_event(1, 10050, nostr_tags_new(1,
+    nostr_tag_new("relay", INBOX_A, NULL)));
+  gh_relay_scope_event(own->scope, DISC_D, inbox);
+  gh_relay_scope_eose(own->scope, DISC_D);
+  g_assert_cmpint(gh_account_relays_get_state(f->relays), ==, GH_ACCOUNT_RELAYS_COMPLETE);
+  g_assert_cmpstr(gh_account_relays_get_write_relays(f->relays)[0], ==, WRITE_W);
+  g_assert_nonnull(gh_account_relays_get_inbox_event_id(f->relays));
+  g_assert_cmpstr(gh_account_relays_get_inbox_relays(f->relays)[0], ==, INBOX_A);
+}
+
+static gboolean
+not_signing(gpointer data)
+{
+  return gh_relay_list_setup_get_state(data) != GH_RELAY_LIST_SETUP_SIGNING;
+}
+
+/* F1 regression + F2: a 10050 inline edit with the correct base_id proceeds
+ * through signing and publish — the user's own existing inbox list is not
+ * treated as "another client's list" (nostrc-mi1z review F1). */
+static void
+test_edit_inbox_add(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  discover_own_lists_and_inbox(f);
+
+  GhInboxSetupConfig config = config_of(f);
+  config.offer_relay_list = TRUE;
+
+  /* Modified 10050: adds INBOX_B to the existing [INBOX_A]. */
+  const gchar *new_relays[] = { INBOX_A, INBOX_B, NULL };
+  g_autofree gchar *unsigned_json =
+    gh_inbox_setup_build_unsigned(hex[1], new_relays,
+                                  g_get_real_time() / G_USEC_PER_SEC);
+  g_assert_nonnull(unsigned_json);
+
+  const gchar *base_id = gh_account_relays_get_inbox_event_id(f->relays);
+  gint64 base_created_at = gh_account_relays_get_inbox_created_at(f->relays);
+  g_assert_nonnull(base_id);
+  g_assert_cmpint(base_created_at, >, 0);
+
+  const gchar *targets[] = { DISC_D, NULL };
+  g_autoptr(GhRelayListSetup) setup = gh_relay_list_setup_new(&config);
+  g_autoptr(GError) error = NULL;
+  guint scopes_before = f->rec.scopes->len;
+  g_assert_true(gh_relay_list_setup_start_edit(setup, unsigned_json, base_id,
+                                                base_created_at, 10050, targets, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_CHECKING);
+
+  /* First check: the target answers with the user's own existing 10050
+   * (same id as base_id).  other_list must return FALSE. */
+  ScopeOpen *check1 = NULL;
+  for (guint i = scopes_before; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && g_str_equal(open->url, DISC_D))
+      check1 = open;
+  }
+  g_assert_nonnull(check1);
+  g_autofree gchar *existing_inbox = signed_event(1, 10050, nostr_tags_new(1,
+    nostr_tag_new("relay", INBOX_A, NULL)));
+  gh_relay_scope_event(check1->scope, DISC_D, existing_inbox);
+  gh_relay_scope_eose(check1->scope, DISC_D);
+
+  /* F1 regression: with the bug, the setup would be SKIPPED here because
+   * other_list treated the user's own 10050 as "another client's list." */
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), !=, GH_RELAY_LIST_SETUP_SKIPPED);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_SIGNING);
+
+  /* The mock signer auto-signs.  Spin until the second check opens. */
+  guint check1_end = f->rec.scopes->len;
+  gh_test_spin_until(not_signing, setup);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_CHECKING);
+
+  /* Second check: same answer (user's own 10050). */
+  ScopeOpen *check2 = NULL;
+  for (guint i = check1_end; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && g_str_equal(open->url, DISC_D))
+      check2 = open;
+  }
+  g_assert_nonnull(check2);
+  gh_relay_scope_event(check2->scope, DISC_D, existing_inbox);
+  gh_relay_scope_eose(check2->scope, DISC_D);
+
+  /* Should now be publishing the signed kind-10050. */
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_PUBLISHING);
+
+  /* Accept the publish on DISC_D. */
+  PubOpen *pub = pub_find(f, DISC_D);
+  g_assert_nonnull(pub);
+  NostrEvent *signed_ev = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(signed_ev, pub->event_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_kind(signed_ev), ==, 10050);
+  char *signed_id_raw = nostr_event_get_id(signed_ev);
+  g_autofree gchar *signed_id = g_strdup(signed_id_raw);
+  free(signed_id_raw);
+  nostr_event_free(signed_ev);
+  gh_relay_publish_ok(pub->publish, DISC_D, signed_id, TRUE, "");
+
+  gh_test_spin_until(list_setup_finished, setup);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_DONE);
+  g_assert_cmpuint(gh_relay_list_setup_get_n_accepted(setup), ==, 1);
+}
+
+/* F2: a 10050 inline remove with the correct base_id proceeds. */
+static void
+test_edit_inbox_remove(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  discover_own_lists_and_inbox(f);
+
+  GhInboxSetupConfig config = config_of(f);
+  config.offer_relay_list = TRUE;
+
+  /* Modified 10050: removes INBOX_A (empty list). */
+  const gchar *empty[] = { NULL };
+  g_autofree gchar *unsigned_json =
+    gh_inbox_setup_build_unsigned(hex[1], empty,
+                                  g_get_real_time() / G_USEC_PER_SEC);
+  g_assert_nonnull(unsigned_json);
+
+  const gchar *base_id = gh_account_relays_get_inbox_event_id(f->relays);
+  gint64 base_created_at = gh_account_relays_get_inbox_created_at(f->relays);
+  g_assert_nonnull(base_id);
+
+  const gchar *targets[] = { DISC_D, NULL };
+  g_autoptr(GhRelayListSetup) setup = gh_relay_list_setup_new(&config);
+  g_autoptr(GError) error = NULL;
+  guint scopes_before = f->rec.scopes->len;
+  g_assert_true(gh_relay_list_setup_start_edit(setup, unsigned_json, base_id,
+                                                base_created_at, 10050, targets, &error));
+  g_assert_no_error(error);
+
+  /* First check: deliver the user's own existing 10050. */
+  ScopeOpen *check = NULL;
+  for (guint i = scopes_before; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && g_str_equal(open->url, DISC_D))
+      check = open;
+  }
+  g_assert_nonnull(check);
+  g_autofree gchar *existing_inbox = signed_event(1, 10050, nostr_tags_new(1,
+    nostr_tag_new("relay", INBOX_A, NULL)));
+  gh_relay_scope_event(check->scope, DISC_D, existing_inbox);
+  gh_relay_scope_eose(check->scope, DISC_D);
+
+  /* The existing list (same id as base_id) is not "another client's list." */
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), !=, GH_RELAY_LIST_SETUP_SKIPPED);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_SIGNING);
+}
+
+/* F4: at equal created_at, NIP-01 says the lower event id is authoritative.
+ * A discovered event with a lower id at the same timestamp must cause SKIPPED
+ * (never overwrite on a tie unless ours wins). */
+static void
+test_edit_same_timestamp_skipped(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  discover_own_lists(f);
+
+  GhInboxSetupConfig config = config_of(f);
+  config.offer_relay_list = TRUE;
+
+  /* Get the base event's id and created_at from the admitted 10002. */
+  const gchar *base_json = gh_account_relays_get_relay_list_json(f->relays);
+  g_assert_nonnull(base_json);
+  NostrEvent *base_event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(base_event, base_json, NULL), ==, 1);
+  char *raw_base_id = nostr_event_get_id(base_event);
+  g_autofree gchar *base_id = g_strdup(raw_base_id);
+  free(raw_base_id);
+  gint64 base_created_at = nostr_event_get_created_at(base_event);
+  nostr_event_free(base_event);
+
+  /* Create a same-timestamp event with different tags → different id. */
+  NostrEvent *same_ts = nostr_event_new();
+  nostr_event_set_kind(same_ts, 10002);
+  nostr_event_set_created_at(same_ts, base_created_at);
+  nostr_event_set_content(same_ts, "");
+  nostr_event_set_tags(same_ts, nostr_tags_new(1,
+    nostr_tag_new("r", "wss://same-timestamp.example.org", "write", NULL)));
+  g_assert_cmpint(nostr_event_sign(same_ts, gh_test_secret[1]), ==, 0);
+  char *same_raw = nostr_event_serialize_compact(same_ts);
+  g_autofree gchar *same_json = g_strdup(same_raw);
+  free(same_raw);
+  char *raw_same_id = nostr_event_get_id(same_ts);
+  g_autofree gchar *same_id = g_strdup(raw_same_id);
+  free(raw_same_id);
+  nostr_event_free(same_ts);
+
+  g_assert_cmpstr(base_id, !=, same_id);
+
+  /* Arrange: base has the higher id; discovered has the lower.
+   * NIP-01: lower id wins at equal timestamp → discovered event is
+   * authoritative → SKIPPED.  If same_id > base_id, swap roles. */
+  const gchar *edit_base_id;
+  const gchar *discovered_json;
+  if (g_strcmp0(same_id, base_id) < 0) {
+    edit_base_id = base_id;
+    discovered_json = same_json;
+  } else {
+    edit_base_id = same_id;
+    discovered_json = base_json;
+  }
+
+  /* Build an unsigned edit (content doesn't matter for the clobber check). */
+  const gchar *new_relays[] = { WRITE_W, INBOX_A, NULL };
+  g_autofree gchar *unsigned_json =
+    gh_inbox_setup_build_relay_list_unsigned(hex[1], new_relays,
+                                             g_get_real_time() / G_USEC_PER_SEC);
+  g_assert_nonnull(unsigned_json);
+
+  const gchar *targets[] = { DISC_D, NULL };
+  g_autoptr(GhRelayListSetup) setup = gh_relay_list_setup_new(&config);
+  g_autoptr(GError) error = NULL;
+  guint scopes_before = f->rec.scopes->len;
+  g_assert_true(gh_relay_list_setup_start_edit(setup, unsigned_json, edit_base_id,
+                                                base_created_at, 10002, targets, &error));
+  g_assert_no_error(error);
+
+  ScopeOpen *check = NULL;
+  for (guint i = scopes_before; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && g_str_equal(open->url, DISC_D))
+      check = open;
+  }
+  g_assert_nonnull(check);
+  gh_relay_scope_event(check->scope, DISC_D, discovered_json);
+  gh_relay_scope_eose(check->scope, DISC_D);
+
+  /* Same timestamp, lower id wins → SKIPPED. */
+  gh_test_spin_until(list_setup_finished, setup);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_SKIPPED);
+  g_assert_cmpuint(f->rec.pubs->len, ==, 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1183,6 +1435,9 @@ main(int argc, char **argv)
   ADD("auth-shared-with-policy", test_auth_shared_with_policy);
   ADD("onboarding-targets-include-suggestions", test_onboarding_targets_include_suggestions);
   ADD("edit-never-clobbers-newer", test_edit_never_clobbers_newer);
+  ADD("edit-inbox-add", test_edit_inbox_add);
+  ADD("edit-inbox-remove", test_edit_inbox_remove);
+  ADD("edit-same-timestamp-skipped", test_edit_same_timestamp_skipped);
 #undef ADD
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {

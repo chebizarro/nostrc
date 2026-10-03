@@ -1169,8 +1169,6 @@ on_edit_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, gboolean
   const gchar *base_json = NULL;
   if (kind == 10050) {
     unsigned_json = build_modified_inbox(self->relays, self->accounts, url, add);
-    /* 10050 has no base_json in GhAccountRelays — treat as CREATE-like
-     * (any existing list on a target means SKIPPED). Set base to NULL. */
   } else if (kind == 10002) {
     unsigned_json = build_modified_relay_list(self->relays, self->accounts, url, add);
     base_json = gh_account_relays_get_relay_list_json(self->relays);
@@ -1183,7 +1181,13 @@ on_edit_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, gboolean
   }
   g_autofree gchar *base_id = NULL;
   gint64 base_created_at = 0;
-  base_event_info(base_json, &base_id, &base_created_at);
+  if (kind == 10050) {
+    const gchar *inbox_id = gh_account_relays_get_inbox_event_id(self->relays);
+    base_id = inbox_id ? g_strdup(inbox_id) : NULL;
+    base_created_at = gh_account_relays_get_inbox_created_at(self->relays);
+  } else {
+    base_event_info(base_json, &base_id, &base_created_at);
+  }
   g_auto(GStrv) targets = relay_edit_targets(self);
   GhInboxSetupConfig config = {
     .accounts = self->accounts,

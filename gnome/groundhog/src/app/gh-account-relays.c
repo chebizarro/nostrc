@@ -376,6 +376,20 @@ gh_account_relays_get_inbox_relays(GhAccountRelays *self)
   return (const gchar *const *)self->inbox_urls;
 }
 
+const gchar *
+gh_account_relays_get_inbox_event_id(GhAccountRelays *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), NULL);
+  return self->inbox.id;
+}
+
+gint64
+gh_account_relays_get_inbox_created_at(GhAccountRelays *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_RELAYS(self), 0);
+  return self->inbox.created_at;
+}
+
 static void
 gh_account_relays_dispose(GObject *object)
 {
