@@ -2711,12 +2711,14 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
         g_hash_table_add(group->leavers, g_strdup(result.commit.departed_pubkey_hexes[i]));
     /* Re-review R1: an admin's Commit while our Remove request waits
      * (group->admins still lists the admins it was judged against).
-     * F1: count only Commits that processed no departure proposals as
-     * misses.  An admin who committed another member's leave, or any
-     * other work, may still process ours next.  MDK 0.8's auto-commit
-     * that drops a Remove request always has departed_count == 0. */
+     * F1: count only empty admin Commits as misses — no departures
+     * processed and no routing changed.  An admin who committed another
+     * member's leave, a routing change, or any other visible work is
+     * actively online and may process ours next.  MDK 0.8's auto-commit
+     * that drops a Remove request produces exactly this: departed_count 0
+     * and no routing change. */
     if (group->leaving && group->leave_via_admin && result.commit.committer_pubkey_hex &&
-        result.commit.departed_count == 0 &&
+        result.commit.departed_count == 0 && !result.commit.routing_changed &&
         g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex))
       group->leave_admin_commit = TRUE;
     /* Who added the devices the Commit brings (nostrc-6ukh). Our own,
