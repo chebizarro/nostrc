@@ -572,11 +572,10 @@ gh_nip17_rumor_new_reaction_room(const gchar *sender_pubkey_hex,
     return NULL;
   g_autoptr(GPtrArray) extra = g_ptr_array_new();
   const gchar *e_pair[] = { "e", target_rumor_id, NULL };
+  const gchar *k_pair[] = { "k", target_kind_str, NULL };
   g_ptr_array_add(extra, (gpointer)e_pair);
-  if (target_kind_str && *target_kind_str) {
-    const gchar *k_pair[] = { "k", target_kind_str, NULL };
+  if (target_kind_str && *target_kind_str)
     g_ptr_array_add(extra, (gpointer)k_pair);
-  }
   return rumor_new_kind(sender, (const gchar *const *)room, 7, emoji, extra,
                         created_at, 0, out_rumor_id, error);
 }
