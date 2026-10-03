@@ -218,8 +218,25 @@ GPtrArray *
 gh_inbox_setup_load_suggestions(GError **error)
 {
   g_autoptr(GBytes) bytes = g_resources_lookup_data(GH_INBOX_SETUP_SUGGESTIONS_RESOURCE,
-                                                    G_RESOURCE_LOOKUP_FLAGS_NONE, error);
-  return bytes ? gh_inbox_setup_parse_suggestions(bytes, error) : NULL;
+                                                    G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+#ifdef GROUNDHOG_RELAY_SUGGESTIONS
+  /* Fallback for test binaries that don't have the GResource compiled in:
+   * read directly from the source-tree file. In the installed application
+   * the GResource lookup above always succeeds, so this path is dead. */
+  if (!bytes) {
+    g_autofree gchar *text = NULL;
+    gsize len = 0;
+    if (!g_file_get_contents(GROUNDHOG_RELAY_SUGGESTIONS, &text, &len, error))
+      return NULL;
+    bytes = g_bytes_new_take(g_steal_pointer(&text), len);
+  }
+#endif
+  if (!bytes) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "relay suggestions not found");
+    return NULL;
+  }
+  return gh_inbox_setup_parse_suggestions(bytes, error);
 }
 
 /* ---- the kind-10050 list ---------------------------------------------------- */
@@ -696,6 +713,16 @@ compute_targets(GhInboxSetup *self, const gchar *const *inbox_relays, gboolean a
   if (self->config.settings) {
     g_auto(GStrv) discovery = g_settings_get_strv(self->config.settings, "discovery-relays");
     add_listed(targets, (const gchar *const *)discovery, GH_INBOX_SETUP_ROLE_DISCOVERY);
+  }
+  /* nostrc-mi1z: when adopting discovery with no configured relays yet, also
+   * publish to the relay suggestions so other apps can find the lists on
+   * well-known relays, not only on the chosen message relays. */
+  if (adopt && discovery_is_empty(self)) {
+    g_autoptr(GPtrArray) suggestions = gh_inbox_setup_load_suggestions(NULL);
+    for (guint i = 0; suggestions && i < suggestions->len; i++) {
+      GhInboxSuggestion *s = g_ptr_array_index(suggestions, i);
+      target_add(targets, s->url, GH_INBOX_SETUP_ROLE_DISCOVERY);
+    }
   }
   if (targets->len > MAX_TARGETS) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,

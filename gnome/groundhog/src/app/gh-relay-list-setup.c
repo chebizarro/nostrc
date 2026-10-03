@@ -27,6 +27,8 @@ struct _GhRelayListSetup {
   gchar *base_json;            /* ADD_WRITE: the list extended */
   gchar *base_id;
   gint64 base_created_at;
+  gint kind;                   /* EDIT: kind to check for (default KIND_RELAY_LIST) */
+  gchar *edit_unsigned;        /* EDIT: the unsigned event the caller provided */
   GCancellable *cancellable;
   GhRelayScope *check;
   GHashTable *answers;         /* target URL -> CHECK_* */
@@ -249,7 +251,7 @@ on_signed(GObject *source, GAsyncResult *result, gpointer data)
   NostrEvent *event = signed_json ? nostr_event_new() : NULL;
   gboolean ok = event && nostr_event_deserialize_signed(event, signed_json, NULL) ==
                            NOSTR_EVENT_VALIDATION_OK &&
-                nostr_event_get_kind(event) == KIND_RELAY_LIST &&
+                nostr_event_get_kind(event) == (self->kind ? self->kind : KIND_RELAY_LIST) &&
                 g_strcmp0(nostr_event_get_pubkey(event), self->pubkey) == 0;
   if (event)
     nostr_event_free(event);
@@ -271,17 +273,22 @@ on_signed(GObject *source, GAsyncResult *result, gpointer data)
 static void
 sign_list(GhRelayListSetup *self)
 {
-  /* Discovery may have found a list meanwhile: the offer must still hold. */
-  if (gh_relay_list_offer(&self->config) != self->mode) {
+  /* Discovery may have found a list meanwhile: the offer must still hold.
+   * EDIT mode is externally driven: skip the offer re-check. */
+  if (self->mode != GH_RELAY_LIST_OFFER_EDIT &&
+      gh_relay_list_offer(&self->config) != self->mode) {
     finish(self, GH_RELAY_LIST_SETUP_SKIPPED, NULL);
     return;
   }
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-  g_autofree gchar *unsigned_json =
-    self->mode == GH_RELAY_LIST_OFFER_CREATE
-      ? gh_inbox_setup_build_relay_list_unsigned(self->pubkey,
-                                                 (const gchar *const *)self->write_relays, now)
-      : build_extended(self, now);
+  g_autofree gchar *unsigned_json = NULL;
+  if (self->mode == GH_RELAY_LIST_OFFER_EDIT)
+    unsigned_json = g_strdup(self->edit_unsigned);
+  else if (self->mode == GH_RELAY_LIST_OFFER_CREATE)
+    unsigned_json = gh_inbox_setup_build_relay_list_unsigned(self->pubkey,
+                                                 (const gchar *const *)self->write_relays, now);
+  else
+    unsigned_json = build_extended(self, now);
   if (!unsigned_json) {
     fail(self, _("Could not build the relay list."));
     return;
@@ -329,7 +336,8 @@ check_settled(GhRelayListSetup *self)
     return;
   }
   /* Second check, after the signer: still clean, and still the offer. */
-  if (gh_relay_list_offer(&self->config) != self->mode) {
+  if (self->mode != GH_RELAY_LIST_OFFER_EDIT &&
+      gh_relay_list_offer(&self->config) != self->mode) {
     finish(self, GH_RELAY_LIST_SETUP_SKIPPED, NULL);
     return;
   }
@@ -344,9 +352,10 @@ static gboolean
 other_list(GhRelayListSetup *self, const gchar *event_json, const gchar *event_id)
 {
   NostrEvent *event = nostr_event_new();
+  gint check_kind = self->kind ? self->kind : KIND_RELAY_LIST;
   gboolean mine = event && nostr_event_deserialize_signed(event, event_json, NULL) ==
                              NOSTR_EVENT_VALIDATION_OK &&
-                  nostr_event_get_kind(event) == KIND_RELAY_LIST &&
+                  nostr_event_get_kind(event) == check_kind &&
                   g_strcmp0(nostr_event_get_pubkey(event), self->pubkey) == 0;
   gint64 created_at = mine ? nostr_event_get_created_at(event) : 0;
   if (event)
@@ -355,6 +364,7 @@ other_list(GhRelayListSetup *self, const gchar *event_json, const gchar *event_i
     return FALSE;
   if (self->mode == GH_RELAY_LIST_OFFER_CREATE)
     return TRUE;
+  /* ADD_WRITE and EDIT: the base event is ours; a newer one is another client's. */
   if (g_strcmp0(event_id, self->base_id) == 0)
     return FALSE;
   return created_at >= self->base_created_at;
@@ -417,7 +427,7 @@ start_check(GhRelayListSetup *self, GError **error)
 {
   NostrFilters *filters = nostr_filters_new();
   NostrFilter *filter = nostr_filter_new();
-  const int kinds[] = { KIND_RELAY_LIST };
+  const int kinds[] = { self->kind ? self->kind : KIND_RELAY_LIST };
   const char *const authors[] = { self->pubkey };
   nostr_filter_set_kinds(filter, kinds, G_N_ELEMENTS(kinds));
   nostr_filter_set_authors(filter, authors, G_N_ELEMENTS(authors));
@@ -513,6 +523,47 @@ gh_relay_list_setup_start(GhRelayListSetup *self, const gchar *const *write_rela
   return start_check(self, error);
 }
 
+gboolean
+gh_relay_list_setup_start_edit(GhRelayListSetup *self, const gchar *unsigned_json,
+                               const gchar *base_id, gint64 base_created_at,
+                               gint kind, const gchar *const *targets, GError **error)
+{
+  g_return_val_if_fail(GH_IS_RELAY_LIST_SETUP(self), FALSE);
+  if (self->state != GH_RELAY_LIST_SETUP_IDLE) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PENDING, "this setup already ran");
+    return FALSE;
+  }
+  if (!unsigned_json || !*unsigned_json) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "no event to sign");
+    return FALSE;
+  }
+  g_autoptr(GPtrArray) all = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; targets && targets[i]; i++)
+    add_unique(all, targets[i]);
+  if (all->len == 0) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        _("Choose at least one relay."));
+    return FALSE;
+  }
+  GhAccountController *accounts = self->config.accounts;
+  self->pubkey = gh_identity_pubkey_hex(gh_account_controller_get_active_npub(accounts));
+  if (!self->pubkey) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        _("Choose an account first."));
+    return FALSE;
+  }
+  self->mode = GH_RELAY_LIST_OFFER_EDIT;
+  self->kind = kind;
+  self->edit_unsigned = g_strdup(unsigned_json);
+  self->base_id = g_strdup(base_id);
+  self->base_created_at = base_created_at;
+  g_ptr_array_add(all, NULL);
+  self->targets = (GStrv)g_ptr_array_free(g_steal_pointer(&all), FALSE);
+  self->generation = gh_account_controller_get_generation(accounts);
+  self->cancellable = g_cancellable_new();
+  return start_check(self, error);
+}
+
 void
 gh_relay_list_setup_cancel(GhRelayListSetup *self)
 {
@@ -599,6 +650,7 @@ gh_relay_list_setup_finalize(GObject *object)
   g_free(self->base_json);
   g_free(self->base_id);
   g_free(self->signed_json);
+  g_free(self->edit_unsigned);
   g_hash_table_unref(self->answers);
   G_OBJECT_CLASS(gh_relay_list_setup_parent_class)->finalize(object);
 }

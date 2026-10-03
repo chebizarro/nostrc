@@ -1036,9 +1036,9 @@ test_published_relays(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(group));
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(inbox)));
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(write)));
-  /* Each list has a header row + one row per relay. */
-  g_assert_cmpuint(n_rows(inbox), ==, 3); /* header + 2 relays */
-  g_assert_cmpuint(n_rows(write), ==, 2); /* header + 1 relay */
+  /* Each list has a header row + relay rows + an add-entry row. */
+  g_assert_cmpuint(n_rows(inbox), ==, 4); /* header + 2 relays + add */
+  g_assert_cmpuint(n_rows(write), ==, 3); /* header + 1 relay + add */
   g_assert_cmpstr(row_title(inbox, 1), ==, "wss://inbox.example.com");
   g_assert_cmpstr(row_title(inbox, 2), ==, "wss://inbox2.example.com");
   g_assert_cmpstr(row_title(write, 1), ==, "wss://relay.example.com");

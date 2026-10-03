@@ -1089,6 +1089,8 @@ if (TARGET groundhog-dm-inbox AND TARGET groundhog-conversation-ui AND
   target_include_directories(groundhog-inbox-setup PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
   target_link_libraries(groundhog-inbox-setup PUBLIC groundhog-dm-inbox PkgConfig::GROUNDHOG_JSON)
   target_compile_options(groundhog-inbox-setup PRIVATE -Wall -Wextra -Werror)
+  target_compile_definitions(groundhog-inbox-setup PRIVATE
+    "GROUNDHOG_RELAY_SUGGESTIONS=\"${GROUNDHOG_DATA}/relay-suggestions.json\"")
   add_library(groundhog-onboarding STATIC src/ui/gh-onboarding-view.c)
   target_include_directories(groundhog-onboarding PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
   target_link_libraries(groundhog-onboarding PUBLIC groundhog-ui groundhog-inbox-setup)

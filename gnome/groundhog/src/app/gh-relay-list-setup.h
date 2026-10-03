@@ -44,7 +44,8 @@ G_BEGIN_DECLS
 typedef enum {
   GH_RELAY_LIST_OFFER_NONE,      /* nothing to offer (or not known yet) */
   GH_RELAY_LIST_OFFER_CREATE,    /* no relay list anywhere discovery looked */
-  GH_RELAY_LIST_OFFER_ADD_WRITE  /* a relay list without any write-capable relay */
+  GH_RELAY_LIST_OFFER_ADD_WRITE, /* a relay list without any write-capable relay */
+  GH_RELAY_LIST_OFFER_EDIT       /* inline edit: caller provides the modified event */
 } GhRelayListOffer;
 
 /* What config's account could be offered now (config->offer_relay_list,
@@ -78,6 +79,17 @@ GhRelayListSetup *gh_relay_list_setup_new(const GhInboxSetupConfig *config);
  * already ran. One use per object; "changed" after every update. */
 gboolean gh_relay_list_setup_start(GhRelayListSetup *self, const gchar *const *write_relays,
                                    const gchar *const *targets, GError **error);
+/* Inline editing from Preferences (nostrc-mi1z): the caller provides the
+ * unsigned event, its base event's id and created_at (for the
+ * never-clobber check), the kind to check for, and the publish targets.
+ * The check-sign-check-publish pipeline is the same as start(). */
+gboolean gh_relay_list_setup_start_edit(GhRelayListSetup *self,
+                                         const gchar *unsigned_json,
+                                         const gchar *base_id,
+                                         gint64 base_created_at,
+                                         gint kind,
+                                         const gchar *const *targets,
+                                         GError **error);
 void gh_relay_list_setup_cancel(GhRelayListSetup *self);
 GhRelayListSetupState gh_relay_list_setup_get_state(GhRelayListSetup *self);
 GhRelayListOffer gh_relay_list_setup_get_mode(GhRelayListSetup *self);

@@ -6,6 +6,7 @@
 #endif
 #if GROUNDHOG_HAVE_RELAYS
 #include "gh-account-relays.h"
+#include "gh-inbox-setup.h"
 #endif
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
@@ -36,6 +37,10 @@
 #endif
 #if GROUNDHOG_HAVE_ONBOARDING
 #include "gh-onboarding-view.h"
+#endif
+#if GROUNDHOG_HAVE_RELAYS
+#include "gh-relay-list-setup.h"
+#include <nostr-event.h>
 #endif
 #if GROUNDHOG_HAVE_NOTIFIER
 #include "gh-notifier.h"
@@ -1029,6 +1034,190 @@ on_change_relays(GhAppServices *self, GhPreferencesDialog *dialog)
   adw_dialog_close(ADW_DIALOG(dialog));
 }
 
+/* nostrc-mi1z phase 2: inline add/remove relay in Preferences.
+ * Builds the modified event, then runs a GhRelayListSetup in EDIT mode. */
+static void
+on_relay_edit_changed(GhRelayListSetup *setup, gpointer dialog)
+{
+  GhRelayListSetupState state = gh_relay_list_setup_get_state(setup);
+  switch (state) {
+  case GH_RELAY_LIST_SETUP_DONE: {
+    guint n = gh_relay_list_setup_get_n_accepted(setup);
+    gchar *msg = g_strdup_printf(ngettext("Published to %u relay",
+                                          "Published to %u relays", n), n);
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+                                     adw_toast_new(msg));
+    g_free(msg);
+    break;
+  }
+  case GH_RELAY_LIST_SETUP_SKIPPED:
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+      adw_toast_new(_("Another app published a newer relay list — not overwritten")));
+    break;
+  case GH_RELAY_LIST_SETUP_FAILED: {
+    const GError *error = gh_relay_list_setup_get_error(setup);
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+      adw_toast_new(error ? error->message : _("Publishing failed")));
+    break;
+  }
+  default:
+    break;
+  }
+}
+
+/* Build a modified 10050 event: current relays ± url. */
+static gchar *
+build_modified_inbox(GhAccountRelays *relays, GhAccountController *accounts,
+                     const gchar *url, gboolean add)
+{
+  const gchar *const *current = gh_account_relays_get_inbox_relays(relays);
+  g_autoptr(GPtrArray) urls = g_ptr_array_new();
+  for (guint i = 0; current && current[i]; i++) {
+    if (!add && g_str_equal(current[i], url))
+      continue;
+    g_ptr_array_add(urls, (gchar *)current[i]);
+  }
+  if (add)
+    g_ptr_array_add(urls, (gchar *)url);
+  g_ptr_array_add(urls, NULL);
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(
+    gh_account_controller_get_active_npub(accounts));
+  return pubkey ? gh_inbox_setup_build_unsigned(pubkey,
+    (const gchar *const *)urls->pdata, g_get_real_time() / G_USEC_PER_SEC) : NULL;
+}
+
+/* Build a modified 10002 event: current relays ± url (as write). */
+static gchar *
+build_modified_relay_list(GhAccountRelays *relays, GhAccountController *accounts,
+                          const gchar *url, gboolean add)
+{
+  const gchar *const *current = gh_account_relays_get_write_relays(relays);
+  g_autoptr(GPtrArray) urls = g_ptr_array_new();
+  for (guint i = 0; current && current[i]; i++) {
+    if (!add && g_str_equal(current[i], url))
+      continue;
+    g_ptr_array_add(urls, (gchar *)current[i]);
+  }
+  if (add)
+    g_ptr_array_add(urls, (gchar *)url);
+  g_ptr_array_add(urls, NULL);
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(
+    gh_account_controller_get_active_npub(accounts));
+  return pubkey ? gh_inbox_setup_build_relay_list_unsigned(pubkey,
+    (const gchar *const *)urls->pdata, g_get_real_time() / G_USEC_PER_SEC) : NULL;
+}
+
+/* Collect the publish targets: the account's own write relays and the
+ * discovery relays from settings (where the lists are found). */
+static GStrv
+relay_edit_targets(GhAppServices *self)
+{
+  g_autoptr(GPtrArray) targets = g_ptr_array_new_with_free_func(g_free);
+  if (self->relays) {
+    const gchar *const *write = gh_account_relays_get_write_relays(self->relays);
+    for (guint i = 0; write && write[i]; i++)
+      g_ptr_array_add(targets, g_strdup(write[i]));
+    const gchar *const *inbox = gh_account_relays_get_inbox_relays(self->relays);
+    for (guint i = 0; inbox && inbox[i]; i++) {
+      gboolean dup = FALSE;
+      for (guint j = 0; !dup && j < targets->len; j++)
+        dup = g_str_equal(g_ptr_array_index(targets, j), inbox[i]);
+      if (!dup)
+        g_ptr_array_add(targets, g_strdup(inbox[i]));
+    }
+  }
+  if (self->settings) {
+    g_auto(GStrv) discovery = g_settings_get_strv(self->settings, "discovery-relays");
+    for (guint i = 0; discovery[i]; i++) {
+      gboolean dup = FALSE;
+      for (guint j = 0; !dup && j < targets->len; j++)
+        dup = g_str_equal(g_ptr_array_index(targets, j), discovery[i]);
+      if (!dup)
+        g_ptr_array_add(targets, g_strdup(discovery[i]));
+    }
+  }
+  g_ptr_array_add(targets, NULL);
+  return (GStrv)g_ptr_array_free(g_steal_pointer(&targets), FALSE);
+}
+
+/* The base event's id and created_at from the raw JSON (GhAccountRelays). */
+static void
+base_event_info(const gchar *json, gchar **out_id, gint64 *out_created_at)
+{
+  *out_id = NULL;
+  *out_created_at = 0;
+  if (!json)
+    return;
+  NostrEvent *event = nostr_event_new();
+  if (event && nostr_event_deserialize_compact(event, json, NULL) == 1) {
+    char *id = nostr_event_get_id(event);
+    *out_id = id ? g_strdup(id) : NULL;
+    free(id);
+    *out_created_at = nostr_event_get_created_at(event);
+  }
+  if (event)
+    nostr_event_free(event);
+}
+
+static void
+on_edit_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, gboolean add,
+              GhAppServices *self)
+{
+  if (!self->relays || !self->accounts)
+    return;
+  g_autofree gchar *unsigned_json = NULL;
+  const gchar *base_json = NULL;
+  if (kind == 10050) {
+    unsigned_json = build_modified_inbox(self->relays, self->accounts, url, add);
+    /* 10050 has no base_json in GhAccountRelays — treat as CREATE-like
+     * (any existing list on a target means SKIPPED). Set base to NULL. */
+  } else if (kind == 10002) {
+    unsigned_json = build_modified_relay_list(self->relays, self->accounts, url, add);
+    base_json = gh_account_relays_get_relay_list_json(self->relays);
+  } else
+    return;
+  if (!unsigned_json) {
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+      adw_toast_new(_("Could not build the relay list")));
+    return;
+  }
+  g_autofree gchar *base_id = NULL;
+  gint64 base_created_at = 0;
+  base_event_info(base_json, &base_id, &base_created_at);
+  g_auto(GStrv) targets = relay_edit_targets(self);
+  GhInboxSetupConfig config = {
+    .accounts = self->accounts,
+    .account_relays = self->relays,
+    .settings = self->settings,
+    .offer_relay_list = TRUE,
+  };
+  g_autoptr(GhRelayListSetup) setup = gh_relay_list_setup_new(&config);
+  g_signal_connect_object(setup, "changed", G_CALLBACK(on_relay_edit_changed), dialog, 0);
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_list_setup_start_edit(setup, unsigned_json, base_id, base_created_at,
+                                       kind, (const gchar *const *)targets, &error)) {
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+      adw_toast_new(error->message));
+    return;
+  }
+  /* Keep it alive until it settles: the ref passes to the dialog's qdata,
+   * cleared when the dialog closes or the setup reaches a terminal state. */
+  g_object_set_data_full(G_OBJECT(dialog), "relay-edit-setup",
+                         g_object_ref(setup), g_object_unref);
+}
+
+static void
+on_add_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, GhAppServices *self)
+{
+  on_edit_relay(dialog, kind, url, TRUE, self);
+}
+
+static void
+on_remove_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, GhAppServices *self)
+{
+  on_edit_relay(dialog, kind, url, FALSE, self);
+}
+
 static void
 key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
 {
@@ -1059,6 +1248,11 @@ key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
    * setup step, the same as the key-package [Set Up] button. */
   g_signal_connect_object(dialog, "change-relays",
                           G_CALLBACK(on_change_relays), self, G_CONNECT_SWAPPED);
+  /* nostrc-mi1z phase 2: inline add/remove relays in Preferences. */
+  g_signal_connect_object(dialog, "add-relay",
+                          G_CALLBACK(on_add_relay), self, 0);
+  g_signal_connect_object(dialog, "remove-relay",
+                          G_CALLBACK(on_remove_relay), self, 0);
 }
 #endif
 

@@ -430,6 +430,27 @@ choose_account(Fixture *f)
   g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "signer");
 }
 
+/* Build the full target list: the chosen URLs + non-duplicate relay
+ * suggestions (adopt with empty discovery adds them as targets). */
+static gchar **
+all_targets(const gchar *const *chosen)
+{
+  g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; chosen[i]; i++)
+    g_ptr_array_add(urls, g_strdup(chosen[i]));
+  g_autoptr(GPtrArray) s = gh_inbox_setup_load_suggestions(NULL);
+  for (guint i = 0; s && i < s->len; i++) {
+    GhInboxSuggestion *sg = g_ptr_array_index(s, i);
+    gboolean found = FALSE;
+    for (guint j = 0; !found && chosen[j]; j++)
+      found = g_str_equal(chosen[j], sg->url);
+    if (!found)
+      g_ptr_array_add(urls, g_strdup(sg->url));
+  }
+  g_ptr_array_add(urls, NULL);
+  return (gchar **)g_ptr_array_steal(urls, NULL);
+}
+
 /* The published list's answers: every live publication accepted, the
  * first message relay private and the others private or open. */
 static void
@@ -563,22 +584,26 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
 
   act(f, "onboarding.publish");
   g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "publish");
-  OpenCount two = { f, 2 };
-  gh_test_spin_until(pubs_live, &two);
-  /* Exactly the chosen relays (nothing else is configured yet). */
-  g_assert_cmpuint(f->rec.pubs->len, ==, 2);
   const gchar *chosen[] = { suggested, custom, NULL };
+  /* Chosen relays + non-duplicate suggestions (adopt with empty discovery). */
+  g_auto(GStrv) pub_targets = all_targets(chosen);
+  guint n_pubs = g_strv_length(pub_targets);
+  OpenCount pub_count = { f, n_pubs };
+  gh_test_spin_until(pubs_live, &pub_count);
+  g_assert_cmpuint(f->rec.pubs->len, ==, n_pubs);
   answer_publish(f, chosen, TRUE); /* the typed example.org relay serves reads */
   GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
   g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
   GListModel *results = gh_onboarding_view_get_results(f->view);
-  g_assert_cmpuint(g_list_model_get_n_items(results), ==, 2);
-  for (guint i = 0; i < 2; i++)
+  g_assert_cmpuint(g_list_model_get_n_items(results), ==, n_pubs);
+  for (guint i = 0; i < n_pubs; i++)
     g_assert_cmpstr(gh_onboarding_item_get_icon_name(item_at(results, i)), ==,
                     "emblem-ok-symbolic");
   g_assert_true(gtk_widget_get_visible(child(f, "publish_continue")));
   g_assert_false(gtk_widget_get_visible(child(f, "publish_retry")));
-  /* The user agreed: the relays that kept the list now find it. */
+  /* The user agreed: the relays that kept the list now find it.
+   * Discovery saves only the user's chosen relays, not the suggestion
+   * relays (which were publish targets for discoverability only). */
   g_auto(GStrv) discovery = g_settings_get_strv(f->settings, "discovery-relays");
   g_assert_cmpuint(g_strv_length(discovery), ==, 2);
 
@@ -861,6 +886,7 @@ test_relay_list_edit_opt_in(Fixture *f, gconstpointer data)
   g_assert_false(adw_switch_row_get_active(edit));
   guint scopes = f->rec.scopes->len;
   act(f, "onboarding.publish");
+  /* discovery-relays is non-empty → suggestions are not added as targets. */
   OpenCount two = { f, 2 };
   gh_test_spin_until(pubs_live, &two);
   GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
@@ -903,11 +929,13 @@ test_first_run_offers_relay_list(Fixture *f, gconstpointer data)
   g_assert_false(gtk_widget_get_visible(child(f, "relay_list_group")));   /* not known yet */
   g_assert_true(adw_switch_row_get_active(child(f, "discovery_switch")));
   act(f, "onboarding.publish");
-  OpenCount one = { f, 1 };
-  gh_test_spin_until(pubs_live, &one);
   GhInboxSetup *setup = gh_onboarding_view_get_setup(f->view);
   const gchar *chosen = gh_inbox_setup_get_relay(setup, 0)->url;
   const gchar *const chosen_list[] = { chosen, NULL };
+  g_auto(GStrv) inbox_targets = all_targets(chosen_list);
+  guint n_inbox_pubs = g_strv_length(inbox_targets);
+  OpenCount inbox_count = { f, n_inbox_pubs };
+  gh_test_spin_until(pubs_live, &inbox_count);
   answer_publish(f, chosen_list, FALSE);
   g_assert_cmpint(gh_inbox_setup_get_state(setup), ==, GH_INBOX_SETUP_DONE);
   g_assert_true(gh_inbox_setup_get_adopted_discovery(setup));
@@ -921,9 +949,10 @@ test_first_run_offers_relay_list(Fixture *f, gconstpointer data)
   g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "publish");
 
   act(f, "onboarding.publish-relay-list");
-  answer_checks(f, chosen_list);
-  answer_checks(f, chosen_list);   /* after the signer (final review F1) */
-  gh_test_spin_until(pubs_live, &one);
+  answer_checks(f, (const gchar *const *)inbox_targets);
+  answer_checks(f, (const gchar *const *)inbox_targets);   /* after the signer (final review F1) */
+  OpenCount rl_pubs = { f, n_inbox_pubs };
+  gh_test_spin_until(pubs_live, &rl_pubs);
   for (guint i = 0; i < f->rec.pubs->len; i++) {
     PubOpen *open = g_ptr_array_index(f->rec.pubs, i);
     if (!open->closed)
@@ -1129,8 +1158,9 @@ shoot_flow(Fixture *f, const gchar *dir, int width, int height, const gchar *var
   act(f, "onboarding.inbox-continue");
   shoot(f, dir, 5, "confirm", variant);
   act(f, "onboarding.publish");
-  OpenCount two = { f, 2 };
-  gh_test_spin_until(pubs_live, &two);
+  g_auto(GStrv) shoot_targets = all_targets(chosen);
+  OpenCount shoot_pubs = { f, g_strv_length(shoot_targets) };
+  gh_test_spin_until(pubs_live, &shoot_pubs);
   /* The reviewed suggestions refuse unauthenticated reads (as checked on
    * the review date), so the evidence shows them that way. */
   answer_publish(f, chosen, FALSE);

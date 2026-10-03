@@ -11,6 +11,7 @@
  * main context; their deadline is a failure bound, never a source of
  * progress. */
 #include "gh-inbox-setup.h"
+#include "gh-relay-list-setup.h"
 #include "gh-auth-policy.h"
 #include "gh-signer.h"
 #include "gh-test-signer.h"
@@ -634,7 +635,9 @@ test_nothing_before_signer(Fixture *f, gconstpointer data)
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) plan = gh_inbox_setup_plan(f->setup, chosen, TRUE, &error);
   g_assert_no_error(error);
-  g_assert_cmpuint(plan->len, ==, 2);
+  /* 2 chosen inboxes + the relay suggestions (adopt with empty discovery). */
+  g_autoptr(GPtrArray) suggestions = gh_inbox_setup_load_suggestions(NULL);
+  g_assert_cmpuint(plan->len, ==, 2 + (suggestions ? suggestions->len : 0));
   const GhInboxSetupRelay *first = g_ptr_array_index(plan, 0);
   g_assert_cmpstr(first->url, ==, INBOX_A);
   /* Nothing configured to find lists yet: adopting makes them discovery. */
@@ -825,6 +828,16 @@ settle_all(Fixture *f, gboolean accept_a, gboolean accept_b)
   PubOpen *a = pub_find(f, INBOX_A);
   gh_relay_publish_ok(a->publish, INBOX_A, id, accept_a, accept_a ? "" : "invalid: no");
   gh_relay_publish_ok(a->publish, INBOX_B, id, accept_b, accept_b ? "" : "blocked: no");
+  /* nostrc-mi1z: suggestion relays may also be targets; match the test's
+   * accept/reject intent — accept discovery targets iff any inbox accepted. */
+  gboolean accept_others = accept_a || accept_b;
+  for (guint i = 0; i < f->rec.pubs->len; i++) {
+    PubOpen *p = g_ptr_array_index(f->rec.pubs, i);
+    if (!p->closed && g_strcmp0(p->url, INBOX_A) != 0 &&
+        g_strcmp0(p->url, INBOX_B) != 0)
+      gh_relay_publish_ok(a->publish, p->url, id, accept_others,
+                          accept_others ? "" : "blocked: no");
+  }
   GhRelayScope *probe = probe_open(f, INBOX_A)->scope;
   gh_relay_scope_eose(probe, INBOX_A);
   gh_relay_scope_eose(probe, INBOX_B);
@@ -1027,6 +1040,123 @@ test_account_switch(Fixture *f, gconstpointer data)
   gh_test_spin_until(probe_scopes_closed, f);
 }
 
+/* nostrc-mi1z phase 2: onboarding with adopt publishes to the relay
+ * suggestions as discovery targets, so other apps find the lists on the
+ * well-known relays (not only on the chosen message relays). */
+static void
+test_onboarding_targets_include_suggestions(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  new_setup(f);
+  const gchar *chosen[] = { INBOX_A, NULL };
+  /* With adopt and empty discovery-relays, the targets should include the
+   * suggestion URLs from the shipped relay-suggestions.json. */
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) plan = gh_inbox_setup_plan(f->setup, chosen, TRUE, &error);
+  g_assert_no_error(error);
+  /* The plan has at least: INBOX_A + the relay suggestions. */
+  g_autoptr(GPtrArray) suggestions = gh_inbox_setup_load_suggestions(NULL);
+  g_assert_nonnull(suggestions);
+  g_assert_cmpuint(suggestions->len, >=, 1);
+  /* Every suggestion URL should appear as a target. */
+  for (guint i = 0; i < suggestions->len; i++) {
+    GhInboxSuggestion *s = g_ptr_array_index(suggestions, i);
+    gboolean found = FALSE;
+    for (guint j = 0; !found && j < plan->len; j++) {
+      const GhInboxSetupRelay *target = g_ptr_array_index(plan, j);
+      if (g_str_equal(target->url, s->url))
+        found = TRUE;
+    }
+    g_assert_true(found);
+  }
+  g_assert_cmpuint(plan->len, >=, 1 + suggestions->len);
+  /* Without adopt, the suggestions are NOT added. */
+  g_autoptr(GPtrArray) plan_no_adopt = gh_inbox_setup_plan(f->setup, chosen, FALSE, &error);
+  g_assert_no_error(error);
+  /* Only INBOX_A is a target (no discovery, no write, no suggestions). */
+  g_assert_cmpuint(plan_no_adopt->len, ==, 1);
+}
+
+/* nostrc-mi1z phase 2: a relay list edit (start_edit) that finds a newer
+ * list on a target ends SKIPPED — never overwrites another client's work. */
+static gboolean
+list_setup_finished(gpointer data)
+{
+  GhRelayListSetupState state = gh_relay_list_setup_get_state(data);
+  return state == GH_RELAY_LIST_SETUP_DONE || state == GH_RELAY_LIST_SETUP_FAILED ||
+         state == GH_RELAY_LIST_SETUP_SKIPPED;
+}
+
+static void
+test_edit_never_clobbers_newer(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  /* Set up discovery so GhAccountRelays can find the existing list. */
+  discover_own_lists(f);
+
+  GhInboxSetupConfig config = config_of(f);
+  config.offer_relay_list = TRUE;
+
+  /* Build an unsigned 10002 event: the "edited" list (adds a new relay). */
+  const gchar *new_relays[] = { WRITE_W, INBOX_A, NULL };
+  g_autofree gchar *unsigned_json =
+    gh_inbox_setup_build_relay_list_unsigned(hex[1], new_relays,
+                                             g_get_real_time() / G_USEC_PER_SEC);
+  g_assert_nonnull(unsigned_json);
+
+  /* Get the base event's id and created_at. */
+  const gchar *base_json = gh_account_relays_get_relay_list_json(f->relays);
+  g_assert_nonnull(base_json);
+  NostrEvent *base_event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(base_event, base_json, NULL), ==, 1);
+  char *raw_id = nostr_event_get_id(base_event);
+  g_autofree gchar *base_id = g_strdup(raw_id);
+  free(raw_id);
+  gint64 base_created_at = nostr_event_get_created_at(base_event);
+  nostr_event_free(base_event);
+
+  /* Create a newer list "from another client" (created_at > base). */
+  NostrEvent *newer = nostr_event_new();
+  nostr_event_set_kind(newer, 10002);
+  nostr_event_set_created_at(newer, base_created_at + 10);
+  nostr_event_set_content(newer, "");
+  nostr_event_set_tags(newer, nostr_tags_new(1,
+    nostr_tag_new("r", "wss://other.example.org", "write", NULL)));
+  g_assert_cmpint(nostr_event_sign(newer, gh_test_secret[1]), ==, 0);
+  char *newer_raw = nostr_event_serialize_compact(newer);
+  g_autofree gchar *newer_json = g_strdup(newer_raw);
+  free(newer_raw);
+  nostr_event_free(newer);
+
+  /* Start the edit. Target is DISC_D. */
+  const gchar *targets[] = { DISC_D, NULL };
+  g_autoptr(GhRelayListSetup) setup = gh_relay_list_setup_new(&config);
+  g_autoptr(GError) error = NULL;
+  guint scopes_before = f->rec.scopes->len;
+  g_assert_true(gh_relay_list_setup_start_edit(setup, unsigned_json, base_id,
+                                                base_created_at, 10002, targets, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_CHECKING);
+
+  /* The check scope asks {kinds:[10002], authors:[account]} on DISC_D.
+   * Deliver the newer event and EOSE. */
+  ScopeOpen *check = NULL;
+  for (guint i = scopes_before; i < f->rec.scopes->len; i++) {
+    ScopeOpen *open = g_ptr_array_index(f->rec.scopes, i);
+    if (!open->probe && g_str_equal(open->url, DISC_D))
+      check = open;
+  }
+  g_assert_nonnull(check);
+  gh_relay_scope_event(check->scope, DISC_D, newer_json);
+  gh_relay_scope_eose(check->scope, DISC_D);
+
+  /* The setup should see the newer list and skip — never clobber. */
+  gh_test_spin_until(list_setup_finished, setup);
+  g_assert_cmpint(gh_relay_list_setup_get_state(setup), ==, GH_RELAY_LIST_SETUP_SKIPPED);
+  /* No signer request (the newer list was found before signing). */
+  g_assert_cmpuint(f->rec.pubs->len, ==, 0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1051,6 +1181,8 @@ main(int argc, char **argv)
   ADD("nothing-accepted", test_nothing_accepted);
   ADD("account-switch", test_account_switch);
   ADD("auth-shared-with-policy", test_auth_shared_with_policy);
+  ADD("onboarding-targets-include-suggestions", test_onboarding_targets_include_suggestions);
+  ADD("edit-never-clobbers-newer", test_edit_never_clobbers_newer);
 #undef ADD
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {

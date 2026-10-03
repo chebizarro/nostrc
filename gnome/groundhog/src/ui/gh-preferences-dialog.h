@@ -254,5 +254,10 @@ void gh_preferences_dialog_set_published_relays(GhPreferencesDialog *self,
                                                 const gchar *const *inbox_relays,
                                                 const gchar *const *write_relays);
 
+/* Inline relay editing (nostrc-mi1z phase 2): "add-relay" and
+ * "remove-relay" carry the kind (10050 or 10002) and the relay URL. The
+ * application handles the check-sign-publish flow and refreshes the
+ * section from GhAccountRelays when it settles. */
+
 G_END_DECLS
 #endif
