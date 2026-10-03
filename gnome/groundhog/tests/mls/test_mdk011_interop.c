@@ -1947,11 +1947,9 @@ test_white_noise_reactions(void)
     return;
   /* Alice with a reaction store so the service admits kind-7 events. */
   g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
-  world_legacy_only = TRUE; /* simplify: legacy KeyPackages only */
   World w;
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
-  world_legacy_only = FALSE;
   App *alice = &w.apps[ALICE];
   /* Inject the reaction store into Alice's MLS service config. The
    * service reads it from the config struct it was created with; the
@@ -1964,21 +1962,13 @@ test_white_noise_reactions(void)
     gh_mls_service_set_reaction_store(alice->service, reactions);
     gh_reaction_store_set_account(reactions, hex[ALICE], NULL, NULL, NULL);
   }
-  spin_until(key_package_published, alice, "Alice's KeyPackage");
-  accept_contact(alice, CAROL);
-  mdk_peer("carol", CAROL);
 
-  /* Carol creates a group, Alice accepts. */
-  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, NULL);
-  g_autoptr(JsonObject) made = mdk_call(&driver,
-    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Reactions Room\","
-    "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
-    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w.g.url, hex[CAROL], alice_kp, w.x.url);
-  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
-  GhMlsGroup *ga = accept_from_carol(alice, "Reactions Room");
+  /* Reuse the White Noise group helper (adopted profile, both admins,
+   * validated KeyPackage and components).  The helper calls mdk_peer,
+   * discover, create_group with white_noise:true, and join(). */
+  g_autofree gchar *group = NULL;
+  GhMlsGroup *ga = white_noise_group(&w, &group);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
-  wait_live(ga);
 
   /* Exchange messages to react to. */
   mdk_send("carol", group, "hello from carol");
@@ -1988,38 +1978,36 @@ test_white_noise_reactions(void)
   const gchar *carol_msg_id = gh_message_get_rumor_id(carol_msg);
 
   send_accepted(alice, ga, "hello from alice");
+
+  /* MDK syncs to verify delivery of Alice's message. */
   {
     g_autoptr(JsonObject) synced = mdk_sync("carol", group);
     g_assert_true(synced_message(synced, hex[ALICE], "hello from alice"));
   }
 
-  /* MDK reacts to Alice's message → Groundhog sees the reaction. */
-  {
-    /* Find Alice's event id in Carol's sync view. */
-    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
-    JsonArray *results = json_object_get_array_member(synced, "results");
-    const gchar *alice_event_id = NULL;
-    for (guint i = 0; i < json_array_get_length(results); i++) {
-      JsonObject *r = json_array_get_object_element(results, i);
-      if (g_strcmp0(json_object_get_string_member_with_default(r, "content", NULL),
-                   "hello from alice") == 0)
-        alice_event_id = json_object_get_string_member(r, "id");
-    }
-    g_assert_nonnull(alice_event_id);
-
-    mdk_call(&driver,
-      "\"cmd\":\"send_reaction\",\"peer\":\"carol\",\"group\":\"%s\","
-      "\"emoji\":\"thumbs_up\",\"target_event_id\":\"%s\","
-      "\"target_pubkey\":\"%s\",\"target_kind\":\"9\"",
-      group, alice_event_id, hex[ALICE]);
-  }
-
-  /* Wait for Groundhog to receive the reaction. The GhMlsService sync
-   * admits kind-7 inner events to the reaction store. */
+  /* The NIP-01 event ID (rumor ID) that Groundhog computed for Alice's
+   * inner event.  The MDK sync returns an MLS-level message_id for its
+   * "id" field — that is a transport artefact unrelated to the nostr
+   * event ID, so the reaction's e-tag must carry the rumor ID instead. */
   GhMessage *alice_local_msg = find_message(alice, room, "hello from alice");
   g_assert_nonnull(alice_local_msg);
   const gchar *alice_local_id = gh_message_get_rumor_id(alice_local_msg);
   g_assert_nonnull(alice_local_id);
+
+  /* MDK reacts to Alice's message → Groundhog sees the reaction. */
+  {
+    g_autoptr(JsonObject) reacted = mdk_call(&driver,
+      "\"cmd\":\"send_reaction\",\"peer\":\"carol\",\"group\":\"%s\","
+      "\"emoji\":\"thumbs_up\",\"target_event_id\":\"%s\","
+      "\"target_pubkey\":\"%s\",\"target_kind\":\"9\"",
+      group, alice_local_id, hex[ALICE]);
+    g_autofree gchar *rtxt = mdk_json(reacted);
+    g_test_message("MDK send_reaction result: %s", rtxt);
+  }
+
+  /* Wait for Groundhog to receive the reaction. The GhMlsService
+   * admits kind-7 inner events to the reaction store keyed by the
+   * target's NIP-01 rumor ID. */
   ReactionWait rw = { reactions, alice_local_id };
   spin_until(reaction_arrived, &rw, "Carol's reaction");
   GhReactionSummary *summary = gh_reaction_store_lookup(reactions, alice_local_id);
