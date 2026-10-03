@@ -220,3 +220,157 @@ Expected textual conflicts in `gh-mls-service.c` (inner-kind dispatch),
 `gh-message-row.c` (template children), and `gh-message.c` (kind
 constants). All are additive (new `else if` branches, new struct fields)
 and mechanically resolvable. Coordinate with slice B (reactions) author.
+
+---
+
+## Addendum — re-review after author fixes
+
+**Commits reviewed:** 60b0bb7e (F1, F3, F4, F5, F7), f5ea8dc9 (F2)
+**Date:** 2026-10-03
+**Review branch rebased onto:** f5ea8dc9
+
+### Verdict: ACCEPT
+
+All seven original findings are addressed. Both blockers (F1, F2) are
+resolved with evidence. The branch is ready to merge, subject to the
+residual note on F5 below.
+
+---
+
+### F1 — FIXED ✅
+
+**What changed:** `valid_display_text()` (line 80) now calls
+`g_utf8_validate(s, len, NULL)` before the `g_utf8_next_char` loop.
+Comment references the fuzz finding.
+
+**Verification:**
+- Two new unit tests (`test_invalid_utf8_question`,
+  `test_invalid_utf8_option_label`) exercise the exact crash inputs:
+  an incomplete `0xC0` leader and a `0xFE 0xFF` sequence. Both assert
+  the parse returns NULL with `G_IO_ERROR_INVALID_ARGUMENT`.
+- All 29 tests pass clean under ASan+UBSan.
+- **Fuzz re-run:** 200,000 iterations of random-byte payloads (0–300
+  bytes, seed 42) under ASan — no crash, no OOB read. The guard
+  fully resolves the heap-buffer-overflow.
+
+---
+
+### F2 — FIXED ✅
+
+**What changed:** A live 3-phase Docker interop test added to
+`test_mdk011_interop.c` (`test_polls`, ~280 lines) and the MDK 0.11
+driver (`driver-0.11/src/main.rs`: `poll_create`, `poll_vote`,
+`poll_tally` commands, ~185 lines). The test is registered as case
+`polls` in the CMake interop matrix (line 1891).
+
+**Three phases:**
+1. MDK creates poll → Groundhog votes → MDK tallies verify
+2. Groundhog creates poll → MDK votes → Groundhog tallies verify
+3. Post-deadline vote rejected by both sides
+
+**Verification:** Built Docker image under private tag
+`nostrc-mdk-interop:0.11.0-polls-review` from the branch. Ran the case
+live with `GH_MDK_DRIVER` pointed to the review image:
+
+```
+ok 1 /groundhog/mdk011-interop/polls
+# slow test /groundhog/mdk011-interop/polls executed in 3.47 secs
+```
+
+The driver's `hello` response confirms `poll_create`, `poll_vote`,
+`poll_tally` in its command list, MDK rev `946e0547`, profile
+`marmot-adopted`. Full round-trip through MLS encryption + relay
+delivery passes.
+
+---
+
+### F3 — FIXED ✅
+
+**What changed:** Both `process_event` (line 2548) and
+`rebuild_poll_from_stored` (line 7962) now guard vote application with:
+```c
+if (gh_mls_poll_is_open(poll, vote_ts) &&
+    vote_ts >= gh_mls_poll_get_created_at(poll))
+```
+This matches MDK's `validate_poll_response` semantics: reject votes
+whose `created_at` is after the deadline OR before the poll's own
+`created_at`.
+
+**Verification:** Two new unit tests (`test_late_vote_rejected`,
+`test_pre_poll_vote_rejected`) assert the temporal guards. Both pass
+under ASan. The live Docker interop phase 3 also exercises post-deadline
+rejection end-to-end.
+
+---
+
+### F4 — FIXED ✅
+
+**What changed:** `is_valid()` in `gh-create-poll-dialog.c` (line 41)
+now uses `g_autofree gchar *stripped = g_strdup(q); g_strstrip(stripped);`
+instead of the leaked `g_strstrip(g_strdup(q))`.
+
+**Verification:** Code inspection confirms `g_autofree` scope covers the
+function body. The allocation is freed on every return path.
+
+---
+
+### F5 — PARTIALLY ADDRESSED (acceptable)
+
+**What changed:** Lines 2719–2743 of `gh-mls-service.c` add a
+withdrawal handler that:
+1. **Withdrawn poll:** `g_hash_table_remove(self->polls, poll_key)` —
+   removes the entire projection. Correct.
+2. **Withdrawn vote:** Iterates polls in the group and emits
+   `tallies-changed` — but does **not** actually remove the voter
+   record from the poll's voter hash table. The comment says "Rebuild
+   is simpler" and defers to `rebuild_polls` on restart.
+
+**No dedicated test exists.** The withdrawal path is exercised by the
+existing `test_conflict_withdraws_messages` in `test_mls_service.c`
+(for regular messages), but no test specifically creates a poll, casts
+a vote, withdraws the vote via convergence, and asserts the tally
+decremented.
+
+**Assessment:** The withdrawn-poll path is correct. The withdrawn-vote
+path is incomplete (signal without state change), but the inconsistency
+window is short (until restart, which rebuilds from the store where
+the withdrawn message is absent). This was a Low finding in the
+original review and the partial fix is acceptable for merge. A
+follow-up issue should track adding a dedicated test and optionally
+removing the voter record in-session.
+
+---
+
+### F6 — UNCHANGED (informational)
+
+No code change expected; merge conflicts with slice B remain a
+coordination item.
+
+---
+
+### F7 — FIXED ✅
+
+**What changed:** `gh_mls_poll_apply_vote()` (line 460) now compares the
+incoming option_ids against the existing voter record and returns FALSE
+if the selection is identical.
+
+**Verification:** `test_duplicate_vote_no_change` updated to assert
+`g_assert_false(second)` on a re-applied identical vote. Passes under
+ASan.
+
+---
+
+### Summary of re-review gates
+
+| Gate | Result |
+|------|--------|
+| `test-groundhog-mls-poll` (29 tests, ASan+UBSan) | ✅ all pass |
+| UTF-8 fuzz (200k iterations, ASan) | ✅ no crash |
+| Live Docker polls interop (`nostrc-mdk-interop:0.11.0-polls-review`) | ✅ passes |
+| F5 withdrawal: dedicated test? | ❌ **none** (acceptable, Low) |
+
+### Residual
+
+- **F5 follow-up:** File an issue for a dedicated poll-withdrawal test
+  and consider removing voter records in-session (not just signalling).
+  Severity: Low — does not block merge.
