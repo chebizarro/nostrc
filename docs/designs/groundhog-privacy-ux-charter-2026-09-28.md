@@ -140,7 +140,7 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 - Hiding that you use Nostr, or (in direct mode) which relays you use.
 - Hiding from *your own* inbox relay that you receive messages and roughly when.
 - Confidentiality of NIP-29 relay groups from their relay operators.
-- Multi-device MLS: one device per MLS identity in v1, stated in onboarding and group info.
+- Multi-device MLS: one device per MLS identity in v1, stated in onboarding and group info. *(Amended 2026-10-03, nostrc-lrac, W27 slice B: `--instance NAME` or `GROUNDHOG_INSTANCE=NAME` runs a second Groundhog on the same machine with fully isolated XDG directories, GSettings (keyfile backend), encrypted store and a distinct GApplication id (`org.nostr.Groundhog.NAME`). Each instance is a separate device from the protocol's point of view: its own keys, store, relay lists and MLS state. The threat model treats two instances as two independent users of the same machine (A3 boundaries apply between them only if they run as different UIDs; under the same UID, A4 applies). This is intended for development and acceptance testing of multi-device scenarios, not as a user-facing multi-account feature. See §3.2 for the on-disk layout.)*
 - Guaranteed deletion by relays or recipients for disappearing messages.
 - Resistance to a global passive adversary's timing analysis.
 
@@ -240,6 +240,16 @@ $XDG_DATA_HOME/groundhog/                    0700
 $XDG_STATE_HOME/groundhog/nip17/*.seen       legacy; only rejected ids imported into `seen`, then deleted (ST-12)
 $XDG_STATE_HOME/groundhog/nip17/*.checkpoint legacy; deleted unread (ST-12)
 $XDG_CACHE_HOME                              never used for message data (AT-5)
+
+# Named instance (nostrc-lrac, amended 2026-10-03):
+# --instance NAME or GROUNDHOG_INSTANCE=NAME overrides XDG dirs to:
+$ORIGINAL_XDG_CONFIG_HOME/.groundhog-instances/NAME/   (→ XDG_CONFIG_HOME)
+$ORIGINAL_XDG_DATA_HOME/.groundhog-instances/NAME/     (→ XDG_DATA_HOME)
+$ORIGINAL_XDG_CACHE_HOME/.groundhog-instances/NAME/    (→ XDG_CACHE_HOME)
+$ORIGINAL_XDG_STATE_HOME/.groundhog-instances/NAME/    (→ XDG_STATE_HOME)
+# The app id becomes org.nostr.Groundhog.NAME; GSettings uses the keyfile
+# backend (portable, no dconf needed). The store, autostart and all state
+# follow the overridden XDG dirs automatically.
 ```
 
 - **Legacy inbox files (W13 review B1).**

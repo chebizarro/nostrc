@@ -164,6 +164,12 @@ EXCEPTIONS = {
     ("no-tmp-cache", "src/media/gh-attachment.c", "g_get_user_runtime_dir"):
         "path_under_gvfs() compares a chosen file's path with $XDG_RUNTIME_DIR/gvfs "
         "to refuse GVfs FUSE files; it creates, writes and reads nothing there",
+    # nostrc-lrac: setup_instance() reads XDG_CACHE_HOME to redirect it to an
+    # instance-specific subdirectory for data isolation; it does not write
+    # plaintext to the cache directory.
+    ("no-tmp-cache", "src/main.c", '"XDG_CACHE_HOME"'):
+        "setup_instance() reads XDG_CACHE_HOME to redirect it to the instance's "
+        "subdirectory (nostrc-lrac); no plaintext is written to the cache",
 }
 
 Key = namedtuple("Key", "type default choices", defaults=(None,))

@@ -82,7 +82,8 @@ jobs:
             test-groundhog-about \
             test-groundhog-icons \
             test-groundhog-message-reply \
-            test-groundhog-mls-poll
+            test-groundhog-mls-poll \
+            test-groundhog-bus-probe test-groundhog-two-instance
 
       - name: Require complete Groundhog test registration
         run: |
@@ -123,6 +124,7 @@ jobs:
               'groundhog-mls-media', 'groundhog-mls-files',
               'groundhog-about', 'groundhog-about-gui',
               'groundhog-mls-poll',
+              'groundhog-bus-probe', 'groundhog-two-instance',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))

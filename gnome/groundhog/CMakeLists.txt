@@ -667,6 +667,23 @@ if (BUILD_TESTING)
   # relay and writes no inbox state.
   set_tests_properties(groundhog-launch PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 15
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+  # nostrc-v59q: the bus probe test launches groundhog against a stalled
+  # Unix socket and verifies it does not hang.
+  add_executable(test-groundhog-bus-probe tests/app/test_bus_probe.c)
+  target_link_libraries(test-groundhog-bus-probe PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-bus-probe PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-bus-probe COMMAND test-groundhog-bus-probe)
+  set_tests_properties(groundhog-bus-probe PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
+  # nostrc-lrac: two-instance concurrent start test.
+  add_executable(test-groundhog-two-instance tests/app/test_two_instance.c)
+  target_link_libraries(test-groundhog-two-instance PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-two-instance PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-two-instance COMMAND test-groundhog-two-instance)
+  set_tests_properties(groundhog-two-instance PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+
   add_test(NAME groundhog-schema
     COMMAND ${GLIB_COMPILE_SCHEMAS} --strict --dry-run ${CMAKE_CURRENT_BINARY_DIR})
   find_package(Python3 QUIET COMPONENTS Interpreter)

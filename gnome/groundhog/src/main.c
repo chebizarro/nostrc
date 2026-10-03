@@ -9,6 +9,14 @@
 #endif
 #include "gh-window.h"
 
+/* nostrc-v59q: the D-Bus probe uses low-level sockets. */
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 void groundhog_register_resource(void);
@@ -19,6 +27,270 @@ static int smoke_status = 0;
  * encrypted store and its outbox) lives in the container; see
  * gh-app-services.h. */
 static GhAppServices *app_services;
+
+/* TRUE when the session bus was detected as unresponsive (nostrc-v59q) and
+ * Groundhog falls back to non-unique mode. The account controller sees a
+ * NULL D-Bus connection and shows the SIGNER_NO_BUS banner. */
+static gboolean bus_fallback = FALSE;
+
+/* The instance name, if running as a named instance (nostrc-lrac). NULL for
+ * the default instance. Validated in setup_instance(). */
+static const gchar *instance_name;
+
+/* ---- Instance support (nostrc-lrac) ----------------------------------------
+ *
+ * --instance NAME (or GROUNDHOG_INSTANCE=NAME) runs Groundhog with:
+ *   - app id  org.nostr.Groundhog.NAME
+ *   - XDG dirs  under <original>/.groundhog-instances/NAME
+ *   - GSettings  keyfile backend (portable, no dconf needed)
+ *   - encrypted store, autostart, state  follow XDG dirs automatically
+ *
+ * Each instance is a separate device from the protocol's point of view:
+ * its own keys, store, relay lists and MLS state. The privacy charter
+ * treats two instances as two independent users of the same machine. */
+
+/* Returns TRUE if name is a valid instance identifier:
+ * 1–32 characters, ASCII alphanumeric or underscore, first char a letter. */
+static gboolean
+valid_instance_name(const char *name)
+{
+  if (!name || !name[0])
+    return FALSE;
+  if (!((name[0] >= 'A' && name[0] <= 'Z') || (name[0] >= 'a' && name[0] <= 'z')))
+    return FALSE;
+  for (size_t i = 1; name[i]; i++) {
+    if (i >= 32)
+      return FALSE;
+    char c = name[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '_'))
+      return FALSE;
+  }
+  return TRUE;
+}
+
+/* Must be called before any GLib function that caches XDG directories.
+ * Returns the instance name (owned by the process) or NULL. */
+static const char *
+setup_instance(int argc, char **argv)
+{
+  /* 1. Check --instance NAME (must be before GLib touches the env). */
+  const char *name = NULL;
+  for (int i = 1; i < argc - 1; i++) {
+    if (strcmp(argv[i], "--instance") == 0) {
+      name = argv[i + 1];
+      /* Remove from argv so GApplication doesn't see it. */
+      for (int j = i; j < argc - 2; j++)
+        argv[j] = argv[j + 2];
+      argc -= 2;
+      /* Patch argc through argv[0] convention — the caller's argc
+       * is not a pointer here; we'll return and let main() handle it. */
+      break;
+    }
+  }
+
+  /* 2. Fall back to GROUNDHOG_INSTANCE env. */
+  if (!name)
+    name = getenv("GROUNDHOG_INSTANCE");
+
+  if (!name || !name[0])
+    return NULL;
+
+  if (!valid_instance_name(name)) {
+    fprintf(stderr, "Groundhog: invalid instance name '%s' "
+            "(1-32 chars, alphanumeric/underscore, starts with letter)\n", name);
+    return NULL;  /* Continue as default instance. */
+  }
+
+  /* 3. Override XDG directories: each instance gets its own subtree.
+   * The originals are read before any GLib caching can happen. */
+  const char *xdg_vars[] = {
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME"
+  };
+  const char *defaults[] = {
+    NULL, NULL, NULL, NULL
+  };
+  /* Compute defaults (before we override them). */
+  const char *home = getenv("HOME");
+  if (!home)
+    home = "/tmp";
+  char config_default[PATH_MAX], data_default[PATH_MAX],
+       cache_default[PATH_MAX], state_default[PATH_MAX];
+  snprintf(config_default, sizeof(config_default), "%s/.config", home);
+  snprintf(data_default, sizeof(data_default), "%s/.local/share", home);
+  snprintf(cache_default, sizeof(cache_default), "%s/.cache", home);
+  snprintf(state_default, sizeof(state_default), "%s/.local/state", home);
+  defaults[0] = config_default;
+  defaults[1] = data_default;
+  defaults[2] = cache_default;
+  defaults[3] = state_default;
+
+  for (size_t i = 0; i < 4; i++) {
+    const char *current = getenv(xdg_vars[i]);
+    if (!current || !current[0])
+      current = defaults[i];
+    char buf[PATH_MAX];
+    snprintf(buf, sizeof(buf), "%s/.groundhog-instances/%s", current, name);
+    setenv(xdg_vars[i], buf, 1);
+  }
+
+  /* 4. Use the keyfile GSettings backend so dconf isolation isn't needed.
+   * Don't override if the caller already chose a backend (e.g. "memory"
+   * for test runners). */
+  if (!getenv("GSETTINGS_BACKEND"))
+    setenv("GSETTINGS_BACKEND", "keyfile", 1);
+
+  return name;
+}
+
+/* Build the app ID with the instance suffix, if any. The returned string
+ * is static or process-lifetime. */
+static const char *
+app_id_for_instance(const char *name)
+{
+  if (!name)
+    return GROUNDHOG_APP_ID;
+  /* "org.nostr.Groundhog.NAME" — safe because name is validated. */
+  static char buf[128];
+  snprintf(buf, sizeof(buf), "%s.%s", GROUNDHOG_APP_ID, name);
+  return buf;
+}
+
+/* ---- D-Bus probe (nostrc-v59q) -------------------------------------------
+ *
+ * The session bus might accept the socket (macOS launchd holds it) but
+ * never answer the D-Bus AUTH handshake. g_application_register() calls
+ * g_bus_get_sync() which calls _g_dbus_auth_run_client() which blocks in
+ * select() with no timeout — the process hangs forever, never shows a
+ * window, and ignores SIGTERM.
+ *
+ * This probe opens the Unix socket, sends the D-Bus AUTH null byte, and
+ * waits for a response with a bounded timeout. If the daemon never
+ * answers, the caller clears DBUS_SESSION_BUS_ADDRESS so GApplication
+ * registers locally with NON_UNIQUE. The existing SIGNER_NO_BUS banner
+ * tells the user. */
+
+/* Extract the Unix socket path from a D-Bus address of the form
+ * "unix:path=/foo/bar[,guid=...]". Returns a newly allocated string,
+ * or NULL for TCP, abstract or unrecognised addresses. */
+static gchar *
+dbus_unix_path(const gchar *address)
+{
+  const gchar *p = strstr(address, "unix:path=");
+  if (!p)
+    return NULL;
+  p += strlen("unix:path=");
+  const gchar *end = strpbrk(p, ",;");
+  return end ? g_strndup(p, (gsize)(end - p)) : g_strdup(p);
+}
+
+/* Returns TRUE if the session bus daemon answers the D-Bus AUTH handshake
+ * within timeout_ms milliseconds. FALSE means the bus is unreachable or
+ * stalled, and g_bus_get_sync() would hang. */
+static gboolean
+session_bus_responds(guint timeout_ms)
+{
+  /* Resolve the bus address without connecting. On macOS this queries
+   * launchd for DBUS_LAUNCHD_SESSION_BUS_SOCKET; it does not block. */
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *address =
+    g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, &error);
+  if (!address)
+    return FALSE;
+
+  g_autofree gchar *path = dbus_unix_path(address);
+  if (!path)
+    return TRUE; /* TCP or abstract: assume alive, don't block. */
+
+  if (!g_file_test(path, G_FILE_TEST_EXISTS))
+    return FALSE;
+
+  /* Open a non-blocking Unix socket. */
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (fd < 0)
+    return FALSE;
+
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    close(fd);
+    return FALSE;
+  }
+
+  struct sockaddr_un sa;
+  memset(&sa, 0, sizeof(sa));
+  sa.sun_family = AF_UNIX;
+  g_strlcpy(sa.sun_path, path, sizeof(sa.sun_path));
+
+  int r = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
+  if (r != 0 && errno != EINPROGRESS) {
+    close(fd);
+    return FALSE;
+  }
+
+  /* Wait for the connect to complete. */
+  struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+  if (poll(&pfd, 1, (int)timeout_ms) <= 0) {
+    close(fd);
+    return FALSE;
+  }
+
+  /* Verify the connection actually succeeded. */
+  int so_error = 0;
+  socklen_t optlen = sizeof(so_error);
+  getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen);
+  if (so_error != 0) {
+    close(fd);
+    return FALSE;
+  }
+
+  /* Send the D-Bus AUTH null byte — the very first byte a D-Bus client
+   * sends. A live daemon responds with "REJECTED ..." within
+   * milliseconds. A stalled socket (launchd placeholder) never answers. */
+  char nul = '\0';
+  (void)write(fd, &nul, 1);
+
+  /* Wait for any response. */
+  pfd.events = POLLIN;
+  r = poll(&pfd, 1, (int)timeout_ms);
+  close(fd);
+  return r > 0;
+}
+
+/* Check whether the session bus is reachable; if not, arrange for
+ * GApplication to skip it. Called before g_application_run(). */
+static void
+probe_session_bus(GApplicationFlags *flags)
+{
+  /* No address at all: nothing to probe, GApplication will fail fast. */
+  const gchar *addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+#ifdef __APPLE__
+  const gchar *launchd_sock = g_getenv("DBUS_LAUNCHD_SESSION_BUS_SOCKET");
+  if ((!addr || !*addr) && (!launchd_sock || !*launchd_sock))
+    return;
+#else
+  if (!addr || !*addr)
+    return;
+#endif
+
+  /* Give the daemon 5 seconds. A local Unix socket responds in <10 ms
+   * when alive; 5 s is generous for CI, slow VMs and D-Bus broker startup. */
+  if (session_bus_responds(5000))
+    return;
+
+  /* The bus is stalled or unreachable. Point the address at a path
+   * that fails fast (connect → ENOTSOCK) so g_bus_get_sync() returns
+   * an error instead of blocking, and switch to non-unique so
+   * g_application_register() does not fail. An empty string would
+   * trigger GLib's Linux fallback to $XDG_RUNTIME_DIR/bus or X11
+   * autolaunch, which may also block. */
+  g_message("Groundhog: the session bus did not respond within 5 s — "
+            "Nostr Signer and notifications are unavailable (nostrc-v59q)");
+  g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", TRUE);
+  *flags |= G_APPLICATION_NON_UNIQUE;
+  bus_fallback = TRUE;
+}
+
+/* ---- application callbacks -------------------------------------------------- */
 
 /* The widget tree is the GhWindow template (data/ui/gh-window.blp and the
  * page templates it names); only behaviour is attached here. */
@@ -134,7 +406,8 @@ activate(GApplication *app, gpointer user_data)
                                                GTK_STYLE_PROVIDER(css),
                                                GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     gh_about_dialog_register_icons();
-    gtk_window_set_default_icon_name(GROUNDHOG_APP_ID);
+    const gchar *app_id = g_application_get_application_id(app);
+    gtk_window_set_default_icon_name(app_id ? app_id : GROUNDHOG_APP_ID);
     window = GTK_WINDOW(create_window(ADW_APPLICATION(app)));
   }
   gtk_window_present(window);
@@ -153,6 +426,26 @@ main(int argc, char **argv)
     g_print("Groundhog %s\n", GROUNDHOG_VERSION);
     return 0;
   }
+
+  /* Instance support (nostrc-lrac): must run before any GLib function that
+   * caches XDG directories. Uses only libc, not GLib. */
+  instance_name = setup_instance(argc, argv);
+
+  /* Re-count argc: setup_instance may have removed --instance NAME. */
+  {
+    int new_argc = 0;
+    while (argv[new_argc])
+      new_argc++;
+    argc = new_argc;
+  }
+
+  /* D-Bus probe (nostrc-v59q): detect a stalled session bus before
+   * any GLib or GTK function that might connect to D-Bus. On Linux,
+   * gtk_init_check() initialises AT-SPI accessibility via the session
+   * bus, so a stalled bus would hang there before the probe ever ran.
+   * Must come before the --smoke block's gtk_init_check(). */
+  probe_session_bus(&flags);
+
   if (argc == 2 && g_str_equal(argv[1], "--smoke")) {
     smoke_mode = TRUE;
 #ifdef __APPLE__
@@ -183,8 +476,12 @@ main(int argc, char **argv)
   }
 #endif
 
+  const char *app_id = app_id_for_instance(instance_name);
+  if (instance_name)
+    g_message("Groundhog instance '%s' (app id %s)", instance_name, app_id);
+
   groundhog_register_resource();
-  app = adw_application_new(GROUNDHOG_APP_ID, flags);
+  app = adw_application_new(app_id, flags);
   /* Logout ends the session's clients: GTK quits on the session manager's
    * EndSession/Stop, so a background process shuts down cleanly too. */
   g_object_set(app, "register-session", TRUE, NULL);
