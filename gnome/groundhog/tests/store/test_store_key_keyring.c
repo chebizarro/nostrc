@@ -367,9 +367,16 @@ stop_private_daemons(void)
 
 /* KC-4 on a live bus: nothing owns org.freedesktop.secrets (the keyring is
  * not started yet), so every operation is UNAVAILABLE, interactive or not. */
+/* On macOS the default backend is the Keychain, which doesn't rely on the
+ * session bus.  The Keychain errSecNotAvailable → UNAVAILABLE mapping is
+ * exercised in the pre-push gate's hermetic (no-GUI) environment. */
 static void
 test_bus_without_secret_service(void)
 {
+#ifdef __APPLE__
+  g_test_skip("libsecret-specific: macOS uses the Keychain backend");
+  return;
+#endif
   g_assert_false(keyring_started);
   GhStoreKey *store_key = gh_store_key_new(NULL);
   gchar *account = random_account();

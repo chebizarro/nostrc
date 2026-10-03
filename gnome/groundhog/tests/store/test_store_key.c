@@ -703,10 +703,19 @@ test_sqlcipher_key(void)
 /* KC-4 with the production backend: no session bus is reachable (main()
  * points DBUS_SESSION_BUS_ADDRESS at a socket that does not exist), so
  * libsecret cannot reach any Secret Service. Runs last, so the no-files
- * check also covers every fake-backed case before it. */
+ * check also covers every fake-backed case before it.
+ *
+ * On macOS the default backend is the Keychain, which ignores D-Bus and
+ * would either succeed (login keychain) or hang on a security prompt.
+ * The Keychain errSecNotAvailable → UNAVAILABLE mapping is exercised
+ * in the pre-push gate's hermetic environment instead. */
 static void
 test_real_backend_no_bus(void)
 {
+#ifdef __APPLE__
+  g_test_skip("libsecret-specific: macOS uses the Keychain backend");
+  return;
+#endif
   GhStoreKey *store_key = gh_store_key_new(NULL);
   for (guint interactive = 0; interactive < 2; interactive++) {
     GhStoreKeyFlags flags = interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE;

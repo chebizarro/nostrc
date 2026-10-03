@@ -1010,18 +1010,28 @@ static void test_cancelled_private_sender(Ctx *ctx) {
   CHECK(g_strcmp0(w.a.identity, ctx->npub) == 0);
   close_conn(private);
   /* Race the approval against NameOwnerChanged delivery: the service must
-   * also check the caller's live bus name before performing or remembering. */
+   * also check the caller's live bus name before performing or remembering.
+   * Two valid outcomes: (a) NameOwnerChanged hasn't arrived yet → the
+   * pending entry is still present, approve returns (false); (b) on fast
+   * buses (macOS) NameOwnerChanged already cleaned up → approve returns
+   * ERR_NOT_FOUND because the entry was removed.  Both are correct. */
   GError *err = NULL;
   GVariant *approved = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
   while (!w.a.completed) g_main_loop_run(w.a.loop);
   watch_wait_replies(&w);
   CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
-  CHECK(approved != NULL);
-  gboolean ok = TRUE;
-  g_variant_get(approved, "(b)", &ok);
-  CHECK(!ok);
-  g_variant_unref(approved);
-  CHECK(err == NULL);
+  if (approved) {
+    /* Outcome (a): pending entry still present. */
+    gboolean ok = TRUE;
+    g_variant_get(approved, "(b)", &ok);
+    CHECK(!ok);
+    g_variant_unref(approved);
+    CHECK(err == NULL);
+  } else {
+    /* Outcome (b): NameOwnerChanged already cleaned up. */
+    expect_remote_error(err, ERR_NOT_FND);
+    g_clear_error(&err);
+  }
   char *key = g_strdup_printf("%s|%s", pr(ctx, "cancel-test"), ctx->npub);
   CHECK(!grants_has(ctx, "event", key, "allow"));
   g_free(key);
@@ -1331,13 +1341,12 @@ static void test_gating(Ctx *ctx) {
     watch_stop(ctx, &w);
   }
 
-  /* Unknown request ids are not "handled". */
+  /* Unknown request ids return ERR_NOT_FOUND (nip55l 0.6.0). */
   {
     GVariant *ok = approve_call(ctx, "req-does-not-exist", TRUE, FALSE, &err);
-    CHECK(ok != NULL);
-    gboolean handled = TRUE; g_variant_get(ok, "(b)", &handled);
-    CHECK(!handled);
-    g_variant_unref(ok);
+    CHECK(ok == NULL);
+    expect_remote_error(err, ERR_NOT_FND);
+    g_clear_error(&err);
   }
 
   /* No approval agent on the bus: a call that needs a prompt fails fast.

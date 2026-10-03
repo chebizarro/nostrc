@@ -209,6 +209,16 @@ test_store_search_verify(void)
   destroy_temp_keychain();
 }
 
+/* KC-MAC-4: when the Keychain is unavailable (errSecNotAvailable / -60006,
+ * e.g. no default keychain in a headless gate environment), every operation
+ * must surface GH_STORE_KEY_ERROR_UNAVAILABLE, not a generic FAILED.
+ *
+ * This cannot be tested reliably from a GUI session (the login keychain is
+ * always available); the mapping is exercised by the
+ * /store-key-libsecret/kc4-no-session-bus and /store-key/kc4/bus-without-
+ * secret-service tests in test_store_key.c / test_store_key_keyring.c, which
+ * run in the pre-push gate's hermetic (no-GUI) environment. */
+
 int
 main(int argc, char *argv[])
 {

@@ -98,6 +98,22 @@ kc_scope_query(GhStoreKeyKeychain *self, CFMutableDictionaryRef q, gboolean for_
 #pragma clang diagnostic pop
 }
 
+/* Map an OSStatus to a GhStoreKeyError code.
+ * errSecNotAvailable (-60006): the Keychain is unreachable — no default
+ *   keychain, or running in a hermetic environment without a GUI session.
+ * errSecAuthFailed (-25293): the keychain is locked and could not be
+ *   unlocked (no UI or user cancelled).
+ * Everything else: generic backend failure. */
+static GhStoreKeyError
+kc_map_error(OSStatus st)
+{
+  switch (st) {
+  case errSecNotAvailable: return GH_STORE_KEY_ERROR_UNAVAILABLE;
+  case errSecAuthFailed:   return GH_STORE_KEY_ERROR_LOCKED;
+  default:                 return GH_STORE_KEY_ERROR_FAILED;
+  }
+}
+
 /* ---- search ----------------------------------------------------------- */
 
 /* Fetch the secret data for a single item identified by service + account +
@@ -189,7 +205,7 @@ kc_search_in_thread(GTask *task, gpointer source, gpointer task_data,
     if (cf_acct) CFRelease(cf_acct);
     g_ptr_array_unref(out);
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            GH_STORE_KEY_ERROR_UNAVAILABLE,
+                            kc_map_error(st),
                             "Keychain search failed: %d", (int)st);
     if (result) CFRelease(result);
     return;
@@ -317,7 +333,7 @@ kc_store_in_thread(GTask *task, gpointer source, gpointer task_data,
     g_task_return_boolean(task, TRUE);
   } else {
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            GH_STORE_KEY_ERROR_FAILED,
+                            kc_map_error(st),
                             "Keychain store failed: %d", (int)st);
   }
 }
@@ -383,7 +399,7 @@ kc_clear_in_thread(GTask *task, gpointer source, gpointer task_data,
     g_task_return_boolean(task, TRUE);
   } else {
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            GH_STORE_KEY_ERROR_FAILED,
+                            kc_map_error(st),
                             "Keychain clear failed: %d", (int)st);
   }
 }
