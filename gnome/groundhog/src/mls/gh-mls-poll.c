@@ -465,7 +465,9 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
     return FALSE;
 
   /* F7: detect whether tallies actually change (an identical re-vote does
-   * not). Check the existing record before replacing it. */
+   * not). Check the existing record before replacing it.  Even when the
+   * options match, update the vote_event_id so convergence withdrawal
+   * finds the latest event (review finding 6). */
   GhMlsPollVoterRecord *existing = g_hash_table_lookup(self->voters, voter_pubkey);
   if (existing && existing->option_ids) {
     gboolean same = g_strv_length(existing->option_ids) == n_selected;
@@ -473,8 +475,12 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
       for (guint i = 0; i < n_selected && same; i++)
         same = g_strcmp0(existing->option_ids[i], option_ids[i]) == 0;
     }
-    if (same)
+    if (same) {
+      /* Tallies unchanged but track the newest event id for withdrawal. */
+      g_free(existing->vote_event_id);
+      existing->vote_event_id = g_strdup(vote_event_id);
       return FALSE;
+    }
   }
 
   GhMlsPollVoterRecord *rec = g_new0(GhMlsPollVoterRecord, 1);

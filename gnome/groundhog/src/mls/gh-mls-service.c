@@ -8310,10 +8310,9 @@ gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
   send_listed(self, group, message, outbox_id, entry, out.event_json);
   marmot_outgoing_message_free(&out);
 
-  /* Apply the vote to the local poll.  For local votes the vote_event_id is
-   * set once the message has a rumor id, but poll withdrawal for our own
-   * messages is handled by the poll-key path above, so NULL is fine. */
-  gh_mls_poll_apply_vote(poll, self->account, option_ids, now, NULL);
+  /* Apply the vote to the local poll with the inner event id so that
+   * convergence withdrawal can find and remove this voter record. */
+  gh_mls_poll_apply_vote(poll, self->account, option_ids, now, inner_id);
 
   return g_steal_pointer(&message);
 

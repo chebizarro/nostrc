@@ -814,6 +814,50 @@ test_vote_withdrawal(void)
   g_assert_false(gh_mls_poll_remove_voter(poll, CAROL_HEX));
 }
 
+
+/* ---- same-choice re-vote updates event ID (review finding 6) ----------- */
+
+static void
+test_revote_same_choice_updates_event_id(void)
+{
+  /* A same-choice re-vote does not change tallies but must track the newest
+   * event id.  If convergence withdraws the second (surviving) event, the
+   * voter record must be found and removed by the newer id.  If it
+   * withdraws the first (superseded) event, the voter must NOT be
+   * removed — the surviving second event still stands. */
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *json = make_poll_json(ALICE_HEX, now, "Fav?", 2,
+                                           "singlechoice", 0);
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          now, json, NULL);
+  const gchar *ids0[] = { "0", NULL };
+
+  /* First vote by Bob for option 0 with event A. */
+  g_assert_true(gh_mls_poll_apply_vote(poll, BOB_HEX, ids0, now,
+      "aaaa000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
+
+  /* Same-choice re-vote by Bob for option 0 with event B. */
+  g_assert_false(gh_mls_poll_apply_vote(poll, BOB_HEX, ids0, now,
+      "bbbb000000000000000000000000000000000000000000000000000000000001"));
+  /* Tallies did not change. */
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
+
+  /* Withdraw the FIRST (superseded) event A: Bob must remain — the second
+   * event B still stands. */
+  g_assert_false(gh_mls_poll_remove_voter_by_event_id(poll,
+      "aaaa000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 1);
+
+  /* Withdraw the SECOND (surviving) event B: Bob is removed. */
+  g_assert_true(gh_mls_poll_remove_voter_by_event_id(poll,
+      "bbbb000000000000000000000000000000000000000000000000000000000001"));
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 0);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 0);
+}
+
 /* ---- main ----------------------------------------------------------------- */
 
 int
@@ -851,6 +895,10 @@ main(int argc, char **argv)
 
   /* F5 / nostrc-tmib: vote withdrawal removes voter record in-session. */
   g_test_add_func("/mls/poll/vote-withdrawal", test_vote_withdrawal);
+
+  /* Review finding 6: same-choice re-vote must update the event id. */
+  g_test_add_func("/mls/poll/revote-same-choice-updates-event-id",
+                  test_revote_same_choice_updates_event_id);
 
   /* MDK v0.11 wire-format matrix. */
   g_test_add_func("/mls/poll/mdk-poll-to-groundhog", test_mdk_poll_to_groundhog);
