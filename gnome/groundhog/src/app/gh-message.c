@@ -36,6 +36,8 @@ struct _GhMessage {
   GPtrArray *attachments;   /* GhMessageAttachment, MLS only; NULL: none */
   guint rejected_attachments;
   gboolean withdrawn;   /* nostrc-xrza: withdrawn by the group's convergence */
+  /* nostrc-zjkv: NIP-29/MLS reply target (the first e-reply or q tag). */
+  gchar *reply_to_id;
 };
 
 enum {
@@ -539,6 +541,39 @@ first_tag_value(const NostrEvent *event, const gchar *key, gboolean *present)
   return NULL;
 }
 
+/* nostrc-zjkv: extract the reply-target event id from the tags.
+ * Priority: an e tag with marker "reply", then a q tag (quote), then the
+ * last bare e tag (deprecated NIP-10 convention). Returns a newly allocated
+ * lowercase hex id, or NULL when the event is not a reply/quote. */
+static gchar *
+read_reply_id(const NostrEvent *event)
+{
+  NostrTags *tags = nostr_event_get_tags((NostrEvent *)event);
+  if (!tags)
+    return NULL;
+  const gchar *marked_reply = NULL;
+  const gchar *quote = NULL;
+  const gchar *last_e = NULL;
+  for (size_t i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2)
+      continue;
+    const gchar *name = nostr_tag_get(tag, 0);
+    const gchar *value = nostr_tag_get(tag, 1);
+    if (!value || !lower_hex64(value))
+      continue;
+    if (g_strcmp0(name, "e") == 0) {
+      last_e = value;
+      if (nostr_tag_size(tag) >= 4 && g_strcmp0(nostr_tag_get(tag, 3), "reply") == 0)
+        marked_reply = value;
+    } else if (g_strcmp0(name, "q") == 0 && !quote) {
+      quote = value;
+    }
+  }
+  const gchar *best = marked_reply ? marked_reply : quote ? quote : last_e;
+  return best ? g_strdup(best) : NULL;
+}
+
 GhMessage *
 gh_message_new_from_nip29_event(const gchar *account_pubkey, const gchar *relay_url,
                                 const gchar *event_json, GError **error)
@@ -617,6 +652,7 @@ gh_message_new_from_nip29_event(const gchar *account_pubkey, const gchar *relay_
   gint64 expires_at = 0;
   if (expiration && g_ascii_string_to_signed(expiration, 10, 1, G_MAXINT64, &expires_at, NULL))
     self->expires_at = expires_at;
+  self->reply_to_id = read_reply_id(event);
   nostr_event_free(event);
   return self;
 }
@@ -745,6 +781,7 @@ gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
   gint64 expires_at = 0;
   if (expiration && g_ascii_string_to_signed(expiration, 10, 1, G_MAXINT64, &expires_at, NULL))
     self->expires_at = expires_at;
+  self->reply_to_id = read_reply_id(event);
   nostr_event_free(event);
   return self;
 }
@@ -773,6 +810,13 @@ gh_message_get_mls_epoch(GhMessage *self, guint64 *out_source_epoch)
   if (out_source_epoch)
     *out_source_epoch = self->mls_epoch;
   return TRUE;
+}
+
+const gchar *
+gh_message_get_reply_to_id(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), NULL);
+  return self->reply_to_id;
 }
 
 gint
@@ -841,6 +885,7 @@ gh_message_finalize(GObject *object)
   g_free(self->subject);
   g_free(self->group_id);
   g_free(self->group_relay);
+  g_free(self->reply_to_id);
   g_clear_pointer(&self->attachments, g_ptr_array_unref);
   g_ptr_array_unref(self->relays);
   G_OBJECT_CLASS(gh_message_parent_class)->finalize(object);

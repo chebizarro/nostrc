@@ -114,6 +114,11 @@ const gchar *const *gh_message_get_relays(GhMessage *self);
 /* Returns TRUE and notifies "relays" when url was not yet recorded. */
 gboolean gh_message_add_relay(GhMessage *self, const gchar *url);
 
+/* nostrc-zjkv: the event id this message replies to or quotes (from the
+ * first e-reply or q tag); NULL when it is not a reply. Group messages
+ * (NIP-29 and MLS) only. */
+const gchar *gh_message_get_reply_to_id(GhMessage *self);
+
 /* Total order of a conversation: created_at, then rumor id. */
 gint gh_message_compare(GhMessage *a, GhMessage *b);
 

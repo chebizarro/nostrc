@@ -29,6 +29,36 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
+      <object class="GtkButton" id="reply_button">
+        <property name="visible">false</property>
+        <property name="halign">1</property>
+        <style>
+          <class name="flat"/>
+          <class name="caption"/>
+          <class name="dim-label"/>
+          <class name="groundhog-reply-header"/>
+        </style>
+        <child>
+          <object class="GtkBox">
+            <property name="spacing">4</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">go-up-symbolic</property>
+                <property name="pixel-size">12</property>
+                <property name="valign">3</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="reply_label">
+                <property name="ellipsize">3</property>
+                <property name="max-width-chars">40</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
       <object class="GtkBox" id="bubble">
         <property name="orientation">1</property>
         <property name="spacing">6</property>

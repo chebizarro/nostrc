@@ -30,6 +30,35 @@ template $GhMessageRow: Widget {
     ]
   }
 
+  // nostrc-zjkv: reply header — shown when the message replies to or quotes
+  // another event, parsed from the e/q tags. Clicking jumps to the original.
+  Button reply_button {
+    visible: false;
+    halign: start;
+
+    styles [
+      "flat",
+      "caption",
+      "dim-label",
+      "groundhog-reply-header",
+    ]
+
+    Box {
+      spacing: 4;
+
+      Image {
+        icon-name: "go-up-symbolic";
+        pixel-size: 12;
+        valign: center;
+      }
+
+      Label reply_label {
+        ellipsize: end;
+        max-width-chars: 40;
+      }
+    }
+  }
+
   Box bubble {
     orientation: vertical;
     spacing: 6;

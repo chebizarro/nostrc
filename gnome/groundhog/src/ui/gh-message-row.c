@@ -20,6 +20,8 @@
 struct _GhMessageRow {
   GtkWidget parent_instance;
   GtkLabel *sender_label;
+  GtkButton *reply_button;
+  GtkLabel *reply_label;
   GtkBox *bubble;
   GtkLabel *body_label;
   GtkBox *attachment_slot;
@@ -50,6 +52,7 @@ struct _GhMessageRow {
   gboolean show_sender;
   gboolean compact;
   gboolean undecryptable;
+  gboolean has_reply;   /* nostrc-zjkv: the message has a reply_to_id */
 };
 
 enum {
@@ -166,6 +169,9 @@ compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
                                                           "%u files attached", files), files);
     append_sentence(out, count);
   }
+  /* nostrc-zjkv: mention reply in accessible text. */
+  if (!undecryptable && gh_message_get_reply_to_id(message))
+    append_sentence(out, _("In reply to another message"));
   if (gh_message_get_expires_at(message) > 0)
     append_sentence(out, _("Disappearing message"));
   if (gh_message_is_self(message))
@@ -390,6 +396,35 @@ update_all(GhMessageRow *self)
   gtk_widget_set_halign(GTK_WIDGET(self->meta_box), align);
 
   g_clear_pointer(&self->preview_uri, g_free);
+
+  /* nostrc-zjkv: reply header — show "Replying to npub1…" when the message
+   * has a reply-target event id. The button's action target is the reply-to
+   * id so conversation.scroll-to-reply can find and scroll to it. */
+  const gchar *reply_to = message ? gh_message_get_reply_to_id(message) : NULL;
+  self->has_reply = reply_to != NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->reply_button), self->has_reply);
+  if (self->has_reply) {
+    /* TRANSLATORS: "Replying to" header above a message bubble. The
+     * replacement is an abbreviated event id since we don't fetch the
+     * reply target's author (charter PT-8). */
+    gsize len = strlen(reply_to);
+    g_autofree gchar *short_id = len > 16 ? g_strdup_printf("%.8s…%.4s", reply_to, reply_to + len - 4)
+                                          : g_strdup(reply_to);
+    g_autofree gchar *label = g_strdup_printf(_("Replying to %s"), short_id);
+    gtk_label_set_text(self->reply_label, label);
+    /* Set the action target before the action name so GTK doesn't warn
+     * about a NULL target when the action expects "s". */
+    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->reply_button), "s", reply_to);
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(self->reply_button),
+                                   "conversation.scroll-to-reply");
+    gtk_widget_set_halign(GTK_WIDGET(self->reply_button), align);
+    /* TRANSLATORS: accessible description for the reply header. */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->reply_button),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  } else {
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(self->reply_button), NULL);
+  }
+
   set_class(GTK_WIDGET(self->body_label), "groundhog-undecryptable", self->undecryptable);
   /* nostrc-xrza: withdrawn when the group resolved a conflict -- marked,
    * never shown as the text (or the files) other members did not see. */
@@ -804,6 +839,8 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-message-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reply_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reply_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);

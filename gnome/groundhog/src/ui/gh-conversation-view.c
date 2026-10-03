@@ -1713,6 +1713,33 @@ action_react(GtkWidget *widget, const char *name, GVariant *parameter)
   self->react_func(self->conversation, message, emoji, add, self->react_data);
 }
 
+/* nostrc-zjkv: scroll to the message being replied to. */
+static void
+action_scroll_to_reply(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  (void)name;
+  if (!self->conversation)
+    return;
+  const gchar *reply_id = g_variant_get_string(parameter, NULL);
+  GhMessage *target = gh_conversation_lookup_message(self->conversation, reply_id);
+  if (!target)
+    return;
+  /* Find its position in the visible timeline (GhTimelineItems). */
+  guint n = n_visible(self);
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhTimelineItem) item =
+        GH_TIMELINE_ITEM(g_list_model_get_item(G_LIST_MODEL(self->timeline), i));
+    GhMessage *msg = gh_timeline_item_get_message(item);
+    if (!msg)
+      continue;
+    if (g_strcmp0(gh_message_get_rumor_id(msg), reply_id) == 0) {
+      gtk_list_view_scroll_to(self->message_list, i, GTK_LIST_SCROLL_SELECT, NULL);
+      return;
+    }
+  }
+}
+
 static void
 action_jump(GtkWidget *widget, const char *name, GVariant *parameter)
 {
@@ -1988,6 +2015,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_install_action(widget_class, "conversation.show-preview", "s",
                                   action_show_preview);
   gtk_widget_class_install_action(widget_class, "conversation.retry-message", "s", action_retry);
+  gtk_widget_class_install_action(widget_class, "conversation.scroll-to-reply", "s",
+                                  action_scroll_to_reply);
   gtk_widget_class_install_action(widget_class, "conversation.react", "(ssb)", action_react);
   gtk_widget_class_install_action(widget_class, "conversation.jump-to-latest", NULL,
                                   action_jump);
