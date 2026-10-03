@@ -101,6 +101,44 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/avatar-default-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/action-unavailable-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/alarm-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/audio-x-generic-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/channel-secure-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/computer-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/content-loading-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-question-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-warning-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/document-open-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-ok-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/emblem-synchronizing-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/go-bottom-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/go-down-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/go-next-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/go-previous-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/go-up-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/help-about-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/image-x-generic-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/mail-attachment-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/mail-read-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/mail-send-receive-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/mail-unread-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/network-offline-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/network-transmit-receive-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/network-workgroup-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/open-menu-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/package-x-generic-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/preferences-system-privacy-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/system-lock-screen-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/system-log-out-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/text-x-generic-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/user-bookmarks-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/video-x-generic-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/view-list-bullet-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/view-more-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/view-pin-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/view-refresh-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/x-office-document-symbolic.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 
@@ -294,6 +332,14 @@ if (TARGET nostr AND TARGET nip19)
     target_compile_options(test-groundhog-conversations PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-conversations COMMAND test-groundhog-conversations)
     set_tests_properties(groundhog-conversations PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+    # Reply-target parsing for NIP-29 and MLS messages (nostrc-zjkv).
+    add_executable(test-groundhog-message-reply tests/app/test_message_reply.c)
+    target_link_libraries(test-groundhog-message-reply PRIVATE groundhog-conversations)
+    target_compile_options(test-groundhog-message-reply PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-message-reply COMMAND test-groundhog-message-reply)
+    set_tests_properties(groundhog-message-reply PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
@@ -1172,6 +1218,16 @@ if (BUILD_TESTING)
   add_test(NAME groundhog-about-gui COMMAND test-groundhog-about --gui)
   set_tests_properties(groundhog-about groundhog-about-gui PROPERTIES TIMEOUT 60
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings" SKIP_RETURN_CODE 77)
+endif()
+if (BUILD_TESTING)
+  # Icon resolution: every symbolic icon the app references resolves from the
+  # bundled GResource, so non-GNOME desktops render icons (nostrc-9juh).
+  add_executable(test-groundhog-icons tests/ui/test_icons.c ${GROUNDHOG_RESOURCE_C})
+  target_link_libraries(test-groundhog-icons PRIVATE PkgConfig::GROUNDHOG_GIO)
+  target_compile_options(test-groundhog-icons PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-icons COMMAND test-groundhog-icons)
+  set_tests_properties(groundhog-icons PROPERTIES TIMEOUT 30
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 endif()
 if (BUILD_TESTING)
   # Every row bound to its key both ways (memory GSettings backend), the rows

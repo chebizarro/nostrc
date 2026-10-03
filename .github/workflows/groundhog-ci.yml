@@ -80,6 +80,8 @@ jobs:
             test-groundhog-attachments test-groundhog-attachment-ui \
             test-groundhog-mls-media test-groundhog-mls-files \
             test-groundhog-about \
+            test-groundhog-icons \
+            test-groundhog-message-reply \
             test-groundhog-mls-poll
 
       - name: Require complete Groundhog test registration

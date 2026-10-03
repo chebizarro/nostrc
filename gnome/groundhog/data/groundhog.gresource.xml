@@ -5,12 +5,50 @@
     <!-- The app icon (About, the window icon): the hicolor layout under icons/. -->
     <file>icons/512x512/apps/org.nostr.Groundhog.png</file>
     <file>icons/256x256/apps/org.nostr.Groundhog.png</file>
-    <!-- Bundled symbolic icons (the icon theme's resource path). -->
+    <!-- Bundled symbolic icons (the icon theme's resource path).
+         Non-GNOME desktops may lack the Adwaita icon theme; bundle every
+         symbolic icon the app references so they always render (nostrc-9juh). -->
     <file>icons/scalable/actions/send-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic-rtl.svg</file>
-    <!-- The account pages' and Preferences' account icon, where the icon
-         theme lacks it (nostrc-qp24.70); a theme's own icon wins. -->
     <file>icons/scalable/actions/avatar-default-symbolic.svg</file>
+    <file>icons/scalable/actions/action-unavailable-symbolic.svg</file>
+    <file>icons/scalable/actions/alarm-symbolic.svg</file>
+    <file>icons/scalable/actions/audio-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/channel-secure-symbolic.svg</file>
+    <file>icons/scalable/actions/computer-symbolic.svg</file>
+    <file>icons/scalable/actions/content-loading-symbolic.svg</file>
+    <file>icons/scalable/actions/dialog-question-symbolic.svg</file>
+    <file>icons/scalable/actions/dialog-warning-symbolic.svg</file>
+    <file>icons/scalable/actions/document-open-symbolic.svg</file>
+    <file>icons/scalable/actions/emblem-ok-symbolic.svg</file>
+    <file>icons/scalable/actions/emblem-synchronizing-symbolic.svg</file>
+    <file>icons/scalable/actions/go-bottom-symbolic.svg</file>
+    <file>icons/scalable/actions/go-down-symbolic.svg</file>
+    <file>icons/scalable/actions/go-next-symbolic.svg</file>
+    <file>icons/scalable/actions/go-previous-symbolic.svg</file>
+    <file>icons/scalable/actions/go-up-symbolic.svg</file>
+    <file>icons/scalable/actions/help-about-symbolic.svg</file>
+    <file>icons/scalable/actions/image-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/mail-attachment-symbolic.svg</file>
+    <file>icons/scalable/actions/mail-read-symbolic.svg</file>
+    <file>icons/scalable/actions/mail-send-receive-symbolic.svg</file>
+    <file>icons/scalable/actions/mail-unread-symbolic.svg</file>
+    <file>icons/scalable/actions/network-offline-symbolic.svg</file>
+    <file>icons/scalable/actions/network-transmit-receive-symbolic.svg</file>
+    <file>icons/scalable/actions/network-workgroup-symbolic.svg</file>
+    <file>icons/scalable/actions/open-menu-symbolic.svg</file>
+    <file>icons/scalable/actions/package-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/preferences-system-privacy-symbolic.svg</file>
+    <file>icons/scalable/actions/system-lock-screen-symbolic.svg</file>
+    <file>icons/scalable/actions/system-log-out-symbolic.svg</file>
+    <file>icons/scalable/actions/text-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/user-bookmarks-symbolic.svg</file>
+    <file>icons/scalable/actions/video-x-generic-symbolic.svg</file>
+    <file>icons/scalable/actions/view-list-bullet-symbolic.svg</file>
+    <file>icons/scalable/actions/view-more-symbolic.svg</file>
+    <file>icons/scalable/actions/view-pin-symbolic.svg</file>
+    <file>icons/scalable/actions/view-refresh-symbolic.svg</file>
+    <file>icons/scalable/actions/x-office-document-symbolic.svg</file>
     <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
     <file>ui/gh-window.ui</file>
     <file>ui/gh-sidebar-page.ui</file>
