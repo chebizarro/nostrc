@@ -1964,6 +1964,52 @@ gh_nip29_service_send(GhNip29Service *self, GhNip29Room *room, const gchar *text
   return op;
 }
 
+GhNip29Op *
+gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
+                               const gchar *target_event_id,
+                               const gchar *target_pubkey,
+                               const gchar *target_kind_str,
+                               const gchar *emoji,
+                               GhReactionStore *reactions,
+                               GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  if (!check_room(self, room, error))
+    return NULL;
+  if (room->join != GH_NIP29_JOIN_MEMBER && room->join != GH_NIP29_JOIN_PENDING &&
+      room->join != GH_NIP29_JOIN_REQUESTING) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        "Join the group before reacting in it");
+    return NULL;
+  }
+  GhNip29TemplateContext context;
+  room_context(room, &context);
+  g_autofree gchar *reaction_json = gh_nip29_template_reaction(
+    room->key, &context, target_event_id, target_pubkey, target_kind_str, emoji, error);
+  GhNip29Op *op = reaction_json ? room_enqueue(room, reaction_json, error) : NULL;
+  if (!op)
+    return NULL;
+  /* Local echo: compute the event id from the template and admit a
+   * GhReaction so the chip shows immediately. */
+  if (reactions) {
+    NostrEvent *event = nostr_event_new();
+    if (event && nostr_event_deserialize_compact(event, reaction_json, NULL) == 1) {
+      gchar id[65] = { 0 };
+      if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
+        g_autoptr(GhReaction) local =
+          gh_reaction_new(target_event_id, id,
+                          context.author_pubkey, emoji, context.created_at,
+                          room->room_id);
+        if (local)
+          gh_reaction_store_admit(reactions, local, NULL);
+      }
+    }
+    if (event)
+      nostr_event_free(event);
+  }
+  return op;
+}
+
 static GhNip29Op *
 admin_enqueue(GhNip29Service *self, GhNip29Room *room, nostr_permission_t permission,
               gchar *(*build)(GhNip29Room *room, const GhNip29TemplateContext *context,

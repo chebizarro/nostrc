@@ -118,6 +118,25 @@ gchar *gh_nip17_rumor_new_file_room(const gchar *sender_pubkey_hex,
                                     const GhNip17File *file, gint64 created_at,
                                     gint64 expires_at, gchar **out_rumor_id,
                                     GError **error);
+/* W26 slice B (nostrc-191r): the rumor of a NIP-25 reaction (kind 7) to
+ * a NIP-17 room (W17). @emoji becomes the content, and e/k tags identify
+ * the target message. The p-tags are the room's participants (for NIP-17
+ * gift-wrap routing). */
+gchar *gh_nip17_rumor_new_reaction_room(const gchar *sender_pubkey_hex,
+                                        const gchar *const *recipients,
+                                        const gchar *emoji,
+                                        const gchar *target_rumor_id,
+                                        const gchar *target_kind_str,
+                                        gint64 created_at,
+                                        gchar **out_rumor_id, GError **error);
+/* W26 slice B: the rumor of a NIP-09 deletion (kind 5) targeting an
+ * event id. */
+gchar *gh_nip17_rumor_new_deletion_room(const gchar *sender_pubkey_hex,
+                                        const gchar *const *recipients,
+                                        const gchar *target_event_id,
+                                        gint64 created_at,
+                                        gchar **out_rumor_id, GError **error);
+
 /* Every recipient of a canonical unsigned kind-14 (or kind-15 file) rumor
  * authored by @sender_pubkey_hex (lowercase hex, "p" order): its "p" tags, which must be
  * 1 to GH_NIP17_MAX_SEND_RECIPIENTS distinct valid pubkeys, the sender only

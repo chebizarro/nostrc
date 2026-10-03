@@ -376,7 +376,7 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
 static gboolean
 dm_kind(gint kind)
 {
-  return kind == 14 || kind == GH_NIP17_FILE_KIND;
+  return kind == 14 || kind == GH_NIP17_FILE_KIND || kind == 7 || kind == 5;
 }
 
 /* A canonical rumor of kind (14 or 15) with its id, one "p" tag per
@@ -544,6 +544,67 @@ gh_nip17_rumor_new_file_room(const gchar *sender_pubkey_hex, const gchar *const 
     return NULL;
   return rumor_new_kind(sender, (const gchar *const *)room, GH_NIP17_FILE_KIND, file->url, tags,
                         created_at, expires_at, out_rumor_id, error);
+}
+
+gchar *
+gh_nip17_rumor_new_reaction_room(const gchar *sender_pubkey_hex,
+                                 const gchar *const *recipients,
+                                 const gchar *emoji,
+                                 const gchar *target_rumor_id,
+                                 const gchar *target_kind_str,
+                                 gint64 created_at, gchar **out_rumor_id,
+                                 GError **error)
+{
+  if (!emoji || !*emoji || !g_utf8_validate(emoji, -1, NULL)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A reaction needs a non-empty UTF-8 emoji");
+    return NULL;
+  }
+  if (!target_rumor_id || !*target_rumor_id) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A reaction needs a target event id");
+    return NULL;
+  }
+  g_autofree gchar *sender = NULL;
+  g_auto(GStrv) room = room_rumor_check(sender_pubkey_hex, recipients, emoji, created_at,
+                                        0, &sender, error);
+  if (!room)
+    return NULL;
+  g_autoptr(GPtrArray) extra = g_ptr_array_new();
+  const gchar *e_pair[] = { "e", target_rumor_id, NULL };
+  g_ptr_array_add(extra, (gpointer)e_pair);
+  if (target_kind_str && *target_kind_str) {
+    const gchar *k_pair[] = { "k", target_kind_str, NULL };
+    g_ptr_array_add(extra, (gpointer)k_pair);
+  }
+  return rumor_new_kind(sender, (const gchar *const *)room, 7, emoji, extra,
+                        created_at, 0, out_rumor_id, error);
+}
+
+gchar *
+gh_nip17_rumor_new_deletion_room(const gchar *sender_pubkey_hex,
+                                 const gchar *const *recipients,
+                                 const gchar *target_event_id,
+                                 gint64 created_at, gchar **out_rumor_id,
+                                 GError **error)
+{
+  if (!target_event_id || !*target_event_id) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A deletion needs a target event id");
+    return NULL;
+  }
+  /* kind-5 content is a reason (NIP-09), may be empty; room_rumor_check
+   * requires non-empty content, so pass a placeholder. */
+  g_autofree gchar *sender = NULL;
+  g_auto(GStrv) room = room_rumor_check(sender_pubkey_hex, recipients, "delete", created_at,
+                                        0, &sender, error);
+  if (!room)
+    return NULL;
+  g_autoptr(GPtrArray) extra = g_ptr_array_new();
+  const gchar *e_pair[] = { "e", target_event_id, NULL };
+  g_ptr_array_add(extra, (gpointer)e_pair);
+  return rumor_new_kind(sender, (const gchar *const *)room, 5, "", extra,
+                        created_at, 0, out_rumor_id, error);
 }
 
 gboolean

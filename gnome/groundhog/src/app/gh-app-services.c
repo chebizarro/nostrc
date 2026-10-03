@@ -26,9 +26,11 @@
 #if GROUNDHOG_HAVE_OUTBOX
 #include "gh-app-outbox.h"
 #include "gh-contact-titles.h"
+#include "gh-outbox.h"
+#include "gh-reaction.h"
+#include "gh-reaction-store.h"
 #include "gh-send-ui.h"
 #include "gh-conversation-view.h"
-#include "gh-reaction-store.h"
 #endif
 #include <glib/gi18n.h>
 #if GROUNDHOG_HAVE_EXPIRY
@@ -630,6 +632,8 @@ expiry_teardown(GhAppServices *self)
  * view. The store follows the account store lifecycle (created on open,
  * freed on close). */
 #if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+static void on_react(GhConversation *, GhMessage *, const gchar *, gboolean, gpointer);
+
 static void
 reactions_share(GhAppServices *self)
 {
@@ -639,8 +643,11 @@ reactions_share(GhAppServices *self)
       continue;
     GhContentPage *content = gh_window_get_content(GH_WINDOW(l->data));
     GtkWidget *view = gh_content_page_get_view(content);
-    if (GH_IS_CONVERSATION_VIEW(view))
+    if (GH_IS_CONVERSATION_VIEW(view)) {
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
+      gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
+                                             on_react, self, NULL);
+    }
   }
 }
 
@@ -664,8 +671,115 @@ reactions_teardown(GhAppServices *self)
       continue;
     GhContentPage *content = gh_window_get_content(GH_WINDOW(l->data));
     GtkWidget *view = gh_content_page_get_view(content);
-    if (GH_IS_CONVERSATION_VIEW(view))
+    if (GH_IS_CONVERSATION_VIEW(view)) {
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), NULL);
+      gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
+                                             NULL, NULL, NULL);
+    }
+  }
+}
+#endif
+
+/* W26 slice B (nostrc-191r): the user toggled a reaction. Dispatch to the
+ * appropriate backend based on the conversation type. */
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+static void
+on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
+         gboolean add, gpointer user_data)
+{
+  GhAppServices *self = user_data;
+  GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  const gchar *target_id = gh_message_get_rumor_id(target);
+  const gchar *target_pubkey = gh_message_get_sender(target);
+  gint target_kind = gh_message_get_kind(target);
+  g_autofree gchar *target_kind_str = g_strdup_printf("%d", target_kind);
+
+  if (!add) {
+    /* Remove our own reaction with this emoji. */
+    g_autofree gchar *reaction_id = reactions
+      ? gh_reaction_store_remove_own(reactions, target_id, emoji, NULL) : NULL;
+    if (!reaction_id)
+      return;
+    switch (gh_conversation_get_backend(conversation)) {
+    case GH_CONVERSATION_BACKEND_NIP17: {
+      const gchar *const *recipients = gh_conversation_get_peers(conversation);
+      GObject *outbox_obj = gh_account_store_get_outbox(self->account_store);
+      GhOutbox *outbox = outbox_obj ? GH_OUTBOX(outbox_obj) : NULL;
+      if (outbox && recipients)
+        gh_outbox_send_deletion_room(outbox, recipients, reaction_id, NULL);
+      break;
+    }
+    case GH_CONVERSATION_BACKEND_NIP29: {
+      GObject *service_obj = gh_app_outbox_get_nip29_service(self->outbox);
+      if (GH_IS_NIP29_SERVICE(service_obj)) {
+        GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
+        if (room)
+          gh_nip29_service_delete_event(GH_NIP29_SERVICE(service_obj), room, reaction_id,
+                                        NULL, NULL);
+      }
+      break;
+    }
+    case GH_CONVERSATION_BACKEND_MLS: {
+      GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
+      if (GH_IS_MLS_SERVICE(service_obj)) {
+        GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
+        if (group)
+          gh_mls_service_send_deletion(GH_MLS_SERVICE(service_obj), group, reaction_id, NULL);
+      }
+      break;
+    }
+    default:
+      break;
+    }
+    return;
+  }
+
+  /* Add a reaction. */
+  switch (gh_conversation_get_backend(conversation)) {
+  case GH_CONVERSATION_BACKEND_NIP17: {
+    const gchar *const *recipients = gh_conversation_get_peers(conversation);
+    GObject *outbox_obj2 = gh_account_store_get_outbox(self->account_store);
+    GhOutbox *outbox = outbox_obj2 ? GH_OUTBOX(outbox_obj2) : NULL;
+    if (outbox && recipients) {
+      g_autofree gchar *rumor_id =
+        gh_outbox_send_reaction_room(outbox, recipients, emoji, target_id,
+                                     target_kind_str, NULL);
+      if (rumor_id && reactions) {
+        const gchar *account = gh_conversation_store_get_account(self->conversations);
+        g_autoptr(GhReaction) reaction =
+          gh_reaction_new(target_id, rumor_id, account, emoji,
+                          g_get_real_time() / G_USEC_PER_SEC, room_id);
+        if (reaction)
+          gh_reaction_store_admit(reactions, reaction, NULL);
+      }
+    }
+    break;
+  }
+  case GH_CONVERSATION_BACKEND_NIP29: {
+    GObject *service_obj = gh_app_outbox_get_nip29_service(self->outbox);
+    if (GH_IS_NIP29_SERVICE(service_obj)) {
+      GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
+      if (room)
+        gh_nip29_service_send_reaction(GH_NIP29_SERVICE(service_obj), room,
+                                       target_id, target_pubkey, target_kind_str,
+                                       emoji, reactions, NULL);
+    }
+    break;
+  }
+  case GH_CONVERSATION_BACKEND_MLS: {
+    GObject *service_obj = gh_app_outbox_get_mls_service(self->outbox);
+    if (GH_IS_MLS_SERVICE(service_obj)) {
+      GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(service_obj), room_id);
+      if (group)
+        gh_mls_service_send_reaction(GH_MLS_SERVICE(service_obj), group,
+                                     target_id, target_pubkey, target_kind_str,
+                                     emoji, NULL);
+    }
+    break;
+  }
+  default:
+    break;
   }
 }
 #endif
@@ -1799,8 +1913,11 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     GhReactionStore *reactions = gh_app_outbox_get_reactions(self->outbox);
     GhContentPage *content = gh_window_get_content(window);
     GtkWidget *view = gh_content_page_get_view(content);
-    if (GH_IS_CONVERSATION_VIEW(view))
+    if (GH_IS_CONVERSATION_VIEW(view)) {
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
+      gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
+                                             on_react, self, NULL);
+    }
   }
 #if GROUNDHOG_HAVE_ATTACHMENTS
   /* G22: the attach button, the sheet and the attachment cards. */

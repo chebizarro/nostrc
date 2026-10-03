@@ -258,6 +258,18 @@ GhNip29Op *gh_nip29_service_leave(GhNip29Service *self, GhNip29Room *room,
 GhNip29Op *gh_nip29_service_send(GhNip29Service *self, GhNip29Room *room,
                                  const gchar *text, GError **error);
 
+/* W26 slice B (nostrc-191r): sends a kind-7 NIP-25 reaction targeting
+ * @target_event_id (the reacted-to message's id) by @target_pubkey (its
+ * author) of kind @target_kind_str. @emoji must be non-empty. A local
+ * GhReaction is admitted to @reactions (nullable) for immediate display. */
+GhNip29Op *gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
+                                          const gchar *target_event_id,
+                                          const gchar *target_pubkey,
+                                          const gchar *target_kind_str,
+                                          const gchar *emoji,
+                                          GhReactionStore *reactions,
+                                          GError **error);
+
 /* Admin operations, refused with G_IO_ERROR_PERMISSION_DENIED only when the
  * account's authorization for them is DENIED_* (gh_nip29_room_check_permission). */
 GhNip29Op *gh_nip29_service_put_user(GhNip29Service *self, GhNip29Room *room,

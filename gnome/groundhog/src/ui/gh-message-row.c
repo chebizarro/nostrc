@@ -1,6 +1,7 @@
 #include "gh-message-row.h"
 #include "gh-attachment-card.h"
 #include "gh-reaction-bar.h"
+#include "gh-reaction-picker.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
@@ -28,6 +29,7 @@ struct _GhMessageRow {
   GtkBox *poll_slot;
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
   GhReactionBar *reaction_bar;
+  GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
   GtkButton *preview_button;
   GtkLabel *preview_title;
@@ -473,6 +475,53 @@ on_reaction_toggled(GhReactionBar *bar, const gchar *emoji, gboolean add, GhMess
                              rumor_id, emoji, add);
 }
 
+/* W26 slice B (nostrc-191r): the reaction picker (right-click / long-press /
+ * the "+" button on the reaction bar). The picker is a GtkPopover parented
+ * to the bubble. Its emoji-picked signal fires conversation.react (add). */
+static void
+on_emoji_picked(GhReactionPicker *picker, const gchar *emoji, GhMessageRow *self)
+{
+  (void)picker;
+  if (!self->message)
+    return;
+  const gchar *rumor_id = gh_message_get_rumor_id(self->message);
+  if (!rumor_id)
+    return;
+  gtk_widget_activate_action(GTK_WIDGET(self), "conversation.react", "(ssb)",
+                             rumor_id, emoji, TRUE);
+}
+
+static void
+show_picker(GhMessageRow *self, gdouble x, gdouble y)
+{
+  if (!self->picker) {
+    self->picker = GH_REACTION_PICKER(gh_reaction_picker_new());
+    gtk_widget_set_parent(GTK_WIDGET(self->picker), GTK_WIDGET(self->bubble));
+    g_signal_connect(self->picker, "emoji-picked", G_CALLBACK(on_emoji_picked), self);
+  }
+  if (x >= 0 && y >= 0) {
+    GdkRectangle rect = { (int)x, (int)y, 1, 1 };
+    gtk_popover_set_pointing_to(GTK_POPOVER(self->picker), &rect);
+  }
+  gtk_popover_popup(GTK_POPOVER(self->picker));
+}
+
+static void
+on_secondary_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y,
+                     GhMessageRow *self)
+{
+  (void)n_press;
+  show_picker(self, x, y);
+  gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+on_long_pressed(GtkGestureLongPress *gesture, gdouble x, gdouble y, GhMessageRow *self)
+{
+  show_picker(self, x, y);
+  gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
 /* ---- links and the enclosing view ------------------------------------------------ */
 
 /* Every click on a link goes through the view's policy; GTK's default
@@ -690,6 +739,10 @@ gh_message_row_dispose(GObject *object)
   if (self->message)
     g_signal_handlers_disconnect_by_data(self->message, self);
   g_clear_object(&self->message);
+  if (self->picker) {
+    gtk_widget_unparent(GTK_WIDGET(self->picker));
+    self->picker = NULL;
+  }
   /* The extra cards are the slot's children: they go with the template. */
   g_clear_pointer(&self->extra_cards, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MESSAGE_ROW);
@@ -703,6 +756,14 @@ gh_message_row_finalize(GObject *object)
   g_free(self->preview_uri);
   g_free(self->summary);
   G_OBJECT_CLASS(gh_message_row_parent_class)->finalize(object);
+}
+
+static void
+action_add_reaction(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  show_picker(GH_MESSAGE_ROW(widget), -1, -1);
 }
 
 static void
@@ -731,9 +792,15 @@ gh_message_row_class_init(GhMessageRowClass *klass)
     GH_TYPE_REACTION_SUMMARY, rw);
   g_object_class_install_properties(object_class, N_PROPS, props);
 
+  /* W26 slice B: the "+" button in the reaction bar activates this action;
+   * the message row shows its picker. */
+  gtk_widget_class_install_action(widget_class, "conversation.add-reaction", NULL,
+                                  action_add_reaction);
+
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
   g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
 
+  g_type_ensure(GH_TYPE_REACTION_BAR);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-message-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
@@ -769,6 +836,15 @@ gh_message_row_init(GhMessageRow *self)
   self->run_start = TRUE;
   g_signal_connect(self->reaction_bar, "reaction-toggled",
                    G_CALLBACK(on_reaction_toggled), self);
+  /* Right-click and long-press on the bubble show the reaction picker. */
+  GtkGesture *click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
+  g_signal_connect(click, "pressed", G_CALLBACK(on_secondary_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->bubble), GTK_EVENT_CONTROLLER(click));
+  GtkGesture *hold = gtk_gesture_long_press_new();
+  gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(hold), TRUE);
+  g_signal_connect(hold, "pressed", G_CALLBACK(on_long_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->bubble), GTK_EVENT_CONTROLLER(hold));
   self->run_end = TRUE;
   self->summary = g_strdup("");
   g_signal_connect_swapped(self->body_label, "activate-link", G_CALLBACK(on_activate_link),

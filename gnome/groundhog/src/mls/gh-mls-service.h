@@ -911,6 +911,24 @@ void gh_mls_service_rebuild_poll_from_stored(GhMlsService *self,
                                              const gchar *group_id_hex,
                                              GhMessage *message);
 
+/* W26 slice B (nostrc-191r): sends a kind-7 NIP-25 reaction (inner event)
+ * to an active group. A local GhReaction is admitted for immediate display.
+ * For removal, send a kind-5 deletion via gh_mls_service_send_deletion(). */
+/* W26 slice B: set the reaction store after construction (for tests). */
+void gh_mls_service_set_reaction_store(GhMlsService *self, GhReactionStore *store);
+
+gboolean gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
+                                      const gchar *target_event_id,
+                                      const gchar *target_pubkey,
+                                      const gchar *target_kind_str,
+                                      const gchar *emoji,
+                                      GError **error);
+/* W26 slice B (nostrc-191r): sends a kind-5 NIP-09 deletion (inner event)
+ * referencing @event_id (the reaction to remove). */
+gboolean gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
+                                      const gchar *event_id,
+                                      GError **error);
+
 /* Pending invitations, oldest first (GhMlsInvite). Transfer full. */
 GPtrArray *gh_mls_service_list_invites(GhMlsService *self, GError **error);
 /* Joins the group of a pending invitation: its room is listed and read.

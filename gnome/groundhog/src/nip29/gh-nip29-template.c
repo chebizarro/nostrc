@@ -491,6 +491,33 @@ gh_nip29_template_delete_event(const GhNip29GroupKey *group,
 }
 
 gchar *
+gh_nip29_template_reaction(const GhNip29GroupKey *group,
+                           const GhNip29TemplateContext *context,
+                           const gchar *target_event_id,
+                           const gchar *target_pubkey,
+                           const gchar *target_kind_str,
+                           const gchar *emoji, GError **error)
+{
+  TemplateBuild build;
+  if (!check_context(group, context, error) ||
+      !check_text(emoji, TRUE, "emoji", error))
+    return NULL;
+  if (!gh_nip29_is_hex64(target_event_id)) {
+    fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "target event id must be 64-char lowercase hex");
+    return NULL;
+  }
+  if (!check_pubkey(target_pubkey, error))
+    return NULL;
+  if (!check_text(target_kind_str, TRUE, "target kind", error) ||
+      !template_begin(&build, group, context, error))
+    return NULL;
+  template_add(&build, nostr_tag_new("e", target_event_id, NULL));
+  template_add(&build, nostr_tag_new("p", target_pubkey, NULL));
+  template_add(&build, nostr_tag_new("k", target_kind_str, NULL));
+  return template_finish(&build, context, 7, emoji, error);
+}
+
+gchar *
 gh_nip29_template_create_invite(const GhNip29GroupKey *group,
                                 const GhNip29TemplateContext *context, const gchar *code,
                                 const gchar *reason, GError **error)

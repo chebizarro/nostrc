@@ -50,6 +50,7 @@
  * another shape fails; so does an unexpected success (XPASS). */
 #include "mls-world.h"
 #include "mdk-peer.h"
+#include "gh-reaction-store.h"
 #include "blossom-fixture.h"
 #include "gh-attachments.h"
 #include "gh-mls-attachments.h"
@@ -1907,6 +1908,139 @@ test_concurrent_commits(void)
   mdk_driver_stop(&driver);
 }
 
+/* ---- W26 slice B (nostrc-191r): NIP-25 reactions ------------------------------------ */
+
+/* Whether the sync result has a kind-7 reaction from author with emoji. */
+static gboolean
+synced_reaction(JsonObject *synced, const gchar *author, const gchar *emoji)
+{
+  JsonArray *results = json_object_get_array_member(synced, "results");
+  for (guint i = 0; i < json_array_get_length(results); i++) {
+    JsonObject *r = json_array_get_object_element(results, i);
+    if (g_strcmp0(json_object_get_string_member(r, "type"), "application") == 0 &&
+        g_strcmp0(json_object_get_string_member(r, "author"), author) == 0 &&
+        json_object_get_int_member_with_default(r, "kind", 0) == 7 &&
+        g_strcmp0(json_object_get_string_member_with_default(r, "content", NULL), emoji) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+typedef struct {
+  GhReactionStore *reactions;
+  const gchar *target_id;
+} ReactionWait;
+
+static gboolean
+reaction_arrived(gpointer data)
+{
+  ReactionWait *rw = data;
+  GhReactionSummary *summary = gh_reaction_store_lookup(rw->reactions, rw->target_id);
+  return summary && gh_reaction_summary_get_total_count(summary) > 0;
+}
+
+static void
+test_white_noise_reactions(void)
+{
+  cases_run++;
+  if (!mdk_up())
+    return;
+  /* Alice with a reaction store so the service admits kind-7 events. */
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  world_legacy_only = TRUE; /* simplify: legacy KeyPackages only */
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  world_legacy_only = FALSE;
+  App *alice = &w.apps[ALICE];
+  /* Inject the reaction store into Alice's MLS service config. The
+   * service reads it from the config struct it was created with; the
+   * mls-world.h setup leaves it NULL. We set it on the object's config
+   * field directly. */
+  {
+    /* The service stores the pointer from the config, so we keep
+     * `reactions` alive until world_down. Access the struct field: */
+    extern void gh_mls_service_set_reaction_store(GhMlsService *, GhReactionStore *);
+    gh_mls_service_set_reaction_store(alice->service, reactions);
+    gh_reaction_store_set_account(reactions, hex[ALICE], NULL, NULL, NULL);
+  }
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  accept_contact(alice, CAROL);
+  mdk_peer("carol", CAROL);
+
+  /* Carol creates a group, Alice accepts. */
+  g_autofree gchar *alice_kp = mdk_discover_key_package(&w, "carol", ALICE, NULL);
+  g_autoptr(JsonObject) made = mdk_call(&driver,
+    "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"Reactions Room\","
+    "\"description\":\"\",\"relays\":[\"%s\"],\"admins\":[\"%s\"],"
+    "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
+    w.g.url, hex[CAROL], alice_kp, w.x.url);
+  g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
+  GhMlsGroup *ga = accept_from_carol(alice, "Reactions Room");
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  wait_live(ga);
+
+  /* Exchange messages to react to. */
+  mdk_send("carol", group, "hello from carol");
+  wait_message(alice, room, "hello from carol");
+  GhMessage *carol_msg = find_message(alice, room, "hello from carol");
+  g_assert_nonnull(carol_msg);
+  const gchar *carol_msg_id = gh_message_get_rumor_id(carol_msg);
+
+  send_accepted(alice, ga, "hello from alice");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "hello from alice"));
+  }
+
+  /* MDK reacts to Alice's message → Groundhog sees the reaction. */
+  {
+    /* Find Alice's event id in Carol's sync view. */
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    JsonArray *results = json_object_get_array_member(synced, "results");
+    const gchar *alice_event_id = NULL;
+    for (guint i = 0; i < json_array_get_length(results); i++) {
+      JsonObject *r = json_array_get_object_element(results, i);
+      if (g_strcmp0(json_object_get_string_member_with_default(r, "content", NULL),
+                   "hello from alice") == 0)
+        alice_event_id = json_object_get_string_member(r, "id");
+    }
+    g_assert_nonnull(alice_event_id);
+
+    mdk_call(&driver,
+      "\"cmd\":\"send_reaction\",\"peer\":\"carol\",\"group\":\"%s\","
+      "\"emoji\":\"thumbs_up\",\"target_event_id\":\"%s\","
+      "\"target_pubkey\":\"%s\",\"target_kind\":\"9\"",
+      group, alice_event_id, hex[ALICE]);
+  }
+
+  /* Wait for Groundhog to receive the reaction. The GhMlsService sync
+   * admits kind-7 inner events to the reaction store. */
+  GhMessage *alice_local_msg = find_message(alice, room, "hello from alice");
+  g_assert_nonnull(alice_local_msg);
+  const gchar *alice_local_id = gh_message_get_rumor_id(alice_local_msg);
+  g_assert_nonnull(alice_local_id);
+  ReactionWait rw = { reactions, alice_local_id };
+  spin_until(reaction_arrived, &rw, "Carol's reaction");
+  GhReactionSummary *summary = gh_reaction_store_lookup(reactions, alice_local_id);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 1);
+
+  /* Groundhog reacts to Carol's message → MDK sees it via sync. */
+  {
+    g_autoptr(GError) error = NULL;
+    g_assert_true(gh_mls_service_send_reaction(alice->service, ga,
+      carol_msg_id, hex[CAROL], "9", "+", &error));
+    g_assert_no_error(error);
+  }
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_reaction(synced, hex[ALICE], "+"));
+  }
+
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
 /* ---- MDK 0.9.0, expected incompatible ------------------------------------------------ */
 
 static void
@@ -2316,6 +2450,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk011-interop/white-noise-dm", test_white_noise_dm);
   g_test_add_func("/groundhog/mdk011-interop/concurrent-commits", test_concurrent_commits);
   g_test_add_func("/groundhog/mdk011-interop/polls", test_polls);
+  g_test_add_func("/groundhog/mdk011-interop/white-noise-reactions", test_white_noise_reactions);
   g_test_add_func("/groundhog/mdk011-interop/mdk09-probe", test_mdk09_probe);
   gint rc = g_test_run();
   mls_world_finish();

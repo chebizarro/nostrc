@@ -290,6 +290,18 @@ if (TARGET nostr AND TARGET nip19)
     add_test(NAME groundhog-reactions COMMAND test-groundhog-reactions)
     set_tests_properties(groundhog-reactions PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+    # W26 slice B (nostrc-191r): NIP-17 reaction/deletion rumor builders.
+    if (TARGET groundhog-account-relays)
+      add_executable(test-groundhog-reaction-send tests/app/test_reaction_send.c
+        src/app/gh-nip17-envelope.c)
+      target_link_libraries(test-groundhog-reaction-send PRIVATE groundhog-account-relays
+        nostr_nip17_core nostr_nip59_core)
+      target_compile_options(test-groundhog-reaction-send PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-reaction-send COMMAND test-groundhog-reaction-send)
+      set_tests_properties(groundhog-reaction-send PROPERTIES TIMEOUT 20
+        ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+    endif()
 endif()
 
 # GTK-free NIP-17 receive pipeline: the active account's kind-1059 REQs on its

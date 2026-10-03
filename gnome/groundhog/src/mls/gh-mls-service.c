@@ -5442,6 +5442,220 @@ gh_mls_service_send_with_imeta(GhMlsService *self, GhMlsGroup *group, const gcha
   return send_inner(self, group, caption ? caption : "", imeta_tags, source_epoch, error);
 }
 
+/* W26 slice B (nostrc-191r): build a kind-7 reaction inner event, compute
+ * its id and return the canonical JSON. */
+static gchar *
+inner_event_new_reaction(GhMlsService *self, GhMlsGroup *group,
+                         const gchar *target_id, const gchar *target_pubkey,
+                         const gchar *target_kind, const gchar *emoji,
+                         gchar **out_id)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 7);
+  nostr_event_set_pubkey(event, self->account);
+  nostr_event_set_created_at(event, now_s(self));
+  nostr_event_set_content(event, emoji);
+  NostrTags *tags = nostr_tags_new(4,
+    nostr_tag_new("h", group->nostr_hex, NULL),
+    nostr_tag_new("e", target_id, NULL),
+    nostr_tag_new("p", target_pubkey, NULL),
+    nostr_tag_new("k", target_kind, NULL));
+  nostr_event_set_tags(event, tags);
+  gchar id[65] = { 0 };
+  gchar *json = NULL;
+  if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
+    free(event->id);
+    event->id = strdup(id);
+    char *serialized = nostr_event_serialize_compact(event);
+    json = g_strdup(serialized);
+    free(serialized);
+    *out_id = g_strdup(id);
+  }
+  nostr_event_free(event);
+  return json;
+}
+
+/* W26 slice B: kind-5 deletion inner event with e-tag. */
+static gchar *
+inner_event_new_deletion(GhMlsService *self, GhMlsGroup *group,
+                         const gchar *event_id, gchar **out_id)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 5);
+  nostr_event_set_pubkey(event, self->account);
+  nostr_event_set_created_at(event, now_s(self));
+  nostr_event_set_content(event, "");
+  NostrTags *tags = nostr_tags_new(2,
+    nostr_tag_new("h", group->nostr_hex, NULL),
+    nostr_tag_new("e", event_id, NULL));
+  nostr_event_set_tags(event, tags);
+  gchar id[65] = { 0 };
+  gchar *json = NULL;
+  if (nostr_event_compute_id(event, id) == NOSTR_EVENT_VALIDATION_OK) {
+    free(event->id);
+    event->id = strdup(id);
+    char *serialized = nostr_event_serialize_compact(event);
+    json = g_strdup(serialized);
+    free(serialized);
+    *out_id = g_strdup(id);
+  }
+  nostr_event_free(event);
+  return json;
+}
+
+/* W26 slice B: fire-and-forget publish callbacks. */
+static void
+reaction_publish_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary,
+                      gpointer data)
+{
+  (void)summary; (void)data;
+  gh_relay_publish_unref(publish);
+}
+
+static void
+reaction_publish_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
+                        gpointer data)
+{
+  (void)publish; (void)result; (void)data;
+}
+
+void
+gh_mls_service_set_reaction_store(GhMlsService *self, GhReactionStore *store)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  g_set_object(&self->reactions, store);
+}
+
+gboolean
+gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
+                             const gchar *target_event_id,
+                             const gchar *target_pubkey,
+                             const gchar *target_kind_str,
+                             const gchar *emoji, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!check_running(self, error))
+    return FALSE;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
+      group->leaving || !emoji || !*emoji || !g_utf8_validate(emoji, -1, NULL) ||
+      !target_event_id || !target_pubkey || !target_kind_str) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A reaction needs an emoji and an active group");
+    return FALSE;
+  }
+  if (!group->relays[0]) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group has no relays");
+    return FALSE;
+  }
+  g_autofree gchar *inner_id = NULL;
+  g_autofree gchar *inner = inner_event_new_reaction(self, group, target_event_id,
+                                                      target_pubkey, target_kind_str,
+                                                      emoji, &inner_id);
+  if (!inner) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not build reaction inner event");
+    return FALSE;
+  }
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  drop_stale_error(self);
+  MarmotError err = marmot_create_message(self->marmot, &group->gid, inner, &out);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The reaction could not be encrypted", error);
+    marmot_outgoing_message_free(&out);
+    return FALSE;
+  }
+  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json, inner);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The reaction could not be stored", error);
+    marmot_outgoing_message_free(&out);
+    return FALSE;
+  }
+  /* Fire-and-forget publish. */
+  g_autoptr(GError) pub_error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new(
+    self->generation, out.event_json, reaction_publish_update,
+    reaction_publish_done, NULL, &pub_error);
+  if (publish) {
+    for (guint i = 0; group->relays[i]; i++) {
+      gh_relay_publish_add_url(publish, group->relays[i], NULL);
+      gh_auth_policy_apply_publish(self->policy, publish,
+                                   GH_AUTH_PURPOSE_MLS_ROUTING, group->relays[i], NULL);
+    }
+    if (!gh_relay_publish_start(publish, &pub_error))
+      gh_relay_publish_unref(publish);
+  }
+  /* Local echo: the reaction store admits it for immediate display. */
+  if (self->reactions) {
+    g_autoptr(GhReaction) reaction =
+      gh_reaction_new(target_event_id, inner_id,
+                      self->account, emoji, now_s(self),
+                      group->room_id);
+    if (reaction)
+      gh_reaction_store_admit(self->reactions, reaction, NULL);
+  }
+  marmot_outgoing_message_free(&out);
+  return TRUE;
+}
+
+gboolean
+gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
+                             const gchar *event_id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!check_running(self, error))
+    return FALSE;
+  if (!GH_IS_MLS_GROUP(group) || group->service != self || !group->active ||
+      group->leaving || !event_id) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "A deletion needs an event id and an active group");
+    return FALSE;
+  }
+  if (!group->relays[0]) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                        "The group has no relays");
+    return FALSE;
+  }
+  g_autofree gchar *inner_id = NULL;
+  g_autofree gchar *inner = inner_event_new_deletion(self, group, event_id, &inner_id);
+  if (!inner) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not build deletion inner event");
+    return FALSE;
+  }
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  drop_stale_error(self);
+  MarmotError err = marmot_create_message(self->marmot, &group->gid, inner, &out);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The deletion could not be encrypted", error);
+    marmot_outgoing_message_free(&out);
+    return FALSE;
+  }
+  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json, inner);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The deletion could not be stored", error);
+    marmot_outgoing_message_free(&out);
+    return FALSE;
+  }
+  g_autoptr(GError) pub_error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new(
+    self->generation, out.event_json, reaction_publish_update,
+    reaction_publish_done, NULL, &pub_error);
+  if (publish) {
+    for (guint i = 0; group->relays[i]; i++) {
+      gh_relay_publish_add_url(publish, group->relays[i], NULL);
+      gh_auth_policy_apply_publish(self->policy, publish,
+                                   GH_AUTH_PURPOSE_MLS_ROUTING, group->relays[i], NULL);
+    }
+    if (!gh_relay_publish_start(publish, &pub_error))
+      gh_relay_publish_unref(publish);
+  }
+  marmot_outgoing_message_free(&out);
+  return TRUE;
+}
+
 /* The id and kind of a stored unsigned event (a rumor or inner event). */
 static gchar *
 unsigned_id_of(const gchar *json, gint *out_kind)

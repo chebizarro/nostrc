@@ -2055,6 +2055,133 @@ gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
   return send_room_message(self, recipients, NULL, file, error);
 }
 
+/* W26 slice B (nostrc-191r): send a kind-7 NIP-25 reaction through the
+ * outbox's seal pipeline. Unlike send_room_message, no GhMessage local
+ * echo (GhMessage rejects kind 7) and no SIGNAL_ITEM_ADDED (the send-ui
+ * tracks chat messages, not reactions). Returns the reaction's rumor id. */
+gchar *
+gh_outbox_send_reaction_room(GhOutbox *self, const gchar *const *recipients,
+                             const gchar *emoji, const gchar *target_rumor_id,
+                             const gchar *target_kind_str, GError **error)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
+  if (!self->generation) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "This outbox's account is not the active account");
+    return NULL;
+  }
+  g_autofree gchar *rumor_id = NULL;
+  const gint64 created_at = now_unix(self);
+  g_autofree gchar *rumor = gh_nip17_rumor_new_reaction_room(
+    self->account, recipients, emoji, target_rumor_id, target_kind_str,
+    created_at, &rumor_id, error);
+  if (!rumor)
+    return NULL;
+  g_autofree gchar *key = nip17_backend_key(self->account, recipients);
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
+  if (!gh_store_begin(self->store, error))
+    return NULL;
+  if (!gh_store_ensure_conversation(self->store, GH_STORE_BACKEND_NIP17, key,
+                                    GH_STORE_REQUEST_ACCEPTED, &conversation_id, error)) {
+    gh_store_rollback(self->store);
+    return NULL;
+  }
+  GhStoreOutgoing outgoing = {
+    .conversation_id = conversation_id,
+    .op_id = op_id,
+    .backend_msg_id = rumor_id,
+    .sender_pubkey = self->account,
+    .kind = 7,
+    .created_at = created_at,
+    .body = emoji,
+    .rumor_json = rumor,
+  };
+  if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error)) {
+    gh_store_rollback(self->store);
+    return NULL;
+  }
+  if (!gh_store_commit(self->store, error))
+    return NULL;
+  GhStoreOutboxEntry *entry = g_new0(GhStoreOutboxEntry, 1);
+  entry->id = outbox_id;
+  entry->conversation_id = conversation_id;
+  entry->message_id = message_id;
+  entry->op_id = g_strdup(op_id);
+  entry->backend = GH_STORE_BACKEND_NIP17;
+  entry->state = GH_STORE_OUTBOX_QUEUED;
+  entry->rumor_json = g_strdup(rumor);
+  entry->created_at = created_at;
+  entry->events = g_ptr_array_new();
+  Msg *msg = msg_ref(msg_new(self, entry));
+  if (!msg->dropped)
+    msg_queue_eval(msg);
+  msg_unref(msg);
+  return g_steal_pointer(&rumor_id);
+}
+
+/* W26 slice B: send a kind-5 NIP-09 deletion through the outbox's seal
+ * pipeline. */
+gchar *
+gh_outbox_send_deletion_room(GhOutbox *self, const gchar *const *recipients,
+                             const gchar *target_event_id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
+  if (!self->generation) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "This outbox's account is not the active account");
+    return NULL;
+  }
+  g_autofree gchar *rumor_id = NULL;
+  const gint64 created_at = now_unix(self);
+  g_autofree gchar *rumor = gh_nip17_rumor_new_deletion_room(
+    self->account, recipients, target_event_id,
+    created_at, &rumor_id, error);
+  if (!rumor)
+    return NULL;
+  g_autofree gchar *key = nip17_backend_key(self->account, recipients);
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
+  if (!gh_store_begin(self->store, error))
+    return NULL;
+  if (!gh_store_ensure_conversation(self->store, GH_STORE_BACKEND_NIP17, key,
+                                    GH_STORE_REQUEST_ACCEPTED, &conversation_id, error)) {
+    gh_store_rollback(self->store);
+    return NULL;
+  }
+  GhStoreOutgoing outgoing = {
+    .conversation_id = conversation_id,
+    .op_id = op_id,
+    .backend_msg_id = rumor_id,
+    .sender_pubkey = self->account,
+    .kind = 5,
+    .created_at = created_at,
+    .body = "",
+    .rumor_json = rumor,
+  };
+  if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error)) {
+    gh_store_rollback(self->store);
+    return NULL;
+  }
+  if (!gh_store_commit(self->store, error))
+    return NULL;
+  GhStoreOutboxEntry *entry = g_new0(GhStoreOutboxEntry, 1);
+  entry->id = outbox_id;
+  entry->conversation_id = conversation_id;
+  entry->message_id = message_id;
+  entry->op_id = g_strdup(op_id);
+  entry->backend = GH_STORE_BACKEND_NIP17;
+  entry->state = GH_STORE_OUTBOX_QUEUED;
+  entry->rumor_json = g_strdup(rumor);
+  entry->created_at = created_at;
+  entry->events = g_ptr_array_new();
+  Msg *msg = msg_ref(msg_new(self, entry));
+  if (!msg->dropped)
+    msg_queue_eval(msg);
+  msg_unref(msg);
+  return g_steal_pointer(&rumor_id);
+}
+
 GhOutboxItem *
 gh_outbox_lookup(GhOutbox *self, gint64 outbox_id)
 {

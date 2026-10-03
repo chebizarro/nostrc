@@ -72,7 +72,7 @@ use cgka_traits::app_components::{
     SAFE_AAD_COMPONENT_ID, decode_nostr_routing_v1, default_group_components,
     encode_encrypted_media_policy_v2, encode_nostr_routing_v1,
 };
-use cgka_traits::app_event::{MARMOT_APP_EVENT_KIND_CHAT, MarmotAppEvent};
+use cgka_traits::app_event::{MARMOT_APP_EVENT_KIND_CHAT, MARMOT_APP_EVENT_KIND_REACTION, MARMOT_APP_EVENT_KIND_DELETE, MarmotAppEvent};
 use cgka_traits::polls::{
     MARMOT_APP_EVENT_KIND_POLL, MARMOT_APP_EVENT_KIND_POLL_RESPONSE,
     PollType, poll_tags, poll_response_tags, parse_poll, parse_poll_response,
@@ -1158,7 +1158,8 @@ impl Driver {
                     "protocol_profile": "Current",
                     "commands": ["hello", "peer_new", "publish_key_package", "fetch_key_package",
                         "parse_key_package", "create_group", "add_members", "remove_members",
-                        "update_group_data", "self_update", "leave", "send", "send_media",
+                        "update_group_data", "self_update", "leave", "send", "send_reaction",
+                        "send_deletion", "send_media",
                         "open_media", "sync",
                         "fetch_welcomes", "accept_welcome", "state", "group_context",
                         "poll_create", "poll_vote", "poll_tally"],
@@ -1300,6 +1301,8 @@ impl Driver {
             }
             "leave" => self.leave(req).await,
             "send" => self.send(req).await,
+            "send_reaction" => self.send_reaction(req).await,
+            "send_deletion" => self.send_deletion(req).await,
             "send_media" => self.send_media(req).await,
             "open_media" => self.open_media(req).await,
             "poll_create" => self.poll_create(req).await,
@@ -1799,6 +1802,83 @@ impl Driver {
             }));
         }
         Ok(json!({ "polls": tallies, "sync": sync_result }))
+    }
+
+    /// W26 slice B (nostrc-191r): send a NIP-25 reaction (kind 7) as an inner
+    /// app event. The tags are ["e", target_event_id], ["p", target_pubkey],
+    /// ["k", target_kind]; content is the emoji.
+    async fn send_reaction(&mut self, req: &Value) -> Res<Value> {
+        let group_id = group_id_arg(req)?;
+        let emoji = str_arg(req, "emoji")?.to_string();
+        let target_event_id = str_arg(req, "target_event_id")?.to_string();
+        let target_pubkey = str_arg(req, "target_pubkey")?.to_string();
+        let target_kind = str_arg(req, "target_kind")?.to_string();
+        let peer = self.peer(req)?;
+        let now = Timestamp::now().as_secs();
+        let tags = vec![
+            vec!["e".into(), target_event_id],
+            vec!["p".into(), target_pubkey],
+            vec!["k".into(), target_kind],
+        ];
+        let payload = MarmotAppEvent::new(peer.keys.public_key().to_hex(), now,
+            MARMOT_APP_EVENT_KIND_REACTION, tags, emoji)
+            .encode()
+            .map_err(as_fail(INTERNAL, "reaction app event"))?;
+        let effects = peer
+            .session
+            .send(SendIntent::AppMessage { group_id: group_id.clone(), payload, expected_epoch: None })
+            .await
+            .map_err(engine_fail("send_reaction"))?;
+        let msg = effects
+            .publish
+            .iter()
+            .find_map(|w| match w {
+                PublishWork::ApplicationMessage { msg, .. } => Some(msg.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| fail(STATE, format!("no reaction to publish (queued: {})", effects.queued.len())))?;
+        let event = transport_event(&msg)?;
+        peer.seen.insert(event.id);
+        let relays = routing(peer, &group_id)?.relays;
+        let (accepted, answers) = publish_all(&relays, &event, &Keys::generate()).await;
+        if !accepted {
+            return Err(fail(TRANSPORT, format!("no relay accepted the reaction: {answers}")));
+        }
+        Ok(json!({ "event_id": event.id.to_hex() }))
+    }
+
+    /// W26 slice B: send a NIP-09 deletion (kind 5) targeting an event id.
+    async fn send_deletion(&mut self, req: &Value) -> Res<Value> {
+        let group_id = group_id_arg(req)?;
+        let target_event_id = str_arg(req, "target_event_id")?.to_string();
+        let peer = self.peer(req)?;
+        let now = Timestamp::now().as_secs();
+        let tags = vec![vec!["e".into(), target_event_id]];
+        let payload = MarmotAppEvent::new(peer.keys.public_key().to_hex(), now,
+            MARMOT_APP_EVENT_KIND_DELETE, tags, "")
+            .encode()
+            .map_err(as_fail(INTERNAL, "deletion app event"))?;
+        let effects = peer
+            .session
+            .send(SendIntent::AppMessage { group_id: group_id.clone(), payload, expected_epoch: None })
+            .await
+            .map_err(engine_fail("send_deletion"))?;
+        let msg = effects
+            .publish
+            .iter()
+            .find_map(|w| match w {
+                PublishWork::ApplicationMessage { msg, .. } => Some(msg.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| fail(STATE, format!("no deletion to publish (queued: {})", effects.queued.len())))?;
+        let event = transport_event(&msg)?;
+        peer.seen.insert(event.id);
+        let relays = routing(peer, &group_id)?.relays;
+        let (accepted, answers) = publish_all(&relays, &event, &Keys::generate()).await;
+        if !accepted {
+            return Err(fail(TRANSPORT, format!("no relay accepted the deletion: {answers}")));
+        }
+        Ok(json!({ "event_id": event.id.to_hex() }))
     }
 
     /// MIP-04 encrypted-media-v2 as marmot-app 0.11 sends it

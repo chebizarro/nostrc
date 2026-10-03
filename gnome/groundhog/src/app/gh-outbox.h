@@ -212,6 +212,17 @@ GhOutboxItem *gh_outbox_send_file(GhOutbox *self, const gchar *recipient_pubkey_
  * One recipient is exactly gh_outbox_send_file(). */
 GhOutboxItem *gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
                                        const GhNip17File *file, GError **error);
+/* W26 slice B (nostrc-191r): send a NIP-25 reaction (kind 7) through the
+ * outbox's seal-and-publish pipeline to a NIP-17 room. Returns the
+ * reaction's rumor id (transfer full), or NULL on failure. No GhMessage
+ * local echo — the caller creates a GhReaction in the store. */
+gchar *gh_outbox_send_reaction_room(GhOutbox *self, const gchar *const *recipients,
+                                    const gchar *emoji, const gchar *target_rumor_id,
+                                    const gchar *target_kind_str, GError **error);
+/* W26 slice B: send a NIP-09 deletion (kind 5) targeting @target_event_id. */
+gchar *gh_outbox_send_deletion_room(GhOutbox *self, const gchar *const *recipients,
+                                    const gchar *target_event_id, GError **error);
+
 /* Whether @content is short enough for one gift wrap to @recipient_pubkey_hex:
  * gh_outbox_send() refuses a text whose rumor is too long (about 40 KB,
  * less for text that JSON must escape). Measures exactly the rumor it would

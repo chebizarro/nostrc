@@ -690,6 +690,11 @@ test_templates_exact(void)
   assert_json(gh_nip29_template_create_invite(key, &ctx, "INVITE-2", NULL, &error), &error,
               HEAD("9009") "[\"code\",\"INVITE-2\"]," PREVIOUS "],\"content\":\"\"}");
 
+  /* W26 slice B (nostrc-191r): kind-7 reaction template with e/p/k tags. */
+  assert_json(gh_nip29_template_reaction(key, &ctx, EV4, OTHER, "9", "👍", &error), &error,
+              HEAD("7") "[\"e\",\"" EV4 "\"],[\"p\",\"" OTHER "\"],[\"k\",\"9\"],"
+              PREVIOUS "],\"content\":\"👍\"}");
+
   /* edit-metadata replaces the whole state: editing a copy of the admitted
    * snapshot keeps its supported kinds, parent and children. */
   g_autoptr(GhNip29Group) group = group_new(RELAY_A, &relay_a);

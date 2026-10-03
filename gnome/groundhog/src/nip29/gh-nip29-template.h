@@ -136,6 +136,17 @@ gchar *gh_nip29_template_delete_event(const GhNip29GroupKey *group,
                                       const gchar *reason,
                                       GError **error);
 
+/* W26 slice B (nostrc-191r): kind:7 reaction (NIP-25): ["e", <target event
+ * id>], ["p", <target author pubkey>], ["k", <target kind as string>];
+ * @emoji must be non-empty UTF-8 and becomes the content. */
+gchar *gh_nip29_template_reaction(const GhNip29GroupKey *group,
+                                  const GhNip29TemplateContext *context,
+                                  const gchar *target_event_id,
+                                  const gchar *target_pubkey,
+                                  const gchar *target_kind_str,
+                                  const gchar *emoji,
+                                  GError **error);
+
 /* kind:9009 create-invite: ["code", <code>]; @code must be non-empty. */
 gchar *gh_nip29_template_create_invite(const GhNip29GroupKey *group,
                                        const GhNip29TemplateContext *context,
