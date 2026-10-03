@@ -654,9 +654,10 @@ marmot_commit_authorize_ex(const MlsGroup *pre, const MlsGroup *post,
      * Add(KeyPackage claiming Y) lands in Y's slot under the same identity.
      * Judged by identity alone that swap passed as unprivileged and as Y's
      * own new leaf: any member could take over a proof-less member's device
-     * (W24 review B1).  libmarmot applies no Update proposals (no proposal
-     * store on this path; a by-reference Update is MARMOT_ERR_UNSUPPORTED);
-     * whoever adds them must pass their leaves in as renewals too. */
+     * (W24 review B1).  libmarmot applies no Update proposals (the proposal
+     * store holds only departures; a by-reference Update is
+     * MARMOT_ERR_UNSUPPORTED); whoever adds them must pass their leaves in
+     * as renewals too. */
     const MlsLeafNode *committer_after = leaf_at(post, committer_leaf);
     if (!committer_after || !same_identity(committer, committer_after))
         return MARMOT_ERR_IDENTITY_CHANGE;

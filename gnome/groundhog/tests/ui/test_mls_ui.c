@@ -367,8 +367,8 @@ test_copy(void)
   g_autofree gchar *group_only = gh_mls_verify_result_copy(GH_MLS_MEMBER_UNVERIFIED, reveal,
                                                            "Dave");
   g_assert_cmpstr(group_only, ==,
-                  "This person’s relays are the group’s relays, so checking would reveal this "
-                  "group.");
+                  "Every relay Groundhog could ask is one of this group's relays, "
+                  "so checking would reveal this group.");
 
   GhMlsIdentityCopy ready = gh_mls_identity_copy(GH_MLS_IDENTITY_ENROLLED);
   g_assert_true(ready.ready);

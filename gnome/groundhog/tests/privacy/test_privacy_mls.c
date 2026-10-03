@@ -299,18 +299,18 @@ test_no_secrets_outside_the_store(void)
   world_down(&w);
 }
 
-/* REQs naming `key` for any kind a member lookup uses -- its relay list
- * (10002) or KeyPackages (443, 30443) -- that `relay` received (W24 review
- * A3: whatever kind a regression would fetch). */
+/* REQs naming `key` in any filter (as author or #p tag) that `relay`
+ * received.  Counts any kind, not just the ones a member lookup uses
+ * today: a regression that adds an automatic kind-0 fetch would also be
+ * caught (W24 review N1). */
 static guint
-key_package_reqs(WireRelay *relay, guint key)
+member_naming_reqs(WireRelay *relay, guint key)
 {
   guint n = 0;
   for (guint i = 0; i < relay->frames->len; i++) {
     WireFrame *frame = g_ptr_array_index(relay->frames, i);
     if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
-        strstr(frame->text, hex[key]) &&
-        (strstr(frame->text, "10002") || strstr(frame->text, "443")))
+        strstr(frame->text, hex[key]))
       n++;
   }
   return n;
@@ -320,7 +320,7 @@ key_package_reqs(WireRelay *relay, guint key)
 static guint
 group_relay_reqs(World *w, guint key)
 {
-  return key_package_reqs(&w->g, key) + key_package_reqs(&w->h, key);
+  return member_naming_reqs(&w->g, key) + member_naming_reqs(&w->h, key);
 }
 
 typedef struct {
@@ -412,22 +412,22 @@ test_member_lookups_on_demand_only(void)
   gh_mls_service_add_members_async(alice->service, ga, carol, NULL, on_changed, &added);
   spin_until(op_done, &added, "Alice's Add of Carol");
   g_assert_no_error(added.error);
-  guint asked = key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL);
+  guint asked = member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL);
   wait_members(gb, 3);
   wait_live(gb);
   drain();
   g_assert_cmpint(gh_mls_group_get_member_identity(gb, hex[CAROL], NULL), ==,
                   GH_MLS_MEMBER_UNVERIFIED);
-  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), ==, asked);
-  g_assert_cmpuint(key_package_reqs(&w.x, CAROL) + group_relay_reqs(&w, CAROL), ==, 0);
+  g_assert_cmpuint(member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL), ==, asked);
+  g_assert_cmpuint(member_naming_reqs(&w.x, CAROL) + group_relay_reqs(&w, CAROL), ==, 0);
 
   VerifyWait wait = { 0 };
   gh_mls_service_verify_member_async(bob->service, gb, hex[CAROL], NULL, on_verified, &wait);
   spin_until(verify_finished, &wait, "Bob's Verify");
   g_assert_cmpint(wait.identity, ==, GH_MLS_MEMBER_VERIFIED);
-  g_assert_cmpuint(key_package_reqs(&w.e, CAROL), >, 0);
-  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), >, asked);
-  g_assert_cmpuint(key_package_reqs(&w.x, CAROL) + group_relay_reqs(&w, CAROL), ==, 0);
+  g_assert_cmpuint(member_naming_reqs(&w.e, CAROL), >, 0);
+  g_assert_cmpuint(member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL), >, asked);
+  g_assert_cmpuint(member_naming_reqs(&w.x, CAROL) + group_relay_reqs(&w, CAROL), ==, 0);
 
   /* A1: the group relay is also a discovery relay and one of Carol's write
    * relays. Verify asks the others, never it, in either phase. */
@@ -439,24 +439,24 @@ test_member_lookups_on_demand_only(void)
   g_autofree gchar *list = sign_event(CAROL, 10002, g_get_real_time() / G_USEC_PER_SEC - 60, "",
                                       tags);
   wire_relay_inject(&w.e, list);
-  guint on_w = key_package_reqs(&w.w, CAROL);
+  guint on_w = member_naming_reqs(&w.w, CAROL);
   VerifyWait again = { 0 };
   gh_mls_service_verify_member_async(bob->service, gb, hex[CAROL], NULL, on_verified, &again);
   spin_until(verify_finished, &again, "Bob's Verify with overlapping relays");
   g_assert_cmpint(again.identity, ==, GH_MLS_MEMBER_VERIFIED);
-  g_assert_cmpuint(key_package_reqs(&w.w, CAROL), >, on_w);   /* phase 2 ran */
+  g_assert_cmpuint(member_naming_reqs(&w.w, CAROL), >, on_w);   /* phase 2 ran */
   g_assert_cmpuint(group_relay_reqs(&w, CAROL), ==, 0);
 
   /* Nothing but the group relay to ask: refused, nothing sent. */
   const gchar *only_group[] = { w.g.url, NULL };
   g_settings_set_strv(bob->settings, "discovery-relays", only_group);
-  guint before = key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL);
+  guint before = member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL);
   RefusedWait refused = { 0 };
   gh_mls_service_verify_member_async(bob->service, gb, hex[CAROL], NULL, on_refused, &refused);
   spin_until(refused_finished, &refused, "Bob's refused Verify");
   g_assert_error(refused.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
   g_clear_error(&refused.error);
-  g_assert_cmpuint(key_package_reqs(&w.e, CAROL) + key_package_reqs(&w.w, CAROL), ==, before);
+  g_assert_cmpuint(member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL), ==, before);
   g_assert_cmpuint(group_relay_reqs(&w, CAROL), ==, 0);
   world_down(&w);
 }
