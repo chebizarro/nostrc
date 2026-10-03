@@ -1204,6 +1204,57 @@ test_gui_new_group(void)
   world_down(&w);
 }
 
+/* ---- standalone invites dialog (regression for libadwaita 1.5 focus crash) -------------- */
+
+/* Accepting an invitation in a standalone GhMlsInvitesDialog (presented with
+ * NULL parent, as the interop GUI test does) used to crash on Linux/Xvfb with
+ * libadwaita 1.5: refresh() removed the row from the preferences group, the
+ * row and its accept button were finalized, and GTK's post-action focus
+ * handling hit the dead widget (gtk_widget_get_can_focus assertion failure).
+ * The fix defers the old rows' final unref to idle; this test exercises the
+ * exact code path that crashed. */
+static void
+test_gui_invites_standalone(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+
+  /* Alice creates a group with Bob. */
+  GhMlsGroup *ga = create_group(alice, "Standalone", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  (void)room;
+
+  /* Bob receives the invitation. */
+  spin_until(has_invite, bob, "Bob's invitation");
+  g_autofree gchar *wrapper = the_invite(bob, ALICE);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+
+  /* Bob accepts in a standalone dialog (no parent window): the crash path. */
+  GhMlsUiContext context = { .service = bob->service, .accounts = bob->accounts,
+                              .model = bob->model, .settings = bob->settings };
+  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
+  adw_dialog_present(ADW_DIALOG(dialog), NULL);
+  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 1);
+
+  /* Accept: the row is removed from the group inside the action handler.
+   * Before the fix, this crashed on Linux/Xvfb. */
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.accept", "s", wrapper);
+  wait_text(invites_toast, dialog, "You joined \xe2\x80\x9cStandalone\xe2\x80\x9d");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
+
+  /* Close and drain: the deferred unref fires during drain(). */
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  drain();
+
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 1);
+  world_down(&w);
+}
+
 /* ---- --gui: the build's own flag --------------------------------------------------------- */
 
 /* A widget of type titled title that is on screen, or NULL. */
@@ -2225,6 +2276,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/new-group-format-changed",
                     test_gui_new_group_format_changed);
 #endif
+    g_test_add_func("/groundhog/mls-ui-gui/invites-standalone", test_gui_invites_standalone);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

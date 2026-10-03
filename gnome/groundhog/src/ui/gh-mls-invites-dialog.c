@@ -71,12 +71,42 @@ show_toast(GhMlsInvitesDialog *self, AdwToast *toast)
   adw_toast_overlay_add_toast(self->toasts, toast);
 }
 
+static gboolean
+drop_stale_rows(gpointer data)
+{
+  GPtrArray *stale = data;
+  for (guint i = 0; i < stale->len; i++)
+    g_object_unref(g_ptr_array_index(stale, i));
+  g_ptr_array_unref(stale);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 refresh(GhMlsInvitesDialog *self)
 {
-  for (guint i = 0; i < self->rows->len; i++)
-    adw_preferences_group_remove(self->invites_group, g_ptr_array_index(self->rows, i));
-  g_ptr_array_set_size(self->rows, 0);
+  /* Clear focus before removing rows: on libadwaita 1.5 (Ubuntu 24.04),
+   * adw_dialog_set_focus() fires during gtk_widget_unparent() via the
+   * set-focus-child signal chain and receives a half-destroyed widget,
+   * hitting "gtk_widget_get_can_focus: assertion 'GTK_IS_WIDGET (widget)'
+   * failed".  Clearing the root's focus first prevents the stale callback.
+   * Ref old rows too, then drop the refs on the next idle, so GTK's
+   * post-unparent bookkeeping can still inspect them safely. */
+  if (self->rows->len > 0) {
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+    if (root)
+      gtk_root_set_focus(root, NULL);
+  }
+  GPtrArray *stale = NULL;
+  if (self->rows->len > 0) {
+    stale = g_ptr_array_new();
+    for (guint i = 0; i < self->rows->len; i++) {
+      GtkWidget *row = g_ptr_array_index(self->rows, i);
+      g_object_ref(row);
+      g_ptr_array_add(stale, row);
+      adw_preferences_group_remove(self->invites_group, row);
+    }
+    g_ptr_array_set_size(self->rows, 0);
+  }
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) invites = self->context.service
     ? gh_mls_service_list_invites(self->context.service, &error) : NULL;
@@ -128,6 +158,8 @@ refresh(GhMlsInvitesDialog *self)
     g_ptr_array_add(self->rows, row);
   }
   gtk_stack_set_visible_child_name(self->stack, self->rows->len > 0 ? "list" : "empty");
+  if (stale)
+    g_idle_add(drop_stale_rows, stale);
 }
 
 static void
