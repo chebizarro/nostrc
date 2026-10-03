@@ -740,3 +740,4 @@
 {"id":"int-28e4528d","kind":"field_change","created_at":"2026-10-03T07:28:41.187704Z","actor":"Biz","issue_id":"nostrc-txnu","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-62768003","kind":"field_change","created_at":"2026-10-03T07:28:42.347666Z","actor":"Biz","issue_id":"nostrc-57o8","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-ce19ac01","kind":"field_change","created_at":"2026-10-03T07:28:43.465693Z","actor":"Biz","issue_id":"nostrc-e92q","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-36db7df8","kind":"field_change","created_at":"2026-10-03T12:34:03.106799Z","actor":"Biz","issue_id":"nostrc-191r","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"W26 slice B on master 4999a546; review docs/reviews/w26-reactions-*.md APPROVED; live MDK 0.11 white-noise-reactions passes"}}
