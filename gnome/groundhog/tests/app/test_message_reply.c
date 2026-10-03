@@ -176,6 +176,24 @@ test_mls_reply_q_over_bare(void)
   g_assert_cmpstr(gh_message_get_reply_to_id(msg), ==, FAKE_EVENT_ID3);
 }
 
+
+/* Review finding 8: an e tag with marker "mention" must NOT produce a reply
+ * header — it is an inline reference, not a reply target. */
+static void
+test_nip29_e_mention_no_reply(void)
+{
+  NostrTags *tags = nostr_tags_new(0);
+  /* An e tag with "mention" marker only — no unmarked e tags, no q tags. */
+  nostr_tags_append(tags, nostr_tag_new("e", FAKE_EVENT_ID, "", "mention", NULL));
+  g_autofree gchar *json = nip29_json_with_tags(tags);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) msg = gh_message_new_from_nip29_event(
+      ACCOUNT, "wss://relay.example.com", json, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(msg);
+  g_assert_null(gh_message_get_reply_to_id(msg));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -191,5 +209,9 @@ main(int argc, char **argv)
   g_test_add_func("/message/reply/mls-no-reply", test_mls_no_reply);
   g_test_add_func("/message/reply/mls-e-tag", test_mls_reply_e_tag);
   g_test_add_func("/message/reply/mls-q-over-bare", test_mls_reply_q_over_bare);
+
+  /* Review finding 8: e-mention must not produce a reply. */
+  g_test_add_func("/message/reply/nip29-e-mention-no-reply", test_nip29_e_mention_no_reply);
+
   return g_test_run();
 }

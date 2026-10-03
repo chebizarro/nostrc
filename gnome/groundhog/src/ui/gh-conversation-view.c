@@ -1723,8 +1723,10 @@ action_scroll_to_reply(GtkWidget *widget, const char *name, GVariant *parameter)
     return;
   const gchar *reply_id = g_variant_get_string(parameter, NULL);
   GhMessage *target = gh_conversation_lookup_message(self->conversation, reply_id);
-  if (!target)
+  if (!target) {
+    show_toast(self, _("Original message not loaded"));
     return;
+  }
   /* Find its position in the visible timeline (GhTimelineItems). */
   guint n = n_visible(self);
   for (guint i = 0; i < n; i++) {

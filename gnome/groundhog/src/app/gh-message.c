@@ -563,7 +563,11 @@ read_reply_id(const NostrEvent *event)
     if (!value || !lower_hex64(value))
       continue;
     if (g_strcmp0(name, "e") == 0) {
-      last_e = value;
+      /* Only genuinely unmarked e tags serve as the positional fallback;
+       * a tag with marker "mention" is an inline reference, not a reply. */
+      if (nostr_tag_size(tag) < 4 || !nostr_tag_get(tag, 3) ||
+          *nostr_tag_get(tag, 3) == '\0')
+        last_e = value;
       if (nostr_tag_size(tag) >= 4 && g_strcmp0(nostr_tag_get(tag, 3), "reply") == 0)
         marked_reply = value;
     } else if (g_strcmp0(name, "q") == 0 && !quote) {
