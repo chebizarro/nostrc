@@ -49,6 +49,12 @@
     <file>icons/scalable/actions/view-pin-symbolic.svg</file>
     <file>icons/scalable/actions/view-refresh-symbolic.svg</file>
     <file>icons/scalable/actions/x-office-document-symbolic.svg</file>
+    <file>icons/scalable/actions/changes-prevent-symbolic.svg</file>
+    <file>icons/scalable/actions/dialog-password-symbolic.svg</file>
+    <file>icons/scalable/actions/document-open-recent-symbolic.svg</file>
+    <file>icons/scalable/actions/network-server-symbolic.svg</file>
+    <file>icons/scalable/actions/system-search-symbolic.svg</file>
+    <file>icons/scalable/actions/view-conceal-symbolic.svg</file>
     <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
     <file>ui/gh-window.ui</file>
     <file>ui/gh-sidebar-page.ui</file>

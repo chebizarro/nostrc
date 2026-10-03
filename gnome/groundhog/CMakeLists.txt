@@ -139,6 +139,12 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/view-pin-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/view-refresh-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/x-office-document-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/changes-prevent-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/dialog-password-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/document-open-recent-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/network-server-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/system-search-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/view-conceal-symbolic.svg
           ${GROUNDHOG_UI_FILES}
   VERBATIM)
 

@@ -2,27 +2,38 @@
  *
  * Verifies that every symbolic icon name referenced by the app resolves from
  * the bundled GResource, so non-GNOME desktops (which may lack the Adwaita
- * icon theme) see icons. Runs without a display. */
+ * icon theme) see icons.  Runs without a display.
+ *
+ * GTK4 builtins — icons GTK ships internally (verified via
+ * `strings libgtk-4.*.dylib | grep symbolic`) that do NOT need bundling:
+ *   edit-copy-symbolic, edit-delete-symbolic, face-smile-symbolic,
+ *   list-add-symbolic, list-remove-symbolic, object-select-symbolic,
+ *   user-trash-symbolic, window-close-symbolic.
+ * If any of these stops shipping with GTK, bundle it and move it to the
+ * BUNDLED_ICONS array; the test failure from a missing GResource will catch
+ * the regression at build time. */
 #include <gio/gio.h>
 #include <glib.h>
 #include <string.h>
 
 void groundhog_register_resource(void);
 
-/* Every symbolic icon the app references in Blueprint files and C source.
- * GTK4 built-ins (edit-copy, object-select, …) are omitted — GTK always
- * carries them.  The three pre-existing bundled icons (send, send-rtl,
- * avatar-default) are included as a baseline. */
+/* Every non-GTK-builtin symbolic icon the app references in Blueprint files
+ * and C source.  Derived from a full grep audit of data/ui/.blp and
+ * src/ui/.c (nostrc-9juh, review finding 4). */
 static const char *const BUNDLED_ICONS[] = {
   "action-unavailable-symbolic",
   "alarm-symbolic",
   "audio-x-generic-symbolic",
   "avatar-default-symbolic",
+  "changes-prevent-symbolic",
   "channel-secure-symbolic",
   "computer-symbolic",
   "content-loading-symbolic",
+  "dialog-password-symbolic",
   "dialog-question-symbolic",
   "dialog-warning-symbolic",
+  "document-open-recent-symbolic",
   "document-open-symbolic",
   "emblem-ok-symbolic",
   "emblem-synchronizing-symbolic",
@@ -38,6 +49,7 @@ static const char *const BUNDLED_ICONS[] = {
   "mail-send-receive-symbolic",
   "mail-unread-symbolic",
   "network-offline-symbolic",
+  "network-server-symbolic",
   "network-transmit-receive-symbolic",
   "network-workgroup-symbolic",
   "open-menu-symbolic",
@@ -47,9 +59,11 @@ static const char *const BUNDLED_ICONS[] = {
   "send-symbolic-rtl",
   "system-lock-screen-symbolic",
   "system-log-out-symbolic",
+  "system-search-symbolic",
   "text-x-generic-symbolic",
   "user-bookmarks-symbolic",
   "video-x-generic-symbolic",
+  "view-conceal-symbolic",
   "view-list-bullet-symbolic",
   "view-more-symbolic",
   "view-pin-symbolic",
