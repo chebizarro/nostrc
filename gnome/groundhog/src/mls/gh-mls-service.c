@@ -2645,15 +2645,23 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
                 gh_reaction_store_admit(self->reactions, reaction, NULL);
             }
           }
-        } else if (inner_kind == 5) {
-          /* NIP-25 deletion: each e-tag names a reaction to remove. */
+        } else if (inner_kind == 5 && result.app_msg.sender_pubkey_hex) {
+          /* NIP-25 deletion: each e-tag names a reaction to remove.
+           * W26 slice B review fix (F3): only the reaction's author may
+           * delete it (NIP-09). */
           NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
           if (tags) {
             for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
               NostrTag *tag = nostr_tags_get(tags, ti);
               if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
-                  nostr_tag_get_value(tag))
-                gh_reaction_store_remove(self->reactions, nostr_tag_get_value(tag), NULL);
+                  nostr_tag_get_value(tag)) {
+                const gchar *rid = nostr_tag_get_value(tag);
+                const gchar *original_sender =
+                  gh_reaction_store_get_sender(self->reactions, rid);
+                if (original_sender &&
+                    g_strcmp0(original_sender, result.app_msg.sender_pubkey_hex) == 0)
+                  gh_reaction_store_remove(self->reactions, rid, NULL);
+              }
             }
           }
         }

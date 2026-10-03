@@ -208,6 +208,143 @@ test_store_aggregation(void)
   g_assert_true(c1->is_own);
 }
 
+/* ---- F4: double-add same emoji → toggle ------------------------------------ */
+
+static void
+test_store_double_add_toggle(void)
+{
+  /* If the user already reacted with an emoji, re-adding the same emoji
+   * should be detected by the caller (via own_reaction_id). The store
+   * itself would dedup by rumor_id, but the picker creates a NEW rumor_id
+   * each time, so the caller must check before creating a new reaction. */
+  g_autoptr(GhReactionStore) store = gh_reaction_store_new();
+  gh_reaction_store_set_account(store, ACCOUNT, NULL, NULL, NULL);
+
+  /* User reacts with 👍. */
+  g_autoptr(GhReaction) r1 =
+    gh_reaction_new(TARGET_1, "rxn-f4-001", ACCOUNT, "👍", 1000, ROOM_ID);
+  g_assert_true(gh_reaction_store_admit(store, r1, NULL));
+
+  /* Before adding a second 👍, check if already reacted. */
+  GhReactionSummary *summary = gh_reaction_store_lookup(store, TARGET_1);
+  const gchar *existing = gh_reaction_summary_own_reaction_id(summary, "👍");
+  g_assert_nonnull(existing);
+  g_assert_cmpstr(existing, ==, "rxn-f4-001");
+
+  /* The caller would toggle (remove) instead of adding. */
+  g_autofree gchar *removed = gh_reaction_store_remove_own(store, TARGET_1, "👍", NULL);
+  g_assert_cmpstr(removed, ==, "rxn-f4-001");
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 0);
+
+  /* A different emoji is still addable. */
+  g_assert_null(gh_reaction_summary_own_reaction_id(summary, "❤️"));
+}
+
+/* ---- F3: sender ownership on kind-5 deletion ------------------------------- */
+
+static void
+test_store_forged_deletion(void)
+{
+  /* A kind-5 deletion should only remove a reaction if the deletion sender
+   * matches the reaction's original sender. A forged deletion from a
+   * different sender must be rejected. */
+  g_autoptr(GhReactionStore) store = gh_reaction_store_new();
+  gh_reaction_store_set_account(store, ACCOUNT, NULL, NULL, NULL);
+
+  /* Alice (SENDER_A) reacts with 👍. */
+  g_autoptr(GhReaction) alice_rxn =
+    gh_reaction_new(TARGET_1, "rxn-f3-alice", SENDER_A, "👍", 1000, ROOM_ID);
+  g_assert_true(gh_reaction_store_admit(store, alice_rxn, NULL));
+
+  /* Lookup the sender of that reaction. */
+  const gchar *sender = gh_reaction_store_get_sender(store, "rxn-f3-alice");
+  g_assert_cmpstr(sender, ==, SENDER_A);
+
+  /* Bob (SENDER_B) tries to delete Alice's reaction — forged.
+   * The caller should compare sender before calling remove. */
+  g_assert_cmpstr(gh_reaction_store_get_sender(store, "rxn-f3-alice"), ==, SENDER_A);
+  g_assert_true(g_strcmp0(SENDER_B, SENDER_A) != 0);  /* different sender */
+
+  /* Simulate the check the receive path performs: sender doesn't match,
+   * so the reaction should NOT be removed. */
+  const gchar *original = gh_reaction_store_get_sender(store, "rxn-f3-alice");
+  if (original && g_strcmp0(original, SENDER_B) == 0)
+    gh_reaction_store_remove(store, "rxn-f3-alice", NULL);
+
+  /* Reaction must still be present. */
+  GhReactionSummary *summary = gh_reaction_store_lookup(store, TARGET_1);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 1);
+
+  /* Now the real author (SENDER_A) deletes it — succeeds. */
+  original = gh_reaction_store_get_sender(store, "rxn-f3-alice");
+  if (original && g_strcmp0(original, SENDER_A) == 0)
+    gh_reaction_store_remove(store, "rxn-f3-alice", NULL);
+
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 0);
+}
+
+static void
+test_store_get_sender_unknown(void)
+{
+  /* get_sender for an unknown reaction returns NULL. */
+  g_autoptr(GhReactionStore) store = gh_reaction_store_new();
+  gh_reaction_store_set_account(store, ACCOUNT, NULL, NULL, NULL);
+  g_assert_null(gh_reaction_store_get_sender(store, "nonexistent"));
+}
+
+/* ---- F5: restore loop must not re-insert into database --------------------- */
+
+static gint admit_delegate_calls;
+
+static gboolean
+counting_admit(gpointer data, GhReaction *reaction, GError **error)
+{
+  (void)data; (void)reaction; (void)error;
+  admit_delegate_calls++;
+  return TRUE;
+}
+
+static const GhReactionDelegate counting_delegate = {
+  .admit = counting_admit,
+  .remove = NULL,
+  .remove_by_sender = NULL,
+};
+
+static void
+test_store_suspend_delegate(void)
+{
+  /* When the delegate is suspended, admit() should not call the delegate's
+   * admit callback (simulating the restore loop bypassing SQLite). */
+  g_autoptr(GhReactionStore) store = gh_reaction_store_new();
+  admit_delegate_calls = 0;
+  gh_reaction_store_set_account(store, ACCOUNT, &counting_delegate, NULL, NULL);
+
+  /* Normal admit: delegate is called. */
+  g_autoptr(GhReaction) r1 =
+    gh_reaction_new(TARGET_1, "rxn-f5-001", SENDER_A, "👍", 1000, ROOM_ID);
+  gh_reaction_store_admit(store, r1, NULL);
+  g_assert_cmpint(admit_delegate_calls, ==, 1);
+
+  /* Suspend: delegate should not be called. */
+  gh_reaction_store_suspend_delegate(store);
+  g_autoptr(GhReaction) r2 =
+    gh_reaction_new(TARGET_1, "rxn-f5-002", SENDER_B, "❤️", 1001, ROOM_ID);
+  gh_reaction_store_admit(store, r2, NULL);
+  g_assert_cmpint(admit_delegate_calls, ==, 1);  /* still 1, not 2 */
+
+  /* But the in-memory model should still have both reactions. */
+  GhReactionSummary *summary = gh_reaction_store_lookup(store, TARGET_1);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 2);
+
+  /* Resume: delegate is called again. */
+  gh_reaction_store_resume_delegate(store);
+  g_autoptr(GhReaction) r3 =
+    gh_reaction_new(TARGET_1, "rxn-f5-003", ACCOUNT, "😂", 1002, ROOM_ID);
+  gh_reaction_store_admit(store, r3, NULL);
+  g_assert_cmpint(admit_delegate_calls, ==, 2);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 3);
+}
+
 /* ---- privacy: no remote image fetch ---------------------------------------- */
 
 static void
@@ -259,6 +396,10 @@ main(int argc, char *argv[])
   g_test_add_func("/reactions/store/remove", test_store_remove);
   g_test_add_func("/reactions/store/remove-own", test_store_remove_own);
   g_test_add_func("/reactions/store/aggregation", test_store_aggregation);
+  g_test_add_func("/reactions/store/double-add-toggle", test_store_double_add_toggle);
+  g_test_add_func("/reactions/store/forged-deletion", test_store_forged_deletion);
+  g_test_add_func("/reactions/store/get-sender-unknown", test_store_get_sender_unknown);
+  g_test_add_func("/reactions/store/suspend-delegate", test_store_suspend_delegate);
   g_test_add_func("/reactions/privacy/custom-emoji-shortcode", test_custom_emoji_shortcode);
   g_test_add_func("/reactions/privacy/emoji-max-length", test_emoji_max_length);
 

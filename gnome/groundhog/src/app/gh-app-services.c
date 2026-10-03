@@ -711,12 +711,15 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
       break;
     }
     case GH_CONVERSATION_BACKEND_NIP29: {
+      /* W26 slice B review fix (F2): use kind-5 (NIP-09 author deletion),
+       * not kind 9005 (admin delete-event). A regular member can remove
+       * their own reaction without admin permission. */
       GObject *service_obj = gh_app_outbox_get_nip29_service(self->outbox);
       if (GH_IS_NIP29_SERVICE(service_obj)) {
         GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(service_obj), room_id);
         if (room)
-          gh_nip29_service_delete_event(GH_NIP29_SERVICE(service_obj), room, reaction_id,
-                                        NULL, NULL);
+          gh_nip29_service_send_deletion(GH_NIP29_SERVICE(service_obj), room, reaction_id,
+                                         NULL);
       }
       break;
     }
@@ -733,6 +736,18 @@ on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
       break;
     }
     return;
+  }
+
+  /* W26 slice B review fix (F4): if the user already reacted with this emoji,
+   * toggle (remove) instead of double-adding. The picker always sends
+   * add=TRUE, so without this guard the same emoji can be added twice. */
+  if (reactions) {
+    GhReactionSummary *summary = gh_reaction_store_lookup(reactions, target_id);
+    if (summary && gh_reaction_summary_own_reaction_id(summary, emoji)) {
+      /* Recurse with add=FALSE to trigger the removal path. */
+      on_react(conversation, target, emoji, FALSE, user_data);
+      return;
+    }
   }
 
   /* Add a reaction. */

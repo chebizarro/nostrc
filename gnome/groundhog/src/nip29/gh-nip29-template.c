@@ -490,6 +490,27 @@ gh_nip29_template_delete_event(const GhNip29GroupKey *group,
   return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_DELETE_EVENT, reason, error);
 }
 
+/* W26 slice B review fix (F2): kind:5 author deletion (NIP-09) for a NIP-29
+ * group. Unlike kind:9005 (admin delete-event), this is a regular member
+ * deleting their own event. The relay should accept it from the author. */
+gchar *
+gh_nip29_template_deletion(const GhNip29GroupKey *group,
+                           const GhNip29TemplateContext *context,
+                           const gchar *event_id, GError **error)
+{
+  TemplateBuild build;
+  if (!check_context(group, context, error))
+    return NULL;
+  if (!gh_nip29_is_hex64(event_id)) {
+    fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "event id must be 64-char lowercase hex");
+    return NULL;
+  }
+  if (!template_begin(&build, group, context, error))
+    return NULL;
+  template_add(&build, nostr_tag_new("e", event_id, NULL));
+  return template_finish(&build, context, 5, "", error);
+}
+
 gchar *
 gh_nip29_template_reaction(const GhNip29GroupKey *group,
                            const GhNip29TemplateContext *context,

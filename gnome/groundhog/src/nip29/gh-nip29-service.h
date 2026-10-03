@@ -270,6 +270,13 @@ GhNip29Op *gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *roo
                                           GhReactionStore *reactions,
                                           GError **error);
 
+/* W26 slice B review fix (F2): sends a kind-5 NIP-09 deletion for the
+ * account's own event (e.g. a reaction). Unlike the admin kind-9005
+ * delete-event below, this requires no admin permission. */
+GhNip29Op *gh_nip29_service_send_deletion(GhNip29Service *self, GhNip29Room *room,
+                                          const gchar *event_id,
+                                          GError **error);
+
 /* Admin operations, refused with G_IO_ERROR_PERMISSION_DENIED only when the
  * account's authorization for them is DENIED_* (gh_nip29_room_check_permission). */
 GhNip29Op *gh_nip29_service_put_user(GhNip29Service *self, GhNip29Room *room,

@@ -1119,13 +1119,21 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
         }
       }
     } else if (room && room->service->reactions && kind == 5) {
-      /* W26 slice B: NIP-25 deletion in a NIP-29 group. */
+      /* W26 slice B: NIP-25 deletion in a NIP-29 group.
+       * W26 slice B review fix (F3): only the reaction's author may delete
+       * it (NIP-09). The event's pubkey is the deletion sender. */
+      const gchar *deletion_sender = nostr_event_get_pubkey(event);
       NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
-      if (tags) {
+      if (tags && deletion_sender) {
         for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
           NostrTag *tag = nostr_tags_get(tags, ti);
-          if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag))
-            gh_reaction_store_remove(room->service->reactions, nostr_tag_get_value(tag), NULL);
+          if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag)) {
+            const gchar *rid = nostr_tag_get_value(tag);
+            const gchar *original_sender =
+              gh_reaction_store_get_sender(room->service->reactions, rid);
+            if (original_sender && g_strcmp0(original_sender, deletion_sender) == 0)
+              gh_reaction_store_remove(room->service->reactions, rid, NULL);
+          }
         }
       }
     } else if (room && (kind == NOSTR_KIND_SIMPLE_GROUP_ADD_USER ||
@@ -2008,6 +2016,23 @@ gh_nip29_service_send_reaction(GhNip29Service *self, GhNip29Room *room,
       nostr_event_free(event);
   }
   return op;
+}
+
+/* W26 slice B review fix (F2): kind-5 NIP-09 author deletion for a NIP-29
+ * group. A regular member can delete their own event (reaction) without admin
+ * permission. Uses room_enqueue (member-level), not admin_enqueue. */
+GhNip29Op *
+gh_nip29_service_send_deletion(GhNip29Service *self, GhNip29Room *room,
+                               const gchar *event_id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  if (!check_room(self, room, error))
+    return NULL;
+  GhNip29TemplateContext context;
+  room_context(room, &context);
+  g_autofree gchar *deletion_json = gh_nip29_template_deletion(
+    room->key, &context, event_id, error);
+  return deletion_json ? room_enqueue(room, deletion_json, error) : NULL;
 }
 
 static GhNip29Op *

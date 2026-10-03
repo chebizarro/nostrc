@@ -136,6 +136,14 @@ gchar *gh_nip29_template_delete_event(const GhNip29GroupKey *group,
                                       const gchar *reason,
                                       GError **error);
 
+/* W26 slice B review fix (F2): kind:5 author deletion (NIP-09) for a NIP-29
+ * group. Regular members use this to delete their own events (e.g. reactions).
+ * Unlike kind:9005 (admin delete-event), no admin permission is needed. */
+gchar *gh_nip29_template_deletion(const GhNip29GroupKey *group,
+                                  const GhNip29TemplateContext *context,
+                                  const gchar *event_id,
+                                  GError **error);
+
 /* W26 slice B (nostrc-191r): kind:7 reaction (NIP-25): ["e", <target event
  * id>], ["p", <target author pubkey>], ["k", <target kind as string>];
  * @emoji must be non-empty UTF-8 and becomes the content. */

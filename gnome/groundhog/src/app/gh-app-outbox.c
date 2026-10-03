@@ -308,14 +308,22 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
       g_object_unref(reaction);
     }
   } else if (kind == 5) {
-    /* Deletion: each e-tag names a reaction to remove. */
+    /* Deletion: each e-tag names a reaction to remove.
+     * W26 slice B review fix (F3): only the reaction's author may delete
+     * it (NIP-09). The sender_pubkey comes from the NIP-17 seal. */
     NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
-    if (tags) {
+    if (tags && message->sender_pubkey) {
       for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
         NostrTag *tag = nostr_tags_get(tags, ti);
         if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
-            nostr_tag_get_value(tag))
-          gh_reaction_store_remove(self->reactions, nostr_tag_get_value(tag), NULL);
+            nostr_tag_get_value(tag)) {
+          const gchar *rid = nostr_tag_get_value(tag);
+          const gchar *original_sender =
+            gh_reaction_store_get_sender(self->reactions, rid);
+          if (original_sender &&
+              g_strcmp0(original_sender, message->sender_pubkey) == 0)
+            gh_reaction_store_remove(self->reactions, rid, NULL);
+        }
       }
     }
   }

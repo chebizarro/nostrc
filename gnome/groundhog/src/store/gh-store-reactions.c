@@ -205,6 +205,11 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
     return FALSE;
   }
 
+  /* W26 slice B review fix (F5): suspend the delegate so the restore loop
+   * does not issue redundant INSERT OR IGNORE statements for every stored
+   * reaction. The reactions are already persisted. */
+  gh_reaction_store_suspend_delegate(model);
+
   while (sqlite3_step(stmt) == SQLITE_ROW) {
     const gchar *target_msg_id = (const gchar *)sqlite3_column_text(stmt, 0);
     const gchar *reaction_msg_id = (const gchar *)sqlite3_column_text(stmt, 1);
@@ -219,12 +224,13 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
     g_autoptr(GhReaction) reaction = gh_reaction_new(
       target_msg_id, reaction_msg_id, sender_pubkey, emoji, created_at, room_id);
     if (reaction) {
-      /* Bypass delegate on restore (already persisted). */
       g_autoptr(GError) admit_error = NULL;
       gh_reaction_store_admit(model, reaction, &admit_error);
     }
   }
   sqlite3_finalize(stmt);
+
+  gh_reaction_store_resume_delegate(model);
   return TRUE;
 }
 

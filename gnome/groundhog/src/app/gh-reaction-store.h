@@ -62,6 +62,19 @@ gchar *gh_reaction_store_remove_own(GhReactionStore *self,
 GhReactionSummary *gh_reaction_store_lookup(GhReactionStore *self,
                                             const gchar *target_rumor_id);
 
+/* W26 slice B review fix (F5): temporarily suspend and resume the delegate
+ * so that bulk operations (restore loop) don't trigger redundant SQLite
+ * statements. */
+void gh_reaction_store_suspend_delegate(GhReactionStore *self);
+void gh_reaction_store_resume_delegate(GhReactionStore *self);
+
+/* W26 slice B review fix (F3): looks up the sender pubkey for a reaction by
+ * its rumor id. Returns NULL if the reaction is unknown. The returned string
+ * is borrowed from the reaction and valid as long as the store is alive and
+ * the reaction has not been removed. */
+const gchar *gh_reaction_store_get_sender(GhReactionStore *self,
+                                          const gchar *reaction_rumor_id);
+
 /* Signal: "reaction-changed" (target_rumor_id: string) — emitted after
  * a reaction is added or removed, so the UI can update the affected
  * message row. */

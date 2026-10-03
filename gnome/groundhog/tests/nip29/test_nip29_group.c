@@ -695,6 +695,11 @@ test_templates_exact(void)
               HEAD("7") "[\"e\",\"" EV4 "\"],[\"p\",\"" OTHER "\"],[\"k\",\"9\"],"
               PREVIOUS "],\"content\":\"👍\"}");
 
+  /* W26 slice B review fix (F2): kind-5 NIP-09 author deletion with h-tag. */
+  assert_json(gh_nip29_template_deletion(key, &ctx, EV4, &error), &error,
+              HEAD("5") "[\"e\",\"" EV4 "\"],"
+              PREVIOUS "],\"content\":\"\"}");
+
   /* edit-metadata replaces the whole state: editing a copy of the admitted
    * snapshot keeps its supported kinds, parent and children. */
   g_autoptr(GhNip29Group) group = group_new(RELAY_A, &relay_a);

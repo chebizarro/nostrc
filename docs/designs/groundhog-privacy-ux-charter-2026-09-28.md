@@ -310,6 +310,13 @@ CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT
 -- keyed by the component state that named it; deleted on forget and Clear).
 -- Every migration is one-way: a store at v5 is refused by an older Groundhog
 -- (NEWER_SCHEMA), which therefore cannot open it after an upgrade.
+-- Schema v6 (W25 slice N re-review): libmarmot message rows keep no
+-- plaintext; index on (mls_group_id, epoch).
+-- Schema v7 (W26 slice B, NIP-25 reactions): reactions table
+-- (conversation_id FK → conversations, target_msg_id, reaction_msg_id
+-- UNIQUE, sender_pubkey, emoji, created_at, room_id); indexes
+-- reactions_by_target and reactions_by_sender. Forward migration: a store
+-- at v7 is refused by an older Groundhog.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
