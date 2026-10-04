@@ -41,6 +41,7 @@ test_resource_registration(void)
   assert_resource("/org/nostr/Groundhog/style.css");
   /* The reviewed onboarding relay suggestions (charter D4). */
   assert_resource("/org/nostr/Groundhog/relay-suggestions.json");
+  assert_resource("/org/nostr/Groundhog/blossom-media-suggestions.txt");
   for (guint i = 0; i < G_N_ELEMENTS(ui); i++)
     assert_resource(ui[i]);
   /* Bundled symbolic icons for hosts whose icon theme lacks them (the

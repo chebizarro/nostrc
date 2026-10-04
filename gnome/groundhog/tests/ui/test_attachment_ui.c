@@ -858,6 +858,21 @@ test_attach_send(void)
 
 static gboolean label_with(GtkWidget *widget, const gchar *prefix);
 
+static GtkButton *
+button_labeled(GtkWidget *widget, const gchar *label)
+{
+  if (GTK_IS_BUTTON(widget) && gtk_widget_get_visible(widget) &&
+      g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label) == 0)
+    return GTK_BUTTON(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkButton *found = button_labeled(child, label);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
 /* D6: with no server the first use asks for one, refuses what isn't an
  * https server, never picks one, and contacts nothing. */
 static void
@@ -894,6 +909,43 @@ test_first_use_server(void)
   /* Closing sends nothing. */
   close_sheet(&f);
   g_assert_null(own_file_message(bob));
+  fixture_clear(&f);
+}
+
+/* First-use suggestions are visible, but neither saved nor contacted until
+ * the user explicitly chooses one. Each button persists only its own URL. */
+static void
+test_suggested_encrypted_media_servers(void)
+{
+  static const gchar *const hosts[] = {
+    "blossom.divine.video", "blossom.ditto.pub", "cdn.hzrd149.com"
+  };
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  GhConversation *bob = receive_text(&f, "Hi");
+  send_stack_select(&f.s, bob);
+  g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 3);
+  for (guint selected = 0; selected < G_N_ELEMENTS(hosts); selected++) {
+    g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+    gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
+    GhAttachmentSheet *sheet = wait_page(&f, "servers");
+    g_assert_true(label_with(GTK_WIDGET(sheet), "White Noise uses these servers for encrypted media."));
+    g_assert_true(label_with(GTK_WIDGET(sheet), "The chosen server sees your IP address"));
+    for (guint i = 0; i < G_N_ELEMENTS(hosts); i++)
+      g_assert_nonnull(button_labeled(GTK_WIDGET(sheet), hosts[i]));
+    g_auto(GStrv) before = g_settings_get_strv(f.s.settings, "blossom-servers");
+    g_assert_cmpuint(g_strv_length(before), ==, 0);
+    g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+    g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), hosts[selected]), "clicked");
+    wait_page(&f, "preview");
+    g_auto(GStrv) after = g_settings_get_strv(f.s.settings, "blossom-servers");
+    g_autofree gchar *expected = g_strdup_printf("https://%s", hosts[selected]);
+    g_assert_cmpstr(after[0], ==, expected);
+    g_assert_null(after[1]);
+    g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+    close_sheet(&f);
+  }
   fixture_clear(&f);
 }
 
@@ -1745,6 +1797,7 @@ main(int argc, char **argv)
 #define ADD(path, func) nostrc_test_bus_add_func("/groundhog/attachment-ui/" path, func)
   ADD("attach-send", test_attach_send);
   ADD("first-use-server", test_first_use_server);
+  ADD("suggested-encrypted-media-servers", test_suggested_encrypted_media_servers);
   ADD("live-server-choice", test_live_server_choice);
   ADD("opaque-server-refusal", test_opaque_server_refusal);
   ADD("consent", test_consent);

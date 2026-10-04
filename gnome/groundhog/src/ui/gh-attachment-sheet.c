@@ -4,6 +4,8 @@
 
 /* The photo's largest size on the preview page. */
 #define THUMBNAIL_MAX 240
+#define SUGGESTIONS_RESOURCE "/org/nostr/Groundhog/blossom-media-suggestions.txt"
+#define N_SUGGESTIONS 3
 
 struct _GhAttachmentSheet {
   AdwDialog parent_instance;
@@ -11,6 +13,10 @@ struct _GhAttachmentSheet {
   AdwEntryRow *server_entry;
   GtkLabel *server_error;
   GtkButton *server_button;
+  GtkButton *suggestion_first;
+  GtkButton *suggestion_second;
+  GtkButton *suggestion_third;
+  gchar *suggestion_urls[N_SUGGESTIONS];
   GtkPicture *thumbnail;
   AdwActionRow *file_row;
   AdwActionRow *metadata_row;
@@ -218,6 +224,19 @@ action_use_server(GtkWidget *widget, const char *name, GVariant *parameter)
 }
 
 static void
+action_use_suggested_server(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhAttachmentSheet *self = GH_ATTACHMENT_SHEET(widget);
+  (void)name;
+  gint index = g_variant_get_int32(parameter);
+  if (index < 0 || index >= N_SUGGESTIONS || !self->suggestion_urls[index])
+    return;
+  const gchar *server = self->suggestion_urls[index];
+  gtk_editable_set_text(GTK_EDITABLE(self->server_entry), server);
+  g_signal_emit(self, signals[SIGNAL_SERVER_CHOSEN], 0, server);
+}
+
+static void
 action_send(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   (void)name;
@@ -268,7 +287,10 @@ gh_attachment_sheet_dispose(GObject *object)
 static void
 gh_attachment_sheet_finalize(GObject *object)
 {
-  g_free(GH_ATTACHMENT_SHEET(object)->error);
+  GhAttachmentSheet *self = GH_ATTACHMENT_SHEET(object);
+  g_free(self->error);
+  for (guint i = 0; i < N_SUGGESTIONS; i++)
+    g_free(self->suggestion_urls[i]);
   G_OBJECT_CLASS(gh_attachment_sheet_parent_class)->finalize(object);
 }
 
@@ -297,6 +319,9 @@ gh_attachment_sheet_class_init(GhAttachmentSheetClass *klass)
   BIND(server_entry);
   BIND(server_error);
   BIND(server_button);
+  BIND(suggestion_first);
+  BIND(suggestion_second);
+  BIND(suggestion_third);
   BIND(thumbnail);
   BIND(file_row);
   BIND(metadata_row);
@@ -314,15 +339,56 @@ gh_attachment_sheet_class_init(GhAttachmentSheetClass *klass)
   BIND(consent_decline);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "sheet.use-server", NULL, action_use_server);
+  gtk_widget_class_install_action(widget_class, "sheet.use-suggested-server", "i",
+                                  action_use_suggested_server);
   gtk_widget_class_install_action(widget_class, "sheet.send", NULL, action_send);
   gtk_widget_class_install_action(widget_class, "sheet.consent", NULL, action_consent);
   gtk_widget_class_install_action(widget_class, "sheet.cancel", NULL, action_cancel);
 }
 
 static void
+load_suggestions(GhAttachmentSheet *self)
+{
+  GtkButton *buttons[N_SUGGESTIONS] = {
+    self->suggestion_first, self->suggestion_second, self->suggestion_third
+  };
+  g_auto(GStrv) hosts = g_new0(gchar *, N_SUGGESTIONS + 1);
+  g_autofree gchar *text = NULL;
+  g_auto(GStrv) urls = NULL;
+  g_autoptr(GBytes) bytes = g_resources_lookup_data(SUGGESTIONS_RESOURCE,
+                                                    G_RESOURCE_LOOKUP_FLAGS_NONE, NULL);
+  if (!bytes)
+    goto unavailable;
+  gsize size = 0;
+  const gchar *data = g_bytes_get_data(bytes, &size);
+  text = g_strndup(data, size);
+  urls = g_strsplit(text, "\n", -1);
+  if (g_strv_length(urls) != N_SUGGESTIONS + 1 || *urls[N_SUGGESTIONS] != '\0')
+    goto unavailable;
+  for (guint i = 0; i < N_SUGGESTIONS; i++) {
+    g_autoptr(GUri) uri = g_uri_parse(urls[i], G_URI_FLAGS_NONE, NULL);
+    if (!uri || g_strcmp0(g_uri_get_scheme(uri), "https") != 0 ||
+        !g_uri_get_host(uri) || g_uri_get_userinfo(uri) || g_uri_get_query(uri) ||
+        g_uri_get_fragment(uri))
+      goto unavailable;
+    hosts[i] = g_strdup(g_uri_get_host(uri));
+  }
+  for (guint i = 0; i < N_SUGGESTIONS; i++) {
+    self->suggestion_urls[i] = g_strdup(urls[i]);
+    gtk_button_set_label(buttons[i], hosts[i]);
+  }
+  return;
+
+unavailable:
+  for (guint i = 0; i < N_SUGGESTIONS; i++)
+    gtk_widget_set_sensitive(GTK_WIDGET(buttons[i]), FALSE);
+}
+
+static void
 gh_attachment_sheet_init(GhAttachmentSheet *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  load_suggestions(self);
   gtk_widget_set_overflow(GTK_WIDGET(self->thumbnail), GTK_OVERFLOW_HIDDEN);
   g_signal_connect_swapped(self->server_entry, "changed", G_CALLBACK(on_entry_changed), self);
   gh_attachment_sheet_set_metadata_removed(self, FALSE);

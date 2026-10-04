@@ -4,7 +4,7 @@ using Adw 1;
 // Sending a file (charter §6 "Send", D6, G22), driven by
 // gh-attachment-sheet.c and gh-attachment-ui.c. Pages:
 //  - "servers": the first use, with no attachment server chosen. Groundhog
-//    never picks one: the user types the address of a server they choose;
+//    never picks one: the user explicitly chooses a suggested server or enters another;
 //  - "preview": what will be sent (name, size, the photo), whether its
 //    hidden details were removed, and what the server learns;
 //  - "sending": encrypting and uploading, with Cancel;
@@ -56,7 +56,13 @@ template $GhAttachmentSheet: Adw.Dialog {
             }
 
             Label {
-              label: _("The server keeps the encrypted file. It can see the file's size and when it's uploaded and downloaded, and your IP address unless you use Tor. It can't see what the file contains or whom it's for.");
+              label: _("White Noise uses these servers for encrypted media. Choose one explicitly, or enter another HTTPS server below.");
+              wrap: true;
+              xalign: 0;
+            }
+
+            Label {
+              label: _("The chosen server sees your IP address unless you use Tor, the encrypted blob's size, and upload and download times. It can't read the file or see whom it's for.");
               wrap: true;
               xalign: 0;
 
@@ -64,6 +70,29 @@ template $GhAttachmentSheet: Adw.Dialog {
                 "dim-label",
                 "caption",
               ]
+            }
+
+            Box {
+              orientation: vertical;
+              spacing: 6;
+
+              Button suggestion_first {
+                label: _("Suggestion unavailable");
+                action-name: "sheet.use-suggested-server";
+                action-target: "0";
+              }
+
+              Button suggestion_second {
+                label: _("Suggestion unavailable");
+                action-name: "sheet.use-suggested-server";
+                action-target: "1";
+              }
+
+              Button suggestion_third {
+                label: _("Suggestion unavailable");
+                action-name: "sheet.use-suggested-server";
+                action-target: "2";
+              }
             }
 
             ListBox {

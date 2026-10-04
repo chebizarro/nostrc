@@ -99,6 +99,7 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/512x512/apps/org.nostr.Groundhog.png
           ${GROUNDHOG_DATA}/icons/256x256/apps/org.nostr.Groundhog.png
           ${GROUNDHOG_DATA}/relay-suggestions.json
+          ${GROUNDHOG_DATA}/blossom-media-suggestions.txt
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/send-symbolic-rtl.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/avatar-default-symbolic.svg

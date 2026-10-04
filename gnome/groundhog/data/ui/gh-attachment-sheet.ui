@@ -52,13 +52,47 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">The server keeps the encrypted file. It can see the file's size and when it's uploaded and downloaded, and your IP address unless you use Tor. It can't see what the file contains or whom it's for.</property>
+                            <property name="label" translatable="yes">White Noise uses these servers for encrypted media. Choose one explicitly, or enter another HTTPS server below.</property>
+                            <property name="wrap">true</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">The chosen server sees your IP address unless you use Tor, the encrypted blob's size, and upload and download times. It can't read the file or see whom it's for.</property>
                             <property name="wrap">true</property>
                             <property name="xalign">0</property>
                             <style>
                               <class name="dim-label"/>
                               <class name="caption"/>
                             </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="orientation">1</property>
+                            <property name="spacing">6</property>
+                            <child>
+                              <object class="GtkButton" id="suggestion_first">
+                                <property name="label" translatable="yes">Suggestion unavailable</property>
+                                <property name="action-name">sheet.use-suggested-server</property>
+                                <property name="action-target">0</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="suggestion_second">
+                                <property name="label" translatable="yes">Suggestion unavailable</property>
+                                <property name="action-name">sheet.use-suggested-server</property>
+                                <property name="action-target">1</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="suggestion_third">
+                                <property name="label" translatable="yes">Suggestion unavailable</property>
+                                <property name="action-name">sheet.use-suggested-server</property>
+                                <property name="action-target">2</property>
+                              </object>
+                            </child>
                           </object>
                         </child>
                         <child>

@@ -108,5 +108,7 @@
     <file>ui/gh-voice-bubble.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
+    <!-- Reviewed MDK 0.11 encrypted-media server suggestions; no automatic contact. -->
+    <file>blossom-media-suggestions.txt</file>
   </gresource>
 </gresources>
