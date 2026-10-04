@@ -871,7 +871,9 @@ test_first_use_server(void)
   g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 2);
   gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
   GhAttachmentSheet *sheet = wait_page(&f, "servers");
-  g_assert_true(label_with(GTK_WIDGET(sheet), "Files are encrypted on this device"));
+  g_assert_true(label_with(GTK_WIDGET(sheet),
+                           "Files are encrypted on this device before upload. The server receives "
+                           "unreadable bytes, not the original file's type."));
   AdwEntryRow *entry = gh_attachment_sheet_get_server_entry(sheet);
   gtk_editable_set_text(GTK_EDITABLE(entry), "http://files.example.com");
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.use-server", NULL);
@@ -942,7 +944,9 @@ test_opaque_server_refusal(void)
   g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 6);
   gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
   GhAttachmentSheet *sheet = wait_page(&f, "servers");
-  g_assert_true(label_with(GTK_WIDGET(sheet), "Files are encrypted on this device"));
+  g_assert_true(label_with(GTK_WIDGET(sheet),
+                           "Files are encrypted on this device before upload. The server receives "
+                           "unreadable bytes, not the original file's type."));
   const gchar *chosen[] = { blossom_fixture_url(f.blossom), NULL };
   g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
   gh_attachment_sheet_show_preview(sheet, NULL);

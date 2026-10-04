@@ -45,7 +45,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">Files are encrypted on this device, then stored on a Blossom server you choose. It must accept encrypted files (application/octet-stream); some image-only servers do not. Groundhog doesn't choose a server for you.</property>
+                            <property name="label" translatable="yes">Files are encrypted on this device before upload. The server receives unreadable bytes, not the original file's type. Image-only servers may refuse them. Groundhog doesn't choose a server for you.</property>
                             <property name="wrap">true</property>
                             <property name="xalign">0</property>
                           </object>
