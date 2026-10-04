@@ -365,6 +365,49 @@ test_send_on_first_use_servers(void)
   world_down(&w);
 }
 
+/* Even a direct caller supplying server B cannot send a policy group's
+ * ciphertext outside the verified 0x800b endpoints (server A). */
+static void
+test_send_uses_policy_servers(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Policy upload", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  BlossomFixture *policy = blossom_fixture_new();
+  BlossomFixture *selected = blossom_fixture_new();
+  Files fa;
+  files_up(&fa, alice, blossom_fixture_url(selected), NULL);
+
+  const gchar *endpoints[] = { blossom_fixture_url(policy), NULL };
+  OpWait changed = { 0 };
+  gh_mls_service_set_media_policy_async(alice->service, ga, endpoints, NULL, on_changed,
+                                        &changed);
+  spin_until(op_done, &changed, "the file media policy Commit");
+  g_assert_no_error(changed.error);
+
+  g_autoptr(GBytes) photo = make_png();
+  const gchar *choice[] = { blossom_fixture_url(selected), NULL };
+  SendWait sent = { 0 };
+  gh_mls_attachments_send_on_servers_async(fa.files, ga, photo, "photo.png", "image/png",
+                                           NULL, choice, NULL, on_sent, &sent);
+  spin_until(send_done, &sent, "policy group file sent");
+  g_assert_no_error(sent.error);
+  g_assert_nonnull(sent.message);
+  g_assert_cmpstr(sent.server, ==, endpoints[0]);
+  g_assert_cmpuint(blossom_fixture_count(policy, "PUT"), ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(selected, "PUT"), ==, 0);
+  send_wait_clear(&sent);
+  files_down(&fa);
+  blossom_fixture_free(policy);
+  blossom_fixture_free(selected);
+  world_down(&w);
+}
+
 static gboolean
 upload_held(gpointer data)
 {
@@ -962,6 +1005,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-files/send-receive-on-request", test_send_receive_on_request);
   g_test_add_func("/groundhog/mls-files/send-on-first-use-servers",
                   test_send_on_first_use_servers);
+  g_test_add_func("/groundhog/mls-files/send-uses-policy-servers",
+                  test_send_uses_policy_servers);
   g_test_add_func("/groundhog/mls-files/epoch-change-reseals", test_epoch_change_reseals);
   g_test_add_func("/groundhog/mls-files/stale-epoch-refused", test_stale_epoch_refused);
   g_test_add_func("/groundhog/mls-files/tor", test_tor);

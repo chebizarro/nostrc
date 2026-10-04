@@ -586,6 +586,7 @@ typedef struct {
   gchar *name;      /* neutral */
   gchar *mime;
   gchar *caption;
+  GStrv selected_servers;
   GStrv servers;
   guint tries;
   GhMlsMediaSealed *sealed;
@@ -601,6 +602,7 @@ send_op_free(gpointer data)
   g_free(op->name);
   g_free(op->mime);
   g_free(op->caption);
+  g_strfreev(op->selected_servers);
   g_strfreev(op->servers);
   g_clear_pointer(&op->sealed, gh_mls_media_sealed_free);
   g_free(op->server);
@@ -608,6 +610,47 @@ send_op_free(gpointer data)
 }
 
 static void send_try(GTask *task);
+
+/* A group's verified 0x800b endpoints override the sheet/account choice.
+ * Re-read them for an epoch retry: a Commit may have changed the policy. */
+static gboolean
+refresh_send_servers(GhMlsAttachments *self, SendOp *op, GError **error)
+{
+  MarmotGroupComponents components;
+  g_autoptr(GError) components_error = NULL;
+  if (!gh_mls_service_get_components(self->service, op->group, &components,
+                                     &components_error)) {
+    if (!g_error_matches(components_error, GH_MLS_SERVICE_ERROR,
+                         GH_MLS_SERVICE_ERROR_UNSUPPORTED)) {
+      g_propagate_error(error, g_steal_pointer(&components_error));
+      return FALSE;
+    }
+    g_clear_pointer(&op->servers, g_strfreev);
+    op->servers = op->selected_servers ? g_strdupv(op->selected_servers) : NULL;
+    return TRUE; /* An older-format group has no 0x800b policy. */
+  }
+  gboolean has_policy = components.has_media_policy;
+  gboolean allowed = gh_mls_media_policy_allows_blossom(&components);
+  g_auto(GStrv) named = has_policy ? gh_mls_media_dup_servers(&components) : NULL;
+  marmot_group_components_clear(&components);
+  if (!allowed) {
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
+                        "The group's media policy doesn't allow Blossom servers");
+    return FALSE;
+  }
+  GStrv next = has_policy
+    ? gh_blossom_client_dup_public_servers(client_of(self), (const gchar *const *)named)
+    : (op->selected_servers ? g_strdupv(op->selected_servers) : NULL);
+  if (has_policy && !next[0]) {
+    g_strfreev(next);
+    g_set_error_literal(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER,
+                        "The group names no usable Blossom media server");
+    return FALSE;
+  }
+  g_strfreev(op->servers);
+  op->servers = next;
+  return TRUE;
+}
 
 static gboolean
 send_stale(GTask *task)
@@ -694,8 +737,13 @@ send_try(GTask *task)
   SendOp *op = g_task_get_task_data(task);
   if (send_stale(task))
     return;
-  op->tries++;
   GError *error = NULL;
+  if (!refresh_send_servers(self, op, &error)) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  op->tries++;
   g_clear_pointer(&op->sealed, gh_mls_media_sealed_free);
   op->sealed = gh_mls_media_seal(gh_mls_service_get_marmot(self->service),
                                  gh_mls_group_get_group_id(op->group), op->file, op->mime,
@@ -738,25 +786,13 @@ gh_mls_attachments_send_on_servers_async(GhMlsAttachments *self, GhMlsGroup *gro
   op->file = g_bytes_ref(file);
   op->mime = g_strdup(mime_hint);
   op->caption = g_strdup(caption ? caption : "");
-  op->servers = servers ? g_strdupv((gchar **)servers) : NULL;
+  op->selected_servers = servers ? g_strdupv((gchar **)servers) : NULL;
   g_task_set_task_data(task, op, send_op_free);
   if (!service_of(self) || !client_of(self)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
                             "Files need the account's message storage, which isn't open");
     g_object_unref(task);
     return;
-  }
-  /* The group's media policy must allow the locators Groundhog writes. */
-  MarmotGroupComponents components;
-  if (gh_mls_service_get_components(self->service, group, &components, NULL)) {
-    gboolean allowed = gh_mls_media_policy_allows_blossom(&components);
-    marmot_group_components_clear(&components);
-    if (!allowed) {
-      g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED,
-                              "The group's media policy doesn't allow Blossom servers");
-      g_object_unref(task);
-      return;
-    }
   }
   /* The name every member and the server sees says no more than the type. */
   g_autoptr(GhAttachmentPrepared) probe = gh_attachment_prepare(file, mime_hint,

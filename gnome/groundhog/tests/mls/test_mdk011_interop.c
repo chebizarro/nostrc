@@ -1278,8 +1278,10 @@ test_routing_rotation(void)
  * a White Noise-shaped group with Alice (both admins); Alice joins. Returns
  * Alice's group, *out_group the group id hex for the driver. */
 static GhMlsGroup *
-white_noise_group(World *w_, gchar **out_group)
+white_noise_group(World *w_, gchar **out_group, const gchar *media_endpoint)
 {
+  if (!media_endpoint)
+    media_endpoint = "https://blossom.example.com";
   App *alice = &w_->apps[ALICE];
   spin_until(key_package_published, alice, "Alice's KeyPackages");
   accept_contact(alice, CAROL);
@@ -1320,9 +1322,9 @@ white_noise_group(World *w_, gchar **out_group)
   g_autoptr(JsonObject) made = mdk_call(&driver,
     "\"cmd\":\"create_group\",\"peer\":\"carol\",\"name\":\"White Noise group\","
     "\"description\":\"wn\",\"relays\":[\"%s\"],\"admins\":[\"%s\",\"%s\"],"
-    "\"white_noise\":true,\"media_endpoints\":[\"https://blossom.example.com\"],"
+    "\"white_noise\":true,\"media_endpoints\":[\"%s\"],"
     "\"key_packages\":[%s],\"welcome_relays\":[\"%s\"]",
-    w_->g.url, hex[CAROL], hex[ALICE], alice_kp, w_->x.url);
+    w_->g.url, hex[CAROL], hex[ALICE], media_endpoint, alice_kp, w_->x.url);
   g_autofree gchar *group = g_strdup(json_object_get_string_member(made, "group"));
   g_auto(GStrv) components = mdk_strv(json_object_get_array_member(made, "components"));
   g_autofree gchar *component_text = g_strjoinv(",", components);
@@ -1348,8 +1350,10 @@ white_noise_group(World *w_, gchar **out_group)
   g_assert_cmpuint(parts.agent_text_stream.required_member_roles, ==,
                    MARMOT_AGENT_STREAM_ROLE_RECEIVE);
   g_assert_true(parts.has_media_policy);
+  g_autofree gchar *expected_endpoint = g_str_has_suffix(media_endpoint, "/")
+    ? g_strdup(media_endpoint) : g_strconcat(media_endpoint, "/", NULL);
   g_assert_cmpstr(parts.media_policy.default_blob_endpoints[0].base_url, ==,
-                  "https://blossom.example.com/");
+                  expected_endpoint);
   marmot_group_components_clear(&parts);
   marmot_group_id_free(&gid);
   *out_group = g_steal_pointer(&group);
@@ -1367,7 +1371,7 @@ test_white_noise_welcome(void)
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   g_autofree gchar *group = NULL;
-  GhMlsGroup *ga = white_noise_group(&w, &group);
+  GhMlsGroup *ga = white_noise_group(&w, &group, NULL);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
 
   /* Application messages both ways. */
@@ -1517,10 +1521,9 @@ test_white_noise_media(void)
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
   g_autofree gchar *group = NULL;
-  GhMlsGroup *ga = white_noise_group(&w, &group);
-  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
-
   BlossomFixture *blossom = blossom_fixture_new();
+  GhMlsGroup *ga = white_noise_group(&w, &group, blossom_fixture_url(blossom));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
   g_autoptr(GSettings) settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
@@ -1766,11 +1769,10 @@ test_white_noise_voice(void)
   const guint keys[] = { ALICE };
   world_up(&w, keys, G_N_ELEMENTS(keys));
   App *alice = &w.apps[ALICE];
-  g_autofree gchar *group = NULL;
-  GhMlsGroup *ga = white_noise_group(&w, &group);
-  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
-
   BlossomFixture *blossom = blossom_fixture_new();
+  g_autofree gchar *group = NULL;
+  GhMlsGroup *ga = white_noise_group(&w, &group, blossom_fixture_url(blossom));
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
   g_autoptr(GSettings) settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   const gchar *servers[] = { blossom_fixture_url(blossom), NULL };
@@ -2237,7 +2239,7 @@ test_white_noise_reactions(void)
    * validated KeyPackage and components).  The helper calls mdk_peer,
    * discover, create_group with white_noise:true, and join(). */
   g_autofree gchar *group = NULL;
-  GhMlsGroup *ga = white_noise_group(&w, &group);
+  GhMlsGroup *ga = white_noise_group(&w, &group, NULL);
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
 
   /* Exchange messages to react to. */

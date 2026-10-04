@@ -26,6 +26,7 @@ typedef struct {
   GhConversation *group;          /* or an encrypted group (W25): a reference */
   gchar *name;                    /* as chosen (the group delegate makes it neutral) */
   GStrv chosen_servers;           /* this sheet's first-use choice, independent of settings */
+  GStrv policy_servers;           /* non-NULL: the group's read-only 0x800b endpoints */
   GCancellable *upload;           /* while uploading */
   gchar *consent_server;          /* the server that asked for a known account */
 } Offer;
@@ -80,6 +81,7 @@ offer_free(Offer *offer)
   g_clear_object(&offer->group);
   g_free(offer->name);
   g_strfreev(offer->chosen_servers);
+  g_strfreev(offer->policy_servers);
   g_free(offer->consent_server);
   g_free(offer);
 }
@@ -211,6 +213,14 @@ servers(GhAttachmentUi *ui)
   return list ? list : g_new0(gchar *, 1);
 }
 
+static GStrv
+offer_servers(GhAttachmentUi *ui, Offer *offer)
+{
+  if (offer->policy_servers)
+    return g_strdupv(offer->policy_servers);
+  return offer->chosen_servers ? g_strdupv(offer->chosen_servers) : servers(ui);
+}
+
 /* ---- the sheet's copy -------------------------------------------------------------- */
 
 static gchar *
@@ -247,12 +257,25 @@ update_notes(GhAttachmentUi *ui)
 {
   if (!ui->offer)
     return;
-  g_auto(GStrv) list = ui->offer->chosen_servers
-    ? g_strdupv(ui->offer->chosen_servers) : servers(ui);
+  g_auto(GStrv) list = offer_servers(ui, ui->offer);
   g_autofree gchar *host = list[0] ? host_of(list[0]) : NULL;
   gboolean tor = gh_attachments_get_tor(ui->attachments);
   g_autofree gchar *server_note = NULL;
-  if (!host)
+  if (ui->offer->policy_servers && !list[0])
+    server_note = g_strdup(_("This group's media policy names no verified Blossom server. "
+                             "Ask an admin to update it in Group Info."));
+  else if (ui->offer->policy_servers) {
+    g_autofree gchar *named = g_strjoinv(", ", list);
+    server_note = g_strdup_printf(
+      tor ? _("This group's media policy selects these attachment servers: %s. The accepting "
+              "server keeps the encrypted file and can see its size and upload time, but not "
+              "your IP address or what the file contains. Only an admin can change the "
+              "servers in Group Info.")
+          : _("This group's media policy selects these attachment servers: %s. The accepting "
+              "server keeps the encrypted file and can see its size, upload time and your IP "
+              "address, but not what the file contains. Only an admin can change the servers "
+              "in Group Info."), named);
+  } else if (!host)
     server_note = g_strdup("");
   else if (tor)
     server_note = g_strdup_printf(
@@ -299,7 +322,12 @@ upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, gboolean 
       offer->consent_server = g_strdup(server);
       gh_attachment_sheet_show_consent(offer->sheet, host ? host : server);
     } else if (g_error_matches(upload_error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER)) {
-      gh_attachment_sheet_show_servers(offer->sheet, NULL);
+      if (offer->policy_servers)
+        gh_attachment_sheet_show_preview(offer->sheet,
+          _("This group's media policy names no usable Blossom server. Ask an admin to update it "
+            "in Group Info."));
+      else
+        gh_attachment_sheet_show_servers(offer->sheet, NULL);
     } else {
       /* The error names the server and may quote it: debug only (PD-10). */
       g_debug("Attachment: an upload failed: %s", upload_error->message);
@@ -385,10 +413,14 @@ start_upload(GhAttachmentUi *ui)
   Offer *offer = ui->offer;
   if (!offer || offer->upload)
     return;
-  g_auto(GStrv) list = offer->chosen_servers
-    ? g_strdupv(offer->chosen_servers) : servers(ui);
+  g_auto(GStrv) list = offer_servers(ui, offer);
   if (!list[0]) {
-    gh_attachment_sheet_show_servers(offer->sheet, NULL);
+    if (offer->policy_servers)
+      gh_attachment_sheet_show_preview(offer->sheet,
+        _("This group's media policy names no usable Blossom server. Ask an admin to update it "
+          "in Group Info."));
+    else
+      gh_attachment_sheet_show_servers(offer->sheet, NULL);
     return;
   }
   g_autofree gchar *host = host_of(list[0]);
@@ -438,6 +470,8 @@ on_sheet_server(GhAttachmentSheet *sheet, const gchar *text, GtkWidget *window)
   GhAttachmentUi *ui = ui_of(window);
   if (!ui || !ui->offer || ui->offer->sheet != sheet)
     return;
+  if (ui->offer->policy_servers)
+    return; /* A group's 0x800b endpoints cannot be replaced in this sheet. */
   g_autoptr(GError) error = NULL;
   g_autofree gchar *chosen = gh_preferences_normalize_server_url(text, ui->allow_onion, &error);
   if (!chosen) {
@@ -532,6 +566,8 @@ offer_prepared(GhAttachmentUi *ui, GhAttachmentPrepared *prepared, const gchar *
   offer->prepared = prepared;
   offer->recipients = recipients;
   offer->group = group ? g_object_ref(group) : NULL;
+  if (group && ui->groups.dup_policy_servers)
+    offer->policy_servers = ui->groups.dup_policy_servers(group, ui->groups_data);
   offer->name = g_strdup(name);
   offer->sheet = g_object_ref_sink(gh_attachment_sheet_new());
   ui->offer = offer;
@@ -551,9 +587,13 @@ offer_prepared(GhAttachmentUi *ui, GhAttachmentPrepared *prepared, const gchar *
   g_signal_connect_object(offer->sheet, "consent", G_CALLBACK(on_sheet_consent), ui->window, 0);
   g_signal_connect_object(offer->sheet, "cancel", G_CALLBACK(on_sheet_cancel), ui->window, 0);
   g_signal_connect_object(offer->sheet, "closed", G_CALLBACK(on_sheet_closed), ui->window, 0);
-  g_auto(GStrv) list = servers(ui);
-  /* D6: no server is ever chosen for the user. */
-  if (list[0])
+  g_auto(GStrv) list = offer_servers(ui, offer);
+  /* D6: no server is chosen for a DM; an MLS policy, when present, is read-only. */
+  if (offer->policy_servers && !list[0])
+    gh_attachment_sheet_show_preview(offer->sheet,
+      _("This group's media policy names no usable Blossom server. Ask an admin to update it "
+        "in Group Info."));
+  else if (list[0])
     gh_attachment_sheet_show_preview(offer->sheet, NULL);
   else
     gh_attachment_sheet_show_servers(offer->sheet, NULL);

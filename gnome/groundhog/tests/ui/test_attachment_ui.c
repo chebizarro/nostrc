@@ -1500,6 +1500,7 @@ typedef struct {
   gchar *name;
   gchar *mime;
   GStrv servers;
+  GStrv policy_servers; /* NULL: this group has no 0x800b policy */
   GhAttachments *upload_attachments; /* only the first-use group fixture */
   GError *fail_with;     /* the next send's error, or NULL */
   gchar *fail_server;
@@ -1525,6 +1526,14 @@ stub_watch(GhConversation *conversation, gpointer data)
   StubGroups *stub = data;
   return g_str_has_suffix(gh_conversation_get_room_id(conversation), STUB_GROUP)
            ? G_OBJECT(stub->group) : NULL;
+}
+
+static GStrv
+stub_dup_policy_servers(GhConversation *conversation, gpointer data)
+{
+  (void)conversation;
+  StubGroups *stub = data;
+  return stub->policy_servers ? g_strdupv(stub->policy_servers) : NULL;
 }
 
 static void
@@ -1612,6 +1621,7 @@ stub_cancel(GhAttachmentTransfer *transfer, gpointer data)
 
 static const GhAttachmentUiGroups stub_groups = {
   .can_send = stub_can_send,
+  .dup_policy_servers = stub_dup_policy_servers,
   .send_async = stub_send_async,
   .send_finish = stub_send_finish,
   .describe = stub_describe,
@@ -1844,6 +1854,57 @@ test_group_first_use_suggested_send(void)
   g_strfreev(stub.servers);
 }
 
+/* The account chose B, but the group's verified 0x800b policy names A.
+ * The sheet shows A read-only and the same-session PUT must go only to A. */
+static void
+test_group_policy_overrides_selected_server(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  BlossomFixture *selected = blossom_fixture_new();
+  const gchar *policy_url = blossom_fixture_url(f.blossom);
+  const gchar *selected_url = blossom_fixture_url(selected);
+  const gchar *account_servers[] = { selected_url, NULL };
+  const gchar *policy_servers[] = { policy_url, NULL };
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", account_servers));
+  StubGroups stub = { .upload_attachments = f.attachments,
+                      .policy_servers = g_strdupv((gchar **)policy_servers) };
+  gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+  g_autoptr(GhMessage) message = group_file_message(&f);
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_add_message(f.s.model, message, &error);
+  g_assert_no_error(error);
+  GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                       gh_message_get_room_id(message));
+  g_assert_nonnull(group);
+  send_stack_select(&f.s, group);
+  g_autoptr(GBytes) png = make_png(200);
+  gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
+  GhAttachmentSheet *sheet = wait_page(&f, "preview");
+  const gchar *note = gh_attachment_sheet_get_server_note(sheet);
+  g_assert_nonnull(strstr(note, policy_url));
+  g_assert_null(strstr(note, selected_url));
+  g_assert_nonnull(strstr(note, "Group Info"));
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  g_assert_cmpuint(blossom_fixture_count(selected, NULL), ==, 0);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(stub.sends, ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(selected, "PUT"), ==, 0);
+  g_assert_cmpstr(stub.servers[0], ==, policy_url);
+  g_assert_null(stub.servers[1]);
+  gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+  fixture_clear(&f);
+  blossom_fixture_free(selected);
+  g_clear_pointer(&stub.file, g_bytes_unref);
+  g_free(stub.name);
+  g_free(stub.mime);
+  g_strfreev(stub.servers);
+  g_strfreev(stub.policy_servers);
+}
+
 #if GROUNDHOG_TEST_MLS_FILES
 /* The application's own delegate (gh-mls-attachment-ui.c) on a real window,
  * under fatal-criticals: it installs and follows without a CRITICAL (W25
@@ -1929,6 +1990,7 @@ main(int argc, char **argv)
   ADD("preferences", test_preferences);
   ADD("group-delegate", test_group_delegate);
   ADD("group-first-use-suggested-send", test_group_first_use_suggested_send);
+  ADD("group-policy-overrides-selected-server", test_group_policy_overrides_selected_server);
 #if GROUNDHOG_TEST_MLS_FILES
   ADD("mls-delegate-attach", test_mls_delegate_attach);
 #endif

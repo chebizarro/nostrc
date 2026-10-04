@@ -22,6 +22,24 @@ can_send(GhConversation *conversation, gpointer data)
   return group && !reason;
 }
 
+static GStrv
+dup_policy_servers(GhConversation *conversation, gpointer data)
+{
+  GhMlsAttachments *files = data;
+  GhMlsGroup *group = group_of(files, conversation);
+  MarmotGroupComponents components;
+  g_autoptr(GError) error = NULL;
+  if (!group)
+    return g_new0(gchar *, 1);
+  if (!gh_mls_service_get_components(gh_mls_attachments_get_service(files), group,
+                                     &components, &error))
+    return g_error_matches(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_UNSUPPORTED)
+      ? NULL : g_new0(gchar *, 1); /* A legacy group has no 0x800b policy. */
+  GStrv servers = components.has_media_policy ? gh_mls_media_dup_servers(&components) : NULL;
+  marmot_group_components_clear(&components);
+  return servers;
+}
+
 static void
 send_async(GhConversation *conversation, GBytes *file, const gchar *name, const gchar *mime,
            const gchar *const *servers, GCancellable *cancellable,
@@ -88,6 +106,7 @@ watch(GhConversation *conversation, gpointer data)
 
 static const GhAttachmentUiGroups groups = {
   .can_send = can_send,
+  .dup_policy_servers = dup_policy_servers,
   .send_async = send_async,
   .send_finish = send_finish,
   .describe = describe,

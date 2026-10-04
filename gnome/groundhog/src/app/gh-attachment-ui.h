@@ -31,9 +31,11 @@ typedef struct {
  *    hidden details, what the server learns in the current network mode, and
  *    that the encrypted file outlives a disappearing message. Nothing leaves
  *    before Send.
- *  - The first use without a server asks for one (the sheet's "servers"
- *    page); Groundhog never picks a server by itself, and the address the
- *    user types follows Preferences' rules (gh_preferences_server_list_add()).
+ *  - A DM or a group without a 0x800b media policy asks for a server on first
+ *    use (the sheet's "servers" page); Groundhog never picks one by itself,
+ *    and the address the user types follows Preferences' rules
+ *    (gh_preferences_server_list_add()). A policy group's verified endpoints
+ *    are shown read-only instead of offering an individual choice.
  *  - Send uploads through GhAttachments (a throwaway upload key); a server
  *    that wants a known account gets the account's signature only after the
  *    user's consent for that server (kept per account, nostrc-dnsc), and
@@ -58,15 +60,19 @@ typedef struct {
 void gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config);
 
 /* An encrypted group's files (W25, nostrc-q3a6), installed by
- * gh-mls-attachment-ui.c: the same attach button, sheet (server choice,
+ * gh-mls-attachment-ui.c: the same attach button, sheet (server choice only
+ * when the group has no media policy,
  * preview, metadata notice, consent), size limit, files on this device only,
  * cards with Download on request, and Save As as a NIP-17 file; what differs
  * (sealing for the group's epoch, the kind-9 imeta, opening with the epoch)
- * is the delegate's. Every function is required but download_note and
- * watch. */
+ * is the delegate's. Every function is required but dup_policy_servers,
+ * download_note and watch. */
 typedef struct {
   /* Whether files can be sent in conversation (an encrypted group) now. */
   gboolean (*can_send)(GhConversation *conversation, gpointer data);
+  /* Verified 0x800b Blossom endpoints (transfer full). NULL: no media policy;
+   * an empty vector: the policy names no usable Blossom endpoint. */
+  GStrv (*dup_policy_servers)(GhConversation *conversation, gpointer data);
   /* Seal, upload and send file (metadata already removed) named name, using
    * this sheet's server list rather than a later client/settings snapshot. */
   void (*send_async)(GhConversation *conversation, GBytes *file, const gchar *name,

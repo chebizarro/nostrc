@@ -37,7 +37,9 @@ G_BEGIN_DECLS
  *    only (the caller: gh_mls_media_read_file_async() or the sheet's
  *    bytes), JPEG/PNG metadata removed, encrypted for the group's current
  *    epoch, uploaded with GhAttachments' client (its servers and consents),
- *    then sent as one kind-9 inner event with its ordered v2 imeta. If a
+ *    then sent as one kind-9 inner event with its ordered v2 imeta. A group's
+ *    verified 0x800b Blossom endpoints, when present, override the account's
+ *    server choice; no policy keeps the account or sheet choice. If a
  *    Commit moved the group during the upload, it is sealed and uploaded
  *    again (at most GH_MLS_ATTACHMENTS_SEND_TRIES times). The name sent is
  *    neutral ("photo.jpg", "file.pdf"): a camera's IMG_20260930_142233.jpg
@@ -105,8 +107,9 @@ void gh_mls_attachments_send_async(GhMlsAttachments *self, GhMlsGroup *group, GB
                                    const gchar *name, const gchar *mime_hint,
                                    const gchar *caption, GCancellable *cancellable,
                                    GAsyncReadyCallback callback, gpointer user_data);
-/* The sheet's explicit server choice is kept for the whole send, including
- * an epoch-change retry. NULL uses the client's configured list. */
+/* The sheet's explicit server choice is kept for a group without 0x800b
+ * policy, including an epoch-change retry. A policy's verified endpoints
+ * override it. NULL uses the client's configured list when no policy exists. */
 void gh_mls_attachments_send_on_servers_async(GhMlsAttachments *self, GhMlsGroup *group,
                                               GBytes *file, const gchar *name,
                                               const gchar *mime_hint, const gchar *caption,
