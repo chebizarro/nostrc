@@ -73,3 +73,22 @@ Re-arm the short settle timer only when the **write set** changes, not for 10050
 - `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-kp-relay-migration`: **60 passed**, no sanitizer reports. Existing gate volumes were reused; none was created for this review.
 - `git cherry-pick --no-commit a0fb5f2a 53cc8ac9 b07b34ab` onto `origin/master` `8612778f` in a disposable scratch worktree: **clean**, no conflicts; scratch worktree removed.
 - The new candidate-store key and reconciliation changes are a PATCH-class correction to Groundhog, folded into unreleased `0.12.0`. `VERSION_MANIFEST.md` records that decision and the authoritative source remains `0.12.0`; no further bump is required. This addendum is documentation-only and needs no bump. No push was made.
+
+## Final addendum — round-3 re-review of `74895d81` (2026-10-04)
+
+**Final verdict: APPROVE.** This supersedes the CHANGES-REQUIRED verdicts above. I rebased `review/w27-kp-relay-migration` onto `74895d81` and reviewed the new `nostrc-rk2u` change. Prior findings F1–F3 and R1 are resolved; I found no new blocker or untracked Nostr-protocol smell in this diff. No implementation change from this review is committed, and nothing was pushed.
+
+### R1 resolution and independent checks
+
+- `on_relays_changed()` now compares the sorted, unique effective signed kind-10002 write set (and signed-list presence) against a snapshot. A kind-10050 change or no-op 10002 republish cannot restart its 100 ms settle timer. The timer's monotonic first-change timestamp limits rearming to one second even under genuine write-set churn; it is a bounded lifecycle coalescer, not a substitute for relay OK handling.
+- I replayed my reviewer-only probe: after signed A→B, **40 successively newer signed 10050 events** were injected 20 ms apart. `GhAccountRelays` admitted the final event, and B already stored an adopted KeyPackage after 839 ms (versus zero with the prior fix absent); reconciliation fired at 100 ms. The temporary probe was removed.
+- A second reviewer-only probe sent **60 alternating, effective signed 10002 write-set changes** over 1,264 ms. With temporary timer instrumentation, the first reconciliation fired at **1,000 ms** from the first pending change, not 100 ms after the stream ended. The final signed set was admitted. This confirms the hard cap on deferral; an in-flight migration may still be preempted by later genuine changes, as intended. All probe code and instrumentation were removed.
+- With only the round-3 service file reverted to `b07b34ab` while retaining the new tests, both `write-relay-migration-inbox-stream` and `write-relay-migration-noop-write-stream` failed at `test_mls_kp_lifecycle.c:1786`, **`first_published_us > 0`** (`0 > 0`), the intended new-relay-publication assertion. The reviewed service was restored and rebuilt; the working tree's implementation files match `HEAD`.
+
+### Gates, integration, and versioning
+
+- Fresh macOS Ninja configure/build with `BUILD_GROUNDHOG=ON` and `BUILD_MDK011_INTEROP=ON`, using `/tmp/nostrc-macos27-env.sh`: **pass**. `scripts/check-unsequenced-args.py`: **pass**.
+- `groundhog-mls-kp-lifecycle`, `groundhog-mls-kp-lifecycle-adopted`, and `groundhog-mls-service`: **3 passed**. MDK 0.11 matrix: **18 passed**, with one expected private-tag `mdk09-probe` skip. The new round-3 regressions are included in the adopted lifecycle suite.
+- `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-kp-relay-migration`: **60 passed**, no sanitizer reports. The existing gate volume was reused; no new review volume requires cleanup.
+- An actual `git cherry-pick --no-commit a0fb5f2a 53cc8ac9 b07b34ab 74895d81` onto `origin/master` `8612778f` in my disposable scratch worktree was **conflict-free**; I removed that scratch worktree.
+- `VERSION_MANIFEST.md` records the round-3 Groundhog PATCH-class availability correction folded into unreleased `0.12.0`; the declared Groundhog version remains `0.12.0`. No further component bump is due. This documentation-only addendum needs no bump.
