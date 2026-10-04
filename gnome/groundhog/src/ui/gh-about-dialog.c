@@ -24,14 +24,17 @@ gh_about_dialog_register_icons(void)
 AdwDialog *
 gh_about_dialog_new(void)
 {
-  const char *developers[] = { "The nostrc contributors", NULL };
+  const char *developers[] = { "Biz", NULL };
+  const char *owner_npub = "npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv";
   AdwDialog *dialog = adw_about_dialog_new();
   AdwAboutDialog *about = ADW_ABOUT_DIALOG(dialog);
   adw_about_dialog_set_application_name(about, "Groundhog");
   adw_about_dialog_set_application_icon(about, GROUNDHOG_APP_ID);
   adw_about_dialog_set_version(about, GROUNDHOG_VERSION);
-  adw_about_dialog_set_developer_name(about, _("The nostrc project"));
+  adw_about_dialog_set_developer_name(about, "Biz");
   adw_about_dialog_set_developers(about, developers);
+  g_autofree gchar *nostr_uri = g_strconcat("nostr:", owner_npub, NULL);
+  adw_about_dialog_add_link(about, owner_npub, nostr_uri);
   adw_about_dialog_set_license_type(about, GTK_LICENSE_MIT_X11);
   adw_about_dialog_set_website(about, "https://github.com/chebizarro/nostrc");
   adw_about_dialog_set_issue_url(about, "https://github.com/chebizarro/nostrc/issues");

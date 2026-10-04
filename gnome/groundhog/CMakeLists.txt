@@ -1244,6 +1244,7 @@ if (BUILD_TESTING)
   # resource layout and decodes; --gui: the dialog shows the icon, version,
   # licence and links, and self-skips (77) without a display.
   add_executable(test-groundhog-about tests/ui/test_about.c ${GROUNDHOG_RESOURCE_C})
+  target_include_directories(test-groundhog-about PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
   target_link_libraries(test-groundhog-about PRIVATE groundhog-about)
   target_compile_definitions(test-groundhog-about PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
   target_compile_options(test-groundhog-about PRIVATE -Wall -Wextra -Werror)

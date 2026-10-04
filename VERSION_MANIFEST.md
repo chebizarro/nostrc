@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| W28 About dialog owner credit and Nostr identity (Biz, copyable npub link) | groundhog | 0.12.0 | No further bump: shipped UI metadata change is folded into the unreleased 0.12.0 MINOR; no new API or incompatible format. |
 | W28 owner decision (nostrc-7gx7): encrypted groups available by default, preview guard retired, picker lifetime/input/cap hardened, Marmot interoperability and privacy disclosures in UI and metainfo | groundhog | 0.12.0 | No further bump: the already-declared, unreleased 0.12.0 is the required MINOR bump since 0.11.x. It first added the encrypted-group media library and now includes the public encrypted-group capability. No 0.13.0 before the first 0.12.0 release. |
 | libmarmot 0.3.6 -> 0.4.0 (MINOR: breaking LeafNodeTBS wire change, nostrc-2io4; plus nostrc-lz4f, -va60, -5q55, -8u1k) | libmarmot | 0.4.0 | MINOR bump (0.x breaking wire change; migration notes in `libmarmot/README.md`). |
 | same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change. It links libmarmot statically, so its next (first) 1.1.0 release embeds 0.4.0 and must carry libmarmot's wire-compatibility note. |
