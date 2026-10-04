@@ -544,6 +544,10 @@ int main(int argc, char **argv) {
   memset(&server_cfg, 0, sizeof server_cfg);
   server_cfg.cfg = &cfg;
   server_cfg.storage = served;
+#ifdef NOSTRC_HAVE_NOSTRDB_STORAGE
+  if (served == st && st && strcmp(driver, "nostrdb") == 0)
+    server_cfg.async_storage = nostrdb_storage_async_ops();
+#endif
   server_cfg.stop_flag = &s_stop_flag;
   server_cfg.listener.kind = NOSTR_RELAY_LISTENER_UNIX_FD;
   server_cfg.listener.u.unix_fd.fd = listen_fd;

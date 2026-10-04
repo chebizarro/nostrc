@@ -18,6 +18,7 @@
 #include <stddef.h>
 
 #include "nostr-storage.h"
+#include "relayd_async_storage.h"
 #include "relayd_config.h"
 
 #ifdef __cplusplus
@@ -76,6 +77,13 @@ typedef struct {
    * open its own per-user path. May be NULL, in which case the server logs
    * a warning and continues (queries return empty; useful for smoke tests). */
   NostrStorage *storage;
+
+  /* Optional nonblocking write/commit-notification interface. NULL keeps
+   * the ordinary storage vtable path for backends without this capability. */
+  const RelaydAsyncStorageOps *async_storage;
+  /* Zero selects the production 10-second commit deadline. Test fixtures
+   * may shorten it to exercise the timeout without a slow test. */
+  unsigned int ack_timeout_ms;
 
   /* How to obtain the listening socket. */
   NostrRelayListener listener;

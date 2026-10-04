@@ -7,6 +7,7 @@
 #include <time.h>
 #include "nostr-storage.h"
 #include "nostrdb_storage.h"
+#include "relayd_async_storage.h"
 #include "nostr-filter.h"
 #include "json.h"
 #include "nostr-event.h"
@@ -20,6 +21,7 @@
 #if !HAVE_NOSTRDB
 /* Stub implementation when nostrdb is not available; registers backend but returns NULL */
 NostrStorage* nostrdb_storage_new(void) { return NULL; }
+const struct RelaydAsyncStorageOps *nostrdb_storage_async_ops(void) { return NULL; }
 __attribute__((constructor))
 static void _nostrdb_auto_register(void) { nostr_storage_register("nostrdb", nostrdb_storage_new); }
 #else
@@ -30,6 +32,9 @@ typedef struct {
   struct ndb *db;
   pthread_mutex_t commit_mutex;
   pthread_cond_t commit_cond;
+  uint64_t async_subid;
+  void (*async_notify)(void *);
+  void *async_notify_ctx;
 } NDBImpl;
 
 typedef struct {
@@ -45,9 +50,10 @@ typedef struct {
  * querying the DB (or unsubscribing) from the callback would deadlock. */
 static void ndb_committed(void *ctx, uint64_t subid) {
   NDBImpl *impl = (NDBImpl*)ctx;
-  (void)subid;
   pthread_mutex_lock(&impl->commit_mutex);
   pthread_cond_broadcast(&impl->commit_cond);
+  if (subid == impl->async_subid && impl->async_notify)
+    impl->async_notify(impl->async_notify_ctx);
   pthread_mutex_unlock(&impl->commit_mutex);
 }
 
@@ -185,6 +191,76 @@ static int ndb_put_event(NostrStorage *st, const NostrEvent *ev) {
   pthread_mutex_unlock(&impl->commit_mutex);
   ndb_unsubscribe(impl->db, subid);
   return rc > 0 ? 0 : rc;
+}
+
+/* The relay's LWS service thread uses this path instead of put_event().
+ * One catch-all subscription wakes it after each successful writer commit;
+ * drain() keeps nostrdb's subscription inbox from filling on long runs. */
+static int ndb_async_start(NostrStorage *st, void (*notify)(void *), void *ctx) {
+  if (!st || !st->impl || !notify) return -EINVAL;
+  NDBImpl *impl = (NDBImpl*)st->impl;
+  uint64_t subid = ndb_subscribe(impl->db, NULL, 0);
+  if (!subid) return -EIO;
+  pthread_mutex_lock(&impl->commit_mutex);
+  if (impl->async_subid) {
+    pthread_mutex_unlock(&impl->commit_mutex);
+    ndb_unsubscribe(impl->db, subid);
+    return -EBUSY;
+  }
+  impl->async_notify_ctx = ctx;
+  impl->async_notify = notify;
+  impl->async_subid = subid;
+  pthread_mutex_unlock(&impl->commit_mutex);
+  return 0;
+}
+
+static void ndb_async_stop(NostrStorage *st) {
+  if (!st || !st->impl) return;
+  NDBImpl *impl = (NDBImpl*)st->impl;
+  pthread_mutex_lock(&impl->commit_mutex);
+  uint64_t subid = impl->async_subid;
+  impl->async_subid = 0;
+  impl->async_notify = NULL;
+  impl->async_notify_ctx = NULL;
+  pthread_mutex_unlock(&impl->commit_mutex);
+  if (subid) ndb_unsubscribe(impl->db, subid);
+}
+
+static int ndb_async_enqueue(NostrStorage *st, const NostrEvent *ev) {
+  if (!st || !st->impl || !ev) return -EINVAL;
+  NDBImpl *impl = (NDBImpl*)st->impl;
+  char *json = nostr_event_serialize(ev);
+  if (!json) return -ENOMEM;
+  int queued = ndb_process_event(impl->db, json, (int)strlen(json));
+  free(json);
+  return queued ? 0 : -EIO;
+}
+
+static int ndb_async_visible(NostrStorage *st, const unsigned char id[32]) {
+  if (!st || !st->impl || !id) return -EINVAL;
+  return ndb_note_is_stored((NDBImpl*)st->impl, id);
+}
+
+static void ndb_async_drain(NostrStorage *st) {
+  if (!st || !st->impl) return;
+  NDBImpl *impl = (NDBImpl*)st->impl;
+  pthread_mutex_lock(&impl->commit_mutex);
+  uint64_t subid = impl->async_subid;
+  pthread_mutex_unlock(&impl->commit_mutex);
+  uint64_t notes[256];
+  while (subid && ndb_poll_for_notes(impl->db, subid, notes, 256) > 0) {}
+}
+
+static const RelaydAsyncStorageOps g_async_ops = {
+  .start = ndb_async_start,
+  .stop = ndb_async_stop,
+  .enqueue = ndb_async_enqueue,
+  .visible = ndb_async_visible,
+  .drain = ndb_async_drain,
+};
+
+const struct RelaydAsyncStorageOps *nostrdb_storage_async_ops(void) {
+  return &g_async_ops;
 }
 
 static int ndb_ingest_ldjson(NostrStorage *st, const char *ldjson, size_t len) {

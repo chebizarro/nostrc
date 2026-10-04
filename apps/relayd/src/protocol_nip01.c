@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
 #include <time.h>
 #include <libwebsockets.h>
 #include "nostr-json.h"
@@ -158,10 +159,115 @@ void relayd_conn_subs_free_all(ConnState *cs, const RelaydCtx *ctx) {
   while (cs->nsubs > 0) conn_sub_remove(cs, ctx, cs->nsubs - 1);
 }
 
+static void ack_finish(RelaydPendingAck *ack, const RelaydCtx *ctx, int accepted) {
+  if (ack->ready) return;
+  ack->ready = 1;
+  ack->accepted = accepted;
+  (void)relay_ingress_finish(ctx->policy, &ack->ingress, accepted);
+  if (accepted && ack->old_replaceable_id && ctx->storage->vt->delete_event)
+    (void)ctx->storage->vt->delete_event(ctx->storage,
+                                         ack->old_replaceable_id);
+}
+
+static void ack_schedule_timer(struct lws *wsi, const ConnState *cs) {
+  uint64_t first = UINT64_MAX;
+  for (const RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next)
+    if (!ack->ready && ack->deadline_ms < first) first = ack->deadline_ms;
+  if (first == UINT64_MAX) {
+    lws_set_timer_usecs(wsi, LWS_SET_TIMER_USEC_CANCEL);
+    return;
+  }
+  uint64_t now = rate_limit_now_ms();
+  lws_set_timer_usecs(wsi, first > now ? (first - now) * 1000u : 1u);
+}
+
+static void ack_reconcile_connection(struct lws *wsi, ConnState *cs,
+                                     const RelaydCtx *ctx) {
+  if (!ctx->async_storage || !cs->ack_head) return;
+  uint64_t now = rate_limit_now_ms();
+  for (RelaydPendingAck *ack = cs->ack_head; ack; ack = ack->next) {
+    if (ack->ready) continue;
+    int visible = ctx->async_storage->visible(ctx->storage,
+                                              ack->ingress.binary_id);
+    if (visible > 0) ack_finish(ack, ctx, 1);
+    else if (visible < 0 || now >= ack->deadline_ms)
+      ack_finish(ack, ctx, 0);
+  }
+  ack_schedule_timer(wsi, cs);
+  if (cs->ack_head->ready) lws_callback_on_writable(wsi);
+}
+
+void relayd_nip01_reconcile_all(const RelaydCtx *ctx) {
+  if (!ctx || !ctx->async_storage) return;
+  if (ctx->async_storage->drain) ctx->async_storage->drain(ctx->storage);
+  for (ConnState *cs = ctx->clients; cs; cs = cs->next_client)
+    ack_reconcile_connection(cs->wsi, cs, ctx);
+}
+
+void relayd_nip01_on_timer(struct lws *wsi, ConnState *cs,
+                           const RelaydCtx *ctx) {
+  if (cs && ctx) ack_reconcile_connection(wsi, cs, ctx);
+}
+
+void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx) {
+  if (!cs) return;
+  RelaydPendingAck *ack = cs->ack_head;
+  while (ack) {
+    RelaydPendingAck *next = ack->next;
+    if (!ack->ready && ctx && ctx->async_storage) {
+      int visible = ctx->async_storage->visible(ctx->storage,
+                                                ack->ingress.binary_id);
+      ack_finish(ack, ctx, visible > 0);
+    }
+    free(ack->old_replaceable_id);
+    free(ack);
+    ack = next;
+  }
+  cs->ack_head = cs->ack_tail = NULL;
+  cs->nacks = 0;
+}
+
+static int ack_enqueue(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx,
+                       RelayIngressResult *ingress, char **old_id) {
+  if (cs->nacks >= RELAYD_MAX_PENDING_ACKS) return -EAGAIN;
+  RelaydPendingAck *ack = calloc(1, sizeof *ack);
+  if (!ack) return -ENOMEM;
+  int rc = ctx->async_storage->enqueue(ctx->storage, ingress->event);
+  if (rc != 0) { free(ack); return rc; }
+  ack->ingress = *ingress;
+  ack->ingress.event = NULL; /* the caller frees its event after enqueue */
+  ingress->replay_reserved = 0; /* reservation now belongs to the ack */
+  ack->old_replaceable_id = *old_id;
+  *old_id = NULL;
+  unsigned int timeout = ctx->ack_timeout_ms ? ctx->ack_timeout_ms : 10000u;
+  ack->deadline_ms = rate_limit_now_ms() + timeout;
+  if (cs->ack_tail) cs->ack_tail->next = ack;
+  else cs->ack_head = ack;
+  cs->ack_tail = ack;
+  cs->nacks++;
+  ack_reconcile_connection(wsi, cs, ctx);
+  return 0;
+}
+
 void relayd_nip01_on_writable(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx) {
   if (!wsi || !cs) return;
   NostrStorage *st = ctx ? ctx->storage : NULL;
   if (relayd_nip42_maybe_send_challenge_on_writable(wsi, cs, ctx)) return;
+  if (cs->ack_head && cs->ack_head->ready) {
+    RelaydPendingAck *ack = cs->ack_head;
+    char *ok = nostr_ok_build_json(ack->ingress.canonical_id, ack->accepted,
+                                   ack->accepted ? "" : "error: storage commit unconfirmed");
+    if (ok) { ws_send_text(wsi, ok); free(ok); }
+    cs->ack_head = ack->next;
+    if (!cs->ack_head) cs->ack_tail = NULL;
+    cs->nacks--;
+    free(ack->old_replaceable_id);
+    free(ack);
+    ack_schedule_timer(wsi, cs);
+    if (cs->ack_head && cs->ack_head->ready) lws_callback_on_writable(wsi);
+    else if (cs->nsubs) lws_callback_on_writable(wsi);
+    return;
+  }
   if (cs->nsubs == 0 || !relayd_storage_can_query(st)) return;
   RelaydPendingSub *ps = &cs->subs[0];
   int sent_any = 0;
@@ -428,6 +534,7 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
         rate_limit_now_ms(), &ingress);
 
     int rc_store = -1;
+    int deferred = 0;
     const char *reason = ingress.reason;
     if (decision == RELAY_INGRESS_DUPLICATE) {
       rc_store = 0;
@@ -490,21 +597,31 @@ void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs, const RelaydCtx *ct
           reason = "invalid: newer replaceable event exists";
           (void)relay_ingress_finish(ctx->policy, &ingress, 0);
         } else {
-          rc_store = st->vt->put_event(st, ev);
-          reason = rc_store == 0 ? "" : "error: store failed";
-          (void)relay_ingress_finish(ctx->policy, &ingress, rc_store == 0);
-          if (rc_store == 0 && old_replaceable_id &&
-              st->vt->delete_event)
-            (void)st->vt->delete_event(st, old_replaceable_id);
+          if (ctx->async_storage) {
+            rc_store = ack_enqueue(wsi, cs, ctx, &ingress,
+                                   &old_replaceable_id);
+            deferred = rc_store == 0;
+            reason = rc_store == -EAGAIN ? "rate-limited: too many pending events"
+                                         : "error: store enqueue failed";
+            if (!deferred)
+              (void)relay_ingress_finish(ctx->policy, &ingress, 0);
+          } else {
+            rc_store = st->vt->put_event(st, ev);
+            reason = rc_store == 0 ? "" : "error: store failed";
+            (void)relay_ingress_finish(ctx->policy, &ingress, rc_store == 0);
+            if (rc_store == 0 && old_replaceable_id &&
+                st->vt->delete_event)
+              (void)st->vt->delete_event(st, old_replaceable_id);
+          }
         }
         free(old_replaceable_id);
       }
     }
 
-    {
+    if (!deferred) {
       const char *id_hex = ingress.canonical_id[0] ? ingress.canonical_id : "0000";
       char *ok = nostr_ok_build_json(id_hex, rc_store == 0, reason ? reason : "");
-    if (ok) { ws_send_text(wsi, ok); free(ok); }
+      if (ok) { ws_send_text(wsi, ok); free(ok); }
     }
     relay_ingress_result_clear(&ingress);
     free(ebuf);

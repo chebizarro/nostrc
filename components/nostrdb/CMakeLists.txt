@@ -60,3 +60,4 @@ if (Threads_FOUND)
 endif()
 
 target_include_directories(nostrdb_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(nostrdb_storage PRIVATE ${CMAKE_SOURCE_DIR}/apps/relayd/include)

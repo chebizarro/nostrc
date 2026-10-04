@@ -16,6 +16,9 @@ extern "C" {
 
 void relayd_nip01_on_writable(struct lws *wsi, ConnState *cs,
                               const RelaydCtx *ctx);
+void relayd_nip01_reconcile_all(const RelaydCtx *ctx);
+void relayd_nip01_on_timer(struct lws *wsi, ConnState *cs, const RelaydCtx *ctx);
+void relayd_conn_acks_free_all(ConnState *cs, const RelaydCtx *ctx);
 void relayd_nip01_on_receive(struct lws *wsi, ConnState *cs,
                              const RelaydCtx *ctx, const void *in, size_t len);
 

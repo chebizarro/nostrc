@@ -2,6 +2,7 @@
 #define RELAYD_CONN_H
 
 #include "rate_limit.h"
+#include "relay_ingress.h"
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -13,6 +14,7 @@ extern "C" {
 /* Hard cap on REQs one connection may have streaming at once; the
  * effective limit is min(cfg.max_subs, this). */
 #define RELAYD_MAX_PENDING_SUBS 16
+#define RELAYD_MAX_PENDING_ACKS 256
 
 /* A REQ whose stored results are still being sent. The relay has no live
  * fan-out, so a subscription ends at its EOSE. */
@@ -21,7 +23,23 @@ typedef struct {
   char subid[RELAYD_SUBID_MAX + 1];
 } RelaydPendingSub;
 
-typedef struct {
+typedef struct RelaydPendingAck {
+  struct RelaydPendingAck *next;
+  RelayIngressResult ingress; /* replay reservation; event is freed after enqueue */
+  char *old_replaceable_id;
+  uint64_t deadline_ms;
+  int ready;
+  int accepted;
+} RelaydPendingAck;
+
+struct lws;
+typedef struct ConnState {
+  struct ConnState *next_client;
+  struct ConnState *prev_client;
+  struct lws *wsi;
+  RelaydPendingAck *ack_head;
+  RelaydPendingAck *ack_tail;
+  size_t nacks;
   /* FIFO: subs[0] is streamed by on_writable until its EOSE, then the rest
    * follow in arrival order. */
   RelaydPendingSub subs[RELAYD_MAX_PENDING_SUBS];

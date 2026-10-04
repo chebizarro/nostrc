@@ -22,6 +22,7 @@
 #include "nostr-relay-server.h"
 #include "nostr-storage.h"
 #include "relayd_config.h"
+#include "relay_policy.h"
 
 /* ---- scripted fake storage ------------------------------------------- */
 
@@ -108,6 +109,111 @@ static NostrStorageVTable g_fake_vt = {
   .query_free = fake_query_free,
 };
 
+/* Commit-notification fixture. Its synchronous vtable put blocks until the
+ * test releases it, making the old service-loop implementation fail client
+ * B's latency bound. The asynchronous enqueue never waits. */
+typedef struct {
+  pthread_mutex_t mutex;
+  pthread_cond_t cond;
+  unsigned char ids[128][32];
+  int queued;
+  int committed;
+  int release_sync;
+  void (*notify)(void *);
+  void *notify_ctx;
+} AsyncFake;
+static AsyncFake g_async = {
+  .mutex = PTHREAD_MUTEX_INITIALIZER,
+  .cond = PTHREAD_COND_INITIALIZER,
+};
+
+static int async_fake_put(NostrStorage *st, const NostrEvent *ev) {
+  (void)st; (void)ev;
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.queued++;
+  pthread_cond_broadcast(&g_async.cond);
+  while (!g_async.release_sync)
+    pthread_cond_wait(&g_async.cond, &g_async.mutex);
+  pthread_mutex_unlock(&g_async.mutex);
+  return 0;
+}
+
+static int async_fake_start(NostrStorage *st, void (*notify)(void *), void *ctx) {
+  (void)st;
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.notify = notify;
+  g_async.notify_ctx = ctx;
+  pthread_mutex_unlock(&g_async.mutex);
+  return 0;
+}
+
+static void async_fake_stop(NostrStorage *st) {
+  (void)st;
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.notify = NULL;
+  g_async.notify_ctx = NULL;
+  pthread_mutex_unlock(&g_async.mutex);
+}
+
+static int async_fake_enqueue(NostrStorage *st, const NostrEvent *ev) {
+  (void)st;
+  char *hex = nostr_event_get_id((NostrEvent*)ev);
+  if (!hex) return -1;
+  pthread_mutex_lock(&g_async.mutex);
+  int ok = g_async.queued < 128 &&
+           relay_policy_hex_to_id(hex, g_async.ids[g_async.queued]);
+  if (ok) g_async.queued++;
+  pthread_cond_broadcast(&g_async.cond);
+  pthread_mutex_unlock(&g_async.mutex);
+  free(hex);
+  return ok ? 0 : -1;
+}
+
+static int async_fake_visible(NostrStorage *st, const unsigned char id[32]) {
+  (void)st;
+  pthread_mutex_lock(&g_async.mutex);
+  int found = 0;
+  for (int i = 0; i < g_async.committed; i++)
+    if (memcmp(id, g_async.ids[i], 32) == 0) { found = 1; break; }
+  pthread_mutex_unlock(&g_async.mutex);
+  return found;
+}
+
+static const RelaydAsyncStorageOps g_async_ops = {
+  .start = async_fake_start,
+  .stop = async_fake_stop,
+  .enqueue = async_fake_enqueue,
+  .visible = async_fake_visible,
+};
+static NostrStorageVTable g_async_vt = {
+  .put_event = async_fake_put,
+  .query = fake_query,
+  .query_next = fake_query_next,
+  .query_free = fake_query_free,
+};
+
+static int async_wait_queued(int target) {
+  struct timespec deadline;
+  clock_gettime(CLOCK_REALTIME, &deadline);
+  deadline.tv_sec += 3;
+  pthread_mutex_lock(&g_async.mutex);
+  int rc = 0;
+  while (g_async.queued < target && rc == 0)
+    rc = pthread_cond_timedwait(&g_async.cond, &g_async.mutex, &deadline);
+  int ok = g_async.queued >= target;
+  pthread_mutex_unlock(&g_async.mutex);
+  return ok;
+}
+
+static void async_commit_all(void) {
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.committed = g_async.queued;
+  void (*notify)(void *) = g_async.notify;
+  void *ctx = g_async.notify_ctx;
+  pthread_mutex_unlock(&g_async.mutex);
+  if (notify) notify(ctx);
+}
+
 /* ---- in-process server ------------------------------------------------ */
 
 typedef struct {
@@ -126,10 +232,19 @@ static void *server_main(void *arg) {
 }
 
 static int server_start(Server *s, NostrStorage *storage, const char *dir,
-                        int max_subs) {
+                        int max_subs, const RelaydAsyncStorageOps *async_ops,
+                        unsigned int ack_timeout_ms) {
   memset(s, 0, sizeof *s);
   if (relayd_config_load(NULL, &s->cfg) != 0) return -1;
   s->cfg.max_subs = max_subs;
+  s->cfg.rate_ops_per_sec = 10000;
+  s->cfg.rate_burst = 10000;
+  s->cfg.verification_conn_per_sec = 10000;
+  s->cfg.verification_conn_burst = 10000;
+  s->cfg.verification_ip_per_sec = 10000;
+  s->cfg.verification_ip_burst = 10000;
+  s->cfg.verification_global_per_sec = 10000;
+  s->cfg.verification_global_burst = 10000;
   snprintf(s->sock_path, sizeof s->sock_path, "%s/relay.sock", dir);
   unlink(s->sock_path);
   s->listen_fd = unix_socket_cloexec();
@@ -142,6 +257,8 @@ static int server_start(Server *s, NostrStorage *storage, const char *dir,
     return -1;
   s->scfg.cfg = &s->cfg;
   s->scfg.storage = storage;
+  s->scfg.async_storage = async_ops;
+  s->scfg.ack_timeout_ms = ack_timeout_ms;
   s->scfg.stop_flag = &s->stop;
   s->scfg.listener.kind = NOSTR_RELAY_LISTENER_UNIX_FD;
   s->scfg.listener.u.unix_fd.fd = s->listen_fd;
@@ -167,7 +284,7 @@ static int connect_client(Server *s) {
 static void run_storage_less(const char *dir) {
   fprintf(stderr, "== no storage\n");
   Server s;
-  CHECK(server_start(&s, NULL, dir, 8) == 0, "server start");
+  CHECK(server_start(&s, NULL, dir, 8, NULL, 0) == 0, "server start");
   int fd = connect_client(&s);
   if (fd >= 0) {
     expect_reply(fd, "[\"REQ\",\"a\",{\"kinds\":[1],\"limit\":1}]",
@@ -203,7 +320,7 @@ static void run_with_storage(const char *dir) {
   NostrStorage st = { .vt = &g_fake_vt, .impl = NULL };
   Server s;
   memset(&g_fake, 0, sizeof g_fake);
-  CHECK(server_start(&s, &st, dir, 2) == 0, "server start");
+  CHECK(server_start(&s, &st, dir, 2, NULL, 0) == 0, "server start");
   int fd = connect_client(&s);
   if (fd >= 0) {
     g_fake.mode = FAKE_EMPTY_ITER;
@@ -319,6 +436,136 @@ static void run_with_storage(const char *dir) {
         g_fake.frees);
 }
 
+static char *signed_event_frame(const char *sk, const char *pk,
+                                int sequence, char **id_out) {
+  NostrEvent *ev = nostr_event_new();
+  if (!ev) return NULL;
+  char content[64];
+  snprintf(content, sizeof content, "async-ack-%d", sequence);
+  nostr_event_set_pubkey(ev, pk);
+  nostr_event_set_kind(ev, 1);
+  nostr_event_set_created_at(ev, (int64_t)time(NULL));
+  nostr_event_set_content(ev, content);
+  if (nostr_event_sign(ev, sk) != 0) { nostr_event_free(ev); return NULL; }
+  *id_out = nostr_event_get_id(ev);
+  char *json = nostr_event_serialize(ev);
+  nostr_event_free(ev);
+  if (!json || !*id_out) { free(json); return NULL; }
+  char *frame = malloc(strlen(json) + 16);
+  if (frame) sprintf(frame, "[\"EVENT\",%s]", json);
+  free(json);
+  return frame;
+}
+
+static void run_async_commit(const char *dir) {
+  fprintf(stderr, "== async commit/timeout and independent client\n");
+  pthread_mutex_lock(&g_async.mutex);
+  g_async.queued = g_async.committed = g_async.release_sync = 0;
+  pthread_mutex_unlock(&g_async.mutex);
+  memset(&g_fake, 0, sizeof g_fake);
+  g_fake.mode = FAKE_EMPTY_ITER;
+  NostrStorage st = { .vt = &g_async_vt, .impl = NULL };
+  Server s;
+  CHECK(server_start(&s, &st, dir, 8, &g_async_ops, 2000) == 0,
+        "async server start");
+  int a = connect_client(&s);
+  int b = connect_client(&s);
+  char *sk = nostr_key_generate_private();
+  char *pk = sk ? nostr_key_get_public(sk) : NULL;
+  CHECK(a >= 0 && b >= 0 && sk && pk, "async fixture setup");
+  if (a >= 0 && b >= 0 && sk && pk) {
+    char *id = NULL;
+    char *frame = signed_event_frame(sk, pk, 0, &id);
+    CHECK(frame && ws_send(a, frame) == 0, "send stalled EVENT A");
+    CHECK(async_wait_queued(1), "EVENT A was not queued");
+    /* A pending OK must not hold up REQ/EOSE even on the same socket. */
+    CHECK(ws_send(a, "[\"REQ\",\"same\",{\"kinds\":[424242]}]") == 0,
+          "send same-client REQ");
+    char *same_reply = ws_recv(a);
+    CHECK(same_reply && strcmp(same_reply, "[\"EOSE\",\"same\"]") == 0,
+          "same-client REQ blocked behind pending OK: %s",
+          same_reply ? same_reply : "(no reply)");
+    free(same_reply);
+    long long t0 = now_ms();
+    CHECK(ws_send(b, "[\"REQ\",\"b\",{\"kinds\":[424242]}]") == 0,
+          "send independent REQ B");
+    char *reply = ws_recv(b);
+    long long elapsed = now_ms() - t0;
+    CHECK(reply && strcmp(reply, "[\"EOSE\",\"b\"]") == 0,
+          "client B did not receive EOSE while A was stalled: %s",
+          reply ? reply : "(no reply)");
+    CHECK(elapsed < 500, "client B was delayed %lld ms by A's commit", elapsed);
+    fprintf(stderr, "  client B EOSE while A's commit is stalled: %lld ms\n", elapsed);
+    free(reply);
+    /* Also releases the old blocking put_event path in the red check. */
+    pthread_mutex_lock(&g_async.mutex);
+    g_async.release_sync = 1;
+    pthread_cond_broadcast(&g_async.cond);
+    pthread_mutex_unlock(&g_async.mutex);
+    async_commit_all();
+    reply = ws_recv(a);
+    char prefix[128];
+    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", id);
+    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
+          "commit did not yield OK true: %s", reply ? reply : "(no reply)");
+    free(reply);
+    free(frame); free(id);
+
+    frame = signed_event_frame(sk, pk, 1, &id);
+    long long timeout_start = now_ms();
+    CHECK(frame && ws_send(a, frame) == 0, "send timeout EVENT A");
+    CHECK(async_wait_queued(2), "timeout EVENT was not queued");
+    t0 = now_ms();
+    CHECK(ws_send(b, "[\"REQ\",\"timeout-b\",{\"kinds\":[424242]}]") == 0,
+          "send independent REQ during absent commit notification");
+    reply = ws_recv(b);
+    elapsed = now_ms() - t0;
+    CHECK(reply && strcmp(reply, "[\"EOSE\",\"timeout-b\"]") == 0,
+          "client B lost EOSE during commit timeout: %s",
+          reply ? reply : "(no reply)");
+    CHECK(elapsed < 500, "client B was delayed %lld ms by missing notification", elapsed);
+    free(reply);
+    reply = ws_recv(a);
+    long long timeout_elapsed = now_ms() - timeout_start;
+    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",false,\"error:", id);
+    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
+          "deadline did not yield OK false error: %s",
+          reply ? reply : "(no reply)");
+    CHECK(timeout_elapsed >= 1900 && timeout_elapsed < 3000,
+          "2-second commit deadline took %lld ms", timeout_elapsed);
+    fprintf(stderr, "  absent notification: client B EOSE %lld ms, OK false %lld ms\n",
+            elapsed, timeout_elapsed);
+    free(reply); free(frame); free(id);
+
+    enum { BURST = 100 };
+    char *frames[BURST], *ids[BURST];
+    for (int i = 0; i < BURST; i++) {
+      ids[i] = NULL;
+      frames[i] = signed_event_frame(sk, pk, i + 2, &ids[i]);
+      CHECK(frames[i] && ids[i], "sign burst EVENT %d", i);
+    }
+    long long burst_start = now_ms();
+    for (int i = 0; i < BURST; i++)
+      CHECK(frames[i] && ws_send(a, frames[i]) == 0, "send burst EVENT %d", i);
+    CHECK(async_wait_queued(BURST + 2), "burst was not queued");
+    long long queued_ms = now_ms() - burst_start;
+    async_commit_all();
+    for (int i = 0; i < BURST; i++) {
+      reply = ws_recv(a);
+      snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", ids[i]);
+      CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
+            "burst OK %d out of order: %s", i,
+            reply ? reply : "(no reply)");
+      free(reply); free(frames[i]); free(ids[i]);
+    }
+    fprintf(stderr, "  async burst %d: queued in %lld ms, all ordered OKs in %lld ms\n",
+            BURST, queued_ms, now_ms() - burst_start);
+    close(a); close(b);
+  }
+  free(pk); free(sk);
+  server_stop(&s);
+}
+
 int main(void) {
   signal(SIGPIPE, SIG_IGN);
   nostr_json_init();
@@ -326,6 +573,7 @@ int main(void) {
   if (!mkdtemp(dir)) { perror("mkdtemp"); return 1; }
   run_storage_less(dir);
   run_with_storage(dir);
+  run_async_commit(dir);
   rmdir(dir);
   if (g_failures) {
     fprintf(stderr, "test_relay_req_contract: %d failure(s)\n", g_failures);

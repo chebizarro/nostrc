@@ -86,9 +86,13 @@ int main(int argc, char **argv) {
 
   /* Parse the TCP listener out of cfg.listen. relayd_config_load()
    * already validated the format; treat a failure here as an assertion. */
-  NostrRelayServerConfig server_cfg;
+  NostrRelayServerConfig server_cfg = {0};
   server_cfg.cfg = &cfg;
   server_cfg.storage = st;
+#ifdef NOSTRC_HAVE_NOSTRDB_STORAGE
+  if (st && strcmp(driver, "nostrdb") == 0)
+    server_cfg.async_storage = nostrdb_storage_async_ops();
+#endif
   server_cfg.stop_flag = NULL;
   server_cfg.listener.kind = NOSTR_RELAY_LISTENER_TCP;
   server_cfg.listener.u.tcp.port = 0;

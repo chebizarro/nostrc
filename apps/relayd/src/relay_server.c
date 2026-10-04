@@ -55,6 +55,11 @@
  */
 static volatile sig_atomic_t s_signal_stop = 0;
 
+static void async_storage_notify(void *context) {
+  /* The only lws API safe from nostrdb's writer thread. */
+  lws_cancel_service((struct lws_context*)context);
+}
+
 static void handle_stop_signal(int sig) {
   (void)sig;
   s_signal_stop = 1;
@@ -259,6 +264,10 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         memset(user, 0, sizeof(ConnState));
         const RelaydCtx *ctx = (const RelaydCtx*)lws_context_user(lws_get_context(wsi));
         ConnState *cs = (ConnState*)user;
+        cs->wsi = wsi;
+        cs->next_client = ctx->clients;
+        if (ctx->clients) ctx->clients->prev_client = cs;
+        ((RelaydCtx*)ctx)->clients = cs;
         /* If auth is required, start unauthenticated */
         cs->authed = (ctx && strcmp(ctx->cfg.auth, "required") == 0) ? 0 : 1;
         /* Monotonic weighted frame and verification buckets. */
@@ -300,7 +309,17 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         ConnState *cs = (ConnState *)user;
         const RelaydCtx *ctx =
             (const RelaydCtx *)lws_context_user(lws_get_context(wsi));
-        if (cs && ctx) relayd_conn_subs_free_all(cs, ctx);
+        if (cs && ctx) {
+          relayd_conn_subs_free_all(cs, ctx);
+          if (cs->wsi == wsi) {
+            relayd_conn_acks_free_all(cs, ctx);
+            if (cs->prev_client) cs->prev_client->next_client = cs->next_client;
+            else if (ctx->clients == cs) ((RelaydCtx*)ctx)->clients = cs->next_client;
+            if (cs->next_client) cs->next_client->prev_client = cs->prev_client;
+            cs->next_client = cs->prev_client = NULL;
+            cs->wsi = NULL;
+          }
+        }
         if (cs && ctx && cs->neg_state && ctx->storage && ctx->storage->vt &&
             ctx->storage->vt->set_free)
           ctx->storage->vt->set_free(ctx->storage, cs->neg_state);
@@ -311,6 +330,14 @@ static int nostr_cb(struct lws *wsi, enum lws_callback_reasons reason,
         }
       }
       metrics_on_disconnect();
+      break;
+    case LWS_CALLBACK_EVENT_WAIT_CANCELLED:
+      relayd_nip01_reconcile_all(
+          (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
+      break;
+    case LWS_CALLBACK_TIMER:
+      relayd_nip01_on_timer(wsi, (ConnState*)user,
+          (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
       break;
     case LWS_CALLBACK_SERVER_WRITEABLE:
       relayd_nip01_on_writable(wsi, (ConnState*)user, (const RelaydCtx*)lws_context_user(lws_get_context(wsi)));
@@ -581,6 +608,8 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
 
   RelaydCtx ctx = {
       .storage = server_cfg->storage,
+      .async_storage = server_cfg->async_storage,
+      .ack_timeout_ms = server_cfg->ack_timeout_ms,
       .cfg = *cfg,
       .policy = policy,
       .verification_budget = verification_budget,
@@ -590,6 +619,17 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
   struct lws_context *context = lws_create_context(&info);
   if (!context) {
     fprintf(stderr, "nostr-relay-server: failed to create lws context\n");
+    relay_policy_destroy(policy);
+    verification_budget_destroy(verification_budget);
+    return 1;
+  }
+
+  if (ctx.async_storage &&
+      (!ctx.async_storage->start || !ctx.async_storage->stop ||
+       !ctx.async_storage->enqueue || !ctx.async_storage->visible ||
+       ctx.async_storage->start(ctx.storage, async_storage_notify, context) != 0)) {
+    fprintf(stderr, "nostr-relay-server: async storage notification setup failed\n");
+    lws_context_destroy(context);
     relay_policy_destroy(policy);
     verification_budget_destroy(verification_budget);
     return 1;
@@ -635,6 +675,7 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
               "nostr-relay-server: could not adopt Unix listen fd %d: %s\n",
               listen_fd, lws_listen_fd < 0 ? strerror(errno) : "lws refused");
       s_shutting_down = 1;
+      if (ctx.async_storage) ctx.async_storage->stop(ctx.storage);
       lws_context_destroy(context);
       sigaction(SIGINT, &prev_int, NULL);
       sigaction(SIGTERM, &prev_term, NULL);
@@ -675,6 +716,7 @@ int nostr_relay_server_run(const NostrRelayServerConfig *server_cfg) {
 
   s_shutting_down = 1;
   lws_sul_cancel(&wake.sul);
+  if (ctx.async_storage) ctx.async_storage->stop(ctx.storage);
   lws_context_destroy(context);
   sigaction(SIGINT, &prev_int, NULL);
   sigaction(SIGTERM, &prev_term, NULL);

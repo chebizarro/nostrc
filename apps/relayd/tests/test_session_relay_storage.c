@@ -147,6 +147,40 @@ static void check_addressable(int fd, const char *sk, const char *pk) {
   for (size_t i = 0; i < sizeof ids / sizeof ids[0]; i++) free(ids[i]);
 }
 
+/* The writer may batch a burst: ACKs must remain ordered and every
+ * success must follow a query-visible commit, without serializing one wait
+ * per EVENT on the service thread. Print the measured end-to-end duration. */
+static void check_burst(int fd, const char *sk, const char *pk) {
+  enum { BURST = 100 };
+  char *ids[BURST], *frames[BURST];
+  for (int i = 0; i < BURST; i++) {
+    char content[80];
+    snprintf(content, sizeof content, "relay async burst %d", i);
+    ids[i] = NULL;
+    frames[i] = signed_frame(sk, pk, 1, (int64_t)time(NULL), NULL,
+                             content, &ids[i]);
+  }
+  long long start = now_ms();
+  for (int i = 0; i < BURST; i++)
+    CHECK(frames[i] && ws_send(fd, frames[i]) == 0,
+          "send burst EVENT %d", i);
+  for (int i = 0; i < BURST; i++) {
+    char *reply = ws_recv(fd);
+    char prefix[128];
+    snprintf(prefix, sizeof prefix, "[\"OK\",\"%s\",true", ids[i]);
+    CHECK(reply && strncmp(reply, prefix, strlen(prefix)) == 0,
+          "burst OK %d out of order: %s", i,
+          reply ? reply : "(no reply)");
+    free(reply);
+    free(frames[i]);
+  }
+  fprintf(stderr, "  nostrdb burst %d: all ordered OKs in %lld ms\n",
+          BURST, now_ms() - start);
+  CHECK(fetch_by_id(fd, ids[BURST - 1]),
+        "last burst event missing from immediate REQ after OK");
+  for (int i = 0; i < BURST; i++) free(ids[i]);
+}
+
 int main(void) {
   const char *bin = getenv("NOSTR_SESSION_RELAYD");
   if (!bin || !*bin) {
@@ -171,7 +205,11 @@ int main(void) {
   FILE *config = fopen(config_path, "w");
   CHECK(config != NULL, "create session relay config");
   if (!config) return 1;
-  CHECK(fputs("rate_ops_per_sec=100\nrate_burst=128\n", config) >= 0,
+  CHECK(fputs("rate_ops_per_sec=10000\nrate_burst=10000\n"
+              "verification_conn_per_sec=10000\nverification_conn_burst=10000\n"
+              "verification_ip_per_sec=10000\nverification_ip_burst=10000\n"
+              "verification_global_per_sec=10000\nverification_global_burst=10000\n",
+              config) >= 0,
         "write session relay config");
   CHECK(fclose(config) == 0, "close session relay config");
   if (g_failures) return 1;
@@ -207,6 +245,7 @@ int main(void) {
     snprintf(ok_prefix, sizeof ok_prefix, "[\"OK\",\"%s\",true", id);
     expect_reply(fd, frame, ok_prefix, "signed EVENT accepted");
     CHECK(fetch_by_id(fd, id), "event missing from immediate REQ after OK");
+    check_burst(fd, sk, pk);
     /* An empty result still ends in EOSE with storage on. */
     expect_reply(fd, "[\"REQ\",\"none\",{\"kinds\":[31999],\"limit\":1}]",
                  "[\"EOSE\",\"none\"]", "no match -> EOSE");

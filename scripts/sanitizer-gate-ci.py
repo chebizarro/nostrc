@@ -77,6 +77,7 @@ SANITIZER_BUILD_PATHS = (
     "marmot-gobject/",
     "nips/",
     "components/nostrdb/",
+    "apps/relayd/include/relayd_async_storage.h",  # included by nostrdb storage
     "third_party/",
     "tests/",
 )
