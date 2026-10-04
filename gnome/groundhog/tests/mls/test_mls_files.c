@@ -475,6 +475,56 @@ test_epoch_change_reseals(void)
   world_down(&w);
 }
 
+/* The first PUT used the disclosed policy A. If a Commit changes the policy
+ * while it is held, an epoch retry must not make a new PUT to undisclosed B. */
+static void
+test_policy_change_stops_epoch_retry(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Policy retry", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  BlossomFixture *first = blossom_fixture_new();
+  BlossomFixture *replacement = blossom_fixture_new();
+  Files fa;
+  files_up(&fa, alice, blossom_fixture_url(first), NULL);
+  const gchar *initial[] = { blossom_fixture_url(first), NULL };
+  OpWait changed = { 0 };
+  gh_mls_service_set_media_policy_async(alice->service, ga, initial, NULL, on_changed,
+                                        &changed);
+  spin_until(op_done, &changed, "the initial file policy Commit");
+  g_assert_no_error(changed.error);
+
+  blossom_fixture_set_hold(first, TRUE);
+  g_autoptr(GBytes) photo = make_png();
+  SendWait sent = { 0 };
+  gh_mls_attachments_send_async(fa.files, ga, photo, "photo.png", "image/png", NULL, NULL,
+                                on_sent, &sent);
+  spin_until(upload_held, first, "the policy A upload held");
+  const gchar *updated[] = { blossom_fixture_url(replacement), NULL };
+  OpWait rotated = { 0 };
+  gh_mls_service_set_media_policy_async(alice->service, ga, updated, NULL, on_changed,
+                                        &rotated);
+  spin_until(op_done, &rotated, "the replacement file policy Commit");
+  g_assert_no_error(rotated.error);
+  blossom_fixture_set_hold(first, FALSE);
+  blossom_fixture_release_held(first);
+  spin_until(send_done, &sent, "the policy-changed send stopped");
+  g_assert_error(sent.error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_SERVERS_CHANGED);
+  g_assert_null(sent.message);
+  g_assert_cmpuint(blossom_fixture_count(first, "PUT"), ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(replacement, "PUT"), ==, 0);
+  send_wait_clear(&sent);
+  files_down(&fa);
+  blossom_fixture_free(first);
+  blossom_fixture_free(replacement);
+  world_down(&w);
+}
+
 typedef struct {
   gboolean done;
   GhMlsAttachment *attachment;
@@ -1008,6 +1058,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-files/send-uses-policy-servers",
                   test_send_uses_policy_servers);
   g_test_add_func("/groundhog/mls-files/epoch-change-reseals", test_epoch_change_reseals);
+  g_test_add_func("/groundhog/mls-files/policy-change-stops-epoch-retry",
+                  test_policy_change_stops_epoch_retry);
   g_test_add_func("/groundhog/mls-files/stale-epoch-refused", test_stale_epoch_refused);
   g_test_add_func("/groundhog/mls-files/tor", test_tor);
   g_test_add_func("/groundhog/mls-files/legacy-group-has-no-picture",

@@ -4,6 +4,7 @@
 #include "gh-composer.h"
 #include "gh-conversation-view.h"
 #include "gh-nip17-envelope.h"
+#include "gh-mls-service.h"
 #include "gh-outbox.h"
 #include "gh-preferences-dialog.h"
 
@@ -296,6 +297,34 @@ update_notes(GhAttachmentUi *ui)
   gh_attachment_sheet_set_notes(ui->offer->sheet, server_note, timer_note);
 }
 
+/* The policy the sheet disclosed is a consent snapshot. A Commit can replace
+ * it while the sheet is open; never send to a host the user has not seen. */
+static gboolean
+refresh_changed_policy(GhAttachmentUi *ui, Offer *offer, gboolean force_notice)
+{
+  if (!offer->group || !ui->groups.dup_policy_servers)
+    return FALSE;
+  g_auto(GStrv) live = ui->groups.dup_policy_servers(offer->group, ui->groups_data);
+  gboolean changed = (offer->policy_servers == NULL) != (live == NULL) ||
+    (offer->policy_servers && live &&
+     !g_strv_equal((const gchar *const *)offer->policy_servers,
+                   (const gchar *const *)live));
+  if (!changed && !force_notice)
+    return FALSE;
+  if (changed) {
+    g_strfreev(offer->policy_servers);
+    offer->policy_servers = g_steal_pointer(&live);
+  }
+  update_notes(ui);
+  const gchar *notice = _("The group's file servers changed; review and send again.");
+  g_auto(GStrv) list = offer_servers(ui, offer);
+  if (list[0] || offer->policy_servers)
+    gh_attachment_sheet_show_preview(offer->sheet, notice);
+  else
+    gh_attachment_sheet_show_servers(offer->sheet, notice);
+  return TRUE;
+}
+
 /* ---- sending ------------------------------------------------------------------------ */
 
 static void start_upload(GhAttachmentUi *ui);
@@ -315,6 +344,10 @@ upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, gboolean 
   if (!file && !group_sent) {
     if (g_error_matches(upload_error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       gh_attachment_sheet_show_preview(offer->sheet, NULL);
+    } else if (g_error_matches(upload_error, GH_MLS_SERVICE_ERROR,
+                               GH_MLS_SERVICE_ERROR_SERVERS_CHANGED) &&
+               refresh_changed_policy(ui, offer, TRUE)) {
+      /* An epoch retry found a new policy: the refreshed sheet needs Send. */
     } else if (g_error_matches(upload_error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED) &&
                server && !gh_attachments_get_consent(ui->attachments, server)) {
       /* Charter §6 step 4: the account signs only with this server's consent. */
@@ -412,6 +445,8 @@ start_upload(GhAttachmentUi *ui)
 {
   Offer *offer = ui->offer;
   if (!offer || offer->upload)
+    return;
+  if (refresh_changed_policy(ui, offer, FALSE))
     return;
   g_auto(GStrv) list = offer_servers(ui, offer);
   if (!list[0]) {

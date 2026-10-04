@@ -1568,7 +1568,10 @@ stub_send_async(GhConversation *conversation, GBytes *file, const gchar *name, c
   stub->servers = g_strdupv((gchar **)servers);
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   if (stub->upload_attachments) {
-    gh_attachments_upload_on_servers_async(stub->upload_attachments, servers, file, mime,
+    /* The real MLS delegate re-reads the group's live 0x800b policy. */
+    const gchar *const *upload_servers = stub->policy_servers
+      ? (const gchar *const *)stub->policy_servers : servers;
+    gh_attachments_upload_on_servers_async(stub->upload_attachments, upload_servers, file, mime,
                                             cancellable, stub_uploaded, task);
     return;
   }
@@ -1905,6 +1908,67 @@ test_group_policy_overrides_selected_server(void)
   g_strfreev(stub.policy_servers);
 }
 
+/* A policy Commit after the sheet opens cannot silently change the upload
+ * destination. The first Send refreshes the read-only disclosure, not the
+ * network; only a second Send may PUT to the newly displayed server. */
+static void
+test_group_policy_changes_while_sheet_open(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  BlossomFixture *replacement = blossom_fixture_new();
+  const gchar *old_url = blossom_fixture_url(f.blossom);
+  const gchar *new_url = blossom_fixture_url(replacement);
+  const gchar *initial[] = { old_url, NULL };
+  StubGroups stub = { .upload_attachments = f.attachments,
+                      .policy_servers = g_strdupv((gchar **)initial) };
+  gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+  g_autoptr(GhMessage) message = group_file_message(&f);
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_add_message(f.s.model, message, &error);
+  g_assert_no_error(error);
+  GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                       gh_message_get_room_id(message));
+  g_assert_nonnull(group);
+  send_stack_select(&f.s, group);
+  g_autoptr(GBytes) png = make_png(200);
+  gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
+  GhAttachmentSheet *sheet = wait_page(&f, "preview");
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_server_note(sheet), old_url));
+  g_assert_null(strstr(gh_attachment_sheet_get_server_note(sheet), new_url));
+
+  const gchar *updated[] = { new_url, NULL };
+  g_strfreev(stub.policy_servers);
+  stub.policy_servers = g_strdupv((gchar **)updated);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_run_until_idle();
+  g_assert_true(gh_attachment_ui_get_sheet(f.s.window) == sheet);
+  g_assert_cmpstr(gh_attachment_sheet_get_page(sheet), ==, "preview");
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_error(sheet),
+                          "file servers changed; review and send again"));
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_server_note(sheet), new_url));
+  g_assert_null(strstr(gh_attachment_sheet_get_server_note(sheet), old_url));
+  g_assert_cmpuint(stub.sends, ==, 0);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 0);
+  g_assert_cmpuint(blossom_fixture_count(replacement, "PUT"), ==, 0);
+
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(stub.sends, ==, 1);
+  g_assert_cmpstr(stub.servers[0], ==, new_url);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 0);
+  g_assert_cmpuint(blossom_fixture_count(replacement, "PUT"), ==, 1);
+  gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+  fixture_clear(&f);
+  blossom_fixture_free(replacement);
+  g_clear_pointer(&stub.file, g_bytes_unref);
+  g_free(stub.name);
+  g_free(stub.mime);
+  g_strfreev(stub.servers);
+  g_strfreev(stub.policy_servers);
+}
+
 #if GROUNDHOG_TEST_MLS_FILES
 /* The application's own delegate (gh-mls-attachment-ui.c) on a real window,
  * under fatal-criticals: it installs and follows without a CRITICAL (W25
@@ -1991,6 +2055,7 @@ main(int argc, char **argv)
   ADD("group-delegate", test_group_delegate);
   ADD("group-first-use-suggested-send", test_group_first_use_suggested_send);
   ADD("group-policy-overrides-selected-server", test_group_policy_overrides_selected_server);
+  ADD("group-policy-changes-while-sheet-open", test_group_policy_changes_while_sheet_open);
 #if GROUNDHOG_TEST_MLS_FILES
   ADD("mls-delegate-attach", test_mls_delegate_attach);
 #endif

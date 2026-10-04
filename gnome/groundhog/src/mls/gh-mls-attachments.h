@@ -109,7 +109,9 @@ void gh_mls_attachments_send_async(GhMlsAttachments *self, GhMlsGroup *group, GB
                                    GAsyncReadyCallback callback, gpointer user_data);
 /* The sheet's explicit server choice is kept for a group without 0x800b
  * policy, including an epoch-change retry. A policy's verified endpoints
- * override it. NULL uses the client's configured list when no policy exists. */
+ * override it. If a Commit changes that policy during an epoch retry, the
+ * send stops instead of uploading to a newly introduced endpoint. NULL uses
+ * the client's configured list when no policy exists. */
 void gh_mls_attachments_send_on_servers_async(GhMlsAttachments *self, GhMlsGroup *group,
                                               GBytes *file, const gchar *name,
                                               const gchar *mime_hint, const gchar *caption,

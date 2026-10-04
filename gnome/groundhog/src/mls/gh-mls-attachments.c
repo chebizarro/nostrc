@@ -588,6 +588,7 @@ typedef struct {
   gchar *caption;
   GStrv selected_servers;
   GStrv servers;
+  gboolean had_policy;
   guint tries;
   GhMlsMediaSealed *sealed;
   gchar *server;
@@ -612,7 +613,8 @@ send_op_free(gpointer data)
 static void send_try(GTask *task);
 
 /* A group's verified 0x800b endpoints override the sheet/account choice.
- * Re-read them for an epoch retry: a Commit may have changed the policy. */
+ * A retry must not contact newly introduced endpoints that the sheet did not
+ * disclose for this send. */
 static gboolean
 refresh_send_servers(GhMlsAttachments *self, SendOp *op, GError **error)
 {
@@ -623,6 +625,11 @@ refresh_send_servers(GhMlsAttachments *self, SendOp *op, GError **error)
     if (!g_error_matches(components_error, GH_MLS_SERVICE_ERROR,
                          GH_MLS_SERVICE_ERROR_UNSUPPORTED)) {
       g_propagate_error(error, g_steal_pointer(&components_error));
+      return FALSE;
+    }
+    if (op->tries && op->had_policy) {
+      g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_SERVERS_CHANGED,
+                          "The group's media policy changed during the upload");
       return FALSE;
     }
     g_clear_pointer(&op->servers, g_strfreev);
@@ -641,6 +648,14 @@ refresh_send_servers(GhMlsAttachments *self, SendOp *op, GError **error)
   GStrv next = has_policy
     ? gh_blossom_client_dup_public_servers(client_of(self), (const gchar *const *)named)
     : (op->selected_servers ? g_strdupv(op->selected_servers) : NULL);
+  if (op->tries && (op->had_policy != has_policy ||
+                    (has_policy && !g_strv_equal((const gchar *const *)op->servers,
+                                                 (const gchar *const *)next)))) {
+    g_strfreev(next);
+    g_set_error_literal(error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_SERVERS_CHANGED,
+                        "The group's media policy changed during the upload");
+    return FALSE;
+  }
   if (has_policy && !next[0]) {
     g_strfreev(next);
     g_set_error_literal(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER,
@@ -649,6 +664,7 @@ refresh_send_servers(GhMlsAttachments *self, SendOp *op, GError **error)
   }
   g_strfreev(op->servers);
   op->servers = next;
+  op->had_policy = has_policy;
   return TRUE;
 }
 
