@@ -41,12 +41,13 @@ lookup_room(sqlite3 *db, const gchar *room_id, gboolean *known, GError **error)
   return rc == SQLITE_ROW || sql_error(db, rc, "lookup room", error);
 }
 
-/* At the account ceiling, only a full author/room or room bucket may replace
- * one of its own rows. Otherwise reject the new deferred entry: an unrelated
+/* Existing keys add no row. At the account ceiling, a new key may only
+ * replace an entry in its own full author/room or room bucket: an unrelated
  * room must never evict an under-quota known room. */
 static gboolean
 has_deferred_capacity(sqlite3 *db, const gchar *table, const gchar *room,
-                      const gchar *sender, gboolean *available, GError **error)
+                      const gchar *sender, const gchar *rid,
+                      gboolean *available, GError **error)
 {
   *available = FALSE;
   g_autofree gchar *sql = g_strdup_printf(
@@ -54,13 +55,16 @@ has_deferred_capacity(sqlite3 *db, const gchar *table, const gchar *room,
     " OR (SELECT count(*) FROM %s WHERE room_id = ?1 AND sender_pubkey = ?2) >= "
     G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT)
     " OR (SELECT count(*) FROM %s WHERE room_id = ?1) >= "
-    G_STRINGIFY(REACTION_ROOM_LIMIT), table, table, table);
+    G_STRINGIFY(REACTION_ROOM_LIMIT)
+    " OR EXISTS (SELECT 1 FROM %s WHERE room_id = ?1 AND sender_pubkey = ?2 "
+    "AND reaction_msg_id = ?3)", table, table, table, table);
   sqlite3_stmt *stmt = NULL;
   if (!sql_error(db, sqlite3_prepare_v2(db, sql, -1, &stmt, NULL),
                  "prepare deferred capacity", error))
     return FALSE;
   sqlite3_bind_text(stmt, 1, room, -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt, 2, sender, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, rid, -1, SQLITE_TRANSIENT);
   int rc = sqlite3_step(stmt);
   if (rc == SQLITE_ROW)
     *available = sqlite3_column_int(stmt, 0) != 0;
@@ -219,7 +223,8 @@ delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
   if (conversation_id < 0) {
     gboolean available = FALSE;
     if (!has_deferred_capacity(db, "pending_reactions", room_id,
-                               gh_reaction_get_sender(reaction), &available, error))
+                               gh_reaction_get_sender(reaction),
+                               gh_reaction_get_reaction_rumor_id(reaction), &available, error))
       return FALSE;
     if (!available)
       return FALSE;
@@ -288,7 +293,7 @@ delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender
     return FALSE;
   sqlite3_stmt *stmt = NULL;
   gboolean keep_notice = FALSE;
-  if (!has_deferred_capacity(db, "reaction_tombstones", room, sender,
+  if (!has_deferred_capacity(db, "reaction_tombstones", room, sender, rid,
                              &keep_notice, error))
     return FALSE;
   int rc = SQLITE_OK;

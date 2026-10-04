@@ -1998,6 +1998,22 @@ test_reaction_account_cap(void)
                                    "reaction_msg_id = 'cap-pending-0001'"), ==, 1);
   g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
                                    "reaction_msg_id = 'cap-tombstone-0001'"), ==, 1);
+
+  /* Repeating a deletion adds no row, even when this under-quota room cannot
+   * admit another tombstone at the account ceiling. Keep its receipt fresh. */
+  g_assert_true(gh_store_exec(f.store,
+    "UPDATE reaction_tombstones SET received_at = CAST(strftime('%s','now') AS INTEGER) - 60 "
+    "WHERE reaction_msg_id = 'cap-tombstone-0001'", NULL));
+  gint64 previous_receipt = sql_int(f.store,
+    "SELECT received_at FROM reaction_tombstones WHERE reaction_msg_id = 'cap-tombstone-0001'");
+  gint64 previous_sequence = sql_int(f.store, "SELECT max(arrival_seq) FROM reaction_tombstones");
+  g_assert_true(gh_reaction_store_delete_event(r.model, "cap-tombstone-0001", "sender-000",
+                                                "cap-room-000", NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 4096);
+  g_assert_cmpint(sql_int(f.store, "SELECT received_at FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'cap-tombstone-0001'"), >, previous_receipt);
+  g_assert_cmpint(sql_int(f.store, "SELECT arrival_seq FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'cap-tombstone-0001'"), >, previous_sequence);
   reaction_harness_close(&f, &r);
   fixture_clear(&f);
 }
