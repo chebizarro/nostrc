@@ -452,5 +452,20 @@ if(BUILD_TESTING)
       test_nostr_gtk_listview_recycle_stress
       PROPERTIES
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
+
+    # The parallel smoke run checks that bindings and heartbeats occur. The
+    # CPU-time responsiveness budget is a separate, serial perf registration
+    # of the same binary, so it cannot race the rest of CTest's GUI suite.
+    if(XVFB_RUN)
+      add_test(NAME test_nostr_gtk_bind_latency_perf
+        COMMAND ${XVFB_RUN} -a $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
+    else()
+      add_test(NAME test_nostr_gtk_bind_latency_perf
+        COMMAND $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
+    endif()
+    set_tests_properties(test_nostr_gtk_bind_latency_perf PROPERTIES
+      RUN_SERIAL TRUE TIMEOUT 120
+      LABELS "gtk;widget;perf"
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr;NOSTRC_TEST_PERF=1")
   endif()
 endif()

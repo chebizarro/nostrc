@@ -130,7 +130,7 @@ BROKEN_ON_LINUX='gnostr-test-image-viewer-remote-media|gnostr-test-delete-author
 #    loop 400-650 ms against its 200 ms budget;
 #  - relayd_session_relay_storage: "event lost across restart" on linux/amd64
 #    only, emulation artifact or real x86_64 bug still open (nostrc-5djt).
-EMULATION_ONLY='nostr_signer_webext_host_e2e|test_nostr_gtk_bind_latency_budget'
+EMULATION_ONLY='nostr_signer_webext_host_e2e|test_nostr_gtk_bind_latency_budget|test_nostr_gtk_bind_latency_perf'
 AMD64_KNOWN='relayd_session_relay_storage'
 if [ "$ARCH" != "$NATIVE" ]; then
     BROKEN_ON_LINUX="$BROKEN_ON_LINUX|$EMULATION_ONLY|$AMD64_KNOWN"

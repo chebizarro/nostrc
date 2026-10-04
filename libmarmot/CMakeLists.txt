@@ -357,6 +357,13 @@ if(BUILD_TESTING)
   target_link_libraries(test_adopted_commits PRIVATE marmot)
   target_include_directories(test_adopted_commits PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME marmot_test_adopted_commits COMMAND test_adopted_commits)
+  set_tests_properties(marmot_test_adopted_commits PROPERTIES RUN_SERIAL TRUE)
+  if(MARMOT_TEST_HOOKS)
+    add_test(NAME marmot_test_large_commit_bound
+      COMMAND test_adopted_commits test_large_commit_refused_quickly)
+    set_tests_properties(marmot_test_large_commit_bound PROPERTIES
+      LABELS "unit;adopted" TIMEOUT 60)
+  endif()
   # Test: Storage contract tests (all backends)
   add_executable(test_storage_contract ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_storage_contract.c)
   target_link_libraries(test_storage_contract PRIVATE marmot)

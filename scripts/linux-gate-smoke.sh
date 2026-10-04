@@ -206,9 +206,30 @@ recent_gates() {
   tail -n "$HISTORY_KEEP" "$HISTORY/gates"
 }
 
+# A perf-labeled test is not a parallel-smoke flake. Run it once, serially,
+# after the functional suite. A failure here blocks; RERUN_MAX applies only
+# to the parallel functional run.
+run_perf() {
+  local count log
+  count="$(ctest --test-dir "$BUILD_DIR" -N -L '^perf$' "${SELECT[@]}" |
+    awk '/Total Tests:/ { print $3 }')"
+  [ "${count:-0}" -gt 0 ] || return 0
+  echo "==> $GATE: running $count perf test(s) serially after $SUITE ($(stamp))"
+  log="$STATE_DIR/ctest-perf.log"
+  if ! run_logged "$log" -L '^perf$' "${SELECT[@]}"; then
+    cp "$log" "$HISTORY/$RUN_ID-perf-run.log"
+    cat "$log"
+    echo "==> $GATE: PERF TESTS FAILED ($(stamp)); no retry after a serial run"
+    return 1
+  fi
+  check_forbidden "$log"
+  echo "==> $GATE: perf tests passed serially ($(stamp))"
+}
+
 [ "$PROGRESS" != 1 ] || echo "==> $GATE: running $SUITE, $JOBS at a time ($(stamp))"
-if run_logged "$STATE_DIR/ctest.log" --parallel "$JOBS" "${SELECT[@]}"; then
+if run_logged "$STATE_DIR/ctest.log" --parallel "$JOBS" -LE '^perf$' "${SELECT[@]}"; then
   check_forbidden "$STATE_DIR/ctest.log"
+  run_perf
   echo "==> $GATE: $SUITE passed, $(grep -E "tests passed" "$STATE_DIR/ctest.log" | sed "s/.*out of //") run ($(stamp))"
   exit 0
 fi
@@ -288,6 +309,7 @@ for test in $failed; do
                                       END { print n + 0 }' <(recent_gates) "$HISTORY/reruns")"
   echo "!!   $test needed a rerun in $count of the last $gates gate(s)"
 done
+run_perf
 echo "==> $GATE: $SUITE passed after a rerun, $(printf "%s" "$first" | sed "s/.*out of //") run ($(stamp))"
 exit 0
 }

@@ -901,6 +901,13 @@ int mls_commit_serialize(const MlsCommit *commit, MlsTlsBuf *buf);
  * (slice H re-review R2). */
 #define MLS_COMMIT_MAX_PROPOSALS ((size_t)MLS_APP_DATA_UPDATE_MAX + 1024u)
 
+#ifdef MARMOT_TEST_HOOKS
+/* Number of proposal-array moves by the most recent application-order sort.
+ * The test checks the linear-work contract without a host-time budget. */
+extern size_t mls_test_proposal_sort_moves;
+int mls_test_sort_proposals_for_application(MlsProposal *proposals, size_t count);
+#endif
+
 /** Deserialize a Commit from TLS wire format (at most
  *  MLS_COMMIT_MAX_PROPOSALS proposals). */
 int mls_commit_deserialize(MlsTlsReader *reader, MlsCommit *commit);

@@ -2145,14 +2145,6 @@ test_rotation_back_to_old_address(void)
 
 /* ── Re-review (R2, R3, R5) ─────────────────────────────────────────── */
 
-static double
-now_s(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
-}
-
 static void
 load_group(Member *x, const MarmotGroupId *gid, MlsGroup *out)
 {
@@ -2225,10 +2217,8 @@ frame_commit(const MlsGroup *g, const MlsCommit *commit, const uint8_t tag[MLS_H
  * AppDataUpdates followed by 4,000 Adds -- the order the application sort
  * reverses, before any authorization -- and the same proposals already in
  * application order (Adds first).  Both are refused (their Adds do not
- * verify), and the reversed one costs about what the ordered one does: the
- * sort is one linear pass (the insertion sort it replaced moved 512-byte
- * proposals O(n^2) times -- 60x the ordered cost here, seconds).  Measured
- * as a ratio, which sanitizers and slow machines leave alone.  A Commit
+ * verify). The test-only move count checks that the sort remains linear,
+ * even on an overloaded host. A Commit
  * with more proposals than any may have (MLS_COMMIT_MAX_PROPOSALS) is
  * refused while it is parsed, and that bound is exact. */
 static void
@@ -2271,34 +2261,46 @@ test_large_commit_refused_quickly(void)
     MlsCommit c;
     memset(&c, 0, sizeof(c));
 
-    double cost[2];
     for (int k = 0; k < 2; k++) {
         c.proposals = k == 0 ? ordered : props;   /* application order, then reversed */
         c.proposal_count = K + A;
         size_t len = 0;
         uint8_t *msg = frame_commit(&bob, &c, tag, &len);
-        double t0 = now_s();
         MarmotError err = marmot_commit_judge(t.alice.m, &t.gid, msg, len);
-        cost[k] = now_s() - t0;
         CHECK(err == MARMOT_ERR_MLS_PROCESS_MESSAGE, "refused: %d (%s)", err,
               marmot_error_string(err));
         free(msg);
     }
-    printf("[ordered %.3f s, reversed %.3f s] ", cost[0], cost[1]);
-    CHECK(cost[1] < 3.0 * cost[0] + 0.05,
-          "40,000 AppDataUpdates then 4,000 Adds: %.3f s, in application order %.3f s",
-          cost[1], cost[0]);
 
-    /* Over the bound: refused at parse, no dearer than the ones above. */
+#ifdef MARMOT_TEST_HOOKS
+    /* The invalid no-path Commits above are rejected before application.
+     * Probe the sorter directly: both input orders must take exactly two
+     * moves per proposal, and the reversed order must become stable. */
+    CHECK(mls_test_sort_proposals_for_application(ordered, K + A) == 0 &&
+          mls_test_proposal_sort_moves == 2 * (K + A), "ordered sort work");
+    CHECK(mls_test_sort_proposals_for_application(props, K + A) == 0 &&
+          mls_test_proposal_sort_moves == 2 * (K + A), "reversed sort work");
+    for (size_t i = 0; i < K + A; i++) {
+        CHECK(props[i].type == ordered[i].type, "sort type at %zu", i);
+        if (i >= A)
+            CHECK(props[i].app_data_update.component_id ==
+                  ordered[i].app_data_update.component_id, "sort stability at %zu", i);
+    }
+#endif
+
+    /* Over the bound: refused at parse, before any sorting. */
     c.proposals = props;
     c.proposal_count = n;
     size_t len = 0;
     uint8_t *msg = frame_commit(&bob, &c, tag, &len);
-    double t0 = now_s();
+#ifdef MARMOT_TEST_HOOKS
+    mls_test_proposal_sort_moves = SIZE_MAX;
+#endif
     MarmotError err = marmot_commit_judge(t.alice.m, &t.gid, msg, len);
-    double dt = now_s() - t0;
     CHECK(err == MARMOT_ERR_MLS_PROCESS_MESSAGE, "refused: %d (%s)", err, marmot_error_string(err));
-    CHECK(dt < 3.0 * cost[0] + 0.05, "%zu proposals refused in %.3f s", n, dt);
+#ifdef MARMOT_TEST_HOOKS
+    CHECK(mls_test_proposal_sort_moves == SIZE_MAX, "%zu proposals reached the sort", n);
+#endif
     free(msg);
 
     /* The bound, exactly, on the Commit body. */

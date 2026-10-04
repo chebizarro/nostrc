@@ -96,11 +96,13 @@ static void test_channel_blocking(void) {
     int rc = go_channel_receive(ch, &recv_val);
     TEST_ASSERT(rc == 0, "receive failed");
     TEST_ASSERT(recv_val != NULL && *(int*)recv_val == 99, "wrong value");
-    TEST_ASSERT(atomic_load(&ctx.completed), "sender didn't complete");
     /* Sender allocated, we free */
     free(recv_val);
     
     pthread_join(tid, NULL);
+    /* A successful receive only proves the send published its value.  The
+     * sender may not have run its next instruction yet under load. */
+    TEST_ASSERT(atomic_load(&ctx.completed), "sender didn't complete");
     go_channel_free(ch);
     
     printf("  PASS\n");

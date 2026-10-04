@@ -2387,6 +2387,10 @@ proposal_application_order(uint16_t type)
     }
 }
 
+#ifdef MARMOT_TEST_HOOKS
+size_t mls_test_proposal_sort_moves;
+#endif
+
 /* Stable, in O(n): a counting pass over the five application-order
  * classes, then each proposal moved once (slice H re-review R2: the
  * insertion sort it replaces moved 512-byte proposals O(n^2) times, before
@@ -2397,6 +2401,9 @@ proposal_application_order(uint16_t type)
 static int
 sort_proposals_for_application(MlsProposal *proposals, size_t count)
 {
+#ifdef MARMOT_TEST_HOOKS
+    mls_test_proposal_sort_moves = 0;
+#endif
     if (count < 2) return 0;
     size_t start[6] = {0};
     for (size_t i = 0; i < count; i++)
@@ -2404,12 +2411,27 @@ sort_proposals_for_application(MlsProposal *proposals, size_t count)
     for (size_t k = 1; k < 6; k++) start[k] += start[k - 1];
     MlsProposal *sorted = malloc(count * sizeof(*sorted));
     if (!sorted) return MARMOT_ERR_MEMORY;
-    for (size_t i = 0; i < count; i++)
+    for (size_t i = 0; i < count; i++) {
         sorted[start[proposal_application_order(proposals[i].type)]++] = proposals[i];
+#ifdef MARMOT_TEST_HOOKS
+        mls_test_proposal_sort_moves++;
+#endif
+    }
     memcpy(proposals, sorted, count * sizeof(*sorted));
+#ifdef MARMOT_TEST_HOOKS
+    mls_test_proposal_sort_moves += count;
+#endif
     free(sorted);
     return 0;
 }
+
+#ifdef MARMOT_TEST_HOOKS
+int
+mls_test_sort_proposals_for_application(MlsProposal *proposals, size_t count)
+{
+    return sort_proposals_for_application(proposals, count);
+}
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Referenced-proposal store (RFC 9420 §12.4)

@@ -87,6 +87,40 @@ gh_test_spin_until_at(gboolean (*pred)(gpointer), gpointer data, int line)
 }
 #define gh_test_spin_until(pred, data) gh_test_spin_until_at((pred), (data), __LINE__)
 
+/* Slow integration waits still check the actual state, not elapsed work.
+ * Keep the normal 10-second helper above for small unit transitions. */
+static G_GNUC_UNUSED gboolean
+gh_test_wait_until_for_at(gboolean (*pred)(gpointer), gpointer data, guint seconds)
+{
+  guint slowdown = 1;
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+  slowdown = 10;
+#elif defined(__has_feature)
+#  if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+  slowdown = 10;
+#  endif
+#endif
+  const gchar *names[] = { "GH_TEST_SLOWDOWN", "SANITIZER_SLOWDOWN" };
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+    const gchar *env = g_getenv(names[i]);
+    if (!env || !*env)
+      continue;
+    gchar *end = NULL;
+    guint64 parsed = g_ascii_strtoull(env, &end, 10);
+    if (end != env && *end == '\0' && parsed > 0 && parsed <= 30)
+      slowdown = MAX(slowdown, (guint)parsed);
+  }
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(seconds * slowdown, gh_test_deadline_hit, &expired);
+  guint tick = g_timeout_add(10, gh_test_tick, NULL);
+  while (!pred(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  gboolean ready = pred(data);
+  g_source_remove(tick);
+  g_source_remove(timer);
+  return ready;
+}
+
 static G_GNUC_UNUSED gboolean
 gh_test_is_null(gpointer data)
 {

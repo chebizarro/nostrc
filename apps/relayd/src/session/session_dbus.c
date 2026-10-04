@@ -468,11 +468,23 @@ void nsr_dbus_start(const NsrDbusInfo *info) {
   s_dbus = d;
 }
 
+static gboolean quit_dbus_loop(gpointer data) {
+  g_main_loop_quit(data);
+  return G_SOURCE_REMOVE;
+}
+
 void nsr_dbus_stop(void) {
   NsrDbus *d = s_dbus;
   if (!d) return;
   s_dbus = NULL;
-  g_main_loop_quit(d->loop); /* thread-safe; wakes d->ctx */
+  /* A direct quit can race a newly spawned thread: if it has not entered
+   * g_main_loop_run() yet, that call has no effect and join hangs forever.
+   * An attached source executes only after the D-Bus context is running. */
+  GSource *quit = g_idle_source_new();
+  g_source_set_priority(quit, G_PRIORITY_HIGH);
+  g_source_set_callback(quit, quit_dbus_loop, d->loop, NULL);
+  g_source_attach(quit, d->ctx);
+  g_source_unref(quit);
   g_thread_join(d->thread);
   g_main_loop_unref(d->loop);
   g_main_context_unref(d->ctx);

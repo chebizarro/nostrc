@@ -522,7 +522,20 @@ stack_bring_up(SendStack *s)
   send_stack_up(s);
   g_assert_cmpint(gh_account_store_get_state(s->store), ==, GH_ACCOUNT_STORE_OPEN);
   send_stack_window(s, 960, 680);
-  gh_test_spin_until(inbox_live, s);
+  /* Opening three real account stacks and waiting for each relay's EOSE can
+   * be delayed by the parallel gate. LIVE is the contract, not 10 seconds of
+   * host wall time. Keep a bounded, slowdown-aware diagnostic wait. */
+  if (!gh_test_wait_until_for_at(inbox_live, s, 30)) {
+    const gchar *const *urls = gh_dm_inbox_get_relays(s->inbox);
+    const gchar *detail = NULL;
+    GhDmInboxRelayState relay_state = gh_dm_inbox_get_relay_state(
+      s->inbox, urls && urls[0] ? urls[0] : NULL, &detail);
+    g_error("inbox did not become live: state=%d relay=%d detail=%s "
+            "account_relays=%p outbox=%p",
+            gh_dm_inbox_get_state(s->inbox), relay_state, detail ? detail : "(none)",
+            (void *)gh_account_relays_get_inbox_relays(s->relays),
+            (void *)gh_account_store_get_outbox(s->store));
+  }
 }
 
 static void

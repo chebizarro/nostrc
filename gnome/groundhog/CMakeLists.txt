@@ -1567,7 +1567,9 @@ if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
       groundhog_store_link_sqlcipher_first(test-groundhog-e2e-dm)
       add_dependencies(test-groundhog-e2e-dm groundhog-test-schemas)
       add_test(NAME groundhog-e2e-dm COMMAND test-groundhog-e2e-dm)
-      set_tests_properties(groundhog-e2e-dm PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 180
+      # The condition-based inbox-live wait scales under sanitizer builds;
+      # CTest's outer watchdog must not preempt its own diagnostic deadline.
+      set_tests_properties(groundhog-e2e-dm PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
     endif()
   endif()

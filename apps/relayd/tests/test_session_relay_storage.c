@@ -17,9 +17,11 @@
  * Needs $NOSTR_SESSION_RELAYD; exits 77 (SKIP) when it is unset.
  */
 #define _GNU_SOURCE
+#include <errno.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 
 #include "ws_test_client.h"
 
@@ -45,15 +47,23 @@ static pid_t spawn_daemon(const char *bin, const char *xrd, const char *state) {
 
 
 static int stop_daemon(pid_t pid) {
-  kill(pid, SIGTERM);
+  if (kill(pid, SIGTERM) != 0) return -1;
   int status = 0;
-  for (int i = 0; i < 100; i++) {
-    if (waitpid(pid, &status, WNOHANG) == pid)
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  const time_t deadline = now.tv_sec + 30;
+  for (;;) {
+    pid_t waited = waitpid(pid, &status, WNOHANG);
+    if (waited == pid)
       return WIFEXITED(status) ? WEXITSTATUS(status) : 128;
-    sleep_ms(100);
+    if (waited < 0 && errno != EINTR) return -1;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (now.tv_sec >= deadline) break;
+    sleep_ms(20);
   }
+  fprintf(stderr, "session relay did not exit after SIGTERM before deadline\n");
   kill(pid, SIGKILL);
-  waitpid(pid, &status, 0);
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
   return -1;
 }
 
