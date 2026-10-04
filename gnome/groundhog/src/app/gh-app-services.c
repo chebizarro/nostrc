@@ -71,14 +71,6 @@
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-features.h"
-#ifdef GH_MLS_TEST_HOOKS
-/* Exercise the real application service graph in acceptance builds without
- * opening the unreleased encrypted-groups gate in ordinary launches. */
-#define GH_APP_ENCRYPTED_GROUPS (GH_FEATURE_ENCRYPTED_GROUPS || \
-  g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0)
-#else
-#define GH_APP_ENCRYPTED_GROUPS GH_FEATURE_ENCRYPTED_GROUPS
-#endif
 #include "gh-identity.h"
 #include "gh-preferences-dialog.h"
 #endif
@@ -327,7 +319,7 @@ sender_init(GhAppServices *self, GError **error)
     .account_relays = self->relays,
     .settings = self->settings,
     /* Encrypted groups run only once their UI ships (qp24.13 part 2). */
-    .encrypted_groups = GH_APP_ENCRYPTED_GROUPS,
+    .encrypted_groups = GH_FEATURE_ENCRYPTED_GROUPS,
   };
   self->outbox = gh_app_outbox_new(&config);
   return TRUE;
@@ -1900,7 +1892,7 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .conversations = self->conversations,
     .nip05 = self->nip05,
     .settings = self->settings,
-    .encrypted_groups = GH_APP_ENCRYPTED_GROUPS,
+    .encrypted_groups = GH_FEATURE_ENCRYPTED_GROUPS,
   };
 #if GROUNDHOG_HAVE_OUTBOX
   GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
@@ -1951,7 +1943,7 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .settings = self->settings,
     /* Encrypted groups find people through their kind 10002 (nostrc-0bdg):
      * offered, with consent, only when they run and the account has none. */
-    .offer_relay_list = GH_APP_ENCRYPTED_GROUPS,
+    .offer_relay_list = GH_FEATURE_ENCRYPTED_GROUPS,
   };
   gh_onboarding_attach(window, &onboarding);
 #endif

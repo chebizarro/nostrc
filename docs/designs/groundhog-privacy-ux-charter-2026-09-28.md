@@ -1049,7 +1049,7 @@ Each page is reachable again from Preferences. The window stays usable at 360×2
   - "Relay Group": "Hosted on a relay you choose. The relay's operators can read messages."
   - Relay-group fields: relay (`Adw.EntryRow`), name, about, "Only Members Can Read" (`private`, relay-enforced), "Join by Invite Only" (`closed`) → 9007 then 9002. The result is shown as pending until the authoritative 39000 arrives.
   - Encrypted-group fields: members (contacts, each with a KeyPackage check row), group relays, name.
-  - The whole MLS path is compiled and shown only when `qp24.13` passes acceptance. There are no disabled placeholders in release builds.
+  - W28 owner decision (2026-10-04, nostrc-7gx7): `qp24.13` acceptance is met by the W25 White Noise/MDK 0.11 interop evidence and the W27 two-device and public-relay runs. The MLS path is now shown by default, with no preview-only build. The chooser and creation page disclose the newer/older format split, member visibility, relay metadata, local history, leaving and Blossom server exposure before Create. There are no disabled placeholders in release builds.
 
 ### 7.10 Group info and admin sheets
 

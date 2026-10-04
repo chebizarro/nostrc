@@ -157,7 +157,7 @@ cancel_check(GhMlsInviteeRow *row)
 
 typedef struct {
   GhMlsInviteePicker *picker; /* weak */
-  GhMlsInviteeRow *row;       /* weak through the picker's rows */
+  GhMlsInviteeRow *row;       /* held until the async callback returns */
   GCancellable *cancellable;
 } Check;
 
@@ -167,6 +167,7 @@ check_free(Check *check)
   if (check->picker)
     g_object_remove_weak_pointer(G_OBJECT(check->picker), (gpointer *)&check->picker);
   g_object_unref(check->cancellable);
+  g_object_unref(check->row);
   g_free(check);
 }
 
@@ -203,7 +204,7 @@ start_check(GhMlsInviteePicker *self, GhMlsInviteeRow *row)
   Check *check = g_new0(Check, 1);
   check->picker = self;
   g_object_add_weak_pointer(G_OBJECT(self), (gpointer *)&check->picker);
-  check->row = row;
+  check->row = g_object_ref(row);
   check->cancellable = g_object_ref(row->checking);
   gh_mls_invitee_check_async(self->context.accounts, self->context.settings, row->pubkey,
                              self->context.lookup_deadline,
@@ -234,6 +235,11 @@ on_toggled(GtkCheckButton *check, GParamSpec *pspec, gpointer data)
   GhMlsInviteeRow *row = data;
   GhMlsInviteePicker *self = row->picker;
   if (row_selected(row)) {
+    /* Programmatic toggles bypass the disabled check button at the cap. */
+    if (gh_mls_invitee_picker_get_n_selected(self) > GH_MLS_SERVICE_MAX_INVITEES) {
+      gtk_check_button_set_active(row->check, FALSE);
+      return;
+    }
     start_check(self, row);
   } else {
     cancel_check(row);
@@ -274,7 +280,12 @@ on_add_entry_apply(AdwEntryRow *entry, gpointer data)
     return;
   }
 
-  if (input->kind != GH_RECIPIENT_INPUT_PUBKEY) {
+  g_autofree gchar *hex_pubkey = NULL;
+  const gchar *pubkey = input->pubkey;
+  if (input->kind == GH_RECIPIENT_INPUT_TEXT && gh_recipient_is_pubkey(input->text)) {
+    hex_pubkey = g_ascii_strdown(input->text, -1);
+    pubkey = hex_pubkey;
+  } else if (input->kind != GH_RECIPIENT_INPUT_PUBKEY) {
     gtk_label_set_text(self->add_error, _("Paste an npub (starting with npub1) or a 64-character hex public key."));
     gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
     return;
@@ -284,7 +295,7 @@ on_add_entry_apply(AdwEntryRow *entry, gpointer data)
 
   const gchar *account = self->context.model
     ? gh_conversation_store_get_account(self->context.model) : NULL;
-  if (account && g_ascii_strcasecmp(input->pubkey, account) == 0) {
+  if (account && g_ascii_strcasecmp(pubkey, account) == 0) {
     gtk_label_set_text(self->add_error, _("That is your own public key."));
     gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
     return;
@@ -294,14 +305,22 @@ on_add_entry_apply(AdwEntryRow *entry, gpointer data)
   GhMlsInviteeRow *existing = NULL;
   for (guint i = 0; i < self->rows->len; i++) {
     GhMlsInviteeRow *row = g_ptr_array_index(self->rows, i);
-    if (g_ascii_strcasecmp(row->pubkey, input->pubkey) == 0) {
+    if (g_ascii_strcasecmp(row->pubkey, pubkey) == 0) {
       existing = row;
       break;
     }
   }
+  if (existing && row_selected(existing)) {
+    gtk_editable_set_text(GTK_EDITABLE(entry), "");
+    return;
+  }
+  if (gh_mls_invitee_picker_get_n_selected(self) >= GH_MLS_SERVICE_MAX_INVITEES) {
+    gtk_label_set_text(self->add_error, _("Up to 32 people can be invited at a time"));
+    gtk_widget_set_visible(GTK_WIDGET(self->add_error), TRUE);
+    return;
+  }
   if (existing) {
-    if (!row_selected(existing))
-      gtk_check_button_set_active(existing->check, TRUE);
+    gtk_check_button_set_active(existing->check, TRUE);
     gtk_editable_set_text(GTK_EDITABLE(entry), "");
     return;
   }
@@ -309,10 +328,10 @@ on_add_entry_apply(AdwEntryRow *entry, gpointer data)
   /* New person: add a row, select it (starts the KeyPackage check). */
   GhMlsInviteeRow *row = g_object_new(GH_TYPE_MLS_INVITEE_ROW, NULL);
   row->picker = self;
-  row->pubkey = g_strdup(input->pubkey);
-  row->npub_short = gh_recipient_npub_short(input->pubkey);
+  row->pubkey = g_strdup(pubkey);
+  row->npub_short = gh_recipient_npub_short(pubkey);
   const gchar *name = self->context.display_name
-    ? self->context.display_name(input->pubkey, self->context.names_data) : NULL;
+    ? self->context.display_name(pubkey, self->context.names_data) : NULL;
   row->named = name && *name;
   const gchar *title = row->named ? name : row->npub_short;
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
@@ -533,7 +552,8 @@ gh_mls_invitee_picker_set_selected(GhMlsInviteePicker *self, const gchar *pubkey
 {
   g_return_val_if_fail(GH_IS_MLS_INVITEE_PICKER(self), FALSE);
   GhMlsInviteeRow *row = find_row(self, pubkey);
-  if (!row)
+  if (!row || (selected && !row_selected(row) &&
+               gh_mls_invitee_picker_get_n_selected(self) >= GH_MLS_SERVICE_MAX_INVITEES))
     return FALSE;
   gtk_check_button_set_active(row->check, selected);
   return TRUE;

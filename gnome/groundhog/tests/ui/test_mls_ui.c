@@ -1,6 +1,6 @@
 /* Encrypted-group UI (Marmot MLS; privacy charter §7.5, §7.6, §7.7, §7.9,
  * §7.10, §7.15 #13, §1.4, D7, PD-8; nostrc-9xf5, qp24.13 part 2), with
- * GH_FEATURE_ENCRYPTED_GROUPS still 0: the UI is attached directly.
+ * GH_FEATURE_ENCRYPTED_GROUPS is on by default; the UI is also attached directly in these tests.
  *
  * Every test runs against the three-account world of the MLS service tests
  * (tests/mls/mls-world.h): real account controllers with the mock
@@ -1078,12 +1078,15 @@ test_gui_new_group(void)
   g_assert_nonnull(encrypted);
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(encrypted)), ==,
                   "Only members can read messages. Everyone needs an app that supports "
-                  "encrypted groups.");
+                  "Marmot encrypted groups.");
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
     gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
   g_assert_true(ADW_NAVIGATION_PAGE(page) == adw_navigation_view_get_visible_page(navigation));
+  g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Who can see this group"));
+  g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Marmot compatibility"));
+  g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Leaving"));
   g_assert_null(gh_mls_new_group_page_get_identity_title(page));   /* approved */
 
   /* Relays: the account's own write relay to start with; typed ones are
@@ -1349,11 +1352,8 @@ find_mapped(GtkWidget *widget, GType type, const gchar *title)
   return NULL;
 }
 
-/* Review M1 (charter §7.9: no disabled placeholders in release builds): the
- * window glued as gh-app-services.c glues it, with GH_FEATURE_ENCRYPTED_GROUPS
- * as this build compiled it (gh_mls_ui_attach_if_enabled(); this test never
- * overrides it). At 0 New Group opens on the relay form: no chooser, no
- * "Encrypted Group" row, nothing to choose. At 1, the chooser. */
+/* Release path: the window is glued as gh-app-services.c glues it, with
+ * gh_mls_ui_attach_if_enabled() and the default-on feature flag. */
 static void
 test_gui_flag_new_group(void)
 {
@@ -1376,10 +1376,9 @@ test_gui_flag_new_group(void)
     .account_relays = alice->relays,
   };
   gboolean attached = gh_mls_ui_attach_if_enabled(window, &mls);
-  g_assert_cmpint(attached, ==, GH_FEATURE_ENCRYPTED_GROUPS != 0);
-  g_assert_cmpint(gh_mls_ui_enabled(), ==, GH_FEATURE_ENCRYPTED_GROUPS != 0);
-  g_assert_cmpint(g_action_group_has_action(G_ACTION_GROUP(window), "group-invitations"), ==,
-                  attached);
+  g_assert_true(attached);
+  g_assert_true(gh_mls_ui_enabled());
+  g_assert_true(g_action_group_has_action(G_ACTION_GROUP(window), "group-invitations"));
 
   g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
   AdwDialog *dialog = visible_dialog(window);
@@ -1390,23 +1389,9 @@ test_gui_flag_new_group(void)
   const gchar *first = adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation));
   g_autoptr(GListModel) stack = adw_navigation_view_get_navigation_stack(navigation);
   g_assert_cmpuint(g_list_model_get_n_items(stack), ==, 1);   /* nothing to go back to */
-#if GH_FEATURE_ENCRYPTED_GROUPS
   g_assert_cmpstr(first, ==, "type");
   g_assert_nonnull(gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
   g_assert_nonnull(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group"));
-#else
-  g_assert_cmpstr(first, ==, "form");
-  g_assert_null(gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
-  g_assert_null(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group"));
-  g_assert_null(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
-  /* Choosing an encrypted group leads nowhere: the action is disabled. */
-  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
-  drain();
-  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
-                  ==, "form");
-  /* The relay form itself is what shows. */
-  g_assert_nonnull(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ENTRY_ROW, "Relay"));
-#endif
   adw_dialog_force_close(dialog);
   drain();
   close_window(window);
@@ -1504,7 +1489,7 @@ test_gui_group_info(void)
   GtkWidget *device = find_type(GTK_WIDGET(info), ADW_TYPE_ACTION_ROW, "On this device only");
   g_assert_nonnull(device);
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(device)), ==,
-                  "Messages are kept only on this device; history can’t be restored.");
+                  "Group history stays on this device. It can’t be exported or restored if this device’s data is lost.");
 
   /* Add Carol: accepted contacts not in the group, a fresh check. */
   gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.add-members", NULL);
@@ -2340,6 +2325,72 @@ test_gui_enrollment(void)
 }
 #endif
 
+static void
+test_release_flag(void)
+{
+  /* The release build must expose the same MLS UI exercised by --gui. */
+  g_assert_cmpint(GH_FEATURE_ENCRYPTED_GROUPS, ==, 1);
+  g_assert_true(gh_mls_ui_enabled());
+}
+
+static gboolean
+weak_row_gone(gpointer data)
+{
+  return *(gpointer *)data == NULL;
+}
+
+/* The release picker accepts the format it promises, caps even pasted or
+ * programmatic selection, and keeps a cancelled check's row alive until its
+ * completion callback has finished. */
+static void
+test_gui_picker_boundaries(void)
+{
+  World w;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  accept_contact(alice, BOB);
+  accept_contact(alice, CAROL);
+  GhMlsUiContext context = { .service = alice->service, .accounts = alice->accounts,
+                             .model = alice->model, .settings = alice->settings,
+                             .lookup_deadline = 1 };
+  GhMlsInviteePicker *picker = g_object_ref_sink(g_object_new(GH_TYPE_MLS_INVITEE_PICKER, NULL));
+  gh_mls_invitee_picker_setup(picker, &context, NULL);
+  AdwEntryRow *entry = ADW_ENTRY_ROW(gtk_widget_get_template_child(
+    GTK_WIDGET(picker), GH_TYPE_MLS_INVITEE_PICKER, "add_entry"));
+  gtk_editable_set_text(GTK_EDITABLE(entry), hex[BOB]);
+  g_signal_emit_by_name(entry, "apply");
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==, 1);
+  g_assert_nonnull(gh_mls_invitee_picker_get_row(picker, hex[BOB]));
+
+  for (guint i = 0; i < GH_MLS_SERVICE_MAX_INVITEES - 1; i++) {
+    g_autofree gchar *pubkey = g_strdup_printf("%064x", i + 100);
+    gtk_editable_set_text(GTK_EDITABLE(entry), pubkey);
+    g_signal_emit_by_name(entry, "apply");
+  }
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==,
+                   GH_MLS_SERVICE_MAX_INVITEES);
+  g_assert_false(gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE));
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==,
+                   GH_MLS_SERVICE_MAX_INVITEES);
+  gtk_editable_set_text(GTK_EDITABLE(entry), hex[STRANGER]);
+  g_signal_emit_by_name(entry, "apply");
+  g_assert_null(gh_mls_invitee_picker_get_row(picker, hex[STRANGER]));
+  g_assert_cmpuint(gh_mls_invitee_picker_get_n_selected(picker), ==,
+                   GH_MLS_SERVICE_MAX_INVITEES);
+
+  /* Force a new check, then replace rows before its callback is dispatched. */
+  g_assert_true(gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE));
+  g_assert_true(gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE));
+  gpointer weak_row = gh_mls_invitee_picker_get_row(picker, hex[BOB]);
+  g_object_add_weak_pointer(G_OBJECT(weak_row), &weak_row);
+  gh_mls_invitee_picker_setup(picker, &context, NULL);
+  g_assert_nonnull(weak_row);
+  spin_until(weak_row_gone, &weak_row, "cancelled picker row finalized");
+  g_object_unref(picker);
+  world_down(&w);
+}
+
 /* ---- main ------------------------------------------------------------------------------- */
 
 int
@@ -2376,6 +2427,7 @@ main(int argc, char **argv)
     }
     gh_test_bus_up_beside_gtk(&test_bus);
     g_test_add_func("/groundhog/mls-ui-gui/flag-new-group", test_gui_flag_new_group);
+    g_test_add_func("/groundhog/mls-ui-gui/picker-boundaries", test_gui_picker_boundaries);
     g_test_add_func("/groundhog/mls-ui-gui/new-group", test_gui_new_group);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
     g_test_add_func("/groundhog/mls-ui-gui/new-group-formats", test_gui_new_group_formats);
@@ -2394,6 +2446,7 @@ main(int argc, char **argv)
   } else {
     g_test_init(&argc, &argv, NULL);
     mls_world_init();
+    g_test_add_func("/groundhog/mls-ui/release-flag", test_release_flag);
     g_test_add_func("/groundhog/mls-ui/copy", test_copy);
     g_test_add_func("/groundhog/mls-ui/view-model", test_view_model);
     g_test_add_func("/groundhog/mls-ui/dm-shape", test_dm_shape);

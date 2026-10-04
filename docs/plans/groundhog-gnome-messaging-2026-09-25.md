@@ -257,3 +257,7 @@ Not landed (branches, unreviewed since both agent providers reached their usage 
 (nostrc-7ash fix + review follow-ups) and `groundhog/w27-blossom-upload` (BUD-11 base64url auth, X-SHA-256, live server
 choice). GH_FEATURE_ENCRYPTED_GROUPS stays 0: the two-device criterion is met over private relays; the owner decides
 whether a public-relay rerun is required, and reactions/media must land first (owner decision 2026-10-02).
+
+### W28 (2026-10-04) — encrypted-groups release gate
+
+Owner decision for nostrc-7gx7 step 3: the adopted-format White Noise/MDK 0.11 exchange and older MDK 0.8 matrix (W25), Groundhog two-device acceptance (W27), and supported-server public-relay attachment run (W27) satisfy the gate. Encrypted groups now run in the default build; the obsolete development preview switch and test-control feature override are retired. The release copy names the two public, linkable KeyPackages; newer/older format split; member visibility; relay ciphertext, timing and routing; no history export; potentially local leave until an admin removes the member; and Blossom server IP and blob-size exposure. Groundhog 0.12.0 remains unreleased: this is the MINOR release that includes the flip, not a second bump to 0.13.0. The integrator closes nostrc-7gx7 after landing.

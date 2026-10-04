@@ -179,7 +179,7 @@ sync_media_notice(GhMlsNewGroupPage *self)
   g_autofree gchar *title = g_strdup_printf(
     ngettext("Files stored on %u server", "Files stored on %u servers", n), n);
   g_autofree gchar *subtitle = g_strdup_printf(
-    _("Pictures and files shared in this group will be stored on %s."), list->str);
+    _("Encrypted pictures and files will be stored on %s. A Blossom server learns your IP address and the blob size unless you use Tor."), list->str);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_row), title);
   adw_action_row_set_subtitle(self->media_row, subtitle);
   gtk_widget_set_visible(GTK_WIDGET(self->media_row), TRUE);

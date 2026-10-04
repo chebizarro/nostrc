@@ -28,7 +28,7 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
 
         child: Adw.PreferencesPage {
           Adw.PreferencesGroup {
-            description: _("Only members can read messages. Everyone needs an app that supports encrypted groups.");
+            description: _("Only members can read messages. Everyone needs an app that supports Marmot encrypted groups.");
           }
 
           // This device's approval (gh_mls_identity_copy()); hidden once
@@ -110,7 +110,7 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
 
             Adw.ActionRow {
               title: _("On this device only");
-              subtitle: _("Messages are kept only on this device; history can’t be restored.");
+              subtitle: _("Group history stays on this device. It can’t be exported or restored if this device’s data is lost.");
               use-markup: false;
               subtitle-lines: 3;
 
@@ -119,6 +119,27 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
                 icon-name: "computer-symbolic";
                 accessible-role: presentation;
               }
+            }
+
+            Adw.ActionRow {
+              title: _("Who can see this group");
+              subtitle: _("Members can see each other. Relays see encrypted messages, their timing and the group's relays, but not their contents.");
+              use-markup: false;
+              subtitle-lines: 0;
+            }
+
+            Adw.ActionRow {
+              title: _("Marmot compatibility");
+              subtitle: _("White Noise with MDK 0.11 uses the newer format; MDK 0.8-era apps use the older one. People whose apps support only different formats can't share a group.");
+              use-markup: false;
+              subtitle-lines: 0;
+            }
+
+            Adw.ActionRow {
+              title: _("Leaving");
+              subtitle: _("Leaving may be local until an admin removes you; others may still count you as a member.");
+              use-markup: false;
+              subtitle-lines: 0;
             }
 
             // nostrc-46k7: which Blossom servers store the group's files.

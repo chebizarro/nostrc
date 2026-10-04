@@ -105,7 +105,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.SwitchRow older_marmot_invites_row {
         title: _("Let people using older Marmot apps invite me");
-        subtitle: _("Also publishes an older-format invitation key for older White Noise and Amethyst. Anyone can link the two keys to your account. Off: that key is withdrawn.");
+        subtitle: _("By default your account publishes two public KeyPackage events: one newer and one for MDK 0.8-era apps. Anyone can link both to each other and to your account. Off: the older one is withdrawn, but copies may remain.");
       }
 
       Adw.SwitchRow message_previews_row {
@@ -526,6 +526,12 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     Adw.PreferencesGroup key_package_group {
       visible: false;
       title: _("Encrypted Groups");
+
+      Adw.ActionRow {
+        title: _("What encrypted groups reveal");
+        subtitle: _("Members see each other. Relays see ciphertext, timing and group relays. Group history has no export; leaving may be local until an admin removes you. Attachments use a Blossom server you or the group policy chooses, which sees your IP and blob size.");
+        subtitle-lines: 0;
+      }
 
       Adw.ActionRow key_package_row {
         title: _("Invitations");

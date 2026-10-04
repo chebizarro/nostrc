@@ -48,8 +48,8 @@ void groundhog_register_resource(void);
 #define STORE_ID "0b8f3c2e-5d1a-4e6f-9a7b-2c3d4e5f6a7b"
 #define T0       G_GINT64_CONSTANT(1900000000)
 #define N_PEOPLE 14
-/* This build creates no encrypted groups (GH_FEATURE_ENCRYPTED_GROUPS 0), so
- * the limit doesn't point to them; a build that does says the charter's copy. */
+/* This fixture deliberately disables encrypted-group creation to cover the
+ * unavailable branch; the default release build points to groups instead. */
 #define LIMIT_COPY "A private conversation can include up to 10 people. Larger groups " \
                    "aren't available in this version yet."
 #define LIMIT_COPY_GROUPS "A private conversation can include up to 10 people. For larger " \
@@ -1121,11 +1121,11 @@ test_gui_new_message_limit(void)
     press_enter(dialog);
     g_assert_cmpuint(n_recipients(dialog), ==, i + 1);
   }
-  /* At 10: the limit, said in place, pointing to no missing feature. */
+  /* At 10: the limit, in this fixture with groups deliberately disabled. */
   g_assert_true(gtk_widget_get_visible(limit));
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(limit)), ==, LIMIT_COPY);
   {
-    /* A build with encrypted groups points to them instead (charter §7.9). */
+    /* The release configuration points to groups instead (charter §7.9). */
     GhNewMessageConfig config = new_message_config(&f);
     config.encrypted_groups = TRUE;
     GhNewMessageDialog *groups = g_object_ref_sink(gh_new_message_dialog_new(&config));

@@ -186,7 +186,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="AdwActionRow" id="device_row">
                                 <property name="title" translatable="yes">On this device only</property>
-                                <property name="subtitle" translatable="yes">Messages are kept only on this device; history can’t be restored.</property>
+                                <property name="subtitle" translatable="yes">Group history stays on this device. It can’t be exported or restored if this device’s data is lost.</property>
                                 <property name="use-markup">false</property>
                                 <property name="subtitle-lines">3</property>
                                 <child type="prefix">

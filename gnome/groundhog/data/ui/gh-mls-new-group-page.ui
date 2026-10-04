@@ -23,7 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="AdwPreferencesPage">
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="description" translatable="yes">Only members can read messages. Everyone needs an app that supports encrypted groups.</property>
+                        <property name="description" translatable="yes">Only members can read messages. Everyone needs an app that supports Marmot encrypted groups.</property>
                       </object>
                     </child>
                     <child>
@@ -114,7 +114,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwActionRow">
                             <property name="title" translatable="yes">On this device only</property>
-                            <property name="subtitle" translatable="yes">Messages are kept only on this device; history can’t be restored.</property>
+                            <property name="subtitle" translatable="yes">Group history stays on this device. It can’t be exported or restored if this device’s data is lost.</property>
                             <property name="use-markup">false</property>
                             <property name="subtitle-lines">3</property>
                             <child type="prefix">
@@ -123,6 +123,30 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 <property name="accessible-role">43</property>
                               </object>
                             </child>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Who can see this group</property>
+                            <property name="subtitle" translatable="yes">Members can see each other. Relays see encrypted messages, their timing and the group's relays, but not their contents.</property>
+                            <property name="use-markup">false</property>
+                            <property name="subtitle-lines">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Marmot compatibility</property>
+                            <property name="subtitle" translatable="yes">White Noise with MDK 0.11 uses the newer format; MDK 0.8-era apps use the older one. People whose apps support only different formats can't share a group.</property>
+                            <property name="use-markup">false</property>
+                            <property name="subtitle-lines">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="AdwActionRow">
+                            <property name="title" translatable="yes">Leaving</property>
+                            <property name="subtitle" translatable="yes">Leaving may be local until an admin removes you; others may still count you as a member.</property>
+                            <property name="use-markup">false</property>
+                            <property name="subtitle-lines">0</property>
                           </object>
                         </child>
                         <child>

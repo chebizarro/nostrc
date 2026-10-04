@@ -1038,14 +1038,18 @@ prepare_confirm(GhOnboardingView *self)
     adw_action_row_set_subtitle(ADW_ACTION_ROW(self->relay_list_switch),
       _("Your relay list names no relay you publish to, so people can't find your "
         "encrypted-group keys. This adds these relays to it as relays you publish to and keeps "
-        "everything else in it. Nostr Signer asks once more."));
+        "everything else in it. By default two public KeyPackage events (newer and older "
+        "Marmot formats) can be linked to each other and to your account. Nostr Signer asks "
+        "once more."));
   } else {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->relay_list_switch),
                                   _("Let People Invite You to Encrypted Groups"));
     adw_action_row_set_subtitle(ADW_ACTION_ROW(self->relay_list_switch),
       _("Also publishes a relay list naming these relays as where you publish, so people can "
-        "find your encrypted-group keys there. Nostr Signer asks once more. Anyone can see this "
-        "list. Groundhog first checks that none of these relays holds a relay list of yours, and "
+        "find your encrypted-group keys there. By default two public KeyPackage events (newer "
+        "and older Marmot formats) can be linked to each other and to your account. "
+        "Nostr Signer asks once more. Groundhog first checks that none of these relays holds "
+        "a relay list of yours, and "
         "never changes one you already have."));
   }
   g_autoptr(GError) error = NULL;

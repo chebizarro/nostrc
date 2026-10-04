@@ -107,7 +107,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="older_marmot_invites_row">
                 <property name="title" translatable="yes">Let people using older Marmot apps invite me</property>
-                <property name="subtitle" translatable="yes">Also publishes an older-format invitation key for older White Noise and Amethyst. Anyone can link the two keys to your account. Off: that key is withdrawn.</property>
+                <property name="subtitle" translatable="yes">By default your account publishes two public KeyPackage events: one newer and one for MDK 0.8-era apps. Anyone can link both to each other and to your account. Off: the older one is withdrawn, but copies may remain.</property>
               </object>
             </child>
             <child>
@@ -522,6 +522,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="AdwPreferencesGroup" id="key_package_group">
             <property name="visible">false</property>
             <property name="title" translatable="yes">Encrypted Groups</property>
+            <child>
+              <object class="AdwActionRow">
+                <property name="title" translatable="yes">What encrypted groups reveal</property>
+                <property name="subtitle" translatable="yes">Members see each other. Relays see ciphertext, timing and group relays. Group history has no export; leaving may be local until an admin removes you. Attachments use a Blossom server you or the group policy chooses, which sees your IP and blob size.</property>
+                <property name="subtitle-lines">0</property>
+              </object>
+            </child>
             <child>
               <object class="AdwActionRow" id="key_package_row">
                 <property name="title" translatable="yes">Invitations</property>

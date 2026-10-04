@@ -699,7 +699,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="AdwSwitchRow" id="relay_list_switch">
                                     <property name="active">true</property>
                                     <property name="title" translatable="yes">Let People Invite You to Encrypted Groups</property>
-                                    <property name="subtitle" translatable="yes">Also publishes a relay list naming these relays as where you publish, so people can find your encrypted-group keys there. Nostr Signer asks once more. Anyone can see this list. Groundhog never changes a relay list you already have.</property>
+                                    <property name="subtitle" translatable="yes">Also publishes a public relay list so people can find your encrypted-group invitation keys. By default two public KeyPackage events (newer and older Marmot formats) can be linked to each other and to your account. Nostr Signer asks once more. Groundhog never changes a relay list you already have.</property>
                                     <property name="title-lines">0</property>
                                     <property name="subtitle-lines">0</property>
                                   </object>

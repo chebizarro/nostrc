@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 # This is a focused compile/test gate, not messaging-protocol or GNOME manual
-# accessibility acceptance. Groundhog remains opt-in and incomplete.
+# accessibility acceptance. Groundhog builds encrypted groups by default.
 jobs:
   groundhog:
     runs-on: ubuntu-24.04
@@ -126,7 +126,7 @@ jobs:
               'groundhog-mls-kp-lifecycle', 'groundhog-mls-kp-lifecycle-adopted',
               'groundhog-net', 'groundhog-tls-resumption',
               'groundhog-group-ui', 'groundhog-group-ui-gui',
-              'groundhog-mls-ui', 'groundhog-mls-ui-gui', 'groundhog-mls-preview-guard',
+              'groundhog-mls-ui', 'groundhog-mls-ui-gui',
               'groundhog-conversation-menu', 'groundhog-conversation-menu-gui',
               'groundhog-multi-send',
               'groundhog-media', 'groundhog-blossom', 'groundhog-media-purge', 'groundhog-relay-guard',

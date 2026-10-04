@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(groundhog VERSION 0.12.0 LANGUAGES C)
 
+# W28: accept old preview build invocations while dropping their cached gate.
+# The feature is enabled in normal and packaging builds, regardless of the
+# obsolete value. This lets an existing preview build directory be reused.
+if (DEFINED GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW)
+  message(STATUS "GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW is retired; encrypted groups are enabled by default")
+  unset(GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW CACHE)
+endif()
+
 include(GNUInstallDirs)
 if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
   include(CTest)
@@ -647,12 +655,6 @@ if (BUILD_TESTING)
   install(CODE "message(FATAL_ERROR \"Groundhog testing build has a test-only D-Bus control interface; reconfigure with BUILD_TESTING=OFF before installing.\")")
 endif()
 
-# Review M5: a GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW build (development only,
-# see the W21 section below) is never installed: cmake --install, ninja
-# install and CPack run this before any Groundhog file.
-if (GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW)
-  install(CODE "message(FATAL_ERROR \"Groundhog was built with GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=ON, a development-only build: it is not installed.\")")
-endif()
 install(TARGETS groundhog RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
@@ -2432,8 +2434,8 @@ endif()
 # and GhMlsInvitesDialog; gh-mls-ui.c attaches them to the window (the
 # composer delegate, win.group-invitations and the sidebar entry, Group Info,
 # the header's member count, "Unable to decrypt N messages yet"). The
-# executable attaches it only while GH_FEATURE_ENCRYPTED_GROUPS is 1
-# (gh-features.h); the tests attach it directly, so it is tested at 0.
+# executable attaches it with GH_FEATURE_ENCRYPTED_GROUPS=1 (gh-features.h);
+# the tests exercise the same default-on path.
 if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
   message(STATUS "Groundhog encrypted-group UI: enabled")
   set(GROUNDHOG_MLS_UI_SOURCES src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
@@ -2450,36 +2452,6 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c)
     target_link_libraries(groundhog PRIVATE groundhog-mls-ui)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS_UI=1)
-  endif()
-  # Trying encrypted groups before their backfill blockers close (see
-  # gh-features.h): the executable only, never a release, a package or an
-  # install (review M5; the rules are cmake/GroundhogPreviewGuard.cmake,
-  # tested by groundhog-mls-preview-guard). A reused build directory keeps the
-  # cached option, so a release configure on top of a preview tree fails here
-  # instead of shipping it.
-  option(GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW
-         "Build Groundhog with GH_FEATURE_ENCRYPTED_GROUPS=1 (development only)" OFF)
-  if (GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW)
-    include(${CMAKE_CURRENT_LIST_DIR}/cmake/GroundhogPreviewGuard.cmake)
-    set(groundhog_preview_cpack)
-    if (DEFINED CPACK_PACKAGE_NAME OR DEFINED CPACK_GENERATOR)
-      set(groundhog_preview_cpack CPACK)
-    endif()
-    groundhog_preview_problem(groundhog_preview_problem
-      BUILD_TYPE "${CMAKE_BUILD_TYPE}" CONFIGURATION_TYPES ${CMAKE_CONFIGURATION_TYPES}
-      INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}" ${groundhog_preview_cpack})
-    if (groundhog_preview_problem)
-      message(FATAL_ERROR "Groundhog: GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=ON is for development "
-                          "builds only, and ${groundhog_preview_problem}. Encrypted groups "
-                          "ship when nostrc-5rfp, nostrc-cpwf and nostrc-kzun close (see "
-                          "src/app/gh-features.h). Configure with "
-                          "-DGROUNDHOG_ENCRYPTED_GROUPS_PREVIEW=OFF.")
-    endif()
-    message(WARNING "Groundhog: encrypted groups are ON (GROUNDHOG_ENCRYPTED_GROUPS_PREVIEW); "
-                    "their backfill is not complete yet (nostrc-5rfp, nostrc-cpwf, "
-                    "nostrc-kzun). Not for release; installing this build is refused.")
-    target_compile_definitions(groundhog PRIVATE GH_FEATURE_ENCRYPTED_GROUPS=1)
-    # Installing it is refused before Groundhog's first install rule (above).
   endif()
   if (BUILD_TESTING AND TARGET groundhog-test-schemas AND
       TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
@@ -2508,10 +2480,6 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     target_compile_options(test-groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-mls-ui)
     add_dependencies(test-groundhog-mls-ui groundhog-test-schemas)
-    # Review M5: the preview's release/package/install guard, in script mode.
-    add_test(NAME groundhog-mls-preview-guard
-      COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_preview_guard.cmake)
-    set_tests_properties(groundhog-mls-preview-guard PROPERTIES TIMEOUT 30)
     add_test(NAME groundhog-mls-ui COMMAND test-groundhog-mls-ui)
     set_tests_properties(groundhog-mls-ui PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
