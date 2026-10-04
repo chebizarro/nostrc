@@ -1077,15 +1077,19 @@ test_gui_new_group(void)
   GtkWidget *encrypted = find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group");
   g_assert_nonnull(encrypted);
   g_assert_cmpstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(encrypted)), ==,
-                  "Only members can read messages. Everyone needs an app that supports "
-                  "Marmot encrypted groups.");
+                  "Only members can read messages. Ask people to use a compatible Marmot "
+                  "format; some app versions cannot join.");
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
     gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
   g_assert_true(ADW_NAVIGATION_PAGE(page) == adw_navigation_view_get_visible_page(navigation));
   g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Who can see this group"));
-  g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Marmot compatibility"));
+  AdwActionRow *compatibility = ADW_ACTION_ROW(
+    find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Marmot compatibility"));
+  g_assert_nonnull(compatibility);
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(compatibility),
+                          "Some intermediate Marmot app versions cannot join either format."));
   g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Leaving"));
   g_assert_null(gh_mls_new_group_page_get_identity_title(page));   /* approved */
 

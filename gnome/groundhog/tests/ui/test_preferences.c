@@ -380,6 +380,21 @@ test_choice_rows_bind_both_ways(Fixture *f, gconstpointer data)
 /* "Let people using older Marmot apps invite me" is a choice only when the
  * adopted producer is built: then it's shown and bound; without it the older
  * format is the only one and the switch isn't shown at all (review N4). */
+static GtkWidget *
+find_row_title(GtkWidget *widget, const char *title)
+{
+  if (ADW_IS_ACTION_ROW(widget) &&
+      g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(widget)), title) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c;
+       c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_row_title(c, title);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
 static void
 test_older_marmot_switch(Fixture *f, gconstpointer data)
 {
@@ -394,6 +409,11 @@ test_older_marmot_switch(Fixture *f, gconstpointer data)
     return;
   }
   g_assert_true(gtk_widget_get_sensitive(row));
+  present(f, 800, 700);
+  GtkWidget *compatibility = find_row_title(GTK_WIDGET(f->dialog), "Marmot compatibility");
+  g_assert_nonnull(compatibility);
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(compatibility)),
+                          "Some intermediate Marmot app versions cannot join either format."));
   g_assert_true(adw_switch_row_get_active(ADW_SWITCH_ROW(row))); /* on by default */
   g_settings_set_boolean(f->settings, "mls-legacy-key-packages", FALSE);
   drain_idle();

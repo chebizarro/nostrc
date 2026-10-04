@@ -28,7 +28,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwActionRow" id="encrypted_choice">
                             <property name="title" translatable="yes">Encrypted Group</property>
-                            <property name="subtitle" translatable="yes">Only members can read messages. Everyone needs an app that supports Marmot encrypted groups.</property>
+                            <property name="subtitle" translatable="yes">Only members can read messages. Ask people to use a compatible Marmot format; some app versions cannot join.</property>
                             <property name="use-markup">false</property>
                             <property name="activatable">true</property>
                             <property name="action-name">new-group.choose-encrypted</property>

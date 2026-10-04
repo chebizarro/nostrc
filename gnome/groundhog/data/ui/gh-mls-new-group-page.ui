@@ -23,7 +23,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="AdwPreferencesPage">
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="description" translatable="yes">Only members can read messages. Everyone needs an app that supports Marmot encrypted groups.</property>
+                        <property name="description" translatable="yes">Only members can read messages. Ask people to use a compatible Marmot format; some app versions cannot join.</property>
                       </object>
                     </child>
                     <child>
@@ -136,7 +136,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <child>
                           <object class="AdwActionRow">
                             <property name="title" translatable="yes">Marmot compatibility</property>
-                            <property name="subtitle" translatable="yes">White Noise with MDK 0.11 uses the newer format; MDK 0.8-era apps use the older one. People whose apps support only different formats can't share a group.</property>
+                            <property name="subtitle" translatable="yes">Verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11) in the newer format; MDK 0.8-era apps use an older-format group. Some intermediate Marmot app versions cannot join either format. Apps limited to different formats cannot share a group.</property>
                             <property name="use-markup">false</property>
                             <property name="subtitle-lines">0</property>
                           </object>

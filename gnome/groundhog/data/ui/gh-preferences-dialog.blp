@@ -108,6 +108,13 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         subtitle: _("By default your account publishes two public KeyPackage events: one newer and one for MDK 0.8-era apps. Anyone can link both to each other and to your account. Off: the older one is withdrawn, but copies may remain.");
       }
 
+      Adw.ActionRow marmot_compatibility_row {
+        title: _("Marmot compatibility");
+        subtitle: _("Verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11) in the newer format; MDK 0.8-era apps use an older-format group. Some intermediate Marmot app versions cannot join either format. Apps limited to different formats cannot share a group.");
+        use-markup: false;
+        subtitle-lines: 0;
+      }
+
       Adw.SwitchRow message_previews_row {
         title: _("Show Message Previews in List");
         subtitle: _("The latest message appears under each conversation");
@@ -148,7 +155,7 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.ComboRow default_dm_protocol_row {
         title: _("New Direct Messages");
-        subtitle: _("Marmot messages are end-to-end encrypted and work with White Noise. NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.");
+        subtitle: _("Marmot messages are end-to-end encrypted; verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11). NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.");
 
         model: StringList {
           strings [

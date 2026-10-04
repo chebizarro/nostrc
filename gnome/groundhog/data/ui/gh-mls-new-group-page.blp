@@ -28,7 +28,7 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
 
         child: Adw.PreferencesPage {
           Adw.PreferencesGroup {
-            description: _("Only members can read messages. Everyone needs an app that supports Marmot encrypted groups.");
+            description: _("Only members can read messages. Ask people to use a compatible Marmot format; some app versions cannot join.");
           }
 
           // This device's approval (gh_mls_identity_copy()); hidden once
@@ -130,7 +130,7 @@ template $GhMlsNewGroupPage: Adw.NavigationPage {
 
             Adw.ActionRow {
               title: _("Marmot compatibility");
-              subtitle: _("White Noise with MDK 0.11 uses the newer format; MDK 0.8-era apps use the older one. People whose apps support only different formats can't share a group.");
+              subtitle: _("Verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11) in the newer format; MDK 0.8-era apps use an older-format group. Some intermediate Marmot app versions cannot join either format. Apps limited to different formats cannot share a group.");
               use-markup: false;
               subtitle-lines: 0;
             }

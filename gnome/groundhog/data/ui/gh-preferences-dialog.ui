@@ -111,6 +111,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="AdwActionRow" id="marmot_compatibility_row">
+                <property name="title" translatable="yes">Marmot compatibility</property>
+                <property name="subtitle" translatable="yes">Verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11) in the newer format; MDK 0.8-era apps use an older-format group. Some intermediate Marmot app versions cannot join either format. Apps limited to different formats cannot share a group.</property>
+                <property name="use-markup">false</property>
+                <property name="subtitle-lines">0</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwSwitchRow" id="message_previews_row">
                 <property name="title" translatable="yes">Show Message Previews in List</property>
                 <property name="subtitle" translatable="yes">The latest message appears under each conversation</property>
@@ -155,7 +163,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwComboRow" id="default_dm_protocol_row">
                 <property name="title" translatable="yes">New Direct Messages</property>
-                <property name="subtitle" translatable="yes">Marmot messages are end-to-end encrypted and work with White Noise. NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.</property>
+                <property name="subtitle" translatable="yes">Marmot messages are end-to-end encrypted; verified with White Noise Android 2026.9.30 (MDK/MarmotKit 0.11). NIP-17 gift wraps work with more apps but aren't end-to-end encrypted.</property>
                 <property name="model">
                   <object class="GtkStringList">
                     <items>
