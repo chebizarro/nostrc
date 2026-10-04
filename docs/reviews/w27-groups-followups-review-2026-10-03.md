@@ -25,3 +25,23 @@
 - The media policy is an MLS app component merged locally before the first Add, not a public Nostr event tag. Its server URLs are visible to invited/current group members (and to the selected Blossom servers on upload), not to group relays through the policy itself. An empty account list creates no policy, with no built-in server fallback.
 - Each normal adopted+legacy rotation requests **two account Nostr signatures** (one per KeyPackage). The forced-held case now also requests two, rather than only the adopted signature; failed attempts/retries can request more. No immediate recursive double-publish loop was observed, but the independently failing publications cause finding 2.
 - Version decision: libmarmot and Groundhog already declare unreleased `0.12.0` consistently with `VERSION_MANIFEST.md`; these changes are folded into that unreleased version, so **no further bump** is needed for this review.
+
+## Addendum — re-review at `b627150c` (2026-10-03)
+
+**Final verdict: APPROVE-WITH-NITS.** This supersedes the changes-required verdict above. Commits `0f54c59e` and `b627150c` resolve all five findings; I found no remaining blocker in the reviewed paths.
+
+1. **Group Info callback (former High 1): resolved.** `gh-mls-group-info-dialog.c:313-386,1321-1330` now owns a cancellable, finishes the async result without dereferencing a dead dialog, and uses a weak reference plus the dispose/destruction checks before touching widgets. The GUI test closes the dialog with the relay OK held, verifies it is freed, then releases the OK. Reverting this fix makes the test fail at its pending-operation assertion.
+2. **Legacy-newer invariant (former High 2): resolved on eventual relay recovery.** `gh-mls-service.c:7337-7365,7410-7449,7816-7846` persists a legacy repair obligation after a partial relay result or signer failure, clears the publication cursor, and retries despite an invitation hold. The partial-relay test checks both relays' newest format after restart; the signer tests cover denial before and after adopted confirmation. Disabling partial-relay repair makes its test time out; reverting the signer-failure recovery makes both signer tests time out.
+3. **Failed forced publish (former High 3): resolved.** `gh-mls-service.c:7337-7450` clears `keep_old_keys` on no-ACK and signer/publish failures. The forced-failure test then declines the invitation and verifies that an ordinary successful retry retires the old init key. Removing the no-ACK clear makes that assertion fail.
+4. **Hold-bounded retirement (former Medium 4): resolved.** `gh-mls-service.c:7055-7229,7755-7783` persists the exact confirmed legacy ref and retires older init keys when the invitation ends or the original hold cap expires, including after restart. Disabling deferred retirement makes the post-decline assertion fail and the hold-cap test time out; both pass with the fix restored.
+5. **New Group copy (former Medium 5): resolved.** `gh-mls-new-group-page.c:150-184` hides the media-policy claim for legacy groups and explicitly states the no-server outcome for adopted groups. The GUI tests cover both and fail when either branch is disabled.
+
+**Nit — `VERSION_MANIFEST.md:230-232`:** A blank line separates the two new W27 decision rows from the existing decision table. Remove it so the rows remain inside that table; this does not affect the version decision. Libmarmot and Groundhog are still unreleased at `0.12.0`, so **no further version bump** is required.
+
+### Re-review verification
+
+- Fresh macOS Ninja configure/build with Groundhog and MDK 0.11 interop enabled, using private image tag `nostrc-mdk-interop:0.11.0-rv-w27-groups-rereview`: **pass**. Touched MLS service, KeyPackage lifecycle (both formats), privacy-MLS and MLS UI/GUI suites: **6/6 pass**.
+- Full macOS CTest: **476 registered, 0 failures, 6 expected skips**. MDK 0.11 matrix separately: **18 registered, 0 failures, 1 expected MDK 0.9 incompatibility skip**; its GUI and media-policy cases passed.
+- `python3 scripts/check-unsequenced-args.py`: **pass**. Linux gate: **454 smoke tests pass**. `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-groups-followups`: clean run **exit 0, 54 tests pass**.
+- The fix-disabled checks above were made only in the private review worktree. All source mutations were restored; the affected targets and baseline regression tests passed again afterward.
+- After fetching, `origin/master` remained `7194f038`. Cherry-picking all five slice-D commits (`2170aba7` through `b627150c`) onto it with `git cherry-pick -n` in a separate private worktree completed **without conflicts**. The main checkout was not changed; nothing was pushed.
