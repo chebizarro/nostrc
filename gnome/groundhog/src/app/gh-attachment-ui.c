@@ -410,8 +410,11 @@ start_upload(GhAttachmentUi *ui)
                           ui->groups_data);
     return;
   }
-  gh_attachments_upload_async(ui->attachments, offer->prepared->plaintext, offer->prepared->mime,
-                              offer->upload, on_uploaded, op);
+  /* Bind the choice displayed by this sheet to this send, rather than
+   * mutating the shared client while another transfer might be in flight. */
+  gh_attachments_upload_on_servers_async(ui->attachments, (const gchar *const *)list,
+                                          offer->prepared->plaintext, offer->prepared->mime,
+                                          offer->upload, on_uploaded, op);
 }
 
 /* ---- the sheet's signals ------------------------------------------------------------ */

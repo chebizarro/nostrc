@@ -118,6 +118,9 @@ void gh_blossom_client_set_allow_private_hosts(GhBlossomClient *self, gboolean a
 void gh_blossom_client_set_max_file_size(GhBlossomClient *self, gsize max_file_size);
 gsize gh_blossom_client_get_max_file_size(GhBlossomClient *self);
 
+/* Encode a signed event for BUD-11's Nostr Authorization header. */
+gchar *gh_blossom_client_authorization(const gchar *event_json);
+
 /* Uploads ciphertext, whose SHA-256 is sha256_hex, to the first server that
  * takes it. Finishes with the file URL (<server>/<sha256>) and, in
  * out_server (nullable), the server used (normalized). Errors:
@@ -127,6 +130,13 @@ gsize gh_blossom_client_get_max_file_size(GhBlossomClient *self);
 void gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext,
                                     const gchar *sha256_hex, GCancellable *cancellable,
                                     GAsyncReadyCallback callback, gpointer user_data);
+/* As above, but snapshot the selected server list for this upload only. This
+ * never changes the client's Preferences-backed list or its test override. */
+void gh_blossom_client_upload_on_servers_async(GhBlossomClient *self,
+                                               const gchar *const *servers,
+                                               GBytes *ciphertext, const gchar *sha256_hex,
+                                               GCancellable *cancellable,
+                                               GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_blossom_client_upload_finish(GhBlossomClient *self, GAsyncResult *result,
                                        gchar **out_server, GError **error);
 

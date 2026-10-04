@@ -113,6 +113,11 @@ gboolean gh_attachment_check_preview(GBytes *plaintext, GhMediaFormat *out_forma
 void gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gchar *mime_hint,
                                 GCancellable *cancellable, GAsyncReadyCallback callback,
                                 gpointer user_data);
+/* As above, using a snapshot of the server choice for this file only. */
+void gh_attachment_upload_on_servers_async(GhBlossomClient *client,
+                                           const gchar *const *servers, GBytes *file,
+                                           const gchar *mime_hint, GCancellable *cancellable,
+                                           GAsyncReadyCallback callback, gpointer user_data);
 GhNip17File *gh_attachment_upload_finish(GAsyncResult *result, GError **error);
 /* As gh_attachment_upload_finish(), and in out_server (nullable) the server
  * used, or with GH_BLOSSOM_ERROR_AUTH_REQUIRED the server that asked for an

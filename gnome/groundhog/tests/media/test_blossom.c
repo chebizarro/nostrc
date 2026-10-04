@@ -8,6 +8,7 @@
 #include "gh-message.h"
 #include "gh-store-media.h"
 #include "blossom-fixture.h"
+#include "gh-attachments.h"
 #include "canary-scan.h"
 #include "socks5-fixture.h"
 #include "../gh-test-port.h"
@@ -356,6 +357,47 @@ test_no_server(void)
   upload(&f, jpeg, &r, NULL);
   g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_NO_SERVER);
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  result_clear(&r);
+  fixture_down(&f);
+}
+
+static void
+test_authorization_base64url(void)
+{
+  g_autofree gchar *unpadded = gh_blossom_client_authorization("{}");
+  g_assert_cmpstr(unpadded, ==, "Nostr e30");
+  g_autofree gchar *url_safe = gh_blossom_client_authorization("{\"x\":\"💬\"}");
+  g_assert_cmpstr(url_safe, ==, "Nostr eyJ4Ijoi8J-SrCJ9");
+  g_autofree gchar *slash = gh_blossom_client_authorization("{\"x\":\"࠿\"}");
+  g_assert_cmpstr(slash, ==, "Nostr eyJ4Ijoi4KC_In0");
+}
+
+/* A strict BUD-02/BUD-11 server accepts the ciphertext, hash header and
+ * unpadded Base64url authorization. A media-only server tells the truth. */
+static void
+test_strict_encrypted_upload(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  blossom_fixture_set_strict_upload(f.blossom, TRUE);
+  g_autoptr(GBytes) jpeg = make_jpeg(4096);
+  Result r = { 0 };
+  upload(&f, jpeg, &r, NULL);
+  g_assert_no_error(r.error);
+  g_assert_nonnull(r.file);
+  BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
+  g_assert_true(put->auth_valid);
+  g_assert_true(put->auth_base64url);
+  g_assert_cmpstr(put->content_type, ==, "application/octet-stream");
+  g_assert_cmpstr(put->x_sha256, ==, r.file->x);
+  blossom_fixture_reject_opaque(f.blossom, TRUE);
+  upload(&f, jpeg, &r, NULL);
+  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_REFUSED);
+  g_assert_nonnull(strstr(r.error->message, "HTTP 415"));
+  g_assert_nonnull(strstr(r.error->message, "File type not allowed"));
+  g_autofree gchar *shown = gh_attachments_describe_error(r.error, GH_ATTACHMENTS_UPLOAD,
+                                                         FALSE, FALSE, NULL, NULL);
+  g_assert_nonnull(strstr(shown, "HTTP 415"));
   result_clear(&r);
   fixture_down(&f);
 }
@@ -1069,6 +1111,8 @@ main(int argc, char **argv)
   g_autofree gchar *uuid = g_uuid_string_random();
   file_canary = g_strdup_printf("G21-FILE-PLAINTEXT-CANARY-%s", uuid);
   g_test_add_func("/groundhog/blossom/no-server", test_no_server);
+  g_test_add_func("/groundhog/blossom/authorization-base64url", test_authorization_base64url);
+  g_test_add_func("/groundhog/blossom/strict-encrypted-upload", test_strict_encrypted_upload);
   g_test_add_func("/groundhog/blossom/at1-round-trip", test_at1_round_trip);
   g_test_add_func("/groundhog/blossom/at2-tampered-download", test_at2_tampered_download);
   g_test_add_func("/groundhog/blossom/at3-size-cap", test_at3_size_cap);

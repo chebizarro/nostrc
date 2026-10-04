@@ -491,6 +491,16 @@ gh_attachments_upload_async(GhAttachments *self, GBytes *file, const gchar *mime
                             GCancellable *cancellable, GAsyncReadyCallback callback,
                             gpointer user_data)
 {
+  gh_attachments_upload_on_servers_async(self, NULL, file, mime, cancellable, callback,
+                                          user_data);
+}
+
+void
+gh_attachments_upload_on_servers_async(GhAttachments *self, const gchar *const *servers,
+                                       GBytes *file, const gchar *mime,
+                                       GCancellable *cancellable, GAsyncReadyCallback callback,
+                                       gpointer user_data)
+{
   g_return_if_fail(GH_IS_ATTACHMENTS(self));
   g_return_if_fail(file != NULL);
   GTask *task = g_task_new(self, cancellable, callback, user_data);
@@ -504,7 +514,8 @@ gh_attachments_upload_async(GhAttachments *self, GBytes *file, const gchar *mime
     g_object_unref(task);
     return;
   }
-  gh_attachment_upload_async(self->client, file, mime, cancellable, on_uploaded, task);
+  gh_attachment_upload_on_servers_async(self->client, servers, file, mime, cancellable,
+                                         on_uploaded, task);
 }
 
 GhNip17File *

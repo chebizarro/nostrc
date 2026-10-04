@@ -116,6 +116,7 @@ typedef struct {
   const gchar *accept;        /* NULL: "application/json" */
   const gchar *authorization; /* the Authorization header value, or NULL */
   const gchar *content_type;  /* of body; NULL: application/octet-stream */
+  const gchar *x_sha256;      /* optional BUD-02 X-SHA-256 of body */
   GBytes *body;               /* the request body, or NULL */
   gsize max_bytes;            /* the answer's body cap (> 0) */
   /* W25: the URL is someone else's choice (e.g. a group's media server):

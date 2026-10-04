@@ -13,6 +13,8 @@ struct _BlossomFixture {
   GPtrArray *requests;      /* BlossomRequest */
   gchar *required_pubkey;
   gchar *lie;
+  gboolean strict_upload;
+  gboolean reject_opaque;
   gboolean hold;
   gboolean chunked;
   gboolean stall;
@@ -28,6 +30,8 @@ request_free(gpointer data)
   g_free(request->auth_pubkey);
   g_free(request->auth_x);
   g_free(request->auth_server);
+  g_free(request->content_type);
+  g_free(request->x_sha256);
   g_free(request);
 }
 
@@ -58,8 +62,20 @@ check_auth(BlossomRequest *request, const gchar *header, const gchar *body_sha25
   request->has_auth = TRUE;
   if (!g_str_has_prefix(header, "Nostr "))
     return FALSE;
+  const gchar *encoded = header + 6;
+  request->auth_base64url = *encoded != '\0' && strspn(encoded,
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_") == strlen(encoded);
+  g_autofree gchar *standard = g_malloc(strlen(encoded) + 4);
+  strcpy(standard, encoded);
+  gsize n = strlen(standard);
+  while (n % 4) standard[n++] = '=';
+  standard[n] = '\0';
+  for (gchar *p = standard; *p; p++) {
+    if (*p == '-') *p = '+';
+    else if (*p == '_') *p = '/';
+  }
   gsize length = 0;
-  g_autofree guchar *raw = g_base64_decode(header + 6, &length);
+  g_autofree guchar *raw = g_base64_decode(standard, &length);
   g_autofree gchar *json = raw ? g_strndup((const gchar *)raw, length) : NULL;
   if (!json)
     return FALSE;
@@ -100,10 +116,22 @@ on_put(BlossomFixture *f, SoupServerMessage *message, BlossomRequest *request)
   const guint8 *data = g_bytes_get_data(bytes, &size);
   request->body_size = size;
   g_autofree gchar *sha256 = sha256_of(data, size);
-  const gchar *auth = soup_message_headers_get_one(soup_server_message_get_request_headers(message),
-                                                   "Authorization");
+  SoupMessageHeaders *headers = soup_server_message_get_request_headers(message);
+  request->content_type = g_strdup(soup_message_headers_get_content_type(headers, NULL));
+  request->x_sha256 = g_strdup(soup_message_headers_get_one(headers, "X-SHA-256"));
+  const gchar *auth = soup_message_headers_get_one(headers, "Authorization");
   if (!check_auth(request, auth, sha256)) {
     refuse(message, SOUP_STATUS_UNAUTHORIZED, "Invalid upload authorization");
+    return;
+  }
+  if (f->strict_upload && (!request->auth_base64url ||
+                           g_strcmp0(request->x_sha256, sha256) != 0 ||
+                           g_strcmp0(request->content_type, "application/octet-stream") != 0)) {
+    refuse(message, SOUP_STATUS_BAD_REQUEST, "Invalid encrypted upload headers");
+    return;
+  }
+  if (f->reject_opaque && g_strcmp0(request->content_type, "application/octet-stream") == 0) {
+    refuse(message, SOUP_STATUS_UNSUPPORTED_MEDIA_TYPE, "File type not allowed");
     return;
   }
   if (f->required_pubkey && g_strcmp0(request->auth_pubkey, f->required_pubkey) != 0) {
@@ -253,6 +281,18 @@ blossom_fixture_require_pubkey(BlossomFixture *f, const gchar *pubkey)
 {
   g_free(f->required_pubkey);
   f->required_pubkey = g_strdup(pubkey);
+}
+
+void
+blossom_fixture_set_strict_upload(BlossomFixture *f, gboolean strict)
+{
+  f->strict_upload = strict;
+}
+
+void
+blossom_fixture_reject_opaque(BlossomFixture *f, gboolean reject)
+{
+  f->reject_opaque = reject;
 }
 
 void

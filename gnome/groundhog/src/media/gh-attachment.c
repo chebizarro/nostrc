@@ -351,6 +351,16 @@ gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gchar *m
                            GCancellable *cancellable, GAsyncReadyCallback callback,
                            gpointer user_data)
 {
+  gh_attachment_upload_on_servers_async(client, NULL, file, mime_hint, cancellable, callback,
+                                        user_data);
+}
+
+void
+gh_attachment_upload_on_servers_async(GhBlossomClient *client, const gchar *const *servers,
+                                      GBytes *file, const gchar *mime_hint,
+                                      GCancellable *cancellable, GAsyncReadyCallback callback,
+                                      gpointer user_data)
+{
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(client));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_attachment_upload_async);
@@ -368,8 +378,12 @@ gh_attachment_upload_async(GhBlossomClient *client, GBytes *file, const gchar *m
   Upload *upload = g_new0(Upload, 1);
   upload->sealed = sealed;
   g_task_set_task_data(task, upload, upload_free);
-  gh_blossom_client_upload_async(client, sealed->ciphertext, sealed->file->x, cancellable,
-                                 on_uploaded, task);
+  if (servers)
+    gh_blossom_client_upload_on_servers_async(client, servers, sealed->ciphertext,
+                                              sealed->file->x, cancellable, on_uploaded, task);
+  else
+    gh_blossom_client_upload_async(client, sealed->ciphertext, sealed->file->x, cancellable,
+                                   on_uploaded, task);
 }
 
 GhNip17File *

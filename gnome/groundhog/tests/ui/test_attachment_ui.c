@@ -856,6 +856,8 @@ test_attach_send(void)
   fixture_clear(&f);
 }
 
+static gboolean label_with(GtkWidget *widget, const gchar *prefix);
+
 /* D6: with no server the first use asks for one, refuses what isn't an
  * https server, never picks one, and contacts nothing. */
 static void
@@ -869,6 +871,7 @@ test_first_use_server(void)
   g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 2);
   gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
   GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  g_assert_true(label_with(GTK_WIDGET(sheet), "Files are encrypted on this device"));
   AdwEntryRow *entry = gh_attachment_sheet_get_server_entry(sheet);
   gtk_editable_set_text(GTK_EDITABLE(entry), "http://files.example.com");
   gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.use-server", NULL);
@@ -888,6 +891,67 @@ test_first_use_server(void)
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
   /* Closing sends nothing. */
   close_sheet(&f);
+  g_assert_null(own_file_message(bob));
+  fixture_clear(&f);
+}
+
+/* The server shown by a live sheet wins over an old client server snapshot. */
+static void
+test_live_server_choice(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  GhConversation *bob = receive_text(&f, "Hi");
+  send_stack_select(&f.s, bob);
+  g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 5);
+  gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
+  GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  /* A setting delivered to the UI later than an already-created client's
+   * snapshot must still be the one used for this send. */
+  const gchar *chosen[] = { blossom_fixture_url(f.blossom), NULL };
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  const gchar *stale[] = { NULL };
+  gh_blossom_client_set_servers(gh_attachments_get_client(f.attachments), stale);
+  gh_attachment_sheet_show_preview(sheet, NULL);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  gh_test_spin_until(has_own_file, bob);
+  GhBlossomClient *client = gh_attachments_get_client(f.attachments);
+  g_auto(GStrv) still_stale = gh_blossom_client_dup_servers(client);
+  g_assert_null(still_stale[0]); /* this upload never touched the shared override */
+  gh_blossom_client_set_servers(client, NULL);
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  g_auto(GStrv) after = gh_blossom_client_dup_servers(client);
+  g_assert_cmpstr(after[0], ==, blossom_fixture_url(f.blossom));
+  fixture_clear(&f);
+}
+
+/* An image-only server's rejection stays visible in the Send File sheet. */
+static void
+test_opaque_server_refusal(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  blossom_fixture_set_strict_upload(f.blossom, TRUE);
+  blossom_fixture_reject_opaque(f.blossom, TRUE);
+  GhConversation *bob = receive_text(&f, "Hi");
+  send_stack_select(&f.s, bob);
+  g_autoptr(GBytes) jpeg = make_jpeg(8 * 1024, 6);
+  gh_attachment_ui_offer_bytes(f.s.window, jpeg, "photo.jpg", "image/jpeg");
+  GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  g_assert_true(label_with(GTK_WIDGET(sheet), "Files are encrypted on this device"));
+  const gchar *chosen[] = { blossom_fixture_url(f.blossom), NULL };
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", chosen));
+  gh_attachment_sheet_show_preview(sheet, NULL);
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  wait_page(&f, "sending");
+  wait_page(&f, "preview");
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_error(sheet), "HTTP 415"));
+  g_assert_nonnull(strstr(gh_attachment_sheet_get_error(sheet), "File type not allowed"));
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
   g_assert_null(own_file_message(bob));
   fixture_clear(&f);
 }
@@ -1677,6 +1741,8 @@ main(int argc, char **argv)
 #define ADD(path, func) nostrc_test_bus_add_func("/groundhog/attachment-ui/" path, func)
   ADD("attach-send", test_attach_send);
   ADD("first-use-server", test_first_use_server);
+  ADD("live-server-choice", test_live_server_choice);
+  ADD("opaque-server-refusal", test_opaque_server_refusal);
   ADD("consent", test_consent);
   ADD("drop-and-paste", test_drop_and_paste);
   ADD("card-download-and-save", test_card_download_and_save);

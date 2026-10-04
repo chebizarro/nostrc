@@ -633,6 +633,8 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
   soup_message_headers_replace(headers, "Accept", accept ? accept : "application/json");
   if (send && send->authorization)
     soup_message_headers_replace(headers, "Authorization", send->authorization);
+  if (send && send->x_sha256)
+    soup_message_headers_replace(headers, "X-SHA-256", send->x_sha256);
   if (send && send->body)
     soup_message_set_request_body_from_bytes(request->message,
                                              send->content_type ? send->content_type
@@ -682,7 +684,7 @@ gh_net_http_send_async(GhNetHttp *self, const GhNetHttpRequest *request,
                    g_str_equal(request->method, SOUP_METHOD_PUT) ||
                    g_str_equal(request->method, SOUP_METHOD_HEAD));
   g_return_if_fail(header_value_ok(request->accept) && header_value_ok(request->authorization) &&
-                   header_value_ok(request->content_type));
+                   header_value_ok(request->content_type) && header_value_ok(request->x_sha256));
   request_start(self, request, request->uri, request->accept, request->max_bytes,
                 request->public_only, cancellable, callback, user_data);
 }

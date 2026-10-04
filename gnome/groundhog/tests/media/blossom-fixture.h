@@ -23,6 +23,9 @@ typedef struct {
   gchar *auth_pubkey;  /* its pubkey (NULL without a parsable event) */
   gchar *auth_x;
   gchar *auth_server;
+  gchar *content_type;
+  gchar *x_sha256;
+  gboolean auth_base64url;
   gint64 auth_expiration;
   gsize body_size;
 } BlossomRequest;
@@ -37,6 +40,10 @@ guint16 blossom_fixture_port(BlossomFixture *fixture);
 
 /* Uploads are accepted only when signed by pubkey (NULL: any valid key). */
 void blossom_fixture_require_pubkey(BlossomFixture *fixture, const gchar *pubkey);
+/* Enforce BUD-11 Base64url and BUD-02 ciphertext headers. */
+void blossom_fixture_set_strict_upload(BlossomFixture *fixture, gboolean strict);
+/* Simulate a media-only server: opaque bytes get HTTP 415/X-Reason. */
+void blossom_fixture_reject_opaque(BlossomFixture *fixture, gboolean reject);
 /* The descriptor names this sha256 instead of the real one (NULL: honest). */
 void blossom_fixture_set_lie(BlossomFixture *fixture, const gchar *sha256);
 /* Answers wait until released (blossom_fixture_release_held). */

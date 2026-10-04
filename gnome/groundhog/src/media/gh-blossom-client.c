@@ -420,13 +420,27 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(task);
 }
 
+gchar *
+gh_blossom_client_authorization(const gchar *event_json)
+{
+  g_return_val_if_fail(event_json != NULL, NULL);
+  /* BUD-11 requires unpadded Base64url, not standard Base64. */
+  g_autofree gchar *encoded = g_base64_encode((const guchar *)event_json,
+                                              strlen(event_json));
+  for (gchar *p = encoded; *p; p++) {
+    if (*p == '+') *p = '-';
+    else if (*p == '/') *p = '_';
+    else if (*p == '=') { *p = '\0'; break; }
+  }
+  return g_strconcat("Nostr ", encoded, NULL);
+}
+
 static void
 upload_put(GTask *task, const gchar *auth_json)
 {
   GhBlossomClient *self = g_task_get_source_object(task);
   Upload *upload = g_task_get_task_data(task);
-  g_autofree gchar *encoded = g_base64_encode((const guchar *)auth_json, strlen(auth_json));
-  g_autofree gchar *authorization = g_strconcat("Nostr ", encoded, NULL);
+  g_autofree gchar *authorization = gh_blossom_client_authorization(auth_json);
   g_autofree gchar *uri = g_strconcat(upload->server, "/upload", NULL);
   GhNetHttpRequest request = {
     .method = "PUT",
@@ -434,6 +448,7 @@ upload_put(GTask *task, const gchar *auth_json)
     .accept = "application/json",
     .authorization = authorization,
     .content_type = "application/octet-stream",
+    .x_sha256 = upload->sha256,
     .body = upload->ciphertext,
     .max_bytes = DESCRIPTOR_MAX_BYTES,
     .public_only = upload->public_only,
@@ -524,6 +539,17 @@ gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const 
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(ciphertext != NULL && sha256_hex != NULL);
   upload_start(self, ciphertext, sha256_hex, NULL, NULL, cancellable, callback, user_data);
+}
+
+void
+gh_blossom_client_upload_on_servers_async(GhBlossomClient *self, const gchar *const *servers,
+                                               GBytes *ciphertext, const gchar *sha256_hex,
+                                               GCancellable *cancellable,
+                                               GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
+  g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL);
+  upload_start(self, ciphertext, sha256_hex, servers, NULL, cancellable, callback, user_data);
 }
 
 void

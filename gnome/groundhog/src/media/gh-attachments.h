@@ -113,6 +113,11 @@ guint gh_attachments_get_downloads_started(GhAttachments *self);
 void gh_attachments_upload_async(GhAttachments *self, GBytes *file, const gchar *mime,
                                  GCancellable *cancellable, GAsyncReadyCallback callback,
                                  gpointer user_data);
+/* As above, but bind one sheet's selected servers to this upload only. */
+void gh_attachments_upload_on_servers_async(GhAttachments *self, const gchar *const *servers,
+                                            GBytes *file, const gchar *mime,
+                                            GCancellable *cancellable,
+                                            GAsyncReadyCallback callback, gpointer user_data);
 GhNip17File *gh_attachments_upload_finish(GhAttachments *self, GAsyncResult *result,
                                           gchar **out_server, GError **error);
 /* The file of the own message rumor_id was queued with its plaintext (what
