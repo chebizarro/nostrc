@@ -47,3 +47,29 @@ With the service implementation replaced by `origin/master` and the new test unc
 ## Version assessment
 
 The added `libmarmot` public function is MINOR-class, and the Groundhog behavior is PATCH-class. Both are correctly folded into the still-unreleased `0.12.0`: `VERSION_MANIFEST.md` has decision rows for both, and the listed libmarmot CMake/Meson and Groundhog CMake sources agree at `0.12.0`. No additional bump is required. The review document itself is documentation-only and needs no bump. Mention these decisions in the peer-review handoff.
+
+## Addendum — re-review of `b07b34ab` (2026-10-04)
+
+**Final verdict: CHANGES-REQUIRED.** Reviewed `53cc8ac9` and `b07b34ab` after rebasing this review branch onto the new tip. F1–F3 above are resolved, but the new trailing-edge coalescer can indefinitely postpone a legitimate 10002 migration during unrelated signed 10050 updates. This is a new Medium availability finding; it fails the requested no-starvation check. No implementation files were committed from this review.
+
+### R1 — Medium: 10050 activity can starve a pending KeyPackage relay move
+
+**Location:** `gnome/groundhog/src/mls/gh-mls-service.c:8909-8916` (`on_relays_changed`) and `:8444-8449` (`key_package_maybe_publish`); `gnome/groundhog/src/app/gh-account-relays.c:121-157` (both admitted 10002 and 10050 emit the same `changed` signal).
+
+Every `GhAccountRelays::changed` removes and restarts the 100 ms reconciliation timer, even when only the inbox list (kind 10050) changed and the kind-10002 write set did not. `key_package_maybe_publish()` refuses to run while that timer exists. A reviewer-only wire-relay probe first injected a signed 10002 moving A→B, then injected **40 valid, successively newer signed 10050 events** at 20 ms intervals. `GhAccountRelays` admitted the final 10050 (its `inbox_created_at` matched the final event), but after 800 ms B still held **zero** adopted KeyPackages. An assertion requiring B to have one failed (`0 > 0`); a second probe confirmed B was published only after the 10050 stream stopped. A device repeatedly updating its inbox list can therefore keep the account uninvitable on its already-selected write relay for as long as the stream continues. The temporary probes were removed.
+
+Re-arm the short settle timer only when the **write set** changes, not for 10050/state-only signals, and impose a maximum delay from the first pending 10002 change so sustained 10002 edits cannot postpone reconciliation without bound. Add a regression that streams signed 10050 changes while a 10002 move is pending and asserts a bounded publication time without a publish storm. This finding is not covered by the now-closed `nostrc-3e6g` and should be tracked.
+
+### Resolution of prior findings
+
+- **F1, intermediate B:** resolved. I reran my original A→B→C wire-relay probe with B's OKs held, then C's OKs held: A and B remained until C had both unchanged slots and its OKs were released; both retired afterward, with refs and init keys unchanged. The committed `write-relay-migration-rapid` also passes after `app_restart()` between B's partial ACK and C's publication, demonstrating durable candidate coverage. The 17-candidate cleanup-batch case passes and the code advances each batch only after all its OKs.
+- **F2, signed empty write set:** resolved. My independent read-only-10002 probe observed NIP-09 withdrawal from both former write relays, no publication to the read-only relay, init keys retained, and the empty state still correct after restart.
+- **F3, counterfactual setup:** resolved. With the entire migration service reverted to the pre-`a0fb5f2a` implementation, the unchanged new test now fails at “both unchanged slots on the new relay did not happen within 90 s,” not the missing-baseline precondition. With only `b07b34ab`'s service changes reverted to `a0fb5f2a`, `write-relay-migration-rapid` fails at “NIP-09 removed A and B after C ACK” and `write-relay-migration-empty` fails at “empty write set removed old slots.” All restored-branch cases pass.
+
+### Gates and integration
+
+- Fresh Ninja configure/build (`BUILD_GROUNDHOG=ON`, `BUILD_MDK011_INTEROP=ON`, `/tmp/nostrc-macos27-env.sh`): **pass**. `check-unsequenced-args.py`: **pass**.
+- Groundhog MLS lifecycle, lifecycle-adopted, and service: **3 passed**. MDK 0.11 matrix: **18 passed, one expected `mdk09-probe` skip**, using the configured private `nostrc-mdk-interop:0.11.0` image.
+- `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-kp-relay-migration`: **60 passed**, no sanitizer reports. Existing gate volumes were reused; none was created for this review.
+- `git cherry-pick --no-commit a0fb5f2a 53cc8ac9 b07b34ab` onto `origin/master` `8612778f` in a disposable scratch worktree: **clean**, no conflicts; scratch worktree removed.
+- The new candidate-store key and reconciliation changes are a PATCH-class correction to Groundhog, folded into unreleased `0.12.0`. `VERSION_MANIFEST.md` records that decision and the authoritative source remains `0.12.0`; no further bump is required. This addendum is documentation-only and needs no bump. No push was made.
