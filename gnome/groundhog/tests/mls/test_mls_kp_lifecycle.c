@@ -1604,6 +1604,118 @@ current_key_packages_on_both(gpointer data)
   return TRUE;
 }
 
+typedef struct {
+  World *world;
+  guint formats;
+} MigratedWait;
+
+static gboolean
+migration_format_enabled(guint format)
+{
+  return format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY || GH_MLS_ADOPTED_KEY_PACKAGES;
+}
+
+static gboolean
+migrated_on_new_relay(gpointer data)
+{
+  MigratedWait *wait = data;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    FormatCountWait on_new = { &wait->world->x, ALICE, f, 1 };
+    if (!format_count_reached(&on_new)) return FALSE;
+  }
+  return TRUE;
+}
+
+static gboolean
+old_key_packages_deleted(gpointer data)
+{
+  MigratedWait *wait = data;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_autoptr(GPtrArray) w = stored_key_packages_of(&wait->world->w, ALICE, f);
+    g_autoptr(GPtrArray) h = stored_key_packages_of(&wait->world->h, ALICE, f);
+    if (w->len || h->len) return FALSE;
+  }
+  return TRUE;
+}
+
+/* A changed 10002 moves both existing slots, not their MLS keys. An OK from
+ * every new relay for both formats precedes NIP-09 on the retired relays. */
+static void
+test_write_relay_migration(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  spin_until(current_key_packages_on_both, alice, "both existing slots on old write relays");
+  drain();
+  /* Emulate a store written before reconciliation existed. Its legacy
+   * KeyPackage info, not the new snapshot, must recover the old relay set. */
+  g_autoptr(GError) store_error = NULL;
+  MarmotStorage *storage = gh_store_marmot_new(alice->store, &store_error);
+  g_assert_no_error(store_error);
+  g_assert_nonnull(storage);
+  guint8 owner[32];
+  g_assert_true(nostr_hex2bin(owner, hex[ALICE], sizeof owner));
+  g_assert_cmpint(storage->mls_delete(storage->ctx, "gh/key-package-write-relays", owner,
+                                      sizeof owner), ==, MARMOT_OK);
+  marmot_storage_free(storage);
+  app_restart(alice);
+  wait_published(alice);
+  const guint formats = GH_MLS_ADOPTED_KEY_PACKAGES ? 2 : 1;
+  gchar *refs[GH_MLS_KEY_PACKAGE_N_FORMATS] = { NULL };
+  gchar *slots[GH_MLS_KEY_PACKAGE_N_FORMATS] = { NULL };
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    newest_key_package_of(&w.w, ALICE, f, &refs[f], &slots[f], NULL);
+    g_assert_true(has_init_key(alice, refs[f]));
+  }
+  w.w.nip09 = w.h.nip09 = TRUE;
+  w.x.hold_oks = TRUE;
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", w.x.url, "write", NULL));
+  nostr_tags_append(tags, nostr_tag_new("r", w.r.url, "read", NULL));
+  g_autofree gchar *list = sign_event(ALICE, 10002, real_now(), "", tags);
+  wire_relay_inject(&w.e, list);
+  MigratedWait migrated = { &w, formats };
+  spin_until(migrated_on_new_relay, &migrated, "both unchanged slots on the new relay");
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_autofree gchar *ref = NULL, *d = NULL, *json = NULL;
+    newest_key_package_of(&w.x, ALICE, f, &ref, &d, &json);
+    g_assert_cmpstr(ref, ==, refs[f]);
+    g_assert_cmpstr(d, ==, slots[f]);
+    g_assert_true(has_init_key(alice, refs[f]));
+    g_assert_cmpint(marmot_validate_key_package_event_json(json,
+                                                           f == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
+                                                             ? MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                                                             : MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8, 0,
+                                                           NULL, NULL), ==, MARMOT_OK);
+  }
+  drain();
+  g_assert_cmpuint(w.w.deleted + w.h.deleted, ==, 0);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_autoptr(GPtrArray) old = stored_key_packages_of(&w.w, ALICE, f);
+    g_assert_cmpuint(old->len, ==, 1);
+  }
+  wire_relay_release_oks(&w.x);
+  spin_until(old_key_packages_deleted, &migrated, "NIP-09 retired both old relay slots");
+  g_assert_cmpuint(w.w.deleted, ==, formats);
+  g_assert_cmpuint(w.h.deleted, ==, formats);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_assert_true(has_init_key(alice, refs[f]));
+    g_free(refs[f]);
+    g_free(slots[f]);
+  }
+  world_down(&w);
+}
+
 /* Review L1 and M4: "Let people using older Marmot apps invite me" switched
  * off. The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request to
  * the write relays naming its slot's address, dated no earlier than its
@@ -2255,6 +2367,7 @@ main(int argc, char **argv)
                   test_invitation_listing_error_holds);
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
+  g_test_add_func(KP_TEST("write-relay-migration"), test_write_relay_migration);
   g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
   g_test_add_func(KP_TEST("upgrade-companion-held"), test_upgrade_companion_held);
   g_test_add_func(KP_TEST("upgrade-companion-partial-relay-failure"),

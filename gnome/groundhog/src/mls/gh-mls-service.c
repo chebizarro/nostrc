@@ -32,6 +32,7 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
  * "adopted" for the adopted one) and each group's read cursor ("mls/" + a
  * hash of the group id: the scope is bounded and names no group). */
 #define KEY_PACKAGE_CURSOR "mls/key-package"
+#define KEY_PACKAGE_RELAY_SET "gh/key-package-write-relays"
 /* When a due KeyPackage replacement was first held back for pending
  * invitations (0: not held); see key_package_hold(). */
 #define KEY_PACKAGE_HELD_CURSOR "mls/key-package-held"
@@ -238,6 +239,9 @@ typedef struct {
   guint8 deferred_ref[32];
   gboolean repair;                   /* a companion was not accepted by every write relay */
   gboolean repair_loaded;
+  gboolean migrating;               /* rewrap of the same MLS keys for a new relay set */
+  gboolean all_acked;                /* every relay accepted this run's ordinary publish */
+  GStrv published_urls;             /* target of that ordinary publish */
 } KeyPackageSlot;
 
 struct _GhMlsService {
@@ -295,6 +299,13 @@ struct _GhMlsService {
   gboolean key_package_recheck;      /* the formats changed during a round: look again */
   guint key_package_hold_timer;      /* GhClock source: look at the hold again */
   guint key_package_sweep_timer;     /* GhClock source: the next not_after */
+  GStrv kp_write_relays;             /* last fully reconciled set, also stored in mls_kv */
+  gboolean kp_write_relays_loaded;
+  GStrv kp_target_relays;            /* in-flight reconciliation target */
+  gboolean kp_migrating;
+  gboolean kp_launching;
+  gboolean kp_migrated[GH_MLS_KEY_PACKAGE_N_FORMATS];
+  GhRelayPublish *kp_cleanup;        /* NIP-09 to relays no longer in 10002 */
 
   /* Member identities (nostrc-6ukh, W24 review H1) */
   GHashTable *verifying;           /* account hex: a Verify the user asked for runs */
@@ -7035,6 +7046,90 @@ key_package_relays(GhMlsService *self)
   return (GStrv)g_ptr_array_steal(urls, NULL);
 }
 
+/* The baseline is separate from kind 10002: a new 10002 may already be
+ * visible when the old KeyPackages are still on its former write relays.
+ * For stores made before this record existed, the legacy KeyPackage info
+ * retains the relay URLs with which it was made. */
+static gboolean
+key_package_load_write_relays(GhMlsService *self)
+{
+  if (self->kp_write_relays_loaded)
+    return TRUE;
+  guint8 *stored = NULL;
+  size_t len = 0;
+  MarmotError err = self->storage->mls_load(self->storage->ctx, KEY_PACKAGE_RELAY_SET,
+                                           self->account_key, 32, &stored, &len);
+  if (err == MARMOT_OK) {
+    if (!stored || len == 0 || len > 16 * 4096) {
+      free(stored);
+      g_message("Groundhog's saved KeyPackage write relays are invalid");
+      return FALSE;
+    }
+    g_autofree gchar *joined = g_strndup((const gchar *)stored, len);
+    free(stored);
+    GStrv urls = g_strsplit(joined, "\n", -1);
+    guint count = g_strv_length(urls);
+    gboolean valid = count > 0 && count <= MAX_GROUP_RELAYS;
+    for (guint i = 0; valid && i < count; i++)
+      valid = gh_relay_url_validate(urls[i], NULL) &&
+              (i == 0 || g_strcmp0(urls[i - 1], urls[i]) < 0);
+    if (!valid) {
+      g_strfreev(urls);
+      g_message("Groundhog's saved KeyPackage write relays are invalid");
+      return FALSE;
+    }
+    self->kp_write_relays = urls;
+  } else if (err == MARMOT_ERR_STORAGE_NOT_FOUND &&
+             self->storage->find_key_packages_by_pubkey) {
+    MarmotKeyPackageInfo **infos = NULL;
+    size_t n = 0;
+    err = self->storage->find_key_packages_by_pubkey(self->storage->ctx, self->account_key,
+                                                      &infos, &n);
+    MarmotKeyPackageInfo *newest = NULL;
+    for (size_t i = 0; err == MARMOT_OK && i < n; i++)
+      if (infos[i]->active && infos[i]->relay_count &&
+          (!newest || infos[i]->created_at > newest->created_at))
+        newest = infos[i];
+    if (newest) {
+      g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+      for (size_t i = 0; i < newest->relay_count && urls->len < MAX_GROUP_RELAYS; i++)
+        if (gh_relay_url_validate(newest->relay_urls[i], NULL) &&
+            !g_ptr_array_find_with_equal_func(urls, newest->relay_urls[i], g_str_equal, NULL))
+          g_ptr_array_add(urls, g_strdup(newest->relay_urls[i]));
+      g_ptr_array_sort(urls, compare_strings);
+      if (urls->len) {
+        g_ptr_array_add(urls, NULL);
+        self->kp_write_relays = (GStrv)g_ptr_array_steal(urls, NULL);
+      }
+    }
+    for (size_t i = 0; i < n; i++) marmot_key_package_info_free(infos[i]);
+    free(infos);
+  }
+  if (err != MARMOT_OK && err != MARMOT_ERR_STORAGE_NOT_FOUND) {
+    g_message("Groundhog could not read its KeyPackage write relays (%d)", err);
+    return FALSE;
+  }
+  self->kp_write_relays_loaded = TRUE;
+  return TRUE;
+}
+
+static gboolean
+key_package_save_write_relays(GhMlsService *self, const gchar *const *urls)
+{
+  g_autofree gchar *joined = g_strjoinv("\n", (gchar **)urls);
+  MarmotError err = self->storage->mls_store(self->storage->ctx, KEY_PACKAGE_RELAY_SET,
+                                            self->account_key, 32,
+                                            (const guint8 *)joined, strlen(joined));
+  if (err != MARMOT_OK) {
+    g_message("Groundhog could not record its KeyPackage write relays (%d)", err);
+    return FALSE;
+  }
+  g_strfreev(self->kp_write_relays);
+  self->kp_write_relays = g_strdupv((gchar **)urls);
+  self->kp_write_relays_loaded = TRUE;
+  return TRUE;
+}
+
 /* The KeyPackage producers. The adopted profile (kind 30443 of the adopted
  * Marmot spec: MLSMessage framing, app_components, no encoding or relays
  * tag) is built in with libmarmot's producer (CMake option
@@ -7468,7 +7563,10 @@ typedef struct {
   GhMlsKeyPackageFormat format;
   GStrv urls;
   guint8 ref[32];      /* the KeyPackageRef being published */
+  gboolean migration;
 } KeyPackageJob;
+
+static void key_package_migration_published(GhMlsService *self);
 
 static void
 key_package_job_free(KeyPackageJob *job)
@@ -7491,6 +7589,8 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
       key_package_withdrawn(slot);
     return;
   }
+  if (slot->migrating)
+    return; /* Re-signed envelope, same MLS keys: no lifecycle confirmation. */
   if (slot->state == GH_MLS_KEY_PACKAGE_PUBLISHED)
     return;
   /* The first relay OK (transports/nostr.md "Publish targets and
@@ -7543,6 +7643,27 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
    * still have reached a relay; the next confirmed one retires it). A
    * withdrawal no relay accepted keeps them too, and is asked again. */
   slot->in_flight = FALSE;
+  if (slot->migrating) {
+    slot->migrating = FALSE;
+    gboolean all = summary->total > 0 && summary->accepted == summary->total;
+    self->kp_migrated[slot->format] = all;
+    if (all) {
+      const gchar *id = gh_relay_publish_get_event_id(publish);
+      g_free(slot->id);
+      slot->id = g_strdup(id);
+      if (id) {
+        if (slot->event_ids->len >= MAX_KEY_PACKAGE_EVENT_IDS)
+          g_ptr_array_remove_index(slot->event_ids, 0);
+        g_ptr_array_add(slot->event_ids, g_strdup(id));
+      }
+      key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_PUBLISHED);
+    } else {
+      key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    }
+    g_idle_add(key_package_publish_free_idle, publish);
+    key_package_migration_published(self);
+    return;
+  }
   gboolean withdrawal = slot->withdrawing;
   slot->withdrawing = FALSE;
   if (!summary->any_accepted) {
@@ -7551,6 +7672,8 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
       key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
   }
+  slot->all_acked = !withdrawal && summary->total > 0 &&
+                    summary->accepted == summary->total;
   if (!withdrawal && slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
       key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
     if (summary->accepted < summary->total) {
@@ -7566,12 +7689,34 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
     }
   }
   g_idle_add(key_package_publish_free_idle, publish);
+  if (!withdrawal && !self->kp_write_relays && !key_package_any_busy(self)) {
+    const gchar *const *published_urls = NULL;
+    gboolean all = TRUE;
+    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+      if (!key_package_produced(self, f)) continue;
+      KeyPackageSlot *other = &self->kp[f];
+      if (!other->all_acked || !other->published_urls ||
+          (published_urls && !g_strv_equal(published_urls,
+                                           (const gchar *const *)other->published_urls)))
+        all = FALSE;
+      published_urls = (const gchar *const *)other->published_urls;
+    }
+    if (all && published_urls)
+      key_package_save_write_relays(self, published_urls);
+  }
   /* A rotation asked for, or the MDK 0.8 format switched on or off, while
    * this round was in flight. */
   gboolean rotate = self->key_package_recheck;
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
     rotate |= self->kp[f].rotate;
-  if (summary->any_accepted && rotate && !key_package_any_busy(self) && !self->retry)
+  /* A due rotation can publish directly to a changed 10002 set. It makes
+   * the new slots reachable, but the old relays still need ACK-gated cleanup. */
+  g_auto(GStrv) current_urls = key_package_relays(self);
+  gboolean relay_set_pending = self->kp_write_relays &&
+    !g_strv_equal((const gchar *const *)self->kp_write_relays,
+                  (const gchar *const *)current_urls);
+  if (summary->any_accepted && (rotate || relay_set_pending) &&
+      !key_package_any_busy(self) && !self->retry)
     key_package_maybe_publish(self);
 }
 
@@ -7619,8 +7764,9 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     if (publish)
       gh_relay_publish_unref(publish);
     slot->busy = FALSE;
+    slot->migrating = FALSE;
     slot->keep_old_keys = FALSE;
-    if (slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+    if (!job->migration && slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
         key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
       key_package_repair_set(self, TRUE);
       slot->rotate = TRUE;
@@ -7629,19 +7775,23 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     }
     key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
+    if (job->migration)
+      key_package_migration_published(self);
     key_package_job_free(job);
     return;
   }
   slot->publish = publish;
   memcpy(slot->ref, job->ref, sizeof slot->ref);
   slot->in_flight = TRUE;
+  slot->migrating = job->migration;
   if (!gh_relay_publish_start(publish, &error)) {
     slot->publish = NULL;
     slot->in_flight = FALSE;
     gh_relay_publish_unref(publish);
     slot->busy = FALSE;
+    slot->migrating = FALSE;
     slot->keep_old_keys = FALSE;
-    if (slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+    if (!job->migration && slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
         key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
       key_package_repair_set(self, TRUE);
       slot->rotate = TRUE;
@@ -7650,6 +7800,8 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     }
     key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
+    if (job->migration)
+      key_package_migration_published(self);
   }
   key_package_job_free(job);
 }
@@ -7687,6 +7839,9 @@ key_package_publish(GhMlsService *self, GhMlsKeyPackageFormat format, const gcha
     return;
   }
   slot->busy = TRUE;
+  g_strfreev(slot->published_urls);
+  slot->published_urls = g_strdupv((gchar **)urls);
+  slot->all_acked = FALSE;
   /* This KeyPackage serves any rotation asked for so far; until a relay
    * accepts it the publication time stays unrecorded (0 after a rotation),
    * so a failure or a restart publishes again. */
@@ -7702,6 +7857,210 @@ key_package_publish(GhMlsService *self, GhMlsKeyPackageFormat format, const gcha
                                                     self->cancellable, key_package_signed,
                                                     job);
   marmot_key_package_result_free(&made);
+}
+
+static void
+key_package_republish(GhMlsService *self, GhMlsKeyPackageFormat format,
+                      const gchar *const *urls)
+{
+  KeyPackageSlot *slot = &self->kp[format];
+  MarmotKeyPackageResult made = { 0 };
+  MarmotError err = marmot_republish_key_package_unsigned(self->marmot,
+                                                            key_package_profile(format),
+                                                            self->account_key,
+                                                            (const char **)urls,
+                                                            g_strv_length((gchar **)urls),
+                                                            &made);
+  if (err != MARMOT_OK) {
+    g_autoptr(GError) error = NULL;
+    marmot_fail(self, err, "Reusing a KeyPackage on new write relays", &error);
+    g_message("Groundhog could not migrate its KeyPackage: %s", error->message);
+    /* If the local KeyPackage expired while the list was being edited,
+     * ordinary rotation is the only safe recovery. */
+    if (err == MARMOT_ERR_STORAGE_NOT_FOUND || err == MARMOT_ERR_VALIDATION)
+      slot->rotate = TRUE;
+    key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    key_package_migration_published(self);
+    return;
+  }
+  slot->busy = TRUE;
+  slot->migrating = TRUE;
+  key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_PUBLISHING);
+  KeyPackageJob *job = g_new0(KeyPackageJob, 1);
+  g_weak_ref_init(&job->service, self);
+  job->run = self->run;
+  job->format = format;
+  job->migration = TRUE;
+  job->urls = g_strdupv((gchar **)urls);
+  memcpy(job->ref, made.key_package_ref, sizeof job->ref);
+  gh_account_controller_sign_with_cancellable_async(self->accounts, made.event_json,
+                                                    self->cancellable, key_package_signed,
+                                                    job);
+  marmot_key_package_result_free(&made);
+}
+
+static void
+key_package_migration_reset(GhMlsService *self)
+{
+  self->kp_migrating = FALSE;
+  self->kp_launching = FALSE;
+  g_clear_pointer(&self->kp_target_relays, g_strfreev);
+  memset(self->kp_migrated, 0, sizeof self->kp_migrated);
+}
+
+static void
+key_package_cleanup_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary,
+                         gpointer data)
+{
+  GhMlsService *self = data;
+  if (self->kp_cleanup == publish)
+    self->kp_cleanup = NULL;
+  g_idle_add(key_package_publish_free_idle, publish);
+  gboolean all = summary->total > 0 && summary->accepted == summary->total;
+  if (all)
+    all = key_package_save_write_relays(self, (const gchar *const *)self->kp_target_relays);
+  key_package_migration_reset(self);
+  if (!all)
+    schedule_retry(self);
+  else
+    key_package_maybe_publish(self); /* a newer 10002 may have arrived */
+}
+
+static void
+key_package_cleanup_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
+                           gpointer data)
+{
+  (void)publish;
+  (void)result;
+  (void)data;
+}
+
+static void
+key_package_cleanup_signed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  KeyPackageJob *job = data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
+  g_autoptr(GhMlsService) self = g_weak_ref_get(&job->service);
+  if (!self || self->run != job->run || !running(self)) {
+    key_package_job_free(job);
+    return;
+  }
+  NostrEvent *event = signed_json ? nostr_event_new() : NULL;
+  gboolean ok = event && nostr_event_deserialize_compact(event, signed_json, NULL) == 1 &&
+                nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                nostr_event_get_kind(event) == 5 &&
+                g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0;
+  if (event) nostr_event_free(event);
+  GhRelayPublish *publish = ok ? gh_relay_publish_new(self->generation, signed_json,
+                                                      key_package_cleanup_update,
+                                                      key_package_cleanup_done, self, &error)
+                               : NULL;
+  guint added = 0;
+  for (guint i = 0; publish && job->urls[i]; i++) {
+    if (!gh_relay_publish_add_url(publish, job->urls[i], NULL)) continue;
+    gh_auth_policy_apply_publish(self->policy, publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
+                                 job->urls[i], NULL);
+    added++;
+  }
+  if (publish && self->publish_deadline)
+    gh_relay_publish_set_deadline(publish, self->publish_deadline);
+  self->kp_cleanup = publish;
+  if (!publish || !added || !gh_relay_publish_start(publish, &error)) {
+    g_message("Groundhog could not remove KeyPackages from old write relays: %s",
+              error ? error->message : "the signer returned something else");
+    self->kp_cleanup = NULL;
+    if (publish) gh_relay_publish_unref(publish);
+    key_package_migration_reset(self);
+    schedule_retry(self);
+  }
+  key_package_job_free(job);
+}
+
+/* Both unchanged KeyPackages reached every new write relay. Only now ask
+ * relays that left the set to remove the old addressable slots. */
+static void
+key_package_migration_published(GhMlsService *self)
+{
+  if (!self->kp_migrating || self->kp_launching || self->kp_cleanup ||
+      key_package_any_busy(self))
+    return;
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    if (key_package_produced(self, f) && !self->kp_migrated[f]) {
+      key_package_migration_reset(self);
+      schedule_retry(self);
+      return;
+    }
+  g_auto(GStrv) current = key_package_relays(self);
+  if (!g_strv_equal((const gchar *const *)current,
+                    (const gchar *const *)self->kp_target_relays)) {
+    key_package_migration_reset(self);
+    key_package_maybe_publish(self);
+    return;
+  }
+  g_autoptr(GPtrArray) old = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; self->kp_write_relays && self->kp_write_relays[i]; i++)
+    if (!g_strv_contains((const gchar *const *)self->kp_target_relays,
+                         self->kp_write_relays[i]))
+      g_ptr_array_add(old, g_strdup(self->kp_write_relays[i]));
+  if (old->len == 0) {
+    gboolean saved = key_package_save_write_relays(self,
+                                                    (const gchar *const *)self->kp_target_relays);
+    key_package_migration_reset(self);
+    if (!saved) schedule_retry(self);
+    else key_package_maybe_publish(self);
+    return;
+  }
+  g_ptr_array_add(old, NULL);
+  g_autoptr(GError) error = NULL;
+  int64_t created_at = 0;
+  if (!gh_store_begin(self->store, &error)) goto failed;
+  MarmotError err = marmot_key_package_reserve_created_at(self->marmot, self->account_key,
+                                                           now_s(self), &created_at);
+  if (err != MARMOT_OK || !gh_store_commit(self->store, &error)) {
+    if (err != MARMOT_OK)
+      marmot_fail(self, err, "Dating the old-relay KeyPackage deletion", &error);
+    gh_store_rollback(self->store);
+    goto failed;
+  }
+  NostrEvent *event = nostr_event_new();
+  NostrTags *tags = nostr_tags_new(0);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!key_package_produced(self, f)) continue;
+    char d[65];
+    err = marmot_key_package_slot(self->marmot, self->account_key, key_package_profile(f), d);
+    if (err != MARMOT_OK) {
+      marmot_fail(self, err, "Reading the KeyPackage slot for relay migration", &error);
+      nostr_tags_free(tags);
+      nostr_event_free(event);
+      goto failed;
+    }
+    g_autofree gchar *address = g_strdup_printf("30443:%s:%s", self->account, d);
+    nostr_tags_append(tags, nostr_tag_new("a", address, NULL));
+  }
+  nostr_tags_append(tags, nostr_tag_new("k", "30443", NULL));
+  nostr_event_set_kind(event, 5);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, "");
+  nostr_event_set_pubkey(event, self->account);
+  nostr_event_set_tags(event, tags);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  if (!raw) goto failed;
+  KeyPackageJob *job = g_new0(KeyPackageJob, 1);
+  g_weak_ref_init(&job->service, self);
+  job->run = self->run;
+  job->urls = (GStrv)g_ptr_array_steal(old, NULL);
+  gh_account_controller_sign_with_cancellable_async(self->accounts, raw, self->cancellable,
+                                                    key_package_cleanup_signed, job);
+  free(raw);
+  return;
+failed:
+  g_message("Groundhog could not remove KeyPackages from old write relays: %s",
+            error ? error->message : "the deletion could not be made");
+  key_package_migration_reset(self);
+  schedule_retry(self);
 }
 
 /* The withdrawal's first relay OK (review L1): the relays were asked to
@@ -7921,6 +8280,10 @@ key_package_maybe_publish(GhMlsService *self)
 {
   if (!running(self) || !identity_ready(self))
     return;
+  if (self->kp_migrating) {
+    self->key_package_recheck = TRUE;
+    return;
+  }
   if (key_package_any_busy(self)) {
     self->key_package_recheck = TRUE;
     return;
@@ -7934,6 +8297,10 @@ key_package_maybe_publish(GhMlsService *self)
   g_auto(GStrv) urls = key_package_relays(self);
   if (!urls[0]) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_NO_RELAYS);
+    return;
+  }
+  if (!key_package_load_write_relays(self)) {
+    schedule_retry(self);
     return;
   }
   gboolean due[GH_MLS_KEY_PACKAGE_N_FORMATS] = { FALSE };
@@ -7963,6 +8330,20 @@ key_package_maybe_publish(GhMlsService *self)
       drop_stale_error(self);
     withdraw = legacy_expires != 0;
     any_due |= withdraw;
+  }
+  if (!any_due && (!self->kp_write_relays ||
+                   !g_strv_equal((const gchar *const *)self->kp_write_relays,
+                                 (const gchar *const *)urls))) {
+    self->kp_migrating = TRUE;
+    self->kp_launching = TRUE;
+    self->kp_target_relays = g_strdupv(urls);
+    memset(self->kp_migrated, 0, sizeof self->kp_migrated);
+    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+      if (key_package_produced(self, f))
+        key_package_republish(self, f, (const gchar *const *)urls);
+    self->kp_launching = FALSE;
+    key_package_migration_published(self);
+    return;
   }
   gboolean pending = invitations_pending(self) != INVITES_NONE;
   gboolean deferred_held = FALSE;
@@ -8219,6 +8600,11 @@ stop_generation(GhMlsService *self)
     self->retry = 0;
   }
   self->retry_s = 0;
+  if (self->kp_cleanup) {
+    gh_relay_publish_cancel(self->kp_cleanup);
+    g_clear_pointer(&self->kp_cleanup, gh_relay_publish_unref);
+  }
+  key_package_migration_reset(self);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     KeyPackageSlot *slot = &self->kp[f];
     if (slot->publish) {
@@ -8229,6 +8615,9 @@ stop_generation(GhMlsService *self)
     slot->in_flight = FALSE;
     slot->held = FALSE;
     slot->withdrawing = FALSE;
+    slot->migrating = FALSE;
+    slot->all_acked = FALSE;
+    g_clear_pointer(&slot->published_urls, g_strfreev);
     slot->withdrawal = NULL;
   }
   key_package_hold_stop(self, FALSE);
@@ -8863,8 +9252,11 @@ gh_mls_service_finalize(GObject *object)
   if (self->clock)
     gh_clock_unref(self->clock);
   g_free(self->account);
+  g_strfreev(self->kp_write_relays);
+  g_strfreev(self->kp_target_relays);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     g_free(self->kp[f].id);
+    g_strfreev(self->kp[f].published_urls);
     g_ptr_array_unref(self->kp[f].event_ids);
   }
   G_OBJECT_CLASS(gh_mls_service_parent_class)->finalize(object);

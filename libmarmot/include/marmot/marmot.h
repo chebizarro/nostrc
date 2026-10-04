@@ -616,6 +616,28 @@ MarmotError marmot_create_key_package_for_profile(Marmot *m,
                                                    MarmotKeyPackageResult *result);
 
 /**
+ * marmot_republish_key_package_unsigned:
+ * @m: Marmot instance
+ * @profile: the account's existing KeyPackage profile
+ * @nostr_pubkey: (array fixed-size=32): account public key
+ * @relay_urls: (array length=relay_count): write relays for the legacy tag
+ * @relay_count: number of relay URLs
+ * @result: (out): unsigned kind:30443 event and unchanged KeyPackageRef
+ *
+ * Rewrap the newest locally held KeyPackage of @profile in a new event in
+ * its existing stable `d` slot. Its MLS bytes and private keys do not change.
+ * The caller signs and publishes the event; this operation reserves a newer
+ * created_at so relay-list migration never makes an older slot version.
+ * Returns MARMOT_ERR_STORAGE_NOT_FOUND if no usable KeyPackage is held.
+ */
+MarmotError marmot_republish_key_package_unsigned(Marmot *m,
+                                                   MarmotKeyPackageProfile profile,
+                                                   const uint8_t nostr_pubkey[32],
+                                                   const char **relay_urls,
+                                                   size_t relay_count,
+                                                   MarmotKeyPackageResult *result);
+
+/**
  * marmot_validate_key_package_event_json:
  * @event_json: a signed kind:30443 event
  * @profile: the profile the event must satisfy

@@ -1146,6 +1146,137 @@ marmot_create_key_package_for_profile(Marmot *m,
                                      result);
 }
 
+/* Rebuild only the Nostr envelope from the stored MLS KeyPackage. In
+ * particular, do not call the producer: that would rotate the init key and
+ * invalidate invitations already made from the old write relay. */
+MarmotError
+marmot_republish_key_package_unsigned(Marmot *m, MarmotKeyPackageProfile profile,
+                                      const uint8_t nostr_pubkey[32],
+                                      const char **relay_urls, size_t relay_count,
+                                      MarmotKeyPackageResult *result)
+{
+    if (!m || !nostr_pubkey || !result ||
+        (profile != MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8 &&
+         profile != MARMOT_KEY_PACKAGE_PROFILE_ADOPTED) ||
+        (relay_count && !relay_urls) || !m->storage || !m->storage->mls_load)
+        return MARMOT_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+
+    uint8_t ref[32] = {0};
+    bool found = false;
+    MarmotError err = marmot_kp_lifecycle_newest(m, nostr_pubkey,
+                                                 profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+                                                 ref, &found);
+    if (err != MARMOT_OK || !found)
+        return err == MARMOT_OK ? MARMOT_ERR_STORAGE_NOT_FOUND : err;
+    bool has_private = false;
+    err = marmot_key_package_has_private_key(m, ref, &has_private);
+    if (err != MARMOT_OK || !has_private)
+        return err == MARMOT_OK ? MARMOT_ERR_STORAGE_NOT_FOUND : err;
+
+    uint8_t *bytes = NULL;
+    size_t len = 0;
+    err = m->storage->mls_load(m->storage->ctx, "kp_full", ref, 32, &bytes, &len);
+    if (err != MARMOT_OK) return err;
+    MlsKeyPackage kp;
+    memset(&kp, 0, sizeof(kp));
+    MlsTlsReader reader;
+    mls_tls_reader_init(&reader, bytes, len);
+    int parsed = mls_key_package_deserialize(&reader, &kp);
+    bool complete = mls_tls_reader_done(&reader);
+    free(bytes);
+    if (parsed != 0 || !complete ||
+        kp.leaf_node.credential_identity_len != 32 ||
+        memcmp(kp.leaf_node.credential_identity, nostr_pubkey, 32) != 0 ||
+        kp.leaf_node.lifetime_not_after <= (uint64_t)marmot_now() ||
+        mls_key_package_ref(&kp, result->key_package_ref) != 0 ||
+        memcmp(result->key_package_ref, ref, 32) != 0) {
+        mls_key_package_clear(&kp);
+        return MARMOT_ERR_VALIDATION;
+    }
+
+    char d[65];
+    err = marmot_key_package_slot(m, nostr_pubkey, profile, d);
+    if (err != MARMOT_OK) goto out;
+    int64_t created_at = 0;
+    err = marmot_key_package_reserve_created_at(m, nostr_pubkey, marmot_now(), &created_at);
+    if (err != MARMOT_OK) goto out;
+
+    MlsTlsBuf tls;
+    if (mls_tls_buf_init(&tls, 1024) != 0) { err = MARMOT_ERR_MEMORY; goto out; }
+    int encoded = profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                    ? marmot_mls_message_frame_key_package(&kp, &tls)
+                    : mls_key_package_serialize(&kp, &tls);
+    char *content = encoded == 0 ? marmot_base64_encode(tls.data, tls.len) : NULL;
+    mls_tls_buf_free(&tls);
+    if (!content) { err = encoded ? MARMOT_ERR_TLS_CODEC : MARMOT_ERR_MEMORY; goto out; }
+
+    NostrEvent *event = nostr_event_new();
+    NostrTags *tags = nostr_tags_new(0);
+    if (!event || !tags) {
+        err = MARMOT_ERR_MEMORY;
+        free(content);
+        nostr_tags_free(tags);
+        if (event) nostr_event_free(event);
+        goto out;
+    }
+    nostr_event_set_kind(event, MARMOT_KIND_KEY_PACKAGE);
+    nostr_event_set_created_at(event, created_at);
+    char *pubkey = marmot_hex_encode(nostr_pubkey, 32);
+    nostr_event_set_pubkey(event, pubkey);
+    nostr_event_set_content(event, content);
+    free(pubkey);
+    free(content);
+
+    NostrTag *tag = nostr_tag_new("d", d, NULL);
+#define ADD_KP_TAG(t) do { NostrTag *new_tag = (t); if (!new_tag) goto tag_failure; nostr_tags_append(tags, new_tag); } while (0)
+    ADD_KP_TAG(tag);
+    ADD_KP_TAG(nostr_tag_new("mls_protocol_version", "1.0", NULL));
+    ADD_KP_TAG(nostr_tag_new("mls_ciphersuite", "0x0001", NULL));
+    ADD_KP_TAG(id_list_tag_new("mls_extensions", kp.leaf_node.cap_extensions,
+                               kp.leaf_node.cap_extension_count));
+    ADD_KP_TAG(profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
+                 ? id_list_tag_new("mls_proposals", kp.leaf_node.proposals,
+                                   kp.leaf_node.proposal_count)
+                 : nostr_tag_new("mls_proposals", "0x000a", NULL));
+    if (profile == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED) {
+        uint16_t *ids = NULL;
+        size_t n = 0;
+        if (leaf_app_components(&kp.leaf_node, &ids, &n) != 0) goto tag_failure;
+        size_t private_count = 0;
+        for (size_t i = 0; i < n; i++)
+            if (ids[i] >= MARMOT_COMPONENT_PRIVATE_USE_START) ids[private_count++] = ids[i];
+        tag = id_list_tag_new("app_components", ids, private_count);
+        free(ids);
+        ADD_KP_TAG(tag);
+    } else if (relay_count) {
+        tag = nostr_tag_new("relays", relay_urls[0], NULL);
+        if (!tag) goto tag_failure;
+        for (size_t i = 1; i < relay_count; i++) nostr_tag_append(tag, relay_urls[i]);
+        ADD_KP_TAG(tag);
+    }
+    char *ref_hex = marmot_hex_encode(ref, 32);
+    tag = ref_hex ? nostr_tag_new("i", ref_hex, NULL) : NULL;
+    free(ref_hex);
+    ADD_KP_TAG(tag);
+    if (profile == MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8)
+        ADD_KP_TAG(nostr_tag_new("encoding", "base64", NULL));
+#undef ADD_KP_TAG
+    nostr_event_set_tags(event, tags);
+    result->event_json = nostr_event_serialize_compact(event);
+    nostr_event_free(event);
+    err = result->event_json ? MARMOT_OK : MARMOT_ERR_MEMORY;
+    goto out;
+tag_failure:
+    nostr_tags_free(tags);
+    nostr_event_free(event);
+    err = MARMOT_ERR_MEMORY;
+out:
+    mls_key_package_clear(&kp);
+    if (err != MARMOT_OK) marmot_key_package_result_free(result);
+    return err;
+}
+
 /* Ungated producer for libmarmot's own tests (not in a public header). */
 MarmotError
 marmot_create_key_package_adopted_internal(Marmot *m, const uint8_t nostr_pubkey[32],
