@@ -68,3 +68,27 @@
 - Required `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-ui-followups-r2`: **54/54 passed** (arm64; no sanitizer report).
 - MDK 0.8 admin-leave reproduction, with the checked-in test: **failed at the obsolete post-leave send**, not at the former `gh_store_commit` assertion. Temporary omission of only that obsolete send block: **passed**. All temporary edits were restored and the test target rebuilt.
 - The shared ASAN Docker volume predates both reviews; this review created no Docker volume and left no command running.
+
+## Addendum — final review at `ea32fc3c` (2026-10-03)
+
+**Final verdict: APPROVE-WITH-NITS.** The author commits `084feb54` and `ea32fc3c` resolve R1–R5 at the reviewed tip. No remaining correctness or release-blocking finding was reproduced.
+
+| Finding | Final disposition | Evidence |
+|---|---|---|
+| R1 — MDK leave test ordering | **Fixed** | `test_mdk_interop.c:1224-1248` sends and checks the message *before* confirming device-only leave; afterward it asserts `LEFT_DEVICE`, inactive/not leaving, and no further proposal or Commit. The committed MDK 0.8 admin-leave case and full MDK 0.8 suite pass. |
+| R2 — nonempty Add Commit counted as a miss | **Fixed for the reported case** | `gh-mls-service.c:2533-2652,2838-2846` compares pre/post member leaves and group metadata, rather than just `departed_count`. `test_mdk_interop.c:1182-1219` makes Carol Add Dave while Alice's Remove waits, then requires the full two empty-Commit rounds. The committed case passes; temporarily treating every admin Commit as a miss made it fail at `rounds == GH_MLS_SERVICE_LEAVE_REQUESTS` (`1 == 2`). The source and target were restored. |
+| R3 — icon audit not derived from references | **Fixed for the requested Blueprint/C scope** | `test_icons.c:58-105` scans live `data/ui/*.blp` icon-name properties and `src/ui/*.c` symbolic literals against resources or an explicit GTK-builtin allowlist. Baseline `groundhog-icons` passes; replacing a live Blueprint icon with unbundled `review-unbundled-symbolic` made `/groundhog/icons/resources` fail at `test_icons.c:104`. The Blueprint file was restored. A minimal-search-path GTK probe resolved all eight allowlisted builtins and rejected the synthetic icon. |
+| R4 — manifest row outside table | **Fixed** | `VERSION_MANIFEST.md:230` is inside the component decision table, before `## Maintenance`; the maintenance bullet and tag example are intact. Groundhog remains unreleased `0.12.0`, with no further bump; the libmarmot edit remains comment-only, with no libmarmot bump. |
+| R5 — ignored miss-counter write failure | **Fixed** | `gh-mls-service.c:4463-4472` persists `next_miss` before incrementing the in-memory counter or publishing another Remove; on failure it logs, schedules a retry, and returns. `test_mdk_interop.c:1253-1297` injects a cursor failure and observes no extra leave-publish attempt. The committed test passes; temporarily bypassing the failed-write branch made it fail (`attempts` 2 vs 1). The source and target were restored. |
+
+### Non-blocking nits
+
+- **Low — icon discovery does not follow C-supplied icon names outside `src/ui`.** `gnome/groundhog/tests/ui/test_icons.c:70-74` scans only `src/ui`, while `src/ui/gh-delivery-indicator.c:269` gets its icon from `src/app/gh-message-status.c:43`. The current out-of-scope `dialog-error-symbolic` resolves from GTK itself in a minimal-theme probe, so no current missing icon was found. But a future non-builtin status icon in `src/app` would bypass the audit and could render blank on a non-GNOME desktop. Widen the scan or explicitly check those supplied names.
+- **Nit — cursor-failure test does not assert eventual retry after storage recovers.** `gnome/groundhog/tests/mls/test_mdk_interop.c:1293-1297` checks the immediate no-extra-attempt condition, then tears down. If a future change accidentally removed `schedule_retry()` at `gh-mls-service.c:4468`, this test could still pass while the group stayed in Leaving indefinitely. Add a recovery assertion when convenient. The older service-level local-vote withdrawal test gap also remains a test-coverage follow-up, not a demonstrated code defect.
+
+### Verification
+
+- Clean macOS 27 Ninja build in a private build directory with `BUILD_GROUNDHOG=ON`, `BUILD_MDK_INTEROP=ON`, and `BUILD_MDK011_INTEROP=ON`: **passed**. MDK 0.8 and 0.11 used private image tags.
+- The committed `/groundhog/mdk-interop/groundhog-leaves-mdk-admin` case: **passed**. The full touched macOS selection, including MDK 0.8 and MDK 0.11 interop, MLS, store, privacy, Blueprint, icons, replies, and UI: **32/32 with no failures** (one platform keyring test skipped). The full MDK 0.8 suite passed again after both negative controls were restored.
+- `scripts/linux-gate.sh --sanitizers /tmp/rv-w27-ui-followups`: **54/54 passed**, no sanitizer report. `python3 scripts/check-unsequenced-args.py` and `git diff --check`: **passed**.
+- The icon, Add-Commit, and cursor-write negative controls each failed as intended. All temporary source edits were restored; only this review document is changed on the review branch. The sanitizer gate used the existing shared Docker volume; no review-owned volume was created.
