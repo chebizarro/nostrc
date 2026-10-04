@@ -41,7 +41,7 @@ gh_about_dialog_new(void)
   /* The metainfo summary, then what the app promises (charter §2.2). */
   adw_about_dialog_set_comments(about,
       _("A calm home for Nostr conversations.\n\n"
-        "Private messages and encrypted groups that work with other Nostr apps. "
+        "Private messages and encrypted groups with compatible Nostr apps. "
         "Your private key stays in Nostr Signer, and nothing loads from the web "
         "unless you ask."));
   /* Translators: put your name here, one per line, if you translated Groundhog. */

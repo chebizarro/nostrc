@@ -37,17 +37,58 @@ test_icon_resource(void)
 
 #define OWNER_NPUB "npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv"
 
-static gboolean
-has_identity_label(GtkWidget *root)
+#define OWNER_URI "nostr:" OWNER_NPUB
+
+typedef struct {
+  guint identity_labels;
+  guint identity_links;
+} IdentityAudit;
+
+static void
+assert_no_email(const char *text)
 {
-  if (GTK_IS_LABEL(root) && strstr(gtk_label_get_text(GTK_LABEL(root)), OWNER_NPUB))
-    return TRUE;
-  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
-       child = gtk_widget_get_next_sibling(child)) {
-    if (has_identity_label(child))
-      return TRUE;
+  if (!text)
+    return;
+  g_assert_null(strchr(text, '@'));
+  g_assert_false(g_str_has_prefix(text, "mailto:"));
+}
+
+static void
+audit_dialog(GtkWidget *root, IdentityAudit *audit)
+{
+  assert_no_email(gtk_widget_get_tooltip_text(root));
+  if (GTK_IS_LABEL(root)) {
+    const char *text = gtk_label_get_text(GTK_LABEL(root));
+    assert_no_email(text);
+    assert_no_email(gtk_label_get_label(GTK_LABEL(root)));
+    if (strstr(text, OWNER_NPUB))
+      audit->identity_labels++;
   }
-  return FALSE;
+  if (GTK_IS_BUTTON(root))
+    assert_no_email(gtk_button_get_label(GTK_BUTTON(root)));
+  if (GTK_IS_EDITABLE(root))
+    assert_no_email(gtk_editable_get_text(GTK_EDITABLE(root)));
+  if (ADW_IS_PREFERENCES_ROW(root))
+    assert_no_email(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(root)));
+  if (ADW_IS_ACTION_ROW(root))
+    assert_no_email(adw_action_row_get_subtitle(ADW_ACTION_ROW(root)));
+
+  /* Adwaita renders add_link() as its internal AdwLinkRow. Its public
+   * GObject URI property is the destination the row actually opens. */
+  GParamSpec *uri_property = g_object_class_find_property(G_OBJECT_GET_CLASS(root), "uri");
+  if (uri_property && G_PARAM_SPEC_VALUE_TYPE(uri_property) == G_TYPE_STRING) {
+    g_autofree char *uri = NULL;
+    g_object_get(root, "uri", &uri, NULL);
+    assert_no_email(uri);
+    if (ADW_IS_PREFERENCES_ROW(root) &&
+        g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(root)), OWNER_NPUB) == 0) {
+      g_assert_cmpstr(uri, ==, OWNER_URI);
+      audit->identity_links++;
+    }
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child))
+    audit_dialog(child, audit);
 }
 
 static void
@@ -64,13 +105,18 @@ test_gui_dialog(void)
   g_assert_cmpstr(adw_about_dialog_get_version(about), ==, GROUNDHOG_VERSION);
   g_assert_cmpint(adw_about_dialog_get_license_type(about), ==, GTK_LICENSE_MIT_X11);
   g_assert_cmpstr(adw_about_dialog_get_developer_name(about), ==, "Biz");
+  assert_no_email(adw_about_dialog_get_developer_name(about));
   const char *const *developers = adw_about_dialog_get_developers(about);
   g_assert_nonnull(developers);
   g_assert_cmpstr(developers[0], ==, "Biz");
+  assert_no_email(developers[0]);
   g_assert_null(developers[1]);
   g_assert_true(g_str_has_prefix(adw_about_dialog_get_website(about), "https://"));
   g_assert_true(g_str_has_prefix(adw_about_dialog_get_issue_url(about), "https://"));
   g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Nostr"));
+  assert_no_email(adw_about_dialog_get_comments(about));
+  assert_no_email(adw_about_dialog_get_website(about));
+  assert_no_email(adw_about_dialog_get_issue_url(about));
 
   GtkWidget *window = gtk_window_new();
   gtk_window_present(GTK_WINDOW(window));
@@ -78,7 +124,10 @@ test_gui_dialog(void)
   for (int i = 0; i < 50; i++)
     g_main_context_iteration(NULL, FALSE);
   g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(dialog)));
-  g_assert_true(has_identity_label(GTK_WIDGET(dialog)));
+  IdentityAudit audit = { 0 };
+  audit_dialog(GTK_WIDGET(dialog), &audit);
+  g_assert_cmpuint(audit.identity_labels, >, 0);
+  g_assert_cmpuint(audit.identity_links, ==, 1);
   adw_dialog_force_close(dialog);
   gtk_window_destroy(GTK_WINDOW(window));
   for (int i = 0; i < 50; i++)
