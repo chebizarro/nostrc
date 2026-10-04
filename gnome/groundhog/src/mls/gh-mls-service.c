@@ -232,6 +232,12 @@ typedef struct {
   gboolean keep_old_keys;            /* nostrc-cyxb: a forced companion publish does not
                                       * retire the held slot's keys (pending invitations
                                       * made with them still open when the Welcome arrives) */
+  gboolean deferred_retire;          /* a confirmed forced companion still protects old keys */
+  gboolean deferred_loaded;
+  gboolean deferred_persisted;
+  guint8 deferred_ref[32];
+  gboolean repair;                   /* a companion was not accepted by every write relay */
+  gboolean repair_loaded;
 } KeyPackageSlot;
 
 struct _GhMlsService {
@@ -7243,18 +7249,135 @@ key_package_hold_apply(GhMlsService *self, gboolean ended, gint64 wake)
   if (ended)
     g_message("Groundhog publishes a KeyPackage replacement although an invitation is still "
               "pending: it waited as long as it may");
-  if (!held) {
+  if (!held && !self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].keep_old_keys &&
+      !self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].deferred_retire) {
     /* An ended hold keeps its start until a replacement is accepted. */
     key_package_hold_stop(self, !ended);
     return;
   }
-  key_package_set_held(self, TRUE);
-  if (!self->key_package_hold_timer) {
+  key_package_set_held(self, held);
+  if (!self->key_package_hold_timer && wake != G_MAXINT64) {
     gint64 wait_s = MIN(wake - now_s(self), (gint64)GH_MLS_KEY_PACKAGE_HOLD_RECHECK_S);
     self->key_package_hold_timer =
       gh_clock_timeout_add(self->clock, (guint64)MAX(wait_s, 1) * 1000, key_package_hold_fired,
                            self, NULL);
   }
+}
+
+/* Persist the exact acknowledged ref across restarts. Cursors reject negative
+ * values, so encode it as eight unsigned 32-bit words. */
+static gboolean
+key_package_deferred_store(GhMlsService *self, const guint8 ref[32], gboolean active,
+                           GError **error)
+{
+  for (guint i = 0; active && i < 8; i++) {
+    gint64 word = 0;
+    for (guint j = 0; j < 4; j++)
+      word = (word << 8) | ref[i * 4 + j];
+    g_autofree gchar *key = g_strdup_printf("ref-%u", i);
+    if (!gh_store_set_cursor(self->store, "mls/key-package-deferred", key, word, error))
+      return FALSE;
+  }
+  return gh_store_set_cursor(self->store, "mls/key-package-deferred", "active",
+                             active ? 1 : 0, error);
+}
+
+static void
+key_package_deferred_load(GhMlsService *self)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  if (slot->deferred_loaded)
+    return;
+  slot->deferred_loaded = TRUE;
+  gint64 active = 0;
+  if (!gh_store_get_cursor(self->store, "mls/key-package-deferred", "active", &active, NULL) ||
+      active != 1)
+    return;
+  for (guint i = 0; i < 8; i++) {
+    gint64 word = 0;
+    g_autofree gchar *key = g_strdup_printf("ref-%u", i);
+    if (!gh_store_get_cursor(self->store, "mls/key-package-deferred", key, &word, NULL))
+      return;
+    for (guint j = 0; j < 4; j++)
+      slot->deferred_ref[i * 4 + j] = (guint8)(word >> (24 - 8 * j));
+  }
+  slot->deferred_retire = TRUE;
+  slot->deferred_persisted = TRUE;
+}
+
+static void
+key_package_repair_set(GhMlsService *self, gboolean needed)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  slot->repair = needed;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_set_cursor(self->store, "mls/key-package-repair", "legacy",
+                           needed ? 1 : 0, &error))
+    g_message("Groundhog could not record KeyPackage relay repair: %s", error->message);
+}
+
+static void
+key_package_repair_load(GhMlsService *self)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  if (slot->repair_loaded)
+    return;
+  slot->repair_loaded = TRUE;
+  gint64 needed = 0;
+  if (gh_store_get_cursor(self->store, "mls/key-package-repair", "legacy", &needed, NULL))
+    slot->repair = needed != 0;
+}
+
+static gboolean
+key_package_deferred_persist(GhMlsService *self)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  if (!slot->deferred_retire || slot->deferred_persisted)
+    return TRUE;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_begin(self->store, &error))
+    goto failed;
+  if (!key_package_deferred_store(self, slot->deferred_ref, TRUE, &error) ||
+      !gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
+    goto failed;
+  }
+  slot->deferred_persisted = TRUE;
+  return TRUE;
+failed:
+  g_message("Groundhog could not record deferred KeyPackage retirement: %s", error->message);
+  schedule_retry(self);
+  return FALSE;
+}
+
+static void
+key_package_deferred_retire(GhMlsService *self)
+{
+  KeyPackageSlot *slot = &self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY];
+  if (!slot->deferred_retire)
+    return;
+  g_autoptr(GError) error = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, &error))
+    goto failed;
+  MarmotError err = marmot_key_package_confirm_published(self->marmot, self->account_key,
+                                                          slot->deferred_ref);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "Deferred KeyPackage retirement", &error);
+    gh_store_rollback(self->store);
+    goto failed;
+  }
+  if (!key_package_deferred_store(self, NULL, FALSE, &error) ||
+      !gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
+    goto failed;
+  }
+  slot->deferred_retire = FALSE;
+  slot->deferred_persisted = FALSE;
+  return;
+failed:
+  g_message("Groundhog could not perform deferred KeyPackage retirement: %s", error->message);
+  schedule_retry(self);
 }
 
 /* The relay's OK for the KeyPackage in flight: the replacement is
@@ -7268,18 +7391,33 @@ key_package_confirm(KeyPackageSlot *slot)
   if (!slot->in_flight)
     return;
   slot->in_flight = FALSE;
+  gboolean keep = slot->keep_old_keys;
+  slot->keep_old_keys = FALSE;
+  if (keep) {
+    memcpy(slot->deferred_ref, slot->ref, sizeof slot->ref);
+    slot->deferred_retire = TRUE;
+    slot->deferred_persisted = FALSE;
+  }
   g_autoptr(GError) error = NULL;
   drop_stale_error(self);
   if (!gh_store_begin(self->store, &error)) {
     g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+    schedule_retry(self);
     return;
   }
   /* nostrc-cyxb: a legacy KeyPackage forced out alongside an adopted one keeps
    * the previous keys (the pending invitation's Welcome still needs them).
-   * The next non-forced confirm retires them together with the skipped one. */
-  if (slot->keep_old_keys) {
-    slot->keep_old_keys = FALSE;
-    gh_store_rollback(self->store);
+   * Review finding 4: track that retirement was deferred; it runs when the
+   * invitation hold ends (key_package_deferred_retire). */
+  if (keep) {
+    if (!key_package_deferred_store(self, slot->deferred_ref, TRUE, &error) ||
+        !gh_store_commit(self->store, &error)) {
+      gh_store_rollback(self->store);
+      g_message("Groundhog could not record deferred KeyPackage retirement: %s", error->message);
+      schedule_retry(self);
+    } else {
+      slot->deferred_persisted = TRUE;
+    }
   } else {
     MarmotError err = marmot_key_package_confirm_published(self->marmot, self->account_key,
                                                            slot->ref);
@@ -7289,10 +7427,19 @@ key_package_confirm(KeyPackageSlot *slot)
       g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
       return;
     }
+    if (slot->deferred_retire &&
+        !key_package_deferred_store(self, NULL, FALSE, &error)) {
+      gh_store_rollback(self->store);
+      g_message("Groundhog could not clear deferred KeyPackage retirement: %s", error->message);
+      return;
+    }
     if (!gh_store_commit(self->store, &error)) {
       gh_store_rollback(self->store);
       g_message("Groundhog could not retire its old KeyPackage: %s", error->message);
+      return;
     }
+    slot->deferred_retire = FALSE;
+    slot->deferred_persisted = FALSE;
   }
 }
 
@@ -7353,7 +7500,8 @@ key_package_update(GhRelayPublish *publish, const GhRelayPublishResult *result, 
   gboolean other_held = FALSE;
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
     other_held |= self->kp[f].held;
-  if (!other_held)
+  if (!other_held && !self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].keep_old_keys &&
+      !self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].deferred_retire)
     key_package_hold_stop(self, TRUE);
   key_package_sweep_schedule(self);
   g_autoptr(GError) error = NULL;
@@ -7398,9 +7546,24 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
   gboolean withdrawal = slot->withdrawing;
   slot->withdrawing = FALSE;
   if (!summary->any_accepted) {
+    slot->keep_old_keys = FALSE;
     if (!withdrawal)
       key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
     schedule_retry(self);
+  }
+  if (!withdrawal && slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+      key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
+    if (summary->accepted < summary->total) {
+      key_package_repair_set(self, TRUE);
+      slot->rotate = TRUE;
+      g_autoptr(GError) error = NULL;
+      if (!gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR,
+                               key_package_cursor_key(slot->format), 0, &error))
+        g_message("Groundhog could not record a KeyPackage relay repair: %s", error->message);
+      schedule_retry(self);
+    } else {
+      key_package_repair_set(self, FALSE);
+    }
   }
   g_idle_add(key_package_publish_free_idle, publish);
   /* A rotation asked for, or the MDK 0.8 format switched on or off, while
@@ -7408,7 +7571,7 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
   gboolean rotate = self->key_package_recheck;
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
     rotate |= self->kp[f].rotate;
-  if (summary->any_accepted && rotate && !key_package_any_busy(self))
+  if (summary->any_accepted && rotate && !key_package_any_busy(self) && !self->retry)
     key_package_maybe_publish(self);
 }
 
@@ -7456,7 +7619,16 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     if (publish)
       gh_relay_publish_unref(publish);
     slot->busy = FALSE;
+    slot->keep_old_keys = FALSE;
+    if (slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+        key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
+      key_package_repair_set(self, TRUE);
+      slot->rotate = TRUE;
+      gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR, key_package_cursor_key(slot->format),
+                          0, NULL);
+    }
     key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    schedule_retry(self);
     key_package_job_free(job);
     return;
   }
@@ -7468,7 +7640,16 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     slot->in_flight = FALSE;
     gh_relay_publish_unref(publish);
     slot->busy = FALSE;
+    slot->keep_old_keys = FALSE;
+    if (slot->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+        key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED)) {
+      key_package_repair_set(self, TRUE);
+      slot->rotate = TRUE;
+      gh_store_set_cursor(self->store, KEY_PACKAGE_CURSOR, key_package_cursor_key(slot->format),
+                          0, NULL);
+    }
     key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    schedule_retry(self);
   }
   key_package_job_free(job);
 }
@@ -7483,8 +7664,15 @@ key_package_publish(GhMlsService *self, GhMlsKeyPackageFormat format, const gcha
   memset(&made, 0, sizeof made);
   g_autoptr(GError) error = NULL;
   drop_stale_error(self);
-  if (!gh_store_begin(self->store, &error))
+  if (!gh_store_begin(self->store, &error)) {
+    slot->keep_old_keys = FALSE;
+    slot->rotate = TRUE;
+    if (format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY &&
+        key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED))
+      key_package_repair_set(self, TRUE);
+    schedule_retry(self);
     return;
+  }
   MarmotError err = key_package_make(self, format, urls, &made);
   if (err != MARMOT_OK || !gh_store_commit(self->store, &error)) {
     if (err != MARMOT_OK) {
@@ -7493,7 +7681,9 @@ key_package_publish(GhMlsService *self, GhMlsKeyPackageFormat format, const gcha
     }
     g_message("Groundhog could not make a KeyPackage: %s", error->message);
     marmot_key_package_result_free(&made);
+    slot->keep_old_keys = FALSE;
     key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_FAILED);
+    schedule_retry(self);
     return;
   }
   slot->busy = TRUE;
@@ -7729,9 +7919,17 @@ key_package_withdraw(GhMlsService *self, const gchar *const *urls)
 static void
 key_package_maybe_publish(GhMlsService *self)
 {
-  if (!running(self) || key_package_any_busy(self) || !identity_ready(self))
+  if (!running(self) || !identity_ready(self))
     return;
+  if (key_package_any_busy(self)) {
+    self->key_package_recheck = TRUE;
+    return;
+  }
   self->key_package_recheck = FALSE;
+  key_package_deferred_load(self);
+  key_package_repair_load(self);
+  if (!key_package_deferred_persist(self))
+    return;
   key_package_sweep(self);
   g_auto(GStrv) urls = key_package_relays(self);
   if (!urls[0]) {
@@ -7766,16 +7964,26 @@ key_package_maybe_publish(GhMlsService *self)
     withdraw = legacy_expires != 0;
     any_due |= withdraw;
   }
+  gboolean pending = invitations_pending(self) != INVITES_NONE;
+  gboolean deferred_held = FALSE;
+  gint64 deferred_deadline = G_MAXINT64;
+  if (self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].deferred_retire) {
+    HoldVerdict verdict = key_package_hold_verdict(self, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY,
+                                                   pending, &deferred_deadline);
+    if (verdict == HOLD_YES)
+      deferred_held = TRUE;
+    else
+      key_package_deferred_retire(self);
+  }
   if (!any_due) {
     for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
       self->kp[f].held = FALSE;
-    key_package_hold_stop(self, TRUE);
+    key_package_hold_apply(self, FALSE, deferred_deadline);
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_PUBLISHED);
     return;
   }
   /* Due. Pending invitations hold a replacement back (review H1); the
    * current KeyPackage stays published meanwhile. */
-  gboolean pending = invitations_pending(self) != INVITES_NONE;
   gboolean go[GH_MLS_KEY_PACKAGE_N_FORMATS] = { FALSE };
   gboolean ended = FALSE;
   gint64 wake = G_MAXINT64;
@@ -7817,6 +8025,15 @@ key_package_maybe_publish(GhMlsService *self)
         g_message("Groundhog could not record a due KeyPackage: %s", error->message);
     }
   }
+  if (self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].repair &&
+      due[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY] &&
+      !go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY]) {
+    self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].held = FALSE;
+    self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].keep_old_keys = pending;
+    go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY] = TRUE;
+  }
+  if (deferred_held)
+    wake = MIN(wake, deferred_deadline);
   /* nostrc-cyxb: MDK 0.8 and 0.9 are slot-blind — they take the newest
    * kind 30443 event regardless of d-tag. If only the adopted one goes out
    * (the legacy slot is held for a pending invitation), the adopted event
@@ -7828,6 +8045,8 @@ key_package_maybe_publish(GhMlsService *self)
   if (go[GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED] &&
       key_package_produced(self, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY) &&
       !go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY]) {
+    /* Keep the old private key and original deadline, but the replacement
+     * itself is not held back. */
     self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].held = FALSE;
     self->kp[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY].keep_old_keys = TRUE;
     go[GH_MLS_KEY_PACKAGE_FORMAT_LEGACY] = TRUE;

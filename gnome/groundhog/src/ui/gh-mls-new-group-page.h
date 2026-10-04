@@ -63,6 +63,8 @@ GhMlsKeyPackageFormat gh_mls_new_group_page_get_format(GhMlsNewGroupPage *self);
 /* The identity row's title, NULL when hidden. */
 const gchar *gh_mls_new_group_page_get_identity_title(GhMlsNewGroupPage *self);
 const gchar *gh_mls_new_group_page_get_status_title(GhMlsNewGroupPage *self);
+/* The media row's title, NULL when hidden (review finding 5 test). */
+const gchar *gh_mls_new_group_page_get_media_notice(GhMlsNewGroupPage *self);
 /* The group made by Create, once created; NULL before. */
 GhMlsGroup *gh_mls_new_group_page_get_group(GhMlsNewGroupPage *self);
 

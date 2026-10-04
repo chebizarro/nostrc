@@ -146,14 +146,28 @@ identity_state(GhMlsNewGroupPage *self)
 /* nostrc-46k7: the consent copy for file storage. When the user has Blossom
  * servers configured, the group will get a media policy at creation (see
  * create_group_now), and the user should see which servers before Create. */
+/* Review finding 5: the consent copy must be format-aware.  A legacy group
+ * cannot carry a 0x800b media policy, so showing server names would be wrong.
+ * An adopted group with no configured servers has no media policy either —
+ * state that explicitly so the user knows before Create. */
 static void
 sync_media_notice(GhMlsNewGroupPage *self)
 {
+  /* Legacy groups never carry a media policy. */
+  if (self->format == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY) {
+    gtk_widget_set_visible(GTK_WIDGET(self->media_row), FALSE);
+    return;
+  }
   GSettings *settings = self->context.settings;
   g_auto(GStrv) servers = settings ? g_settings_get_strv(settings, "blossom-servers") : NULL;
   guint n = servers ? g_strv_length(servers) : 0;
   if (n == 0) {
-    gtk_widget_set_visible(GTK_WIDGET(self->media_row), FALSE);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->media_row),
+                                  _("No file servers configured"));
+    adw_action_row_set_subtitle(self->media_row,
+      _("This group won't have a file-storage policy. You can add servers later "
+        "from Group Info."));
+    gtk_widget_set_visible(GTK_WIDGET(self->media_row), TRUE);
     return;
   }
   g_autoptr(GString) list = g_string_new(NULL);
@@ -589,6 +603,15 @@ gh_mls_new_group_page_get_status_title(GhMlsNewGroupPage *self)
 {
   g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), NULL);
   return gtk_label_get_text(self->status_title);
+}
+
+const gchar *
+gh_mls_new_group_page_get_media_notice(GhMlsNewGroupPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_NEW_GROUP_PAGE(self), NULL);
+  if (!gtk_widget_get_visible(GTK_WIDGET(self->media_row)))
+    return NULL;
+  return adw_preferences_row_get_title(ADW_PREFERENCES_ROW(self->media_row));
 }
 
 GhMlsGroup *

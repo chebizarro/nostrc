@@ -83,6 +83,7 @@ struct _WireRelay {
   gboolean auth_gate_dms;    /* kind 1059 only to its authenticated recipient */
   gboolean auth_writes;      /* EVENT only from an authenticated connection */
   gboolean refuse_events;    /* serve: every EVENT refused (OK false "blocked:") */
+  gboolean refuse_legacy_key_packages; /* serve: reject kind 30443 with encoding tag */
   gboolean nip09;            /* serve: a kept kind 5 deletes its author's events it names,
                               * before its OK: `e` ids, and `a` addresses up to its
                               * created_at (NIP-09) */
@@ -636,12 +637,15 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
       wire_send_ok(connection, event_id, FALSE, "auth-required: sign in to publish");
       return TRUE;
     }
-    if (relay->refuse_events) {
+    g_autofree gchar *json = wire_frame_payload(text, "[\"EVENT\",");
+    /* The older KeyPackage shape alone carries an encoding tag. */
+    gboolean refuse_legacy = relay->refuse_legacy_key_packages &&
+                             strstr(json, "\"encoding\"") != NULL;
+    if (relay->refuse_events || refuse_legacy) {
       relay->refused_events++;
       wire_send_ok(connection, event_id, FALSE, "blocked: refused by the test relay");
       return TRUE;
     }
-    g_autofree gchar *json = wire_frame_payload(text, "[\"EVENT\",");
     if (relay->max_future_seconds > 0) {
       NostrEvent *event = nostr_event_new();
       gboolean ahead =

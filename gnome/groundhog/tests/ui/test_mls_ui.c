@@ -1142,6 +1142,44 @@ test_gui_new_group(void)
   g_assert_cmpint(gh_mls_new_group_page_get_format_notice(page) != NULL, ==,
                   !GH_MLS_ADOPTED_KEY_PACKAGES);
   g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+
+  /* Review finding 5: the media notice is format-aware.  With no Blossom
+   * servers, an adopted group shows "No file servers configured" (not
+   * hidden).  With servers it shows the server list.  A legacy group
+   * hides the media row entirely. */
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  /* No servers: an adopted group shows the no-servers notice. */
+  g_assert_cmpstr(gh_mls_new_group_page_get_media_notice(page), ==,
+                  "No file servers configured");
+
+  /* With a server: the notice names it. */
+  const gchar *srv[] = { "https://blossom.example.com", NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", srv);
+  /* Re-sync by toggling selection (sync_create → sync_media_notice). */
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GROUNDHOG_READY);
+  spin_until(reason_cleared, page, "ready with servers set");
+  g_assert_nonnull(gh_mls_new_group_page_get_media_notice(page));
+  g_assert_nonnull(strstr(gh_mls_new_group_page_get_media_notice(page), "1 server"));
+  g_settings_reset(alice->settings, "blossom-servers");
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GROUNDHOG_READY);
+  spin_until(reason_cleared, page, "ready after server reset");
+#else
+  /* A configured account server must not be presented as a group policy
+   * when the selected invitees require a legacy group. */
+  const gchar *srv[] = { "https://blossom.example.com", NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", srv);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], FALSE);
+  gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
+  wait_pick(picker, hex[BOB], GROUNDHOG_READY);
+  spin_until(reason_cleared, page, "ready with legacy server setting");
+  g_assert_null(gh_mls_new_group_page_get_media_notice(page));
+  g_settings_reset(alice->settings, "blossom-servers");
+#endif
+
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
   wait_text(status_title, page, "Group Created");
   GhMlsGroup *ga = gh_mls_new_group_page_get_group(page);
@@ -1388,6 +1426,13 @@ confirm(AdwAlertDialog *alert, GtkWidget *parent, const gchar *response)
   drain();
 }
 
+static gboolean
+relay_ok_is_held(gpointer data)
+{
+  WireRelay *relay = data;
+  return relay->held_oks->len > 0;
+}
+
 static GhMlsGroupInfoDialog *
 show_info(GhWindow *window, GhConversation *conversation)
 {
@@ -1485,6 +1530,24 @@ test_gui_group_info(void)
   wait_text(last_info_toast, info, "Name and description saved");
   wait_text(gh_mls_group_get_name, gb, "Renamed Club");
   g_assert_cmpstr(gh_mls_group_get_description(gb), ==, "Books, mostly");
+
+  /* Closing Group Info while its media-policy Commit awaits an OK must
+   * release the dialog; the later completion must not touch its widgets. */
+  const gchar *servers[] = { "https://files.example.invalid", NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", servers);
+  w.g.hold_oks = TRUE;
+  gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.update-media", NULL);
+  g_assert_cmpuint(gh_mls_group_info_dialog_get_pending(info), ==, 1);
+  spin_until(relay_ok_is_held, &w.g, "media-policy OK held");
+  gpointer closed_info = info;
+  g_object_add_weak_pointer(G_OBJECT(info), &closed_info);
+  adw_dialog_force_close(ADW_DIALOG(info));
+  drain();
+  g_assert_null(closed_info);
+  wire_relay_release_oks(&w.g);
+  drain();
+  g_settings_reset(alice->settings, "blossom-servers");
+  info = show_info(window, conversation);
 
   /* Remove Carol, after the confirmation naming what it does. */
   gtk_widget_activate_action(GTK_WIDGET(info), "mls-group.remove", "s", hex[CAROL]);

@@ -181,6 +181,8 @@ struct _GhMlsGroupInfoDialog {
   guint pending;            /* changes started, not finished */
   GhMlsAttachments *files;  /* the window's group files (W25), or NULL */
   GCancellable *picture_op; /* fetching or setting the picture */
+  GCancellable *media_op;   /* updating the group file servers */
+  gboolean disposing;
   gint picture_state;       /* GhMlsPictureState shown, -1 before */
   gboolean picture_shown;   /* the avatar shows the decrypted picture */
   GBytes *offered_picture;  /* chosen, awaiting the upload's confirmation */
@@ -308,18 +310,34 @@ sync_media_policy(GhMlsGroupInfoDialog *self)
   marmot_group_components_clear(&mc);
 }
 
+typedef struct {
+  GWeakRef dialog;
+  GCancellable *cancellable;
+} MediaUpdate;
+
 static void
-on_media_updated(GObject *source, GAsyncResult *result, gpointer data)
+media_updated(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhMlsGroupInfoDialog *self = data;
-  GError *error = NULL;
-  if (gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error)) {
-    toast(self, _("File servers updated"));
-    sync_media_policy(self);
-  } else {
-    toast(self, error->message);
-    g_error_free(error);
+  MediaUpdate *update = data;
+  g_autoptr(GError) error = NULL;
+  gboolean ok = gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error);
+  g_autoptr(GhMlsGroupInfoDialog) self = g_weak_ref_get(&update->dialog);
+  if (self && self->media_op == update->cancellable) {
+    g_clear_object(&self->media_op);
+    self->pending--;
+    if (!self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self))) {
+      if (ok)
+        toast(self, _("File servers updated"));
+      else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+        g_autofree gchar *words = gh_mls_error_copy(error);
+        toast(self, words);
+      }
+      sync_media_policy(self);
+    }
   }
+  g_weak_ref_clear(&update->dialog);
+  g_object_unref(update->cancellable);
+  g_free(update);
 }
 
 static void
@@ -339,9 +357,16 @@ action_update_media(GtkWidget *widget, const gchar *action, GVariant *parameter)
     toast(self, _("No Blossom servers configured in your settings"));
     return;
   }
+  if (self->media_op)
+    return;
+  MediaUpdate *update = g_new0(MediaUpdate, 1);
+  g_weak_ref_init(&update->dialog, self);
+  update->cancellable = g_cancellable_new();
+  self->media_op = g_object_ref(update->cancellable);
+  self->pending++;
   gh_mls_service_set_media_policy_async(self->context.service, self->group,
-                                        (const gchar *const *)servers, NULL,
-                                        on_media_updated, self);
+                                        (const gchar *const *)servers, update->cancellable,
+                                        media_updated, update);
 }
 
 static void
@@ -547,7 +572,7 @@ sync_all(GhMlsGroupInfoDialog *self)
 
 typedef struct {
   GhMlsGroupInfoDialog *self; /* a reference */
-  gchar *done;                /* the toast when it worked */
+  gchar *done;               /* the toast when it worked */
 } Change;
 
 static void
@@ -1296,6 +1321,10 @@ static void
 gh_mls_group_info_dialog_dispose(GObject *object)
 {
   GhMlsGroupInfoDialog *self = GH_MLS_GROUP_INFO_DIALOG(object);
+  self->disposing = TRUE;
+  if (self->media_op)
+    g_cancellable_cancel(self->media_op);
+  g_clear_object(&self->media_op);
   if (self->context.service) {
     g_object_weak_unref(G_OBJECT(self->context.service), on_service_gone, self);
     self->context.service = NULL;

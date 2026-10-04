@@ -78,6 +78,22 @@ typedef struct {
 
 static guint n_key_packages(WireRelay *relay, guint key);
 
+static G_GNUC_UNUSED gboolean
+relay_rejected(gpointer data)
+{
+  CountWait *wait = data;
+  return wait->relay->refused_events >= wait->count;
+}
+
+static G_GNUC_UNUSED gboolean
+legacy_repair_recorded(gpointer data)
+{
+  App *app = data;
+  gint64 needed = 0;
+  return gh_store_get_cursor(app->store, "mls/key-package-repair", "legacy", &needed, NULL) &&
+         needed == 1;
+}
+
 static gboolean
 key_packages_reached(gpointer data)
 {
@@ -1173,6 +1189,299 @@ test_upgrade_companion_held(void)
   world_down(&w);
 }
 
+/* Review finding 2: after any adopted publish the legacy one must end up
+ * newer on *every* write relay, even when one relay rejects the companion
+ * legacy the first time.  The retry publishes a newer legacy that covers
+ * every relay. */
+static void
+test_upgrade_companion_partial_relay_failure(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "Pending", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the pending invitation");
+  g_autofree gchar *old_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &old_ref, NULL, NULL);
+
+  /* H accepts adopted but rejects legacy; W accepts both. The first legacy
+   * OK is not enough to declare the pair repaired on H. */
+  world_legacy_only = FALSE;
+  w.h.refuse_legacy_key_packages = TRUE;
+  app_restart(bob);
+  FormatCountWait adopted_h = { &w.h, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, 1 };
+  spin_until(format_count_reached, &adopted_h, "adopted KP on H");
+  FormatCountWait legacy_w = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy_w, "legacy KP on W");
+  CountWait rejected_h = { &w.h, BOB, 1 };
+  spin_until(relay_rejected, &rejected_h, "legacy rejection on H");
+  g_assert_cmpint(newest_key_package_format(&w.h, BOB), ==,
+                  GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED);
+  spin_until(legacy_repair_recorded, bob, "the per-relay repair recorded");
+  w.h.refuse_legacy_key_packages = FALSE;
+  app_restart(bob); /* repair must survive the invitation hold and a restart */
+  FormatCountWait legacy_h = { &w.h, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy_h, "legacy repair on H");
+  wait_published(bob);
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_cmpint(newest_key_package_format(&w.h, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_true(has_init_key(bob, old_ref));
+  world_down(&w);
+}
+
+static gint
+held_key_package_index(GhTestSigner *signer, GhMlsKeyPackageFormat format)
+{
+  for (guint i = 0; i < signer->held->len; i++) {
+    GDBusMethodInvocation *invocation = g_ptr_array_index(signer->held, i);
+    if (g_strcmp0(g_dbus_method_invocation_get_method_name(invocation), "SignEvent") != 0)
+      continue;
+    const gchar *input, *peer, *npub;
+    g_variant_get(g_dbus_method_invocation_get_parameters(invocation), "(&s&s&s)",
+                  &input, &peer, &npub);
+    (void)peer;
+    (void)npub;
+    NostrEvent *event = nostr_event_new();
+    gboolean match = nostr_event_deserialize_compact(event, input, NULL) == 1 &&
+                     nostr_event_get_kind(event) == 30443 &&
+                     key_package_format(event) == format;
+    nostr_event_free(event);
+    if (match)
+      return (gint)i;
+  }
+  return -1;
+}
+
+static gboolean
+both_key_packages_held(gpointer data)
+{
+  GhTestSigner *signer = data;
+  return held_key_package_index(signer, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED) >= 0 &&
+         held_key_package_index(signer, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY) >= 0;
+}
+
+static void
+answer_held_signer(GhTestSigner *signer, guint index, gboolean deny)
+{
+  GDBusMethodInvocation *invocation = g_ptr_array_steal_index(signer->held, index);
+  gboolean before = signer->deny;
+  signer->deny = deny;
+  gh_test_signer_answer(signer, invocation);
+  signer->deny = before;
+  g_object_unref(invocation);
+}
+
+static void
+check_companion_signer_failure(gboolean adopted_first)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *bob = &w.apps[BOB];
+  wait_published(bob);
+
+  w.signer.hold_key_packages = TRUE;
+  world_legacy_only = FALSE;
+  app_restart(bob);
+  spin_until(both_key_packages_held, &w.signer, "both KeyPackage signatures");
+  if (adopted_first) {
+    answer_held_signer(&w.signer,
+                       held_key_package_index(&w.signer, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED),
+                       FALSE);
+    FormatPublishedWait adopted = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
+    spin_until(format_confirmed, &adopted, "adopted confirmed before legacy denial");
+    answer_held_signer(&w.signer,
+                       held_key_package_index(&w.signer, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY), TRUE);
+  } else {
+    answer_held_signer(&w.signer,
+                       held_key_package_index(&w.signer, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY), TRUE);
+    answer_held_signer(&w.signer,
+                       held_key_package_index(&w.signer, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED),
+                       FALSE);
+  }
+  w.signer.hold_key_packages = FALSE;
+  FormatCountWait repaired_w = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  FormatCountWait repaired_h = { &w.h, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &repaired_w, "legacy repair on W after signer denial");
+  spin_until(format_count_reached, &repaired_h, "legacy repair on H after signer denial");
+  wait_published(bob);
+  g_assert_cmpint(newest_key_package_format(&w.w, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_assert_cmpint(newest_key_package_format(&w.h, BOB), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  world_down(&w);
+}
+
+static void
+test_companion_signer_fails_before_adopted(void)
+{
+  check_companion_signer_failure(FALSE);
+}
+
+static void
+test_companion_signer_fails_after_adopted(void)
+{
+  check_companion_signer_failure(TRUE);
+}
+
+/* Review finding 3: a forced companion that fails (signer refused or every
+ * relay rejected) must not suppress retirement on a later ordinary publish.
+ * keep_old_keys is cleared on every failure path. */
+static void
+test_forced_companion_failure_clears_keep_old_keys(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  create_attempt(alice, "Pending", (const guint[]){ BOB }, 1, &error);
+  g_assert_no_error(error);
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the pending invitation");
+  g_autofree gchar *wrapper = invite_from(bob, ALICE);
+
+  g_autofree gchar *old_legacy_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &old_legacy_ref, NULL, NULL);
+  g_assert_true(has_init_key(bob, old_legacy_ref));
+
+  /* The adopted event is accepted, but both relays refuse the forced
+   * legacy companion. Declining ends the hold before the ordinary retry. */
+  world_legacy_only = FALSE;
+  w.w.refuse_legacy_key_packages = w.h.refuse_legacy_key_packages = TRUE;
+  app_restart(bob);
+  FormatPublishedWait adopted_ok = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
+  spin_until(format_confirmed, &adopted_ok, "adopted confirmed");
+  wait_state(bob, GH_MLS_KEY_PACKAGE_FAILED);
+  g_assert_true(has_init_key(bob, old_legacy_ref));
+  g_assert_true(gh_mls_service_decline_invite(bob->service, wrapper, &error));
+  g_assert_no_error(error);
+  w.w.refuse_legacy_key_packages = w.h.refuse_legacy_key_packages = FALSE;
+  FormatCountWait repaired = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &repaired, "ordinary legacy retry");
+  wait_published(bob);
+
+  /* The normal retry's confirm retires the old legacy key: keep_old_keys
+   * was cleared by the failure path, so the confirm is not suppressed. */
+  g_autofree gchar *new_legacy_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &new_legacy_ref, NULL, NULL);
+  g_assert_cmpstr(old_legacy_ref, !=, new_legacy_ref);
+  g_assert_false(has_init_key(bob, old_legacy_ref));
+  world_down(&w);
+}
+
+/* Review finding 4: after a forced companion confirmed with keep_old_keys,
+ * the old init keys must be retired when the invitation hold ends (decline
+ * or cap expiry).  They must not linger until the next 28-day rotation. */
+static void
+test_upgrade_companion_deferred_retirement(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  create_attempt(alice, "One", (const guint[]){ BOB }, 1, &error);
+  g_assert_no_error(error);
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the invitation");
+  g_autofree gchar *wrapper = invite_from(bob, ALICE);
+
+  /* Record the old legacy ref before upgrade. */
+  g_autofree gchar *old_legacy_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &old_legacy_ref, NULL, NULL);
+  g_assert_true(has_init_key(bob, old_legacy_ref));
+
+  /* Upgrade Bob: both formats go out with keep_old_keys for legacy. */
+  world_legacy_only = FALSE;
+  app_restart(bob);
+  FormatCountWait legacy = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy, "the forced companion");
+  FormatPublishedWait confirmed = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
+  spin_until(format_confirmed, &confirmed, "adopted confirmed");
+  wait_published(bob);
+
+  /* The old legacy key is still alive (kept for the pending invitation),
+   * including across a service/store restart. */
+  g_assert_true(has_init_key(bob, old_legacy_ref));
+  app_restart(bob);
+  wait_published(bob);
+  g_assert_true(has_init_key(bob, old_legacy_ref));
+
+  /* Decline the invitation: the hold ends. */
+  g_assert_true(gh_mls_service_decline_invite(bob->service, wrapper, &error));
+  g_assert_no_error(error);
+
+  /* After decline, key_package_maybe_publish runs the deferred retirement:
+   * the old legacy init key must now be gone. */
+  g_assert_false(has_init_key(bob, old_legacy_ref));
+  world_down(&w);
+}
+
+typedef struct {
+  App *app;
+  const gchar *ref;
+} KeyRetiredWait;
+
+static gboolean
+key_retired(gpointer data)
+{
+  KeyRetiredWait *wait = data;
+  return !has_init_key(wait->app, wait->ref);
+}
+
+static void
+test_upgrade_companion_hold_cap_retires(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  world_legacy_only = TRUE;
+  world_key_package_max_hold = 2;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(alice);
+  wait_published(bob);
+  accept_contact(alice, BOB);
+  g_autoptr(GError) error = NULL;
+  g_assert_nonnull(create_attempt(alice, "Pending", (const guint[]){ BOB }, 1, &error));
+  g_assert_no_error(error);
+  InvitesWait one = { bob, 1 };
+  spin_until(invites_at_least, &one, "the pending invitation");
+  g_autofree gchar *old_ref = NULL;
+  newest_key_package_of(&w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, &old_ref, NULL, NULL);
+
+  world_legacy_only = FALSE;
+  app_restart(bob);
+  FormatCountWait companion = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &companion, "the forced companion");
+  wait_published(bob);
+  g_assert_true(has_init_key(bob, old_ref));
+  KeyRetiredWait retired = { bob, old_ref };
+  spin_until(key_retired, &retired, "old legacy key retired at hold cap");
+  world_down(&w);
+}
+
 /* `key`'s deletion requests (kind 5) any client sent the relay. */
 static GPtrArray *
 deletions_on(WireRelay *relay, guint key)
@@ -1948,6 +2257,18 @@ main(int argc, char **argv)
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
   g_test_add_func(KP_TEST("upgrade-companion-held"), test_upgrade_companion_held);
+  g_test_add_func(KP_TEST("upgrade-companion-partial-relay-failure"),
+                  test_upgrade_companion_partial_relay_failure);
+  g_test_add_func(KP_TEST("companion-signer-fails-before-adopted"),
+                  test_companion_signer_fails_before_adopted);
+  g_test_add_func(KP_TEST("companion-signer-fails-after-adopted"),
+                  test_companion_signer_fails_after_adopted);
+  g_test_add_func(KP_TEST("forced-companion-failure-clears-keep-old-keys"),
+                  test_forced_companion_failure_clears_keep_old_keys);
+  g_test_add_func(KP_TEST("upgrade-companion-deferred-retirement"),
+                  test_upgrade_companion_deferred_retirement);
+  g_test_add_func(KP_TEST("upgrade-companion-hold-cap-retires"),
+                  test_upgrade_companion_hold_cap_retires);
   g_test_add_func(KP_TEST("legacy-switched-off"), test_legacy_switched_off);
   g_test_add_func(KP_TEST("legacy-withdraw-unreadable-slot"),
                   test_legacy_withdraw_unreadable_slot);

@@ -157,6 +157,7 @@ typedef struct {
   guint calls;
   guint max_held;
   gboolean hold;
+  gboolean hold_key_packages; /* park kind 30443 signatures, not enrollment/auth */
   gboolean deny;      /* answer every call with ApprovalDenied */
 } GhTestSigner;
 
@@ -238,7 +239,15 @@ gh_test_signer_call(GDBusConnection *connection, const gchar *sender, const gcha
   mock->calls++;
   g_ptr_array_add(mock->senders, g_strdup(sender));
   g_ptr_array_add(mock->methods, g_strdup_printf("%s from %s", method, sender));
-  if (mock->hold) {
+  gboolean park_key_package = FALSE;
+  if (mock->hold_key_packages && g_str_equal(method, "SignEvent")) {
+    const gchar *input, *peer, *npub;
+    g_variant_get(parameters, "(&s&s&s)", &input, &peer, &npub);
+    (void)peer;
+    (void)npub;
+    park_key_package = strstr(input, "\"kind\":30443") != NULL;
+  }
+  if (mock->hold || park_key_package) {
     g_ptr_array_add(mock->held, g_object_ref(invocation));
     mock->max_held = MAX(mock->max_held, mock->held->len);
     return;
