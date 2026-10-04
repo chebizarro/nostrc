@@ -1738,6 +1738,8 @@ test_gui_new_group_formats(void)
   gtk_widget_activate_action(find_type(GTK_WIDGET(page), GH_TYPE_MLS_RELAY_ROW, w.w.url),
                              "relay.remove", NULL);
   GhMlsInviteePicker *picker = gh_mls_new_group_page_get_picker(page);
+  const gchar *servers[] = { "https://blossom.example.com", NULL };
+  g_settings_set_strv(alice->settings, "blossom-servers", servers);
 
   /* Carol alone: the older format, said, and Create runs. */
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
@@ -1748,6 +1750,7 @@ test_gui_new_group_formats(void)
                           "Some people use an older app version; this group will use the "
                           "older format."));
   g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+  g_assert_null(gh_mls_new_group_page_get_media_notice(page));
 
   /* Bob too: no format in common. */
   gh_mls_invitee_picker_set_selected(picker, hex[BOB], TRUE);
@@ -1769,6 +1772,7 @@ test_gui_new_group_formats(void)
   g_assert_null(create_reason(page));
   g_assert_null(format_notice(page));
   g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+  g_assert_nonnull(strstr(gh_mls_new_group_page_get_media_notice(page), "1 server"));
 
   /* Carol again, then keep the older format's people: Bob is un-chosen. */
   gh_mls_invitee_picker_set_selected(picker, hex[CAROL], TRUE);
@@ -1781,6 +1785,7 @@ test_gui_new_group_formats(void)
   g_assert_null(create_reason(page));
   g_assert_nonnull(format_notice(page));
   g_assert_false(gh_mls_new_group_page_get_format_choice(page));
+  g_assert_null(gh_mls_new_group_page_get_media_notice(page));
 
   /* Created: an older-format group. */
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.create", NULL);
