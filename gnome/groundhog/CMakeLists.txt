@@ -39,7 +39,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-dialog
   gh-blocked-page gh-blocked-row gh-conversation-menu
-  gh-attachment-card gh-attachment-sheet gh-create-poll-dialog)
+  gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
+  gh-voice-bubble)
 set(GROUNDHOG_BLUEPRINT_MIN_VERSION 0.12.0)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/Blueprint.cmake)
 set(GROUNDHOG_BLUEPRINT_COMPILER "")
@@ -2225,7 +2226,8 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     endif()
     foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
             mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
-            media-policy white-noise-dm adopted-commits routing-rotation concurrent-commits polls
+            media-policy white-noise-voice
+            white-noise-dm adopted-commits routing-rotation concurrent-commits polls
             white-noise-reactions mdk09-probe)
       if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
         set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
@@ -2821,6 +2823,79 @@ else()
                  "GhStore, the conversation model and OpenSSL)")
 endif()
 # --- end G21 encrypted attachments core ---
+
+# --- W27 voice messages (nostrc-o1kl) ---
+# Voice recording (GStreamer Opus/OGG), playback and waveform computation,
+# interoperable with MDK v0.11.0 / White Noise voice notes. Requires
+# GStreamer ≥ 1.20 (autoaudiosrc, opusenc, oggmux, level, decodebin,
+# scaletempo, autoaudiosink, appsrc).
+pkg_check_modules(GSTREAMER IMPORTED_TARGET gstreamer-1.0>=1.20 gstreamer-audio-1.0>=1.20
+                  gstreamer-app-1.0>=1.20)
+if (GSTREAMER_FOUND AND TARGET groundhog-media)
+  message(STATUS "Groundhog voice messages: enabled (GStreamer ${GSTREAMER_gstreamer-1.0_VERSION})")
+  add_library(groundhog-voice STATIC
+    src/media/gh-voice-meta.c
+    src/media/gh-voice-waveform.c
+    src/media/gh-voice-recorder.c
+    src/media/gh-voice-player.c)
+  target_include_directories(groundhog-voice PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+  target_link_libraries(groundhog-voice PUBLIC groundhog-media PkgConfig::GSTREAMER m)
+  target_compile_options(groundhog-voice PRIVATE -Wall -Wextra -Werror)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_VOICE=1)
+  if (TARGET test-groundhog-mdk011-interop)
+    target_link_libraries(test-groundhog-mdk011-interop PRIVATE groundhog-voice)
+    target_compile_definitions(test-groundhog-mdk011-interop PRIVATE
+      GROUNDHOG_HAVE_VOICE=1
+      GROUNDHOG_VOICE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures/voice")
+  endif()
+  target_sources(groundhog PRIVATE src/ui/gh-voice-bubble.c)
+  target_link_libraries(groundhog PRIVATE groundhog-voice)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-voice tests/media/test_voice.c
+      tests/privacy/canary-scan.c)
+    target_include_directories(test-groundhog-voice PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/privacy)
+    target_link_libraries(test-groundhog-voice PRIVATE groundhog-voice)
+    target_compile_options(test-groundhog-voice PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-voice PRIVATE
+      GROUNDHOG_VOICE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures/voice")
+    add_test(NAME groundhog-voice COMMAND test-groundhog-voice)
+    set_tests_properties(groundhog-voice PROPERTIES TIMEOUT 60
+      ENVIRONMENT "G_DEBUG=fatal-criticals")
+
+    # W27 voice UI test (nostrc-y79b): the voice bubble, the recording
+    # overlay in the composer, and the mic button. Needs GTK/Adwaita and
+    # the Groundhog resources. gh-voice-bubble.c is compiled here (it
+    # lives on the groundhog executable, not a library target).
+    if (TARGET groundhog-conversation-ui)
+      add_executable(test-groundhog-voice-ui tests/ui/test_voice_ui.c
+        src/ui/gh-voice-bubble.c ${GROUNDHOG_RESOURCE_C})
+      target_include_directories(test-groundhog-voice-ui PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/media
+        ${CMAKE_SOURCE_DIR}/tests/common)
+      target_link_libraries(test-groundhog-voice-ui PRIVATE groundhog-voice
+        groundhog-conversation-ui)
+      target_compile_options(test-groundhog-voice-ui PRIVATE -Wall -Wextra -Werror)
+      target_compile_definitions(test-groundhog-voice-ui PRIVATE
+        GROUNDHOG_HAVE_VOICE=1
+        GROUNDHOG_VOICE_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/media/fixtures/voice")
+      add_test(NAME groundhog-voice-ui COMMAND test-groundhog-voice-ui)
+      set_tests_properties(groundhog-voice-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+        ENVIRONMENT "G_DEBUG=fatal-criticals")
+    endif()
+  endif()
+else()
+  if (BUILD_MDK011_INTEROP)
+    message(FATAL_ERROR "BUILD_MDK011_INTEROP voice case needs GStreamer >= 1.20")
+  endif()
+  if (NOT GSTREAMER_FOUND)
+    message(STATUS "Groundhog voice messages: disabled (needs GStreamer ≥ 1.20)")
+  else()
+    message(STATUS "Groundhog voice messages: disabled (needs groundhog-media)")
+  endif()
+endif()
+# --- end W27 voice messages ---
 # --- W18 messaging polish (nostrc-qp24.75, .83, .84, .86, yp69, 9cho, lff5) ---
 #  - GhDmSender spaces a room's wraps on a GhClock (charter §4.5 S4 on the
 #    direct path, nostrc-yp69): every executable that compiles gh-dm-send.c

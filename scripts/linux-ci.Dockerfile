@@ -18,6 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
     desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
     blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
+    # W27 voice messages (groundhog-ci.yml sanitizer job)
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad gstreamer1.0-libav \
     # gnostr-appimage.yml (Gnostr, gnostr-signer, nostr-gtk)
     libpeas-2-dev libqrencode-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
@@ -25,6 +29,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
+# Fail the image build if partial runtime plugins would crash or disable voice.
+RUN for element in appsrc appsink decodebin audioconvert audioresample \
+    scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
+    oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock

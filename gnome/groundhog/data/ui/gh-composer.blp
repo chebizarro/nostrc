@@ -86,6 +86,29 @@ template $GhComposer: Widget {
             ]
           }
 
+
+          // Voice recording (W27 voice, nostrc-o1kl): shown while the
+          // owner can record a voice message here ("can-record-voice");
+          // emits "record-voice-requested" for the owner's recorder.
+          Button voice_button {
+            visible: false;
+            valign: end;
+            icon-name: "microphone-sensitivity-high-symbolic";
+            tooltip-text: _("Record Voice Message");
+            action-name: "composer.record-voice";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Record Voice Message");
+              description: _("Record a voice message to send encrypted.");
+            }
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
           // The conversation's disappearing-messages timer (charter §3.7,
           // G07), shown before sending while it is on; the text and the
           // accessible label are set from C. It opens Conversation Info
@@ -202,6 +225,95 @@ template $GhComposer: Widget {
               "groundhog-send-button",
             ]
           }
+        }
+      };
+    }
+
+    // W27 voice recording (nostrc-4h64): visible while a voice message is
+    // being recorded. Shows a level meter, elapsed timer, cancel and stop
+    // buttons. Escape cancels; the stop button sends the recording.
+    StackPage {
+      name: "recording";
+
+      child: Box {
+        spacing: 6;
+
+        styles [
+          "groundhog-composer-recording",
+        ]
+
+        Image recording_icon {
+          icon-name: "microphone-sensitivity-high-symbolic";
+          pixel-size: 16;
+          valign: center;
+
+          styles [
+            "error",
+          ]
+        }
+
+        Label recording_label {
+          label: _("Recording…");
+          hexpand: true;
+          xalign: 0;
+          valign: center;
+
+          styles [
+            "caption",
+          ]
+        }
+
+        Label recording_time {
+          label: "0:00";
+          valign: center;
+
+          styles [
+            "caption",
+            "numeric",
+          ]
+        }
+
+        LevelBar recording_level {
+          min-value: 0;
+          max-value: 1;
+          value: 0;
+          valign: center;
+          hexpand: false;
+
+          styles [
+            "groundhog-recording-level",
+          ]
+        }
+
+        Button cancel_recording_button {
+          valign: center;
+          label: _("_Cancel");
+          use-underline: true;
+          action-name: "composer.cancel-recording";
+
+          accessibility {
+            label: _("Cancel Recording");
+          }
+
+          styles [
+            "flat",
+          ]
+        }
+
+        Button stop_recording_button {
+          valign: center;
+          icon-name: "media-playback-stop-symbolic";
+          tooltip-text: _("Send Voice Message");
+          action-name: "composer.stop-recording";
+
+          accessibility {
+            label: _("Stop and send voice message");
+          }
+
+          styles [
+            "circular",
+            "suggested-action",
+          ]
         }
       };
     }

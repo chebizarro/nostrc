@@ -12,7 +12,7 @@ on:
 jobs:
   groundhog:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 60
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
@@ -35,7 +35,10 @@ jobs:
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
             desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
-            blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common
+            blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
           # groundhog-blueprint compares its output with the committed .ui.
           blueprint-compiler --version
@@ -43,13 +46,17 @@ jobs:
           # (ST-4) proves every sqlite3_* binding in groundhog resolves to it, ahead
           # of the libsqlite3 that libsoup links.
           pkg-config --modversion sqlcipher
+          for element in appsrc appsink decodebin audioconvert audioresample \
+            scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
+            oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
 
       - name: Configure Groundhog and in-tree adapters
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
             -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
-            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
+            -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF \
+            -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice
 
       - name: Build Groundhog and every focused test target
         run: |
@@ -84,7 +91,8 @@ jobs:
             test-groundhog-message-reply \
             test-groundhog-mls-poll \
             test-groundhog-bus-probe test-groundhog-two-instance \
-            groundhog-test-harness test-groundhog-two-instance-acceptance
+            groundhog-test-harness test-groundhog-two-instance-acceptance \
+            test-groundhog-voice test-groundhog-voice-ui test-groundhog-mdk011-interop
 
       - name: Require complete Groundhog test registration
         run: |
@@ -128,6 +136,9 @@ jobs:
               'groundhog-mls-poll',
               'groundhog-bus-probe', 'groundhog-two-instance',
               'groundhog-two-instance-acceptance',
+              'groundhog-voice',
+              'groundhog-voice-ui',
+              'groundhog-mdk011-interop-white-noise-voice',
           }
           missing = required - found
           print('Groundhog tests:', ', '.join(sorted(found & required)))
@@ -143,9 +154,22 @@ jobs:
           dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
             ctest --test-dir build --output-on-failure \
               --output-junit "$PWD/build/groundhog-ctest.xml" \
-              -R '^(groundhog-|nostrc-test-bus-selftest$)' | tee build/groundhog-ctest.log
+              -R '^(groundhog-|nostrc-test-bus-selftest$)' \
+              -E '^groundhog-mdk011-' | tee build/groundhog-ctest.log
           if grep -Eq '\*\*\*Skipped|Not Run' build/groundhog-ctest.log; then
             echo 'Groundhog test unexpectedly skipped or did not run' >&2
+            exit 1
+          fi
+
+      - name: White Noise AAC/MP4 voice interop with MDK 0.11
+        run: |
+          set -euo pipefail
+          ctest --test-dir build --output-on-failure --no-tests=error \
+            --output-junit "$PWD/build/groundhog-mdk011-voice.xml" \
+            -R '^groundhog-mdk011-interop-white-noise-voice$' \
+            | tee build/groundhog-mdk011-voice.log
+          if grep -Eq '\*\*\*Skipped|Not Run' build/groundhog-mdk011-voice.log; then
+            echo 'MDK 0.11 voice interop did not run' >&2
             exit 1
           fi
 
@@ -185,6 +209,8 @@ jobs:
           path: |
             build/groundhog-ctest.log
             build/groundhog-ctest.xml
+            build/groundhog-mdk011-voice.log
+            build/groundhog-mdk011-voice.xml
             build/groundhog-kc6-session.log
             build/Testing/Temporary/LastTest.log
           if-no-files-found: ignore
@@ -216,7 +242,7 @@ jobs:
         groundhog-multi-send
         groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard
         groundhog-media-cache-binding groundhog-attachments groundhog-mls-media
-        groundhog-mls-files groundhog-mls-poll
+        groundhog-mls-files groundhog-mls-poll groundhog-voice
         groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
@@ -234,7 +260,10 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
-            dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi
+            dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
 
       - name: Configure with ASAN and UBSAN
         run: |

@@ -36,6 +36,17 @@ NOT_BUILD_DEPS = {
                    "regeneration, which the gate disables (BLUEPRINT_COMPILER=OFF)",
 }
 
+# Development headers alone do not provide decodebin, AAC/MP4 demux/decoder,
+# Opus/Ogg codec or the audio sinks. Both the gate image and hosted Groundhog
+# job must install the runtime plugins; the image also runs gst-inspect.
+REQUIRED_GSTREAMER_RUNTIME = {
+    "gstreamer1.0-tools",
+    "gstreamer1.0-plugins-base",
+    "gstreamer1.0-plugins-good",
+    "gstreamer1.0-plugins-bad",
+    "gstreamer1.0-libav",
+}
+
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]+$")
 
 
@@ -72,26 +83,33 @@ def check(root):
     if not image:
         return [f"{DOCKERFILE}: no apt-get install packages found"]
     problems = []
+    for package in sorted(REQUIRED_GSTREAMER_RUNTIME - image):
+        problems.append(f"{DOCKERFILE}: missing required voice runtime package {package}")
     for workflow in MIRRORED:
         path = root / workflow
         if not path.is_file():
             problems.append(f"{workflow}: mirrored workflow is missing (update MIRRORED)")
             continue
-        missing = apt_packages(path.read_text()) - image - set(NOT_BUILD_DEPS)
+        workflow_packages = apt_packages(path.read_text())
+        if workflow == ".github/workflows/groundhog-ci.yml":
+            for package in sorted(REQUIRED_GSTREAMER_RUNTIME - workflow_packages):
+                problems.append(f"{workflow}: missing required voice runtime package {package}")
+        missing = workflow_packages - image - set(NOT_BUILD_DEPS)
         for package in sorted(missing):
             problems.append(f"{workflow}: installs {package}, which {DOCKERFILE} does not")
     return problems
 
 
 def self_test():
+    runtime = " ".join(sorted(REQUIRED_GSTREAMER_RUNTIME))
     dockerfile = ("RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
                   "    # a comment line inside the command\n"
                   "    build-essential libfoo-dev \\\n"
-                  "    libbar2.0-dev && rm -rf /var/lib/apt/lists/*\n")
+                  f"    libbar2.0-dev {runtime} && rm -rf /var/lib/apt/lists/*\n")
     good = ("      run: |\n"
             "        sudo apt-get install -y --no-install-recommends \\\n"
             "          build-essential libfoo-dev \\\n"
-            "          libbar2.0-dev wget\n"
+            f"          libbar2.0-dev {runtime} wget\n"
             "        sudo apt-get install -y libfoo-dev\n")
     bad = good + "        sudo apt-get install -y libnew-dev\n"
     with tempfile.TemporaryDirectory() as tmp:
@@ -105,6 +123,10 @@ def self_test():
         (root / MIRRORED[0]).write_text(bad)
         found = check(root)
         assert found == [f"{MIRRORED[0]}: installs libnew-dev, which {DOCKERFILE} does not"], found
+        (root / MIRRORED[0]).write_text(good.replace("gstreamer1.0-libav", ""))
+        found = check(root)
+        assert found == [f"{MIRRORED[0]}: missing required voice runtime package gstreamer1.0-libav"], found
+        (root / MIRRORED[0]).write_text(good)
         (root / MIRRORED[1]).unlink()
         assert any("missing" in p for p in check(root))
     print("check-linux-ci-packages self-test passed")

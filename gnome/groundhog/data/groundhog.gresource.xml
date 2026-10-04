@@ -8,6 +8,7 @@
     <!-- Bundled symbolic icons (the icon theme's resource path).
          Non-GNOME desktops may lack the Adwaita icon theme; bundle every
          symbolic icon the app references so they always render (nostrc-9juh). -->
+    <file>icons/scalable/actions/microphone-sensitivity-high-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic.svg</file>
     <file>icons/scalable/actions/send-symbolic-rtl.svg</file>
     <file>icons/scalable/actions/avatar-default-symbolic.svg</file>
@@ -55,6 +56,12 @@
     <file>icons/scalable/actions/network-server-symbolic.svg</file>
     <file>icons/scalable/actions/system-search-symbolic.svg</file>
     <file>icons/scalable/actions/view-conceal-symbolic.svg</file>
+    <file>icons/scalable/actions/media-playback-stop-symbolic.svg</file>
+    <file>icons/scalable/actions/folder-remote-symbolic.svg</file>
+    <file>icons/scalable/actions/process-stop-symbolic.svg</file>
+    <file>icons/scalable/actions/media-playback-pause-symbolic.svg</file>
+    <file>icons/scalable/actions/folder-download-symbolic.svg</file>
+    <file>icons/scalable/actions/media-playback-start-symbolic.svg</file>
     <!-- Compiled from data/ui/*.blp; see CMakeLists.txt. -->
     <file>ui/gh-window.ui</file>
     <file>ui/gh-sidebar-page.ui</file>
@@ -98,6 +105,7 @@
     <file>ui/gh-attachment-card.ui</file>
     <file>ui/gh-attachment-sheet.ui</file>
     <file>ui/gh-create-poll-dialog.ui</file>
+    <file>ui/gh-voice-bubble.ui</file>
     <!-- Reviewed onboarding relay suggestions (charter D4, G14). -->
     <file>relay-suggestions.json</file>
   </gresource>

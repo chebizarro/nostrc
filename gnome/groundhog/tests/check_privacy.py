@@ -170,6 +170,17 @@ EXCEPTIONS = {
     ("no-tmp-cache", "src/main.c", '"XDG_CACHE_HOME"'):
         "setup_instance() reads XDG_CACHE_HOME to redirect it to the instance's "
         "subdirectory (nostrc-lrac); no plaintext is written to the cache",
+    # W27 voice recording (nostrc-o1kl): the 0600 inode is unlinked before
+    # GStreamer fdsink starts capture, so SIGKILL cannot leave a named plaintext
+    # recording. Startup sweeps legacy files and the create-to-unlink crash
+    # window. /voice/recorder/crash-recovery kills a recorder child and scans
+    # the directory, then verifies a planted stale canary is wiped.
+    ("no-tmp-cache", "src/app/gh-attachment-ui.c", "g_get_user_cache_dir"):
+        "attachment startup sweeps legacy gh-voice files; recording uses an "
+        "already-unlinked 0600 fd, with no reachable plaintext cache file",
+    ("no-tmp-cache", "src/media/gh-voice-recorder.c", "g_mkstemp_full"):
+        "creates one unique 0600 inode in a checked 0700 directory and unlinks "
+        "it before capture; startup sweeps the brief create-to-unlink window",
 }
 
 Key = namedtuple("Key", "type default choices", defaults=(None,))

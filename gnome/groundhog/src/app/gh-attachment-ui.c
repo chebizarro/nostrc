@@ -7,6 +7,12 @@
 #include "gh-outbox.h"
 #include "gh-preferences-dialog.h"
 
+#ifdef GROUNDHOG_HAVE_VOICE
+#include "gh-voice-bubble.h"
+#include "gh-voice-meta.h"
+#include "gh-voice-recorder.h"
+#endif
+
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -43,6 +49,12 @@ typedef struct {
   GDestroyNotify groups_destroy;
   GObject *watched;             /* groups.watch's object for the shown conversation */
   gulong watched_handler;
+#ifdef GROUNDHOG_HAVE_VOICE
+  GhVoiceRecorder *recorder;    /* W27: active voice recording, or NULL */
+  gulong recorder_level_handler;
+  gulong recorder_tick_handler;
+  gulong recorder_state_handler;
+#endif
 } GhAttachmentUi;
 
 static void close_offer(GhAttachmentUi *ui);
@@ -100,6 +112,15 @@ ui_free(gpointer data)
     g_cancellable_cancel(ui->loading);
   g_clear_object(&ui->loading);
   g_clear_pointer(&ui->offer, offer_free);
+#ifdef GROUNDHOG_HAVE_VOICE
+  if (ui->recorder) {
+    gh_voice_recorder_cancel(ui->recorder);
+    g_clear_signal_handler(&ui->recorder_level_handler, ui->recorder);
+    g_clear_signal_handler(&ui->recorder_tick_handler, ui->recorder);
+    g_clear_signal_handler(&ui->recorder_state_handler, ui->recorder);
+    g_clear_object(&ui->recorder);
+  }
+#endif
   g_clear_object(&ui->store);
   g_clear_object(&ui->model);
   g_clear_object(&ui->attachments);
@@ -175,6 +196,10 @@ update_can_attach(GhAttachmentUi *ui)
   gboolean can = (recipients && outbox_of(ui) && gh_attachments_get_client(ui->attachments)) ||
                  group_of(ui, conversation);
   gh_composer_set_can_attach(ui->composer, can);
+#ifdef GROUNDHOG_HAVE_VOICE
+  /* Gate the mic button on sendability (finding 7). */
+  gh_composer_set_can_record_voice(ui->composer, can);
+#endif
 }
 
 static GStrv
@@ -677,6 +702,111 @@ on_file_chosen(GObject *source, GAsyncResult *result, gpointer data)
   g_object_unref(window);
 }
 
+#ifdef GROUNDHOG_HAVE_VOICE
+/* ---- voice recording (W27, nostrc-cxh4) ------------------------------------------- */
+
+static void
+cancel_recorder(GhAttachmentUi *ui)
+{
+  if (!ui->recorder)
+    return;
+  gh_voice_recorder_cancel(ui->recorder);
+  g_clear_signal_handler(&ui->recorder_level_handler, ui->recorder);
+  g_clear_signal_handler(&ui->recorder_tick_handler, ui->recorder);
+  g_clear_signal_handler(&ui->recorder_state_handler, ui->recorder);
+  g_clear_object(&ui->recorder);
+  gh_composer_hide_recording(ui->composer);
+}
+
+static void
+on_recorder_level(GhVoiceRecorder *recorder G_GNUC_UNUSED, gdouble level, gpointer data)
+{
+  GhAttachmentUi *ui = data;
+  if (ui->destroyed)
+    return;
+  gh_composer_set_recording_level(ui->composer, level);
+}
+
+static void
+on_recorder_tick(GhVoiceRecorder *recorder G_GNUC_UNUSED, gdouble seconds, gpointer data)
+{
+  GhAttachmentUi *ui = data;
+  if (ui->destroyed)
+    return;
+  gh_composer_set_recording_time(ui->composer, seconds);
+}
+
+static void
+on_recorder_state(GhVoiceRecorder *recorder G_GNUC_UNUSED, guint state, gpointer data)
+{
+  GhAttachmentUi *ui = data;
+  if (ui->destroyed)
+    return;
+  /* Auto-stop at max duration triggers DONE. */
+  if (state == GH_VOICE_RECORDER_STATE_DONE && ui->recorder) {
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GBytes) bytes = gh_voice_recorder_dup_bytes(ui->recorder, &error);
+    g_clear_signal_handler(&ui->recorder_level_handler, ui->recorder);
+    g_clear_signal_handler(&ui->recorder_tick_handler, ui->recorder);
+    g_clear_signal_handler(&ui->recorder_state_handler, ui->recorder);
+    g_clear_object(&ui->recorder);
+    gh_composer_hide_recording(ui->composer);
+    if (bytes)
+      gh_attachment_ui_offer_bytes(GH_WINDOW(ui->window), bytes,
+                                   GH_VOICE_FILENAME, GH_VOICE_MIME);
+    else
+      toast(ui, error ? error->message : _("The recording couldn't be read"));
+  } else if (state == GH_VOICE_RECORDER_STATE_ERROR) {
+    cancel_recorder(ui);
+    toast(ui, _("Recording failed"));
+  }
+}
+
+static void
+on_record_voice_requested(GhComposer *composer G_GNUC_UNUSED, GtkWidget *window)
+{
+  GhAttachmentUi *ui = ui_of(window);
+  if (!ui || ui->recorder)
+    return;
+  /* The recorder unlinks its 0600 inode before starting capture. */
+  g_autofree gchar *private_dir =
+    g_build_filename(g_get_user_cache_dir(), "groundhog", "voice-tmp", NULL);
+  ui->recorder = gh_voice_recorder_new(private_dir);
+  g_autoptr(GError) error = NULL;
+  if (!gh_voice_recorder_start(ui->recorder, &error)) {
+    g_clear_object(&ui->recorder);
+    toast(ui, error ? error->message : _("Couldn't start recording"));
+    return;
+  }
+  ui->recorder_level_handler =
+    g_signal_connect(ui->recorder, "level-updated", G_CALLBACK(on_recorder_level), ui);
+  ui->recorder_tick_handler =
+    g_signal_connect(ui->recorder, "duration-tick", G_CALLBACK(on_recorder_tick), ui);
+  ui->recorder_state_handler =
+    g_signal_connect(ui->recorder, "state-changed", G_CALLBACK(on_recorder_state), ui);
+  gh_composer_show_recording(ui->composer);
+}
+
+static void
+on_stop_recording(GhComposer *composer G_GNUC_UNUSED, GtkWidget *window)
+{
+  GhAttachmentUi *ui = ui_of(window);
+  if (!ui || !ui->recorder)
+    return;
+  gh_voice_recorder_stop(ui->recorder);
+  /* The state-changed handler picks up DONE and offers the bytes. */
+}
+
+static void
+on_cancel_recording(GhComposer *composer G_GNUC_UNUSED, GtkWidget *window)
+{
+  GhAttachmentUi *ui = ui_of(window);
+  if (!ui)
+    return;
+  cancel_recorder(ui);
+}
+#endif
+
 static void
 on_attach_requested(GhComposer *composer, GtkWidget *window)
 {
@@ -927,9 +1057,15 @@ on_window_destroy(GtkWidget *window)
   if (ui->loading)
     g_cancellable_cancel(ui->loading);
   close_offer(ui);
+#ifdef GROUNDHOG_HAVE_VOICE
+  cancel_recorder(ui);
+#endif
   watch(ui, NULL);
   ui->destroyed = TRUE;
   gh_attachment_card_set_provider(window, NULL, NULL, NULL);
+#ifdef GROUNDHOG_HAVE_VOICE
+  gh_voice_bubble_set_provider(window, NULL, NULL, NULL);
+#endif
 }
 
 /* ---- public ----------------------------------------------------------------------------- */
@@ -973,6 +1109,34 @@ gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config)
                           G_CONNECT_SWAPPED);
   g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), NULL);
   gh_attachment_card_set_provider(GTK_WIDGET(window), &card_provider, ui, NULL);
+#ifdef GROUNDHOG_HAVE_VOICE
+  /* Scrub named plaintext left by older builds or a create/unlink crash.
+   * This runs when the attachment UI starts, before the mic is available. */
+  g_autofree gchar *voice_dir =
+    g_build_filename(g_get_user_cache_dir(), "groundhog", "voice-tmp", NULL);
+  g_autoptr(GError) sweep_error = NULL;
+  if (!gh_voice_recorder_sweep_stale(voice_dir, &sweep_error))
+    g_warning("Cannot clean stale voice recordings: %s", sweep_error->message);
+  /* W27 voice (nostrc-h4mk): the voice bubble uses the same lookup/download
+   * callbacks as the attachment card. */
+  static const GhVoiceBubbleProvider voice_provider = {
+    .lookup = card_lookup,
+    .download = card_download,
+    .cancel = card_cancel,
+    .save = card_save,
+    .download_note = card_download_note,
+    .lookup_at = card_lookup_at,
+  };
+  gh_voice_bubble_set_provider(GTK_WIDGET(window), &voice_provider, ui, NULL);
+  /* W27 voice recording (nostrc-cxh4): the mic button starts recording. */
+  g_signal_connect_object(ui->composer, "record-voice-requested",
+                          G_CALLBACK(on_record_voice_requested), window, 0);
+  g_signal_connect_object(ui->composer, "stop-recording",
+                          G_CALLBACK(on_stop_recording), window, 0);
+  g_signal_connect_object(ui->composer, "cancel-recording",
+                          G_CALLBACK(on_cancel_recording), window, 0);
+  /* Recording is enabled only when the current conversation can send files. */
+#endif
   update_can_attach(ui);
 }
 

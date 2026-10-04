@@ -696,6 +696,68 @@ The NIP-17 kind-15 tags are: `file-type`, `encryption-algorithm=aes-gcm`, `decry
 - NIP-29 attachments would be public uploads; they are out of scope and the UI never pretends otherwise.
 - Marmot encrypted media waits for adopted-spec interop (`qp24.13`).
 
+
+### 6.1 Voice messages (W27, nostrc-o1kl)
+
+Voice messages are audio attachments (`audio/ogg`, Opus codec) that flow through
+the existing encrypted attachment pipeline (§6 for NIP-17 DMs, MIP-04 v2 for MLS
+groups). They interoperate with MDK v0.11.0 / White Noise voice notes. White Noise
+Android records AAC-LC in MP4 (`audio/mp4`, `.m4a`); Groundhog plays it after
+explicit download. Groundhog sends Ogg/Opus, which White Noise's Android
+`MediaPlayer` can decode. MDK 0.11 imeta has neither duration nor waveform,
+so Groundhog sends no speculative extra imeta fields and derives a bounded
+waveform locally from decoded PCM after download.
+
+**Recording:**
+
+1. **Microphone access** uses the platform audio source. There is no
+   app-callable XDG microphone portal: on desktops with PipeWire/PulseAudio,
+   their permission policy mediates capture; on macOS the operating system may
+   show its native microphone prompt. A denied/unavailable source is reported
+   as a recording error, never silently recorded. The composer shows a mic
+   button only when the conversation supports attachments (`can-record-voice`).
+   No ambient or continuous recording; the mic starts only after an explicit
+   tap and stops on Send or Cancel.
+2. **Recording state** is visible: a level meter updates during recording. The
+   user can cancel (swipe or Escape); cancelled audio is wiped from its
+   already-unlinked recording inode immediately.
+3. **Recording storage** is a unique `0600` inode created in a checked
+   user-owned `0700` directory and unlinked *before capture begins*. GStreamer
+   writes through its open file descriptor; on process death, closing that fd
+   leaves no named plaintext recording in the persistent cache. The create-to-
+   unlink interval is brief but not atomic on every platform; attachment-UI
+   startup sweeps and wipes stale `gh-voice-*` files from older builds or a
+   crash in that interval. Successful handoff, cancellation, error and finalize
+   also zero/truncate the open inode before closing it. Zeroing is best-effort,
+   not secure deletion on copy-on-write filesystems, snapshots or wear-levelled
+   media; users needing stronger at-rest protection should use full-disk
+   encryption.
+4. **Max duration** is 5 minutes (`GH_VOICE_MAX_DURATION_S`). Recording stops
+   automatically at the limit.
+
+**Playback:**
+
+1. **No auto-download.** Voice messages follow PD-2: the bubble shows "Voice
+   Message" and a Download button. Playback only begins after the user downloads
+   and the audio is decrypted and verified (§6 receive steps 1–6).
+2. **No MPRIS / system "now playing".** GStreamer playback does not register with
+   the desktop's media player interface. The sender's identity never surfaces in
+   system-level metadata (e.g. GNOME's media notification, KDE's media player
+   applet). This is enforced by not loading the `mpris` GStreamer plugin.
+3. **Audio stays in-process.** Decrypted audio bytes live only in the encrypted
+   media LRU (§6, step 6). No temp file is written for playback.
+
+**Privacy:**
+
+- **No transcription.** Groundhog does not transcribe voice messages and has no
+  speech-to-text integration.
+- **No waveform on the wire.** Waveform visualisation is computed locally from
+  the downloaded audio. MDK v0.11.0 also stores waveform samples only locally
+  (draft-level, not in `imeta`); Groundhog does the same.
+- **Voice detection** is by MIME type (`audio/*`), not by any flag. There is no
+  behavioural difference that could be used to fingerprint voice vs. generic
+  audio.
+
 ---
 
 ## 7. Modern UX information architecture (Blueprint, libadwaita ≥ 1.5)

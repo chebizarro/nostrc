@@ -90,6 +90,16 @@ template $GhMessageRow: Widget {
       spacing: 6;
     }
 
+    // W27 voice messages (nostrc-h4mk): when a file message carries an
+    // audio MIME type, this slot shows a GhVoiceBubble instead of the
+    // attachment card. The voice bubble is added by gh-message-row.c when
+    // it detects an audio attachment; it stays here across recycling.
+    Box voice_slot {
+      visible: false;
+      orientation: vertical;
+      spacing: 6;
+    }
+
     // A kind-15 file message's card (charter G22), in place of the body:
     // nothing is fetched until its Download button. An encrypted group
     // message (W25) shows its caption above and one card per file; the

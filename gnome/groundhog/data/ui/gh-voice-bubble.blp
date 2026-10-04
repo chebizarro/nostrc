@@ -1,0 +1,184 @@
+using Gtk 4.0;
+
+// A voice message bubble (W27, nostrc-o1kl): play/pause, waveform, time,
+// speed selector, Download button. Before download: shows file info and
+// Download. After download: play controls and waveform visualisation.
+template $GhVoiceBubble: Widget {
+  layout-manager: BinLayout {};
+
+  styles [
+    "groundhog-voice-bubble",
+  ]
+
+  Box content_box {
+    orientation: vertical;
+    spacing: 6;
+
+    // Before download: the file info and download button.
+    Box download_box {
+      visible: true;
+      spacing: 8;
+      halign: start;
+
+      Image download_icon {
+        icon-name: "microphone-sensitivity-high-symbolic";
+        pixel-size: 24;
+      }
+
+      Box {
+        orientation: vertical;
+        spacing: 2;
+        hexpand: true;
+
+        Label type_label {
+          xalign: 0;
+          label: _("Voice Message");
+
+          styles [
+            "heading",
+          ]
+        }
+
+        Label size_label {
+          xalign: 0;
+          visible: false;
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+      }
+
+      Button download_button {
+        icon-name: "folder-download-symbolic";
+        tooltip-text: _("Download");
+        action-name: "voice.download";
+
+        accessibility {
+          label: _("Download voice message");
+        }
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      Spinner download_spinner {
+        visible: false;
+        spinning: true;
+      }
+
+      Button cancel_button {
+        visible: false;
+        icon-name: "process-stop-symbolic";
+        tooltip-text: _("Cancel");
+        action-name: "voice.cancel";
+
+        accessibility {
+          label: _("Cancel download");
+        }
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+    }
+
+    // After download: play controls with waveform.
+    Box player_box {
+      visible: false;
+      spacing: 8;
+
+      Button play_button {
+        icon-name: "media-playback-start-symbolic";
+        tooltip-text: _("Play");
+        action-name: "voice.play";
+
+        accessibility {
+          label: _("Play voice message");
+        }
+
+        styles [
+          "flat",
+          "circular",
+        ]
+      }
+
+      // The waveform area, drawn by GhVoiceBubble's snapshot.
+      DrawingArea waveform_area {
+        hexpand: true;
+        content-height: 32;
+        content-width: 160;
+
+        accessibility {
+          label: _("Voice message waveform");
+        }
+      }
+
+      Box time_box {
+        spacing: 4;
+        valign: center;
+
+        Label position_label {
+          label: "0:00";
+
+          styles [
+            "caption",
+            "numeric",
+          ]
+        }
+
+        Label separator_label {
+          label: "/";
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+
+        Label duration_label {
+          label: "0:00";
+
+          styles [
+            "caption",
+            "numeric",
+          ]
+        }
+      }
+
+      Button speed_button {
+        label: "1×";
+        tooltip-text: _("Playback Speed");
+        action-name: "voice.cycle-speed";
+
+        accessibility {
+          label: _("Playback speed");
+          description: _("Cycles between 1×, 1.5× and 2× speed.");
+        }
+
+        styles [
+          "flat",
+          "caption",
+          "numeric",
+        ]
+      }
+    }
+
+    // Error text for a failed download.
+    Label error_label {
+      visible: false;
+      wrap: true;
+      wrap-mode: word_char;
+      xalign: 0;
+
+      styles [
+        "caption",
+        "error",
+      ]
+    }
+  }
+}

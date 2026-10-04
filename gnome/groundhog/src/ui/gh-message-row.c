@@ -7,6 +7,11 @@
 #include "gh-delivery-indicator.h"
 #include "gh-link-policy.h"
 
+#ifdef GROUNDHOG_HAVE_VOICE
+#include "gh-voice-bubble.h"
+#include "gh-voice-meta.h"
+#endif
+
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
@@ -24,6 +29,8 @@ struct _GhMessageRow {
   GtkLabel *reply_label;
   GtkBox *bubble;
   GtkLabel *body_label;
+  GtkBox *voice_slot;      /* W27 voice: shown instead of attachment_slot */
+  GtkWidget *voice_bubble;  /* GhVoiceBubble, created on demand */
   GtkBox *attachment_slot;
   GhAttachmentCard *attachment_card;
   GtkLabel *attachment_note;
@@ -121,6 +128,36 @@ append_sentence(GString *out, const gchar *sentence)
     g_string_append_c(out, '.');
 }
 
+/* How many files a message's bubble shows as cards (W25). */
+static guint
+card_count(GhMessage *message)
+{
+  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND)
+    return 1;
+  return gh_message_is_mls(message) ? gh_message_get_n_attachments(message) : 0;
+}
+
+#ifdef GROUNDHOG_HAVE_VOICE
+/* W27 voice (nostrc-h4mk): TRUE when the message carries a single audio
+ * file — a NIP-17 kind 15 whose declared MIME type starts with "audio/",
+ * or an MLS message with exactly one attachment whose media_type does.
+ * Multi-file messages are never voice (the first could be audio, but the
+ * UX would be unclear). */
+static gboolean
+is_voice_message(GhMessage *message)
+{
+  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND) {
+    g_autoptr(GhNip17File) file = gh_message_dup_file(message);
+    return file && gh_voice_meta_is_audio(file->file_type);
+  }
+  if (gh_message_is_mls(message) && gh_message_get_n_attachments(message) == 1) {
+    const GhMessageAttachment *att = gh_message_get_attachment(message, 0);
+    return att && gh_voice_meta_is_audio(att->media_type);
+  }
+  return FALSE;
+}
+#endif
+
 /* A kind-15 file message is "Photo" or "File" in text
  * (gh_message_dup_display_text()), never its URL, and its bubble holds the
  * attachment card (G22). The URL names encrypted bytes on a Blossom server:
@@ -129,6 +166,10 @@ append_sentence(GString *out, const gchar *sentence)
 static gchar *
 file_text(GhMessage *message)
 {
+#ifdef GROUNDHOG_HAVE_VOICE
+  if (is_voice_message(message))
+    return g_strdup(_("Voice message"));
+#endif
   if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND)
     return gh_message_dup_display_text(message);
   /* An encrypted group's files without a caption: "Photo", "3 files". */
@@ -136,15 +177,6 @@ file_text(GhMessage *message)
   if (gh_message_get_n_attachments(message) > 0 && (!content || !*content))
     return gh_message_dup_display_text(message);
   return NULL;
-}
-
-/* How many files a message's bubble shows as cards (W25). */
-static guint
-card_count(GhMessage *message)
-{
-  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND)
-    return 1;
-  return gh_message_is_mls(message) ? gh_message_get_n_attachments(message) : 0;
 }
 
 static gchar *
@@ -226,6 +258,10 @@ update_width(GhMessageRow *self)
 {
   gint chars = self->compact ? BODY_CHARS_COMPACT : BODY_CHARS;
   gtk_label_set_max_width_chars(self->body_label, chars);
+#ifdef GROUNDHOG_HAVE_VOICE
+  if (self->voice_bubble)
+    gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(self->voice_bubble), self->compact);
+#endif
   gh_attachment_card_set_compact(self->attachment_card, self->compact);
   for (guint i = 0; self->extra_cards && i < self->extra_cards->len; i++)
     gh_attachment_card_set_compact(g_ptr_array_index(self->extra_cards, i), self->compact);
@@ -432,12 +468,43 @@ update_all(GhMessageRow *self)
   set_class(GTK_WIDGET(self->body_label), "groundhog-withdrawn", withdrawn);
   guint cards = message && !self->undecryptable && !withdrawn ? card_count(message) : 0;
   gboolean file_message = cards > 0;
-  /* The cards replace the body, or follow an encrypted group message's
-   * caption (W25); they fetch nothing by being shown. */
+
+#ifdef GROUNDHOG_HAVE_VOICE
+  /* W27 voice (nostrc-h4mk): a single audio attachment shows as a voice
+   * bubble, not as an attachment card. */
+  gboolean voice = file_message && is_voice_message(message);
+  if (voice) {
+    if (!self->voice_bubble) {
+      self->voice_bubble = gh_voice_bubble_new();
+      gtk_box_append(self->voice_slot, self->voice_bubble);
+    }
+    gh_voice_bubble_set_index(GH_VOICE_BUBBLE(self->voice_bubble), 0);
+    gh_voice_bubble_set_message(GH_VOICE_BUBBLE(self->voice_bubble), message);
+    gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(self->voice_bubble), self->compact);
+  } else if (self->voice_bubble) {
+    gh_voice_bubble_set_message(GH_VOICE_BUBBLE(self->voice_bubble), NULL);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->voice_slot), voice);
+  /* Voice messages show the bubble, not the attachment card. */
+  if (voice) {
+    update_cards(self, NULL, 0);
+    file_message = FALSE;  /* no attachment_slot for voice */
+  } else {
+    update_cards(self, file_message ? message : NULL, cards);
+  }
+#else
   update_cards(self, file_message ? message : NULL, cards);
+#endif
+
   const gchar *caption = message ? gh_message_get_content(message) : NULL;
+#ifdef GROUNDHOG_HAVE_VOICE
+  gboolean show_body = withdrawn || (!file_message && !voice) ||
+                       (gh_message_get_kind(message) != GH_NIP17_FILE_KIND && !voice &&
+                        caption && *caption);
+#else
   gboolean show_body = withdrawn || !file_message ||
                        (gh_message_get_kind(message) != GH_NIP17_FILE_KIND && caption && *caption);
+#endif
   gtk_widget_set_visible(GTK_WIDGET(self->attachment_slot), file_message ||
                          (message && !self->undecryptable && !withdrawn &&
                           gh_message_get_rejected_attachments(message) > 0));
@@ -774,6 +841,10 @@ gh_message_row_dispose(GObject *object)
   if (self->message)
     g_signal_handlers_disconnect_by_data(self->message, self);
   g_clear_object(&self->message);
+#ifdef GROUNDHOG_HAVE_VOICE
+  /* The voice bubble is the voice_slot's child: it goes with the template. */
+  self->voice_bubble = NULL;
+#endif
   if (self->picker) {
     gtk_widget_unparent(GTK_WIDGET(self->picker));
     self->picker = NULL;
@@ -834,6 +905,9 @@ gh_message_row_class_init(GhMessageRowClass *klass)
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
   g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
+#ifdef GROUNDHOG_HAVE_VOICE
+  g_type_ensure(GH_TYPE_VOICE_BUBBLE);
+#endif
 
   g_type_ensure(GH_TYPE_REACTION_BAR);
   gtk_widget_class_set_template_from_resource(widget_class,
@@ -853,6 +927,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, time_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, delivery);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, retry_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, voice_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_card);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_note);

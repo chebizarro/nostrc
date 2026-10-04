@@ -12,6 +12,7 @@ struct _GhComposer {
   GtkStack *composer_stack;
   GtkLabel *error_label;
   GtkButton *attach_button;
+  GtkButton *voice_button;
   GtkButton *poll_button;
   GtkBox *timer_slot;
   GtkButton *timer_button;
@@ -24,6 +25,14 @@ struct _GhComposer {
   GtkButton *send_button;
   GtkLabel *disabled_reason;
   GtkButton *disabled_button;
+
+  /* W27 recording page (nostrc-4h64). */
+  GtkImage *recording_icon;
+  GtkLabel *recording_label;
+  GtkLabel *recording_time;
+  GtkLevelBar *recording_level;
+  GtkButton *cancel_recording_button;
+  GtkButton *stop_recording_button;
 
   GtkTextBuffer *buffer; /* the text view's */
   gboolean compact;
@@ -39,6 +48,7 @@ struct _GhComposer {
   gboolean preedit;      /* an input method is composing text (a preedit) */
   gboolean can_attach;   /* the owner can send a file here (G22) */
   gboolean can_create_poll; /* in an encrypted group (W26) */
+  gboolean can_record_voice; /* voice recording available (W27) */
   gboolean draft_pending;
   guint draft_timer;
   GhComposerLengthFunc length_func;
@@ -56,6 +66,7 @@ enum {
   PROP_DISAPPEARING_TIMER,
   PROP_CAN_ATTACH,
   PROP_CAN_CREATE_POLL,
+  PROP_CAN_RECORD_VOICE,
   PROP_CAN_SEND,
   PROP_TOO_LONG,
   N_PROPS
@@ -69,6 +80,9 @@ enum {
   SIGNAL_ATTACH_FILE,
   SIGNAL_ATTACH_TEXTURE,
   SIGNAL_POLL_REQUESTED,
+  SIGNAL_RECORD_VOICE_REQUESTED,
+  SIGNAL_STOP_RECORDING,
+  SIGNAL_CANCEL_RECORDING,
   N_SIGNALS
 };
 static guint signals[N_SIGNALS];
@@ -278,6 +292,31 @@ on_preedit_changed(GhComposer *self, const gchar *preedit)
  * input method first; this one asks the input method itself only for an
  * Enter it would otherwise send or swallow, so no key reaches the input
  * method twice. */
+/* Escape cancels a recording in progress (finding 8). */
+static gboolean
+on_composer_key_pressed(GtkEventControllerKey *controller G_GNUC_UNUSED, guint keyval,
+                        guint keycode G_GNUC_UNUSED, GdkModifierType state G_GNUC_UNUSED,
+                        GhComposer *self)
+{
+  if (keyval == GDK_KEY_Escape) {
+    const gchar *page = gtk_stack_get_visible_child_name(self->composer_stack);
+    if (page && g_str_equal(page, "recording")) {
+      g_signal_emit(self, signals[SIGNAL_CANCEL_RECORDING], 0);
+      return GDK_EVENT_STOP;
+    }
+  }
+  return GDK_EVENT_PROPAGATE;
+}
+
+static void
+on_recording_drag_end(GtkGestureDrag *gesture G_GNUC_UNUSED, gdouble offset_x,
+                      gdouble offset_y G_GNUC_UNUSED, GhComposer *self)
+{
+  if (offset_x < -80.0 &&
+      g_strcmp0(gtk_stack_get_visible_child_name(self->composer_stack), "recording") == 0)
+    g_signal_emit(self, signals[SIGNAL_CANCEL_RECORDING], 0);
+}
+
 static gboolean
 on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
                GdkModifierType state, GhComposer *self)
@@ -371,6 +410,50 @@ update_poll(GhComposer *self)
   gboolean possible = poll_possible(self);
   gtk_widget_set_visible(GTK_WIDGET(self->poll_button), self->can_create_poll);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "composer.create-poll", possible);
+}
+
+/* ---- voice recording (W27 slice A, nostrc-o1kl) ------------------------------------ */
+
+static gboolean
+voice_possible(GhComposer *self)
+{
+  return self->can_record_voice && editable(self);
+}
+
+static void
+action_record_voice(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhComposer *self = GH_COMPOSER(widget);
+  (void)name;
+  (void)parameter;
+  if (voice_possible(self))
+    g_signal_emit(self, signals[SIGNAL_RECORD_VOICE_REQUESTED], 0);
+}
+
+static void
+update_voice(GhComposer *self)
+{
+  gboolean possible = voice_possible(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->voice_button), self->can_record_voice);
+  gtk_widget_action_set_enabled(GTK_WIDGET(self), "composer.record-voice", possible);
+}
+
+/* ---- recording actions (W27 slice A, nostrc-4h64) --------------------------------- */
+
+static void
+action_stop_recording(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  g_signal_emit(widget, signals[SIGNAL_STOP_RECORDING], 0);
+}
+
+static void
+action_cancel_recording(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  g_signal_emit(widget, signals[SIGNAL_CANCEL_RECORDING], 0);
 }
 
 /* A dropped file (the first of several) or image. */
@@ -493,6 +576,7 @@ gh_composer_get_property(GObject *object, guint prop_id, GValue *value, GParamSp
   case PROP_DISAPPEARING_TIMER: g_value_set_int64(value, self->timer); break;
   case PROP_CAN_ATTACH:      g_value_set_boolean(value, self->can_attach); break;
   case PROP_CAN_CREATE_POLL:  g_value_set_boolean(value, self->can_create_poll); break;
+  case PROP_CAN_RECORD_VOICE:  g_value_set_boolean(value, self->can_record_voice); break;
   case PROP_CAN_SEND:        g_value_set_boolean(value, self->can_send); break;
   case PROP_TOO_LONG:        g_value_set_boolean(value, self->too_long); break;
   default:
@@ -520,6 +604,9 @@ gh_composer_set_property(GObject *object, guint prop_id, const GValue *value,
     break;
   case PROP_CAN_CREATE_POLL:
     gh_composer_set_can_create_poll(self, g_value_get_boolean(value));
+    break;
+  case PROP_CAN_RECORD_VOICE:
+    gh_composer_set_can_record_voice(self, g_value_get_boolean(value));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -591,6 +678,7 @@ gh_composer_class_init(GhComposerClass *klass)
                                                       G_MAXINT64, 0, rw);
   props[PROP_CAN_ATTACH] = g_param_spec_boolean("can-attach", NULL, NULL, FALSE, rw);
   props[PROP_CAN_CREATE_POLL] = g_param_spec_boolean("can-create-poll", NULL, NULL, FALSE, rw);
+  props[PROP_CAN_RECORD_VOICE] = g_param_spec_boolean("can-record-voice", NULL, NULL, FALSE, rw);
   props[PROP_CAN_SEND] = g_param_spec_boolean("can-send", NULL, NULL, FALSE, ro);
   props[PROP_TOO_LONG] = g_param_spec_boolean("too-long", NULL, NULL, FALSE, ro);
   g_object_class_install_properties(object_class, N_PROPS, props);
@@ -614,12 +702,22 @@ gh_composer_class_init(GhComposerClass *klass)
   signals[SIGNAL_POLL_REQUESTED] =
     g_signal_new("poll-requested", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_RECORD_VOICE_REQUESTED] =
+    g_signal_new("record-voice-requested", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_STOP_RECORDING] =
+    g_signal_new("stop-recording", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
+  signals[SIGNAL_CANCEL_RECORDING] =
+    g_signal_new("cancel-recording", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-composer.ui");
   gtk_widget_class_bind_template_child(widget_class, GhComposer, composer_stack);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, error_label);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, attach_button);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, voice_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, poll_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_slot);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, timer_button);
@@ -632,9 +730,18 @@ gh_composer_class_init(GhComposerClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhComposer, send_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_reason);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_button);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, recording_icon);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, recording_label);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, recording_time);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, recording_level);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, cancel_recording_button);
+  gtk_widget_class_bind_template_child(widget_class, GhComposer, stop_recording_button);
   gtk_widget_class_install_action(widget_class, "composer.send", NULL, action_send);
   gtk_widget_class_install_action(widget_class, "composer.attach", NULL, action_attach);
   gtk_widget_class_install_action(widget_class, "composer.create-poll", NULL, action_create_poll);
+  gtk_widget_class_install_action(widget_class, "composer.record-voice", NULL, action_record_voice);
+  gtk_widget_class_install_action(widget_class, "composer.stop-recording", NULL, action_stop_recording);
+  gtk_widget_class_install_action(widget_class, "composer.cancel-recording", NULL, action_cancel_recording);
   gtk_widget_class_set_css_name(widget_class, "composer");
   add_icon_path();
 }
@@ -669,10 +776,30 @@ gh_composer_init(GhComposer *self)
   gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(drop));
   g_signal_connect(self->text_view, "paste-clipboard", G_CALLBACK(on_paste_clipboard), self);
 
+  /* Escape cancels a recording (finding 8). This controller is on the
+   * whole composer so it catches Escape even when the text view is not
+   * focused (the recording page has buttons, not text). */
+  GtkEventController *composer_keys = gtk_event_controller_key_new();
+  gtk_event_controller_set_name(composer_keys, "groundhog-composer-escape");
+  gtk_event_controller_set_propagation_phase(composer_keys, GTK_PHASE_CAPTURE);
+  g_signal_connect(composer_keys, "key-pressed", G_CALLBACK(on_composer_key_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), composer_keys);
+
+  /* Swipe left across the recording status to discard without sending. */
+  GtkGesture *recording_drag = gtk_gesture_drag_new();
+  gtk_event_controller_set_name(GTK_EVENT_CONTROLLER(recording_drag),
+                                "groundhog-recording-swipe");
+  gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(recording_drag),
+                                              GTK_PHASE_CAPTURE);
+  g_signal_connect(recording_drag, "drag-end", G_CALLBACK(on_recording_drag_end), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->recording_label),
+                            GTK_EVENT_CONTROLLER(recording_drag));
+
   gtk_stack_set_visible_child_name(self->composer_stack, "edit");
   update_state(self);
   update_timer(self);
   update_attach(self);
+  update_voice(self);
 }
 
 /* ---- public ------------------------------------------------------------------------ */
@@ -808,6 +935,7 @@ gh_composer_set_disabled_reason(GhComposer *self, const gchar *reason)
   gtk_stack_set_visible_child_name(self->composer_stack, reason ? "disabled" : "edit");
   update_state(self);
   update_attach(self);
+  update_voice(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_DISABLED_REASON]);
 }
 
@@ -979,4 +1107,71 @@ gh_composer_get_can_create_poll(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), FALSE);
   return self->can_create_poll;
+}
+
+void
+gh_composer_set_can_record_voice(GhComposer *self, gboolean can_record_voice)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  can_record_voice = !!can_record_voice;
+  if (self->can_record_voice == can_record_voice)
+    return;
+  self->can_record_voice = can_record_voice;
+  update_voice(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CAN_RECORD_VOICE]);
+}
+
+gboolean
+gh_composer_get_can_record_voice(GhComposer *self)
+{
+  g_return_val_if_fail(GH_IS_COMPOSER(self), FALSE);
+  return self->can_record_voice;
+}
+
+/* ---- recording overlay (W27, nostrc-4h64) ------------------------------------------ */
+
+static gchar *
+format_recording_time(gdouble seconds)
+{
+  gint total = (gint)seconds;
+  gint min = total / 60;
+  gint sec = total % 60;
+  return g_strdup_printf("%d:%02d", min, sec);
+}
+
+void
+gh_composer_show_recording(GhComposer *self)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  gtk_stack_set_visible_child_name(self->composer_stack, "recording");
+  gtk_label_set_text(self->recording_time, "0:00");
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->recording_time),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                 _("Recording duration 0:00"), -1);
+  gtk_level_bar_set_value(self->recording_level, 0);
+}
+
+void
+gh_composer_hide_recording(GhComposer *self)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  gtk_stack_set_visible_child_name(self->composer_stack, "edit");
+}
+
+void
+gh_composer_set_recording_level(GhComposer *self, gdouble level)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  gtk_level_bar_set_value(self->recording_level, CLAMP(level, 0.0, 1.0));
+}
+
+void
+gh_composer_set_recording_time(GhComposer *self, gdouble seconds)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_autofree gchar *text = format_recording_time(seconds);
+  gtk_label_set_text(self->recording_time, text);
+  g_autofree gchar *announcement = g_strdup_printf(_("Recording duration %s"), text);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->recording_time),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, announcement, -1);
 }

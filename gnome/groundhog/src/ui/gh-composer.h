@@ -151,6 +151,19 @@ void gh_composer_set_can_attach(GhComposer *self, gboolean can_attach);
 gboolean gh_composer_get_can_attach(GhComposer *self);
 GtkButton *gh_composer_get_attach_button(GhComposer *self);
 
+/* Voice recording (W27 voice, nostrc-o1kl): shown while the owner can
+ * record and send a voice message in this conversation. */
+void gh_composer_set_can_record_voice(GhComposer *self, gboolean can_record_voice);
+gboolean gh_composer_get_can_record_voice(GhComposer *self);
+
+/* W27 voice recording overlay (nostrc-4h64): the owner drives these to
+ * show and update the recording page, and to return to the edit page when
+ * recording ends. */
+void gh_composer_show_recording(GhComposer *self);
+void gh_composer_hide_recording(GhComposer *self);
+void gh_composer_set_recording_level(GhComposer *self, gdouble level);
+void gh_composer_set_recording_time(GhComposer *self, gdouble seconds);
+
 /* NIP-88 poll creation (W26 slice C). */
 void gh_composer_set_can_create_poll(GhComposer *self, gboolean can_create_poll);
 gboolean gh_composer_get_can_create_poll(GhComposer *self);

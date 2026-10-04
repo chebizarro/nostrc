@@ -32,6 +32,11 @@
 #                              of the host architecture. Slow, but x86_64 GCC
 #                              evaluates call arguments right to left, so
 #                              unsequenced-argument bugs show up at run time.
+#   NOSTRC_GATE_IMAGE_TAG=...  private Docker image tag for parallel worktrees;
+#                              default nostrc-linux-ci:<arch>.
+#   NOSTRC_GATE_VOLUME=...     private build/source volume for parallel worktrees;
+#                              default nostrc-linux-gate[-asan]-<arch>. The
+#                              cross-gate build/test locks remain shared.
 #   NOSTRC_GATE_LINUX_TESTS=0  build only; skip the smoke tests (not --sanitizers).
 #   JOBS                       build and test parallelism (default: container CPUs).
 #   NOSTRC_SANITIZER_TEST_JOBS --sanitizers test parallelism (default: the job's
@@ -84,7 +89,7 @@ ARCH="$NATIVE"
 if [ "${NOSTRC_GATE_AMD64:-0}" = 1 ] && [ "$MODE" = smoke ]; then
     ARCH=amd64
 fi
-IMAGE="nostrc-linux-ci:$ARCH"
+IMAGE="${NOSTRC_GATE_IMAGE_TAG:-nostrc-linux-ci:$ARCH}"
 VOLUME="nostrc-linux-gate-$ARCH"
 GATE="Linux gate"
 GATE_CONFIG=""
@@ -99,6 +104,7 @@ if [ "$MODE" = sanitizers ]; then
         exit 1
     fi
 fi
+VOLUME="${NOSTRC_GATE_VOLUME:-$VOLUME}"
 
 echo "==> $GATE ($ARCH): preparing image $IMAGE (the first build takes a few minutes)"
 docker build -q --platform "linux/$ARCH" -t "$IMAGE" - < "$SCRIPTS/linux-ci.Dockerfile" >/dev/null
