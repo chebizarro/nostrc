@@ -227,6 +227,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | NIP-25 reactions across all three conversation backends (W26 slice B, nostrc-191r): NIP-17 kind-7 reaction and kind-5 deletion rumor builders and outbox pipeline; NIP-29 template and service for relay-group reactions; MLS inner-event reaction/deletion with fire-and-forget publish; GhReactionBar and GhReactionPicker UI widgets in GhMessageRow (right-click, long-press, "+" button); MDK 0.11 driver `send_reaction` and `send_deletion` commands; tests: NIP-17 rumor builder (3), NIP-29 template reaction, MDK 0.11 interop `white-noise-reactions` | groundhog | 0.12.0 | No further bump (unreleased 0.12.0): new UI and send paths for reactions; store schema 6 → 7 (forward migration: `reactions` table; a store opened by this build cannot be opened by an older one). The MDK 0.11 driver gains two commands (test harness only, not a versioned component). |
 | GTK 4.24.1 macOS Quartz frame-clock warning crashes GUI tests via SIGTRAP (nostrc-ykxf): shared `gh_test_tolerate_gdk_frame_warning()` helper in `gh-test-gdk-frame.h` uses `g_log_set_writer_func` to forgive exactly `gdk_frame_timings_presented() called on skipped frame` while keeping all other warnings fatal; applied to 14 Groundhog and 3 nostr-gtk widget tests; dedicated tolerance test via `g_test_trap_subprocess` | groundhog | 0.12.0 | No bump (unreleased 0.12.0): test harness only, no source, API or ABI change. |
 | Groundhog About dialog (app.about in the primary menu: AdwAboutDialog with the app icon, version, MIT licence, project links; no network) and the new app icon (owner's 1254 px artwork rendered to hicolor 512/256 PNGs in the resource bundle and installed; the placeholder SVG removed; the window default icon set) | groundhog | 0.12.0 | No further bump: folded into the unreleased 0.12.0. |
+| W27 slice E UI follow-ups (nostrc-zjkv, -9juh, -tmib, -pszz, -fwq7): NIP-29 reply rendering, Adwaita icon bundling, poll vote withdrawal, SelfRemove leave nits, privacy test broadening and R1–R5 corrections | groundhog | 0.12.0 | No further bump: all shipped changes are folded into unreleased 0.12.0. The `libmarmot/src/commits.c` edit is comment-only (no libmarmot bump). |
 
 ## Maintenance
 
@@ -238,7 +239,6 @@ particular:
 - Keep **Latest release** and **Release tag** unchanged for unreleased work.
 - When publishing a release, use the tag
   `<component>-v<MAJOR>.<MINOR>.<PATCH>[-<PRERELEASE>]` (for example,
-| W27 slice E UI follow-ups (nostrc-zjkv, -9juh, -tmib, -pszz, -fwq7): NIP-29 reply rendering, Adwaita icon bundling, poll vote withdrawal, SelfRemove leave nits, privacy test broadening | groundhog | 0.12.0 | No bump: all changes folded into unreleased 0.12.0. The `libmarmot/src/commits.c` edit is comment-only (no libmarmot change). |
   `libnostr-v1.2.3` or `gnostr-v0.1.0-preview`) and then record that exact
   release version and tag here. Prereleases retain the base declared version
   in their authoritative build sources.

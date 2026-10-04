@@ -1230,6 +1230,8 @@ if (BUILD_TESTING)
   # bundled GResource, so non-GNOME desktops render icons (nostrc-9juh).
   add_executable(test-groundhog-icons tests/ui/test_icons.c ${GROUNDHOG_RESOURCE_C})
   target_link_libraries(test-groundhog-icons PRIVATE PkgConfig::GROUNDHOG_GIO)
+  target_compile_definitions(test-groundhog-icons PRIVATE
+    GROUNDHOG_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_options(test-groundhog-icons PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-icons COMMAND test-groundhog-icons)
   set_tests_properties(groundhog-icons PROPERTIES TIMEOUT 30
