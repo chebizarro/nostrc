@@ -220,3 +220,40 @@ The manifest currently lists `nostr-gobject` as stable `2.0.0`, `nostr-gtk` as `
 ## Material open questions at execution start
 
 These are investigation gates, not invitations to weaken the agreed launch scope: (1) exact target nostrc/gnome distribution GTK/libadwaita stable versions and user-service packaging policy; (2) adopted-Marmot legacy-443 read/migration policy and whether the current backend can support staged snapshots without replacement; (3) which third-party Marmot peer provides reproducible adopted-spec interop vectors; and (4) the exact Groundhog↔shipped-notifier bus handoff protocol and suppression contract. W0 resolves the first three before API changes; W7 implements and verifies the fourth against the live tree. If any cannot be resolved, report Groundhog as **blocked for release** with the failing acceptance gate, not “mostly done.”
+
+## Wave log
+
+### W27 (2026-10-03/04) — voice messages, second-device acceptance, macOS signer/keychain, groups and UI follow-ups, two-VM run
+
+Landed on master through the pre-push gate (macOS full ctest, Linux smoke gate, sanitizer gate), each slice after an
+independent peer review (docs/reviews/w27-*-review-2026-10-03.md with addenda):
+
+- **A — voice messages** (nostrc-o1kl): GStreamer Ogg/Opus recording into an already-unlinked 0600 fd (no named
+  plaintext survives SIGKILL; startup sweep of legacy recordings), playback of downloaded notes, AAC-LC/MP4 receive from
+  White Noise, decoded-PCM waveform when imeta carries none, honest degradation without the GStreamer plugins, accessible
+  controls; MDK 0.11 `white-noise-voice` interop case; the Linux CI image installs the codecs. Landed as one squashed
+  commit of the reviewed series (kept on `groundhog/w27-voice-series`).
+- **B — second device** (nostrc-lrac, v59q, sjl1): `groundhog --instance NAME` (suffixed app id, isolated data, signer
+  launcher, autostart and GSettings), the session-bus probe that ends the "accepts but never answers" startup hang, a
+  test-only D-Bus control interface compiled out without GH_MLS_TEST_HOOKS, and an acceptance test that drives two real
+  Groundhog processes through the nostrc-7gx7 lifecycle; `/tmp/ghsmoke/start2.sh` + TWO-DEVICE.md for the owner's run.
+- **C — macOS keychain and signer** (nostrc-oh0s, jvbl, dsoz): GhStoreKey Keychain backend (temporary keychains in tests,
+  never the login keychain; honest LOCKED/UNAVAILABLE mapping of OSStatus), nip55l 0.6.0 CreateProfile/ListIdentities,
+  signer crash fixes (allocator mismatch, double free, double decision callback, prompt storm), expired-request UX.
+- **D — groups follow-ups** (nostrc-c0yo, 46k7, l2ln, cyxb, bmvz): New Group checks invitees against Create's relay scope
+  and names the format it will make; adopted groups carry the creator's 0x800b media policy; 0x8002/0x8007 advertised;
+  legacy KeyPackage kept unheld until the adopted replacement is confirmed, with retirement under partial relay/signer
+  failure; Group Info media update cancelled on dispose.
+- **E — UI follow-ups** (nostrc-zjkv, 9juh, tmib, pszz, fwq7): NIP-29 threaded/quote replies, every referenced symbolic
+  icon bundled and audited (`groundhog-icons` derives the set from Blueprint/C sources), poll withdrawal, SelfRemove leave
+  miss accounting (empty admin Commits only, persisted), privacy-test and copy nits.
+- **Two-VM Groundhog↔Groundhog run** (nostrc-ngvb, evidence for nostrc-7gx7): Ubuntu 24.04 amd64 (lab VM) and arm64 (UTM)
+  installs at e532b7fd; the whole encrypted-group lifecycle (onboard, create+invite, accept, messages both ways, rename,
+  remove/re-add, leave, restart with history) and NIP-17 DMs passed; reactions between Groundhog peers (nostrc-7ash) and
+  encrypted attachments to public Blossom servers (nostrc-bz4g, 1u9k) failed and are open; relays were private
+  containers over SSH tunnels (docs/reviews/w27-two-device-vm-run-2026-10-03.md, helpers under scripts/vm/).
+
+Not landed (branches, unreviewed since both agent providers reached their usage limits): `groundhog/w27-dm-reactions`
+(nostrc-7ash fix + review follow-ups) and `groundhog/w27-blossom-upload` (BUD-11 base64url auth, X-SHA-256, live server
+choice). GH_FEATURE_ENCRYPTED_GROUPS stays 0: the two-device criterion is met over private relays; the owner decides
+whether a public-relay rerun is required, and reactions/media must land first (owner decision 2026-10-02).
