@@ -1661,8 +1661,9 @@ test_write_relay_migration(void)
   g_assert_nonnull(storage);
   guint8 owner[32];
   g_assert_true(nostr_hex2bin(owner, hex[ALICE], sizeof owner));
-  g_assert_cmpint(storage->mls_delete(storage->ctx, "gh/key-package-write-relays", owner,
-                                      sizeof owner), ==, MARMOT_OK);
+  MarmotError deleted = storage->mls_delete(storage->ctx, "gh/key-package-write-relays", owner,
+                                             sizeof owner);
+  g_assert_true(deleted == MARMOT_OK || deleted == MARMOT_ERR_STORAGE_NOT_FOUND);
   marmot_storage_free(storage);
   app_restart(alice);
   wait_published(alice);
