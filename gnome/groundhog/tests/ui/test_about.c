@@ -70,19 +70,38 @@ audit_dialog(GtkWidget *root, IdentityAudit *audit)
     assert_no_email(gtk_editable_get_text(GTK_EDITABLE(root)));
   if (ADW_IS_PREFERENCES_ROW(root))
     assert_no_email(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(root)));
-  if (ADW_IS_ACTION_ROW(root))
+  if (ADW_IS_ACTION_ROW(root)) {
     assert_no_email(adw_action_row_get_subtitle(ADW_ACTION_ROW(root)));
+    gboolean identity = g_strcmp0(
+      adw_preferences_row_get_title(ADW_PREFERENCES_ROW(root)), OWNER_NPUB) == 0;
+    gboolean has_destination = FALSE;
 
-  /* Adwaita renders add_link() as its internal AdwLinkRow. Its public
-   * GObject URI property is the destination the row actually opens. */
-  GParamSpec *uri_property = g_object_class_find_property(G_OBJECT_GET_CLASS(root), "uri");
-  if (uri_property && G_PARAM_SPEC_VALUE_TYPE(uri_property) == G_TYPE_STRING) {
-    g_autofree char *uri = NULL;
-    g_object_get(root, "uri", &uri, NULL);
-    assert_no_email(uri);
-    if (ADW_IS_PREFERENCES_ROW(root) &&
-        g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(root)), OWNER_NPUB) == 0) {
-      g_assert_cmpstr(uri, ==, OWNER_URI);
+    /* libadwaita 1.5 stores add_link() destinations as GtkActionable
+     * targets; newer versions use AdwLinkRow's URI property. Read the
+     * rendered row's actual target rather than the source string. */
+    if (GTK_IS_ACTIONABLE(root)) {
+      GVariant *target = gtk_actionable_get_action_target_value(GTK_ACTIONABLE(root));
+      if (target && g_variant_is_of_type(target, G_VARIANT_TYPE_STRING)) {
+        const char *uri = g_variant_get_string(target, NULL);
+        assert_no_email(uri);
+        if (identity) {
+          g_assert_cmpstr(uri, ==, OWNER_URI);
+          has_destination = TRUE;
+        }
+      }
+    }
+    GParamSpec *uri_property = g_object_class_find_property(G_OBJECT_GET_CLASS(root), "uri");
+    if (uri_property && G_PARAM_SPEC_VALUE_TYPE(uri_property) == G_TYPE_STRING) {
+      g_autofree char *uri = NULL;
+      g_object_get(root, "uri", &uri, NULL);
+      assert_no_email(uri);
+      if (identity) {
+        g_assert_cmpstr(uri, ==, OWNER_URI);
+        has_destination = TRUE;
+      }
+    }
+    if (identity) {
+      g_assert_true(has_destination);
       audit->identity_links++;
     }
   }
