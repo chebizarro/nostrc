@@ -693,6 +693,8 @@ guint gh_mls_service_test_rate_retries(void);
  * how many Commits of members' leaves failed. */
 void gh_mls_service_test_refuse_rate(guint n);
 guint gh_mls_service_test_departure_failures(void);
+/* Number of actual leave-publish attempts (for persistence-failure tests). */
+guint gh_mls_service_test_leave_attempts(void);
 /* Test hooks (nostrc-8ndz). permissive TRUE: services made from now on keep
  * a group created alone permissive at its first Add (libmarmot
  * MarmotConfig.keep_first_add_permissive) and make no background SelfRemove

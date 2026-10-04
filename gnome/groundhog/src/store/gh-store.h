@@ -811,6 +811,8 @@ void gh_store_test_cut(const gchar *label, const gchar *step);
 GStrv gh_store_test_list_cut_points(const gchar *prefix);
 /* Pretend the process runs as @uid for ownership checks (-1 restores). */
 void gh_store_test_set_uid(gint64 uid);
+/* Fail one matching cursor write, as a full/read-only store would. */
+void gh_store_test_fail_cursor_once(const gchar *scope_prefix);
 #endif
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhStore, gh_store_close)

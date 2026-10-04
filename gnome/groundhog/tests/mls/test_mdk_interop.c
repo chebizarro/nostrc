@@ -1179,6 +1179,25 @@ test_groundhog_leaves_mdk_admin(void)
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
   g_assert_no_error(error);
+  /* R2: an Add-only admin Commit while the Remove request waits is real
+   * group work, not an empty Commit/miss. If counted, one later empty
+   * Commit would exhaust the leave budget prematurely. */
+  spin_until(stored_reached, &on_g, "Alice's initial Remove request");
+  mdk_peer("dave", DAVE);
+  g_autofree gchar *dave_published = mdk_publish_key_package(&w, "dave");
+  g_assert_nonnull(dave_published);
+  g_autoptr(JsonObject) dave_view = NULL;
+  g_autofree gchar *dave_kp = mdk_fetch_key_package(&w, "carol", DAVE, &dave_view);
+  g_assert_true(json_object_get_boolean_member(dave_view, "parsed"));
+  guint64 before_add = gh_mls_group_get_epoch(ga);
+  g_autoptr(JsonObject) added = mdk_call(&driver,
+    "\"cmd\":\"add_members\",\"peer\":\"carol\",\"group\":\"%s\",\"key_packages\":[%s],"
+    "\"welcome_relays\":[\"%s\"]", group, dave_kp, w.x.url);
+  wait_epoch(ga, (gint)(before_add + 1));
+  assert_converged(ga, added);
+  g_assert_true(gh_mls_group_get_leaving(ga));
+  g_assert_cmpint(gh_mls_group_get_leave_failure(ga), ==, GH_MLS_LEAVE_FAILURE_NONE);
+  on_g.n = w.g.stored->len;
   guint rounds = 0;
   while (gh_mls_group_get_leaving(ga)) {
     g_assert_cmpuint(rounds, <, GH_MLS_SERVICE_LEAVE_REQUESTS);   /* bounded */
@@ -1202,6 +1221,13 @@ test_groundhog_leaves_mdk_admin(void)
   /* F2 (nostrc-pszz): a second press now leaves on this device, not via
    * the admin who never processed the request. */
   g_assert_cmpint(gh_mls_service_leave_kind(alice->service, ga), ==, GH_MLS_LEAVE_DEVICE);
+  /* A failed admin request did not remove us: sending still works before
+   * the user confirms the device-only leave. */
+  send_accepted(alice, ga, "still here");
+  {
+    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+    g_assert_true(synced_message(synced, hex[ALICE], "still here"));
+  }
   /* The second press leaves on this device (not re-requesting via admin). */
   {
     g_autoptr(GError) e2 = NULL;
@@ -1220,12 +1246,53 @@ test_groundhog_leaves_mdk_admin(void)
     g_assert_cmpuint(synced_count(synced, "commit"), ==, 0);
   }
   g_assert_cmpuint(w.g.stored->len, ==, stored);
-  /* Sending works again. */
-  send_accepted(alice, ga, "still here");
-  {
-    g_autoptr(JsonObject) synced = mdk_sync("carol", group);
-    g_assert_true(synced_message(synced, hex[ALICE], "still here"));
-  }
+  world_down(&w);
+  mdk_driver_stop(&driver);
+}
+
+/* R5: a failed cursor write must not turn an in-memory miss into another
+ * Remove request. A later retry may proceed only after persistence works. */
+static void
+test_leave_miss_cursor_failure(void)
+{
+  if (!mdk_up())
+    return;
+  World w;
+  const guint keys[] = { ALICE };
+  world_permissive_groups = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  spin_until(key_package_published, alice, "Alice's KeyPackage");
+  mdk_peer("carol", CAROL);
+  g_autofree gchar *carol_kp = mdk_publish_key_package(&w, "carol");
+  g_assert_nonnull(carol_kp);
+  accept_contact(alice, CAROL);
+  GhMlsGroup *ga = create_group(alice, "Cursor failure", (const guint[]){ CAROL }, 1);
+  spin_until(welcomes_sent, ga, "Carol's Welcome");
+  g_autofree gchar *group = NULL;
+  g_autoptr(JsonObject) joined = mdk_join(&w, "carol", hex[ALICE], &group);
+  assert_converged(ga, joined);
+  OpWait admins = { 0 };
+  const gchar *carol_only[] = { hex[CAROL], NULL };
+  gh_mls_service_set_admins_async(alice->service, ga, carol_only, NULL, on_changed, &admins);
+  change_done(&admins);
+  g_autoptr(JsonObject) synced = mdk_sync("carol", group);
+  assert_converged(ga, json_object_get_object_member(synced, "state"));
+  g_assert_false(gh_mls_group_get_is_admin(ga));
+
+  StoredCount request = { &w.g, w.g.stored->len + 1 };
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(alice->service, ga, &error));
+  g_assert_no_error(error);
+  spin_until(stored_reached, &request, "initial Remove request");
+  guint attempts = gh_mls_service_test_leave_attempts();
+  guint64 epoch = gh_mls_group_get_epoch(ga);
+  gh_store_test_fail_cursor_once("mls/m/");
+  g_autoptr(JsonObject) dropped = mdk_sync("carol", group);
+  g_assert_cmpuint(synced_count(dropped, "proposal"), ==, 1);
+  wait_epoch(ga, (gint)(epoch + 1));
+  g_assert_true(gh_mls_group_get_leaving(ga));
+  g_assert_cmpuint(gh_mls_service_test_leave_attempts(), ==, attempts);
   world_down(&w);
   mdk_driver_stop(&driver);
 }
@@ -1318,6 +1385,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves", test_groundhog_leaves);
   g_test_add_func("/groundhog/mdk-interop/groundhog-leaves-mdk-admin",
                   test_groundhog_leaves_mdk_admin);
+  g_test_add_func("/groundhog/mdk-interop/leave-miss-cursor-failure",
+                  test_leave_miss_cursor_failure);
   g_test_add_func("/groundhog/mdk-interop/groundhog-member-commits-leave",
                   test_groundhog_member_commits_leave);
   gint rc = g_test_run();

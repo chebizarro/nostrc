@@ -16,6 +16,8 @@
 #include "gh-reaction.h"
 #include "gh-reaction-store.h"
 
+#include <marmot/marmot-group-components.h>
+
 #include <nostr-event.h>
 #include <nostr-filter.h>
 #include <nostr-tag.h>
@@ -2505,6 +2507,128 @@ withdrawn_messages(GhMlsGroup *group, const MarmotMessageResult *result)
   return ids;
 }
 
+/* Ignore the epoch and last-message bookkeeping: an empty Commit advances
+ * those too. Compare all user-visible group metadata and each occupied MLS
+ * leaf, not just the accounts (an Add may bring a second device). If either
+ * snapshot cannot be read, do not claim that the admin ignored our request. */
+static void
+checksum_field(GChecksum *sum, const void *data, gsize len)
+{
+  guint64 size = GUINT64_TO_LE((guint64)len);
+  g_checksum_update(sum, (const guchar *)&size, sizeof size);
+  if (len)
+    g_checksum_update(sum, data, len);
+}
+
+static void
+checksum_optional(GChecksum *sum, const void *data, gsize len)
+{
+  guint8 present = data != NULL;
+  g_checksum_update(sum, &present, 1);
+  if (present)
+    checksum_field(sum, data, len);
+}
+
+static gchar *
+commit_visible_state(GhMlsGroup *group)
+{
+  Marmot *m = group->service->marmot;
+  MarmotGroup *state = NULL;
+  MarmotMemberIdentity *leaves = NULL;
+  size_t count = 0;
+  if (marmot_get_group(m, &group->gid, &state) != MARMOT_OK || !state)
+    return NULL;
+  if (marmot_get_group_member_identities(m, &group->gid, &leaves, &count) != MARMOT_OK) {
+    marmot_group_free(state);
+    return NULL;
+  }
+  g_autoptr(GChecksum) sum = g_checksum_new(G_CHECKSUM_SHA256);
+  checksum_optional(sum, state->name, state->name ? strlen(state->name) : 0);
+  checksum_optional(sum, state->description,
+                    state->description ? strlen(state->description) : 0);
+  checksum_optional(sum, state->image_hash, 32);
+  checksum_optional(sum, state->image_key, 32);
+  checksum_optional(sum, state->image_nonce, 12);
+  checksum_field(sum, state->nostr_group_id, 32);
+  checksum_field(sum, &state->state, sizeof state->state);
+  checksum_field(sum, &state->admin_count, sizeof state->admin_count);
+  for (size_t i = 0; i < state->admin_count; i++)
+    checksum_field(sum, state->admin_pubkeys[i], 32);
+  checksum_field(sum, &count, sizeof count);
+  for (size_t i = 0; i < count; i++) {
+    checksum_field(sum, leaves[i].account_pubkey, 32);
+    checksum_field(sum, leaves[i].signature_key, 32);
+    checksum_field(sum, &leaves[i].leaf_index, sizeof leaves[i].leaf_index);
+  }
+  /* Adopted-profile metadata lives in GroupContext components, not all in
+   * MarmotGroup. In particular, image, avatar and media-policy updates are
+   * nonempty admin Commits even when the member list is unchanged. */
+  MarmotGroupComponents components = { 0 };
+  MarmotError cerr = marmot_get_group_components(m, &group->gid, &components);
+  guint8 adopted = cerr == MARMOT_OK;
+  if (cerr != MARMOT_OK && cerr != MARMOT_ERR_UNSUPPORTED) {
+    free(leaves);
+    marmot_group_free(state);
+    return NULL;
+  }
+  g_checksum_update(sum, &adopted, 1);
+  if (adopted) {
+    checksum_optional(sum, components.name,
+                      components.name ? strlen(components.name) : 0);
+    checksum_optional(sum, components.description,
+                      components.description ? strlen(components.description) : 0);
+    checksum_field(sum, &components.image.present, sizeof components.image.present);
+    if (components.image.present) {
+      checksum_field(sum, components.image.image_hash, 32);
+      checksum_field(sum, components.image.image_key, 32);
+      checksum_field(sum, components.image.image_nonce, 12);
+      checksum_field(sum, components.image.image_upload_key, 32);
+      checksum_optional(sum, components.image.media_type,
+                        components.image.media_type ? strlen(components.image.media_type) : 0);
+    }
+    checksum_optional(sum, components.avatar_url.url,
+                      components.avatar_url.url ? strlen(components.avatar_url.url) : 0);
+    checksum_optional(sum, components.avatar_url.dim, components.avatar_url.dim_len);
+    checksum_optional(sum, components.avatar_url.thumbhash,
+                      components.avatar_url.thumbhash_len);
+    checksum_field(sum, &components.has_media_policy, sizeof components.has_media_policy);
+    if (components.has_media_policy) {
+      MarmotGroupMediaPolicy *policy = &components.media_policy;
+      checksum_field(sum, &policy->allowed_locator_kind_count,
+                     sizeof policy->allowed_locator_kind_count);
+      for (size_t i = 0; i < policy->allowed_locator_kind_count; i++)
+        checksum_field(sum, policy->allowed_locator_kinds[i],
+                       strlen(policy->allowed_locator_kinds[i]));
+      checksum_field(sum, &policy->default_blob_endpoint_count,
+                     sizeof policy->default_blob_endpoint_count);
+      for (size_t i = 0; i < policy->default_blob_endpoint_count; i++) {
+        MarmotMediaBlobEndpoint *endpoint = &policy->default_blob_endpoints[i];
+        checksum_field(sum, endpoint->locator_kind, strlen(endpoint->locator_kind));
+        checksum_field(sum, endpoint->base_url, strlen(endpoint->base_url));
+      }
+    }
+    checksum_field(sum, &components.has_agent_text_stream,
+                   sizeof components.has_agent_text_stream);
+    if (components.has_agent_text_stream) {
+      MarmotAgentTextStreamPolicy *policy = &components.agent_text_stream;
+      checksum_field(sum, &policy->required_member_roles, sizeof policy->required_member_roles);
+      checksum_field(sum, &policy->allowed_member_roles, sizeof policy->allowed_member_roles);
+      checksum_field(sum, &policy->max_plaintext_frame_len, sizeof policy->max_plaintext_frame_len);
+      checksum_field(sum, &policy->replay_ttl_secs, sizeof policy->replay_ttl_secs);
+      checksum_field(sum, &policy->padding_bucket_bytes, sizeof policy->padding_bucket_bytes);
+    }
+    checksum_field(sum, &components.required_component_count,
+                   sizeof components.required_component_count);
+    for (size_t i = 0; i < components.required_component_count; i++)
+      checksum_field(sum, &components.required_components[i], sizeof components.required_components[i]);
+    marmot_group_components_clear(&components);
+  }
+  gchar *digest = g_strdup(g_checksum_get_string(sum));
+  free(leaves);
+  marmot_group_free(state);
+  return digest;
+}
+
 static gboolean
 strv_same(GStrv a, GStrv b)
 {
@@ -2555,6 +2679,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   if (envelope)
     nostr_event_free(envelope);
   gboolean own_commit = own_pending_commit(group, envelope_id);
+  g_autofree gchar *before_commit =
+    group->leaving && group->leave_via_admin ? commit_visible_state(group) : NULL;
   MarmotMessageResult result;
   memset(&result, 0, sizeof result);
   MarmotError err = marmot_process_message(self->marmot, event_json, &result);
@@ -2709,18 +2835,16 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     for (size_t i = 0; i < result.commit.departed_count; i++)
       if (g_strcmp0(result.commit.departed_pubkey_hexes[i], self->account) != 0)
         g_hash_table_add(group->leavers, g_strdup(result.commit.departed_pubkey_hexes[i]));
-    /* Re-review R1: an admin's Commit while our Remove request waits
-     * (group->admins still lists the admins it was judged against).
-     * F1: count only empty admin Commits as misses — no departures
-     * processed and no routing changed.  An admin who committed another
-     * member's leave, a routing change, or any other visible work is
-     * actively online and may process ours next.  MDK 0.8's auto-commit
-     * that drops a Remove request produces exactly this: departed_count 0
-     * and no routing change. */
-    if (group->leaving && group->leave_via_admin && result.commit.committer_pubkey_hex &&
-        result.commit.departed_count == 0 && !result.commit.routing_changed &&
-        g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex))
-      group->leave_admin_commit = TRUE;
+    /* Only an admin's state-empty Commit can count as an ignored Remove.
+     * An Add (including another device of an existing account), metadata,
+     * admin or routing change shows useful work, not a leave miss. */
+    if (group->leaving && group->leave_via_admin && before_commit &&
+        result.commit.committer_pubkey_hex && result.commit.departed_count == 0 &&
+        g_strv_contains((const gchar *const *)group->admins, result.commit.committer_pubkey_hex)) {
+      g_autofree gchar *after_commit = commit_visible_state(group);
+      if (after_commit && g_str_equal(before_commit, after_commit))
+        group->leave_admin_commit = TRUE;
+    }
     /* Who added the devices the Commit brings (nostrc-6ukh). Our own,
      * merged on its relay echo before the relay's OK, is ours, as when that
      * OK merges it (round_report(); nostrc-juhs). */
@@ -3701,6 +3825,13 @@ produce_image(Marmot *marmot, const MarmotGroupId *gid, gpointer data, char **ou
 static guint test_rate_retries;
 static guint test_refuse_rate;
 static guint test_departure_failures;
+static guint test_leave_attempts;
+
+guint
+gh_mls_service_test_leave_attempts(void)
+{
+  return test_leave_attempts;
+}
 static gboolean test_permissive_groups;
 static guint test_upgrade_min_ms, test_upgrade_max_ms, test_upgrade_stagger_ms;
 
@@ -4250,6 +4381,9 @@ leave_start(GhMlsGroup *group, const gchar *json)
   if (group->leave_sent || group->leave_publish || !running(self) || !group->relays ||
       !group->relays[0])
     return;
+#ifdef GH_MLS_TEST_HOOKS
+  test_leave_attempts++;
+#endif
   g_autoptr(GError) error = NULL;
   GhRelayPublish *relay = gh_relay_publish_new(self->generation, json, leave_update, leave_done,
                                                group, &error);
@@ -4297,7 +4431,10 @@ leave_give_up(GhMlsGroup *group, GhMlsLeaveFailure why)
   group->leave_admin_commit = FALSE;
   /* F3: clear the persisted miss counter. */
   g_autofree gchar *ms = leave_misses_scope(group);
-  gh_store_set_cursor(self->store, ms, "", 0, NULL);
+  g_autoptr(GError) cursor_error = NULL;
+  if (!gh_store_set_cursor(self->store, ms, "", 0, &cursor_error))
+    g_message("Groundhog could not clear the encrypted-group leave counter: %s",
+              cursor_error->message);
   g_object_notify_by_pspec(G_OBJECT(group), group_props[GROUP_PROP_LEAVE_FAILED]);
   group_refresh(group);
 }
@@ -4313,16 +4450,26 @@ leave_continue(GhMlsGroup *group)
    * and commits nothing). Request once more; after a second such Commit,
    * stop: the admin's app does not process it. */
   if (group->leave_admin_commit && group->leave_via_admin) {
-    group->leave_admin_commit = FALSE;
-    if (++group->leave_misses >= GH_MLS_SERVICE_LEAVE_REQUESTS) {
+    guint next_miss = group->leave_misses + 1;
+    if (next_miss >= GH_MLS_SERVICE_LEAVE_REQUESTS) {
+      group->leave_admin_commit = FALSE;
       g_message("Groundhog stopped asking the admins to remove the account: no admin acted on it");
       leave_give_up(group, GH_MLS_LEAVE_FAILURE_NOT_PROCESSED);
       return;
     }
-    /* F3: persist the miss counter so it survives restarts.  The cursor
-     * statement auto-commits; no gh_store_begin() is active here. */
+    /* Persist before counting the miss or making another Remove request.
+     * On an I/O failure the pending Commit is retried, not silently treated
+     * as a durable miss. The cursor statement auto-commits. */
     g_autofree gchar *ms = leave_misses_scope(group);
-    gh_store_set_cursor(self->store, ms, "", (gint64)group->leave_misses, NULL);
+    g_autoptr(GError) cursor_error = NULL;
+    if (!gh_store_set_cursor(self->store, ms, "", (gint64)next_miss, &cursor_error)) {
+      g_message("Groundhog could not save the encrypted-group leave counter: %s",
+                cursor_error->message);
+      schedule_retry(self);
+      return;
+    }
+    group->leave_misses = next_miss;
+    group->leave_admin_commit = FALSE;
   }
   char *json = NULL;
   MarmotError err = marmot_self_remove(self->marmot, &group->gid, &json);

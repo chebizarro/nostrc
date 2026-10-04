@@ -99,6 +99,14 @@ static gchar *armed_cut;
 static guint armed_nth;
 static guint armed_hits;
 static gint64 test_uid = -1;
+static gchar *fail_cursor_prefix;
+
+void
+gh_store_test_fail_cursor_once(const gchar *scope_prefix)
+{
+  g_free(fail_cursor_prefix);
+  fail_cursor_prefix = g_strdup(scope_prefix);
+}
 
 void
 gh_store_test_crash_at(const gchar *cut_point, guint nth)
@@ -2728,6 +2736,14 @@ gh_store_set_cursor(GhStore *store, const gchar *scope, const gchar *relay_url,
   }
   if (!store_writable(store, error))
     return FALSE;
+#ifdef GH_STORE_TEST_HOOKS
+  if (fail_cursor_prefix && g_str_has_prefix(scope, fail_cursor_prefix)) {
+    g_clear_pointer(&fail_cursor_prefix, g_free);
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_FAILED,
+                        "Injected cursor write failure");
+    return FALSE;
+  }
+#endif
   sqlite3_stmt *stmt = store_prepare(store, since > 0
     ? "INSERT INTO cursors (scope, relay_url, since) VALUES (?1, ?2, ?3) "
       "ON CONFLICT (scope, relay_url) DO UPDATE SET since = excluded.since"
