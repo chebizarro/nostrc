@@ -97,6 +97,17 @@ test_store_admit_and_lookup(void)
 }
 
 static void
+test_store_empty_summary(void)
+{
+  g_autoptr(GhReactionStore) store = gh_reaction_store_new();
+  gh_reaction_store_set_account(store, ACCOUNT, NULL, NULL, NULL);
+  GhReactionSummary *summary = gh_reaction_store_lookup(store, TARGET_1);
+  g_assert_nonnull(summary);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 0);
+  g_assert_null(gh_reaction_summary_get_chips(summary));
+}
+
+static void
 test_store_dedup(void)
 {
   g_autoptr(GhReactionStore) store = gh_reaction_store_new();
@@ -391,6 +402,7 @@ main(int argc, char *argv[])
   g_test_add_func("/reactions/new", test_reaction_new);
   g_test_add_func("/reactions/default-emoji", test_reaction_default_emoji);
   g_test_add_func("/reactions/store/admit-and-lookup", test_store_admit_and_lookup);
+  g_test_add_func("/reactions/store/empty-summary", test_store_empty_summary);
   g_test_add_func("/reactions/store/dedup", test_store_dedup);
   g_test_add_func("/reactions/store/own-reaction", test_store_own_reaction);
   g_test_add_func("/reactions/store/remove", test_store_remove);

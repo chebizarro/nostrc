@@ -833,6 +833,11 @@ Adw.PreferencesDialog: GhPreferencesDialog; Adw.AboutDialog; Gtk.ShortcutsWindow
 | `gh-preferences-dialog.blp` | `Adw.PreferencesDialog` (search-enabled) | pages Privacy, Network, Account & Storage (§7.11) | Settings bindings |
 | `gh-shortcuts-window.blp` | `Gtk.ShortcutsWindow` | one section, groups per §7.13 | — |
 
+*(Amended 2026-10-03, nostrc-7ash: reaction chips on an open NIP-17, NIP-29,
+or Marmot conversation update when a peer reaction arrives, and restored chips
+are bound when the timeline first opens. A NIP-17 reaction belongs to the room
+formed by its author and p-tag recipients, not to the recipient alone.)*
+
 Illustrative Blueprint:
 
 ```blp

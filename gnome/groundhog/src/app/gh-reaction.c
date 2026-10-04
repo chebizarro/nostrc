@@ -228,6 +228,7 @@ static void
 gh_reaction_summary_init(GhReactionSummary *self)
 {
   self->reactions = g_ptr_array_new_with_free_func(g_object_unref);
+  self->chips_dirty = TRUE;
 }
 
 /* Internal: create a summary for one target message of one account. */

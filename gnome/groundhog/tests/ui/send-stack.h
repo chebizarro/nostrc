@@ -166,6 +166,7 @@ send_stack_up(SendStack *s)
     .transport_data = s->publish_data,
   };
   s->sender = gh_app_outbox_new(&outbox);
+  gh_app_outbox_set_inbox(s->sender, G_OBJECT(s->inbox));
   GhAccountStoreConfig config = {
     .accounts = s->accounts,
     .store_key = s->store_key,

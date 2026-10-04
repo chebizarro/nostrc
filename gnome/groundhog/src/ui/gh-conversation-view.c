@@ -533,11 +533,12 @@ timeline_sync_event(GhTimeline *self)
 }
 
 static GhTimeline *
-timeline_new(GListModel *source, gboolean multi_party)
+timeline_new(GListModel *source, gboolean multi_party, GhReactionStore *reactions)
 {
   GhTimeline *self = g_object_new(GH_TYPE_TIMELINE, NULL);
   self->source = g_object_ref(source);
   self->multi_party = multi_party;
+  self->reactions = reactions; /* borrowed from the view */
   g_signal_connect_object(source, "items-changed", G_CALLBACK(on_source_changed), self,
                           G_CONNECT_SWAPPED);
   on_source_changed(self, 0, 0, g_list_model_get_n_items(source), source);
@@ -1130,8 +1131,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   g_set_object(&self->conversation, conversation);
 
   if (conversation) {
-    self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation));
-    self->timeline->reactions = self->reactions; /* borrowed */
+    self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation),
+                                  self->reactions);
     on_conversation_changed(self, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(conversation)),
                             G_LIST_MODEL(conversation));
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
@@ -1812,6 +1813,21 @@ gh_conversation_view_new(void)
   return g_object_new(GH_TYPE_CONVERSATION_VIEW, NULL);
 }
 
+static void
+on_reaction_changed(GhReactionStore *store, const gchar *target_id,
+                    GhConversationView *self)
+{
+  if (!self->timeline)
+    return;
+  for (guint i = 0; i < self->timeline->items->len; i++) {
+    GhTimelineItem *item = g_ptr_array_index(self->timeline->items, i);
+    if (item->message &&
+        g_strcmp0(gh_message_get_rumor_id(item->message), target_id) == 0)
+      timeline_item_set_reaction_summary(item,
+                                         gh_reaction_store_lookup(store, target_id));
+  }
+}
+
 /* W26 slice B (nostrc-191r): the reaction store for emoji chips on message
  * bubbles. Setting it passes it to the timeline so new items automatically
  * look up their summaries; existing items are retroactively bound too. */
@@ -1819,20 +1835,25 @@ void
 gh_conversation_view_set_reaction_store(GhConversationView *self, GhReactionStore *store)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
-  if (!g_set_object(&self->reactions, store))
+  if (self->reactions == store)
     return;
+  if (self->reactions)
+    g_signal_handlers_disconnect_by_data(self->reactions, self);
+  g_set_object(&self->reactions, store);
   if (self->timeline)
     self->timeline->reactions = store;  /* borrowed; outlives the timeline */
-  /* Retroactively bind summaries for items already in the timeline. */
-  if (self->timeline && store) {
+  if (store)
+    g_signal_connect_object(store, "reaction-changed", G_CALLBACK(on_reaction_changed),
+                            self, 0);
+  /* Rebind existing rows, including clearing them when the account closes. */
+  if (self->timeline) {
     guint n = self->timeline->items->len;
     for (guint i = 0; i < n; i++) {
       GhTimelineItem *item = g_ptr_array_index(self->timeline->items, i);
-      if (item->message && !item->reaction_summary) {
+      if (item->message) {
         const gchar *rumor_id = gh_message_get_rumor_id(item->message);
-        if (rumor_id)
-          timeline_item_set_reaction_summary(item,
-            gh_reaction_store_lookup(store, rumor_id));
+        timeline_item_set_reaction_summary(item,
+          store && rumor_id ? gh_reaction_store_lookup(store, rumor_id) : NULL);
       }
     }
   }

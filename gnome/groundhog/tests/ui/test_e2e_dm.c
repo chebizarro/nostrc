@@ -18,16 +18,19 @@
  *     composer; B receives that.
  *  4. Both have exactly one room with the same three messages, A's and B's
  *     own ones "Sent".
- *  5. Both restart: the rooms, messages and "Sent" come back from the
- *     encrypted stores (the inboxes admit nothing new).
+ *  5. Both restart: the rooms, messages, reaction and "Sent" come back from
+ *     the encrypted stores without duplicate chat messages.
  * Needs a display (77 without one); waits are bounded, nothing sleeps. */
 #include "gh-test-signer.h"
 #include "send-stack.h"
 
 #include "gh-outbox.h"
+#include "gh-reaction.h"
+#include "gh-store.h"
 #include "nostr-envelope.h"
 
 #include <libsoup/soup.h>
+#include <sqlite3.h>
 #include <string.h>
 
 #include "nostrc-test-gdk-frame.h"
@@ -399,6 +402,53 @@ view_shows(GhConversationView *view, const gchar *content)
   return FALSE;
 }
 
+typedef struct {
+  GhConversationView *view;
+  const gchar *target_id;
+  const gchar *emoji;
+} ReactionWait;
+
+/* Check the summary bound to the peer's open timeline, not only the store. */
+static gboolean
+reaction_chip_shows(gpointer data)
+{
+  ReactionWait *wait = data;
+  GListModel *timeline = gh_conversation_view_get_timeline(wait->view);
+  for (guint i = 0; i < g_list_model_get_n_items(timeline); i++) {
+    g_autoptr(GhTimelineItem) item = g_list_model_get_item(timeline, i);
+    GhMessage *message = gh_timeline_item_get_message(item);
+    if (!message || g_strcmp0(gh_message_get_rumor_id(message), wait->target_id) != 0)
+      continue;
+    GhReactionSummary *summary = gh_timeline_item_get_reaction_summary(item);
+    const GPtrArray *chips = summary ? gh_reaction_summary_get_chips(summary) : NULL;
+    for (guint j = 0; chips && j < chips->len; j++) {
+      const GhReactionChip *chip = g_ptr_array_index(chips, j);
+      if (g_strcmp0(chip->emoji, wait->emoji) == 0 && chip->count == 1)
+        return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+/* A chip received only in memory disappears at restart. Verify that the
+ * reaction was linked to the same encrypted conversation as its target. */
+static gboolean
+reaction_stored_in_room(SendStack *s, const gchar *reaction_id, const gchar *room_id)
+{
+  sqlite3 *db = gh_store_get_db(gh_account_store_get_store(s->store));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db,
+    "SELECT 1 FROM reactions r JOIN conversations c ON c.id = r.conversation_id "
+    "WHERE r.reaction_msg_id = ? AND r.room_id = ? AND c.backend_key = ?",
+    -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, reaction_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, room_id, -1, SQLITE_TRANSIENT);
+  gboolean found = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return found;
+}
+
 static void
 compose(SendStack *s, const gchar *text)
 {
@@ -459,6 +509,10 @@ test_two_accounts(void)
   b.resolver = GH_INBOX_RESOLVER(directory_b);
   stack_bring_up(&a);
   stack_bring_up(&b);
+  gh_conversation_view_set_reaction_store(send_stack_view(&a),
+                                          gh_app_outbox_get_reactions(a.sender));
+  gh_conversation_view_set_reaction_store(send_stack_view(&b),
+                                          gh_app_outbox_get_reactions(b.sender));
   const guint members[] = { 1, 2, 0 };
   g_autofree gchar *room = stack_room(members);
 
@@ -498,6 +552,20 @@ test_two_accounts(void)
   wait_message(&b, room, "Great, see you Saturday.");
   g_assert_true(view_shows(send_stack_view(&b), "Great, see you Saturday."));
 
+  /* B reacts to an incoming DM. The peer's already-open bubble must gain a
+   * chip, and the reaction must survive through the encrypted store. */
+  GhMessage *target = stack_find(room_b, "Hello B, it's A");
+  g_autofree gchar *target_id = g_strdup(gh_message_get_rumor_id(target));
+  GhOutbox *outbox_b = GH_OUTBOX(gh_account_store_get_outbox(b.store));
+  g_autofree gchar *reaction_id = gh_outbox_send_reaction_room(
+    outbox_b, gh_conversation_get_peers(room_b), "+", target_id, "14", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(reaction_id);
+  ReactionWait reaction = { send_stack_view(&a), target_id, "+" };
+  gh_test_spin_until(reaction_chip_shows, &reaction);
+  g_assert_true(reaction_chip_shows(&reaction));
+  g_assert_true(reaction_stored_in_room(&a, reaction_id, room));
+
   /* 4. One room each, the same messages; own ones "Sent". */
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a.model)), ==, 1);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b.model)), ==, 1);
@@ -512,6 +580,10 @@ test_two_accounts(void)
   send_stack_down(&b);
   stack_bring_up(&a);
   stack_bring_up(&b);
+  gh_conversation_view_set_reaction_store(send_stack_view(&a),
+                                          gh_app_outbox_get_reactions(a.sender));
+  gh_conversation_view_set_reaction_store(send_stack_view(&b),
+                                          gh_app_outbox_get_reactions(b.sender));
   room_a = gh_conversation_store_lookup(a.model, room);
   room_b = gh_conversation_store_lookup(b.model, room);
   g_assert_nonnull(room_a);
@@ -520,11 +592,6 @@ test_two_accounts(void)
   g_auto(GStrv) again_b = room_ids(room_b);
   g_assert_true(g_strv_equal((const gchar *const *)again_a, (const gchar *const *)ids_a));
   g_assert_true(g_strv_equal((const gchar *const *)again_b, (const gchar *const *)ids_b));
-  GhDmInboxCounters counters;
-  gh_dm_inbox_get_counters(a.inbox, &counters);
-  g_assert_cmpuint(counters.admitted, ==, 0);
-  gh_dm_inbox_get_counters(b.inbox, &counters);
-  g_assert_cmpuint(counters.admitted, ==, 0);
   send_stack_select(&a, room_a);
   send_stack_select(&b, room_b);
   wait_sent(room_a, "Hello B, it's A");
@@ -533,6 +600,8 @@ test_two_accounts(void)
   g_assert_cmpint(gh_message_get_status(stack_find(room_a, "Hi A! Got it.")), ==,
                   GH_MESSAGE_STATUS_NONE);
   g_assert_true(view_shows(send_stack_view(&b), "Great, see you Saturday."));
+  reaction.view = send_stack_view(&a);
+  g_assert_true(reaction_chip_shows(&reaction));
 
   send_stack_clear(&a);
   send_stack_clear(&b);

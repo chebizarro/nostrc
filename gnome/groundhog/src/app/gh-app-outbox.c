@@ -258,19 +258,20 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
     return FALSE;
   }
 
-  /* Build room_id (NIP-17 backend_key): sorted comma-separated pubkeys. */
+  /* A NIP-17 room contains the rumor author and its p-tag recipients. The
+   * recipient account alone misses the author on an incoming reaction. */
   GPtrArray *members = g_ptr_array_new_with_free_func(g_free);
-  g_ptr_array_add(members, g_strdup(message->account_pubkey));
+  g_ptr_array_add(members, g_strdup(message->sender_pubkey));
   if (message->recipients) {
     for (guint i = 0; message->recipients[i]; i++) {
       gchar *lower = g_ascii_strdown(message->recipients[i], -1);
-      if (g_strcmp0(lower, message->account_pubkey) != 0)
+      if (g_strcmp0(lower, message->sender_pubkey) != 0)
         g_ptr_array_add(members, lower);
       else
         g_free(lower);
     }
   }
-  g_ptr_array_sort(members, (GCompareFunc)g_strcmp0);
+  g_ptr_array_sort_values(members, (GCompareFunc)g_strcmp0);
   g_ptr_array_add(members, NULL);
   gchar *room_id = g_strjoinv(",", (gchar **)members->pdata);
   g_ptr_array_unref(members);
