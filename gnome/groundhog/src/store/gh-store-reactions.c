@@ -57,28 +57,34 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
     return FALSE;
   }
 
-  /* Find conversation_id from room_id. */
+  /* A reaction only belongs to the room that owns its target. For NIP-17,
+   * room_id is the canonical set of the reaction author and its p-tags, so
+   * this also requires the author and recipients to match the target room.
+   * Never update the target-only in-memory summary for an unknown room. */
   const gchar *room_id = gh_reaction_get_room_id(reaction);
   sqlite3_stmt *find_conv = NULL;
   int rc = sqlite3_prepare_v2(db,
-    "SELECT id FROM conversations WHERE backend_key = ?", -1, &find_conv, NULL);
+    "SELECT c.id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
+    "WHERE c.backend_key = ? AND m.backend_msg_id = ?", -1, &find_conv, NULL);
   if (rc != SQLITE_OK) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "prepare: %s", sqlite3_errmsg(db));
     return FALSE;
   }
   sqlite3_bind_text(find_conv, 1, room_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(find_conv, 2, gh_reaction_get_target_rumor_id(reaction),
+                    -1, SQLITE_TRANSIENT);
   rc = sqlite3_step(find_conv);
   gint64 conversation_id = -1;
   if (rc == SQLITE_ROW)
     conversation_id = sqlite3_column_int64(find_conv, 0);
   sqlite3_finalize(find_conv);
 
-  if (conversation_id < 0) {
-    /* The conversation doesn't exist yet — reaction on an unknown room.
-     * Store with conversation_id 0; it will be linked when the room is
-     * created. For now, succeed silently (memory-only for this reaction). */
-    return TRUE;
+  if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "lookup target: %s", sqlite3_errmsg(db));
+    return FALSE;
   }
+  if (conversation_id < 0)
+    return FALSE;
 
   sqlite3_stmt *stmt = NULL;
   rc = sqlite3_prepare_v2(db,
@@ -198,8 +204,12 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
 
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db,
-    "SELECT target_msg_id, reaction_msg_id, sender_pubkey, emoji, created_at, room_id "
-    "FROM reactions ORDER BY created_at ASC", -1, &stmt, NULL);
+    "SELECT r.target_msg_id, r.reaction_msg_id, r.sender_pubkey, r.emoji, "
+    "r.created_at, r.room_id FROM reactions r "
+    "JOIN conversations c ON c.id = r.conversation_id "
+    "JOIN messages m ON m.conversation_id = c.id AND m.backend_msg_id = r.target_msg_id "
+    "WHERE c.backend_key = r.room_id ORDER BY r.created_at ASC, r.reaction_msg_id ASC",
+    -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "prepare: %s", sqlite3_errmsg(db));
     return FALSE;

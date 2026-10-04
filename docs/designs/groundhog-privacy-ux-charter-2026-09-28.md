@@ -838,6 +838,11 @@ or Marmot conversation update when a peer reaction arrives, and restored chips
 are bound when the timeline first opens. A NIP-17 reaction belongs to the room
 formed by its author and p-tag recipients, not to the recipient alone.)*
 
+*(Review follow-up 2026-10-04: a reaction is shown only if its target message
+belongs to that exact room; a nonparticipant's NIP-17 rumor cannot project
+onto another DM bubble. Re-adding the same reaction in the same second
+creates a distinct event ID so deletion of the old reaction cannot mask it.)*
+
 Illustrative Blueprint:
 
 ```blp

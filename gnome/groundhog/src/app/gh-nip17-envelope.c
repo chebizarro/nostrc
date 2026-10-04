@@ -573,9 +573,14 @@ gh_nip17_rumor_new_reaction_room(const gchar *sender_pubkey_hex,
   g_autoptr(GPtrArray) extra = g_ptr_array_new();
   const gchar *e_pair[] = { "e", target_rumor_id, NULL };
   const gchar *k_pair[] = { "k", target_kind_str, NULL };
+  g_autofree gchar *nonce = g_uuid_string_random();
+  const gchar *nonce_pair[] = { "nonce", nonce, NULL };
   g_ptr_array_add(extra, (gpointer)e_pair);
   if (target_kind_str && *target_kind_str)
     g_ptr_array_add(extra, (gpointer)k_pair);
+  /* NIP-01 ids include tags and created_at only has second precision. Two
+   * otherwise identical off/on reactions in that second need distinct ids. */
+  g_ptr_array_add(extra, (gpointer)nonce_pair);
   return rumor_new_kind(sender, (const gchar *const *)room, 7, emoji, extra,
                         created_at, 0, out_rumor_id, error);
 }

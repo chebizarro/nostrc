@@ -430,6 +430,20 @@ reaction_chip_shows(gpointer data)
   return FALSE;
 }
 
+typedef struct {
+  GhDmInbox *inbox;
+  guint admitted_before;
+} ReactionInboxWait;
+
+static gboolean
+reaction_inbox_admitted(gpointer data)
+{
+  ReactionInboxWait *wait = data;
+  GhDmInboxCounters counters;
+  gh_dm_inbox_get_counters(wait->inbox, &counters);
+  return counters.admitted > wait->admitted_before;
+}
+
 /* A chip received only in memory disappears at restart. Verify that the
  * reaction was linked to the same encrypted conversation as its target. */
 static gboolean
@@ -444,6 +458,19 @@ reaction_stored_in_room(SendStack *s, const gchar *reaction_id, const gchar *roo
   sqlite3_bind_text(stmt, 1, reaction_id, -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt, 2, room_id, -1, SQLITE_TRANSIENT);
   sqlite3_bind_text(stmt, 3, room_id, -1, SQLITE_TRANSIENT);
+  gboolean found = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return found;
+}
+
+static gboolean
+reaction_stored_anywhere(SendStack *s, const gchar *reaction_id)
+{
+  sqlite3 *db = gh_store_get_db(gh_account_store_get_store(s->store));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db,
+    "SELECT 1 FROM reactions WHERE reaction_msg_id = ?", -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, reaction_id, -1, SQLITE_TRANSIENT);
   gboolean found = sqlite3_step(stmt) == SQLITE_ROW;
   sqlite3_finalize(stmt);
   return found;
@@ -485,30 +512,38 @@ stack_bring_up(SendStack *s)
 static void
 test_two_accounts(void)
 {
-  Relay discovery = { 0 }, inbox_a = { 0 }, inbox_b = { 0 };
+  Relay discovery = { 0 }, inbox_a = { 0 }, inbox_b = { 0 }, inbox_c = { 0 };
   relay_up(&discovery);
   relay_up(&inbox_a);
   relay_up(&inbox_b);
+  relay_up(&inbox_c);
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   const gchar *urls_a[] = { inbox_a.url, NULL };
   const gchar *urls_b[] = { inbox_b.url, NULL };
+  const gchar *urls_c[] = { inbox_c.url, NULL };
   g_autofree gchar *list_a = stack_inbox_list(1, now - 3600, urls_a);
   g_autofree gchar *list_b = stack_inbox_list(2, now - 3600, urls_b);
+  g_autofree gchar *list_c = stack_inbox_list(3, now - 3600, urls_c);
   g_assert_true(relay_store(&discovery, list_a, NULL));
   g_assert_true(relay_store(&discovery, list_b, NULL));
+  g_assert_true(relay_store(&discovery, list_c, NULL));
   /* One each: an account's GhAppOutbox disposes the resolver it was given. */
   StoreDirectory *directory_a = g_object_new(STORE_TYPE_DIRECTORY, NULL);
   StoreDirectory *directory_b = g_object_new(STORE_TYPE_DIRECTORY, NULL);
-  directory_a->relay = directory_b->relay = &discovery;
+  StoreDirectory *directory_c = g_object_new(STORE_TYPE_DIRECTORY, NULL);
+  directory_a->relay = directory_b->relay = directory_c->relay = &discovery;
 
   const gchar *sources[] = { discovery.url, NULL };
-  SendStack a = { 0 }, b = { 0 };
+  SendStack a = { 0 }, b = { 0 }, c = { 0 };
   send_stack_init(&a, 1, bus.client, sources);
   send_stack_init(&b, 2, bus.client, sources);
+  send_stack_init(&c, 3, bus.client, sources);
   a.resolver = GH_INBOX_RESOLVER(directory_a);
   b.resolver = GH_INBOX_RESOLVER(directory_b);
+  c.resolver = GH_INBOX_RESOLVER(directory_c);
   stack_bring_up(&a);
   stack_bring_up(&b);
+  stack_bring_up(&c);
   gh_conversation_view_set_reaction_store(send_stack_view(&a),
                                           gh_app_outbox_get_reactions(a.sender));
   gh_conversation_view_set_reaction_store(send_stack_view(&b),
@@ -566,6 +601,26 @@ test_two_accounts(void)
   g_assert_true(reaction_chip_shows(&reaction));
   g_assert_true(reaction_stored_in_room(&a, reaction_id, room));
 
+  /* C knows A's message id but is not in A-B's room. Its correctly addressed
+   * C-A rumor must not project onto A-B's open bubble. Wait for A to unwrap
+   * it before asserting absence, rather than relying on a timing window. */
+  GhDmInboxCounters before_c;
+  gh_dm_inbox_get_counters(a.inbox, &before_c);
+  GhOutbox *outbox_c = GH_OUTBOX(gh_account_store_get_outbox(c.store));
+  const gchar *to_a[] = { stack_hex[1], NULL };
+  g_autofree gchar *foreign_id = gh_outbox_send_reaction_room(
+    outbox_c, to_a, "x", target_id, "14", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(foreign_id);
+  ReactionInboxWait foreign = { a.inbox, before_c.admitted };
+  gh_test_spin_until(reaction_inbox_admitted, &foreign);
+  ReactionWait foreign_chip = { send_stack_view(&a), target_id, "x" };
+  g_assert_false(reaction_chip_shows(&foreign_chip));
+  const guint foreign_members[] = { 1, 3, 0 };
+  g_autofree gchar *foreign_room = stack_room(foreign_members);
+  g_assert_false(reaction_stored_in_room(&a, foreign_id, foreign_room));
+  g_assert_false(reaction_stored_anywhere(&a, foreign_id));
+
   /* 4. One room each, the same messages; own ones "Sent". */
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a.model)), ==, 1);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b.model)), ==, 1);
@@ -602,16 +657,22 @@ test_two_accounts(void)
   g_assert_true(view_shows(send_stack_view(&b), "Great, see you Saturday."));
   reaction.view = send_stack_view(&a);
   g_assert_true(reaction_chip_shows(&reaction));
+  foreign_chip.view = send_stack_view(&a);
+  g_assert_false(reaction_chip_shows(&foreign_chip));
+  g_assert_false(reaction_stored_anywhere(&a, foreign_id));
 
   send_stack_clear(&a);
   send_stack_clear(&b);
+  send_stack_clear(&c);
   GhTestSenders check = { &bus, &signer };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   g_object_unref(directory_a);
   g_object_unref(directory_b);
+  g_object_unref(directory_c);
   relay_down(&discovery);
   relay_down(&inbox_a);
   relay_down(&inbox_b);
+  relay_down(&inbox_c);
   gh_test_run_until_idle();
 }
 

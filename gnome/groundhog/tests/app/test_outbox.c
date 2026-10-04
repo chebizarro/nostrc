@@ -14,6 +14,7 @@
  * bound to the subprocess's lifetime, so no daemon outlives a test. */
 #include "crash-harness.h"
 #include "gh-outbox.h"
+#include "gh-reaction-store.h"
 #include "gh-auth-policy.h"
 #include "gh-nip17-envelope.h"
 #include "gh-store-conversations.h"
@@ -2449,6 +2450,46 @@ test_cancel_and_delete(void)
   fixture_down(&f);
 }
 
+static void
+test_reaction_same_second_toggle(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fixture_outbox(&f);
+  const gchar *recipients[] = { hex_bob, NULL };
+  const gchar *target = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *first = gh_outbox_send_reaction_room(
+    f.outbox, recipients, "+", target, "14", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(first);
+  g_autofree gchar *deletion = gh_outbox_send_deletion_room(
+    f.outbox, recipients, first, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(deletion);
+  g_autofree gchar *again = gh_outbox_send_reaction_room(
+    f.outbox, recipients, "+", target, "14", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(again);
+  g_assert_cmpstr(first, !=, again);
+  g_assert_cmpint(gh_clock_get_unix(f.clock), ==, T0);
+
+  /* The delete references only the first id; the same-second re-add wins. */
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  gh_reaction_store_set_account(reactions, hex_alice, NULL, NULL, NULL);
+  g_autoptr(GhReaction) old =
+    gh_reaction_new(target, first, hex_alice, "+", T0, "test-room");
+  g_autoptr(GhReaction) latest =
+    gh_reaction_new(target, again, hex_alice, "+", T0, "test-room");
+  g_assert_true(gh_reaction_store_admit(reactions, old, NULL));
+  g_assert_true(gh_reaction_store_remove(reactions, first, NULL));
+  g_assert_true(gh_reaction_store_admit(reactions, latest, NULL));
+  GhReactionSummary *summary = gh_reaction_store_lookup(reactions, target);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 1);
+  g_assert_cmpstr(gh_reaction_summary_own_reaction_id(summary, "+"), ==, again);
+  fixture_down(&f);
+}
+
 /* NIP-29 and MLS entries in the same store belong to their own engines:
  * the NIP-17 outbox neither resumes nor touches them. */
 static void
@@ -2769,6 +2810,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/no-inbox-retry", test_no_inbox_and_retry);
   g_test_add_func("/groundhog/outbox/signer-refusal", test_signer_refusal_and_retry);
   g_test_add_func("/groundhog/outbox/cancel-delete", test_cancel_and_delete);
+  g_test_add_func("/groundhog/outbox/reaction-same-second-toggle",
+                  test_reaction_same_second_toggle);
   g_test_add_func("/groundhog/outbox/note-to-self", test_note_to_self);
   g_test_add_func("/groundhog/outbox/other-backends", test_other_backends_untouched);
   g_test_add_func("/groundhog/outbox/relays-refused", test_relays_refused);

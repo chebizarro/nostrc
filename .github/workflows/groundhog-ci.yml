@@ -70,6 +70,7 @@ jobs:
             test-groundhog-account-store test-groundhog-conversation-view test-groundhog-link-policy test-groundhog-background test-groundhog-preferences test-groundhog-notifier nostrc-test-bus-selftest \
             test-groundhog-inbox-setup test-groundhog-onboarding \
             test-groundhog-composer test-groundhog-e2e-dm test-groundhog-expiry \
+            test-groundhog-reactions test-groundhog-reaction-send \
             test-groundhog-auth-policy test-groundhog-contact-directory \
             test-groundhog-privacy-e2e \
             test-groundhog-new-message test-groundhog-requests \
@@ -115,6 +116,7 @@ jobs:
               'groundhog-account-store', 'groundhog-account-store-gui', 'groundhog-conversation-view', 'groundhog-link-policy', 'groundhog-background', 'groundhog-background-gui', 'groundhog-background-desktop', 'groundhog-preferences', 'groundhog-notifier', 'groundhog-notifier-gui', 'nostrc-test-bus-selftest',
               'groundhog-inbox-setup', 'groundhog-onboarding',
               'groundhog-composer', 'groundhog-e2e-dm', 'groundhog-expiry',
+              'groundhog-reactions', 'groundhog-reaction-send',
               'groundhog-auth-policy', 'groundhog-contact-directory',
               'groundhog-privacy-e2e',
               'groundhog-new-message', 'groundhog-requests', 'groundhog-requests-gui',
@@ -233,6 +235,7 @@ jobs:
         groundhog-store-conversations groundhog-outbox groundhog-account-store
         groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup
         groundhog-expiry groundhog-auth-policy groundhog-contact-directory
+        groundhog-reactions groundhog-reaction-send
         groundhog-privacy-e2e groundhog-new-message groundhog-requests
         groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service
         groundhog-mls-service groundhog-privacy-mls
