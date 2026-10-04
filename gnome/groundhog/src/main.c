@@ -41,9 +41,12 @@ static gboolean bus_fallback = FALSE;
  * the default instance. Validated in setup_instance(). */
 static const gchar *instance_name;
 static gchar *parsed_instance_option;
+static gboolean parsed_smoke_option;
 static const GOptionEntry instance_options[] = {
   { "instance", 0, 0, G_OPTION_ARG_STRING, &parsed_instance_option,
     "Use an isolated Groundhog device instance", "NAME" },
+  { "smoke", 0, 0, G_OPTION_ARG_NONE, &parsed_smoke_option,
+    "Check the Groundhog GUI and exit", NULL },
   { 0 }
 };
 
@@ -387,14 +390,30 @@ main(int argc, char **argv)
   g_autoptr(AdwApplication) app = NULL;
   int status;
 
-  if (argc == 2 && g_str_equal(argv[1], "--version")) {
-    g_print("Groundhog %s\n", GROUNDHOG_VERSION);
-    return 0;
-  }
-
   /* Instance support (nostrc-lrac): must run before any GLib function that
    * caches XDG directories. Uses only libc, not GLib. */
   instance_name = setup_instance(argc, argv);
+
+  /* --version is handled locally, with or without --instance. Other options
+   * still reach GApplication's parser rather than being silently ignored. */
+  gboolean version_only = FALSE;
+  gboolean smoke_requested = FALSE;
+  gboolean known_version_args = TRUE;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "--version") == 0)
+      version_only = TRUE;
+    else if (strcmp(argv[i], "--smoke") == 0) {
+      smoke_requested = TRUE;
+      known_version_args = FALSE;
+    } else if (strcmp(argv[i], "--instance") == 0)
+      i++;  /* setup_instance() already validated the following name. */
+    else if (strncmp(argv[i], "--instance=", 11) != 0)
+      known_version_args = FALSE;
+  }
+  if (version_only && known_version_args) {
+    g_print("Groundhog %s\n", GROUNDHOG_VERSION);
+    return 0;
+  }
 
   /* D-Bus probe (nostrc-v59q): detect a stalled session bus before
    * any GLib or GTK function that might connect to D-Bus. On Linux,
@@ -404,7 +423,7 @@ main(int argc, char **argv)
   probe_session_bus(&flags);
   gh_status_set_bus_unresponsive(bus_fallback);
 
-  if (argc == 2 && g_str_equal(argv[1], "--smoke")) {
+  if (smoke_requested) {
     smoke_mode = TRUE;
 #ifdef __APPLE__
     /* CLI test runners may not own a macOS WindowServer session. */
@@ -419,7 +438,6 @@ main(int argc, char **argv)
       return 77;
     }
     flags |= G_APPLICATION_NON_UNIQUE;
-    argc = 1;
   }
 
 #if GROUNDHOG_HAVE_ACCOUNTS

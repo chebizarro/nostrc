@@ -187,10 +187,103 @@ test_concurrent_instances(void)
                NULL, NULL, NULL, NULL);
 }
 
+/* A named smoke must still reach GApplication's option parser. This catches
+ * the old argc == 2 special case, which rejected --instance NAME --smoke. */
+static gboolean
+run_named_smoke(const gchar *const *argv, const gchar *name)
+{
+  g_auto(GStrv) env = g_get_environ();
+  env = g_environ_unsetenv(env, "GROUNDHOG_INSTANCE");
+  env = g_environ_setenv(env, "DBUS_SESSION_BUS_ADDRESS", "", TRUE);
+  env = g_environ_setenv(env, "DBUS_LAUNCHD_SESSION_BUS_SOCKET", "", TRUE);
+#ifdef __APPLE__
+  env = g_environ_setenv(env, "GROUNDHOG_RUN_GUI_SMOKE", "1", TRUE);
+#endif
+  g_autofree gchar *tmpdir = g_dir_make_tmp("groundhog-cli-smoke-XXXXXX", NULL);
+  g_assert_nonnull(tmpdir);
+  env = g_environ_setenv(env, "XDG_CONFIG_HOME", tmpdir, TRUE);
+  env = g_environ_setenv(env, "XDG_DATA_HOME", tmpdir, TRUE);
+  env = g_environ_setenv(env, "XDG_CACHE_HOME", tmpdir, TRUE);
+  env = g_environ_setenv(env, "XDG_STATE_HOME", tmpdir, TRUE);
+
+  g_autoptr(GError) error = NULL;
+  GPid pid = 0;
+  gint stderr_fd = -1;
+  g_assert_true(g_spawn_async_with_pipes(NULL, (gchar **)argv, env,
+    G_SPAWN_DO_NOT_REAP_CHILD, NULL, NULL, &pid, NULL, NULL, &stderr_fd, &error));
+  g_assert_no_error(error);
+
+  gint status = 0;
+  gboolean exited = FALSE;
+  for (guint i = 0; i < 150; i++) {
+    if (waitpid(pid, &status, WNOHANG) == pid) {
+      exited = TRUE;
+      break;
+    }
+    g_usleep(100 * 1000);
+  }
+  if (!exited) {
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+  }
+  g_spawn_close_pid(pid);
+
+  g_autoptr(GString) stderr_log = g_string_new(NULL);
+  gchar buf[4096];
+  ssize_t count;
+  while ((count = read(stderr_fd, buf, sizeof(buf))) > 0)
+    g_string_append_len(stderr_log, buf, count);
+  close(stderr_fd);
+
+  g_assert_true(exited);
+  g_assert_true(WIFEXITED(status));
+  if (WEXITSTATUS(status) == 77)
+    return FALSE;  /* The runner has no GUI display. */
+  g_test_message("%s: %s", name, stderr_log->str);
+  g_assert_cmpint(WEXITSTATUS(status), ==, 0);
+  g_autofree gchar *expected = g_strdup_printf("app id org.nostr.Groundhog.%s", name);
+  g_assert_nonnull(strstr(stderr_log->str, expected));
+
+  gchar *rm_argv[] = { "rm", "-rf", tmpdir, NULL };
+  g_spawn_sync(NULL, rm_argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL,
+               NULL, NULL, NULL, NULL);
+  return TRUE;
+}
+
+static void
+test_named_smoke_options(void)
+{
+  const gchar *groundhog_bin = g_getenv("GROUNDHOG_BIN");
+  if (!groundhog_bin) {
+    g_test_skip("GROUNDHOG_BIN not set");
+    return;
+  }
+
+  const gchar *first[] = { groundhog_bin, "--instance", "cliSmokeA", "--smoke", NULL };
+  if (!run_named_smoke(first, "cliSmokeA")) {
+    g_test_skip("No GUI display for named smoke");
+    return;
+  }
+  const gchar *second[] = { groundhog_bin, "--smoke", "--instance=cliSmokeB", NULL };
+  g_assert_true(run_named_smoke(second, "cliSmokeB"));
+
+  /* --version is also an existing local option and must compose with the
+   * named profile without attempting a GUI or falling through to the parser. */
+  gchar *version_argv[] = { (gchar *)groundhog_bin, "--instance", "cliVersion", "--version", NULL };
+  g_autofree gchar *version_out = NULL;
+  gint version_status = 0;
+  g_assert_true(g_spawn_sync(NULL, version_argv, NULL, 0, NULL, NULL,
+                             &version_out, NULL, &version_status, NULL));
+  g_assert_true(WIFEXITED(version_status));
+  g_assert_cmpint(WEXITSTATUS(version_status), ==, 0);
+  g_assert_true(g_str_has_prefix(version_out, "Groundhog "));
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/two-instance/concurrent", test_concurrent_instances);
+  g_test_add_func("/groundhog/two-instance/named-smoke-options", test_named_smoke_options);
   return g_test_run();
 }

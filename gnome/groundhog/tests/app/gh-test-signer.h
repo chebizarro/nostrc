@@ -227,6 +227,14 @@ gh_test_signer_call(GDBusConnection *connection, const gchar *sender, const gcha
     g_dbus_method_invocation_return_value(invocation, NULL);
     return;
   }
+  if (g_str_equal(method, "ListIdentities")) {
+    GVariantBuilder identities;
+    g_variant_builder_init(&identities, G_VARIANT_TYPE("as"));
+    for (guint key = 1; key < GH_TEST_KEYS; key++)
+      g_variant_builder_add(&identities, "s", mock->npubs[key]);
+    g_dbus_method_invocation_return_value(invocation, g_variant_new("(as)", &identities));
+    return;
+  }
   mock->calls++;
   g_ptr_array_add(mock->senders, g_strdup(sender));
   g_ptr_array_add(mock->methods, g_strdup_printf("%s from %s", method, sender));
@@ -254,6 +262,7 @@ gh_test_signer_up(GhTestBus *fixture, GhTestSigner *mock)
   mock->node = g_dbus_node_info_new_for_xml(
     "<node><interface name='org.nostr.Signer'>"
     "<method name='EnableTypedApprovalErrors'/>"
+    "<method name='ListIdentities'><arg type='as' direction='out'/></method>"
     "<method name='SignEvent'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
     "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
     "<method name='NIP44Encrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
