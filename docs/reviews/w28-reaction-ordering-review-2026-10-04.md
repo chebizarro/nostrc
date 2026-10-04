@@ -19,3 +19,26 @@
 - **Linux sanitizer gate:** `scripts/linux-gate.sh --sanitizers /tmp/rv-w28-reaction-ordering` passed all 60 registered tests; its input-coverage check found all 972 build inputs within the configured sanitizer paths. The gate used a private image tag and volume.
 
 Only this review document is committed. No push was performed.
+
+## Addendum — re-review of `4d52307e` (2026-10-04)
+
+**Final verdict: CHANGES-REQUIRED.** The two prior findings are addressed in their narrow form: separate 64-per-author-per-room and 512-per-room limits protect another room and another author in the same room, and the migration test now builds a committed SQLCipher v7 file from migrations 1–7 rather than downgrading a v8 file. Two resource/order problems remain.
+
+### Findings
+
+1. **High — varying room keys bypasses every count limit, allowing unbounded encrypted-store growth and increasingly expensive pruning.** `gnome/groundhog/src/store/gh-store-reactions.c:26-52,147-165,194-253`; `gnome/groundhog/src/app/gh-app-outbox.c:274-291`; `gnome/groundhog/src/app/gh-nip17-inbox.c:286-307`. There is no account-wide or unknown-room budget after the old global cap was removed. A single sender can give A valid kind-7 or kind-5 NIP-17 rumors with A plus a different arbitrary well-formed `p` tag each time; this creates an unlimited number of room keys, each eligible for 64 pending reactions and 64 tombstones even when no target or room message exists. Seven-day expiry only bounds age, not rows or peak disk/CPU cost; every admission also scans the growing table with window-function pruning. A temporary probe inserted 64 rows in each of 70 extra rooms; all 4,480 survived pruning alongside an already full 512-row room. Add a bounded account/unknown-room admission policy that cannot be used to evict established rooms' legitimate pending rows, and test a one-sender many-room flood.
+
+2. **Medium — the 512-per-room eviction is not oldest-first for arrivals within one second.** `gnome/groundhog/src/store/gh-store-reactions.c:38-51,152,201-215`; `gnome/groundhog/tests/store/test_store_conversations.c:1868-1891`. Both tables use integer-second `received_at`, then sort by lexicographically descending reaction ID. At the room cap, 600 events from ten authors below their 64-row quotas in the same second prune to 512; a temporary probe inserted `zzz-old` first and `aaa-new` last with the same `received_at` and found the old row retained while the new row was evicted, for both pending reactions and tombstones. Thus a freshly received valid reaction or deletion can be discarded immediately based on its hash rather than arrival order. Use a monotonic arrival ordinal (or other stable subsecond ordering) and assert which rows survive, not only the count.
+
+### Re-verification
+
+- The prior cross-room eviction probe no longer reproduces: a first pending reaction and tombstone in A–P survived 4,100 entries in a different A–Q room. A reviewer-only three-party-room probe also kept P's older pending reaction and tombstone while Q flooded the *same* room; author quotas reduced Q to 64 and kept P's rows. No account-wide count cap remains; that protects these rows but causes Finding 1.
+- At the room cap, rows with a strictly older `received_at` are evicted first, but same-second ties follow reaction-ID order rather than real insertion order (Finding 2). The branch's room-cap test asserts only 512 rows, not their identities.
+- The fixture builder committed `PRAGMA user_version=7`, seven migration rows (max version 7), and no v8 tables before upgrade; a temporary assertion verified those facts. The upgraded SQLCipher store retained the v7 reaction, had one v8 migration row, and reopened with an unchanged `schema_version`. Replacing v8 migration SQL with a no-op made the v7→v8 test fail, then it passed after restoration.
+- Three other targeted mutation checks failed as intended: disabling the author quota broke both the pending and tombstone partition tests (513 vs 65 rows), and disabling the room quota broke the 512-row test (600 vs 512). All reviewer-only edits were restored.
+- Clean macOS `-DBUILD_GROUNDHOG=ON -DBUILD_MDK011_INTEROP=ON` Ninja build passed. `check-unsequenced-args.py` passed. `groundhog-store*`, `groundhog-e2e-dm`, reaction suites, privacy static lint, and White Noise reaction interop passed; the macOS-inapplicable keyring test was skipped. The White Noise case's image and artifact fixtures passed. Existing CI registration is unchanged and includes the touched store/DM suites.
+- Linux sanitizer gate: `scripts/linux-gate.sh --sanitizers /tmp/rv-w28-reaction-ordering-r2` passed all 60 registered tests; the source-input check covered all 972 inputs.
+- Cherry-pick integration: `5226ad6c`, `4d52307e`, and both review-doc commits applied cleanly with `git cherry-pick --no-commit` onto `origin/master` `cf616c3d` in a disposable reviewer worktree; that worktree was removed.
+- Version: this Groundhog PATCH-class correction remains folded into unreleased 0.12.0; no further version bump or other component bump is required.
+
+Only the review document is committed. No push was performed.
