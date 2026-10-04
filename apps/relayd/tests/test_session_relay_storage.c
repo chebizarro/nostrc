@@ -57,34 +57,27 @@ static int stop_daemon(pid_t pid) {
   return -1;
 }
 
-/* REQ @filter_json until an EVENT carrying `id` is served (nostrdb ingests
- * asynchronously). Returns 1 when it arrived, followed by EOSE. */
+/* One REQ issued directly after OK must see the committed event before
+ * EOSE. Retrying used to mask the backend's asynchronous-ingest race. */
 static int fetch_matching(int fd, const char *filter_json, const char *id) {
   char req[1024];
-  for (int attempt = 0; attempt < 40; attempt++) {
-    snprintf(req, sizeof req, "[\"REQ\",\"get%d\",%s]", attempt, filter_json);
-    if (ws_send(fd, req) != 0) return 0;
-    int found = 0;
-    for (;;) {
-      char *m = ws_recv(fd);
-      if (!m) return 0;
-      int is_eose = strncmp(m, "[\"EOSE\"", 7) == 0;
-      if (strncmp(m, "[\"EVENT\"", 8) == 0 && strstr(m, id)) found = 1;
-      if (strncmp(m, "[\"CLOSED\"", 9) == 0) {
-        fprintf(stderr, "  REQ refused: %s\n", m);
-        free(m);
-        return 0;
-      }
+  snprintf(req, sizeof req, "[\"REQ\",\"get\",%s]", filter_json);
+  if (ws_send(fd, req) != 0) return 0;
+  int found = 0;
+  for (;;) {
+    char *m = ws_recv(fd);
+    if (!m) return 0;
+    int is_eose = strncmp(m, "[\"EOSE\"", 7) == 0;
+    if (strncmp(m, "[\"EVENT\"", 8) == 0 && strstr(m, id)) found = 1;
+    if (strncmp(m, "[\"CLOSED\"", 9) == 0) {
+      fprintf(stderr, "  REQ refused: %s\n", m);
       free(m);
-      if (is_eose) break;
+      return 0;
     }
-    if (found) {
-      fprintf(stderr, "  served after %d REQ(s)\n", attempt + 1);
-      return 1;
-    }
-    sleep_ms(50);
+    free(m);
+    if (is_eose) break;
   }
-  return 0;
+  return found;
 }
 
 static int fetch_by_id(int fd, const char *id) {
@@ -170,8 +163,7 @@ int main(void) {
     return 1;
   }
   chmod(xrd, 0700);
-  /* Storage ingestion is asynchronous, so this test can issue multiple REQs
-   * per event. Keep its rate budget independent of scheduler speed. */
+  /* Leave ample headroom for the addressable-event checks. */
   char config_dir[600], config_path[640];
   snprintf(config_dir, sizeof config_dir, "%s/nostr", state);
   snprintf(config_path, sizeof config_path, "%s/session-relay.conf", config_dir);
@@ -214,7 +206,7 @@ int main(void) {
     char ok_prefix[128];
     snprintf(ok_prefix, sizeof ok_prefix, "[\"OK\",\"%s\",true", id);
     expect_reply(fd, frame, ok_prefix, "signed EVENT accepted");
-    CHECK(fetch_by_id(fd, id), "stored event not served by REQ");
+    CHECK(fetch_by_id(fd, id), "event missing from immediate REQ after OK");
     /* An empty result still ends in EOSE with storage on. */
     expect_reply(fd, "[\"REQ\",\"none\",{\"kinds\":[31999],\"limit\":1}]",
                  "[\"EOSE\",\"none\"]", "no match -> EOSE");

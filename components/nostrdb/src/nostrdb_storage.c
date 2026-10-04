@@ -3,6 +3,8 @@
 #include <errno.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <pthread.h>
+#include <time.h>
 #include "nostr-storage.h"
 #include "nostrdb_storage.h"
 #include "nostr-filter.h"
@@ -26,6 +28,8 @@ typedef struct {
   char *uri;
   char *opts;
   struct ndb *db;
+  pthread_mutex_t commit_mutex;
+  pthread_cond_t commit_cond;
 } NDBImpl;
 
 typedef struct {
@@ -36,10 +40,37 @@ typedef struct {
   int index;
 } NDBIter;
 
+/* nostrdb calls this only after a successful writer transaction commit. The
+ * callback runs under its subscription-monitor lock, so only wake waiters here;
+ * querying the DB (or unsubscribing) from the callback would deadlock. */
+static void ndb_committed(void *ctx, uint64_t subid) {
+  NDBImpl *impl = (NDBImpl*)ctx;
+  (void)subid;
+  pthread_mutex_lock(&impl->commit_mutex);
+  pthread_cond_broadcast(&impl->commit_cond);
+  pthread_mutex_unlock(&impl->commit_mutex);
+}
+
+static int ndb_note_is_stored(NDBImpl *impl, const unsigned char id[32]) {
+  struct ndb_txn txn;
+  if (!ndb_begin_query(impl->db, &txn)) return -EIO;
+  int found = ndb_get_note_by_id(&txn, id, NULL, NULL) != NULL;
+  ndb_end_query(&txn);
+  return found;
+}
+
 static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   if (!st) return -EINVAL;
   NDBImpl *impl = (NDBImpl*)calloc(1, sizeof(*impl));
   if (!impl) return -ENOMEM;
+  int sync_rc = pthread_mutex_init(&impl->commit_mutex, NULL);
+  if (sync_rc != 0) { free(impl); return -sync_rc; }
+  sync_rc = pthread_cond_init(&impl->commit_cond, NULL);
+  if (sync_rc != 0) {
+    pthread_mutex_destroy(&impl->commit_mutex);
+    free(impl);
+    return -sync_rc;
+  }
   if (uri) impl->uri = strdup(uri);
   if (opts_json) impl->opts = strdup(opts_json);
   st->impl = impl;
@@ -63,6 +94,7 @@ static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   /* Use multiple ingester threads for better throughput */
   int num_threads = 4; /* Use 4 threads for parallel ingestion */
   ndb_config_set_ingest_threads(&cfg, num_threads);
+  ndb_config_set_subscription_callback(&cfg, ndb_committed, impl);
   fprintf(stderr, "[nostrdb_storage] Using %d ingester threads\n", num_threads);
   
   /* nostrc-w0n: Signature verification is enabled (default).
@@ -72,6 +104,12 @@ static int ndb_open(NostrStorage *st, const char *uri, const char *opts_json) {
   /* ndb_init returns nonzero on success, zero on failure */
   if (rc == 0) {
     fprintf(stderr, "[nostrdb_storage] ndb_init(path=%s) failed rc=%d\n", path, rc);
+    pthread_cond_destroy(&impl->commit_cond);
+    pthread_mutex_destroy(&impl->commit_mutex);
+    free(impl->uri);
+    free(impl->opts);
+    free(impl);
+    st->impl = NULL;
     return -EIO;
   }
   return 0;
@@ -82,6 +120,8 @@ static void ndb_close(NostrStorage *st) {
   NDBImpl *impl = (NDBImpl*)st->impl;
   if (impl) {
     if (impl->db) { ndb_destroy(impl->db); impl->db = NULL; }
+    pthread_cond_destroy(&impl->commit_cond);
+    pthread_mutex_destroy(&impl->commit_mutex);
     free(impl->uri);
     free(impl->opts);
     free(impl);
@@ -91,12 +131,60 @@ static void ndb_close(NostrStorage *st) {
 
 static int ndb_put_event(NostrStorage *st, const NostrEvent *ev) {
   if (!st || !st->impl || !((NDBImpl*)st->impl)->db || !ev) return -EINVAL;
+  NDBImpl *impl = (NDBImpl*)st->impl;
+  char *id_hex = nostr_event_get_id((NostrEvent*)ev);
+  if (!id_hex) return -EINVAL;
+  unsigned char id[32];
+  int id_ok = strlen(id_hex) == 64;
+  for (int i = 0; id_ok && i < 32; i++) {
+    unsigned int byte;
+    if (sscanf(id_hex + 2*i, "%2x", &byte) != 1) id_ok = 0;
+    else id[i] = (unsigned char)byte;
+  }
+  free(id_hex);
+  if (!id_ok) return -EINVAL;
+
+  /* A repeated EVENT may be discarded by nostrdb's ingester rather than
+   * generating a notification. It is already durable, so accept it. */
+  int present = ndb_note_is_stored(impl, id);
+  if (present != 0) return present > 0 ? 0 : present;
+
+  struct ndb_filter filter;
+  if (!ndb_filter_init(&filter)) return -ENOMEM;
+  int filter_ok = ndb_filter_start_field(&filter, NDB_FILTER_IDS);
+  if (filter_ok) filter_ok = ndb_filter_add_id_element(&filter, id);
+  if (filter_ok) {
+    ndb_filter_end_field(&filter);
+    filter_ok = ndb_filter_end(&filter);
+  }
+  uint64_t subid = filter_ok ? ndb_subscribe(impl->db, &filter, 1) : 0;
+  ndb_filter_destroy(&filter);
+  if (!subid) return -EIO;
+
   char *json = nostr_event_serialize(ev);
-  if (!json) return -EIO;
-  int rc = ndb_process_event(((NDBImpl*)st->impl)->db, json, (int)strlen(json));
+  int queued = json && ndb_process_event(impl->db, json, (int)strlen(json));
   free(json);
-  /* nostrdb returns nonzero on success */
-  return rc ? 0 : -EIO;
+  if (!queued) { ndb_unsubscribe(impl->db, subid); return -EIO; }
+
+  /* Queue admission is not persistence. Subscribe before enqueueing, then
+   * return success only once a committed read transaction sees this id.
+   * The bound prevents a rejected event or failed write from hanging relayd. */
+  struct timespec deadline;
+  if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) {
+    ndb_unsubscribe(impl->db, subid);
+    return -EIO;
+  }
+  deadline.tv_sec += 10;
+  pthread_mutex_lock(&impl->commit_mutex);
+  int rc;
+  while ((rc = ndb_note_is_stored(impl, id)) == 0) {
+    int wait_rc = pthread_cond_timedwait(&impl->commit_cond,
+                                         &impl->commit_mutex, &deadline);
+    if (wait_rc != 0) { rc = wait_rc == ETIMEDOUT ? -ETIMEDOUT : -wait_rc; break; }
+  }
+  pthread_mutex_unlock(&impl->commit_mutex);
+  ndb_unsubscribe(impl->db, subid);
+  return rc > 0 ? 0 : rc;
 }
 
 static int ndb_ingest_ldjson(NostrStorage *st, const char *ldjson, size_t len) {
