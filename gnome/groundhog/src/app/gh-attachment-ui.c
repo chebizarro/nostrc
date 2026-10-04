@@ -25,6 +25,7 @@ typedef struct {
   GStrv recipients;               /* the shown conversation's, at the offer */
   GhConversation *group;          /* or an encrypted group (W25): a reference */
   gchar *name;                    /* as chosen (the group delegate makes it neutral) */
+  GStrv chosen_servers;           /* this sheet's first-use choice, independent of settings */
   GCancellable *upload;           /* while uploading */
   gchar *consent_server;          /* the server that asked for a known account */
 } Offer;
@@ -78,6 +79,7 @@ offer_free(Offer *offer)
   g_strfreev(offer->recipients);
   g_clear_object(&offer->group);
   g_free(offer->name);
+  g_strfreev(offer->chosen_servers);
   g_free(offer->consent_server);
   g_free(offer);
 }
@@ -245,7 +247,8 @@ update_notes(GhAttachmentUi *ui)
 {
   if (!ui->offer)
     return;
-  g_auto(GStrv) list = servers(ui);
+  g_auto(GStrv) list = ui->offer->chosen_servers
+    ? g_strdupv(ui->offer->chosen_servers) : servers(ui);
   g_autofree gchar *host = list[0] ? host_of(list[0]) : NULL;
   gboolean tor = gh_attachments_get_tor(ui->attachments);
   g_autofree gchar *server_note = NULL;
@@ -382,7 +385,8 @@ start_upload(GhAttachmentUi *ui)
   Offer *offer = ui->offer;
   if (!offer || offer->upload)
     return;
-  g_auto(GStrv) list = servers(ui);
+  g_auto(GStrv) list = offer->chosen_servers
+    ? g_strdupv(offer->chosen_servers) : servers(ui);
   if (!list[0]) {
     gh_attachment_sheet_show_servers(offer->sheet, NULL);
     return;
@@ -406,7 +410,8 @@ start_upload(GhAttachmentUi *ui)
       return;
     }
     ui->groups.send_async(offer->group, offer->prepared->plaintext, offer->name,
-                          offer->prepared->mime, offer->upload, on_group_sent, op,
+                          offer->prepared->mime, (const gchar *const *)list,
+                          offer->upload, on_group_sent, op,
                           ui->groups_data);
     return;
   }
@@ -434,8 +439,13 @@ on_sheet_server(GhAttachmentSheet *sheet, const gchar *text, GtkWidget *window)
   if (!ui || !ui->offer || ui->offer->sheet != sheet)
     return;
   g_autoptr(GError) error = NULL;
+  g_autofree gchar *chosen = gh_preferences_normalize_server_url(text, ui->allow_onion, &error);
+  if (!chosen) {
+    gh_attachment_sheet_show_servers(sheet, error->message);
+    return;
+  }
   g_auto(GStrv) current = servers(ui);
-  g_auto(GStrv) list = gh_preferences_server_list_add((const gchar *const *)current, text,
+  g_auto(GStrv) list = gh_preferences_server_list_add((const gchar *const *)current, chosen,
                                                       ui->allow_onion, &error);
   if (!list && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_EXISTS)) {
     gh_attachment_sheet_show_servers(sheet, error->message);
@@ -446,6 +456,17 @@ on_sheet_server(GhAttachmentSheet *sheet, const gchar *text, GtkWidget *window)
     gh_attachment_sheet_show_servers(sheet, _("This setting can't be changed"));
     return;
   }
+  /* The user selected this host for this offer. Persistence is for future
+   * offers; a delayed settings write or an older client's list cannot undo
+   * the current choice. Keep the remaining configured servers as fallbacks. */
+  g_autoptr(GStrvBuilder) ordered = g_strv_builder_new();
+  g_strv_builder_add(ordered, chosen);
+  const gchar *const *configured = (const gchar *const *)(list ? list : current);
+  for (guint i = 0; configured[i]; i++)
+    if (g_strcmp0(configured[i], chosen) != 0)
+      g_strv_builder_add(ordered, configured[i]);
+  g_strfreev(ui->offer->chosen_servers);
+  ui->offer->chosen_servers = g_strv_builder_end(ordered);
   update_notes(ui);
   gh_attachment_sheet_show_preview(sheet, NULL);
 }

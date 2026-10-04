@@ -25,6 +25,7 @@
 #include "send-stack.h"
 
 #include "blossom-fixture.h"
+#include "socks5-fixture.h"
 #include "gh-attachment-card.h"
 #include "gh-attachment-ui.h"
 #if GROUNDHOG_TEST_MLS_FILES
@@ -42,6 +43,7 @@
 #define DISCOVERY "wss://discovery.test.invalid"
 #define INBOX_A   "wss://inbox-a.test.invalid"   /* the account's own (key 1) */
 #define INBOX_B   "wss://inbox-b.test.invalid"   /* key 2's */
+#define FIRST_USE_ONION "firstuseblossomfixtureb3srh6u2f7xk7wudhvla6.onion"
 
 static GhTestBus bus;
 static GhTestSigner signer;
@@ -423,7 +425,7 @@ fixture_up(Fixture *f, gboolean with_server)
     .conversations = f->s.model,
     .attachments = f->attachments,
     .settings = f->s.settings,
-    .allow_onion = FALSE,
+    .allow_onion = TRUE,
   };
   gh_attachment_ui_attach(f->s.window, &ui);
   gh_attachment_ui_set_save_target(f->s.window, save_target, f);
@@ -949,6 +951,54 @@ test_suggested_encrypted_media_servers(void)
   fixture_clear(&f);
 }
 
+static Socks5Fixture *
+first_use_proxy(Fixture *f)
+{
+  Socks5Fixture *socks = socks5_fixture_new();
+  socks5_fixture_set_domain_port(socks, blossom_fixture_port(f->blossom));
+  g_assert_true(g_settings_set_string(f->s.settings, "network-mode", "tor"));
+  g_assert_true(g_settings_set_string(f->s.settings, "tor-socks-address",
+                                      socks5_fixture_address(socks)));
+  return socks;
+}
+
+/* A first-use suggestion belongs to this offer, not to a later settings or
+ * client snapshot. A concurrent stale settings write must not turn Send back
+ * into Choose an Attachment Server before the first PUT. */
+static void
+test_first_use_suggested_send(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  Socks5Fixture *socks = first_use_proxy(&f);
+  g_autofree gchar *server =
+    g_strdup_printf("http://" FIRST_USE_ONION ":%u", blossom_fixture_port(f.blossom));
+  GhConversation *bob = receive_text(&f, "Hi");
+  send_stack_select(&f.s, bob);
+  g_auto(GStrv) empty = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_assert_null(empty[0]);
+  g_autoptr(GBytes) png = make_png(200);
+  gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
+  GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  gh_attachment_sheet_set_suggestion_for_test(sheet, 0, server);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), "Fixture server"), "clicked");
+  wait_page(&f, "preview");
+  g_auto(GStrv) chosen = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_assert_cmpstr(chosen[0], ==, server);
+  g_assert_null(chosen[1]);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  /* Model a lagging settings writer after the sheet accepted the choice. */
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  gh_test_spin_until(has_own_file, bob);
+  fixture_clear(&f);
+  socks5_fixture_free(socks);
+}
+
 /* The server shown by a live sheet wins over an old client server snapshot. */
 static void
 test_live_server_choice(void)
@@ -1449,6 +1499,8 @@ typedef struct {
   GBytes *file;
   gchar *name;
   gchar *mime;
+  GStrv servers;
+  GhAttachments *upload_attachments; /* only the first-use group fixture */
   GError *fail_with;     /* the next send's error, or NULL */
   gchar *fail_server;
   GhAttachmentTransfer *transfer;
@@ -1476,9 +1528,23 @@ stub_watch(GhConversation *conversation, gpointer data)
 }
 
 static void
+stub_uploaded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GTask *task = data;
+  GError *error = NULL;
+  g_autoptr(GhNip17File) uploaded =
+    gh_attachments_upload_finish(GH_ATTACHMENTS(source), result, NULL, &error);
+  if (uploaded)
+    g_task_return_boolean(task, TRUE);
+  else
+    g_task_return_error(task, error);
+  g_object_unref(task);
+}
+
+static void
 stub_send_async(GhConversation *conversation, GBytes *file, const gchar *name, const gchar *mime,
-                GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data,
-                gpointer data)
+                const gchar *const *servers, GCancellable *cancellable,
+                GAsyncReadyCallback callback, gpointer user_data, gpointer data)
 {
   (void)conversation;
   StubGroups *stub = data;
@@ -1489,7 +1555,14 @@ stub_send_async(GhConversation *conversation, GBytes *file, const gchar *name, c
   stub->name = g_strdup(name);
   g_free(stub->mime);
   stub->mime = g_strdup(mime);
+  g_strfreev(stub->servers);
+  stub->servers = g_strdupv((gchar **)servers);
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
+  if (stub->upload_attachments) {
+    gh_attachments_upload_on_servers_async(stub->upload_attachments, servers, file, mime,
+                                            cancellable, stub_uploaded, task);
+    return;
+  }
   if (stub->fail_with)
     g_task_return_error(task, g_steal_pointer(&stub->fail_with));
   else
@@ -1721,6 +1794,54 @@ test_group_delegate(void)
   g_clear_pointer(&stub.file, g_bytes_unref);
   g_free(stub.name);
   g_free(stub.mime);
+  g_strfreev(stub.servers);
+}
+
+/* The MLS sheet gives its delegate the same first-use choice. This delegate
+ * uploads through the real local Blossom fixture; the MDK case separately
+ * covers MLS sealing and its on-wire message. */
+static void
+test_group_first_use_suggested_send(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, FALSE);
+  Socks5Fixture *socks = first_use_proxy(&f);
+  g_autofree gchar *server =
+    g_strdup_printf("http://" FIRST_USE_ONION ":%u", blossom_fixture_port(f.blossom));
+  StubGroups stub = { .upload_attachments = f.attachments };
+  gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+  g_autoptr(GhMessage) message = group_file_message(&f);
+  g_autoptr(GError) error = NULL;
+  gh_conversation_store_add_message(f.s.model, message, &error);
+  g_assert_no_error(error);
+  GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                       gh_message_get_room_id(message));
+  g_assert_nonnull(group);
+  send_stack_select(&f.s, group);
+  g_auto(GStrv) empty = g_settings_get_strv(f.s.settings, "blossom-servers");
+  g_assert_null(empty[0]);
+  g_autoptr(GBytes) png = make_png(200);
+  gh_attachment_ui_offer_bytes(f.s.window, png, "photo.png", "image/png");
+  GhAttachmentSheet *sheet = wait_page(&f, "servers");
+  gh_attachment_sheet_set_suggestion_for_test(sheet, 0, server);
+  g_signal_emit_by_name(button_labeled(GTK_WIDGET(sheet), "Fixture server"), "clicked");
+  wait_page(&f, "preview");
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  g_assert_true(g_settings_set_strv(f.s.settings, "blossom-servers", NULL));
+  gtk_widget_activate_action(GTK_WIDGET(sheet), "sheet.send", NULL);
+  gh_test_spin_until(sheet_closed, &f);
+  g_assert_cmpuint(stub.sends, ==, 1);
+  g_assert_cmpstr(stub.servers[0], ==, server);
+  g_assert_null(stub.servers[1]);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+  fixture_clear(&f);
+  socks5_fixture_free(socks);
+  g_clear_pointer(&stub.file, g_bytes_unref);
+  g_free(stub.name);
+  g_free(stub.mime);
+  g_strfreev(stub.servers);
 }
 
 #if GROUNDHOG_TEST_MLS_FILES
@@ -1798,6 +1919,7 @@ main(int argc, char **argv)
   ADD("attach-send", test_attach_send);
   ADD("first-use-server", test_first_use_server);
   ADD("suggested-encrypted-media-servers", test_suggested_encrypted_media_servers);
+  ADD("first-use-suggested-send", test_first_use_suggested_send);
   ADD("live-server-choice", test_live_server_choice);
   ADD("opaque-server-refusal", test_opaque_server_refusal);
   ADD("consent", test_consent);
@@ -1806,6 +1928,7 @@ main(int argc, char **argv)
   ADD("card-cancel-and-errors", test_card_cancel_and_errors);
   ADD("preferences", test_preferences);
   ADD("group-delegate", test_group_delegate);
+  ADD("group-first-use-suggested-send", test_group_first_use_suggested_send);
 #if GROUNDHOG_TEST_MLS_FILES
   ADD("mls-delegate-attach", test_mls_delegate_attach);
 #endif

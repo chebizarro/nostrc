@@ -124,6 +124,13 @@ GhMlsMediaSealed *gh_mls_media_seal(Marmot *marmot, const gchar *group_id_hex, G
 void gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *sealed,
                                GCancellable *cancellable, GAsyncReadyCallback callback,
                                gpointer user_data);
+/* Bind the server list selected for this upload; NULL keeps the client's
+ * ordinary configured-server behavior. */
+void gh_mls_media_upload_on_servers_async(GhBlossomClient *client,
+                                          const GhMlsMediaSealed *sealed,
+                                          const gchar *const *servers,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback, gpointer user_data);
 GhMlsAttachment *gh_mls_media_upload_finish(GAsyncResult *result, GError **error);
 /* The same, with the server used or, with GH_BLOSSOM_ERROR_AUTH_REQUIRED,
  * the one that asked for an account it knows (nullable; the consent is per

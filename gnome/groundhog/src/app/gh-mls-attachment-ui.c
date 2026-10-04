@@ -24,8 +24,8 @@ can_send(GhConversation *conversation, gpointer data)
 
 static void
 send_async(GhConversation *conversation, GBytes *file, const gchar *name, const gchar *mime,
-           GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data,
-           gpointer data)
+           const gchar *const *servers, GCancellable *cancellable,
+           GAsyncReadyCallback callback, gpointer user_data, gpointer data)
 {
   GhMlsAttachments *files = data;
   GhMlsGroup *group = group_of(files, conversation);
@@ -36,8 +36,8 @@ send_async(GhConversation *conversation, GBytes *file, const gchar *name, const 
     g_object_unref(task);
     return;
   }
-  gh_mls_attachments_send_async(files, group, file, name, mime, NULL, cancellable, callback,
-                                user_data);
+  gh_mls_attachments_send_on_servers_async(files, group, file, name, mime, NULL, servers,
+                                           cancellable, callback, user_data);
 }
 
 static gboolean

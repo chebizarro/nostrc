@@ -586,6 +586,7 @@ typedef struct {
   gchar *name;      /* neutral */
   gchar *mime;
   gchar *caption;
+  GStrv servers;
   guint tries;
   GhMlsMediaSealed *sealed;
   gchar *server;
@@ -600,6 +601,7 @@ send_op_free(gpointer data)
   g_free(op->name);
   g_free(op->mime);
   g_free(op->caption);
+  g_strfreev(op->servers);
   g_clear_pointer(&op->sealed, gh_mls_media_sealed_free);
   g_free(op->server);
   g_free(op);
@@ -703,8 +705,9 @@ send_try(GTask *task)
     g_object_unref(task);
     return;
   }
-  gh_mls_media_upload_async(client_of(self), op->sealed, g_task_get_cancellable(task),
-                            on_send_uploaded, task);
+  gh_mls_media_upload_on_servers_async(client_of(self), op->sealed,
+                                       (const gchar *const *)op->servers,
+                                       g_task_get_cancellable(task), on_send_uploaded, task);
 }
 
 void
@@ -712,6 +715,18 @@ gh_mls_attachments_send_async(GhMlsAttachments *self, GhMlsGroup *group, GBytes 
                               const gchar *name, const gchar *mime_hint, const gchar *caption,
                               GCancellable *cancellable, GAsyncReadyCallback callback,
                               gpointer user_data)
+{
+  gh_mls_attachments_send_on_servers_async(self, group, file, name, mime_hint, caption, NULL,
+                                           cancellable, callback, user_data);
+}
+
+void
+gh_mls_attachments_send_on_servers_async(GhMlsAttachments *self, GhMlsGroup *group,
+                                          GBytes *file, const gchar *name,
+                                          const gchar *mime_hint, const gchar *caption,
+                                          const gchar *const *servers,
+                                          GCancellable *cancellable,
+                                          GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_MLS_ATTACHMENTS(self));
   g_return_if_fail(GH_IS_MLS_GROUP(group) && file != NULL);
@@ -723,6 +738,7 @@ gh_mls_attachments_send_async(GhMlsAttachments *self, GhMlsGroup *group, GBytes 
   op->file = g_bytes_ref(file);
   op->mime = g_strdup(mime_hint);
   op->caption = g_strdup(caption ? caption : "");
+  op->servers = servers ? g_strdupv((gchar **)servers) : NULL;
   g_task_set_task_data(task, op, send_op_free);
   if (!service_of(self) || !client_of(self)) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,

@@ -277,6 +277,21 @@ gh_attachment_sheet_new(void)
   return g_object_new(GH_TYPE_ATTACHMENT_SHEET, NULL);
 }
 
+void
+gh_attachment_sheet_set_suggestion_for_test(GhAttachmentSheet *self, guint index,
+                                            const gchar *url)
+{
+  g_return_if_fail(GH_IS_ATTACHMENT_SHEET(self));
+  g_return_if_fail(index < N_SUGGESTIONS);
+  g_return_if_fail(url && *url);
+  GtkButton *buttons[N_SUGGESTIONS] = {
+    self->suggestion_first, self->suggestion_second, self->suggestion_third
+  };
+  g_free(self->suggestion_urls[index]);
+  self->suggestion_urls[index] = g_strdup(url);
+  gtk_button_set_label(buttons[index], "Fixture server");
+}
+
 static void
 gh_attachment_sheet_dispose(GObject *object)
 {

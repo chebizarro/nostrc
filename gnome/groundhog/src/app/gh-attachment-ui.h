@@ -67,9 +67,11 @@ void gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *confi
 typedef struct {
   /* Whether files can be sent in conversation (an encrypted group) now. */
   gboolean (*can_send)(GhConversation *conversation, gpointer data);
-  /* Seal, upload and send file (metadata already removed) named name. */
+  /* Seal, upload and send file (metadata already removed) named name, using
+   * this sheet's server list rather than a later client/settings snapshot. */
   void (*send_async)(GhConversation *conversation, GBytes *file, const gchar *name,
-                     const gchar *mime, GCancellable *cancellable, GAsyncReadyCallback callback,
+                     const gchar *mime, const gchar *const *servers,
+                     GCancellable *cancellable, GAsyncReadyCallback callback,
                      gpointer user_data, gpointer data);
   /* out_server: as gh_attachments_upload_finish(). */
   gboolean (*send_finish)(GAsyncResult *result, gchar **out_server, GError **error,

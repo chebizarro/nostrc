@@ -330,6 +330,41 @@ test_send_receive_on_request(void)
   world_down(&w);
 }
 
+/* The first-use sheet passes a server list into a real MLS send. No server
+ * was configured when this account's Blossom client was created. */
+static void
+test_send_on_first_use_servers(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "First use", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  BlossomFixture *blossom = blossom_fixture_new();
+  Files fa;
+  files_up(&fa, alice, NULL, NULL);
+  g_auto(GStrv) empty = g_settings_get_strv(fa.settings, "blossom-servers");
+  g_assert_null(empty[0]);
+
+  g_autoptr(GBytes) photo = make_png();
+  const gchar *selected[] = { blossom_fixture_url(blossom), NULL };
+  SendWait sent = { 0 };
+  gh_mls_attachments_send_on_servers_async(fa.files, ga, photo, "photo.png", "image/png",
+                                           NULL, selected, NULL, on_sent, &sent);
+  spin_until(send_done, &sent, "first-use group file sent");
+  g_assert_no_error(sent.error);
+  g_assert_nonnull(sent.message);
+  g_assert_cmpstr(sent.server, ==, selected[0]);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+  send_wait_clear(&sent);
+  files_down(&fa);
+  blossom_fixture_free(blossom);
+  world_down(&w);
+}
+
 static gboolean
 upload_held(gpointer data)
 {
@@ -925,6 +960,8 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   mls_world_init();
   g_test_add_func("/groundhog/mls-files/send-receive-on-request", test_send_receive_on_request);
+  g_test_add_func("/groundhog/mls-files/send-on-first-use-servers",
+                  test_send_on_first_use_servers);
   g_test_add_func("/groundhog/mls-files/epoch-change-reseals", test_epoch_change_reseals);
   g_test_add_func("/groundhog/mls-files/stale-epoch-refused", test_stale_epoch_refused);
   g_test_add_func("/groundhog/mls-files/tor", test_tor);

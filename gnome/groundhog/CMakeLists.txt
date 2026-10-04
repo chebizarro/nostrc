@@ -2987,10 +2987,11 @@ if (TARGET groundhog-media AND TARGET groundhog-account-store AND GROUNDHOG_OUTB
     # Download, Cancel, Save As writing only the chosen file, the damaged
     # and unreachable errors, and Preferences › Attachments.
     add_executable(test-groundhog-attachment-ui tests/ui/test_attachment_ui.c
-      ${GROUNDHOG_SEND_TEST_SOURCES} src/app/gh-attachment-ui.c tests/media/blossom-fixture.c)
+      ${GROUNDHOG_SEND_TEST_SOURCES} src/app/gh-attachment-ui.c
+      tests/media/blossom-fixture.c tests/net/socks5-fixture.c)
     target_include_directories(test-groundhog-attachment-ui PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
     target_link_libraries(test-groundhog-attachment-ui PRIVATE groundhog-account-store
       groundhog-conversation-ui groundhog-auth-policy groundhog-media groundhog-preferences
       nostr_nip17_core nostr_nip59_core nostrc-test-bus)

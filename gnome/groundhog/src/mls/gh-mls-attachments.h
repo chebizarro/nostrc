@@ -105,6 +105,14 @@ void gh_mls_attachments_send_async(GhMlsAttachments *self, GhMlsGroup *group, GB
                                    const gchar *name, const gchar *mime_hint,
                                    const gchar *caption, GCancellable *cancellable,
                                    GAsyncReadyCallback callback, gpointer user_data);
+/* The sheet's explicit server choice is kept for the whole send, including
+ * an epoch-change retry. NULL uses the client's configured list. */
+void gh_mls_attachments_send_on_servers_async(GhMlsAttachments *self, GhMlsGroup *group,
+                                              GBytes *file, const gchar *name,
+                                              const gchar *mime_hint, const gchar *caption,
+                                              const gchar *const *servers,
+                                              GCancellable *cancellable,
+                                              GAsyncReadyCallback callback, gpointer user_data);
 GhMessage *gh_mls_attachments_send_finish(GhMlsAttachments *self, GAsyncResult *result,
                                           gchar **out_server, GError **error);
 

@@ -487,6 +487,14 @@ gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *seale
                           GCancellable *cancellable, GAsyncReadyCallback callback,
                           gpointer user_data)
 {
+  gh_mls_media_upload_on_servers_async(client, sealed, NULL, cancellable, callback, user_data);
+}
+
+void
+gh_mls_media_upload_on_servers_async(GhBlossomClient *client, const GhMlsMediaSealed *sealed,
+                                     const gchar *const *servers, GCancellable *cancellable,
+                                     GAsyncReadyCallback callback, gpointer user_data)
+{
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(client));
   g_return_if_fail(sealed != NULL && sealed->ciphertext && sealed->attachment);
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
@@ -495,8 +503,12 @@ gh_mls_media_upload_async(GhBlossomClient *client, const GhMlsMediaSealed *seale
   op->attachment = gh_mls_attachment_copy(sealed->attachment);
   g_task_set_task_data(task, op, upload_op_free);
   g_autofree gchar *sha = gh_mls_attachment_dup_ciphertext_sha256(sealed->attachment);
-  gh_blossom_client_upload_async(client, sealed->ciphertext, sha, cancellable, on_uploaded,
-                                 task);
+  if (servers)
+    gh_blossom_client_upload_on_servers_async(client, servers, sealed->ciphertext, sha,
+                                               cancellable, on_uploaded, task);
+  else
+    gh_blossom_client_upload_async(client, sealed->ciphertext, sha, cancellable, on_uploaded,
+                                   task);
 }
 
 GhMlsAttachment *

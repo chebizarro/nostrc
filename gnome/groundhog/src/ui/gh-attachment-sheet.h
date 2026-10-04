@@ -33,6 +33,9 @@ G_BEGIN_DECLS
 G_DECLARE_FINAL_TYPE(GhAttachmentSheet, gh_attachment_sheet, GH, ATTACHMENT_SHEET, AdwDialog)
 
 GhAttachmentSheet *gh_attachment_sheet_new(void);
+/* Test seam: point one suggestion at a local Blossom fixture. */
+void gh_attachment_sheet_set_suggestion_for_test(GhAttachmentSheet *self, guint index,
+                                                 const gchar *url);
 
 /* What will be sent: name (as chosen; shown, never sent), size in bytes, its
  * kind ("Photo", "File (PDF)") and the photo (nullable). */
