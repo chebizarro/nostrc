@@ -408,6 +408,16 @@ static gboolean
 store_key_init(GhAppServices *self, GError **error)
 {
   (void)error;
+#ifdef GH_MLS_TEST_HOOKS
+  /* The acceptance harness (tests/app/test_two_instance_acceptance.c) runs
+   * this process against its own Secret Service on a private bus. On macOS
+   * the platform default is the login Keychain, which a test must never
+   * touch (and which cannot open the harness's store). */
+  if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0) {
+    self->store_key = gh_store_key_new_secret_service();
+    return TRUE;
+  }
+#endif
   self->store_key = gh_store_key_new(NULL);
   return TRUE;
 }

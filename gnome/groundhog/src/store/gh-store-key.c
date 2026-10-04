@@ -729,6 +729,13 @@ gh_store_key_new(GhStoreKeyBackend *backend)
   return self;
 }
 
+GhStoreKey *
+gh_store_key_new_secret_service(void)
+{
+  g_autoptr(GhStoreKeyBackend) backend = g_object_new(GH_TYPE_STORE_KEY_SECRET_SERVICE, NULL);
+  return gh_store_key_new(backend);
+}
+
 static gchar *
 normalize_account(const gchar *hex)
 {

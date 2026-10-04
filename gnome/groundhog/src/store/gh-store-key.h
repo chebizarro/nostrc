@@ -167,8 +167,15 @@ gboolean gh_store_key_backend_clear_finish(GhStoreKeyBackend *self, GAsyncResult
 #define GH_TYPE_STORE_KEY (gh_store_key_get_type())
 G_DECLARE_FINAL_TYPE(GhStoreKey, gh_store_key, GH, STORE_KEY, GObject)
 
-/* backend NULL selects the session Secret Service (libsecret). */
+/* backend NULL selects the platform default: the session Secret Service
+ * (libsecret) on Linux, the Keychain on macOS. */
 GhStoreKey *gh_store_key_new(GhStoreKeyBackend *backend);
+
+/* The session Secret Service backend on every platform. For test harnesses
+ * that run the real application against their own org.freedesktop.secrets on
+ * a private bus (GH_TEST_CONTROL): on macOS the default would be the login
+ * Keychain, which tests must never touch. */
+GhStoreKey *gh_store_key_new_secret_service(void);
 
 /* account_pubkey_hex is a 64-character hex x-only pubkey (any case; it is
  * stored lowercase), so each account has its own item and key. */
