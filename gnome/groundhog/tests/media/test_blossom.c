@@ -15,6 +15,7 @@
 
 #include <errno.h>
 #include <glib/gstdio.h>
+#include <libsoup/soup.h>
 #include <nostr-event.h>
 #include <nostr-keys.h>
 #include <nostr-tag.h>
@@ -399,6 +400,95 @@ test_strict_encrypted_upload(void)
                                                          FALSE, FALSE, NULL, NULL);
   g_assert_nonnull(strstr(shown, "HTTP 415"));
   result_clear(&r);
+  fixture_down(&f);
+}
+
+typedef struct {
+  gboolean done;
+  GError *error;
+} RawPut;
+
+static gboolean
+raw_put_done(gpointer data)
+{
+  return ((RawPut *)data)->done;
+}
+
+static void
+on_raw_put(GObject *source, GAsyncResult *result, gpointer data)
+{
+  RawPut *put = data;
+  g_autoptr(GBytes) response = soup_session_send_and_read_finish(SOUP_SESSION(source), result,
+                                                                 &put->error);
+  put->done = TRUE;
+}
+
+/* Send directly to the fixture so the declared MIME can be spoofed without
+ * changing Groundhog's intentionally fixed application/octet-stream client. */
+static guint
+raw_fixture_put(BlossomFixture *fixture, GBytes *body, const gchar *mime)
+{
+  g_autofree gchar *hash = sha256_hex(body);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  gchar expiration[24];
+  g_snprintf(expiration, sizeof expiration, "%" G_GINT64_FORMAT, now + 600);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 24242);
+  nostr_event_set_created_at(event, now);
+  nostr_event_set_content(event, "Upload Blob");
+  nostr_event_set_pubkey(event, alice);
+  nostr_event_set_tags(event, nostr_tags_new(4, nostr_tag_new("t", "upload", NULL),
+                                            nostr_tag_new("x", hash, NULL),
+                                            nostr_tag_new("expiration", expiration, NULL),
+                                            nostr_tag_new("server", "127.0.0.1", NULL)));
+  g_assert_cmpint(nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  g_assert_nonnull(json);
+  g_autofree gchar *auth = gh_blossom_client_authorization(json);
+  free(json);
+  nostr_event_free(event);
+
+  g_autofree gchar *url = g_strdup_printf("%s/upload", blossom_fixture_url(fixture));
+  g_autoptr(GProxyResolver) direct = g_simple_proxy_resolver_new(NULL, NULL);
+  g_autoptr(SoupSession) session = soup_session_new_with_options("proxy-resolver", direct, NULL);
+  g_autoptr(SoupMessage) message = soup_message_new(SOUP_METHOD_PUT, url);
+  soup_message_set_request_body_from_bytes(message, mime, body);
+  soup_message_headers_replace(soup_message_get_request_headers(message), "Authorization", auth);
+  soup_message_headers_replace(soup_message_get_request_headers(message), "X-SHA-256", hash);
+  RawPut put = { 0 };
+  soup_session_send_and_read_async(session, message, G_PRIORITY_DEFAULT, NULL, on_raw_put, &put);
+  spin_until(raw_put_done, &put);
+  g_assert_no_error(put.error);
+  guint status = soup_message_get_status(message);
+  soup_session_abort(session);
+  return status;
+}
+
+/* A media-only server checks bytes, not a plaintext-MIME claim on ciphertext.
+ * Strict header conformance is a separate fixture mode tested above. */
+static void
+test_media_only_sniffs_body(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  blossom_fixture_reject_opaque(f.blossom, TRUE);
+  guint8 ciphertext[1024];
+  guint32 state = 0x9e3779b9u;
+  for (gsize i = 0; i < sizeof ciphertext; i++) {
+    state ^= state << 13;
+    state ^= state >> 17;
+    state ^= state << 5;
+    ciphertext[i] = (guint8)state;
+  }
+  ciphertext[0] = 0x42; /* never accidentally a supported file signature */
+  g_autoptr(GBytes) opaque = g_bytes_new(ciphertext, sizeof ciphertext);
+  g_assert_cmpuint(raw_fixture_put(f.blossom, opaque, "image/png"), ==,
+                   SOUP_STATUS_UNSUPPORTED_MEDIA_TYPE);
+  g_autofree gchar *opaque_hash = sha256_hex(opaque);
+  g_assert_null(blossom_fixture_get_blob(f.blossom, opaque_hash));
+  g_autoptr(GBytes) jpeg = make_jpeg(4096);
+  g_assert_cmpuint(raw_fixture_put(f.blossom, jpeg, "image/jpeg"), ==, SOUP_STATUS_OK);
   fixture_down(&f);
 }
 
@@ -1113,6 +1203,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/no-server", test_no_server);
   g_test_add_func("/groundhog/blossom/authorization-base64url", test_authorization_base64url);
   g_test_add_func("/groundhog/blossom/strict-encrypted-upload", test_strict_encrypted_upload);
+  g_test_add_func("/groundhog/blossom/media-only-sniffs-body", test_media_only_sniffs_body);
   g_test_add_func("/groundhog/blossom/at1-round-trip", test_at1_round_trip);
   g_test_add_func("/groundhog/blossom/at2-tampered-download", test_at2_tampered_download);
   g_test_add_func("/groundhog/blossom/at3-size-cap", test_at3_size_cap);

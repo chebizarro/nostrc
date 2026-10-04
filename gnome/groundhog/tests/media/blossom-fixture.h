@@ -42,7 +42,8 @@ guint16 blossom_fixture_port(BlossomFixture *fixture);
 void blossom_fixture_require_pubkey(BlossomFixture *fixture, const gchar *pubkey);
 /* Enforce BUD-11 Base64url and BUD-02 ciphertext headers. */
 void blossom_fixture_set_strict_upload(BlossomFixture *fixture, gboolean strict);
-/* Simulate a media-only server: opaque bytes get HTTP 415/X-Reason. */
+/* Simulate a media-only server: body signatures, not declared MIME, decide;
+ * opaque bytes get HTTP 415/X-Reason even if labeled image/png. */
 void blossom_fixture_reject_opaque(BlossomFixture *fixture, gboolean reject);
 /* The descriptor names this sha256 instead of the real one (NULL: honest). */
 void blossom_fixture_set_lie(BlossomFixture *fixture, const gchar *sha256);

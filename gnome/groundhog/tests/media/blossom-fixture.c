@@ -107,6 +107,21 @@ refuse(SoupServerMessage *message, guint status, const gchar *reason)
   soup_server_message_set_status(message, status, NULL);
 }
 
+/* A deliberately small image-only policy, based on the bytes rather than
+ * the claimed Content-Type. This is not a general MIME detector: it models
+ * the public servers' refusal of opaque ciphertext even when labeled PNG. */
+static gboolean
+has_image_magic(const guint8 *data, gsize size)
+{
+  static const guint8 png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+  return (size >= sizeof png && memcmp(data, png, sizeof png) == 0) ||
+         (size >= 5 && data[0] == 0xff && data[1] == 0xd8 && data[2] == 0xff &&
+          data[size - 2] == 0xff && data[size - 1] == 0xd9) ||
+         (size >= 6 && (memcmp(data, "GIF87a", 6) == 0 ||
+                        memcmp(data, "GIF89a", 6) == 0)) ||
+         (size >= 12 && memcmp(data, "RIFF", 4) == 0 && memcmp(data + 8, "WEBP", 4) == 0);
+}
+
 static void
 on_put(BlossomFixture *f, SoupServerMessage *message, BlossomRequest *request)
 {
@@ -130,7 +145,7 @@ on_put(BlossomFixture *f, SoupServerMessage *message, BlossomRequest *request)
     refuse(message, SOUP_STATUS_BAD_REQUEST, "Invalid encrypted upload headers");
     return;
   }
-  if (f->reject_opaque && g_strcmp0(request->content_type, "application/octet-stream") == 0) {
+  if (f->reject_opaque && !has_image_magic(data, size)) {
     refuse(message, SOUP_STATUS_UNSUPPORTED_MEDIA_TYPE, "File type not allowed");
     return;
   }
