@@ -1644,7 +1644,8 @@ test_st11_schema_version(void)
   static const gchar *const tables[] = {
     "conversations", "contacts", "cursors", "directory", "media", "messages", "meta",
     "mls_groups", "mls_kv", "mls_snapshots", "nip29_groups", "outbox", "outbox_events",
-    "outbox_targets", "participants", "schema_migrations", "seen",
+    "outbox_targets", "participants", "pending_reactions", "reaction_tombstones",
+    "reactions", "schema_migrations", "seen",
   };
   g_autoptr(FakeKeys) keys = fake_keys_new();
   g_autoptr(GError) error = NULL;

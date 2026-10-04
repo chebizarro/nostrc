@@ -980,7 +980,7 @@ if (TARGET groundhog-store AND TARGET groundhog-conversations)
     # namespace, per-account isolation and a canary scan of the store files.
     add_executable(test-groundhog-store-conversations
       tests/store/test_store_conversations.c tests/store/crash-harness.c
-      src/store/gh-store-conversations.c)
+      src/store/gh-store-conversations.c src/store/gh-store-reactions.c)
     target_include_directories(test-groundhog-store-conversations PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/store ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
     target_link_libraries(test-groundhog-store-conversations PRIVATE

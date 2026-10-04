@@ -3,6 +3,7 @@
 #endif
 
 #include "gh-store-conversations.h"
+#include "gh-store-reactions.h"
 
 #include "crash-harness.h"
 
@@ -1631,6 +1632,186 @@ test_canary_scan(void)
   fixture_clear(&f);
 }
 
+typedef struct {
+  GhStoreReactions *durable;
+  GhReactionStore *model;
+} ReactionHarness;
+
+static void
+reconcile_on_message(GhConversationStore *store, GhMessage *message, gpointer data)
+{
+  (void)store;
+  ReactionHarness *r = data;
+  g_assert_true(gh_store_reactions_reconcile(r->durable, r->model,
+    gh_message_get_room_id(message), gh_message_get_rumor_id(message), NULL));
+}
+
+static void
+reaction_harness_open(Fixture *f, ReactionHarness *r)
+{
+  r->durable = gh_store_reactions_new(f->store);
+  r->model = gh_reaction_store_new();
+  g_assert_true(gh_store_reactions_attach(r->durable, r->model, NULL));
+  g_signal_connect(f->model, "message-committed", G_CALLBACK(reconcile_on_message), r);
+}
+
+static void
+reaction_harness_close(Fixture *f, ReactionHarness *r)
+{
+  g_signal_handlers_disconnect_by_func(f->model, G_CALLBACK(reconcile_on_message), r);
+  gh_store_reactions_close(r->durable);
+  g_clear_object(&r->model);
+  g_clear_object(&r->durable);
+}
+
+static guint
+reaction_count(ReactionHarness *r, const gchar *target)
+{
+  return gh_reaction_summary_get_total_count(gh_reaction_store_lookup(r->model, target));
+}
+
+static void
+test_reaction_before_nip17_target(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  Rumor first = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 10,
+                  .content = "known room" };
+  Rumor later = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 + 1,
+                  .content = "late target" };
+  g_assert_cmpint(deliver(f.model, &first, "rxn/first"), ==, GH_CONVERSATION_ADD_NEW);
+  g_autofree gchar *target = rumor_id(ACCOUNT_A, &later);
+  g_autofree gchar *room_id = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *wrong_room = room_of(ACCOUNT_A, PEER_Q, NULL);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  g_autoptr(GhReaction) valid = gh_reaction_new(target, "rxn-before-dm", PEER_P,
+                                                "👍", T0, room_id);
+  g_autoptr(GhReaction) foreign = gh_reaction_new(target, "rxn-foreign-dm", PEER_Q,
+                                                  "x", T0, wrong_room);
+  g_assert_false(gh_reaction_store_admit(r.model, valid, NULL));
+  g_assert_false(gh_reaction_store_admit(r.model, foreign, NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 2);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 0);
+  reaction_harness_close(&f, &r);
+  fixture_restart(&f);
+  reaction_harness_open(&f, &r);
+  g_assert_cmpint(deliver(f.model, &later, "rxn/later"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 1);
+  reaction_harness_close(&f, &r);
+  fixture_restart(&f);
+  reaction_harness_open(&f, &r);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 1);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_deletion_and_expiry(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  g_autofree gchar *room_id = room_of(ACCOUNT_A, PEER_P, NULL);
+  Rumor later = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 + 1,
+                  .content = "deletion target" };
+  g_autofree gchar *target = rumor_id(ACCOUNT_A, &later);
+  g_autoptr(GhReaction) pending = gh_reaction_new(target, "rxn-pending-delete", PEER_P,
+                                                  "+", T0, room_id);
+  g_autoptr(GhReaction) deleted_first = gh_reaction_new(target, "rxn-delete-first", PEER_P,
+                                                        "+", T0, room_id);
+  g_autoptr(GhReaction) expired = gh_reaction_new(target, "rxn-expired", PEER_P,
+                                                  "+", T0, room_id);
+  g_assert_false(gh_reaction_store_admit(r.model, pending, NULL));
+  g_assert_true(gh_reaction_store_delete_event(r.model, "rxn-pending-delete", PEER_P,
+                                                room_id, NULL));
+  g_assert_true(gh_reaction_store_delete_event(r.model, "rxn-delete-first", PEER_P,
+                                                room_id, NULL));
+  reaction_harness_close(&f, &r);
+  fixture_restart(&f);
+  reaction_harness_open(&f, &r);
+  g_assert_false(gh_reaction_store_admit(r.model, deleted_first, NULL));
+  g_assert_false(gh_reaction_store_admit(r.model, expired, NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 1);
+  g_assert_true(gh_store_exec(f.store,
+    "UPDATE pending_reactions SET received_at = 1 WHERE reaction_msg_id = 'rxn-expired'", NULL));
+  g_assert_cmpint(deliver(f.model, &later, "rxn/deletion-target"), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 0);
+  /* A forged deletion is scoped to its author, not merely the event id. */
+  g_assert_true(gh_reaction_store_delete_event(r.model, "rxn-fresh", PEER_Q, room_id, NULL));
+  g_autoptr(GhReaction) fresh = gh_reaction_new(target, "rxn-fresh", PEER_P,
+                                                "+", T0, room_id);
+  g_assert_true(gh_reaction_store_admit(r.model, fresh, NULL));
+  g_assert_cmpuint(reaction_count(&r, target), ==, 1);
+  g_assert_true(gh_reaction_store_delete_event(r.model, "rxn-fresh", PEER_P, room_id, NULL));
+  g_assert_cmpuint(reaction_count(&r, target), ==, 0);
+  g_assert_false(gh_reaction_store_admit(r.model, fresh, NULL));
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_before_marmot_target(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  const gchar *group_id = "abababababababababababababababababababababababababababababababab";
+  g_autofree gchar *inner = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[],\"content\":\"late Marmot target\"}", PEER_P, T0);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) target_message =
+    gh_message_new_from_mls(ACCOUNT_A, group_id, inner, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(target_message);
+  const gchar *target = gh_message_get_rumor_id(target_message);
+  const gchar *room_id = gh_message_get_room_id(target_message);
+  g_autoptr(GhReaction) pending = gh_reaction_new(target, "rxn-before-mls", PEER_P,
+                                                  "❤️", T0, room_id);
+  g_assert_false(gh_reaction_store_admit(r.model, pending, NULL));
+  GhStoreMessage message = { .backend = GH_STORE_BACKEND_MLS,
+    .backend_key = room_id, .backend_msg_id = target, .sender_pubkey = PEER_P,
+    .kind = 9, .created_at = T0, .direction = GH_STORE_DIRECTION_IN,
+    .body = "late Marmot target", .raw_json = inner,
+    .request_state = GH_STORE_REQUEST_ACCEPTED };
+  GhStoreAdmitResult result = GH_STORE_ADMIT_DUPLICATE;
+  g_assert_true(gh_store_admit(f.store, &message, &result, NULL, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(result, ==, GH_STORE_ADMIT_STORED);
+  g_assert_cmpint(gh_conversation_store_admit(f.model, target_message, NULL, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 1);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_pending_count_cap(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  g_assert_true(gh_store_exec(f.store,
+    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<4100) "
+    "INSERT INTO pending_reactions "
+    "(reaction_msg_id, room_id, target_msg_id, sender_pubkey, emoji, created_at, received_at) "
+    "SELECT printf('bulk-%04d',x), 'unknown-room', 'target', 'sender', '+', 1, "
+    "CAST(strftime('%s','now') AS INTEGER) FROM n", NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 4100);
+  g_assert_true(gh_store_reactions_reconcile(r.durable, r.model, NULL, NULL, NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 4096);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1663,6 +1844,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/local-echo", test_local_echo_after_enqueue);
   g_test_add_func("/groundhog/store-conversations/closed", test_closed);
   g_test_add_func("/groundhog/store-conversations/canary-scan", test_canary_scan);
+  g_test_add_func("/groundhog/reaction-ordering/nip17-before-target", test_reaction_before_nip17_target);
+  g_test_add_func("/groundhog/reaction-ordering/deletion-and-expiry", test_reaction_deletion_and_expiry);
+  g_test_add_func("/groundhog/reaction-ordering/marmot-before-target", test_reaction_before_marmot_target);
+  g_test_add_func("/groundhog/reaction-ordering/pending-count-cap", test_reaction_pending_count_cap);
   int status = g_test_run();
   g_free(ACCOUNT_A);
   g_free(ACCOUNT_B);

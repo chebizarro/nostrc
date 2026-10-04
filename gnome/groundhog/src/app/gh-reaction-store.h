@@ -6,8 +6,9 @@
 G_BEGIN_DECLS
 
 /* Persistence delegate: where reactions live durably. The store calls
- * admit() inside its caller's transaction (gh_store_begin/commit is already
- * held by the enclosing admission). remove() is for kind-5 deletions.
+ * admit() before the model changes; a durable delegate may open a nested
+ * transaction and defer reactions without showing them. remove() is for
+ * local removals; delete_event() records verified kind-5 deletions.
  * restore() loads all reactions for the account on startup. All callbacks
  * run on the main context. Any member may be NULL (memory only). */
 typedef struct {
@@ -16,6 +17,9 @@ typedef struct {
   gboolean (*remove_by_sender)(gpointer data, const gchar *target_rumor_id,
                                 const gchar *sender_pubkey, const gchar *emoji,
                                 GError **error);
+  gboolean (*delete_event)(gpointer data, const gchar *reaction_rumor_id,
+                           const gchar *sender_pubkey, const gchar *room_id,
+                           GError **error);
 } GhReactionDelegate;
 
 #define GH_TYPE_REACTION_STORE (gh_reaction_store_get_type())
@@ -47,6 +51,14 @@ gboolean gh_reaction_store_admit(GhReactionStore *self,
 gboolean gh_reaction_store_remove(GhReactionStore *self,
                                   const gchar *reaction_rumor_id,
                                   GError **error);
+
+/* A verified NIP-09 deletion. Records a bounded, author/room-scoped notice
+ * even if the reaction has not arrived yet. */
+gboolean gh_reaction_store_delete_event(GhReactionStore *self,
+                                        const gchar *reaction_rumor_id,
+                                        const gchar *sender_pubkey,
+                                        const gchar *room_id,
+                                        GError **error);
 
 /* Removes the account's own reaction with @emoji on @target_rumor_id.
  * Returns the removed reaction's rumor id (transfer full), or NULL if

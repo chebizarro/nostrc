@@ -386,6 +386,23 @@ static const gchar schema_v7[] =
   "CREATE INDEX reactions_by_target ON reactions (conversation_id, target_msg_id);"
   "CREATE INDEX reactions_by_sender ON reactions (conversation_id, sender_pubkey, target_msg_id);";
 
+/* Arrival time, rather than the untrusted event timestamp, bounds deferred
+ * reactions and deletion notices. Neither table may point at a conversation:
+ * the message (and even its room) can arrive after the reaction. */
+static const gchar schema_v8[] =
+  "CREATE TABLE pending_reactions ("
+  "  reaction_msg_id TEXT PRIMARY KEY,"
+  "  room_id TEXT NOT NULL, target_msg_id TEXT NOT NULL,"
+  "  sender_pubkey TEXT NOT NULL, emoji TEXT NOT NULL,"
+  "  created_at INTEGER NOT NULL, received_at INTEGER NOT NULL) WITHOUT ROWID;"
+  "CREATE INDEX pending_reactions_target ON pending_reactions(room_id, target_msg_id);"
+  "CREATE INDEX pending_reactions_age ON pending_reactions(received_at);"
+  "CREATE TABLE reaction_tombstones ("
+  "  reaction_msg_id TEXT NOT NULL, room_id TEXT NOT NULL,"
+  "  sender_pubkey TEXT NOT NULL, received_at INTEGER NOT NULL,"
+  "  PRIMARY KEY(reaction_msg_id, room_id, sender_pubkey)) WITHOUT ROWID;"
+  "CREATE INDEX reaction_tombstones_age ON reaction_tombstones(received_at);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -394,6 +411,7 @@ static const GhStoreMigration migrations[] = {
   { 5, "Encrypted group attachments and pictures (W25)", schema_v5 },
   { 6, "No plaintext in libmarmot's message rows; messages by epoch (W25)", schema_v6 },
   { 7, "NIP-25 reactions on messages (W26 slice B, nostrc-191r)", schema_v7 },
+  { 8, "Bounded pending reactions and deletion tombstones (W28, nostrc-r41l)", schema_v8 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

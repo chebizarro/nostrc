@@ -25,6 +25,7 @@
 #include "send-stack.h"
 
 #include "gh-outbox.h"
+#include "gh-nip17-envelope.h"
 #include "gh-reaction.h"
 #include "gh-store.h"
 #include "nostr-envelope.h"
@@ -476,6 +477,21 @@ reaction_stored_anywhere(SendStack *s, const gchar *reaction_id)
   return found;
 }
 
+static gboolean
+reaction_pending_in_room(SendStack *s, const gchar *reaction_id, const gchar *room_id)
+{
+  sqlite3 *db = gh_store_get_db(gh_account_store_get_store(s->store));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(db,
+    "SELECT 1 FROM pending_reactions WHERE reaction_msg_id = ? AND room_id = ?",
+    -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, reaction_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room_id, -1, SQLITE_TRANSIENT);
+  gboolean found = sqlite3_step(stmt) == SQLITE_ROW;
+  sqlite3_finalize(stmt);
+  return found;
+}
+
 static void
 compose(SendStack *s, const gchar *text)
 {
@@ -601,6 +617,39 @@ test_two_accounts(void)
   g_assert_true(reaction_chip_shows(&reaction));
   g_assert_true(reaction_stored_in_room(&a, reaction_id, room));
 
+  /* The room already exists, but A receives B's reaction before the target
+   * message's gift wrap. The held reaction must not leak onto another bubble,
+   * then must appear when the target is delivered over the local relay. */
+  const guint recipients_a[] = { 1, 0 };
+  const gchar *to_a_early[] = { stack_hex[1], NULL };
+  g_autofree gchar *late_id = NULL;
+  g_autofree gchar *late_rumor = gh_nip17_rumor_new_room(
+    stack_hex[2], to_a_early, "Delayed hello", now, 0, &late_id, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(late_rumor);
+  g_autofree gchar *late_wrap_a = stack_craft_wrap(2, 1, recipients_a, now, "Delayed hello");
+  g_autofree gchar *late_wrap_b = stack_craft_wrap(2, 2, recipients_a, now, "Delayed hello");
+  GhDmInboxCounters before_early;
+  gh_dm_inbox_get_counters(a.inbox, &before_early);
+  g_autofree gchar *early_id = gh_outbox_send_reaction_room(
+    outbox_b, to_a_early, "o", late_id, "14", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(early_id);
+  ReactionInboxWait early = { a.inbox, before_early.admitted };
+  gh_test_spin_until(reaction_inbox_admitted, &early);
+  g_assert_true(reaction_pending_in_room(&a, early_id, room));
+  g_assert_false(reaction_stored_anywhere(&a, early_id));
+  g_assert_true(relay_store(&inbox_a, late_wrap_a, NULL));
+  g_assert_true(relay_store(&inbox_b, late_wrap_b, NULL));
+  wait_message(&a, room, "Delayed hello");
+  wait_message(&b, room, "Delayed hello");
+  g_assert_cmpstr(gh_message_get_rumor_id(stack_find(room_a, "Delayed hello")), ==, late_id);
+  g_assert_false(reaction_pending_in_room(&a, early_id, room));
+  ReactionWait late_chip = { send_stack_view(&a), late_id, "o" };
+  gh_test_spin_until(reaction_chip_shows, &late_chip);
+  g_assert_true(reaction_stored_in_room(&a, early_id, room));
+  g_assert_false(reaction_pending_in_room(&a, early_id, room));
+
   /* C knows A's message id but is not in A-B's room. Its correctly addressed
    * C-A rumor must not project onto A-B's open bubble. Wait for A to unwrap
    * it before asserting absence, rather than relying on a timing window. */
@@ -624,7 +673,7 @@ test_two_accounts(void)
   /* 4. One room each, the same messages; own ones "Sent". */
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a.model)), ==, 1);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b.model)), ==, 1);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_a)), ==, 3);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_a)), ==, 4);
   g_auto(GStrv) ids_a = room_ids(room_a);
   g_auto(GStrv) ids_b = room_ids(room_b);
   g_assert_true(g_strv_equal((const gchar *const *)ids_a, (const gchar *const *)ids_b));
@@ -657,6 +706,8 @@ test_two_accounts(void)
   g_assert_true(view_shows(send_stack_view(&b), "Great, see you Saturday."));
   reaction.view = send_stack_view(&a);
   g_assert_true(reaction_chip_shows(&reaction));
+  late_chip.view = send_stack_view(&a);
+  g_assert_true(reaction_chip_shows(&late_chip));
   foreign_chip.view = send_stack_view(&a);
   g_assert_false(reaction_chip_shows(&foreign_chip));
   g_assert_false(reaction_stored_anywhere(&a, foreign_id));

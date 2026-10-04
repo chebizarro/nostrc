@@ -2840,11 +2840,9 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
               if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
                   nostr_tag_get_value(tag)) {
                 const gchar *rid = nostr_tag_get_value(tag);
-                const gchar *original_sender =
-                  gh_reaction_store_get_sender(self->reactions, rid);
-                if (original_sender &&
-                    g_strcmp0(original_sender, result.app_msg.sender_pubkey_hex) == 0)
-                  gh_reaction_store_remove(self->reactions, rid, NULL);
+                gh_reaction_store_delete_event(self->reactions, rid,
+                                               result.app_msg.sender_pubkey_hex,
+                                               group->room_id, NULL);
               }
             }
           }

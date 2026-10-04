@@ -1129,10 +1129,8 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
           NostrTag *tag = nostr_tags_get(tags, ti);
           if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag)) {
             const gchar *rid = nostr_tag_get_value(tag);
-            const gchar *original_sender =
-              gh_reaction_store_get_sender(room->service->reactions, rid);
-            if (original_sender && g_strcmp0(original_sender, deletion_sender) == 0)
-              gh_reaction_store_remove(room->service->reactions, rid, NULL);
+            gh_reaction_store_delete_event(room->service->reactions, rid,
+                                           deletion_sender, room->room_id, NULL);
           }
         }
       }

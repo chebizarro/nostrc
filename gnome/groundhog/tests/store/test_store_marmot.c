@@ -2208,6 +2208,8 @@ make_v1_store(const TestAccount *account)
    * v4 (W18) the arrival order, read, timer and inbox columns and two
    * triggers; v5 (W25) the MLS source epoch, attachment identities and
    * group pictures. */
+  sql_exec(store, "DROP TABLE reaction_tombstones");
+  sql_exec(store, "DROP TABLE pending_reactions");
   sql_exec(store, "DROP TABLE reactions");
   sql_exec(store, "DROP TABLE group_images");
   sql_exec(store, "DROP TABLE message_media");
@@ -2263,7 +2265,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 7);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 8);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
@@ -2298,6 +2300,8 @@ test_migration_v6_scrubs_messages(void)
   sqlite3_free(rows);
   /* Back to schema 5. */
   sql_exec(store, "DROP INDEX mls_messages_by_epoch");
+  sql_exec(store, "DROP TABLE reaction_tombstones");
+  sql_exec(store, "DROP TABLE pending_reactions");
   sql_exec(store, "DROP TABLE reactions");
   sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 6");
   sql_exec(store, "PRAGMA user_version = 5");
@@ -2315,6 +2319,38 @@ test_migration_v6_scrubs_messages(void)
                                  "instr(content, 'plaintext') > 0"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND "
                                  "name = 'mls_messages_by_epoch'"), ==, 1);
+  gh_store_close(store);
+  test_account_clear(&account);
+}
+
+static void
+test_migration_v7_to_v8(void)
+{
+  TestAccount account;
+  test_account_init(&account, ACCOUNT_A);
+  GhStore *store = store_open(&account, NULL);
+  sql_exec(store, "INSERT INTO conversations "
+                  "(id, backend, backend_key, created_at, last_activity) "
+                  "VALUES (12345, 1, 'migration-room', 1, 1)");
+  sql_exec(store, "INSERT INTO reactions "
+                  "(conversation_id, target_msg_id, reaction_msg_id, sender_pubkey, "
+                  "emoji, created_at, room_id) "
+                  "VALUES (12345, 'old-target', 'old-reaction', 'old-sender', '+', 1, "
+                  "'migration-room')");
+  sql_exec(store, "DROP TABLE reaction_tombstones");
+  sql_exec(store, "DROP TABLE pending_reactions");
+  sql_exec(store, "DELETE FROM schema_migrations WHERE version = 8");
+  sql_exec(store, "PRAGMA user_version = 7");
+  gh_store_close(store);
+
+  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 8);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pending_reactions"), ==, 0);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reaction_tombstones"), ==, 0);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reactions WHERE "
+                                 "reaction_msg_id = 'old-reaction'"), ==, 1);
+  assert_integrity(store);
   gh_store_close(store);
   test_account_clear(&account);
 }
@@ -4405,6 +4441,7 @@ main(int argc, char **argv)
   g_test_add_func("/store-marmot/store-kinds", test_store_kinds);
   g_test_add_func("/store-marmot/migration/v1-to-v2", test_migration_v1_to_v2);
   g_test_add_func("/store-marmot/migration/v6-scrubs-messages", test_migration_v6_scrubs_messages);
+  g_test_add_func("/store-marmot/migration/v7-to-v8", test_migration_v7_to_v8);
   g_test_add_func("/store-marmot/migration/crash", test_migration_crash);
   g_test_add_func("/store-marmot/t-mls/crash-atomicity", test_tmls_crash_atomicity);
   g_test_add_func("/store-marmot/e2e/persistence", test_e2e_persistence);

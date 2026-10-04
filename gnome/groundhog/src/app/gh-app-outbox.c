@@ -93,6 +93,20 @@ static void unbind_nip29(gpointer data, GObject *outbox);
 static void unbind_mls(gpointer data, GObject *outbox);
 static void unbind_reactions(gpointer data, GObject *outbox);
 
+static void
+reconcile_reactions(GhConversationStore *conversations, GhMessage *message, gpointer data)
+{
+  (void)conversations;
+  GhAppOutbox *self = data;
+  if (!self->store_reactions || !self->reactions)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_reactions_reconcile(self->store_reactions, self->reactions,
+                                   gh_message_get_room_id(message),
+                                   gh_message_get_rumor_id(message), &error))
+    g_warning("Could not reconcile deferred reactions: %s", error->message);
+}
+
 void
 gh_app_outbox_free(GhAppOutbox *self)
 {
@@ -319,11 +333,8 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
         if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
             nostr_tag_get_value(tag)) {
           const gchar *rid = nostr_tag_get_value(tag);
-          const gchar *original_sender =
-            gh_reaction_store_get_sender(self->reactions, rid);
-          if (original_sender &&
-              g_strcmp0(original_sender, message->sender_pubkey) == 0)
-            gh_reaction_store_remove(self->reactions, rid, NULL);
+          gh_reaction_store_delete_event(self->reactions, rid,
+                                         message->sender_pubkey, room_id, NULL);
         }
       }
     }
@@ -348,6 +359,9 @@ bind_reactions(GhAppOutbox *self, GhStore *store, GObject *outbox)
   g_autoptr(GError) error = NULL;
   if (!gh_store_reactions_attach(self->store_reactions, self->reactions, &error))
     g_message("Groundhog runs reactions in memory only: %s", error->message);
+  if (self->conversations)
+    g_signal_connect(self->conversations, "message-committed",
+                     G_CALLBACK(reconcile_reactions), self);
 
   self->reactions_outbox = outbox;
   g_object_weak_ref(outbox, unbind_reactions, self);
@@ -364,6 +378,9 @@ unbind_reactions(gpointer data, GObject *outbox)
   if (self->reactions_outbox != outbox)
     return;
   self->reactions_outbox = NULL;
+  if (self->conversations)
+    g_signal_handlers_disconnect_by_func(self->conversations,
+                                         G_CALLBACK(reconcile_reactions), self);
   /* Clear the NIP-17 reaction sink before disposing the store. */
   if (self->inbox)
     gh_dm_inbox_set_reaction_sink(GH_DM_INBOX(self->inbox), NULL, NULL);

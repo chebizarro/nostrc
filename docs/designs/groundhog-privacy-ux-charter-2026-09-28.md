@@ -329,6 +329,11 @@ CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT
 -- UNIQUE, sender_pubkey, emoji, created_at, room_id); indexes
 -- reactions_by_target and reactions_by_sender. Forward migration: a store
 -- at v7 is refused by an older Groundhog.
+-- Schema v8 (W28, nostrc-r41l): pending_reactions keeps a reaction's
+-- room, target, author, emoji and event id until that exact room's message
+-- arrives. reaction_tombstones keeps author/room-scoped NIP-09 deletions that
+-- arrived first. Both are encrypted with the account store, capped at 4096
+-- rows each and seven days by local arrival time; neither is displayed.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
@@ -852,6 +857,11 @@ formed by its author and p-tag recipients, not to the recipient alone.)*
 belongs to that exact room; a nonparticipant's NIP-17 rumor cannot project
 onto another DM bubble. Re-adding the same reaction in the same second
 creates a distinct event ID so deletion of the old reaction cannot mask it.)*
+
+*(Amended 2026-10-04, nostrc-r41l: an early reaction is held privately and
+shown only after its target enters the same room. Early deletions prevent a
+late reaction from creating a stale chip. Unresolved reactions and deletion
+notices expire after seven days or the 4096-row cap.)*
 
 Illustrative Blueprint:
 

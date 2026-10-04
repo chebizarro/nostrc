@@ -29,7 +29,7 @@ struct _GhConversationStore {
   guint64 next_seq;
 };
 
-enum { SIGNAL_MESSAGE_ADDED, N_SIGNALS };
+enum { SIGNAL_MESSAGE_ADDED, SIGNAL_MESSAGE_COMMITTED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 enum { PROP_0, PROP_ACCOUNT, N_PROPS };
@@ -309,6 +309,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   if (conversation && gh_conversation_is_older_history(conversation, message)) {
     gh_conversation_add_older_history(conversation, message, wrap_id != NULL);
     sync_unread(conversation, &commit);
+    g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
     return GH_CONVERSATION_ADD_NEW;
   }
 
@@ -335,6 +336,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   else
     reposition(self, conversation, old_position);
   g_signal_emit(self, signals[SIGNAL_MESSAGE_ADDED], 0, conversation, message);
+  g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
   return GH_CONVERSATION_ADD_NEW;
 }
 
@@ -728,6 +730,9 @@ gh_conversation_store_class_init(GhConversationStoreClass *klass)
   signals[SIGNAL_MESSAGE_ADDED] = g_signal_new("message-added",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
     G_TYPE_NONE, 2, GH_TYPE_CONVERSATION, GH_TYPE_MESSAGE);
+  signals[SIGNAL_MESSAGE_COMMITTED] = g_signal_new("message-committed",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 1, GH_TYPE_MESSAGE);
 }
 
 static void

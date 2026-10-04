@@ -17,6 +17,7 @@ struct _GhReactionStore {
   GHashTable *reaction_to_target;
   /* W26 slice B review fix (F3): reaction_rumor_id → sender_pubkey. */
   GHashTable *reaction_to_sender;
+  GHashTable *reaction_to_room;
 
   const GhReactionDelegate *delegate;
   gpointer delegate_data;
@@ -54,6 +55,7 @@ gh_reaction_store_finalize(GObject *object)
   g_hash_table_unref(self->summaries);
   g_hash_table_unref(self->reaction_to_target);
   g_hash_table_unref(self->reaction_to_sender);
+  g_hash_table_unref(self->reaction_to_room);
   G_OBJECT_CLASS(gh_reaction_store_parent_class)->finalize(object);
 }
 
@@ -77,6 +79,7 @@ gh_reaction_store_init(GhReactionStore *self)
   self->summaries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   self->reaction_to_target = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   self->reaction_to_sender = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  self->reaction_to_room = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 }
 
 GhReactionStore *
@@ -98,6 +101,7 @@ gh_reaction_store_set_account(GhReactionStore *self,
     g_hash_table_remove_all(self->summaries);
     g_hash_table_remove_all(self->reaction_to_target);
     g_hash_table_remove_all(self->reaction_to_sender);
+    g_hash_table_remove_all(self->reaction_to_room);
   }
 
   clear_delegate(self);
@@ -166,6 +170,8 @@ gh_reaction_store_admit(GhReactionStore *self, GhReaction *reaction, GError **er
   g_hash_table_insert(self->reaction_to_target, g_strdup(rid), g_strdup(tid));
   g_hash_table_insert(self->reaction_to_sender, g_strdup(rid),
                        g_strdup(gh_reaction_get_sender(reaction)));
+  g_hash_table_insert(self->reaction_to_room, g_strdup(rid),
+                      g_strdup(gh_reaction_get_room_id(reaction)));
 
   g_signal_emit(self, signals[SIGNAL_REACTION_CHANGED], 0, tid);
   return TRUE;
@@ -195,9 +201,29 @@ gh_reaction_store_remove(GhReactionStore *self, const gchar *reaction_rumor_id,
     gh_reaction_summary_remove(summary, reaction_rumor_id);
   g_hash_table_remove(self->reaction_to_target, reaction_rumor_id);
   g_hash_table_remove(self->reaction_to_sender, reaction_rumor_id);
+  g_hash_table_remove(self->reaction_to_room, reaction_rumor_id);
 
   g_signal_emit(self, signals[SIGNAL_REACTION_CHANGED], 0, target);
   g_free(target);
+  return TRUE;
+}
+
+gboolean
+gh_reaction_store_delete_event(GhReactionStore *self, const gchar *rid,
+                               const gchar *sender, const gchar *room, GError **error)
+{
+  g_return_val_if_fail(GH_IS_REACTION_STORE(self), FALSE);
+  g_return_val_if_fail(rid && sender && room, FALSE);
+  if (self->delegate && self->delegate->delete_event &&
+      !self->delegate->delete_event(self->delegate_data, rid, sender, room, error))
+    return FALSE;
+  if (g_strcmp0(g_hash_table_lookup(self->reaction_to_sender, rid), sender) == 0 &&
+      g_strcmp0(g_hash_table_lookup(self->reaction_to_room, rid), room) == 0) {
+    /* The delegate already deleted the durable row. */
+    gh_reaction_store_suspend_delegate(self);
+    gh_reaction_store_remove(self, rid, NULL);
+    gh_reaction_store_resume_delegate(self);
+  }
   return TRUE;
 }
 

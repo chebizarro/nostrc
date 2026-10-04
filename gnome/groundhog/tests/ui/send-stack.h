@@ -162,6 +162,7 @@ send_stack_up(SendStack *s)
     .account_relays = s->relays,
     .settings = s->settings,
     .inboxes = s->resolver,
+    .conversations = s->model,
     .transport = s->publish_transport,
     .transport_data = s->publish_data,
   };

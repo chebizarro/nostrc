@@ -10,6 +10,50 @@ struct _GhStoreReactions {
 
 G_DEFINE_FINAL_TYPE(GhStoreReactions, gh_store_reactions, G_TYPE_OBJECT)
 
+#define REACTION_PENDING_LIMIT 4096
+#define REACTION_PENDING_SECONDS (7 * 24 * 60 * 60)
+
+static gboolean
+sql_error(sqlite3 *db, int rc, const gchar *what, GError **error)
+{
+  if (rc == SQLITE_OK || rc == SQLITE_DONE)
+    return TRUE;
+  g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "%s: %s", what, sqlite3_errmsg(db));
+  return FALSE;
+}
+
+static gboolean
+prune_deferred(sqlite3 *db, GError **error)
+{
+  static const gchar *sql =
+    "DELETE FROM pending_reactions WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
+    G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
+    "DELETE FROM reaction_tombstones WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
+    G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
+    "DELETE FROM pending_reactions WHERE reaction_msg_id IN "
+    "(SELECT reaction_msg_id FROM pending_reactions ORDER BY received_at DESC, reaction_msg_id DESC "
+    "LIMIT -1 OFFSET " G_STRINGIFY(REACTION_PENDING_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN "
+    "(SELECT reaction_msg_id, room_id, sender_pubkey FROM reaction_tombstones "
+    "ORDER BY received_at DESC, reaction_msg_id DESC LIMIT -1 OFFSET "
+    G_STRINGIFY(REACTION_PENDING_LIMIT) ");";
+  return sql_error(db, sqlite3_exec(db, sql, NULL, NULL, NULL), "prune reactions", error);
+}
+
+static gboolean
+delete_pending(sqlite3 *db, const gchar *rid, GError **error)
+{
+  sqlite3_stmt *stmt = NULL;
+  if (!sql_error(db, sqlite3_prepare_v2(db,
+      "DELETE FROM pending_reactions WHERE reaction_msg_id = ?", -1, &stmt, NULL),
+      "prepare pending delete", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return sql_error(db, rc, "delete pending", error);
+}
+
 static void
 gh_store_reactions_finalize(GObject *object)
 {
@@ -42,7 +86,7 @@ gh_store_reactions_new(GhStore *store)
 /* ---- Delegate callbacks ---------------------------------------------------- */
 
 static gboolean
-delegate_admit(gpointer data, GhReaction *reaction, GError **error)
+delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
 {
   GhStoreReactions *self = data;
   if (self->closed) {
@@ -50,7 +94,7 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
     return FALSE;
   }
 
-  /* The caller already holds a transaction (gh_store_begin). */
+  /* delegate_admit() opened a transaction, nested when the caller owns one. */
   sqlite3 *db = gh_store_get_db(self->store);
   if (!db) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Store unavailable");
@@ -62,8 +106,25 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
    * this also requires the author and recipients to match the target room.
    * Never update the target-only in-memory summary for an unknown room. */
   const gchar *room_id = gh_reaction_get_room_id(reaction);
-  sqlite3_stmt *find_conv = NULL;
+  if (!prune_deferred(db, error))
+    return FALSE;
+  sqlite3_stmt *tombstone = NULL;
   int rc = sqlite3_prepare_v2(db,
+    "SELECT 1 FROM reaction_tombstones WHERE reaction_msg_id = ? AND room_id = ? "
+    "AND sender_pubkey = ?", -1, &tombstone, NULL);
+  if (!sql_error(db, rc, "prepare tombstone lookup", error))
+    return FALSE;
+  sqlite3_bind_text(tombstone, 1, gh_reaction_get_reaction_rumor_id(reaction), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(tombstone, 2, room_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(tombstone, 3, gh_reaction_get_sender(reaction), -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(tombstone);
+  sqlite3_finalize(tombstone);
+  if (rc == SQLITE_ROW)
+    return FALSE;
+  if (rc != SQLITE_DONE)
+    return sql_error(db, rc, "lookup tombstone", error);
+  sqlite3_stmt *find_conv = NULL;
+  rc = sqlite3_prepare_v2(db,
     "SELECT c.id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
     "WHERE c.backend_key = ? AND m.backend_msg_id = ?", -1, &find_conv, NULL);
   if (rc != SQLITE_OK) {
@@ -83,8 +144,27 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "lookup target: %s", sqlite3_errmsg(db));
     return FALSE;
   }
-  if (conversation_id < 0)
+  if (conversation_id < 0) {
+    sqlite3_stmt *pending = NULL;
+    rc = sqlite3_prepare_v2(db,
+      "INSERT OR IGNORE INTO pending_reactions "
+      "(reaction_msg_id, room_id, target_msg_id, sender_pubkey, emoji, created_at, received_at) "
+      "VALUES (?, ?, ?, ?, ?, ?, CAST(strftime('%s','now') AS INTEGER))",
+      -1, &pending, NULL);
+    if (!sql_error(db, rc, "prepare pending reaction", error))
+      return FALSE;
+    sqlite3_bind_text(pending, 1, gh_reaction_get_reaction_rumor_id(reaction), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(pending, 2, room_id, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(pending, 3, gh_reaction_get_target_rumor_id(reaction), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(pending, 4, gh_reaction_get_sender(reaction), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(pending, 5, gh_reaction_get_emoji(reaction), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(pending, 6, gh_reaction_get_created_at(reaction));
+    rc = sqlite3_step(pending);
+    sqlite3_finalize(pending);
+    if (!sql_error(db, rc, "insert pending reaction", error) || !prune_deferred(db, error))
+      return FALSE;
     return FALSE;
+  }
 
   sqlite3_stmt *stmt = NULL;
   rc = sqlite3_prepare_v2(db,
@@ -108,7 +188,91 @@ delegate_admit(gpointer data, GhReaction *reaction, GError **error)
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "insert: %s", sqlite3_errmsg(db));
     return FALSE;
   }
-  return TRUE;
+  return delete_pending(db, gh_reaction_get_reaction_rumor_id(reaction), error);
+}
+
+static gboolean
+delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender,
+                            const gchar *room, GError **error)
+{
+  GhStoreReactions *self = data;
+  sqlite3 *db = self->closed ? NULL : gh_store_get_db(self->store);
+  if (!db) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Reaction store closed");
+    return FALSE;
+  }
+  if (!prune_deferred(db, error))
+    return FALSE;
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(db,
+    "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
+    "VALUES (?, ?, ?, CAST(strftime('%s','now') AS INTEGER)) "
+    "ON CONFLICT(reaction_msg_id, room_id, sender_pubkey) DO UPDATE SET "
+    "received_at = excluded.received_at", -1, &stmt, NULL);
+  if (!sql_error(db, rc, "prepare deletion notice", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (!sql_error(db, rc, "write deletion notice", error))
+    return FALSE;
+  rc = sqlite3_prepare_v2(db,
+    "DELETE FROM pending_reactions WHERE reaction_msg_id = ? AND room_id = ? "
+    "AND sender_pubkey = ?", -1, &stmt, NULL);
+  if (!sql_error(db, rc, "prepare pending deletion", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (!sql_error(db, rc, "remove pending reaction", error))
+    return FALSE;
+  rc = sqlite3_prepare_v2(db,
+    "DELETE FROM reactions WHERE reaction_msg_id = ? AND room_id = ? AND sender_pubkey = ?",
+    -1, &stmt, NULL);
+  if (!sql_error(db, rc, "prepare reaction deletion", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return sql_error(db, rc, "remove reaction", error) && prune_deferred(db, error);
+}
+
+static gboolean
+delegate_admit(gpointer data, GhReaction *reaction, GError **error)
+{
+  GhStoreReactions *self = data;
+  if (!gh_store_begin(self->store, error))
+    return FALSE;
+  g_autoptr(GError) local_error = NULL;
+  gboolean admitted = delegate_admit_inner(data, reaction, &local_error);
+  if (local_error) {
+    gh_store_rollback(self->store);
+    g_propagate_error(error, g_steal_pointer(&local_error));
+    return FALSE;
+  }
+  if (!gh_store_commit(self->store, error))
+    return FALSE;
+  return admitted;
+}
+
+static gboolean
+delegate_delete_event(gpointer data, const gchar *rid, const gchar *sender,
+                      const gchar *room, GError **error)
+{
+  GhStoreReactions *self = data;
+  if (!gh_store_begin(self->store, error))
+    return FALSE;
+  if (!delegate_delete_event_inner(data, rid, sender, room, error)) {
+    gh_store_rollback(self->store);
+    return FALSE;
+  }
+  return gh_store_commit(self->store, error);
 }
 
 static gboolean
@@ -179,7 +343,59 @@ static const GhReactionDelegate store_delegate = {
   .admit = delegate_admit,
   .remove = delegate_remove,
   .remove_by_sender = delegate_remove_by_sender,
+  .delete_event = delegate_delete_event,
 };
+
+gboolean
+gh_store_reactions_reconcile(GhStoreReactions *self, GhReactionStore *model,
+                             const gchar *room_id, const gchar *target_id, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_REACTIONS(self), FALSE);
+  g_return_val_if_fail(GH_IS_REACTION_STORE(model), FALSE);
+  sqlite3 *db = self->closed ? NULL : gh_store_get_db(self->store);
+  if (!db) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Reaction store closed");
+    return FALSE;
+  }
+  if (!prune_deferred(db, error))
+    return FALSE;
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(db,
+    "SELECT p.target_msg_id, p.reaction_msg_id, p.sender_pubkey, p.emoji, "
+    "p.created_at, p.room_id FROM pending_reactions p "
+    "JOIN conversations c ON c.backend_key = p.room_id "
+    "JOIN messages m ON m.conversation_id = c.id AND m.backend_msg_id = p.target_msg_id "
+    "WHERE (?1 IS NULL OR p.room_id = ?1) AND (?2 IS NULL OR p.target_msg_id = ?2) "
+    "ORDER BY p.created_at, p.reaction_msg_id", -1, &stmt, NULL);
+  if (!sql_error(db, rc, "prepare pending reconciliation", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, room_id, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, target_id, -1, SQLITE_TRANSIENT);
+  g_autoptr(GPtrArray) ready = g_ptr_array_new_with_free_func(g_object_unref);
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+    const gchar *target = (const gchar *)sqlite3_column_text(stmt, 0);
+    const gchar *rid = (const gchar *)sqlite3_column_text(stmt, 1);
+    const gchar *sender = (const gchar *)sqlite3_column_text(stmt, 2);
+    const gchar *emoji = (const gchar *)sqlite3_column_text(stmt, 3);
+    const gchar *room = (const gchar *)sqlite3_column_text(stmt, 5);
+    GhReaction *reaction = gh_reaction_new(target, rid, sender, emoji,
+                                           sqlite3_column_int64(stmt, 4), room);
+    if (reaction)
+      g_ptr_array_add(ready, reaction);
+  }
+  sqlite3_finalize(stmt);
+  if (!sql_error(db, rc, "read pending reactions", error))
+    return FALSE;
+  for (guint i = 0; i < ready->len; i++) {
+    g_autoptr(GError) admit_error = NULL;
+    gh_reaction_store_admit(model, g_ptr_array_index(ready, i), &admit_error);
+    if (admit_error) {
+      g_propagate_error(error, g_steal_pointer(&admit_error));
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
 
 /* ---- Restore --------------------------------------------------------------- */
 
@@ -241,7 +457,7 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
   sqlite3_finalize(stmt);
 
   gh_reaction_store_resume_delegate(model);
-  return TRUE;
+  return gh_store_reactions_reconcile(self, model, NULL, NULL, error);
 }
 
 void
