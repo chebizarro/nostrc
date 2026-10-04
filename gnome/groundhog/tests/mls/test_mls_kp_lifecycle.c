@@ -1717,6 +1717,98 @@ test_write_relay_migration(void)
   world_down(&w);
 }
 
+typedef struct {
+  World *world;
+  guint sent;
+  gint64 created_at;
+  gint kind;
+} ListUpdateStream;
+
+static gboolean
+send_next_unchanged_list_update(gpointer data)
+{
+  ListUpdateStream *stream = data;
+  NostrTags *tags = nostr_tags_new(0);
+  if (stream->kind == 10050)
+    nostr_tags_append(tags, nostr_tag_new("relay", stream->world->x.url, NULL));
+  else
+    nostr_tags_append(tags, nostr_tag_new("r", stream->world->x.url, "write", NULL));
+  g_autofree gchar *json = sign_event(ALICE, stream->kind, stream->created_at + stream->sent,
+                                      "", tags);
+  wire_relay_inject(&stream->world->e, json);
+  stream->sent++;
+  return stream->sent < 40 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+
+/* Inbox-list activity and no-op 10002 republishes must not postpone a
+ * pending write-list migration. The final update arrives around 800 ms;
+ * both slots must be on X while the signed stream is still arriving. */
+static void
+test_write_relay_migration_unchanged_list_stream(gint kind)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  spin_until(current_key_packages_on_both, alice, "both slots before inbox update stream");
+  gchar *refs[GH_MLS_KEY_PACKAGE_N_FORMATS] = { NULL };
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    if (migration_format_enabled(f))
+      newest_key_package_of(&w.w, ALICE, f, &refs[f], NULL, NULL);
+  w.w.nip09 = w.h.nip09 = TRUE;
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", w.x.url, "write", NULL));
+  g_autofree gchar *list = sign_event(ALICE, 10002, real_now(), "", tags);
+  wire_relay_inject(&w.e, list);
+
+  ListUpdateStream stream = { &w, 0, kind == 10050 ? real_now() - 1000 : real_now() + 1,
+                              kind };
+  MigratedWait migrated = { &w, 2 };
+  gint64 started_us = g_get_monotonic_time();
+  gint64 first_published_us = 0;
+  gboolean expired = FALSE;
+  guint updates = g_timeout_add(20, send_next_unchanged_list_update, &stream);
+  guint deadline = g_timeout_add_seconds(5, gh_test_deadline_hit, &expired);
+  guint tick = g_timeout_add(10, gh_test_tick, NULL);
+  while (stream.sent < 40 && !expired) {
+    g_main_context_iteration(NULL, TRUE);
+    if (!first_published_us && migrated_on_new_relay(&migrated))
+      first_published_us = g_get_monotonic_time();
+  }
+  g_source_remove(tick);
+  if (stream.sent < 40)
+    g_source_remove(updates);
+  if (!expired)
+    g_source_remove(deadline);
+  g_assert_cmpuint(stream.sent, ==, 40);
+  g_assert_cmpint(first_published_us, >, 0);
+  g_assert_cmpint(first_published_us - started_us, <, 700 * 1000);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_autofree gchar *ref = NULL;
+    newest_key_package_of(&w.x, ALICE, f, &ref, NULL, NULL);
+    g_assert_cmpstr(ref, ==, refs[f]);
+    g_autoptr(GPtrArray) on_new = stored_key_packages_of(&w.x, ALICE, f);
+    g_assert_cmpuint(on_new->len, ==, 1); /* no republish storm */
+    g_free(refs[f]);
+  }
+  world_down(&w);
+}
+
+static void
+test_write_relay_migration_inbox_stream(void)
+{
+  test_write_relay_migration_unchanged_list_stream(10050);
+}
+
+static void
+test_write_relay_migration_noop_write_stream(void)
+{
+  test_write_relay_migration_unchanged_list_stream(10002);
+}
+
 static gboolean
 retired_migration_relays_deleted(gpointer data)
 {
@@ -2584,6 +2676,10 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("write-relay-migration"), test_write_relay_migration);
+  g_test_add_func(KP_TEST("write-relay-migration-inbox-stream"),
+                  test_write_relay_migration_inbox_stream);
+  g_test_add_func(KP_TEST("write-relay-migration-noop-write-stream"),
+                  test_write_relay_migration_noop_write_stream);
   g_test_add_func(KP_TEST("write-relay-migration-rapid"), test_write_relay_migration_rapid);
   g_test_add_func(KP_TEST("write-relay-migration-empty"), test_write_relay_migration_empty);
   g_test_add_func(KP_TEST("write-relay-migration-cleanup-batches"),

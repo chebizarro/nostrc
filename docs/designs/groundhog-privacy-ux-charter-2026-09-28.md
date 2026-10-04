@@ -598,6 +598,8 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 
 *(Review follow-up, nostrc-3e6g. Groundhog also durably records every attempted KeyPackage publish target before sending: a relay that accepted an event but lost its OK remains a deletion candidate after later 10002 edits or a restart. Briefly coalesced edits converge on the latest signed write set; once its produced formats are ACKed, NIP-09 removes the slots from every formerly used or attempted relay outside that set. A signed 10002 with no write-capable entries withdraws from all such relays without waiting for a replacement publish. An incomplete discovery result is not an empty signed list. Private init keys remain held for delayed Welcomes.)*
 
+*(Re-review follow-up, nostrc-rk2u. Only a change to the effective signed 10002 write-capable set coalesces KeyPackage reconciliation; 10050 inbox updates and no-op 10002 republishes do not delay it. Even sustained write-set edits can postpone reconciliation for at most one second from the first pending change, so the latest selected write relay is not left indefinitely without the account's KeyPackages.)*
+
 ### 4.4 NIP-42 AUTH exposure policy (`GhAuthPolicy`)
 
 - **R1.** Never sign kind 22242 with the account key for a connection whose purpose is not own inbox, own list publish, own self-copy publish, or NIP-29 group. AUTH as the account on a recipient's inbox relay would tie your identity to the gift wrap you just published and undo NIP-59's ephemeral outer key.

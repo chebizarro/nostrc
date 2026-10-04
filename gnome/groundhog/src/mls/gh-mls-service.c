@@ -36,6 +36,7 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
 #define KEY_PACKAGE_CANDIDATE_RELAYS "gh/key-package-candidate-relays"
 #define MAX_KEY_PACKAGE_CANDIDATE_RELAYS 256
 #define KEY_PACKAGE_RELAY_SETTLE_MS 100
+#define KEY_PACKAGE_RELAY_MAX_WAIT_MS 1000
 /* When a due KeyPackage replacement was first held back for pending
  * invitations (0: not held); see key_package_hold(). */
 #define KEY_PACKAGE_HELD_CURSOR "mls/key-package-held"
@@ -307,6 +308,9 @@ struct _GhMlsService {
   GStrv kp_candidate_relays;         /* durable superset of attempted publish targets */
   gboolean kp_candidates_loaded;
   guint kp_reconcile_timer;          /* coalesce successive signed 10002 changes */
+  gint64 kp_reconcile_started_us;     /* first pending change; bounds the coalescing window */
+  GStrv kp_observed_write_relays;     /* latest effective signed 10002 set, not 10050 */
+  gboolean kp_observed_relay_list;
   GStrv kp_target_relays;            /* in-flight reconciliation target */
   gboolean kp_migrating;
   gboolean kp_launching;
@@ -8785,6 +8789,9 @@ stop_generation(GhMlsService *self)
     g_source_remove(self->kp_reconcile_timer);
     self->kp_reconcile_timer = 0;
   }
+  self->kp_reconcile_started_us = 0;
+  g_clear_pointer(&self->kp_observed_write_relays, g_strfreev);
+  self->kp_observed_relay_list = FALSE;
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -8867,6 +8874,10 @@ update_activity(GhMlsService *self)
   identity_new_generation(self, generation);
   self->generation = generation;
   self->online = online;
+  self->kp_observed_write_relays = key_package_relays(self);
+  self->kp_observed_relay_list = self->account_relays &&
+    gh_account_relays_get_generation(self->account_relays) == generation &&
+    gh_account_relays_has_relay_list(self->account_relays);
   if (!running(self)) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_NONE);
     return;
@@ -8901,6 +8912,7 @@ key_package_reconcile_fired(gpointer data)
 {
   GhMlsService *self = data;
   self->kp_reconcile_timer = 0;
+  self->kp_reconcile_started_us = 0;
   key_package_maybe_publish(self);
   return G_SOURCE_REMOVE;
 }
@@ -8908,11 +8920,33 @@ key_package_reconcile_fired(gpointer data)
 static void
 on_relays_changed(GhAccountRelays *relays, gpointer data)
 {
-  (void)relays;
   GhMlsService *self = data;
+  if (!self->generation || gh_account_relays_get_generation(relays) != self->generation)
+    return;
+  g_auto(GStrv) write = key_package_relays(self);
+  gboolean has_list = gh_account_relays_has_relay_list(relays);
+  if (self->kp_observed_relay_list == has_list &&
+      self->kp_observed_write_relays &&
+      g_strv_equal((const gchar *const *)self->kp_observed_write_relays,
+                   (const gchar *const *)write))
+    return;
+  g_strfreev(self->kp_observed_write_relays);
+  self->kp_observed_write_relays = g_steal_pointer(&write);
+  self->kp_observed_relay_list = has_list;
+
+  gint64 now = g_get_monotonic_time();
+  if (!self->kp_reconcile_started_us)
+    self->kp_reconcile_started_us = now;
+  gint64 remaining_us = self->kp_reconcile_started_us +
+    (gint64)KEY_PACKAGE_RELAY_MAX_WAIT_MS * 1000 - now;
+  /* Once the hard deadline has passed, never remove the timer that is due. */
+  if (remaining_us <= 0 && self->kp_reconcile_timer)
+    return;
   if (self->kp_reconcile_timer)
     g_source_remove(self->kp_reconcile_timer);
-  self->kp_reconcile_timer = g_timeout_add(KEY_PACKAGE_RELAY_SETTLE_MS,
+  guint delay_ms = remaining_us <= 0 ? 1 :
+    (guint)MIN((gint64)KEY_PACKAGE_RELAY_SETTLE_MS, (remaining_us + 999) / 1000);
+  self->kp_reconcile_timer = g_timeout_add(delay_ms,
                                            key_package_reconcile_fired, self);
 }
 
@@ -9464,6 +9498,7 @@ gh_mls_service_finalize(GObject *object)
   g_free(self->account);
   g_strfreev(self->kp_write_relays);
   g_strfreev(self->kp_candidate_relays);
+  g_strfreev(self->kp_observed_write_relays);
   g_strfreev(self->kp_target_relays);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     g_free(self->kp[f].id);
