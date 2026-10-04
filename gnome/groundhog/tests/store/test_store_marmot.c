@@ -2324,32 +2324,86 @@ test_migration_v6_scrubs_messages(void)
 }
 
 static void
+make_committed_v7_store(const TestAccount *account)
+{
+  /* Build the file directly from the append-only migrations that shipped in
+   * v7. No v8 store is ever created or reverse-migrated for this fixture. */
+  g_assert_cmpint(g_mkdir_with_parents(g_get_user_data_dir(), 0700), ==, 0);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = gh_store_account_dir_path(NULL, account->pubkey, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(dir);
+  g_assert_cmpint(g_mkdir_with_parents(dir, 0700), ==, 0);
+  g_autofree gchar *path = g_build_filename(dir, "store.db", NULL);
+  sqlite3 *db = NULL;
+  g_assert_cmpint(sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL),
+                  ==, SQLITE_OK);
+  g_assert_cmpint(g_chmod(path, 0600), ==, 0);
+  gsize key_size = 0;
+  const guint8 *key = g_bytes_get_data(account->key, &key_size);
+  g_assert_cmpuint(key_size, ==, GH_STORE_KEY_SIZE);
+  char key_spec[2 + 2 * GH_STORE_KEY_SIZE + 2];
+  key_spec[0] = 'x';
+  key_spec[1] = '\'';
+  sodium_bin2hex(key_spec + 2, 2 * GH_STORE_KEY_SIZE + 1, key, GH_STORE_KEY_SIZE);
+  key_spec[2 + 2 * GH_STORE_KEY_SIZE] = '\'';
+  key_spec[3 + 2 * GH_STORE_KEY_SIZE] = '\0';
+  g_assert_cmpint(sqlite3_key_v2(db, "main", key_spec, strlen(key_spec)), ==, SQLITE_OK);
+  sodium_memzero(key_spec, sizeof key_spec);
+
+  gsize n_migrations = 0;
+  const GhStoreMigration *migrations = gh_store_schema_get_migrations(&n_migrations);
+  g_assert_cmpuint(n_migrations, >=, 8);
+  g_assert_cmpint(sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, NULL), ==, SQLITE_OK);
+  for (guint i = 0; i < 7; i++) {
+    g_assert_cmpint(migrations[i].version, ==, (gint)i + 1);
+    g_assert_cmpint(sqlite3_exec(db, migrations[i].sql, NULL, NULL, NULL), ==, SQLITE_OK);
+    char *record = sqlite3_mprintf(
+      "INSERT INTO schema_migrations (version, applied_at, description) "
+      "VALUES (%d, 1, %Q)", migrations[i].version, migrations[i].description);
+    g_assert_cmpint(sqlite3_exec(db, record, NULL, NULL, NULL), ==, SQLITE_OK);
+    sqlite3_free(record);
+  }
+  char *seed = sqlite3_mprintf(
+    "INSERT INTO meta (key,value) VALUES ('account_pubkey',%Q),('store_id',%Q),"
+    "('created_at','1');"
+    "INSERT INTO conversations (id,backend,backend_key,created_at,last_activity) "
+    "VALUES (12345,1,'migration-room',1,1);"
+    "INSERT INTO reactions (conversation_id,target_msg_id,reaction_msg_id,sender_pubkey,"
+    "emoji,created_at,room_id) VALUES "
+    "(12345,'old-target','old-reaction','old-sender','+',1,'migration-room');"
+    "PRAGMA user_version=7;", account->pubkey, account->store_id);
+  g_assert_cmpint(sqlite3_exec(db, seed, NULL, NULL, NULL), ==, SQLITE_OK);
+  sqlite3_free(seed);
+  g_assert_cmpint(sqlite3_exec(db, "COMMIT", NULL, NULL, NULL), ==, SQLITE_OK);
+  g_assert_cmpint(sqlite3_close(db), ==, SQLITE_OK);
+}
+
+static void
 test_migration_v7_to_v8(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  GhStore *store = store_open(&account, NULL);
-  sql_exec(store, "INSERT INTO conversations "
-                  "(id, backend, backend_key, created_at, last_activity) "
-                  "VALUES (12345, 1, 'migration-room', 1, 1)");
-  sql_exec(store, "INSERT INTO reactions "
-                  "(conversation_id, target_msg_id, reaction_msg_id, sender_pubkey, "
-                  "emoji, created_at, room_id) "
-                  "VALUES (12345, 'old-target', 'old-reaction', 'old-sender', '+', 1, "
-                  "'migration-room')");
-  sql_exec(store, "DROP TABLE reaction_tombstones");
-  sql_exec(store, "DROP TABLE pending_reactions");
-  sql_exec(store, "DELETE FROM schema_migrations WHERE version = 8");
-  sql_exec(store, "PRAGMA user_version = 7");
-  gh_store_close(store);
-
-  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  make_committed_v7_store(&account);
+  GhStore *store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
   g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 8);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 8);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pending_reactions"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reaction_tombstones"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reactions WHERE "
                                  "reaction_msg_id = 'old-reaction'"), ==, 1);
+  assert_integrity(store);
+  gint64 schema_version = sql_int(store, "PRAGMA schema_version");
+  gh_store_close(store);
+  store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 8);
+  g_assert_cmpint(sql_int(store, "PRAGMA schema_version"), ==, schema_version);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 8);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reactions WHERE "
+                                 "reaction_msg_id = 'old-reaction' AND emoji = '+' AND "
+                                 "room_id = 'migration-room'"), ==, 1);
   assert_integrity(store);
   gh_store_close(store);
   test_account_clear(&account);

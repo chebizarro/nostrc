@@ -10,7 +10,8 @@ struct _GhStoreReactions {
 
 G_DEFINE_FINAL_TYPE(GhStoreReactions, gh_store_reactions, G_TYPE_OBJECT)
 
-#define REACTION_PENDING_LIMIT 4096
+#define REACTION_AUTHOR_ROOM_LIMIT 64
+#define REACTION_ROOM_LIMIT 512
 #define REACTION_PENDING_SECONDS (7 * 24 * 60 * 60)
 
 static gboolean
@@ -30,13 +31,24 @@ prune_deferred(sqlite3 *db, GError **error)
     G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
     "DELETE FROM reaction_tombstones WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
     G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
-    "DELETE FROM pending_reactions WHERE reaction_msg_id IN "
-    "(SELECT reaction_msg_id FROM pending_reactions ORDER BY received_at DESC, reaction_msg_id DESC "
-    "LIMIT -1 OFFSET " G_STRINGIFY(REACTION_PENDING_LIMIT) ");"
-    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN "
-    "(SELECT reaction_msg_id, room_id, sender_pubkey FROM reaction_tombstones "
-    "ORDER BY received_at DESC, reaction_msg_id DESC LIMIT -1 OFFSET "
-    G_STRINGIFY(REACTION_PENDING_LIMIT) ");";
+    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
+    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id, sender_pubkey ORDER BY received_at DESC, reaction_msg_id DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT) ");"
+    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
+    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id ORDER BY received_at DESC, reaction_msg_id DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id, sender_pubkey ORDER BY received_at DESC, reaction_msg_id DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id ORDER BY received_at DESC, reaction_msg_id DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");";
   return sql_error(db, sqlite3_exec(db, sql, NULL, NULL, NULL), "prune reactions", error);
 }
 

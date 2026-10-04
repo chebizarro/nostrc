@@ -1793,21 +1793,100 @@ test_reaction_before_marmot_target(void)
 }
 
 static void
-test_reaction_pending_count_cap(void)
+test_reaction_partitioned_count_cap(void)
 {
   Fixture f;
   fixture_init(&f, ACCOUNT_A, 0);
   ReactionHarness r = { 0 };
   reaction_harness_open(&f, &r);
+  g_autofree gchar *protected_room = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *flood_room = room_of(ACCOUNT_A, PEER_Q, NULL);
+  g_autoptr(GhReaction) protected_reaction = gh_reaction_new(
+    "future-target", "protected-reaction", PEER_P, "+", T0, protected_room);
+  g_assert_false(gh_reaction_store_admit(r.model, protected_reaction, NULL));
+  g_assert_true(gh_reaction_store_delete_event(r.model, "protected-deletion", PEER_P,
+                                                protected_room, NULL));
   g_assert_true(gh_store_exec(f.store,
+    "UPDATE pending_reactions SET received_at = received_at - 1 "
+    "WHERE reaction_msg_id = 'protected-reaction';"
+    "UPDATE reaction_tombstones SET received_at = received_at - 1 "
+    "WHERE reaction_msg_id = 'protected-deletion'", NULL));
+  /* A single remote author can fill the old global cap in a different room. */
+  g_autofree gchar *flood = g_strdup_printf(
     "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<4100) "
     "INSERT INTO pending_reactions "
     "(reaction_msg_id, room_id, target_msg_id, sender_pubkey, emoji, created_at, received_at) "
-    "SELECT printf('bulk-%04d',x), 'unknown-room', 'target', 'sender', '+', 1, "
-    "CAST(strftime('%s','now') AS INTEGER) FROM n", NULL));
-  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 4100);
+    "SELECT printf('bulk-%%04d',x), '%s', 'target', '%s', '+', 1, "
+    "CAST(strftime('%%s','now') AS INTEGER) FROM n", flood_room, PEER_Q);
+  g_assert_true(gh_store_exec(f.store, flood, NULL));
+  g_autofree gchar *deletions = g_strdup_printf(
+    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<4100) "
+    "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
+    "SELECT printf('bulk-deletion-%%04d',x), '%s', '%s', "
+    "CAST(strftime('%%s','now') AS INTEGER) FROM n", flood_room, PEER_Q);
+  g_assert_true(gh_store_exec(f.store, deletions, NULL));
   g_assert_true(gh_store_reactions_reconcile(r.durable, r.model, NULL, NULL, NULL));
-  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 4096);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions WHERE "
+                                   "reaction_msg_id = 'protected-reaction'"), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'protected-deletion'"), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 65);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 65);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_tombstone_partitioned_count_cap(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  g_autofree gchar *protected_room = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *flood_room = room_of(ACCOUNT_A, PEER_Q, NULL);
+  g_assert_true(gh_reaction_store_delete_event(r.model, "protected-deletion", PEER_P,
+                                                protected_room, NULL));
+  g_assert_true(gh_store_exec(f.store,
+    "UPDATE reaction_tombstones SET received_at = received_at - 1 "
+    "WHERE reaction_msg_id = 'protected-deletion'", NULL));
+  g_autofree gchar *flood = g_strdup_printf(
+    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<4100) "
+    "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
+    "SELECT printf('bulk-deletion-%%04d',x), '%s', '%s', "
+    "CAST(strftime('%%s','now') AS INTEGER) FROM n", flood_room, PEER_Q);
+  g_assert_true(gh_store_exec(f.store, flood, NULL));
+  g_assert_true(gh_store_reactions_reconcile(r.durable, r.model, NULL, NULL, NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'protected-deletion'"), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 65);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_room_count_cap(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  /* Ten authors, each below the author/room quota, exceed the room quota. */
+  g_assert_true(gh_store_exec(f.store,
+    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<600) "
+    "INSERT INTO pending_reactions "
+    "(reaction_msg_id, room_id, target_msg_id, sender_pubkey, emoji, created_at, received_at) "
+    "SELECT printf('room-%04d',x), 'shared-room', 'target', "
+    "printf('sender-%02d',(x-1)/60), '+', 1, "
+    "CAST(strftime('%s','now') AS INTEGER) FROM n", NULL));
+  g_assert_true(gh_store_exec(f.store,
+    "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<600) "
+    "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
+    "SELECT printf('room-deletion-%04d',x), 'shared-room', "
+    "printf('sender-%02d',(x-1)/60), CAST(strftime('%s','now') AS INTEGER) FROM n", NULL));
+  g_assert_true(gh_store_reactions_reconcile(r.durable, r.model, NULL, NULL, NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions"), ==, 512);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 512);
   reaction_harness_close(&f, &r);
   fixture_clear(&f);
 }
@@ -1847,7 +1926,11 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/reaction-ordering/nip17-before-target", test_reaction_before_nip17_target);
   g_test_add_func("/groundhog/reaction-ordering/deletion-and-expiry", test_reaction_deletion_and_expiry);
   g_test_add_func("/groundhog/reaction-ordering/marmot-before-target", test_reaction_before_marmot_target);
-  g_test_add_func("/groundhog/reaction-ordering/pending-count-cap", test_reaction_pending_count_cap);
+  g_test_add_func("/groundhog/reaction-ordering/partitioned-count-cap",
+                  test_reaction_partitioned_count_cap);
+  g_test_add_func("/groundhog/reaction-ordering/tombstone-partitioned-count-cap",
+                  test_reaction_tombstone_partitioned_count_cap);
+  g_test_add_func("/groundhog/reaction-ordering/room-count-cap", test_reaction_room_count_cap);
   int status = g_test_run();
   g_free(ACCOUNT_A);
   g_free(ACCOUNT_B);

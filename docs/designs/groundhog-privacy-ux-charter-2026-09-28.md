@@ -332,8 +332,10 @@ CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT
 -- Schema v8 (W28, nostrc-r41l): pending_reactions keeps a reaction's
 -- room, target, author, emoji and event id until that exact room's message
 -- arrives. reaction_tombstones keeps author/room-scoped NIP-09 deletions that
--- arrived first. Both are encrypted with the account store, capped at 4096
--- rows each and seven days by local arrival time; neither is displayed.
+-- arrived first. Both are encrypted with the account store, capped separately
+-- at 64 rows per author per room and 512 per room, and seven days by local
+-- arrival time; neither is displayed. Traffic in one room cannot evict
+-- deferred reactions or deletion notices in another room.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
@@ -861,7 +863,8 @@ creates a distinct event ID so deletion of the old reaction cannot mask it.)*
 *(Amended 2026-10-04, nostrc-r41l: an early reaction is held privately and
 shown only after its target enters the same room. Early deletions prevent a
 late reaction from creating a stale chip. Unresolved reactions and deletion
-notices expire after seven days or the 4096-row cap.)*
+notices expire after seven days or their per-author/per-room and per-room
+quotas (64 and 512 rows respectively).)*
 
 Illustrative Blueprint:
 
