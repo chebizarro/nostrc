@@ -119,25 +119,21 @@ static bool filter_matches_event_json(const char *filter_json, const char *event
 
 /* Protocol definitions */
 static const struct lws_protocols protocols[] = {
-    {
-        .name = "http",
-        .callback = mock_http_callback,
-        .per_session_data_size = 0,
-        .rx_buffer_size = 0,
-    },
+    /* The first entry handles upgrades without a subprotocol (NIP-01).
+     * Forward plain HTTP callbacks below so NIP-11 still works. */
     {
         .name = "nostr",
         .callback = mock_ws_callback,
         .per_session_data_size = sizeof(MockConnection*),
         .rx_buffer_size = MAX_MSG_SIZE,
     },
-    /* Libnostr's client subscribes with Sec-WebSocket-Protocol "wss" (see
-     * libnostr/src/connection.c: `ci.protocol = "wss"`). Without a matching
-     * server-side entry the LWS handshake either drops the subprotocol
-     * header silently or, on some LWS builds, rejects the upgrade — the
-     * client-visible symptom is a wsi that never reaches ESTABLISHED and a
-     * pool that never dispatches. Register the same name so real-socket
-     * NIP-46 tests can complete the handshake. */
+    {
+        .name = "http",
+        .callback = mock_http_callback,
+        .per_session_data_size = 0,
+        .rx_buffer_size = 0,
+    },
+    /* Older libnostr clients offered "wss"; keep their fixture path valid. */
     {
         .name = "wss",
         .callback = mock_ws_callback,
@@ -767,7 +763,7 @@ static int mock_ws_callback(struct lws *wsi, enum lws_callback_reasons reason,
         }
 
         default:
-            break;
+            return mock_http_callback(wsi, reason, NULL, in, len);
     }
 
     return 0;

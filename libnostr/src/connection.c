@@ -872,7 +872,10 @@ static void service_loop_process_connect_request(ConnectionRequest *req,
     ci.host = req->conn->priv->connect_host;
     ci.origin = req->conn->priv->connect_host;
     ci.ssl_connection = req->conn->priv->connect_use_ssl ? LCCSCF_USE_SSL : 0;
-    ci.protocol = "wss";
+    /* NIP-01 has no WebSocket subprotocol. Keep the local lws callback
+     * binding separate from the protocol list offered on the wire. */
+    ci.local_protocol_name = "wss";
+    ci.protocol = NULL;
     /* nostrc-flp7: no ci.pwsi. lws writes through it (the wsi, and NULL on a
      * failed dial) outside priv->mutex, and can do so after the close path
      * has released priv. priv->wsi is set below, on this thread, before any

@@ -298,6 +298,16 @@ if (TARGET nostr_gobject AND TARGET nostr)
       add_test(NAME groundhog-relay-publish-wire
         COMMAND test-groundhog-relay-publish-wire)
       set_tests_properties(groundhog-relay-publish-wire PROPERTIES TIMEOUT 40)
+      if (TARGET nostrc-relayd)
+        add_dependencies(test-groundhog-relay-publish-wire nostrc-relayd)
+        add_test(NAME groundhog-relayd-publish
+          COMMAND test-groundhog-relay-publish-wire -p
+            /groundhog/relay-publish-wire/nostrc-relayd)
+        set_tests_properties(groundhog-relayd-publish PROPERTIES
+          TIMEOUT 40
+          ENVIRONMENT "NOSTRC_RELAYD=$<TARGET_FILE:nostrc-relayd>"
+          LABELS "groundhog;relay;integration")
+      endif()
     endif()
   endif()
 endif()

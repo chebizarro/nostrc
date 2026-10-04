@@ -377,6 +377,9 @@ static int unix_listener_cb(struct lws *wsi, enum lws_callback_reasons reason,
  */
 static const struct lws_protocols protocols[] = {
   { "nostr", nostr_cb, sizeof(ConnState), NOSTR_MAX_FRAME_LEN_BYTES },
+  /* Legacy libnostr offered the URL scheme as a subprotocol. Accept it so
+   * existing clients can still connect while they migrate to no offer. */
+  { "wss", nostr_cb, sizeof(ConnState), NOSTR_MAX_FRAME_LEN_BYTES },
   { UNIX_LISTENER_PROTOCOL, unix_listener_cb, 0, 0 },
   { NULL, NULL, 0, 0 }
 };

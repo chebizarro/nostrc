@@ -112,7 +112,8 @@ static inline int ws_wait_accepting(const char *sock_path, long timeout_ms) {
 }
 
 /* Connect, upgrade, and return the socket; *upgrade_ms gets the latency. */
-static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
+static inline int ws_open_with_protocol(const char *sock_path,
+                                        const char *protocol, long long *upgrade_ms) {
   int fd = unix_socket_cloexec();
   if (fd < 0) return -1;
   struct timeval tv = { 3, 0 };
@@ -131,15 +132,17 @@ static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
     close(fd);
     return -1;
   }
-  static const char req[] =
+  char req[512];
+  int req_len = snprintf(req, sizeof req,
       "GET / HTTP/1.1\r\n"
       "Host: localhost\r\n"
       "Upgrade: websocket\r\n"
       "Connection: Upgrade\r\n"
       "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
       "Sec-WebSocket-Version: 13\r\n"
-      "\r\n";
-  if (write_all(fd, req, sizeof req - 1) != 0) {
+      "%s\r\n", protocol ? protocol : "");
+  if (req_len < 0 || (size_t)req_len >= sizeof req ||
+      write_all(fd, req, (size_t)req_len) != 0) {
     close(fd);
     return -1;
   }
@@ -159,7 +162,13 @@ static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
     close(fd);
     return -1;
   }
+  CHECK(strstr(hdr, "Sec-WebSocket-Protocol:") == NULL || protocol != NULL,
+        "unsolicited subprotocol in upgrade response");
   return fd;
+}
+
+static inline int ws_open(const char *sock_path, long long *upgrade_ms) {
+  return ws_open_with_protocol(sock_path, NULL, upgrade_ms);
 }
 
 /* Encode one masked text frame into a malloc'd buffer; returns its size or

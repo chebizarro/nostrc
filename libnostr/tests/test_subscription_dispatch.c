@@ -131,6 +131,7 @@ typedef struct {
     pthread_t thread;
     char *event_json;        /* signed kind-1 event served for every REQ */
     atomic_int reqs_seen;
+    atomic_int protocol_headers_seen;
 } FixtureRelay;
 
 typedef struct {
@@ -149,6 +150,10 @@ static int fx_callback(struct lws *wsi, enum lws_callback_reasons reason,
                        void *user, void *in, size_t len) {
     FixtureConn *c = (FixtureConn *)user;
     switch (reason) {
+    case LWS_CALLBACK_HTTP_CONFIRM_UPGRADE:
+        if (lws_hdr_total_length(wsi, WSI_TOKEN_PROTOCOL) != 0)
+            atomic_fetch_add(&g_fx.protocol_headers_seen, 1);
+        break;
     case LWS_CALLBACK_ESTABLISHED:
         memset(c, 0, sizeof(*c));
         break;
@@ -198,7 +203,7 @@ static int fx_callback(struct lws *wsi, enum lws_callback_reasons reason,
     return 0;
 }
 
-/* The libnostr client offers the "wss" subprotocol; the fixture must accept it. */
+/* The handler name is local; NIP-01 does not negotiate a WS subprotocol. */
 static const struct lws_protocols fx_protocols[] = {
     { "wss", fx_callback, sizeof(FixtureConn), 128 * 1024, 0, NULL, 0 },
     LWS_PROTOCOL_LIST_TERM
@@ -334,6 +339,7 @@ static void test_loopback_fixture_relay(void) {
 
     nostr_relay_close(relay, NULL);
     nostr_relay_free(relay);
+    CHECK(atomic_load(&g_fx.protocol_headers_seen) == 0);
     fx_stop();
     free(want_id);
     printf("  [ok] loopback fixture relay: EVENT+EOSE reach new()+fire and prepare(NULL) subs\n");

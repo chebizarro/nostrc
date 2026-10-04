@@ -93,7 +93,10 @@ int main(void) {
     sleep_ms(300);
     for (int round = 0; round < 2; round++) {
       long long upgrade_ms = -1;
-      int fd = ws_open(sock_path, &upgrade_ms);
+      int fd = round == 0
+          ? ws_open(sock_path, &upgrade_ms)
+          : ws_open_with_protocol(sock_path,
+              "Sec-WebSocket-Protocol: wss\r\n", &upgrade_ms);
       CHECK(fd >= 0, "round %d: WebSocket upgrade over relay.sock failed",
             round);
       if (fd < 0) break;

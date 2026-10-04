@@ -1,9 +1,12 @@
 #include "gh-relay-publish.h"
+#include "gh-relay-scope.h"
 #include "fake-auth-signer.h"
 #include "wire-relay.h"
 #include "wire-tor.h"
 
 #include <nostr-gobject-1.0/nostr_relay.h>
+#include <glib/gstdio.h>
+#include <time.h>
 
 #define OTHER_ID "1111111111111111111111111111111111111111111111111111111111111111"
 
@@ -594,6 +597,157 @@ test_wire_auth_cancel_while_signing(void)
   fake_signer_clear(&fake);
 }
 
+typedef struct {
+  guint events;
+  guint eoses;
+} RelaydRead;
+
+static void
+relayd_read_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  (void)scope;
+  RelaydRead *read = data;
+  if (update->notice == GH_RELAY_NOTICE_EVENT) read->events++;
+  if (update->notice == GH_RELAY_NOTICE_EOSE) read->eoses++;
+}
+
+/* Use the production Groundhog publisher against the first-party TCP daemon,
+ * not a fixture's hand-written OK. The daemon stores the signed EVENT and
+ * returns its own NIP-01 OK; this is the onboarding relay-list failure path. */
+static void
+test_nostrc_relayd_publish(void)
+{
+  const gchar *bin = g_getenv("NOSTRC_RELAYD");
+  g_assert_nonnull(bin);
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *dir = g_dir_make_tmp("gh-relayd-publish-XXXXXX", &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(dir);
+  g_autoptr(GSocketListener) listener = g_socket_listener_new();
+  guint16 port = gh_test_listen_loopback(listener);
+  g_socket_listener_close(listener);
+  g_autofree gchar *config = g_build_filename(dir, "relay.toml", NULL);
+  g_autofree gchar *contents = g_strdup_printf(
+      "listen = \"127.0.0.1:%u\"\nstorage_driver = \"nostrdb\"\n", port);
+  g_assert_true(g_file_set_contents(config, contents, -1, &error));
+  g_assert_no_error(error);
+
+  g_autoptr(GSubprocessLauncher) launcher =
+      g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                G_SUBPROCESS_FLAGS_STDERR_SILENCE);
+  g_subprocess_launcher_set_cwd(launcher, dir);
+  g_autoptr(GSubprocess) daemon = g_subprocess_launcher_spawn(launcher, &error, bin, NULL);
+  g_assert_no_error(error);
+  g_assert_nonnull(daemon);
+  g_autofree gchar *url = g_strdup_printf("ws://127.0.0.1:%u", port);
+
+  /* Bound only to wait for process readiness, not to advance the protocol. */
+  gboolean ready = FALSE;
+  for (guint i = 0; i < 500 && !ready; i++) {
+    g_autoptr(GSocketClient) client = g_socket_client_new();
+    g_autoptr(GSocketConnection) connection =
+        g_socket_client_connect_to_host(client, "127.0.0.1", port, NULL, NULL);
+    ready = connection != NULL;
+    if (!ready) g_usleep(10000);
+  }
+
+  Outcomes outcomes;
+  outcomes_init(&outcomes);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1);
+  nostr_event_set_created_at(event, time(NULL));
+  nostr_event_set_content(event, "first-party relay publish");
+  g_assert_cmpint(nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_autofree gchar *json = g_strdup(raw);
+  free(raw);
+  GhRelayPublish *publish = NULL;
+  if (ready) {
+    publish = gh_relay_publish_new(42, json, on_update, on_done, &outcomes, &error);
+    if (publish && gh_relay_publish_add_url(publish, url, &error) &&
+        gh_relay_publish_start(publish, &error)) {
+      WaitState wait = {0};
+      guint timeout_source = g_timeout_add_seconds(18, expire, &wait);
+      while (!outcomes.done && !wait.timed_out)
+        g_main_context_iteration(NULL, TRUE);
+      if (!wait.timed_out) g_source_remove(timeout_source);
+    }
+  }
+  if (publish) gh_relay_publish_unref(publish);
+
+  RelaydRead read = {0};
+  if (outcomes.summary.accepted == 1) {
+    NostrFilters *filters = nostr_filters_new();
+    NostrFilter *filter = nostr_filter_new();
+    int kinds[] = {1};
+    nostr_filter_set_kinds(filter, kinds, 1);
+    g_assert_true(nostr_filters_add(filters, filter));
+    nostr_filter_free(filter);
+    GhRelayScope *scope = gh_relay_scope_new(43, filters, relayd_read_update, &read);
+    g_assert_true(gh_relay_scope_add_url(scope, url, &error));
+    gh_relay_scope_start(scope);
+    WaitState wait = {0};
+    guint timeout_source = g_timeout_add_seconds(18, expire, &wait);
+    while (!read.eoses && !wait.timed_out)
+      g_main_context_iteration(NULL, TRUE);
+    if (!wait.timed_out) g_source_remove(timeout_source);
+    gh_relay_scope_cancel(scope);
+    gh_relay_scope_unref(scope);
+  }
+  g_subprocess_force_exit(daemon);
+  g_subprocess_wait(daemon, NULL, NULL);
+  outcomes_clear(&outcomes);
+  g_assert_cmpuint(outcomes.done, ==, 1);
+  g_assert_true(ready);
+  g_assert_no_error(error);
+  g_assert_cmpuint(outcomes.summary.accepted, ==, 1);
+  g_assert_true(outcomes.summary.any_accepted);
+  g_assert_cmpuint(read.events, ==, 1);
+  g_assert_cmpuint(read.eoses, ==, 1);
+}
+
+/* Manual local-Docker interop probe for third-party relays. */
+static void
+test_external_relay_publish(void)
+{
+  const gchar *url = g_getenv("GH_TEST_INTEROP_RELAY_URL");
+  g_assert_nonnull(url);
+  Outcomes outcomes;
+  outcomes_init(&outcomes);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 1);
+  nostr_event_set_created_at(event, time(NULL));
+  nostr_event_set_content(event, "local relay interoperability");
+  g_assert_cmpint(nostr_event_sign(event,
+    "0000000000000000000000000000000000000000000000000000000000000001"), ==, 0);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_autofree gchar *json = g_strdup(raw);
+  free(raw);
+  g_autoptr(GError) error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new(44, json, on_update, on_done,
+                                                 &outcomes, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(publish);
+  g_assert_true(gh_relay_publish_add_url(publish, url, &error));
+  g_assert_true(gh_relay_publish_start(publish, &error));
+  WaitState wait = {0};
+  guint timeout_source = g_timeout_add_seconds(18, expire, &wait);
+  while (!outcomes.done && !wait.timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!wait.timed_out) g_source_remove(timeout_source);
+  gh_relay_publish_unref(publish);
+  g_assert_no_error(error);
+  g_assert_cmpuint(outcomes.done, ==, 1);
+  g_test_message("external relay outcome=%d message=%s",
+                 outcome_for(&outcomes, url),
+                 (const gchar *)g_hash_table_lookup(outcomes.messages, url));
+  g_assert_cmpuint(outcomes.summary.accepted, ==, 1);
+  outcomes_clear(&outcomes);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -611,5 +765,11 @@ main(int argc, char **argv)
     { "/groundhog/relay-publish-wire/owner-context", test_wire_callbacks_on_owner_context, FALSE },
   };
   wire_add_tests(cases, G_N_ELEMENTS(cases));
+  if (g_getenv("NOSTRC_RELAYD"))
+    g_test_add_func("/groundhog/relay-publish-wire/nostrc-relayd",
+                    test_nostrc_relayd_publish);
+  if (g_getenv("GH_TEST_INTEROP_RELAY_URL"))
+    g_test_add_func("/groundhog/relay-publish-wire/external-interop",
+                    test_external_relay_publish);
   return g_test_run();
 }

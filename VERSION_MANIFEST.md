@@ -11,7 +11,7 @@ files already declare a version.
 
 | Component | Path | Declared version | Latest release | Release tag | Authoritative version source(s) |
 | --- | --- | --- | --- | --- | --- |
-| libnostr | `libnostr/` | 1.1.2 | Unreleased | — | `libnostr/CMakeLists.txt` |
+| libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.2.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
 | nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
@@ -38,6 +38,10 @@ Decisions for components affected by another component's change (AGENTS.md,
 | W28 release-review interoperability and Blossom consent-copy corrections | groundhog | 0.12.0 | No further bump: user-facing wording and matching UI assertions are folded into the unreleased 0.12.0 MINOR; no API, wire or storage-format change. |
 | W28 About dialog owner credit and Nostr identity (Biz, copyable npub link) | groundhog | 0.12.0 | No further bump: shipped UI metadata change is folded into the unreleased 0.12.0 MINOR; no new API or incompatible format. |
 | W28 owner decision (nostrc-7gx7): encrypted groups available by default, preview guard retired, picker lifetime/input/cap hardened, Marmot interoperability and privacy disclosures in UI and metainfo | groundhog | 0.12.0 | No further bump: the already-declared, unreleased 0.12.0 is the required MINOR bump since 0.11.x. It first added the encrypted-group media library and now includes the public encrypted-group capability. No 0.13.0 before the first 0.12.0 release. |
+| WebSocket NIP-01 interop (nostrc-hja5): libnostr binds its local lws callback with `local_protocol_name` but offers no `Sec-WebSocket-Protocol`; a first-party relay publishes successfully from Groundhog. | libnostr | 1.1.3 | PATCH from 1.1.2: compatible wire-protocol bug fix; no API or ABI change. |
+| Same: relayd accepts the legacy `wss` offer as an alias for Nostr, while continuing to accept a missing offer. | relayd | untracked | No bump: relayd has no declared component version; compatible handshake fix. libwebsockets cannot omit negotiation for an arbitrary unknown offer, so general unknown-token tolerance is tracked as nostrc-2oxs. |
+| Same: Groundhog gets a real nostrc-relayd publisher CTest; production Groundhog code is unchanged. | groundhog | 0.12.0 | No bump: test-only, no shipped artifact change. |
+| Same: the shared mock relay routes no-subprotocol upgrades to its Nostr callback, with HTTP/NIP-11 forwarded. | test harness | untracked | No bump: test fixture only; no shipped component change. |
 | libmarmot 0.3.6 -> 0.4.0 (MINOR: breaking LeafNodeTBS wire change, nostrc-2io4; plus nostrc-lz4f, -va60, -5q55, -8u1k) | libmarmot | 0.4.0 | MINOR bump (0.x breaking wire change; migration notes in `libmarmot/README.md`). |
 | same | marmot-gobject | 1.1.0 | No bump: no source, API or ABI change. It links libmarmot statically, so its next (first) 1.1.0 release embeds 0.4.0 and must carry libmarmot's wire-compatibility note. |
 | same | gnostr | 0.1.0 | No bump: 0.1.0 is not yet released (only `gnostr-v0.1.0-preview`), so the statically linked libmarmot 0.4.0 and the mls-groups `group-error` signal/toast ship in 0.1.0. Its release notes must say that 0.1.0 cannot follow path Commits from the 0.1.0-preview (libmarmot 0.1.0). |
