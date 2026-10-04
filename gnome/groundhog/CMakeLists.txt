@@ -734,8 +734,8 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
   endif()
   target_compile_options(groundhog-store-key PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
-    # KC-1..KC-5 against the in-process FakeSecret backend, plus the libsecret
-    # backend on a private bus with no Secret Service (KC-4).
+    # KC-1..KC-5 use FakeSecret; KC-4 explicitly selects libsecret with no
+    # session bus on every platform (never the macOS default Keychain).
     add_executable(test-groundhog-store-key
       tests/store/test_store_key.c tests/store/fake-secret.c)
     target_link_libraries(test-groundhog-store-key PRIVATE groundhog-store-key)
@@ -759,9 +759,9 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
         ${CMAKE_SOURCE_DIR}/tests/common)
     endif()
   endforeach()
-    # KC-6: a real gnome-keyring on a private bus (or, with
-    # GH_STORE_KEY_TEST_SESSION_KEYRING=1, the session's). Skips (77) only
-    # when gnome-keyring-daemon or dbus-daemon is not installed.
+    # KC-6: a real gnome-keyring on a private bus, explicitly selected as
+    # libsecret. Linux CI may use its throwaway session via the override;
+    # macOS ignores that override. Skips (77) only without required daemons.
     add_executable(test-groundhog-store-key-keyring
       tests/store/test_store_key_keyring.c tests/store/fake-secret.c)
     target_link_libraries(test-groundhog-store-key-keyring PRIVATE groundhog-store-key nostrc-test-bus)

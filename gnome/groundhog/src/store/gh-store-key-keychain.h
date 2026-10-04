@@ -29,6 +29,9 @@ G_DECLARE_FINAL_TYPE(GhStoreKeyKeychain, gh_store_key_keychain,
 void gh_store_key_keychain_set_keychain(GhStoreKeyKeychain *self,
                                         SecKeychainRef      keychain);
 
+/* Internal status mapping, exposed here for deterministic tests. */
+GhStoreKeyError gh_store_key_keychain_error_from_status(OSStatus status);
+
 G_END_DECLS
 
 #endif /* __APPLE__ */

@@ -15,6 +15,7 @@
 #include "gh-store-key.h"
 #include "gh-store-key-keychain.h"
 #include <Security/Security.h>
+#include <Security/Authorization.h>
 #include <sodium.h>
 #include <glib.h>
 #include <unistd.h>
@@ -209,15 +210,28 @@ test_store_search_verify(void)
   destroy_temp_keychain();
 }
 
-/* KC-MAC-4: when the Keychain is unavailable (errSecNotAvailable / -60006,
- * e.g. no default keychain in a headless gate environment), every operation
- * must surface GH_STORE_KEY_ERROR_UNAVAILABLE, not a generic FAILED.
- *
- * This cannot be tested reliably from a GUI session (the login keychain is
- * always available); the mapping is exercised by the
- * /store-key-libsecret/kc4-no-session-bus and /store-key/kc4/bus-without-
- * secret-service tests in test_store_key.c / test_store_key_keyring.c, which
- * run in the pre-push gate's hermetic (no-GUI) environment. */
+/* Inject statuses directly: no security prompt or default keychain is used.
+ * The numeric assertions catch an SDK-constant mix-up such as -60006/-25291. */
+static void
+test_error_mapping(void)
+{
+  g_assert_cmpint(errAuthorizationCanceled, ==, -60006);
+  g_assert_cmpint(errSecNotAvailable, ==, -25291);
+  const struct {
+    OSStatus status;
+    GhStoreKeyError expected;
+  } cases[] = {
+    { -60006, GH_STORE_KEY_ERROR_LOCKED },
+    { errSecUserCanceled, GH_STORE_KEY_ERROR_LOCKED },
+    { errSecInteractionNotAllowed, GH_STORE_KEY_ERROR_LOCKED },
+    { errSecAuthFailed, GH_STORE_KEY_ERROR_LOCKED },
+    { -25291, GH_STORE_KEY_ERROR_UNAVAILABLE },
+    { errSecParam, GH_STORE_KEY_ERROR_FAILED },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++)
+    g_assert_cmpint(gh_store_key_keychain_error_from_status(cases[i].status),
+                    ==, cases[i].expected);
+}
 
 int
 main(int argc, char *argv[])
@@ -228,6 +242,7 @@ main(int argc, char *argv[])
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/store-key-keychain/store-search-verify",
                   test_store_search_verify);
+  g_test_add_func("/store-key-keychain/error-mapping", test_error_mapping);
   return g_test_run();
 }
 

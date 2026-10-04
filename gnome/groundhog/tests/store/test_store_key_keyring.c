@@ -13,12 +13,10 @@
  * exits 77 at once; without gnome-keyring-daemon it runs the bus-only check
  * and then exits 77, since KC-6 itself could not run.
  *
- * With GH_STORE_KEY_TEST_SESSION_KEYRING=1 it instead uses the ambient
- * session bus, which must already have an unlocked Secret Service (CI runs
- * it under dbus-run-session after `gnome-keyring-daemon --unlock`); a missing
- * service is then a failure, not a skip. That mode is for throwaway sessions
- * only: it locks the default keyring at the end and leaves one locked test
- * item there (and a failing run may leave more). */
+ * On Linux only, GH_STORE_KEY_TEST_SESSION_KEYRING=1 uses an ambient
+ * throwaway session bus (CI's dbus-run-session). macOS always uses the private
+ * bus, even with that override, and every GhStoreKey in this file explicitly
+ * selects libsecret rather than the default login-Keychain backend. */
 #include "fake-secret.h"
 #include "nostrc-test-bus.h"
 
@@ -47,6 +45,17 @@ static gboolean keyring_started;
 static gchar *keyring_program; /* NULL: gnome-keyring-daemon is not installed */
 
 static void ensure_keyring(void);
+
+GType gh_store_key_secret_service_get_type(void); /* private implementation */
+
+static GhStoreKey *
+new_libsecret_store_key(void)
+{
+  GhStoreKeyBackend *backend = g_object_new(gh_store_key_secret_service_get_type(), NULL);
+  GhStoreKey *store_key = gh_store_key_new(backend);
+  g_object_unref(backend);
+  return store_key;
+}
 
 static gchar *
 random_account(void)
@@ -130,7 +139,7 @@ static void
 test_round_trip(void)
 {
   ensure_keyring();
-  GhStoreKey *store_key = gh_store_key_new(NULL);
+  GhStoreKey *store_key = new_libsecret_store_key();
   gchar *a = random_account(), *b = random_account();
 
   GhTestKeyResult missing = gh_test_lookup(store_key, a, GH_STORE_KEY_FLAGS_NONE, NULL);
@@ -221,7 +230,7 @@ static void
 test_locked_background(void)
 {
   ensure_keyring();
-  GhStoreKey *store_key = gh_store_key_new(NULL);
+  GhStoreKey *store_key = new_libsecret_store_key();
   gchar *c = random_account(), *d = random_account();
   GhTestKeyResult created = gh_test_lookup_or_create(store_key, c, GH_STORE_KEY_FLAGS_NONE, NULL);
   g_assert_no_error(created.error);
@@ -365,20 +374,14 @@ stop_private_daemons(void)
   tmp_root = NULL;
 }
 
-/* KC-4 on a live bus: nothing owns org.freedesktop.secrets (the keyring is
- * not started yet), so every operation is UNAVAILABLE, interactive or not. */
-/* On macOS the default backend is the Keychain, which doesn't rely on the
- * session bus.  The Keychain errSecNotAvailable → UNAVAILABLE mapping is
- * exercised in the pre-push gate's hermetic (no-GUI) environment. */
+/* KC-4 on a private live bus: nothing owns org.freedesktop.secrets (the
+ * keyring is not started yet). The explicitly selected libsecret backend
+ * must report UNAVAILABLE for every operation on macOS and Linux. */
 static void
 test_bus_without_secret_service(void)
 {
-#ifdef __APPLE__
-  g_test_skip("libsecret-specific: macOS uses the Keychain backend");
-  return;
-#endif
   g_assert_false(keyring_started);
-  GhStoreKey *store_key = gh_store_key_new(NULL);
+  GhStoreKey *store_key = new_libsecret_store_key();
   gchar *account = random_account();
   for (guint interactive = 0; interactive < 2; interactive++) {
     GhStoreKeyFlags flags = interactive ? GH_STORE_KEY_FLAGS_INTERACTIVE : GH_STORE_KEY_FLAGS_NONE;
@@ -402,6 +405,10 @@ main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   gboolean session = g_strcmp0(g_getenv("GH_STORE_KEY_TEST_SESSION_KEYRING"), "1") == 0;
+#ifdef __APPLE__
+  /* Never connect this test to an ambient service on a developer's Mac. */
+  session = FALSE;
+#endif
   if (!session) {
     if (!nostrc_test_bus_available()) {
       g_print("SKIP: no Secret Service available (dbus-daemon is not installed)\n");

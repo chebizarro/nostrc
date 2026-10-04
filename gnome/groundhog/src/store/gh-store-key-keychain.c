@@ -22,6 +22,7 @@
 
 #include "gh-store-key-keychain.h"
 #include <Security/Security.h>
+#include <Security/Authorization.h>
 #include <sodium.h>
 
 struct _GhStoreKeyKeychain {
@@ -98,19 +99,19 @@ kc_scope_query(GhStoreKeyKeychain *self, CFMutableDictionaryRef q, gboolean for_
 #pragma clang diagnostic pop
 }
 
-/* Map an OSStatus to a GhStoreKeyError code.
- * errSecNotAvailable (-60006): the Keychain is unreachable — no default
- *   keychain, or running in a hermetic environment without a GUI session.
- * errSecAuthFailed (-25293): the keychain is locked and could not be
- *   unlocked (no UI or user cancelled).
- * Everything else: generic backend failure. */
-static GhStoreKeyError
-kc_map_error(OSStatus st)
+/* Cancellation or forbidden interaction means the key may still be present:
+ * report LOCKED so the UI offers unlock/retry, not an unavailable backend.
+ * Only errSecNotAvailable (-25291) means no Keychain is available. */
+GhStoreKeyError
+gh_store_key_keychain_error_from_status(OSStatus st)
 {
   switch (st) {
-  case errSecNotAvailable: return GH_STORE_KEY_ERROR_UNAVAILABLE;
-  case errSecAuthFailed:   return GH_STORE_KEY_ERROR_LOCKED;
-  default:                 return GH_STORE_KEY_ERROR_FAILED;
+  case errSecNotAvailable:         return GH_STORE_KEY_ERROR_UNAVAILABLE;
+  case errAuthorizationCanceled:   /* -60006: authorization prompt canceled */
+  case errSecUserCanceled:         /* -128: Keychain prompt canceled */
+  case errSecInteractionNotAllowed: /* -25308: interaction disallowed */
+  case errSecAuthFailed:           return GH_STORE_KEY_ERROR_LOCKED;
+  default:                         return GH_STORE_KEY_ERROR_FAILED;
   }
 }
 
@@ -205,7 +206,7 @@ kc_search_in_thread(GTask *task, gpointer source, gpointer task_data,
     if (cf_acct) CFRelease(cf_acct);
     g_ptr_array_unref(out);
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            kc_map_error(st),
+                            gh_store_key_keychain_error_from_status(st),
                             "Keychain search failed: %d", (int)st);
     if (result) CFRelease(result);
     return;
@@ -333,7 +334,7 @@ kc_store_in_thread(GTask *task, gpointer source, gpointer task_data,
     g_task_return_boolean(task, TRUE);
   } else {
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            kc_map_error(st),
+                            gh_store_key_keychain_error_from_status(st),
                             "Keychain store failed: %d", (int)st);
   }
 }
@@ -399,7 +400,7 @@ kc_clear_in_thread(GTask *task, gpointer source, gpointer task_data,
     g_task_return_boolean(task, TRUE);
   } else {
     g_task_return_new_error(task, GH_STORE_KEY_ERROR,
-                            kc_map_error(st),
+                            gh_store_key_keychain_error_from_status(st),
                             "Keychain clear failed: %d", (int)st);
   }
 }
