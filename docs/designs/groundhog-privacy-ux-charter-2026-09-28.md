@@ -332,10 +332,13 @@ CREATE INDEX messages_by_expiry ON messages (expires_at) WHERE expires_at IS NOT
 -- Schema v8 (W28, nostrc-r41l): pending_reactions keeps a reaction's
 -- room, target, author, emoji and event id until that exact room's message
 -- arrives. reaction_tombstones keeps author/room-scoped NIP-09 deletions that
--- arrived first. Both are encrypted with the account store, capped separately
--- at 64 rows per author per room and 512 per room, and seven days by local
--- arrival time; neither is displayed. Traffic in one room cannot evict
--- deferred reactions or deletion notices in another room.
+-- arrived first. Only an already-known room may retain either entry. Both are
+-- encrypted with the account store, capped separately at 64 rows per author
+-- per room, 512 per room, and 4096 per account, and seven days by local
+-- receipt time. A persistent arrival sequence determines oldest-first
+-- eviction within a room, even for same-second arrivals. At account capacity,
+-- a new under-quota entry is refused rather than evicting another known
+-- room's deferred entry; neither table is displayed.
 
 CREATE TABLE seen (ns INTEGER NOT NULL, id TEXT NOT NULL, first_seen INTEGER NOT NULL,
                    PRIMARY KEY (ns, id)) WITHOUT ROWID;   -- ns: 1 wrap id, 2 rumor id, 3 NIP-29 event, 4 MLS msg,
@@ -864,7 +867,8 @@ creates a distinct event ID so deletion of the old reaction cannot mask it.)*
 shown only after its target enters the same room. Early deletions prevent a
 late reaction from creating a stale chip. Unresolved reactions and deletion
 notices expire after seven days or their per-author/per-room and per-room
-quotas (64 and 512 rows respectively).)*
+quotas (64 and 512 rows respectively). Unknown rooms are not retained; each
+table also has a 4096-row account admission ceiling.)*
 
 Illustrative Blueprint:
 

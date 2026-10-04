@@ -386,21 +386,23 @@ static const gchar schema_v7[] =
   "CREATE INDEX reactions_by_target ON reactions (conversation_id, target_msg_id);"
   "CREATE INDEX reactions_by_sender ON reactions (conversation_id, sender_pubkey, target_msg_id);";
 
-/* Arrival time, rather than the untrusted event timestamp, bounds deferred
- * reactions and deletion notices. Neither table may point at a conversation:
- * the message (and even its room) can arrive after the reaction. */
+/* Receipt time bounds deferred entries; the local sequence orders receipts
+ * within the same second. The target message can arrive after the reaction. */
 static const gchar schema_v8[] =
+  "CREATE INDEX conversations_by_backend_key ON conversations(backend_key);"
   "CREATE TABLE pending_reactions ("
-  "  reaction_msg_id TEXT PRIMARY KEY,"
+  "  arrival_seq INTEGER PRIMARY KEY AUTOINCREMENT,"
+  "  reaction_msg_id TEXT NOT NULL UNIQUE,"
   "  room_id TEXT NOT NULL, target_msg_id TEXT NOT NULL,"
   "  sender_pubkey TEXT NOT NULL, emoji TEXT NOT NULL,"
-  "  created_at INTEGER NOT NULL, received_at INTEGER NOT NULL) WITHOUT ROWID;"
+  "  created_at INTEGER NOT NULL, received_at INTEGER NOT NULL);"
   "CREATE INDEX pending_reactions_target ON pending_reactions(room_id, target_msg_id);"
   "CREATE INDEX pending_reactions_age ON pending_reactions(received_at);"
   "CREATE TABLE reaction_tombstones ("
+  "  arrival_seq INTEGER PRIMARY KEY AUTOINCREMENT,"
   "  reaction_msg_id TEXT NOT NULL, room_id TEXT NOT NULL,"
   "  sender_pubkey TEXT NOT NULL, received_at INTEGER NOT NULL,"
-  "  PRIMARY KEY(reaction_msg_id, room_id, sender_pubkey)) WITHOUT ROWID;"
+  "  UNIQUE(reaction_msg_id, room_id, sender_pubkey));"
   "CREATE INDEX reaction_tombstones_age ON reaction_tombstones(received_at);";
 
 static const GhStoreMigration migrations[] = {

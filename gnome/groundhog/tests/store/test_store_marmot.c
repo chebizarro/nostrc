@@ -2210,6 +2210,7 @@ make_v1_store(const TestAccount *account)
    * group pictures. */
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
+  sql_exec(store, "DROP INDEX conversations_by_backend_key");
   sql_exec(store, "DROP TABLE reactions");
   sql_exec(store, "DROP TABLE group_images");
   sql_exec(store, "DROP TABLE message_media");
@@ -2302,6 +2303,7 @@ test_migration_v6_scrubs_messages(void)
   sql_exec(store, "DROP INDEX mls_messages_by_epoch");
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
+  sql_exec(store, "DROP INDEX conversations_by_backend_key");
   sql_exec(store, "DROP TABLE reactions");
   sql_exec(store, "DELETE FROM schema_migrations WHERE version >= 6");
   sql_exec(store, "PRAGMA user_version = 5");
@@ -2391,6 +2393,10 @@ test_migration_v7_to_v8(void)
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pending_reactions"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reaction_tombstones"), ==, 0);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pragma_table_info('pending_reactions') "
+                                 "WHERE name = 'arrival_seq'"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pragma_table_info('reaction_tombstones') "
+                                 "WHERE name = 'arrival_seq'"), ==, 1);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reactions WHERE "
                                  "reaction_msg_id = 'old-reaction'"), ==, 1);
   assert_integrity(store);
