@@ -6,7 +6,7 @@
 
 ## Hosts, source and build
 
-| | A — gnome-dev (amd64 lab VM) | B — local UTM VM (arm64) |
+| | A — lab VM A (amd64) | B — local UTM VM (arm64) |
 |---|---|---|
 | VM | Ubuntu 24.04.5 LTS, x86_64, 23 GiB reported RAM | Ubuntu 24.04.5 LTS, aarch64 UTM/QEMU, 3.8 GiB reported RAM (provisioned as the small-memory VM) |
 | Toolchain | CMake 3.28.3, GCC 13.3.0, GTK 4.14.5, libadwaita 1.5.0, Blueprint 0.12.0, GStreamer 1.24.2 | Same versions |
