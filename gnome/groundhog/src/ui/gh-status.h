@@ -135,6 +135,10 @@ GhStatusStore gh_status_get_store(GhStatus *self);
 const gchar *gh_status_get_store_error(GhStatus *self);
 GhStatusBanner gh_status_get_banner(GhStatus *self);
 
+/* Set only after startup detects a session bus that did not complete AUTH.
+ * The ordinary no-bus state keeps its generic, accurate copy. */
+void gh_status_set_bus_unresponsive(gboolean unresponsive);
+
 /* Translated banner copy; "" for NONE. */
 const gchar *gh_status_banner_get_title(GhStatusBanner banner);
 /* The banner's button and the detailed action it activates, or NULL when the

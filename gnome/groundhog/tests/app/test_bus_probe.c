@@ -8,6 +8,7 @@
  * --smoke mode. The process must exit within a bounded timeout instead of
  * hanging in g_bus_get_sync(). */
 #include <glib.h>
+#include "nostrc-test-bus.h"
 #include <glib/gstdio.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -140,13 +141,15 @@ test_stalled_bus(void)
     waitpid(child_pid, &child_status, 0);
   }
 
-  /* Read stderr for diagnostic output. */
+  /* Read stderr for diagnostic output and the honest fallback notice. */
+  gboolean fallback_logged = FALSE;
   if (child_stderr >= 0) {
     char buf[4096];
     ssize_t n = read(child_stderr, buf, sizeof(buf) - 1);
     if (n > 0) {
       buf[n] = '\0';
       g_test_message("groundhog stderr: %s", buf);
+      fallback_logged = strstr(buf, "session bus did not respond") != NULL;
     }
     close(child_stderr);
   }
@@ -161,6 +164,7 @@ test_stalled_bus(void)
 
   /* 8. Assert: groundhog must not have timed out. */
   g_assert_false(timed_out);
+  g_assert_true(fallback_logged);
 
   /* The smoke may exit 0 (display available, tree OK), 77 (no display,
    * skipped) or 1 (smoke failed). All are acceptable: the test only
@@ -172,10 +176,90 @@ test_stalled_bus(void)
   }
 }
 
+/* Healthy bus: run groundhog --smoke against a real dbus-daemon (the one
+ * that is already running for this test).  The probe must NOT trigger
+ * the fallback — the smoke must get a bus connection.  We detect the
+ * fallback by looking for the "session bus did not respond" log message
+ * on stderr; its absence proves the healthy bus was correctly accepted. */
+static void
+test_healthy_bus(void)
+{
+  const gchar *groundhog_bin = g_getenv("GROUNDHOG_BIN");
+  if (!groundhog_bin)
+    groundhog_bin = "groundhog";
+
+  /* Start an answering bus, rather than depending on the CI shell's bus. */
+  if (!nostrc_test_bus_available()) {
+    g_test_skip("dbus-daemon unavailable");
+    return;
+  }
+  NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(bus);
+  const gchar *addr = nostrc_test_bus_get_address(bus);
+
+  gchar *child_argv[] = { (gchar *)groundhog_bin, "--smoke", NULL };
+  g_auto(GStrv) env = g_get_environ();
+  env = g_environ_setenv(env, "GSETTINGS_BACKEND", "memory", TRUE);
+  env = g_environ_setenv(env, "DBUS_SESSION_BUS_ADDRESS", addr, TRUE);
+#ifdef __APPLE__
+  env = g_environ_setenv(env, "GROUNDHOG_RUN_GUI_SMOKE", "1", TRUE);
+#endif
+
+  GPid child_pid = 0;
+  gint child_stderr = -1;
+  GError *error = NULL;
+  gboolean spawned = g_spawn_async_with_pipes(
+    NULL, child_argv, env,
+    G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD,
+    NULL, NULL, &child_pid, NULL, NULL, &child_stderr, &error);
+  if (!spawned) {
+    g_test_skip("groundhog binary not found");
+    g_clear_error(&error);
+    nostrc_test_bus_down(bus);
+    return;
+  }
+
+  /* Wait up to 15 s. */
+  gint status = -1;
+  gboolean timed_out = TRUE;
+  for (int i = 0; i < 150; i++) {
+    if (waitpid(child_pid, &status, WNOHANG) > 0) {
+      timed_out = FALSE;
+      break;
+    }
+    g_usleep(100 * 1000);
+  }
+  if (timed_out) {
+    kill(child_pid, SIGKILL);
+    waitpid(child_pid, &status, 0);
+  }
+
+  /* Read stderr and check for the fallback message. */
+  gboolean probe_fired = FALSE;
+  if (child_stderr >= 0) {
+    char buf[8192];
+    ssize_t n = read(child_stderr, buf, sizeof(buf) - 1);
+    if (n > 0) {
+      buf[n] = '\0';
+      g_test_message("groundhog stderr: %s", buf);
+      probe_fired = strstr(buf, "session bus did not respond") != NULL;
+    }
+    close(child_stderr);
+  }
+
+  nostrc_test_bus_down(bus);
+  g_assert_false(timed_out);
+  g_assert_true(WIFEXITED(status));
+  g_assert_cmpint(WEXITSTATUS(status), ==, 0);
+  g_assert_false(probe_fired);
+  g_test_message("healthy bus correctly accepted by probe");
+}
+
 int
 main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/bus-probe/stalled", test_stalled_bus);
+  g_test_add_func("/groundhog/bus-probe/healthy", test_healthy_bus);
   return g_test_run();
 }

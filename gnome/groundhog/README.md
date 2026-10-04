@@ -8,8 +8,10 @@ relay groups and Marmot (MLS) encrypted groups.
 
 A named instance runs Groundhog with fully isolated data, so two
 instances on the same machine behave as two separate devices from the
-protocol's point of view—each has its own keys, encrypted store, relay
-lists and MLS state.
+protocol's point of view—each selects a distinct signer identity and has its
+own encrypted store, relay lists and MLS state. They may share one signer
+and Secret Service under the same user account; this is not a security
+boundary against another process running as that user.
 
 ### Command line
 
@@ -32,19 +34,21 @@ GROUNDHOG_INSTANCE=dev2 groundhog
 | GSettings | system backend (dconf) | keyfile backend |
 | Encrypted store | `$XDG_DATA_HOME/groundhog/accounts/…` | under the instance's `XDG_DATA_HOME` |
 | D-Bus name | `org.nostr.Groundhog` | `org.nostr.Groundhog.NAME` |
+| Background autostart | Supported | Disabled: a desktop autostart entry cannot safely restart a named profile |
 
 Instance names are 1–32 characters, ASCII alphanumeric or underscore,
-starting with a letter. Invalid names are ignored (the default instance
-starts instead).
+starting with a letter. Invalid or missing names fail closed; Groundhog
+never silently opens the default profile instead. Named instances force the
+keyfile GSettings backend even when `GSETTINGS_BACKEND=dconf` is inherited.
 
 ### Session bus resilience
 
 If the session bus socket accepts connections but never answers the
 D-Bus AUTH handshake (common on macOS where launchd holds the socket),
-Groundhog probes the bus with a 5-second timeout before `gtk_init` or
-`g_application_run`. When the probe fails, Groundhog starts in
-offline mode with a banner: "Nostr Signer and notifications are
-unavailable."
+Groundhog performs a complete D-Bus connection and AUTH exchange with a
+5-second deadline before `gtk_init` or `g_application_run`. Only a stalled
+connection enters non-unique fallback mode, with the banner: "Nostr Signer
+and notifications are unavailable: the session bus isn't responding".
 
 ## Building
 

@@ -140,7 +140,7 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 - Hiding that you use Nostr, or (in direct mode) which relays you use.
 - Hiding from *your own* inbox relay that you receive messages and roughly when.
 - Confidentiality of NIP-29 relay groups from their relay operators.
-- Multi-device MLS: one device per MLS identity in v1, stated in onboarding and group info. *(Amended 2026-10-03, nostrc-lrac, W27 slice B: `--instance NAME` or `GROUNDHOG_INSTANCE=NAME` runs a second Groundhog on the same machine with fully isolated XDG directories, GSettings (keyfile backend), encrypted store and a distinct GApplication id (`org.nostr.Groundhog.NAME`). Each instance is a separate device from the protocol's point of view: its own keys, store, relay lists and MLS state. The threat model treats two instances as two independent users of the same machine (A3 boundaries apply between them only if they run as different UIDs; under the same UID, A4 applies). This is intended for development and acceptance testing of multi-device scenarios, not as a user-facing multi-account feature. See §3.2 for the on-disk layout.)*
+- Multi-device MLS: one device per MLS identity in v1, stated in onboarding and group info. *(Amended 2026-10-03, nostrc-lrac, W27 slice B: `--instance NAME` or `GROUNDHOG_INSTANCE=NAME` runs a second Groundhog on the same machine with fully isolated XDG directories, GSettings (keyfile backend), encrypted store and a distinct GApplication id (`org.nostr.Groundhog.NAME`). Each instance is a separate device from the protocol's point of view: a separately selected signer identity, store, relay lists and MLS state. The same user's Secret Service and signer may hold both identities; this is profile separation, not a same-UID security boundary. The threat model treats two instances as two independent users of the same machine (A3 boundaries apply between them only if they run as different UIDs; under the same UID, A4 applies). This is intended for development and acceptance testing of multi-device scenarios, not as a user-facing multi-account feature. See §3.2 for the on-disk layout.)*
 - Guaranteed deletion by relays or recipients for disappearing messages.
 - Resistance to a global passive adversary's timing analysis.
 
@@ -248,8 +248,10 @@ $ORIGINAL_XDG_DATA_HOME/.groundhog-instances/NAME/     (→ XDG_DATA_HOME)
 $ORIGINAL_XDG_CACHE_HOME/.groundhog-instances/NAME/    (→ XDG_CACHE_HOME)
 $ORIGINAL_XDG_STATE_HOME/.groundhog-instances/NAME/    (→ XDG_STATE_HOME)
 # The app id becomes org.nostr.Groundhog.NAME; GSettings uses the keyfile
-# backend (portable, no dconf needed). The store, autostart and all state
-# follow the overridden XDG dirs automatically.
+# backend even when GSETTINGS_BACKEND=dconf is inherited. Store and state
+# follow the overridden XDG dirs. Background autostart is disabled for named
+# instances: a nested XDG autostart file is not scanned and a default-profile
+# desktop service cannot safely restart this named device.
 ```
 
 - **Legacy inbox files (W13 review B1).**

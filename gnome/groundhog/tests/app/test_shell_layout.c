@@ -600,7 +600,13 @@ test_status_banners(void)
                 "Nostr Signer isn't running — messages can't be unlocked or sent");
   gh_status_set_signer(status, GH_STATUS_SIGNER_NO_BUS);
   assert_banner(window, GH_STATUS_BANNER_SIGNER_NO_BUS,
-                "No session bus — Nostr Signer can't be reached to unlock messages");
+                "Nostr Signer and notifications are unavailable: no session bus is available");
+  gh_status_set_signer(status, GH_STATUS_SIGNER_AVAILABLE);
+  gh_status_set_bus_unresponsive(TRUE);
+  gh_status_set_signer(status, GH_STATUS_SIGNER_NO_BUS);
+  assert_banner(window, GH_STATUS_BANNER_SIGNER_NO_BUS,
+                "Nostr Signer and notifications are unavailable: the session bus isn't responding");
+  gh_status_set_bus_unresponsive(FALSE);
   /* #6 outranks the signer (G09: Tor mode with nothing at the Tor address). */
   gh_status_set_tor_unreachable(status, TRUE);
   assert_banner(window, GH_STATUS_BANNER_TOR_UNREACHABLE,

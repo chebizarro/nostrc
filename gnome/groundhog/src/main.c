@@ -1,20 +1,24 @@
 #include "ui/gh-about-dialog.h"
+#include "ui/gh-status.h"
 #include <adwaita.h>
 #include <glib-unix.h>
 #include <signal.h>
 
 #include "gh-app-services.h"
+#if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
+#include "app/gh-test-control.h"
+#endif
 #if GROUNDHOG_HAVE_BACKGROUND
 #include "gh-background.h"
 #endif
 #include "gh-window.h"
+#ifdef GH_TEST_FONTCONFIG_CLEANUP
+#include <fontconfig/fontconfig.h>
+#endif
 
-/* nostrc-v59q: the D-Bus probe uses low-level sockets. */
+/* nostrc-v59q: the D-Bus probe uses a supervised GLib connection. */
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
@@ -36,6 +40,12 @@ static gboolean bus_fallback = FALSE;
 /* The instance name, if running as a named instance (nostrc-lrac). NULL for
  * the default instance. Validated in setup_instance(). */
 static const gchar *instance_name;
+static gchar *parsed_instance_option;
+static const GOptionEntry instance_options[] = {
+  { "instance", 0, 0, G_OPTION_ARG_STRING, &parsed_instance_option,
+    "Use an isolated Groundhog device instance", "NAME" },
+  { 0 }
+};
 
 /* ---- Instance support (nostrc-lrac) ----------------------------------------
  *
@@ -43,7 +53,7 @@ static const gchar *instance_name;
  *   - app id  org.nostr.Groundhog.NAME
  *   - XDG dirs  under <original>/.groundhog-instances/NAME
  *   - GSettings  keyfile backend (portable, no dconf needed)
- *   - encrypted store, autostart, state  follow XDG dirs automatically
+ *   - encrypted store and state  follow XDG dirs; background autostart is disabled
  *
  * Each instance is a separate device from the protocol's point of view:
  * its own keys, store, relay lists and MLS state. The privacy charter
@@ -74,33 +84,39 @@ valid_instance_name(const char *name)
 static const char *
 setup_instance(int argc, char **argv)
 {
-  /* 1. Check --instance NAME (must be before GLib touches the env). */
+  /* Select the profile before GLib caches XDG paths. GApplication parses
+   * the registered option later; do not mutate argv behind its back. */
   const char *name = NULL;
-  for (int i = 1; i < argc - 1; i++) {
+  for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--instance") == 0) {
-      name = argv[i + 1];
-      /* Remove from argv so GApplication doesn't see it. */
-      for (int j = i; j < argc - 2; j++)
-        argv[j] = argv[j + 2];
-      argc -= 2;
-      /* Patch argc through argv[0] convention — the caller's argc
-       * is not a pointer here; we'll return and let main() handle it. */
-      break;
+      if (name || i + 1 >= argc || argv[i + 1][0] == '-') {
+        fprintf(stderr, "Groundhog: --instance needs exactly one NAME\n");
+        exit(1);
+      }
+      name = argv[++i];
+    } else if (strncmp(argv[i], "--instance=", 11) == 0) {
+      if (name) {
+        fprintf(stderr, "Groundhog: --instance may only be specified once\n");
+        exit(1);
+      }
+      name = argv[i] + 11;
     }
   }
-
-  /* 2. Fall back to GROUNDHOG_INSTANCE env. */
   if (!name)
     name = getenv("GROUNDHOG_INSTANCE");
 
-  if (!name || !name[0])
+  if (!name)
     return NULL;
 
   if (!valid_instance_name(name)) {
     fprintf(stderr, "Groundhog: invalid instance name '%s' "
             "(1-32 chars, alphanumeric/underscore, starts with letter)\n", name);
-    return NULL;  /* Continue as default instance. */
+    exit(1);  /* Fail closed: never silently launch the default profile. */
   }
+
+  /* Child services (including background policy) see the CLI-selected name. */
+  if (name != getenv("GROUNDHOG_INSTANCE"))
+    setenv("GROUNDHOG_INSTANCE", name, 1);
 
   /* 3. Override XDG directories: each instance gets its own subtree.
    * The originals are read before any GLib caching can happen. */
@@ -134,13 +150,11 @@ setup_instance(int argc, char **argv)
     setenv(xdg_vars[i], buf, 1);
   }
 
-  /* 4. Use the keyfile GSettings backend so dconf isolation isn't needed.
-   * Don't override if the caller already chose a backend (e.g. "memory"
-   * for test runners). */
-  if (!getenv("GSETTINGS_BACKEND"))
-    setenv("GSETTINGS_BACKEND", "keyfile", 1);
+  /* A named device must never share dconf's fixed schema path with another
+   * device, regardless of a caller-supplied backend override. */
+  setenv("GSETTINGS_BACKEND", "keyfile", 1);
 
-  return name;
+  return g_strdup(name);
 }
 
 /* Build the app ID with the instance suffix, if any. The returned string
@@ -156,107 +170,43 @@ app_id_for_instance(const char *name)
   return buf;
 }
 
-/* ---- D-Bus probe (nostrc-v59q) -------------------------------------------
- *
- * The session bus might accept the socket (macOS launchd holds it) but
- * never answer the D-Bus AUTH handshake. g_application_register() calls
- * g_bus_get_sync() which calls _g_dbus_auth_run_client() which blocks in
- * select() with no timeout — the process hangs forever, never shows a
- * window, and ignores SIGTERM.
- *
- * This probe opens the Unix socket, sends the D-Bus AUTH null byte, and
- * waits for a response with a bounded timeout. If the daemon never
- * answers, the caller clears DBUS_SESSION_BUS_ADDRESS so GApplication
- * registers locally with NON_UNIQUE. The existing SIGNER_NO_BUS banner
- * tells the user. */
-
-/* Extract the Unix socket path from a D-Bus address of the form
- * "unix:path=/foo/bar[,guid=...]". Returns a newly allocated string,
- * or NULL for TCP, abstract or unrecognised addresses. */
-static gchar *
-dbus_unix_path(const gchar *address)
-{
-  const gchar *p = strstr(address, "unix:path=");
-  if (!p)
-    return NULL;
-  p += strlen("unix:path=");
-  const gchar *end = strpbrk(p, ",;");
-  return end ? g_strndup(p, (gsize)(end - p)) : g_strdup(p);
-}
-
-/* Returns TRUE if the session bus daemon answers the D-Bus AUTH handshake
- * within timeout_ms milliseconds. FALSE means the bus is unreachable or
- * stalled, and g_bus_get_sync() would hang. */
+/* A child performs GLib's real bus connection, including the complete AUTH
+ * exchange, without allowing a stalled auth worker to hang the UI process.
+ * The single monotonic deadline covers address resolution, connect and AUTH
+ * for Unix paths, abstract sockets, TCP and launchd addresses alike. */
 static gboolean
-session_bus_responds(guint timeout_ms)
+session_bus_connects(guint timeout_ms, gboolean *timed_out)
 {
-  /* Resolve the bus address without connecting. On macOS this queries
-   * launchd for DBUS_LAUNCHD_SESSION_BUS_SOCKET; it does not block. */
-  g_autoptr(GError) error = NULL;
-  g_autofree gchar *address =
-    g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, NULL, &error);
-  if (!address)
+  *timed_out = FALSE;
+  pid_t pid = fork();
+  if (pid < 0)
     return FALSE;
-
-  g_autofree gchar *path = dbus_unix_path(address);
-  if (!path)
-    return TRUE; /* TCP or abstract: assume alive, don't block. */
-
-  if (!g_file_test(path, G_FILE_TEST_EXISTS))
-    return FALSE;
-
-  /* Open a non-blocking Unix socket. */
-  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (fd < 0)
-    return FALSE;
-
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
-    close(fd);
-    return FALSE;
+  if (pid == 0) {
+    GError *error = NULL;
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+    if (bus)
+      g_object_unref(bus);
+    g_clear_error(&error);
+    _exit(bus ? 0 : 1);
   }
 
-  struct sockaddr_un sa;
-  memset(&sa, 0, sizeof(sa));
-  sa.sun_family = AF_UNIX;
-  g_strlcpy(sa.sun_path, path, sizeof(sa.sun_path));
-
-  int r = connect(fd, (struct sockaddr *)&sa, sizeof(sa));
-  if (r != 0 && errno != EINPROGRESS) {
-    close(fd);
-    return FALSE;
+  gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
+  int status = 0;
+  for (;;) {
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid)
+      return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (result < 0 && errno != EINTR)
+      return FALSE;
+    if (g_get_monotonic_time() >= deadline)
+      break;
+    g_usleep(20 * 1000);
   }
-
-  /* Wait for the connect to complete. */
-  struct pollfd pfd = { .fd = fd, .events = POLLOUT };
-  if (poll(&pfd, 1, (int)timeout_ms) <= 0) {
-    close(fd);
-    return FALSE;
-  }
-
-  /* Verify the connection actually succeeded. */
-  int so_error = 0;
-  socklen_t optlen = sizeof(so_error);
-  getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &optlen);
-  if (so_error != 0) {
-    close(fd);
-    return FALSE;
-  }
-
-  /* Send the D-Bus AUTH null byte — the very first byte a D-Bus client
-   * sends. A live daemon responds with "REJECTED ..." within
-   * milliseconds. A stalled socket (launchd placeholder) never answers. */
-  char nul = '\0';
-  if (write(fd, &nul, 1) < 0) {
-    close(fd);
-    return FALSE;
-  }
-
-  /* Wait for any response. */
-  pfd.events = POLLIN;
-  r = poll(&pfd, 1, (int)timeout_ms);
-  close(fd);
-  return r > 0;
+  *timed_out = TRUE;
+  kill(pid, SIGKILL);
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+    ;
+  return FALSE;
 }
 
 /* Check whether the session bus is reachable; if not, arrange for
@@ -275,12 +225,11 @@ probe_session_bus(GApplicationFlags *flags)
     return;
 #endif
 
-  /* Give the daemon 5 seconds. A local Unix socket responds in <10 ms
-   * when alive; 5 s is generous for CI, slow VMs and D-Bus broker startup. */
-  if (session_bus_responds(5000))
+  gboolean timed_out = FALSE;
+  if (session_bus_connects(5000, &timed_out) || !timed_out)
     return;
 
-  /* The bus is stalled or unreachable. Point the address at a path
+  /* A bus that never completed AUTH timed out. Point the address at a path
    * that fails fast (connect → ENOTSOCK) so g_bus_get_sync() returns
    * an error instead of blocking, and switch to non-unique so
    * g_application_register() does not fail. An empty string would
@@ -372,7 +321,16 @@ app_startup(GApplication *app, gpointer user_data)
     g_printerr("%s\n", error->message);
     smoke_status = 1;
     g_application_quit(app);
+    return;
   }
+#if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
+  if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0) {
+    GDBusConnection *bus = g_application_get_dbus_connection(app);
+    g_message("TestControl: startup bus=%p", (void *)bus);
+    if (bus)
+      gh_test_control_register(app_services, bus);
+  }
+#endif
 }
 
 /* Tears the services down in reverse order: the account's store closes
@@ -382,6 +340,10 @@ app_shutdown(GApplication *app, gpointer user_data)
 {
   (void)app;
   (void)user_data;
+#if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
+  if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0)
+    gh_test_control_unregister();
+#endif
   g_clear_pointer(&app_services, gh_app_services_free);
 }
 
@@ -434,20 +396,13 @@ main(int argc, char **argv)
    * caches XDG directories. Uses only libc, not GLib. */
   instance_name = setup_instance(argc, argv);
 
-  /* Re-count argc: setup_instance may have removed --instance NAME. */
-  {
-    int new_argc = 0;
-    while (argv[new_argc])
-      new_argc++;
-    argc = new_argc;
-  }
-
   /* D-Bus probe (nostrc-v59q): detect a stalled session bus before
    * any GLib or GTK function that might connect to D-Bus. On Linux,
    * gtk_init_check() initialises AT-SPI accessibility via the session
    * bus, so a stalled bus would hang there before the probe ever ran.
    * Must come before the --smoke block's gtk_init_check(). */
   probe_session_bus(&flags);
+  gh_status_set_bus_unresponsive(bus_fallback);
 
   if (argc == 2 && g_str_equal(argv[1], "--smoke")) {
     smoke_mode = TRUE;
@@ -485,6 +440,7 @@ main(int argc, char **argv)
 
   groundhog_register_resource();
   app = adw_application_new(app_id, flags);
+  g_application_add_main_option_entries(G_APPLICATION(app), instance_options);
   /* Logout ends the session's clients: GTK quits on the session manager's
    * EndSession/Stop, so a background process shuts down cleanly too. */
   g_object_set(app, "register-session", TRUE, NULL);
@@ -496,6 +452,10 @@ main(int argc, char **argv)
   status = g_application_run(G_APPLICATION(app), argc, argv);
   g_source_remove(sigterm);
   g_source_remove(sigint);
+#ifdef GH_TEST_FONTCONFIG_CLEANUP
+  if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0)
+    FcFini();
+#endif
   /* smoke_status is also set when the services could not start. */
   return smoke_status != 0 ? smoke_status : status;
 }

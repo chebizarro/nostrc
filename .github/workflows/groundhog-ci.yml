@@ -34,7 +34,7 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
-            desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
+            desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
             blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common
           # Ubuntu 24.04 ships blueprint-compiler 0.12, Groundhog's minimum;
           # groundhog-blueprint compares its output with the committed .ui.
@@ -216,6 +216,7 @@ jobs:
         groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard
         groundhog-media-cache-binding groundhog-attachments groundhog-mls-media
         groundhog-mls-files groundhog-mls-poll
+        groundhog-two-instance-acceptance
         nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain
     steps:
       - name: Checkout with submodules
@@ -232,7 +233,7 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
-            dbus-bin blueprint-compiler gnome-keyring
+            dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi
 
       - name: Configure with ASAN and UBSAN
         run: |

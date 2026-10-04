@@ -146,7 +146,7 @@ static const struct {
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE,
     N_("Nostr Signer isn't running — messages can't be unlocked or sent"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_SIGNER_NO_BUS,
-    N_("No session bus — Nostr Signer can't be reached to unlock messages"), TRUE, NULL, NULL },
+    N_("Nostr Signer and notifications are unavailable: no session bus is available"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_ERROR,
     N_("Can't receive messages on this device"), TRUE, NULL, NULL },
   /* [Set Up]: the onboarding inbox step chooses message relays and, with
@@ -176,11 +176,21 @@ static const struct {
 
 G_STATIC_ASSERT(G_N_ELEMENTS(banner_copy) == GH_STATUS_BANNER_LAST + 1);
 
+static gboolean bus_unresponsive;
+
+void
+gh_status_set_bus_unresponsive(gboolean unresponsive)
+{
+  bus_unresponsive = unresponsive;
+}
+
 const gchar *
 gh_status_banner_get_title(GhStatusBanner banner)
 {
   g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, "");
   g_assert(banner_copy[banner].banner == banner);
+  if (banner == GH_STATUS_BANNER_SIGNER_NO_BUS && bus_unresponsive)
+    return _("Nostr Signer and notifications are unavailable: the session bus isn't responding");
   return *banner_copy[banner].title ? _(banner_copy[banner].title) : "";
 }
 

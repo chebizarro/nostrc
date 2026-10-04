@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
     libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
-    desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
+    desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
     blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
     # gnostr-appimage.yml (Gnostr, gnostr-signer, nostr-gtk)
     libpeas-2-dev libqrencode-dev librsvg2-dev libgdk-pixbuf-2.0-dev \

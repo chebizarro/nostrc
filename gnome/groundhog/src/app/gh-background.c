@@ -39,6 +39,7 @@ struct _GhBackground {
   GDBusConnection *connection; /* nullable */
   GhBackgroundMethod method;
   gchar *autostart_dir;
+  gboolean named_instance; /* named devices cannot use default-profile autostart */
   gchar *state_dir;
   GObject *account_store; /* nullable */
   GCancellable *cancellable;
@@ -196,13 +197,17 @@ on_settings_changed(GSettings *settings, const gchar *key, GhBackground *self)
 {
   (void)key;
   gboolean enabled = g_settings_get_boolean(settings, RUN_IN_BACKGROUND);
+  if (self->named_instance && enabled) {
+    g_settings_set_boolean(settings, RUN_IN_BACKGROUND, FALSE);
+    return;
+  }
   if (enabled != self->enabled) {
     self->enabled = enabled;
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_ENABLED]);
   }
   sync_hold(self);
   update_status(self);
-  if (key_state(self) != self->target)
+  if (!self->named_instance && key_state(self) != self->target)
     request_reconcile(self);
 }
 
@@ -691,7 +696,12 @@ gh_background_new(GApplication *app, const GhBackgroundConfig *config)
                                                          NULL);
   g_autofree gchar *marker = explained_path(self);
   self->explained = g_file_test(marker, G_FILE_TEST_EXISTS);
+  self->named_instance = g_getenv("GROUNDHOG_INSTANCE") && *g_getenv("GROUNDHOG_INSTANCE");
   self->enabled = g_settings_get_boolean(self->settings, RUN_IN_BACKGROUND);
+  if (self->named_instance && self->enabled) {
+    g_settings_set_boolean(self->settings, RUN_IN_BACKGROUND, FALSE);
+    self->enabled = FALSE;
+  }
   self->target = KEY_DEFAULT;
 
   g_object_set_data(G_OBJECT(app), APP_DATA_KEY, self);
@@ -716,7 +726,7 @@ gh_background_new(GApplication *app, const GhBackgroundConfig *config)
   sync_hold(self);
   update_status(self);
   /* Only a confirmed choice touches autostart. */
-  if (key_state(self) != KEY_DEFAULT)
+  if (!self->named_instance && key_state(self) != KEY_DEFAULT)
     request_reconcile(self);
   return self;
 }
@@ -773,6 +783,12 @@ gh_background_set_enabled_async(GhBackground *self, gboolean enabled,
   g_task_set_source_tag(task, gh_background_set_enabled_async);
   if (self->disposed) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Background service stopped");
+    g_object_unref(task);
+    return;
+  }
+  if (self->named_instance && enabled) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                            "Background startup is unavailable for named Groundhog instances");
     g_object_unref(task);
     return;
   }

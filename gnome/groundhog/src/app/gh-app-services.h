@@ -52,5 +52,12 @@ GObject *gh_app_services_get_account_store(GhAppServices *self);
 
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhAppServices, gh_app_services_free)
 
+#ifdef GH_MLS_TEST_HOOKS
+/* Test-only getters for the acceptance test's D-Bus control interface.
+ * Never compiled into the production binary. */
+GObject *gh_app_services_get_mls_service(GhAppServices *self);
+GObject *gh_app_services_get_account_relays(GhAppServices *self);
+#endif
+
 G_END_DECLS
 #endif

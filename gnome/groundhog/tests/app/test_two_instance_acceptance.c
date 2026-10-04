@@ -1,5 +1,5 @@
 /* Two-instance acceptance test (nostrc-sjl1): drives two real Groundhog
- * test-harness processes through the full MLS group lifecycle via D-Bus.
+ * application processes through the full MLS group lifecycle via D-Bus.
  *
  * Scenario:
  *   1. Both instances onboard (key 1 and key 2)
@@ -14,9 +14,11 @@
  * Local test relays and the test signer only; no network. */
 
 #include "gh-test-signer.h"
+#include "gh-mls-service.h"
 #include "wire-relay.h"
 
 #include <glib-unix.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,11 +34,31 @@ static gchar *npub[GH_TEST_KEYS];
 
 /* Data directories for restart persistence. */
 static gchar *root_dir;
-static gchar *data_dir_a;
-static gchar *data_dir_b;
 
-/* Child process PIDs. */
+/* Child process PIDs. Signal cleanup also runs when a GTest assertion aborts. */
 static GPid pid_a, pid_b;
+
+static void
+kill_children_on_signal(int signo)
+{
+  if (pid_a > 0)
+    kill(pid_a, SIGKILL);
+  if (pid_b > 0)
+    kill(pid_b, SIGKILL);
+  _exit(128 + signo);
+}
+
+static void
+install_child_cleanup(void)
+{
+  struct sigaction action = { 0 };
+  action.sa_handler = kill_children_on_signal;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGABRT, &action, NULL);
+  sigaction(SIGTERM, &action, NULL);
+  sigaction(SIGINT, &action, NULL);
+  sigaction(SIGSEGV, &action, NULL);
+}
 
 /* ---- relay list seeding --------------------------------------------------- */
 
@@ -104,6 +126,10 @@ tc_call(const gchar *bus_name, const gchar *method, GVariant *args, const GVaria
     g_main_context_iteration(NULL, TRUE);
   if (data.error)
     g_error("D-Bus call %s.%s failed: %s", bus_name, method, data.error->message);
+  if (!reply_type) {
+    g_clear_pointer(&data.reply, g_variant_unref);
+    return NULL;
+  }
   return data.reply;
 }
 
@@ -134,29 +160,85 @@ wait_for_name(const gchar *bus_name)
   while (!watch.appeared && !expired)
     g_main_context_iteration(NULL, TRUE);
   g_source_remove(tick);
-  g_source_remove(timer);
+  if (!expired)
+    g_source_remove(timer);
   g_bus_unwatch_name(watcher);
   g_assert_false(expired);
 }
 
-/* ---- harness process management ------------------------------------------- */
+/* Object registration follows acquisition of the GApplication bus name.
+ * Wait for the actual control object, not just the well-known name. */
+static void
+wait_for_control(const gchar *bus_name)
+{
+  GDBusConnection *conn = nostrc_test_bus_connect(test_bus.bus);
+  gboolean expired = FALSE;
+  guint deadline = g_timeout_add_seconds(30, gh_test_deadline_hit, &expired);
+  while (!expired) {
+    TcCallData data = { 0 };
+    g_dbus_connection_call(conn, bus_name, TC_PATH,
+      "org.freedesktop.DBus.Introspectable", "Introspect", NULL,
+      G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 1000, NULL, tc_call_cb, &data);
+    while (!data.done)
+      g_main_context_iteration(NULL, TRUE);
+    if (data.reply) {
+      const gchar *xml = NULL;
+      g_variant_get(data.reply, "(&s)", &xml);
+      gboolean ready = xml && strstr(xml, TC_IFACE) != NULL;
+      g_variant_unref(data.reply);
+      if (ready) {
+        g_clear_error(&data.error);
+        if (!expired)
+          g_source_remove(deadline);
+        return;
+      }
+    }
+    g_clear_error(&data.error);
+    gboolean retry = FALSE;
+    guint tick = g_timeout_add(50, gh_test_deadline_hit, &retry);
+    while (!retry && !expired)
+      g_main_context_iteration(NULL, TRUE);
+    if (!retry)
+      g_source_remove(tick);
+  }
+  g_error("Groundhog %s did not export TestControl", bus_name);
+}
+
+/* ---- real application process management ---------------------------------- */
 
 static GPid
-spawn_harness(const gchar *instance, const gchar *data_dir)
+spawn_groundhog(const gchar *instance)
 {
-  const gchar *bin = g_getenv("HARNESS_BIN");
+  const gchar *bin = g_getenv("GROUNDHOG_BIN");
   g_assert_nonnull(bin);
+  gchar *argv[] = { (gchar *)bin, "--instance", (gchar *)instance,
+                    "--gapplication-service", NULL };
+  g_auto(GStrv) env = g_get_environ();
+  env = g_environ_setenv(env, "GH_TEST_CONTROL", "1", TRUE);
+  /* A hostile inherited dconf backend must not defeat named isolation. */
+  env = g_environ_setenv(env, "GSETTINGS_BACKEND", "dconf", TRUE);
+  g_autofree gchar *config = g_build_filename(root_dir, "config", NULL);
+  g_autofree gchar *data = g_build_filename(root_dir, "data", NULL);
+  g_autofree gchar *cache = g_build_filename(root_dir, "cache", NULL);
+  g_autofree gchar *state = g_build_filename(root_dir, "state", NULL);
+  g_mkdir_with_parents(config, 0700);
+  g_mkdir_with_parents(data, 0700);
+  g_mkdir_with_parents(cache, 0700);
+  g_mkdir_with_parents(state, 0700);
+  env = g_environ_setenv(env, "XDG_CONFIG_HOME", config, TRUE);
+  env = g_environ_setenv(env, "XDG_DATA_HOME", data, TRUE);
+  env = g_environ_setenv(env, "XDG_CACHE_HOME", cache, TRUE);
+  env = g_environ_setenv(env, "XDG_STATE_HOME", state, TRUE);
 
-  gchar *argv[] = { (gchar *)bin, (gchar *)instance, (gchar *)data_dir, NULL };
-
-  /* Inherit the test bus address (set by nostrc_test_bus_up). The child
-   * also inherits GSETTINGS_SCHEMA_DIR and GSETTINGS_BACKEND. */
-  GSpawnFlags flags = G_SPAWN_DO_NOT_REAP_CHILD;
   g_autoptr(GError) error = NULL;
   GPid pid;
-  gboolean ok = g_spawn_async(NULL, argv, NULL, flags, NULL, NULL, &pid, &error);
-  if (!ok)
-    g_error("cannot spawn harness: %s", error->message);
+  if (!g_spawn_async(NULL, argv, env, G_SPAWN_DO_NOT_REAP_CHILD,
+                     NULL, NULL, &pid, &error))
+    g_error("cannot spawn Groundhog instance %s: %s", instance, error->message);
+  if (g_str_equal(instance, "testA"))
+    pid_a = pid;
+  else
+    pid_b = pid;
   return pid;
 }
 
@@ -179,20 +261,36 @@ quit_harness(const gchar *bus_name)
 }
 
 static void
-reap(GPid pid)
+reap(GPid pid, gboolean require_success)
 {
   gboolean expired = FALSE;
+  gboolean exited = FALSE;
   guint timer = g_timeout_add_seconds(15, gh_test_deadline_hit, &expired);
   guint tick = g_timeout_add(100, gh_test_tick, NULL);
-  int status;
+  int status = 0;
   while (!expired) {
-    if (waitpid(pid, &status, WNOHANG) == pid)
+    if (waitpid(pid, &status, WNOHANG) == pid) {
+      exited = TRUE;
       break;
+    }
     g_main_context_iteration(NULL, FALSE);
   }
   g_source_remove(tick);
-  g_source_remove(timer);
+  if (!expired)
+    g_source_remove(timer);
+  if (!exited) {
+    kill(pid, SIGKILL);
+    waitpid(pid, &status, 0);
+  }
+  if (pid_a == pid)
+    pid_a = 0;
+  if (pid_b == pid)
+    pid_b = 0;
   g_spawn_close_pid(pid);
+  if (!exited)
+    g_error("Groundhog child %ld did not exit within 15 s", (long)pid);
+  if (require_success)
+    g_assert_true(WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
 /* ---- rm -rf --------------------------------------------------------------- */
@@ -215,20 +313,47 @@ rm_rf(const gchar *path)
   }
 }
 
+static void
+assert_history(const gchar *bus_name, const gchar *room_id)
+{
+  static const gchar *const expected[] = {
+    "hello from A", "hello from B",
+    "hello after re-add from A", "hello after re-add from B"
+  };
+  g_autoptr(GVariant) reply = tc_call(bus_name, "ListMessages",
+    g_variant_new("(s)", room_id), G_VARIANT_TYPE("(as)"));
+  g_autoptr(GVariant) messages = g_variant_get_child_value(reply, 0);
+  for (guint e = 0; e < G_N_ELEMENTS(expected); e++) {
+    gboolean found = FALSE;
+    for (gsize i = 0; i < g_variant_n_children(messages); i++) {
+      const gchar *text;
+      g_variant_get_child(messages, i, "&s", &text);
+      if (g_strcmp0(text, expected[e]) == 0) {
+        found = TRUE;
+        break;
+      }
+    }
+    if (!found)
+      g_error("%s lost '%s' after restart", bus_name, expected[e]);
+  }
+}
+
 /* ---- the test ------------------------------------------------------------- */
 
 static void
 test_acceptance(void)
 {
-  /* Spawn both harness processes. */
-  pid_a = spawn_harness("testA", data_dir_a);
-  pid_b = spawn_harness("testB", data_dir_b);
+  /* Spawn both real application processes. */
+  pid_a = spawn_groundhog("testA");
+  pid_b = spawn_groundhog("testB");
 
-  g_test_message("waiting for harness processes to register on D-Bus");
+  g_test_message("waiting for Groundhog processes to register on D-Bus");
   wait_for_name("org.nostr.Groundhog.testA");
   wait_for_name("org.nostr.Groundhog.testB");
+  wait_for_control("org.nostr.Groundhog.testA");
+  wait_for_control("org.nostr.Groundhog.testB");
 
-  /* 1. Both onboard. */
+  /* 1. Both onboard through the production account controller. */
   g_test_message("onboarding A (key 1) and B (key 2)");
   tc_call("org.nostr.Groundhog.testA", "Onboard",
     g_variant_new("(sssss)", npub[1], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
@@ -236,7 +361,14 @@ test_acceptance(void)
   tc_call("org.nostr.Groundhog.testB", "Onboard",
     g_variant_new("(sssss)", npub[2], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
     NULL);
+  tc_call("org.nostr.Groundhog.testA", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
+  tc_call("org.nostr.Groundhog.testB", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
   g_test_message("both instances onboarded with KeyPackages published");
+  g_autoptr(GVariant) background = tc_call("org.nostr.Groundhog.testA",
+    "TryEnableBackground", NULL, G_VARIANT_TYPE("(b)"));
+  gboolean background_enabled = TRUE;
+  g_variant_get(background, "(b)", &background_enabled);
+  g_assert_false(background_enabled);
 
   /* Accept each other as contacts (required before group invitations). */
   g_test_message("accepting contacts");
@@ -264,6 +396,8 @@ test_acceptance(void)
   g_variant_get(accept_reply, "(&s)", &room_id_b);
   g_autofree gchar *room_b = g_strdup(room_id_b);
   g_test_message("B's group room_id: %s", room_b);
+  tc_call("org.nostr.Groundhog.testA", "WaitMember",
+    g_variant_new("(ssb)", room_a, hex[2], TRUE), NULL);
 
   /* 4. Messages both ways. */
   g_test_message("A sends message");
@@ -287,9 +421,10 @@ test_acceptance(void)
     g_variant_new("(s)", room_a), G_VARIANT_TYPE("(as)"));
   g_autoptr(GVariant) msgs_b = tc_call("org.nostr.Groundhog.testB", "ListMessages",
     g_variant_new("(s)", room_b), G_VARIANT_TYPE("(as)"));
+  g_autoptr(GVariant) msgs_a_arr = g_variant_get_child_value(msgs_a, 0);
+  g_autoptr(GVariant) msgs_b_arr = g_variant_get_child_value(msgs_b, 0);
   g_test_message("A has %zu messages, B has %zu messages",
-    g_variant_n_children(g_variant_get_child_value(msgs_a, 0)),
-    g_variant_n_children(g_variant_get_child_value(msgs_b, 0)));
+    g_variant_n_children(msgs_a_arr), g_variant_n_children(msgs_b_arr));
 
   /* 5. A renames the group. */
   g_test_message("A renames group");
@@ -312,7 +447,8 @@ test_acceptance(void)
       g_main_context_iteration(NULL, TRUE);
   }
   g_source_remove(tick);
-  g_source_remove(timer);
+  if (!expired)
+    g_source_remove(timer);
   g_assert_true(name_match);
   g_test_message("B sees renamed group");
 
@@ -320,6 +456,10 @@ test_acceptance(void)
   g_test_message("A removes B");
   tc_call("org.nostr.Groundhog.testA", "RemoveMember",
     g_variant_new("(ss)", room_a, hex[2]), NULL);
+  tc_call("org.nostr.Groundhog.testB", "WaitGroupEnd",
+    g_variant_new("(si)", room_b, GH_MLS_GROUP_END_REMOVED), NULL);
+  tc_call("org.nostr.Groundhog.testA", "WaitMember",
+    g_variant_new("(ssb)", room_a, hex[2], FALSE), NULL);
 
   g_test_message("A re-adds B");
   tc_call("org.nostr.Groundhog.testA", "AddMember",
@@ -332,32 +472,61 @@ test_acceptance(void)
   g_variant_get(accept2_reply, "(&s)", &room_id_b2);
   g_autofree gchar *room_b2 = g_strdup(room_id_b2);
   g_test_message("B's new group room_id after re-add: %s", room_b2);
+  tc_call("org.nostr.Groundhog.testA", "WaitMember",
+    g_variant_new("(ssb)", room_a, hex[2], TRUE), NULL);
+  tc_call("org.nostr.Groundhog.testA", "SendText",
+    g_variant_new("(ss)", room_a, "hello after re-add from A"), NULL);
+  tc_call("org.nostr.Groundhog.testB", "WaitMessage",
+    g_variant_new("(ss)", room_b2, "hello after re-add from A"), NULL);
+  tc_call("org.nostr.Groundhog.testB", "SendText",
+    g_variant_new("(ss)", room_b2, "hello after re-add from B"), NULL);
+  tc_call("org.nostr.Groundhog.testA", "WaitMessage",
+    g_variant_new("(ss)", room_a, "hello after re-add from B"), NULL);
 
   /* 7. B leaves. */
   g_test_message("B leaves the group");
   tc_call("org.nostr.Groundhog.testB", "Leave",
     g_variant_new("(s)", room_b2), NULL);
+  tc_call("org.nostr.Groundhog.testA", "WaitMember",
+    g_variant_new("(ssb)", room_a, hex[2], FALSE), NULL);
 
   /* 8. Restart both and verify history. */
   g_test_message("restarting both instances");
   quit_harness("org.nostr.Groundhog.testA");
   quit_harness("org.nostr.Groundhog.testB");
-  reap(pid_a);
-  reap(pid_b);
+  reap(pid_a, TRUE);
+  reap(pid_b, TRUE);
 
-  /* Re-spawn with same data dirs. */
-  pid_a = spawn_harness("testA", data_dir_a);
-  pid_b = spawn_harness("testB", data_dir_b);
+  /* Re-spawn with the same named-instance XDG directories. */
+  pid_a = spawn_groundhog("testA");
+  pid_b = spawn_groundhog("testB");
   wait_for_name("org.nostr.Groundhog.testA");
   wait_for_name("org.nostr.Groundhog.testB");
+  wait_for_control("org.nostr.Groundhog.testA");
+  wait_for_control("org.nostr.Groundhog.testB");
 
-  /* Re-onboard (same keys, same relays, same data dirs → reopens store). */
+  /* Keyfile settings must restore the distinct selected identities without
+   * calling Onboard again: a forced dconf backend must not share them. */
+  g_autoptr(GVariant) active_a = tc_call("org.nostr.Groundhog.testA", "GetActiveNpub",
+    NULL, G_VARIANT_TYPE("(s)"));
+  g_autoptr(GVariant) active_b = tc_call("org.nostr.Groundhog.testB", "GetActiveNpub",
+    NULL, G_VARIANT_TYPE("(s)"));
+  const gchar *restored_a, *restored_b;
+  g_variant_get(active_a, "(&s)", &restored_a);
+  g_variant_get(active_b, "(&s)", &restored_b);
+  g_assert_cmpstr(restored_a, ==, npub[1]);
+  g_assert_cmpstr(restored_b, ==, npub[2]);
+
+  /* Re-onboard uses the same keys and relays and reopens the real store. */
   tc_call("org.nostr.Groundhog.testA", "Onboard",
     g_variant_new("(sssss)", npub[1], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
     NULL);
   tc_call("org.nostr.Groundhog.testB", "Onboard",
     g_variant_new("(sssss)", npub[2], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
     NULL);
+
+  tc_call("org.nostr.Groundhog.testA", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
+  tc_call("org.nostr.Groundhog.testB", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
 
   /* Verify history: A still has the messages. */
   g_test_message("verifying history after restart");
@@ -369,25 +538,19 @@ test_acceptance(void)
   g_variant_get_child(groups_arr, 0, "&s", &restored_room);
   g_test_message("A's restored group: %s", restored_room);
 
-  g_autoptr(GVariant) history = tc_call("org.nostr.Groundhog.testA", "ListMessages",
-    g_variant_new("(s)", restored_room), G_VARIANT_TYPE("(as)"));
-  g_autoptr(GVariant) history_arr = g_variant_get_child_value(history, 0);
-  gboolean found_hello_a = FALSE, found_hello_b = FALSE;
-  for (gsize i = 0; i < g_variant_n_children(history_arr); i++) {
-    const gchar *msg;
-    g_variant_get_child(history_arr, i, "&s", &msg);
-    if (g_str_equal(msg, "hello from A")) found_hello_a = TRUE;
-    if (g_str_equal(msg, "hello from B")) found_hello_b = TRUE;
-  }
-  g_assert_true(found_hello_a);
-  g_assert_true(found_hello_b);
-  g_test_message("history preserved: both messages found after restart");
+  g_autoptr(GVariant) groups_b = tc_call("org.nostr.Groundhog.testB", "ListGroups",
+    NULL, G_VARIANT_TYPE("(as)"));
+  g_autoptr(GVariant) groups_b_arr = g_variant_get_child_value(groups_b, 0);
+  g_assert_cmpuint(g_variant_n_children(groups_b_arr), >, 0);
+  assert_history("org.nostr.Groundhog.testA", restored_room);
+  assert_history("org.nostr.Groundhog.testB", room_b2);
+  g_test_message("history preserved on both devices after restart");
 
   /* Clean up. */
   quit_harness("org.nostr.Groundhog.testA");
   quit_harness("org.nostr.Groundhog.testB");
-  reap(pid_a);
-  reap(pid_b);
+  reap(pid_a, TRUE);
+  reap(pid_b, TRUE);
   pid_a = pid_b = 0;
 }
 
@@ -401,7 +564,24 @@ setup(void)
     npub[key] = gh_test_npub(key);
   }
 
+  root_dir = g_dir_make_tmp("groundhog-acceptance-XXXXXX", NULL);
+  g_assert_nonnull(root_dir);
   gh_test_bus_up(&test_bus);
+
+  /* A real Secret Service, with two signer-visible identities, also owns
+   * the per-account encrypted store keys across process restarts. */
+  const gchar *secret_script = g_getenv("SECRET_SERVICE_SCRIPT");
+  g_assert_nonnull(secret_script);
+  g_autofree gchar *secrets_path = g_build_filename(root_dir, "secrets.json", NULL);
+  g_autofree gchar *secrets_json = g_strdup_printf(
+    "{\"counter\":2,\"items\":{"
+    "\"i1\":{\"label\":\"Test A\",\"attrs\":{\"npub\":\"%s\",\"origin\":\"import\",\"key_id\":\"%s\",\"xdg:schema\":\"org.gnostr.Signer/identity\",\"curve\":\"secp256k1\",\"label\":\"Test A\"},\"secret\":\"\",\"ctype\":\"text/plain\",\"created\":0,\"modified\":0},"
+    "\"i2\":{\"label\":\"Test B\",\"attrs\":{\"npub\":\"%s\",\"origin\":\"import\",\"key_id\":\"%s\",\"xdg:schema\":\"org.gnostr.Signer/identity\",\"curve\":\"secp256k1\",\"label\":\"Test B\"},\"secret\":\"\",\"ctype\":\"text/plain\",\"created\":0,\"modified\":0}}}",
+    npub[1], npub[1], npub[2], npub[2]);
+  g_assert_true(g_file_set_contents(secrets_path, secrets_json, -1, NULL));
+  const gchar *secret_argv[] = { "python3", secret_script, secrets_path, NULL };
+  nostrc_test_bus_spawn_supervised(test_bus.bus, "secret-service.log", NULL, secret_argv);
+  wait_for_name("org.freedesktop.secrets");
   gh_test_signer_up(&test_bus, &signer);
 
   /* Local relays: E (discovery), W (write), X (inbox), G (group). */
@@ -420,19 +600,14 @@ setup(void)
     seed_list(key, 10050, relay_x.url);
   }
 
-  /* Data directories. */
-  root_dir = g_dir_make_tmp("groundhog-acceptance-XXXXXX", NULL);
-  g_assert_nonnull(root_dir);
-  data_dir_a = g_build_filename(root_dir, "instance-a", NULL);
-  data_dir_b = g_build_filename(root_dir, "instance-b", NULL);
 }
 
 static void
 teardown(void)
 {
   /* Kill any lingering processes. */
-  if (pid_a) { kill(pid_a, SIGTERM); reap(pid_a); }
-  if (pid_b) { kill(pid_b, SIGTERM); reap(pid_b); }
+  if (pid_a) { kill(pid_a, SIGTERM); reap(pid_a, FALSE); }
+  if (pid_b) { kill(pid_b, SIGTERM); reap(pid_b, FALSE); }
 
   WireRelay *relays[] = { &relay_e, &relay_w, &relay_x, &relay_g };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
@@ -445,8 +620,6 @@ teardown(void)
     rm_rf(root_dir);
     g_free(root_dir);
   }
-  g_free(data_dir_a);
-  g_free(data_dir_b);
 
   for (guint key = 1; key < GH_TEST_KEYS; key++) {
     g_free(hex[key]);
@@ -459,8 +632,8 @@ main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
 
-  if (!g_getenv("HARNESS_BIN")) {
-    g_test_message("HARNESS_BIN not set — skipping");
+  if (!g_getenv("GROUNDHOG_BIN")) {
+    g_test_message("GROUNDHOG_BIN not set — skipping");
     return 77;
   }
 
@@ -470,6 +643,7 @@ main(int argc, char **argv)
   }
 
   g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+  install_child_cleanup();
 
   setup();
   g_test_add_func("/groundhog/two-instance/acceptance", test_acceptance);
