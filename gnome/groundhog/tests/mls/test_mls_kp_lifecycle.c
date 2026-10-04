@@ -1717,6 +1717,221 @@ test_write_relay_migration(void)
   world_down(&w);
 }
 
+static gboolean
+retired_migration_relays_deleted(gpointer data)
+{
+  World *w = data;
+  WireRelay *retired[] = { &w->w, &w->h, &w->x };
+  for (guint i = 0; i < G_N_ELEMENTS(retired); i++)
+    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+      if (!migration_format_enabled(f)) continue;
+      g_autoptr(GPtrArray) left = stored_key_packages_of(retired[i], ALICE, f);
+      if (left->len) return FALSE;
+    }
+  return TRUE;
+}
+
+static void
+release_one_held_ok(WireRelay *relay)
+{
+  g_assert_cmpuint(relay->held_oks->len, >, 0);
+  WireHeldOk *held = g_ptr_array_index(relay->held_oks, 0);
+  g_assert_cmpint(soup_websocket_connection_get_state(held->connection), ==,
+                  SOUP_WEBSOCKET_STATE_OPEN);
+  wire_send_ok(held->connection, held->id, TRUE, held->message);
+  g_ptr_array_remove_index(relay->held_oks, 0);
+}
+
+/* A partial B acknowledgement must not make B disappear from the durable
+ * coverage set. After a restart, C's OKs retire both A and B. */
+static void
+test_write_relay_migration_rapid(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  spin_until(current_key_packages_on_both, alice, "both slots on initial relays");
+  gchar *refs[GH_MLS_KEY_PACKAGE_N_FORMATS] = { NULL };
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    if (migration_format_enabled(f))
+      newest_key_package_of(&w.w, ALICE, f, &refs[f], NULL, NULL);
+  w.w.nip09 = w.h.nip09 = w.x.nip09 = TRUE;
+  w.x.hold_oks = TRUE;
+  NostrTags *b_tags = nostr_tags_new(0);
+  nostr_tags_append(b_tags, nostr_tag_new("r", w.x.url, "write", NULL));
+  g_autofree gchar *b = sign_event(ALICE, 10002, real_now(), "", b_tags);
+  wire_relay_inject(&w.e, b);
+  MigratedWait migrated = { &w, 2 };
+  spin_until(migrated_on_new_relay, &migrated, "both slots on intermediate relay");
+  release_one_held_ok(&w.x); /* the other format remains unacknowledged */
+  drain();
+  w.r.hold_oks = TRUE;
+  NostrTags *c_tags = nostr_tags_new(0);
+  nostr_tags_append(c_tags, nostr_tag_new("r", w.r.url, "write", NULL));
+  g_autofree gchar *c = sign_event(ALICE, 10002, real_now() + 1, "", c_tags);
+  wire_relay_inject(&w.e, c);
+  app_restart(alice); /* B's candidate record, not in-memory state, must survive */
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    FormatCountWait on_c = { &w.r, ALICE, f, 1 };
+    spin_until(format_count_reached, &on_c, "unchanged slot on final relay");
+    g_autofree gchar *ref = NULL;
+    newest_key_package_of(&w.r, ALICE, f, &ref, NULL, NULL);
+    g_assert_cmpstr(ref, ==, refs[f]);
+    g_assert_true(has_init_key(alice, refs[f]));
+  }
+  g_assert_cmpuint(w.w.deleted + w.h.deleted + w.x.deleted, ==, 0);
+  wire_relay_release_oks(&w.r);
+  spin_until(retired_migration_relays_deleted, &w, "NIP-09 removed A and B after C ACK");
+  g_assert_cmpuint(w.w.deleted, ==, 2);
+  g_assert_cmpuint(w.h.deleted, ==, 2);
+  g_assert_cmpuint(w.x.deleted, ==, 2);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_assert_true(has_init_key(alice, refs[f]));
+    g_free(refs[f]);
+  }
+  world_down(&w);
+}
+
+/* A signed 10002 with no write entries is a withdrawal, unlike discovery
+ * that has not yet returned a list. It requires no replacement relay ACK. */
+static void
+test_write_relay_migration_empty(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  spin_until(current_key_packages_on_both, alice, "both slots before empty write list");
+  gchar *refs[GH_MLS_KEY_PACKAGE_N_FORMATS] = { NULL };
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    if (migration_format_enabled(f))
+      newest_key_package_of(&w.w, ALICE, f, &refs[f], NULL, NULL);
+  w.w.nip09 = w.h.nip09 = TRUE;
+  w.w.hold_oks = w.h.hold_oks = TRUE;
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("r", w.r.url, "read", NULL));
+  g_autofree gchar *empty = sign_event(ALICE, 10002, real_now(), "", tags);
+  wire_relay_inject(&w.e, empty);
+  MigratedWait migrated = { &w, 2 };
+  spin_until(old_key_packages_deleted, &migrated, "empty write set removed old slots");
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_assert_true(has_init_key(alice, refs[f]));
+    g_autoptr(GPtrArray) read_only = stored_key_packages_of(&w.r, ALICE, f);
+    g_assert_cmpuint(read_only->len, ==, 0);
+  }
+  wire_relay_release_oks(&w.w);
+  wire_relay_release_oks(&w.h);
+  drain();
+  app_restart(alice);
+  drain();
+  g_assert_true(old_key_packages_deleted(&migrated));
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_assert_true(has_init_key(alice, refs[f]));
+    g_free(refs[f]);
+  }
+  world_down(&w);
+}
+
+typedef struct {
+  WireRelay *relays;
+  guint count;
+} CandidateCleanupWait;
+
+typedef struct {
+  MarmotStorage *storage;
+  guint8 owner[32];
+} CandidateRecordWait;
+
+static gboolean
+candidate_record_cleared(gpointer data)
+{
+  CandidateRecordWait *wait = data;
+  guint8 *remaining = NULL;
+  size_t len = 0;
+  MarmotError err = wait->storage->mls_load(wait->storage->ctx,
+                                            "gh/key-package-candidate-relays", wait->owner,
+                                            sizeof wait->owner, &remaining, &len);
+  free(remaining);
+  return err == MARMOT_ERR_STORAGE_NOT_FOUND;
+}
+
+static gboolean
+candidate_deletions_reached(gpointer data)
+{
+  CandidateCleanupWait *wait = data;
+  for (guint i = 0; i < wait->count; i++)
+    if (wait->relays[i].events == 0)
+      return FALSE;
+  return TRUE;
+}
+
+static gint
+compare_candidate_urls(gconstpointer a, gconstpointer b)
+{
+  return g_strcmp0(*(gchar *const *)a, *(gchar *const *)b);
+}
+
+/* The publish helper accepts at most 16 URLs. A larger durable candidate
+ * union needs multiple ACK-checked NIP-09 batches before it can be cleared. */
+static void
+test_write_relay_migration_cleanup_batches(void)
+{
+  World w;
+  world_split_lists = TRUE;
+  const guint keys[] = { ALICE };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE];
+  wait_published(alice);
+  spin_until(current_key_packages_on_both, alice, "both slots before candidate cleanup");
+  drain();
+  WireRelay candidates[17] = {0};
+  g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < G_N_ELEMENTS(candidates); i++) {
+    candidates[i].serve = TRUE;
+    relay_init(&candidates[i]);
+    g_ptr_array_add(urls, g_strdup(candidates[i].url));
+  }
+  g_ptr_array_sort(urls, compare_candidate_urls);
+  g_ptr_array_add(urls, NULL);
+  g_autofree gchar *joined = g_strjoinv("\n", (gchar **)urls->pdata);
+  g_autoptr(GError) store_error = NULL;
+  MarmotStorage *storage = gh_store_marmot_new(alice->store, &store_error);
+  g_assert_no_error(store_error);
+  g_assert_nonnull(storage);
+  guint8 owner[32];
+  g_assert_true(nostr_hex2bin(owner, hex[ALICE], sizeof owner));
+  g_assert_cmpint(storage->mls_store(storage->ctx, "gh/key-package-candidate-relays", owner,
+                                     sizeof owner, (const guint8 *)joined, strlen(joined)),
+                  ==, MARMOT_OK);
+  marmot_storage_free(storage);
+  app_restart(alice);
+  CandidateCleanupWait wait = { candidates, G_N_ELEMENTS(candidates) };
+  spin_until(candidate_deletions_reached, &wait, "all candidate relay deletion batches");
+  storage = gh_store_marmot_new(alice->store, &store_error);
+  g_assert_no_error(store_error);
+  CandidateRecordWait record = { storage, {0} };
+  memcpy(record.owner, owner, sizeof owner);
+  spin_until(candidate_record_cleared, &record, "candidate record cleared after every ACK");
+  marmot_storage_free(storage);
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+    if (!migration_format_enabled(f)) continue;
+    g_autoptr(GPtrArray) old = stored_key_packages_of(&w.w, ALICE, f);
+    g_assert_cmpuint(old->len, ==, 1);
+  }
+  for (guint i = 0; i < G_N_ELEMENTS(candidates); i++)
+    relay_clear(&candidates[i]);
+  world_down(&w);
+}
+
 /* Review L1 and M4: "Let people using older Marmot apps invite me" switched
  * off. The MDK 0.8 KeyPackage is withdrawn -- a NIP-09 deletion request to
  * the write relays naming its slot's address, dated no earlier than its
@@ -2369,6 +2584,10 @@ main(int argc, char **argv)
   g_test_add_func(KP_TEST("failed-welcome-preserves"), test_failed_welcome_preserves);
 #if GH_MLS_ADOPTED_KEY_PACKAGES
   g_test_add_func(KP_TEST("write-relay-migration"), test_write_relay_migration);
+  g_test_add_func(KP_TEST("write-relay-migration-rapid"), test_write_relay_migration_rapid);
+  g_test_add_func(KP_TEST("write-relay-migration-empty"), test_write_relay_migration_empty);
+  g_test_add_func(KP_TEST("write-relay-migration-cleanup-batches"),
+                  test_write_relay_migration_cleanup_batches);
   g_test_add_func(KP_TEST("formats-own-lifecycle"), test_formats_own_lifecycle);
   g_test_add_func(KP_TEST("upgrade-companion-held"), test_upgrade_companion_held);
   g_test_add_func(KP_TEST("upgrade-companion-partial-relay-failure"),

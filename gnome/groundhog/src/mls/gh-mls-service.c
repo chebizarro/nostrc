@@ -33,6 +33,9 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
  * hash of the group id: the scope is bounded and names no group). */
 #define KEY_PACKAGE_CURSOR "mls/key-package"
 #define KEY_PACKAGE_RELAY_SET "gh/key-package-write-relays"
+#define KEY_PACKAGE_CANDIDATE_RELAYS "gh/key-package-candidate-relays"
+#define MAX_KEY_PACKAGE_CANDIDATE_RELAYS 256
+#define KEY_PACKAGE_RELAY_SETTLE_MS 100
 /* When a due KeyPackage replacement was first held back for pending
  * invitations (0: not held); see key_package_hold(). */
 #define KEY_PACKAGE_HELD_CURSOR "mls/key-package-held"
@@ -301,11 +304,17 @@ struct _GhMlsService {
   guint key_package_sweep_timer;     /* GhClock source: the next not_after */
   GStrv kp_write_relays;             /* last fully reconciled set, also stored in mls_kv */
   gboolean kp_write_relays_loaded;
+  GStrv kp_candidate_relays;         /* durable superset of attempted publish targets */
+  gboolean kp_candidates_loaded;
+  guint kp_reconcile_timer;          /* coalesce successive signed 10002 changes */
   GStrv kp_target_relays;            /* in-flight reconciliation target */
   gboolean kp_migrating;
   gboolean kp_launching;
   gboolean kp_migrated[GH_MLS_KEY_PACKAGE_N_FORMATS];
   GhRelayPublish *kp_cleanup;        /* NIP-09 to relays no longer in 10002 */
+  GStrv kp_cleanup_urls;             /* ACK-checked batches, at most 16 URLs each */
+  gchar *kp_cleanup_json;
+  guint kp_cleanup_offset;
 
   /* Member identities (nostrc-6ukh, W24 review H1) */
   GHashTable *verifying;           /* account hex: a Verify the user asked for runs */
@@ -7060,10 +7069,16 @@ key_package_load_write_relays(GhMlsService *self)
   MarmotError err = self->storage->mls_load(self->storage->ctx, KEY_PACKAGE_RELAY_SET,
                                            self->account_key, 32, &stored, &len);
   if (err == MARMOT_OK) {
-    if (!stored || len == 0 || len > 16 * 4096) {
+    if ((len && !stored) || len > 16 * 4096) {
       free(stored);
       g_message("Groundhog's saved KeyPackage write relays are invalid");
       return FALSE;
+    }
+    if (len == 0) {
+      free(stored);
+      self->kp_write_relays = g_new0(gchar *, 1);
+      self->kp_write_relays_loaded = TRUE;
+      return TRUE;
     }
     g_autofree gchar *joined = g_strndup((const gchar *)stored, len);
     free(stored);
@@ -7113,19 +7128,102 @@ key_package_load_write_relays(GhMlsService *self)
   return TRUE;
 }
 
+/* Persist before sending any kind 30443: a relay may keep an event even if
+ * its OK is lost, or the account may change 10002 before the OK arrives. */
+static gboolean
+key_package_load_candidates(GhMlsService *self)
+{
+  if (self->kp_candidates_loaded)
+    return TRUE;
+  guint8 *stored = NULL;
+  size_t len = 0;
+  MarmotError err = self->storage->mls_load(self->storage->ctx, KEY_PACKAGE_CANDIDATE_RELAYS,
+                                           self->account_key, 32, &stored, &len);
+  if (err == MARMOT_ERR_STORAGE_NOT_FOUND) {
+    self->kp_candidate_relays = g_new0(gchar *, 1);
+  } else if (err == MARMOT_OK && stored && len > 0 &&
+             len <= MAX_KEY_PACKAGE_CANDIDATE_RELAYS * 4096 &&
+             !memchr(stored, 0, len)) {
+    g_autofree gchar *joined = g_strndup((const gchar *)stored, len);
+    GStrv urls = g_strsplit(joined, "\n", -1);
+    guint count = g_strv_length(urls);
+    gboolean valid = count > 0 && count <= MAX_KEY_PACKAGE_CANDIDATE_RELAYS;
+    for (guint i = 0; valid && i < count; i++)
+      valid = gh_relay_url_validate(urls[i], NULL) &&
+              (i == 0 || g_strcmp0(urls[i - 1], urls[i]) < 0);
+    if (valid)
+      self->kp_candidate_relays = urls;
+    else
+      g_strfreev(urls);
+  }
+  free(stored);
+  if (!self->kp_candidate_relays) {
+    g_message("Groundhog could not read its candidate KeyPackage relays (%d)", err);
+    return FALSE;
+  }
+  self->kp_candidates_loaded = TRUE;
+  return TRUE;
+}
+
+static gboolean
+key_package_add_candidates(GhMlsService *self, const gchar *const *urls)
+{
+  g_autoptr(GPtrArray) all = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; self->kp_candidate_relays[i]; i++)
+    g_ptr_array_add(all, g_strdup(self->kp_candidate_relays[i]));
+  gboolean added = FALSE;
+  for (guint i = 0; urls[i]; i++)
+    if (!g_ptr_array_find_with_equal_func(all, urls[i], g_str_equal, NULL)) {
+      g_ptr_array_add(all, g_strdup(urls[i]));
+      added = TRUE;
+    }
+  if (!added)
+    return TRUE;
+  if (all->len > MAX_KEY_PACKAGE_CANDIDATE_RELAYS) {
+    g_message("Groundhog has too many candidate KeyPackage relays to reconcile safely");
+    return FALSE;
+  }
+  g_ptr_array_sort(all, compare_strings);
+  g_ptr_array_add(all, NULL);
+  GStrv next = (GStrv)g_ptr_array_steal(all, NULL);
+  g_autofree gchar *joined = g_strjoinv("\n", next);
+  MarmotError err = self->storage->mls_store(self->storage->ctx, KEY_PACKAGE_CANDIDATE_RELAYS,
+                                            self->account_key, 32,
+                                            (const guint8 *)joined, strlen(joined));
+  if (err != MARMOT_OK) {
+    g_message("Groundhog could not record candidate KeyPackage relays (%d)", err);
+    g_strfreev(next);
+    return FALSE;
+  }
+  g_strfreev(self->kp_candidate_relays);
+  self->kp_candidate_relays = next;
+  return TRUE;
+}
+
 static gboolean
 key_package_save_write_relays(GhMlsService *self, const gchar *const *urls)
 {
   g_autofree gchar *joined = g_strjoinv("\n", (gchar **)urls);
+  g_autoptr(GError) error = NULL;
+  if (!gh_store_begin(self->store, &error)) {
+    g_message("Groundhog could not begin KeyPackage relay reconciliation: %s", error->message);
+    return FALSE;
+  }
   MarmotError err = self->storage->mls_store(self->storage->ctx, KEY_PACKAGE_RELAY_SET,
                                             self->account_key, 32,
                                             (const guint8 *)joined, strlen(joined));
-  if (err != MARMOT_OK) {
+  if (err == MARMOT_OK && self->kp_candidate_relays && self->kp_candidate_relays[0])
+    err = self->storage->mls_delete(self->storage->ctx, KEY_PACKAGE_CANDIDATE_RELAYS,
+                                    self->account_key, 32);
+  if (err != MARMOT_OK || !gh_store_commit(self->store, &error)) {
+    gh_store_rollback(self->store);
     g_message("Groundhog could not record its KeyPackage write relays (%d)", err);
     return FALSE;
   }
   g_strfreev(self->kp_write_relays);
   self->kp_write_relays = g_strdupv((gchar **)urls);
+  g_strfreev(self->kp_candidate_relays);
+  self->kp_candidate_relays = g_new0(gchar *, 1);
   self->kp_write_relays_loaded = TRUE;
   return TRUE;
 }
@@ -7715,6 +7813,9 @@ key_package_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, 
   gboolean relay_set_pending = self->kp_write_relays &&
     !g_strv_equal((const gchar *const *)self->kp_write_relays,
                   (const gchar *const *)current_urls);
+  for (guint i = 0; self->kp_candidate_relays && self->kp_candidate_relays[i]; i++)
+    relay_set_pending |= !g_strv_contains((const gchar *const *)current_urls,
+                                           self->kp_candidate_relays[i]);
   if (summary->any_accepted && (rotate || relay_set_pending) &&
       !key_package_any_busy(self) && !self->retry)
     key_package_maybe_publish(self);
@@ -7733,6 +7834,18 @@ key_package_signed(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   KeyPackageSlot *slot = &self->kp[job->format];
+  if (job->migration) {
+    g_auto(GStrv) current = key_package_relays(self);
+    if (self->kp_reconcile_timer ||
+        !g_strv_equal((const gchar *const *)current, (const gchar *const *)job->urls)) {
+      slot->busy = FALSE;
+      slot->migrating = FALSE;
+      key_package_slot_set_state(slot, GH_MLS_KEY_PACKAGE_PUBLISHED);
+      key_package_migration_published(self);
+      key_package_job_free(job);
+      return;
+    }
+  }
   /* The signer must have signed exactly a KeyPackage of this account, the
    * one just made (its KeyPackageRef is what a relay OK confirms). */
   NostrEvent *event = signed_json ? nostr_event_new() : NULL;
@@ -7905,7 +8018,47 @@ key_package_migration_reset(GhMlsService *self)
   self->kp_migrating = FALSE;
   self->kp_launching = FALSE;
   g_clear_pointer(&self->kp_target_relays, g_strfreev);
+  g_clear_pointer(&self->kp_cleanup_urls, g_strfreev);
+  g_clear_pointer(&self->kp_cleanup_json, g_free);
+  self->kp_cleanup_offset = 0;
   memset(self->kp_migrated, 0, sizeof self->kp_migrated);
+}
+
+static void key_package_cleanup_update(GhRelayPublish *publish,
+                                       const GhRelayPublishResult *result, gpointer data);
+static void key_package_cleanup_done(GhRelayPublish *publish,
+                                     const GhRelayPublishSummary *summary, gpointer data);
+
+/* GhRelayPublish caps one operation at 16 URLs. Never skip a URL and then
+ * mistake the smaller operation's all-ACK summary for complete cleanup. */
+static gboolean
+key_package_cleanup_start_next(GhMlsService *self)
+{
+  g_autoptr(GError) error = NULL;
+  GhRelayPublish *publish = gh_relay_publish_new(self->generation, self->kp_cleanup_json,
+                                                 key_package_cleanup_update,
+                                                 key_package_cleanup_done, self, &error);
+  guint added = 0;
+  for (guint i = self->kp_cleanup_offset;
+       publish && self->kp_cleanup_urls[i] && added < 16; i++) {
+    if (!gh_relay_publish_add_url(publish, self->kp_cleanup_urls[i], &error))
+      break;
+    gh_auth_policy_apply_publish(self->policy, publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
+                                 self->kp_cleanup_urls[i], NULL);
+    added++;
+  }
+  if (publish && self->publish_deadline)
+    gh_relay_publish_set_deadline(publish, self->publish_deadline);
+  if (publish && added && !error)
+    self->kp_cleanup = publish;
+  if (!publish || !added || error || !gh_relay_publish_start(publish, &error)) {
+    g_message("Groundhog could not remove KeyPackages from old write relays: %s",
+              error ? error->message : "the deletion could not be published");
+    self->kp_cleanup = NULL;
+    if (publish) gh_relay_publish_unref(publish);
+    return FALSE;
+  }
+  return TRUE;
 }
 
 static void
@@ -7917,8 +8070,17 @@ key_package_cleanup_done(GhRelayPublish *publish, const GhRelayPublishSummary *s
     self->kp_cleanup = NULL;
   g_idle_add(key_package_publish_free_idle, publish);
   gboolean all = summary->total > 0 && summary->accepted == summary->total;
-  if (all)
+  if (all) {
+    self->kp_cleanup_offset += summary->total;
+    if (self->kp_cleanup_urls[self->kp_cleanup_offset]) {
+      if (!key_package_cleanup_start_next(self)) {
+        key_package_migration_reset(self);
+        schedule_retry(self);
+      }
+      return;
+    }
     all = key_package_save_write_relays(self, (const gchar *const *)self->kp_target_relays);
+  }
   key_package_migration_reset(self);
   if (!all)
     schedule_retry(self);
@@ -7947,31 +8109,29 @@ key_package_cleanup_signed(GObject *source, GAsyncResult *result, gpointer data)
     key_package_job_free(job);
     return;
   }
+  g_auto(GStrv) current = key_package_relays(self);
+  if (self->kp_reconcile_timer ||
+      !g_strv_equal((const gchar *const *)current,
+                    (const gchar *const *)self->kp_target_relays)) {
+    key_package_migration_reset(self);
+    key_package_maybe_publish(self);
+    key_package_job_free(job);
+    return;
+  }
   NostrEvent *event = signed_json ? nostr_event_new() : NULL;
   gboolean ok = event && nostr_event_deserialize_compact(event, signed_json, NULL) == 1 &&
                 nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
                 nostr_event_get_kind(event) == 5 &&
                 g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0;
   if (event) nostr_event_free(event);
-  GhRelayPublish *publish = ok ? gh_relay_publish_new(self->generation, signed_json,
-                                                      key_package_cleanup_update,
-                                                      key_package_cleanup_done, self, &error)
-                               : NULL;
-  guint added = 0;
-  for (guint i = 0; publish && job->urls[i]; i++) {
-    if (!gh_relay_publish_add_url(publish, job->urls[i], NULL)) continue;
-    gh_auth_policy_apply_publish(self->policy, publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
-                                 job->urls[i], NULL);
-    added++;
+  if (ok) {
+    self->kp_cleanup_json = g_steal_pointer(&signed_json);
+    self->kp_cleanup_urls = g_steal_pointer(&job->urls);
   }
-  if (publish && self->publish_deadline)
-    gh_relay_publish_set_deadline(publish, self->publish_deadline);
-  self->kp_cleanup = publish;
-  if (!publish || !added || !gh_relay_publish_start(publish, &error)) {
-    g_message("Groundhog could not remove KeyPackages from old write relays: %s",
-              error ? error->message : "the signer returned something else");
-    self->kp_cleanup = NULL;
-    if (publish) gh_relay_publish_unref(publish);
+  if (!ok || !key_package_cleanup_start_next(self)) {
+    if (!ok)
+      g_message("Groundhog could not sign its old-relay KeyPackage deletion: %s",
+                error ? error->message : "the signer returned something else");
     key_package_migration_reset(self);
     schedule_retry(self);
   }
@@ -7986,12 +8146,6 @@ key_package_migration_published(GhMlsService *self)
   if (!self->kp_migrating || self->kp_launching || self->kp_cleanup ||
       key_package_any_busy(self))
     return;
-  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
-    if (key_package_produced(self, f) && !self->kp_migrated[f]) {
-      key_package_migration_reset(self);
-      schedule_retry(self);
-      return;
-    }
   g_auto(GStrv) current = key_package_relays(self);
   if (!g_strv_equal((const gchar *const *)current,
                     (const gchar *const *)self->kp_target_relays)) {
@@ -7999,11 +8153,22 @@ key_package_migration_published(GhMlsService *self)
     key_package_maybe_publish(self);
     return;
   }
+  for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+    if (key_package_produced(self, f) && !self->kp_migrated[f]) {
+      key_package_migration_reset(self);
+      schedule_retry(self);
+      return;
+    }
   g_autoptr(GPtrArray) old = g_ptr_array_new_with_free_func(g_free);
   for (guint i = 0; self->kp_write_relays && self->kp_write_relays[i]; i++)
     if (!g_strv_contains((const gchar *const *)self->kp_target_relays,
                          self->kp_write_relays[i]))
       g_ptr_array_add(old, g_strdup(self->kp_write_relays[i]));
+  for (guint i = 0; self->kp_candidate_relays && self->kp_candidate_relays[i]; i++)
+    if (!g_strv_contains((const gchar *const *)self->kp_target_relays,
+                         self->kp_candidate_relays[i]) &&
+        !g_ptr_array_find_with_equal_func(old, self->kp_candidate_relays[i], g_str_equal, NULL))
+      g_ptr_array_add(old, g_strdup(self->kp_candidate_relays[i]));
   if (old->len == 0) {
     gboolean saved = key_package_save_write_relays(self,
                                                     (const gchar *const *)self->kp_target_relays);
@@ -8280,6 +8445,8 @@ key_package_maybe_publish(GhMlsService *self)
 {
   if (!running(self) || !identity_ready(self))
     return;
+  if (self->kp_reconcile_timer)
+    return;
   if (self->kp_migrating) {
     self->key_package_recheck = TRUE;
     return;
@@ -8295,11 +8462,12 @@ key_package_maybe_publish(GhMlsService *self)
     return;
   key_package_sweep(self);
   g_auto(GStrv) urls = key_package_relays(self);
-  if (!urls[0]) {
+  if (!urls[0] && (!self->account_relays ||
+                   !gh_account_relays_has_relay_list(self->account_relays))) {
     key_package_set_state(self, GH_MLS_KEY_PACKAGE_NO_RELAYS);
     return;
   }
-  if (!key_package_load_write_relays(self)) {
+  if (!key_package_load_write_relays(self) || !key_package_load_candidates(self)) {
     schedule_retry(self);
     return;
   }
@@ -8331,18 +8499,36 @@ key_package_maybe_publish(GhMlsService *self)
     withdraw = legacy_expires != 0;
     any_due |= withdraw;
   }
-  if (!any_due && (!self->kp_write_relays ||
-                   !g_strv_equal((const gchar *const *)self->kp_write_relays,
-                                 (const gchar *const *)urls))) {
+  gboolean changed = self->kp_write_relays &&
+    !g_strv_equal((const gchar *const *)self->kp_write_relays,
+                  (const gchar *const *)urls);
+  gboolean stale_candidates = FALSE;
+  for (guint i = 0; self->kp_candidate_relays[i]; i++)
+    stale_candidates |= !g_strv_contains((const gchar *const *)urls,
+                                          self->kp_candidate_relays[i]);
+  gboolean publish_target = urls[0] && (changed || !self->kp_write_relays);
+  if ((!any_due || !urls[0]) && (changed || stale_candidates || publish_target)) {
+    if (publish_target && !key_package_add_candidates(self, (const gchar *const *)urls)) {
+      schedule_retry(self);
+      return;
+    }
     self->kp_migrating = TRUE;
     self->kp_launching = TRUE;
     self->kp_target_relays = g_strdupv(urls);
     memset(self->kp_migrated, 0, sizeof self->kp_migrated);
-    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
-      if (key_package_produced(self, f))
+    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
+      if (!key_package_produced(self, f)) continue;
+      if (publish_target)
         key_package_republish(self, f, (const gchar *const *)urls);
+      else
+        self->kp_migrated[f] = TRUE; /* baseline already ACKed, or no target */
+    }
     self->kp_launching = FALSE;
     key_package_migration_published(self);
+    return;
+  }
+  if (!urls[0]) {
+    key_package_set_state(self, GH_MLS_KEY_PACKAGE_NO_RELAYS);
     return;
   }
   gboolean pending = invitations_pending(self) != INVITES_NONE;
@@ -8437,6 +8623,10 @@ key_package_maybe_publish(GhMlsService *self)
     if (key_package_produced(self, f) && !go[f])
       key_package_slot_set_state(&self->kp[f], GH_MLS_KEY_PACKAGE_PUBLISHED);
   for (guint i = 0; i < G_N_ELEMENTS(order); i++) {
+    if (i == 0 && !key_package_add_candidates(self, (const gchar *const *)urls)) {
+      schedule_retry(self);
+      return;
+    }
     if (!go[order[i]])
       continue;
     if (order[i] == GH_MLS_KEY_PACKAGE_FORMAT_LEGACY && withdraw)
@@ -8591,6 +8781,10 @@ static void
 stop_generation(GhMlsService *self)
 {
   self->run++;
+  if (self->kp_reconcile_timer) {
+    g_source_remove(self->kp_reconcile_timer);
+    self->kp_reconcile_timer = 0;
+  }
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -8700,10 +8894,26 @@ on_network_changed(GNetworkMonitor *monitor, gboolean available, gpointer data)
 }
 
 static void
+on_relays_changed(GhAccountRelays *relays, gpointer data);
+
+static gboolean
+key_package_reconcile_fired(gpointer data)
+{
+  GhMlsService *self = data;
+  self->kp_reconcile_timer = 0;
+  key_package_maybe_publish(self);
+  return G_SOURCE_REMOVE;
+}
+
+static void
 on_relays_changed(GhAccountRelays *relays, gpointer data)
 {
   (void)relays;
-  key_package_maybe_publish(data);
+  GhMlsService *self = data;
+  if (self->kp_reconcile_timer)
+    g_source_remove(self->kp_reconcile_timer);
+  self->kp_reconcile_timer = g_timeout_add(KEY_PACKAGE_RELAY_SETTLE_MS,
+                                           key_package_reconcile_fired, self);
 }
 
 /* ---- Object --------------------------------------------------------------------------- */
@@ -9253,6 +9463,7 @@ gh_mls_service_finalize(GObject *object)
     gh_clock_unref(self->clock);
   g_free(self->account);
   g_strfreev(self->kp_write_relays);
+  g_strfreev(self->kp_candidate_relays);
   g_strfreev(self->kp_target_relays);
   for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++) {
     g_free(self->kp[f].id);

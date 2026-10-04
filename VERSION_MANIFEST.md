@@ -242,6 +242,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | W27 KeyPackage write-relay migration (nostrc-qaqh): rebuild the signed kind-30443 envelopes from the existing stored KeyPackages in their stable slots, track the last reconciled 10002 write set, and send NIP-09 deletions to removed relays only after both formats are ACKed on every new relay. | libmarmot | 0.12.0 | No further bump: additive `marmot_republish_key_package_unsigned()` API and same-key transport fix are folded into unreleased 0.12.0 MINOR; no MLS key or storage-format migration. |
 | same | groundhog | 0.12.0 | No further bump: PATCH-class invite-discovery fix folded into unreleased 0.12.0; an internal encrypted-store key records the reconciled write set, with no schema change. Existing 10002 never-clobber rules are unchanged. |
+| W27 KeyPackage relay-migration review follow-up (nostrc-qaqh, nostrc-3e6g): persist attempted relay coverage across rapid edits and restart, withdraw on a signed empty write set, and correct the revert regression's baseline precondition. | groundhog | 0.12.0 | No further bump: PATCH-class correctness/privacy fix folded into unreleased 0.12.0; an additional encrypted-store key tracks possible relay copies, with no public storage format or API change. |
 
 ## Maintenance
 
