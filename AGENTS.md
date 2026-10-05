@@ -285,6 +285,32 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
+## Developer Keychains (MANDATORY)
+
+A developer's macOS default keychain and search list were once left pointing at
+a throwaway test keychain under `/tmp` (nostrc-2hmd): everything apps saved for
+days went to a file a reboot then deleted, and the login keychain had to be
+restored by hand.
+
+- **Never** run `security default-keychain -s`, `security list-keychains -s`,
+  `security login-keychain -s`, `security delete-keychain` or
+  `security set-keychain-settings` on a developer machine, and never call
+  `SecKeychainSetDefault`, `SecKeychainSetSearchList` or
+  `SecKeychainSetDomainSearchList`. Not for isolation, not temporarily.
+- A test that needs a keychain creates one with `SecKeychainCreate` in a
+  temporary directory and addresses it **by reference** (`kSecUseKeychain`,
+  `kSecMatchSearchList`), wrapped in `tests/common/nostrc-test-keychain-guard.h`
+  so it proves the default keychain and search list are unchanged.
+- Smoke and manual test builds on macOS are configured with
+  `-DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`
+  and run against a throwaway Secret Service on a private bus; they never
+  store test keys in the login keychain.
+- `scripts/check-macos-keychain.sh` (read-only) runs in the pre-push hook
+  before and after the tests and blocks the push if the configuration is not
+  the login keychain. If it fails, **stop and tell the owner**; only the
+  machine's owner repairs it. Never choose "Reset To Defaults" in a keychain
+  dialog.
+
 ## Banned Relays
 
 **NEVER add `relay.damus.io` (or `wss://relay.damus.io`) anywhere in this codebase** — not in code, defaults, configs, docs, examples, or tests. It has been deliberately purged due to unreliability. Do not reintroduce it under any circumstances, even as an example URL. Use `wss://nos.lol` or `wss://relay.nostr.band` instead.

@@ -159,6 +159,16 @@ if [ -z "$git_common_dir" ]; then
     }
 fi
 macos_history="$git_common_dir/nostrc-macos-gate-history"
+# nostrc-2hmd: a developer's default keychain once pointed at a throwaway test
+# keychain for days. Read-only; a no-op off macOS and in checkouts without it.
+keychain_guard() {
+    if [ -f "$repo_root/scripts/check-macos-keychain.sh" ] &&
+       ! bash "$repo_root/scripts/check-macos-keychain.sh"; then
+        echo "Pre-push: the macOS keychain configuration is not the login keychain ($1) - push blocked" >&2
+        exit 1
+    fi
+}
+keychain_guard "before the tests"
 saw_ref=0
 while read -r local_ref local_oid remote_ref remote_oid; do
     [ -n "${local_ref:-}" ] || continue
@@ -251,6 +261,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         JOBS="${CTEST_PARALLEL_LEVEL:-1}" TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT= \
         GATE="macOS gate" SUITE="tests" PROGRESS=1 \
         bash "$repo_root/scripts/linux-gate-smoke.sh"
+    keychain_guard "after the macOS tests: a test changed it"
     rm -rf "$build"
     finish_stages
 done

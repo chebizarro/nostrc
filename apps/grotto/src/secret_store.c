@@ -32,6 +32,11 @@
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
+#endif
+/* GROTTO_NO_KEYCHAIN: a smoke/test build whose daemon stores keys in
+ * the Secret Service (NIP55L_SECRET_BACKEND=libsecret) must not read the
+ * developer's login Keychain either (nostrc-2hmd). */
+#if defined(__APPLE__) && !defined(GROTTO_NO_KEYCHAIN)
 #define GNOSTR_HAVE_KEYCHAIN 1
 /* kSecAttrService value shared with the daemon (signer_ops.c
  * KC_SIGNER_SERVICE) so both processes see the same items. */

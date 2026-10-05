@@ -37,11 +37,36 @@ find_package(OpenSSL REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
 
+# Key storage backend. auto: the Keychain on macOS, libsecret elsewhere.
+# "libsecret" on macOS is for smoke and test builds, which must never write
+# to the developer's login Keychain (nostrc-2hmd): keys then go to whatever
+# org.freedesktop.secrets the session bus provides (a throwaway one).
+set(NIP55L_SECRET_BACKEND "auto" CACHE STRING
+    "nip55l key storage backend: auto, libsecret or keychain")
+set_property(CACHE NIP55L_SECRET_BACKEND PROPERTY STRINGS auto libsecret keychain)
+if (NOT NIP55L_SECRET_BACKEND MATCHES "^(auto|libsecret|keychain)$")
+  message(FATAL_ERROR "NIP55L_SECRET_BACKEND must be auto, libsecret or keychain "
+                      "(got '${NIP55L_SECRET_BACKEND}')")
+endif()
+if (NIP55L_SECRET_BACKEND STREQUAL "keychain" AND NOT APPLE)
+  message(FATAL_ERROR "NIP55L_SECRET_BACKEND=keychain needs macOS")
+endif()
+set(NIP55L_USE_LIBSECRET OFF)
+set(NIP55L_USE_KEYCHAIN OFF)
+if (NIP55L_SECRET_BACKEND STREQUAL "libsecret" OR
+    (NIP55L_SECRET_BACKEND STREQUAL "auto" AND NOT APPLE))
+  set(NIP55L_USE_LIBSECRET ON)
+elseif (APPLE)
+  set(NIP55L_USE_KEYCHAIN ON)
+endif()
+
 # Optional libsecret for key storage
 if (PkgConfig_FOUND)
-  # On macOS prefer Keychain; skip libsecret even if present
-  if (NOT APPLE)
+  if (NIP55L_USE_LIBSECRET)
     pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
+    if (NIP55L_SECRET_BACKEND STREQUAL "libsecret" AND NOT LIBSECRET_FOUND)
+      message(FATAL_ERROR "NIP55L_SECRET_BACKEND=libsecret, but libsecret-1 was not found")
+    endif()
     if (LIBSECRET_FOUND)
       target_link_libraries(nostr_nip55l_core PUBLIC PkgConfig::LIBSECRET)
       target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_LIBSECRET)
@@ -56,10 +81,14 @@ if (PkgConfig_FOUND)
   endif()
 endif()
 
-# macOS Keychain fallback when libsecret is not present
+# macOS Keychain (the default backend there). The frameworks are located on
+# every macOS build: the Keychain migration test compiles its own copy of
+# signer_ops.c against a throwaway keychain whatever the daemon's backend.
 if (APPLE)
   find_library(SECURITY_FRAMEWORK Security)
   find_library(COREFOUNDATION_FRAMEWORK CoreFoundation)
+endif()
+if (NIP55L_USE_KEYCHAIN)
   if (SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK)
     target_link_libraries(nostr_nip55l_core PUBLIC ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
     target_compile_definitions(nostr_nip55l_core PRIVATE -DNIP55L_HAVE_KEYCHAIN)

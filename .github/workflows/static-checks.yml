@@ -43,3 +43,6 @@ jobs:
 
       - name: Old signer names stay gone (W31)
         run: bash scripts/check-grotto-names.sh
+
+      - name: Keychain guard self-test (nostrc-2hmd)
+        run: bash scripts/test-check-macos-keychain.sh

@@ -19,6 +19,7 @@
 #include <sodium.h>
 #include <glib.h>
 #include <unistd.h>
+#include "../../../../tests/common/nostrc-test-keychain-guard.h"
 
 /* ---- Temporary keychain management -------------------------------------- */
 
@@ -236,6 +237,7 @@ test_error_mapping(void)
 int
 main(int argc, char *argv[])
 {
+  nostrc_test_keychain_guard_begin();
   /* Safety net: clean up temp keychain even on abort. */
   atexit(destroy_temp_keychain);
 
@@ -243,7 +245,9 @@ main(int argc, char *argv[])
   g_test_add_func("/store-key-keychain/store-search-verify",
                   test_store_search_verify);
   g_test_add_func("/store-key-keychain/error-mapping", test_error_mapping);
-  return g_test_run();
+  int result = g_test_run();
+  nostrc_test_keychain_guard_end();
+  return result;
 }
 
 #else /* !__APPLE__ */

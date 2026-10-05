@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "../../../tests/common/nostrc-test-keychain-guard.h"
 
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -107,6 +108,7 @@ static int holds_raw_key(CFDataRef d, const char *sk_hex) {
 }
 
 int main(void) {
+  nostrc_test_keychain_guard_begin();
   char tmpl[] = "/tmp/nip55l-kc-XXXXXX";
   int fd = mkstemp(tmpl);
   CHECK(fd >= 0);
@@ -170,6 +172,7 @@ int main(void) {
 
   SecKeychainDelete(kc);
   CFRelease(kc);
+  nostrc_test_keychain_guard_end();
   printf("test_nip55l_keychain_migration: PASS\n");
   return 0;
 }

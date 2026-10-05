@@ -769,6 +769,20 @@ if (TARGET PkgConfig::GROUNDHOG_STORE_KEY_DEPS)
   if(APPLE)
     target_link_libraries(groundhog-store-key PUBLIC "-framework Security" "-framework CoreFoundation")
   endif()
+  # The backend gh_store_key_new(NULL) picks. auto: the Keychain on macOS, the
+  # Secret Service elsewhere. "secret-service" on macOS is for smoke and test
+  # builds, which must never write to the developer's login Keychain
+  # (nostrc-2hmd). Explicit backends (tests) are unaffected.
+  set(GROUNDHOG_STORE_KEY_DEFAULT_BACKEND "auto" CACHE STRING
+      "Groundhog default store-key backend: auto or secret-service")
+  set_property(CACHE GROUNDHOG_STORE_KEY_DEFAULT_BACKEND PROPERTY STRINGS auto secret-service)
+  if (NOT GROUNDHOG_STORE_KEY_DEFAULT_BACKEND MATCHES "^(auto|secret-service)$")
+    message(FATAL_ERROR "GROUNDHOG_STORE_KEY_DEFAULT_BACKEND must be auto or secret-service")
+  endif()
+  if (GROUNDHOG_STORE_KEY_DEFAULT_BACKEND STREQUAL "secret-service")
+    target_compile_definitions(groundhog-store-key PRIVATE GH_STORE_KEY_DEFAULT_SECRET_SERVICE=1)
+    message(STATUS "Groundhog store key: Secret Service by default (not the macOS Keychain)")
+  endif()
   target_compile_options(groundhog-store-key PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     # KC-1..KC-5 use FakeSecret; KC-4 explicitly selects libsecret with no

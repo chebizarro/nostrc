@@ -218,12 +218,15 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR})
 if (LIBSECRET_FOUND)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::LIBSECRET)
   message(STATUS "grotto: libsecret linked")
-elseif(APPLE)
-  # macOS: Link Security.framework for Keychain support
+endif()
+if (APPLE)
+  # macOS: sources under __APPLE__ use Security.framework whatever nip55l's
+  # key storage backend is (NIP55L_SECRET_BACKEND=libsecret finds libsecret
+  # too, so this can no longer be the elseif of the branch above).
   find_library(SECURITY_FRAMEWORK Security REQUIRED)
   find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
-  message(STATUS "grotto: Security.framework linked for Keychain support")
+  message(STATUS "grotto: Security.framework linked")
 elseif(WIN32)
   # Windows: Use DPAPI for secure credential storage
   target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GNOSTR_USE_WINDOWS_CREDENTIAL_STORE=1)
@@ -325,6 +328,22 @@ endif()
 # GNOSTR_HAVE_LIBSECRET; see the note there).
 if (LIBSECRET_FOUND)
   target_link_libraries(grotto_bunker_core PUBLIC PkgConfig::LIBSECRET)
+endif()
+if (APPLE)
+  # Its __APPLE__ sources use Security.framework; nip55l only passes the
+  # frameworks on when its own backend is the Keychain.
+  find_library(SECURITY_FRAMEWORK Security REQUIRED)
+  find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+  target_link_libraries(grotto_bunker_core PUBLIC ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+  # A smoke/test build that keeps keys in the Secret Service must not read the
+  # developer's login Keychain from secret_store.c either (nostrc-2hmd).
+  if (NIP55L_SECRET_BACKEND STREQUAL "libsecret")
+    target_compile_definitions(grotto_bunker_core PRIVATE GROTTO_NO_KEYCHAIN=1)
+    if (TARGET ${APP_SIGNER_BIN})
+      target_compile_definitions(${APP_SIGNER_BIN} PRIVATE GROTTO_NO_KEYCHAIN=1)
+    endif()
+    message(STATUS "grotto: Keychain reads disabled (NIP55L_SECRET_BACKEND=libsecret)")
+  endif()
 endif()
 if (SODIUM_FOUND)
   target_link_libraries(grotto_bunker_core PUBLIC PkgConfig::SODIUM)

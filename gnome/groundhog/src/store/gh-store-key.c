@@ -719,7 +719,7 @@ gh_store_key_new(GhStoreKeyBackend *backend)
 {
   g_return_val_if_fail(backend == NULL || GH_IS_STORE_KEY_BACKEND(backend), NULL);
   GhStoreKey *self = g_object_new(GH_TYPE_STORE_KEY, NULL);
-#ifdef __APPLE__
+#if defined(__APPLE__) && !defined(GH_STORE_KEY_DEFAULT_SECRET_SERVICE)
   self->backend = backend ? g_object_ref(backend)
                           : g_object_new(GH_TYPE_STORE_KEY_KEYCHAIN, NULL);
 #else
