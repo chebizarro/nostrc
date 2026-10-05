@@ -33,13 +33,31 @@ MOCK
 # that file (an interrupted run).
 cat > "$tmp/bin/ctest" <<'MOCK'
 #!/bin/bash
+tests="${TESTS:-alpha beta gamma}"
+perf_tests="${PERF_TESTS:-}"
+if [[ " $* " == *" -N "* ]]; then
+    printf 'QUERY %s\n' "$*" >> "$TRACE"
+    selected="$perf_tests"
+    for ((i = 1; i <= $#; i++)); do
+        if [ "${!i}" = -R ]; then
+            j=$((i + 1)); regex="${!j}"; selected=""
+            for t in $perf_tests; do [[ "$t" =~ $regex ]] && selected="$selected $t"; done
+        fi
+    done
+    n=0
+    for t in $selected; do n=$((n + 1)); echo "  Test #$n: $t"; done
+    echo "Total Tests: $n"
+    exit 0
+fi
 printf 'CTEST %s\n' "$*" >> "$TRACE"
 case " $* " in *" --output-on-failure "*) ;; *) echo "no --output-on-failure" >&2; exit 9 ;; esac
-tests="${TESTS:-alpha beta gamma}"
 fail="$FIRST_FAIL"
 skip="${SKIP:-}"
 run=first
 case " $* " in *" --parallel "*) ;; *) fail="$RERUN_FAIL"; skip="${RERUN_SKIP:-$skip}"; run=rerun ;; esac
+if [[ " $* " == *" -L ^perf$ "* ]]; then
+    tests="$perf_tests"; fail="${PERF_FAIL:-}"; skip="${PERF_SKIP:-}"; run=perf
+fi
 if [ "$run" = first ] && [ -n "${HANG_FILE:-}" ]; then
     echo "      Start 1: alpha"
     echo "1/3 Test #1: alpha .........   Passed    0.10 sec"
@@ -47,19 +65,20 @@ if [ "$run" = first ] && [ -n "${HANG_FILE:-}" ]; then
     while [ ! -e "$HANG_FILE" ]; do sleep 0.1; done
     exit 130
 fi
-[ "$run" = first ] || [ -z "${CTEST_PARALLEL_LEVEL:-}" ] || printf 'PARALLEL_RERUN\n' >> "$TRACE"
+[ "$run" != rerun ] || [ -z "${CTEST_PARALLEL_LEVEL:-}" ] || printf 'PARALLEL_RERUN\n' >> "$TRACE"
 selected="$tests"
+if [[ " $* " == *" -LE ^perf$ "* ]]; then selected="${TESTS:-alpha beta gamma}"; fi
 for ((i = 1; i <= $#; i++)); do
     if [ "${!i}" = -R ]; then
         j=$((i + 1))
         regex="${!j}"
         selected=""
-        [ "$run" = first ] || [ "${RERUN_SHORT:-0}" != 1 ] ||  continue
+        [ "$run" != rerun ] || [ "${RERUN_SHORT:-0}" != 1 ] || continue
         for t in $tests; do [[ "$t" =~ $regex ]] && selected="$selected $t"; done
     fi
 done
 report="${REPORT:-}"
-[ "$run" = first ] || report="${RERUN_REPORT:-}"
+[ "$run" != rerun ] || report="${RERUN_REPORT:-}"
 n=0; total=$(echo $selected | wc -w | tr -d ' '); failed=""
 for t in $selected; do
     n=$((n + 1))
@@ -108,6 +127,53 @@ FIRST_FAIL="" RERUN_FAIL="" gate > "$tmp/out" 2>&1 || fail "a clean run failed"
 grep -q 'smoke tests passed, 3 run' "$tmp/out" || fail "no pass line"
 [ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "a clean run reran"
 ! grep -q RERUN "$tmp/out" || fail "a clean run reported a rerun"
+initial_gate="$(head -1 "$tmp/state/gate-history/gates")"
+
+# A perf-labeled test runs only after the functional parallel run. The gate
+# must reject a missing required test, and a serial perf failure is never
+# treated as a parallel-smoke flake.
+FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    gate > "$tmp/out" 2>&1 || fail "a passing serial perf test failed the gate"
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 2 ] || fail "perf did not run exactly once after smoke"
+grep -q 'perf tests passed serially' "$tmp/out" || fail "serial perf pass not reported"
+grep -qF -- '-LE ^perf$' "$tmp/trace" || fail "parallel smoke included perf"
+grep -qF -- '-L ^perf$' "$tmp/trace" || fail "perf label was not selected"
+! grep '^CTEST .* -L ' "$tmp/trace" | grep -q -- '--parallel' || fail "perf was parallel"
+FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe other_probe" REQUIRED_PERF_TEST="perf_probe" \
+    TEST_REGEX=. gate > "$tmp/out" 2>&1 || fail "multiple perf registrations were rejected"
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    TEST_REGEX='^alpha$' gate > "$tmp/out" 2>&1; then
+    fail "an unselected required perf registration passed"
+fi
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="" REQUIRED_PERF_TEST="perf_probe" \
+    gate > "$tmp/out" 2>&1; then
+    fail "a missing required perf test passed the gate"
+fi
+grep -q 'required perf test perf_probe is not registered' "$tmp/out" ||
+    fail "missing perf test was not named"
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="other_probe" REQUIRED_PERF_TEST="perf_probe" \
+    gate > "$tmp/out" 2>&1; then
+    fail "an unrelated perf test satisfied the required registration"
+fi
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    PERF_SKIP="perf_probe" gate > "$tmp/out" 2>&1; then
+    fail "a skipped required perf test passed the gate"
+fi
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    PERF_FAIL="perf_probe" gate > "$tmp/out" 2>&1; then
+    fail "a failing serial perf test passed the gate"
+fi
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 2 ] || fail "a perf failure was retried"
+grep -q 'PERF TESTS FAILED' "$tmp/out" || fail "perf failure was not reported"
+! grep -q 'RERUN:' "$tmp/out" || fail "a perf failure was treated as a flake"
+FIRST_FAIL="beta" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    gate > "$tmp/out" 2>&1 || fail "perf after functional rerun failed the gate"
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 3 ] || fail "perf did not run after rerun"
+# Leave the original clean run as the sole history entry so the existing
+# cross-gate rerun-count assertions below retain their intended sequence.
+printf '%s\n' "$initial_gate" > "$tmp/state/gate-history/gates"
+: > "$tmp/state/gate-history/reruns"
+rm -f "$tmp/state/gate-history/"*-first-run.log
 
 # beta fails in the parallel run and passes alone: the gate passes, prints
 # beta's first output (its last TAIL_LINES lines), keeps the log, counts it.
@@ -290,6 +356,8 @@ project(gate_smoke_selftest NONE)
 enable_testing()
 add_test(NAME flaky_dummy COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/flaky.sh" "${CMAKE_CURRENT_BINARY_DIR}/flaky-count")
 add_test(NAME steady_dummy COMMAND sh -c "echo run >> '${CMAKE_CURRENT_BINARY_DIR}/steady-count'")
+add_test(NAME perf_dummy COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/perf.sh" "${CMAKE_CURRENT_BINARY_DIR}/perf-count")
+set_tests_properties(perf_dummy PROPERTIES LABELS perf)
 CMAKE
     # Fails its first run, passes later ones, unless ALWAYS_FAIL=1.
     cat > "$real/src/flaky.sh" <<'FLAKY'
@@ -297,9 +365,14 @@ n=$(( $(cat "$1" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$1"
 echo "flaky_dummy run $n"
 [ "$n" -ge 2 ] && [ "${ALWAYS_FAIL:-0}" != 1 ]
 FLAKY
+    cat > "$real/src/perf.sh" <<'PERF'
+echo run >> "$1"
+[ "${PERF_FAIL:-0}" != 1 ]
+PERF
     cmake -S "$real/src" -B "$real/build" > /dev/null
     real_gate() {
-        JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 BUILD_DIR="$real/build" STATE_DIR="$real/state" \
+        JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 REQUIRED_PERF_TEST=perf_dummy \
+            BUILD_DIR="$real/build" STATE_DIR="$real/state" \
             GATE="Real gate" SUITE="tests" bash "$scripts/linux-gate-smoke.sh"
     }
     real_gate > "$tmp/out" 2>&1 || { cat "$tmp/out"; fail "real CTest: a flake failed the gate"; }
@@ -307,6 +380,12 @@ FLAKY
     grep -q 'flaky_dummy run 1' "$tmp/out" || fail "real CTest: first output not printed"
     [ "$(cat "$real/build/flaky-count")" = 2 ] || fail "real CTest: flaky_dummy not run exactly twice"
     [ "$(wc -l < "$real/build/steady-count" | tr -d ' ')" = 1 ] || fail "real CTest: a passing test was rerun"
+    [ "$(wc -l < "$real/build/perf-count" | tr -d ' ')" = 1 ] || fail "real CTest: perf did not run once"
+    if PERF_FAIL=1 real_gate > "$tmp/out" 2>&1; then
+        fail "real CTest: a failing serial perf test passed"
+    fi
+    grep -q 'PERF TESTS FAILED' "$tmp/out" || fail "real CTest: perf failure not reported"
+    [ "$(wc -l < "$real/build/perf-count" | tr -d ' ')" = 2 ] || fail "real CTest: perf failure retried"
     rm -f "$real/build/flaky-count"
     if ALWAYS_FAIL=1 real_gate > "$tmp/out" 2>&1; then fail "real CTest: a failing rerun passed"; fi
     grep -q 'the rerun alone failed too' "$tmp/out" || fail "real CTest: no rerun failure line"

@@ -393,6 +393,28 @@ if(BUILD_TESTING)
   )
   target_include_directories(test_nostr_gtk_standalone_core PRIVATE ${PROJECT_ROOT}/tests/common)
 
+  # This GTK-only fixture needs neither Gnostr objects nor its schemas.
+  gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
+    SOURCES tests/test_bind_latency_budget.c
+    LIBS PkgConfig::GTK4
+    TIMEOUT 120
+  )
+  target_include_directories(test_nostr_gtk_bind_latency_budget PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests/common)
+
+  # Run the CPU-relative regression check alone, after functional tests.
+  if(XVFB_RUN)
+    add_test(NAME test_nostr_gtk_bind_latency_perf
+      COMMAND ${XVFB_RUN} -a $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
+  else()
+    add_test(NAME test_nostr_gtk_bind_latency_perf
+      COMMAND $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
+  endif()
+  set_tests_properties(test_nostr_gtk_bind_latency_perf PROPERTIES
+    RUN_SERIAL TRUE TIMEOUT 120
+    LABELS "gtk;widget;perf"
+    ENVIRONMENT "NOSTRC_TEST_PERF=1")
+
   # Gnostr-coupled widget tests. They link the real Gnostr app-layer
   # implementations from gnostr-widget-test-support (apps/gnostr), which is
   # configured after this directory, so gate on the options that create it.
@@ -418,12 +440,6 @@ if(BUILD_TESTING)
       TIMEOUT 120
     )
 
-    gn_add_gtest_xvfb(test_nostr_gtk_bind_latency_budget
-      SOURCES tests/test_bind_latency_budget.c
-      LIBS    ${_nostr_gtk_gnostr_test_libs}
-      TIMEOUT 120
-    )
-
     gn_add_gtest_xvfb(test_nostr_gtk_thread_view_bounded
       SOURCES tests/test_thread_view_bounded_load.c
       LIBS    ${_nostr_gtk_gnostr_test_libs}
@@ -435,7 +451,6 @@ if(BUILD_TESTING)
       test_nostr_gtk_note_card_measure
       test_nostr_gtk_widget_churn_leaks
       test_nostr_gtk_thread_view_bounded
-      test_nostr_gtk_bind_latency_budget
       test_nostr_gtk_listview_recycle_stress
     )
       target_include_directories(${_gtk_widget_test} PRIVATE
@@ -446,26 +461,10 @@ if(BUILD_TESTING)
       test_nostr_gtk_listview_recycle_stress
       test_nostr_gtk_note_card_measure
       test_nostr_gtk_widget_churn_leaks
-      test_nostr_gtk_bind_latency_budget
       test_nostr_gtk_thread_view_bounded
-      test_nostr_gtk_bind_latency_budget
       test_nostr_gtk_listview_recycle_stress
       PROPERTIES
         ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr")
 
-    # The parallel smoke run checks that bindings and heartbeats occur. The
-    # CPU-time responsiveness budget is a separate, serial perf registration
-    # of the same binary, so it cannot race the rest of CTest's GUI suite.
-    if(XVFB_RUN)
-      add_test(NAME test_nostr_gtk_bind_latency_perf
-        COMMAND ${XVFB_RUN} -a $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
-    else()
-      add_test(NAME test_nostr_gtk_bind_latency_perf
-        COMMAND $<TARGET_FILE:test_nostr_gtk_bind_latency_budget>)
-    endif()
-    set_tests_properties(test_nostr_gtk_bind_latency_perf PROPERTIES
-      RUN_SERIAL TRUE TIMEOUT 120
-      LABELS "gtk;widget;perf"
-      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/gnostr;NOSTRC_TEST_PERF=1")
   endif()
 endif()

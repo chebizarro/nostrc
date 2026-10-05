@@ -117,7 +117,9 @@ gh_test_wait_until_for_at(gboolean (*pred)(gpointer), gpointer data, guint secon
     g_main_context_iteration(NULL, TRUE);
   gboolean ready = pred(data);
   g_source_remove(tick);
-  g_source_remove(timer);
+  /* The one-shot deadline removes itself when it fires. */
+  if (!expired)
+    g_source_remove(timer);
   return ready;
 }
 

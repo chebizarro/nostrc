@@ -75,7 +75,11 @@ cat > "$tmp/bin/ctest" <<'MOCK'
 set -eu
 printf 'CTEST %s\n' "$*" >> "$TRACE"
 if [ "${3:-}" = -N ]; then
-    printf 'Total Tests: 1\n'
+    if [[ " $* " == *" -L ^perf$ "* ]]; then
+        printf 'Total Tests: 0\n'
+    else
+        printf 'Total Tests: 1\n'
+    fi
     exit 0
 fi
 run=rerun
@@ -216,7 +220,7 @@ assert_clean
 # The macOS run goes through linux-gate-smoke.sh: a test that fails and then
 # passes alone passes the push, loudly, and is counted in the shared history.
 CTEST_PARALLEL_LEVEL=3 run_hook flaky > "$tmp/flaky-output" 2>&1
-grep -q '^CTEST .*--no-tests=error --output-on-failure --parallel 3 -R \.$' "$tmp/trace"
+grep -qF -- '--no-tests=error --output-on-failure --parallel 3 -LE ^perf$ -R .' "$tmp/trace"
 grep -qF -- '-R ^(dummy)$' "$tmp/trace"
 absent '^PARALLEL_RERUN$' "$tmp/trace"
 grep -q 'DUMMY-OUTPUT-first' "$tmp/flaky-output"

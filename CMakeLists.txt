@@ -428,6 +428,9 @@ if (BUILD_NOSTR_GOBJECT)
 endif()
 
 # GTK4/libadwaita widget library (nostr-gtk-1.0) — depends on nostr-gobject
+# nostr-gtk registers Gnostr-coupled tests before apps/ is added, so this
+# option must already have its default value on a fresh configure.
+option(BUILD_APPS "Build application binaries under apps/" ON)
 option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
 if (BUILD_NOSTR_GTK)
   add_subdirectory(nostr-gtk)
@@ -439,7 +442,6 @@ if(BUILD_TESTING)
 endif()
 
 # GNostr apps (GTK4/GLib/libsecret) — make building apps optional for CI jobs that only need libraries
-option(BUILD_APPS "Build application binaries under apps/" ON)
 if (BUILD_APPS)
   add_subdirectory(apps)
 endif()

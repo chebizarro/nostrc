@@ -4,7 +4,8 @@
  * Verifies that GtkListView bind/unbind operations complete within
  * acceptable time budgets, ensuring smooth scrolling UX.
  *
- * Uses a heartbeat idle to detect main-thread stalls during bind churn.
+ * Checks scroll bind work against an independent in-process GTK reference;
+ * model-swap churn also uses a main-loop heartbeat.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -12,6 +13,7 @@
 #include <gtk/gtk.h>
 #include <glib.h>
 #include <time.h>
+#include <stdlib.h>
 #include "nostrc-test-gdk-frame.h"
 
 /* ASan/UBSan relaxation: sanitizer builds are ~5-10x slower.
@@ -48,8 +50,7 @@
 #define N_ITEMS         300
 #define HEARTBEAT_MS    5
 #define MAX_STALL_MS    (100 * SANITIZER_SLOWDOWN * BACKEND_SLOWDOWN)
-#define MAX_SCROLL_CPU_MS (500 * SANITIZER_SLOWDOWN)
-#define MAX_BIND_CPU_MS (10 * SANITIZER_SLOWDOWN * BACKEND_SLOWDOWN)
+#define MAX_BIND_REFERENCE_RATIO 3.0
 /* Minimum heartbeat iterations we expect in any test — ensures heartbeat actually fired */
 #define MIN_HEARTBEATS  3
 
@@ -109,13 +110,42 @@ on_setup(GtkListItemFactory *f G_GNUC_UNUSED, GtkListItem *li, gpointer ud G_GNU
 }
 
 static guint bind_count = 0;
-static gint64 bind_cpu_total_us = 0;
-static gint64 bind_cpu_max_us = 0;
+static gint64 bind_cpu_total_ns = 0;
+static gint64 bind_cpu_max_ns = 0;
+static guint reference_bind_count = 0;
+static gint64 reference_bind_cpu_ns = 0;
+
+static gint64
+thread_cpu_ns(void)
+{
+    struct timespec ts;
+    g_assert_cmpint(clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts), ==, 0);
+    return (gint64)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+/* Independent reference, interleaved with candidate bindings on the same list.
+ * Unlike setting labels on an idle item, scrolling really dirties GTK layout.
+ * Do not share this implementation with on_bind: added candidate work must
+ * not increase its own budget. */
+static void
+on_reference_bind(GtkListItemFactory *f G_GNUC_UNUSED, GtkListItem *li,
+                  gpointer ud G_GNUC_UNUSED)
+{
+    gint64 start = thread_cpu_ns();
+    GtkBox *box = GTK_BOX(gtk_list_item_get_child(li));
+    GtkLabel *header = GTK_LABEL(gtk_widget_get_first_child(GTK_WIDGET(box)));
+    GtkLabel *body = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(header)));
+    GtkStringObject *so = GTK_STRING_OBJECT(gtk_list_item_get_item(li));
+    gtk_label_set_text(header, "Author Name · 3m");
+    gtk_label_set_text(body, gtk_string_object_get_string(so));
+    reference_bind_count++;
+    reference_bind_cpu_ns += thread_cpu_ns() - start;
+}
 
 static void
 on_bind(GtkListItemFactory *f G_GNUC_UNUSED, GtkListItem *li, gpointer ud G_GNUC_UNUSED)
 {
-    gint64 start = thread_cpu_us();
+    gint64 start = thread_cpu_ns();
     GtkBox *box = GTK_BOX(gtk_list_item_get_child(li));
     GtkLabel *header = GTK_LABEL(gtk_widget_get_first_child(GTK_WIDGET(box)));
     GtkLabel *body = GTK_LABEL(gtk_widget_get_next_sibling(GTK_WIDGET(header)));
@@ -124,9 +154,23 @@ on_bind(GtkListItemFactory *f G_GNUC_UNUSED, GtkListItem *li, gpointer ud G_GNUC
     gtk_label_set_text(header, "Author Name · 3m");
     gtk_label_set_text(body, gtk_string_object_get_string(so));
     bind_count++;
-    gint64 elapsed = thread_cpu_us() - start;
-    bind_cpu_total_us += elapsed;
-    if (elapsed > bind_cpu_max_us) bind_cpu_max_us = elapsed;
+    gint64 elapsed = thread_cpu_ns() - start;
+    bind_cpu_total_ns += elapsed;
+    if (elapsed > bind_cpu_max_ns) bind_cpu_max_ns = elapsed;
+}
+
+static gboolean compare_bindings = FALSE;
+static guint binding_sequence = 0;
+
+static void
+on_benchmark_bind(GtkListItemFactory *factory, GtkListItem *item, gpointer data)
+{
+    /* Neighboring rows see the same layout/cache state and CPU frequency.
+     * Timing separate windows or whole sweeps gives them different workloads. */
+    if (compare_bindings && binding_sequence++ % 2 == 0)
+        on_reference_bind(factory, item, data);
+    else
+        on_bind(factory, item, data);
 }
 
 /* ── Helper: ensure heartbeat fires enough times ─────────────────── */
@@ -142,13 +186,37 @@ ensure_heartbeat_warmup(Heartbeat *hb, guint min_count)
     }
 }
 
+static void
+scroll_through(GtkScrolledWindow *sw)
+{
+    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(sw);
+    double upper = gtk_adjustment_get_upper(vadj);
+    double page = gtk_adjustment_get_page_size(vadj);
+    for (int direction = 0; direction < 2; direction++) {
+        for (int step = 0; step <= 50 && upper > page; step++) {
+            double fraction = step / 50.0;
+            double pos = (upper - page) * (direction ? 1.0 - fraction : fraction);
+            gtk_adjustment_set_value(vadj, pos);
+            for (int i = 0; i < 5; i++)
+                g_main_context_iteration(g_main_context_default(), FALSE);
+        }
+    }
+}
+
+static gint
+compare_ratio(gconstpointer a, gconstpointer b)
+{
+    double x = *(const double *)a, y = *(const double *)b;
+    return (x > y) - (x < y);
+}
+
 /* ── Test: Bind loop stays within latency budget ──────────────────── */
 static void
 test_bind_latency_within_budget(void)
 {
     bind_count = 0;
-    bind_cpu_total_us = 0;
-    bind_cpu_max_us = 0;
+    bind_cpu_total_ns = 0;
+    bind_cpu_max_ns = 0;
 
     /* Create model */
     GListStore *store = g_list_store_new(GTK_TYPE_STRING_OBJECT);
@@ -167,7 +235,7 @@ test_bind_latency_within_budget(void)
     GtkSignalListItemFactory *factory = GTK_SIGNAL_LIST_ITEM_FACTORY(
         gtk_signal_list_item_factory_new());
     g_signal_connect(factory, "setup", G_CALLBACK(on_setup), NULL);
-    g_signal_connect(factory, "bind", G_CALLBACK(on_bind), NULL);
+    g_signal_connect(factory, "bind", G_CALLBACK(on_benchmark_bind), NULL);
 
     GtkNoSelection *sel = gtk_no_selection_new(G_LIST_MODEL(store));
     /* store ownership transferred to sel — don't unref store separately */
@@ -192,41 +260,39 @@ test_bind_latency_within_budget(void)
     }
 
     guint binds_before_scroll = bind_count;
-    bind_cpu_total_us = 0;
-    bind_cpu_max_us = 0;
-    gint64 cpu_start = thread_cpu_us();
-
-    /* Scroll through the entire list */
-    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(sw);
-    double upper = gtk_adjustment_get_upper(vadj);
-    double page = gtk_adjustment_get_page_size(vadj);
-
-    for (int step = 0; step < 50 && upper > page; step++) {
-        double pos = (upper - page) * step / 50.0;
-        gtk_adjustment_set_value(vadj, pos);
-        for (int i = 0; i < 5; i++)
-            g_main_context_iteration(g_main_context_default(), FALSE);
-    }
-
-    double cpu_ms = (thread_cpu_us() - cpu_start) / 1000.0;
-
-    g_test_message("Bind latency test results:");
-    g_test_message("  Scroll binds: %u (total: %u)",
-                   bind_count - binds_before_scroll, bind_count);
-    g_test_message("  Scroll thread CPU: %.1f ms (budget: %d ms)",
-                   cpu_ms, MAX_SCROLL_CPU_MS);
-    g_test_message("  Bind CPU total: %.1f ms; max callback: %.3f ms (budget: %d ms)",
-                   bind_cpu_total_us / 1000.0, bind_cpu_max_us / 1000.0,
-                   MAX_BIND_CPU_MS);
-
-    /* Assertions */
+    scroll_through(sw);
     g_assert_cmpuint(bind_count, >, binds_before_scroll);
-    /* CTest's perf registration runs alone; the parallel registration checks
-     * only that scrolling really binds new rows. CPU time excludes scheduler
-     * pauses while covering synchronous bind and layout work. */
+    g_test_message("Scroll binds: %u", bind_count - binds_before_scroll);
+
     if (g_getenv("NOSTRC_TEST_PERF")) {
-        g_assert_cmpfloat(cpu_ms, <, MAX_SCROLL_CPU_MS);
-        g_assert_cmpfloat(bind_cpu_max_us / 1000.0, <, MAX_BIND_CPU_MS);
+        /* A median of nine interleaved samples rejects sustained work growth
+         * without letting a single allocator/cache outlier decide the result. */
+        compare_bindings = TRUE;
+        double ratios[9];
+        for (guint sample = 0; sample < G_N_ELEMENTS(ratios); sample++) {
+            bind_count = reference_bind_count = 0;
+            bind_cpu_total_ns = reference_bind_cpu_ns = 0;
+            bind_cpu_max_ns = 0;
+            binding_sequence = sample % 2;
+            scroll_through(sw);
+            g_assert_cmpuint(bind_count, >, 0);
+            g_assert_cmpuint(reference_bind_count, >, 0);
+            double baseline = (double)reference_bind_cpu_ns / reference_bind_count;
+            double candidate = (double)bind_cpu_total_ns / bind_count;
+            g_assert_cmpfloat(baseline, >, 0);
+            ratios[sample] = candidate / baseline;
+            g_test_message("Pair %u: candidate %.3f us/bind (%u binds), "
+                           "reference %.3f us/bind (%u binds), ratio %.2f, max %.3f us",
+                           sample, candidate / 1000, bind_count,
+                           baseline / 1000, reference_bind_count,
+                           ratios[sample], bind_cpu_max_ns / 1000.0);
+        }
+        compare_bindings = FALSE;
+        qsort(ratios, G_N_ELEMENTS(ratios), sizeof ratios[0], compare_ratio);
+        double median = ratios[G_N_ELEMENTS(ratios) / 2];
+        g_test_message("Median bind CPU ratio: %.2f (limit %.1f)",
+                       median, MAX_BIND_REFERENCE_RATIO);
+        g_assert_cmpfloat(median, <, MAX_BIND_REFERENCE_RATIO);
     }
 
     /* Cleanup — window owns sw, lv, sel, factory; destroy cascades */

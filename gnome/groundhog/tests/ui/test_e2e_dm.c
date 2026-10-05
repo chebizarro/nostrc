@@ -538,6 +538,29 @@ stack_bring_up(SendStack *s)
   }
 }
 
+static gboolean
+wait_flag(gpointer data)
+{
+  return *(gboolean *)data;
+}
+
+static void
+test_wait_timeout(void)
+{
+  gboolean ready = FALSE;
+  /* Zero makes the real one-shot source expire on the next iteration. The
+   * helper must return to its caller's diagnostic, without a GLib critical. */
+  g_assert_false(gh_test_wait_until_for_at(wait_flag, &ready, 0));
+}
+
+static void
+test_wait_ready(void)
+{
+  gboolean ready = FALSE;
+  g_idle_add(gh_test_deadline_hit, &ready);
+  g_assert_true(gh_test_wait_until_for_at(wait_flag, &ready, 10));
+}
+
 static void
 test_two_accounts(void)
 {
@@ -768,6 +791,8 @@ main(int argc, char **argv)
   nostrc_test_tolerate_gdk_frame_warning();
   stack_keys_init();
   nostrc_test_bus_add_func("/groundhog/e2e-dm/two-accounts", test_two_accounts);
+  nostrc_test_bus_add_func("/groundhog/e2e-dm/wait-timeout", test_wait_timeout);
+  nostrc_test_bus_add_func("/groundhog/e2e-dm/wait-ready", test_wait_ready);
   int status = g_test_run();
   stack_keys_clear();
   gh_test_signer_down(&bus, &signer);

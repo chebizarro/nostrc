@@ -34,6 +34,7 @@
 # and SUITE ("smoke tests") for messages, DISPLAY_WRAP (1: under
 # dbus-run-session and xvfb-run; 0: bare), CTEST_TIMEOUT (120; empty: CTest's
 # default), FORBID_PATTERN (an ERE no ctest log may match, e.g. skipped tests),
+# REQUIRED_PERF_TEST (must be selected with the perf label and pass),
 # SANITIZER_REPORTS (block, or empty), RERUN_MAX (5), PROGRESS (1: stream each
 # test's result line while the log is written; 0: summary only). An
 # interrupted run (SIGINT, SIGTERM) keeps its log so far in the history.
@@ -51,6 +52,7 @@ DISPLAY_WRAP="${DISPLAY_WRAP:-1}"
 CTEST_TIMEOUT="${CTEST_TIMEOUT-120}"
 FORBID_PATTERN="${FORBID_PATTERN:-}"
 SANITIZER_REPORTS="${SANITIZER_REPORTS:-}"
+REQUIRED_PERF_TEST="${REQUIRED_PERF_TEST:-}"
 RERUN_MAX="${RERUN_MAX:-5}"
 PROGRESS="${PROGRESS:-0}"
 # What the first run was, for messages (W25 review N3: the macOS stage's
@@ -210,9 +212,18 @@ recent_gates() {
 # after the functional suite. A failure here blocks; RERUN_MAX applies only
 # to the parallel functional run.
 run_perf() {
-  local count log
-  count="$(ctest --test-dir "$BUILD_DIR" -N -L '^perf$' "${SELECT[@]}" |
-    awk '/Total Tests:/ { print $3 }')"
+  local count expected listing log
+  listing="$(ctest --test-dir "$BUILD_DIR" -N -L '^perf$' "${SELECT[@]}")"
+  count="$(printf '%s\n' "$listing" | awk '/Total Tests:/ { print $3 }')"
+  if [ -n "$REQUIRED_PERF_TEST" ]; then
+    expected="$(printf '%s\n' "$listing" | awk -v name="$REQUIRED_PERF_TEST" '
+      /^ *Test +#[0-9]+:/ && $3 == name { n++ }
+      END { print n+0 }')"
+    if [ "${expected:-0}" -ne 1 ]; then
+      echo "==> $GATE: required perf test $REQUIRED_PERF_TEST is not registered and selected with the perf label"
+      return 1
+    fi
+  fi
   [ "${count:-0}" -gt 0 ] || return 0
   echo "==> $GATE: running $count perf test(s) serially after $SUITE ($(stamp))"
   log="$STATE_DIR/ctest-perf.log"
@@ -223,6 +234,12 @@ run_perf() {
     return 1
   fi
   check_forbidden "$log"
+  if [ -n "$REQUIRED_PERF_TEST" ] &&
+     [ "$(rerun_status "$log" "$REQUIRED_PERF_TEST")" != Passed ]; then
+    cat "$log"
+    echo "==> $GATE: PERF TESTS FAILED: required test $REQUIRED_PERF_TEST did not pass"
+    return 1
+  fi
   echo "==> $GATE: perf tests passed serially ($(stamp))"
 }
 

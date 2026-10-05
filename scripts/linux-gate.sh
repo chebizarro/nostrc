@@ -183,6 +183,8 @@ else
   BUILD_ENV=()
   BUILD_ARGS=()
   BUILT="all targets"
+  REQUIRED_PERF_TEST=test_nostr_gtk_bind_latency_perf
+  export REQUIRED_PERF_TEST
 fi
 # A cache keeps an option (or a compiler) CI no longer passes: other arguments
 # or configure env, a fresh tree. (A volume from before this record adopts it.)

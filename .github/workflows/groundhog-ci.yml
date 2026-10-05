@@ -57,13 +57,14 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON \
-            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
             -DBUILD_APPS=OFF -DBUILD_RELAYD=ON -DSIGNET_ENABLE=OFF \
             -DBUILD_MDK011_INTEROP=ON -DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice
 
       - name: Build Groundhog and every focused test target
         run: |
           cmake --build build --parallel 2 --target \
+            test_nostr_gtk_bind_latency_budget \
             groundhog test-groundhog-resource test-groundhog-shell test-groundhog-identity \
             test-groundhog-account test-groundhog-account-relays test-groundhog-dm-send \
             test-groundhog-account-ui test-groundhog-relay test-groundhog-relay-wire \
@@ -97,6 +98,18 @@ jobs:
             test-groundhog-bus-probe test-groundhog-two-instance \
             groundhog-test-harness test-groundhog-two-instance-acceptance \
             test-groundhog-voice test-groundhog-voice-ui test-groundhog-mdk011-interop
+
+      - name: GTK bind performance regression gate (serial, no retry)
+        run: |
+          python3 - <<'PY'
+          import json
+          import subprocess
+          data = json.loads(subprocess.check_output(
+              ['ctest', '--test-dir', 'build', '--show-only=json-v1', '-L', '^perf$'], text=True))
+          assert 'test_nostr_gtk_bind_latency_perf' in {t['name'] for t in data['tests']}, \
+              'Missing GTK perf registration'
+          PY
+          ctest --test-dir build --output-on-failure --no-tests=error -L '^perf$' --parallel 1
 
       - name: Require complete Groundhog test registration
         run: |
