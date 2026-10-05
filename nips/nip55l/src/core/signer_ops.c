@@ -1282,7 +1282,7 @@ int nostr_nip55l_clear_owner(const char *selector){
  * One-shot keyring migration (nostrc-bml6)
  *
  * Re-stores key material found under the legacy schemas
- * (org.gnostr.Signer/key from gnostr-signer's removed secret-storage.c, the
+ * (org.gnostr.Signer/key from grotto's removed secret-storage.c, the
  * Seahorse helper's former org.gnostr.Key, and — nostrc-e5nz — the gnostr
  * client's retired org.gnostr.NostrKey keystore) under the unified
  * org.gnostr.Signer/identity schema, then deletes each original.

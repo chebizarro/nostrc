@@ -11,7 +11,7 @@ on:
       - 'libmarmot-v*'
       - 'marmot-gobject-v*'
       - 'gnostr-v*'
-      - 'gnostr-signer-v*'
+      - 'grotto-v*'
   workflow_dispatch:
 
 jobs:
@@ -70,7 +70,7 @@ jobs:
   build-deb:
     name: Build .deb packages
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -113,27 +113,27 @@ jobs:
             fpm -s dir -t deb -n gnostr -v "${RELEASE_VERSION}" \
               -C "${root}" -p dist/gnostr_VERSION_ARCH.deb .
           fi
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
-            signer_root="package-roots/gnostr-signer"
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
+            signer_root="package-roots/grotto"
             mkdir -p "${signer_root}/usr/bin" \
               "${signer_root}/usr/share/glib-2.0/schemas" \
               "${signer_root}/usr/share/dbus-1/services" \
               "${signer_root}/usr/share/applications" \
               "${signer_root}/usr/share/icons/hicolor/scalable/apps"
-            cp stage/usr/bin/gnostr-signer "${signer_root}/usr/bin/"
-            cp stage/usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
+            cp stage/usr/bin/grotto "${signer_root}/usr/bin/"
+            cp stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
             glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
             cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
-            cp stage/usr/share/applications/org.gnostr.Signer.desktop "${signer_root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
-            fpm -s dir -t deb -n gnostr-signer -v "${RELEASE_VERSION}" \
-              -C "${signer_root}" -p dist/gnostr-signer_VERSION_ARCH.deb .
+            cp stage/usr/share/applications/org.nostr.Grotto.desktop "${signer_root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
+            fpm -s dir -t deb -n grotto -v "${RELEASE_VERSION}" \
+              -C "${signer_root}" -p dist/grotto_VERSION_ARCH.deb .
 
-            daemon_root="package-roots/gnostr-signer-daemon"
+            daemon_root="package-roots/grotto-daemon"
             mkdir -p "${daemon_root}/usr/bin"
-            cp stage/usr/bin/gnostr-signer-daemon "${daemon_root}/usr/bin/"
-            fpm -s dir -t deb -n gnostr-signer-daemon -v "${RELEASE_VERSION}" \
-              -C "${daemon_root}" -p dist/gnostr-signer-daemon_VERSION_ARCH.deb .
+            cp stage/usr/bin/grotto-daemon "${daemon_root}/usr/bin/"
+            fpm -s dir -t deb -n grotto-daemon -v "${RELEASE_VERSION}" \
+              -C "${daemon_root}" -p dist/grotto-daemon_VERSION_ARCH.deb .
           fi
       - name: Upload DEBs
         uses: actions/upload-artifact@v4
@@ -142,9 +142,9 @@ jobs:
           path: dist/*.deb
 
   build-appimage:
-    name: Build AppImage (gnostr-signer)
+    name: Build AppImage (grotto)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     env:
@@ -163,7 +163,7 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build -j --target gnostr-signer
+        run: cmake --build build -j --target grotto
       - name: Download AppImage tools
         run: |
           mkdir -p appimage-tools
@@ -177,12 +177,12 @@ jobs:
           set -e
           APPDIR=$PWD/AppDir
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-          cp build/apps/gnostr-signer/gnostr-signer "$APPDIR/usr/bin/gnostr-signer"
+          cp build/apps/grotto/grotto "$APPDIR/usr/bin/grotto"
           # Desktop file and metadata
-          cp apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop "$APPDIR/usr/share/applications/"
+          cp apps/grotto/packaging/appimage/grotto.desktop "$APPDIR/usr/share/applications/"
           # Icon
-          if [ -f apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg ]; then
-            cp apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
+          if [ -f apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg ]; then
+            cp apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
           fi
       - name: Build AppImage
         env:
@@ -191,12 +191,12 @@ jobs:
           set -e
           export NO_APPSTREAM=1
           ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
-            -d AppDir/usr/share/applications/gnostr-signer.desktop \
-            --executable AppDir/usr/bin/gnostr-signer \
+            -d AppDir/usr/share/applications/grotto.desktop \
+            --executable AppDir/usr/bin/grotto \
             --plugin gtk
-          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-${RELEASE_VERSION}-x86_64.AppImage
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir grotto-${RELEASE_VERSION}-x86_64.AppImage
           mkdir -p dist
-          mv gnostr-signer-*.AppImage dist/
+          mv grotto-*.AppImage dist/
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
@@ -204,9 +204,9 @@ jobs:
           path: dist/*.AppImage
 
   build-appimage-daemon-tcp:
-    name: Build AppImage (gnostr-signer-daemon TCP)
+    name: Build AppImage (grotto-daemon TCP)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     container: ubuntu:22.04
     env:
@@ -222,7 +222,7 @@ jobs:
       - name: Configure (TCP enabled)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
-        run: cmake --build build -j --target gnostr-signer-daemon
+        run: cmake --build build -j --target grotto-daemon
       - name: Download AppImage tools
         run: |
           mkdir -p appimage-tools
@@ -235,13 +235,13 @@ jobs:
           set -e
           APPDIR=$PWD/AppDir
           mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
-          cp build/apps/gnostr-signer/gnostr-signer-daemon "$APPDIR/usr/bin/gnostr-signer-daemon"
+          cp build/apps/grotto/grotto-daemon "$APPDIR/usr/bin/grotto-daemon"
           # Minimal desktop (optional for CLI); enables AppImage metadata
-          cat > "$APPDIR/usr/share/applications/gnostr-signer-daemon.desktop" <<EOF
+          cat > "$APPDIR/usr/share/applications/grotto-daemon.desktop" <<EOF
           [Desktop Entry]
           Type=Application
-          Name=GNostr Signer Daemon (TCP)
-          Exec=gnostr-signer-daemon
+          Name=Grotto Daemon (TCP)
+          Exec=grotto-daemon
           Terminal=true
           Categories=Utility;
           EOF
@@ -252,11 +252,11 @@ jobs:
           set -e
           export NO_APPSTREAM=1
           ./appimage-tools/linuxdeploy-x86_64.AppImage --appdir AppDir \
-            -d AppDir/usr/share/applications/gnostr-signer-daemon.desktop \
-            --executable AppDir/usr/bin/gnostr-signer-daemon
-          ./appimage-tools/appimagetool-x86_64.AppImage AppDir gnostr-signer-daemon-tcp-${RELEASE_VERSION}-x86_64.AppImage
+            -d AppDir/usr/share/applications/grotto-daemon.desktop \
+            --executable AppDir/usr/bin/grotto-daemon
+          ./appimage-tools/appimagetool-x86_64.AppImage AppDir grotto-daemon-tcp-${RELEASE_VERSION}-x86_64.AppImage
           mkdir -p dist
-          mv gnostr-signer-daemon-tcp-*.AppImage dist/
+          mv grotto-daemon-tcp-*.AppImage dist/
       - name: Upload AppImage (daemon TCP)
         uses: actions/upload-artifact@v4
         with:
@@ -289,38 +289,38 @@ jobs:
           path: snap/gnostr/*.snap
 
   build-snap-signer:
-    name: Build Snap (gnostr-signer)
+    name: Build Snap (grotto)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build snap
         uses: snapcore/action-build@v1
         with:
-          path: ./snap/gnostr-signer
+          path: ./snap/grotto
       - name: Upload snap
         uses: actions/upload-artifact@v4
         with:
-          name: snap-gnostr-signer
-          path: snap/gnostr-signer/*.snap
+          name: snap-grotto
+          path: snap/grotto/*.snap
 
   build-snap-daemon:
-    name: Build Snap (gnostr-signer-daemon)
+    name: Build Snap (grotto-daemon)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Build snap
         uses: snapcore/action-build@v1
         with:
-          path: ./snap/gnostr-signer-daemon
+          path: ./snap/grotto-daemon
       - name: Upload snap
         uses: actions/upload-artifact@v4
         with:
-          name: snap-gnostr-signer-daemon
-          path: snap/gnostr-signer-daemon/*.snap
+          name: snap-grotto-daemon
+          path: snap/grotto-daemon/*.snap
 
   create-release:
     name: Create GitHub Release and upload artifacts
@@ -347,7 +347,7 @@ jobs:
   build-rpm:
     name: Build RPM packages
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -386,28 +386,28 @@ jobs:
             fpm -s dir -t rpm -n gnostr -v "${RELEASE_VERSION}" \
               -C "${root}" -p dist/gnostr_VERSION_ARCH.rpm .
           fi
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
-            signer_root="package-roots/gnostr-signer"
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
+            signer_root="package-roots/grotto"
             mkdir -p "${signer_root}/usr/bin" \
               "${signer_root}/usr/share/glib-2.0/schemas" \
               "${signer_root}/usr/share/dbus-1/services" \
               "${signer_root}/usr/share/applications" \
               "${signer_root}/usr/share/icons/hicolor/scalable/apps"
-            cp stage/usr/bin/gnostr-signer "${signer_root}/usr/bin/"
-            cp stage/usr/share/glib-2.0/schemas/org.gnostr.Signer.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
+            cp stage/usr/bin/grotto "${signer_root}/usr/bin/"
+            cp stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
             glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
             cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
-            cp stage/usr/share/applications/org.gnostr.Signer.desktop "${signer_root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
-            fpm -s dir -t rpm -n gnostr-signer -v "${RELEASE_VERSION}" \
-              -C "${signer_root}" -p dist/gnostr-signer_VERSION_ARCH.rpm .
+            cp stage/usr/share/applications/org.nostr.Grotto.desktop "${signer_root}/usr/share/applications/"
+            cp stage/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
+            fpm -s dir -t rpm -n grotto -v "${RELEASE_VERSION}" \
+              -C "${signer_root}" -p dist/grotto_VERSION_ARCH.rpm .
 
-            daemon_root="package-roots/gnostr-signer-daemon"
+            daemon_root="package-roots/grotto-daemon"
             mkdir -p "${daemon_root}/usr/bin" "${daemon_root}/usr/share/systemd/user"
-            cp stage/usr/bin/gnostr-signer-daemon "${daemon_root}/usr/bin/"
-            cp stage/usr/share/systemd/user/gnostr-signer-daemon.service "${daemon_root}/usr/share/systemd/user/"
-            fpm -s dir -t rpm -n gnostr-signer-daemon -v "${RELEASE_VERSION}" \
-              -C "${daemon_root}" -p dist/gnostr-signer-daemon_VERSION_ARCH.rpm .
+            cp stage/usr/bin/grotto-daemon "${daemon_root}/usr/bin/"
+            cp stage/usr/share/systemd/user/grotto-daemon.service "${daemon_root}/usr/share/systemd/user/"
+            fpm -s dir -t rpm -n grotto-daemon -v "${RELEASE_VERSION}" \
+              -C "${daemon_root}" -p dist/grotto-daemon_VERSION_ARCH.rpm .
           fi
       - name: Upload RPMs
         uses: actions/upload-artifact@v4
@@ -418,7 +418,7 @@ jobs:
   build-tarball-daemon:
     name: Build tarball (daemon + systemd + installer)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -432,19 +432,19 @@ jobs:
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build -j --target gnostr-signer-daemon
+        run: cmake --build build -j --target grotto-daemon
       - name: Assemble tarball tree
         run: |
           set -e
-          mkdir -p tar/gnostr-signer-daemon/bin
-          mkdir -p tar/gnostr-signer-daemon/share/systemd/user
-          mkdir -p tar/gnostr-signer-daemon/scripts
-          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon/bin/
-          cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon/share/systemd/user/
-          cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon/scripts/
-          tar -C tar -czf gnostr-signer-daemon-${RELEASE_VERSION}-linux-x86_64.tar.gz gnostr-signer-daemon
+          mkdir -p tar/grotto-daemon/bin
+          mkdir -p tar/grotto-daemon/share/systemd/user
+          mkdir -p tar/grotto-daemon/scripts
+          cp build/apps/grotto/grotto-daemon tar/grotto-daemon/bin/
+          cp apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service tar/grotto-daemon/share/systemd/user/
+          cp apps/grotto/daemon/packaging/tar/install.sh tar/grotto-daemon/scripts/
+          tar -C tar -czf grotto-daemon-${RELEASE_VERSION}-linux-x86_64.tar.gz grotto-daemon
           mkdir -p dist
-          mv gnostr-signer-daemon-*.tar.gz dist/
+          mv grotto-daemon-*.tar.gz dist/
       - name: Upload tarball
         uses: actions/upload-artifact@v4
         with:
@@ -454,7 +454,7 @@ jobs:
   build-tarball-linux:
     name: Build Linux tarball
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -478,8 +478,8 @@ jobs:
         run: |
           set -e
           VERSION="${RELEASE_VERSION}"
-          if [[ "${COMPONENT}" == "gnostr-signer" ]]; then
-            ROOT="gnostr-signer-${VERSION}"
+          if [[ "${COMPONENT}" == "grotto" ]]; then
+            ROOT="grotto-${VERSION}"
           else
             ROOT="gnostr-${VERSION}"
           fi
@@ -490,13 +490,13 @@ jobs:
             cp apps/gnostr/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
             cp -r apps/gnostr/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
           fi
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr-signer" ]]; then
+          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
             mkdir -p "tar/${ROOT}/share/systemd/user"
-            cp build/apps/gnostr-signer/gnostr-signer "tar/${ROOT}/bin/"
-            cp build/apps/gnostr-signer/gnostr-signer-daemon "tar/${ROOT}/bin/"
-            cp apps/gnostr-signer/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
-            cp -r apps/gnostr-signer/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
-            cp apps/gnostr-signer/daemon/packaging/systemd/user/*.service "tar/${ROOT}/share/systemd/user/" 2>/dev/null || true
+            cp build/apps/grotto/grotto "tar/${ROOT}/bin/"
+            cp build/apps/grotto/grotto-daemon "tar/${ROOT}/bin/"
+            cp apps/grotto/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
+            cp -r apps/grotto/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
+            cp apps/grotto/daemon/packaging/systemd/user/*.service "tar/${ROOT}/share/systemd/user/" 2>/dev/null || true
           fi
 
           tar -C tar -czf "${ROOT}-linux-x86_64.tar.gz" "${ROOT}"
@@ -511,7 +511,7 @@ jobs:
   build-rpm-tcp:
     name: Build RPM package (daemon TCP-enabled)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -529,18 +529,18 @@ jobs:
       - name: Configure (TCP enabled)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
-        run: cmake --build build -j --target gnostr-signer-daemon
+        run: cmake --build build -j --target grotto-daemon
       - name: Stage install tree
         run: cmake --install build --prefix "$PWD/stage/usr"
       - name: Build RPM (daemon TCP variant)
         run: |
           set -e
           mkdir -p dist
-          fpm -s dir -t rpm -n gnostr-signer-daemon-tcp -v "${RELEASE_VERSION}" \
+          fpm -s dir -t rpm -n grotto-daemon-tcp -v "${RELEASE_VERSION}" \
             --prefix=/usr \
-            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
+            stage/usr/bin/grotto-daemon=/usr/bin/grotto-daemon \
             stage/usr/share/systemd/user/=usr/share/systemd/user/ \
-            -C . -p dist/gnostr-signer-daemon-tcp_VERSION_ARCH.rpm
+            -C . -p dist/grotto-daemon-tcp_VERSION_ARCH.rpm
       - name: Upload RPM TCP
         uses: actions/upload-artifact@v4
         with:
@@ -550,7 +550,7 @@ jobs:
   build-tarball-daemon-tcp:
     name: Build tarball (daemon TCP-enabled)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -564,19 +564,19 @@ jobs:
       - name: Configure (TCP enabled)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
       - name: Build
-        run: cmake --build build -j --target gnostr-signer-daemon
+        run: cmake --build build -j --target grotto-daemon
       - name: Assemble tarball tree
         run: |
           set -e
-          mkdir -p tar/gnostr-signer-daemon-tcp/bin
-          mkdir -p tar/gnostr-signer-daemon-tcp/share/systemd/user
-          mkdir -p tar/gnostr-signer-daemon-tcp/scripts
-          cp build/apps/gnostr-signer/gnostr-signer-daemon tar/gnostr-signer-daemon-tcp/bin/
-          cp apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service tar/gnostr-signer-daemon-tcp/share/systemd/user/
-          cp apps/gnostr-signer/daemon/packaging/tar/install.sh tar/gnostr-signer-daemon-tcp/scripts/
-          tar -C tar -czf gnostr-signer-daemon-tcp-${RELEASE_VERSION}-linux-x86_64.tar.gz gnostr-signer-daemon-tcp
+          mkdir -p tar/grotto-daemon-tcp/bin
+          mkdir -p tar/grotto-daemon-tcp/share/systemd/user
+          mkdir -p tar/grotto-daemon-tcp/scripts
+          cp build/apps/grotto/grotto-daemon tar/grotto-daemon-tcp/bin/
+          cp apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service tar/grotto-daemon-tcp/share/systemd/user/
+          cp apps/grotto/daemon/packaging/tar/install.sh tar/grotto-daemon-tcp/scripts/
+          tar -C tar -czf grotto-daemon-tcp-${RELEASE_VERSION}-linux-x86_64.tar.gz grotto-daemon-tcp
           mkdir -p dist
-          mv gnostr-signer-daemon-tcp-*.tar.gz dist/
+          mv grotto-daemon-tcp-*.tar.gz dist/
       - name: Upload tarball TCP
         uses: actions/upload-artifact@v4
         with:
@@ -586,7 +586,7 @@ jobs:
   build-deb-tcp:
     name: Build .deb package (daemon TCP-enabled)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -604,17 +604,17 @@ jobs:
       - name: Configure (TCP enabled)
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
-        run: cmake --build build -j --target gnostr-signer-daemon
+        run: cmake --build build -j --target grotto-daemon
       - name: Stage install tree
         run: cmake --install build --prefix "$PWD/stage/usr"
       - name: Build DEB (daemon TCP variant)
         run: |
           set -e
           mkdir -p dist
-          fpm -s dir -t deb -n gnostr-signer-daemon-tcp -v "${RELEASE_VERSION}" \
+          fpm -s dir -t deb -n grotto-daemon-tcp -v "${RELEASE_VERSION}" \
             --prefix=/usr \
-            stage/usr/bin/gnostr-signer-daemon=/usr/bin/gnostr-signer-daemon \
-            -C . -p dist/gnostr-signer-daemon-tcp_VERSION_ARCH.deb
+            stage/usr/bin/grotto-daemon=/usr/bin/grotto-daemon \
+            -C . -p dist/grotto-daemon-tcp_VERSION_ARCH.deb
       - name: Upload DEB TCP
         uses: actions/upload-artifact@v4
         with:
@@ -622,9 +622,9 @@ jobs:
           path: dist/*.deb
 
   build-flatpak:
-    name: Build Flatpak (gnostr-signer)
+    name: Build Flatpak (grotto)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -637,10 +637,10 @@ jobs:
       - name: Build flatpak bundle
         run: |
           mkdir -p flatpak-build
-          flatpak-builder --force-clean --repo=repo flatpak-build apps/gnostr-signer/flatpak/org.gnostr.Signer.yaml
-          flatpak build-bundle repo gnostr-signer.flatpak org.gnostr.Signer
+          flatpak-builder --force-clean --repo=repo flatpak-build apps/grotto/flatpak/org.nostr.Grotto.yaml
+          flatpak build-bundle repo grotto.flatpak org.nostr.Grotto
           mkdir -p dist
-          mv gnostr-signer.flatpak dist/
+          mv grotto.flatpak dist/
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@v4
         with:
@@ -674,9 +674,9 @@ jobs:
           path: dist/*.flatpak
 
   build-macos-signer-dmg:
-    name: Build macOS DMG (gnostr-signer)
+    name: Build macOS DMG (grotto)
     needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr-signer' }}
+    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: macos-latest
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
@@ -701,7 +701,7 @@ jobs:
         run: cmake --build build -j
       - name: Create DMG
         run: |
-          cd apps/gnostr-signer/packaging/macos
+          cd apps/grotto/packaging/macos
           ./create-dmg.sh --build-dir ../../../../build --version "${RELEASE_VERSION}" --output-dir ../../../../dist
       - name: Upload DMG
         uses: actions/upload-artifact@v4
@@ -743,8 +743,8 @@ jobs:
           mkdir -p "tar/${ROOT}/bin"
           cp build/apps/gnostr/gnostr "tar/${ROOT}/bin/"
           if [[ "${COMPONENT}" == "global" ]]; then
-            cp build/apps/gnostr-signer/gnostr-signer "tar/${ROOT}/bin/"
-            cp build/apps/gnostr-signer/gnostr-signer-daemon "tar/${ROOT}/bin/"
+            cp build/apps/grotto/grotto "tar/${ROOT}/bin/"
+            cp build/apps/grotto/grotto-daemon "tar/${ROOT}/bin/"
           fi
           tar -C tar -czf "${ROOT}-macos-${ARCH}.tar.gz" "${ROOT}"
           mkdir -p dist

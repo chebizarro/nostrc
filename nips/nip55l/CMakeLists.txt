@@ -142,13 +142,16 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   # Colon-separated absolute paths; matched by path AND device/inode.
   set(NIP55L_ORIGIN_BRIDGE_PATHS "${CMAKE_INSTALL_FULL_LIBEXECDIR}/nostr-signer-webext-host"
       CACHE STRING "Executables allowed to assert a web origin as app_id (colon-separated)")
-  set(NIP55L_APPROVER_PATHS "${CMAKE_INSTALL_FULL_BINDIR}/gnostr-signer"
+  # Named NIP55L_APPROVAL_UI_* since W31: the old NIP55L_APPROVER_* cache
+  # entries of an existing build tree still hold the pre-rename signer names
+  # and must not be picked up.
+  set(NIP55L_APPROVAL_UI_PATHS "${CMAKE_INSTALL_FULL_BINDIR}/grotto"
       CACHE STRING "Executables allowed to call ApproveRequest (colon-separated)")
-  set(NIP55L_APPROVER_FLATPAK_ID "org.gnostr.Signer"
+  set(NIP55L_APPROVAL_UI_FLATPAK_ID "org.nostr.Grotto"
       CACHE STRING "Flatpak app id allowed to call ApproveRequest (empty = none)")
   # Bus name the approval UI owns; without an owner, calls that need a prompt
   # fail at once instead of waiting for an answer that cannot come.
-  set(NIP55L_APPROVER_BUS_NAME "org.gnostr.Signer"
+  set(NIP55L_APPROVAL_UI_BUS_NAME "org.nostr.Grotto"
       CACHE STRING "Well-known name of the approval UI (empty = do not check)")
   # First-party services that run without a UI and read the npub / relays
   # (nostr-homed session helpers) or open the secrets envelope at login
@@ -160,9 +163,9 @@ if (GIO_FOUND AND ENABLE_NIP55L)
       CACHE STRING "Built-in grants for first-party headless services")
   target_compile_definitions(nostr_nip55l_glib PRIVATE
     "NIP55L_ORIGIN_BRIDGE_PATHS=\"${NIP55L_ORIGIN_BRIDGE_PATHS}\""
-    "NIP55L_APPROVER_PATHS=\"${NIP55L_APPROVER_PATHS}\""
-    "NIP55L_APPROVER_FLATPAK_ID=\"${NIP55L_APPROVER_FLATPAK_ID}\""
-    "NIP55L_APPROVER_BUS_NAME=\"${NIP55L_APPROVER_BUS_NAME}\""
+    "NIP55L_APPROVER_PATHS=\"${NIP55L_APPROVAL_UI_PATHS}\""
+    "NIP55L_APPROVER_FLATPAK_ID=\"${NIP55L_APPROVAL_UI_FLATPAK_ID}\""
+    "NIP55L_APPROVER_BUS_NAME=\"${NIP55L_APPROVAL_UI_BUS_NAME}\""
     "NIP55L_DEFAULT_GRANTS=\"${NIP55L_DEFAULT_GRANTS}\"")
   # Test builds only: NOSTR_SIGNER_TEST_ORIGIN_BRIDGES / NOSTR_SIGNER_TEST_APPROVERS
   # replace the two executable lists so CTest can drive the real daemon from
@@ -190,11 +193,11 @@ if (GIO_FOUND AND ENABLE_NIP55L)
 
   install(TARGETS nostr_nip55l_glib nostr-signer-daemon nostr-signer-cli)
 
-  # D-Bus activation for org.nostr.Signer is owned by apps/gnostr-signer
+  # D-Bus activation for org.nostr.Signer is owned by apps/grotto
   # (its daemon exports this same GLib service). Installing a second
   # org.nostr.Signer.service here would collide on the same path, so the
   # standalone daemon's activation file is opt-in for headless installs that
-  # ship no gnostr-signer. The template is configured, never copied: an
+  # ship no grotto. The template is configured, never copied: an
   # installed file must carry an absolute Exec= path, not a CMake literal.
   if (ENABLE_NIP55L_STANDALONE_ACTIVATION)
     include(GNUInstallDirs)

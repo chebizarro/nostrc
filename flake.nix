@@ -1,5 +1,5 @@
 {
-  description = "GNostr monorepo (gnostr, gnostr-signer, gnostr-signer-daemon)";
+  description = "GNostr monorepo (gnostr, grotto, grotto-daemon)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
@@ -12,8 +12,8 @@
         pkgs = import nixpkgs { inherit system; }; 
       in {
         packages = {
-          gnostr-signer-daemon = pkgs.stdenv.mkDerivation {
-            pname = "gnostr-signer-daemon";
+          grotto-daemon = pkgs.stdenv.mkDerivation {
+            pname = "grotto-daemon";
             version = "0.0.0"; # update on tag
             src = ./.;
             nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
@@ -24,8 +24,8 @@
               cmake --install build --prefix $out
             '';
           };
-          gnostr-signer-daemon-tcp = pkgs.stdenv.mkDerivation {
-            pname = "gnostr-signer-daemon-tcp";
+          grotto-daemon-tcp = pkgs.stdenv.mkDerivation {
+            pname = "grotto-daemon-tcp";
             version = "0.0.0"; # update on tag
             src = ./.;
             nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
@@ -37,16 +37,16 @@
             '';
           };
         };
-        defaultPackage = self.packages.${system}.gnostr-signer-daemon;
+        defaultPackage = self.packages.${system}.grotto-daemon;
 
         apps.default = {
           type = "app";
-          program = "${self.packages.${system}.gnostr-signer-daemon}/bin/gnostr-signer-daemon";
+          program = "${self.packages.${system}.grotto-daemon}/bin/grotto-daemon";
         };
       }) // {
         overlays.default = final: prev: {
-          gnostr-signer-daemon = self.packages.${final.system}.gnostr-signer-daemon;
-          gnostr-signer-daemon-tcp = self.packages.${final.system}.gnostr-signer-daemon-tcp;
+          grotto-daemon = self.packages.${final.system}.grotto-daemon;
+          grotto-daemon-tcp = self.packages.${final.system}.grotto-daemon-tcp;
         };
       };
 }

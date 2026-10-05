@@ -1,0 +1,35 @@
+[Desktop Entry]
+Type=Application
+Name=Grotto
+GenericName=Nostr Signer
+Comment=Secure Nostr identity management and signing service
+Exec=grotto %U
+Icon=org.nostr.Grotto
+Terminal=false
+DBusActivatable=true
+Categories=Utility;Security;Network;
+Keywords=nostr;signer;keys;identity;crypto;signing;
+StartupNotify=true
+X-GNOME-UsesNotifications=true
+
+# NIP-46 remote-signer URIs only. The signer parses bunker:// (multisig
+# cosigner setup, multisig_nip46.c) and nostrconnect:// (client-initiated
+# connection, bunker_service.c). It must NOT claim nostr: -- that scheme is
+# owned by nostr-dispatcher; a second claimant makes xdg-mime pick one
+# nondeterministically, so note links could open the signer (nostrc-2thp).
+MimeType=x-scheme-handler/bunker;x-scheme-handler/nostrconnect;
+
+# The signer is not an event viewer: it declares no kinds, so the
+# dispatcher never routes nostr: links here.
+X-Nostr-Kinds=
+
+# Desktop actions
+Actions=new-identity;settings;
+
+[Desktop Action new-identity]
+Name=New Identity
+Exec=grotto --new-identity
+
+[Desktop Action settings]
+Name=Settings
+Exec=grotto --settings

@@ -10,7 +10,7 @@ system-bus name for nostr-homed.
 ```
 ┌─ user session (after pam_systemd) ────────────────────────┐
 │                                                            │
-│  org.nostr.Signer      (gnostr-signer, user service)       │
+│  org.nostr.Signer      (grotto, user service)       │
 │  org.nostr.Homed1      (nostr-homectl --daemon, user svc)  │
 │                                                            │
 │  nostrfs@<user>.service  (FUSE mount, user service)        │

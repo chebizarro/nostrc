@@ -68,7 +68,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -u "nostr:$TOKEN" \
 Without the token you get `401`. `OPTIONS` and the `.well-known`
 redirects need no token and reveal nothing about your data.
 
-> **GNostr Signer's "Add to Online Accounts" wizard** currently shows a
+> **Grotto's "Add to Online Accounts" wizard** currently shows a
 > wrong port and password, so it does not work with this version
 > (tracked as `nostrc-0e7k`). Use the steps above instead.
 

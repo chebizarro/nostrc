@@ -1,5 +1,5 @@
 /*
- * test_signer_nip55l_identity.c — GNostr Signer (NIP-55L) session restore
+ * test_signer_nip55l_identity.c — Grotto (NIP-55L) session restore
  * and identity selection (nostrc-vuwu).
  *
  * A fake org.nostr.Signer runs on its own thread on a private test bus
@@ -394,7 +394,7 @@ test_nip55l_identity(void)
   g_signal_connect_swapped(svc, "approval-changed", G_CALLBACK(count_signal), &changes);
   g_mutex_lock(&fake.lock);
   fake.default_sk = SK_A;
-  fake.gate_reason = "approval required but no approval agent is running (start GNostr Signer)";
+  fake.gate_reason = "approval required but no approval agent is running (start Grotto)";
   g_mutex_unlock(&fake.lock);
   /* Restore: the key store is not readable here (no app bridge), so the
    * service asks GetPublicKey, which is gated too. */
@@ -417,7 +417,7 @@ test_nip55l_identity(void)
   g_assert_true(w.ok);
   wait_clear(&w);
   g_mutex_lock(&fake.lock);
-  fake.gate_reason = "approval required but no approval agent is running (start GNostr Signer)";
+  fake.gate_reason = "approval required but no approval agent is running (start Grotto)";
   g_mutex_unlock(&fake.lock);
   gnostr_signer_service_sign_event_async(svc, tmpl, NULL, on_signed, &w);
   wait_for(&w);
@@ -480,7 +480,7 @@ test_error_map(void)
 {
   static const struct { const char *name, *msg; int code; } cases[] = {
     { "org.nostr.Signer.Error.ApprovalDenied",
-      "approval required but no approval agent is running (start GNostr Signer)",
+      "approval required but no approval agent is running (start Grotto)",
       GNOSTR_SIGNER_ERROR_NO_APPROVER },
     { "org.nostr.Signer.Error.ApprovalDenied", "approval timed out", GNOSTR_SIGNER_ERROR_TIMED_OUT },
     { "org.nostr.Signer.Error.ApprovalDenied", "denied by policy", GNOSTR_SIGNER_ERROR_DENIED_BY_RULE },
@@ -526,7 +526,7 @@ test_error_map_contract(void)
     return;
   }
   static const struct { const char *phrase; int code; } reasons[] = {
-    { "approval required but no approval agent is running (start GNostr Signer)",
+    { "approval required but no approval agent is running (start Grotto)",
       GNOSTR_SIGNER_ERROR_NO_APPROVER },
     { "approval timed out", GNOSTR_SIGNER_ERROR_TIMED_OUT },
     { "denied by policy", GNOSTR_SIGNER_ERROR_DENIED_BY_RULE },

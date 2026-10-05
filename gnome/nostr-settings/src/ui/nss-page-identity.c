@@ -150,7 +150,7 @@ static void
 on_signer(GtkButton *b, gpointer data)
 {
   (void)b;
-  nss_launch_desktop(data, "org.gnostr.Signer.desktop", "settings");
+  nss_launch_desktop(data, "org.nostr.Grotto.desktop", "settings");
 }
 
 static void
@@ -218,7 +218,7 @@ nss_page_identity_new(NssContext *ctx)
              "org.gnome.seahorse.Application.desktop", G_CALLBACK(on_seahorse), ctx));
   adw_preferences_group_add(manage,
     link_row("Signer settings", "Create, import or switch identities; app permissions",
-             "org.gnostr.Signer.desktop", G_CALLBACK(on_signer), ctx));
+             "org.nostr.Grotto.desktop", G_CALLBACK(on_signer), ctx));
   adw_preferences_page_add(page, manage);
 
   if (ctx->bus == NULL)

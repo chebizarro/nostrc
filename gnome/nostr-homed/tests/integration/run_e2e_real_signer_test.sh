@@ -36,11 +36,11 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REPO_ROOT="$(cd "$PROJECT_ROOT/../.." && pwd)"
 
 # --- Locate binaries ---
-# Prefer real gnostr-signer-daemon; fall back to mock_signer
+# Prefer real grotto-daemon; fall back to mock_signer
 SIGNER_BIN=""
 USING_REAL_SIGNER=0
-for p in "$REPO_ROOT/build/apps/gnostr-signer/gnostr-signer-daemon" \
-         "$REPO_ROOT/_build/apps/gnostr-signer/gnostr-signer-daemon"; do
+for p in "$REPO_ROOT/build/apps/grotto/grotto-daemon" \
+         "$REPO_ROOT/_build/apps/grotto/grotto-daemon"; do
   if [ -x "$p" ]; then SIGNER_BIN="$p"; USING_REAL_SIGNER=1; break; fi
 done
 if [ -z "$SIGNER_BIN" ]; then

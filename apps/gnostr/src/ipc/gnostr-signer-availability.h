@@ -22,17 +22,17 @@
 G_BEGIN_DECLS
 
 #define GNOSTR_SIGNER_BUS_NAME "org.nostr.Signer"
-/* nostrc-jppi: GNostr Signer's window, the only approval UI nip55l 0.4.0
+/* nostrc-jppi: Grotto's window, the only approval UI nip55l 0.4.0
  * accepts. The daemon (org.nostr.Signer) can run without it; a request that
  * needs a prompt then fails at once with Error.ApprovalDenied. */
-#define GNOSTR_SIGNER_APPROVER_BUS_NAME "org.gnostr.Signer"
+#define GNOSTR_SIGNER_APPROVER_BUS_NAME "org.nostr.Grotto"
 
 /* nostrc-jppi: what the last approval-gated NIP-55L answers say about
- * GNostr's standing with GNostr Signer (kept by GnostrSignerService). */
+ * GNostr's standing with Grotto (kept by GnostrSignerService). */
 typedef enum {
   GNOSTR_SIGNER_APPROVAL_OK,          /* nothing to report */
   GNOSTR_SIGNER_APPROVAL_NO_APPROVER, /* a request needed a prompt and no
-                                       * GNostr Signer window was open */
+                                       * Grotto window was open */
   GNOSTR_SIGNER_APPROVAL_REFUSED,     /* a saved "deny" rule refused GNostr */
 } GnostrSignerApproval;
 
@@ -49,7 +49,7 @@ typedef struct {
   guint legacy_keys;
   /* The signer daemon imports those by itself when it starts. */
   gboolean legacy_auto_migrates;
-  /* nostrc-jppi: GNostr Signer's window (org.gnostr.Signer) is open, so
+  /* nostrc-jppi: Grotto's window (org.nostr.Grotto) is open, so
    * approval prompts can be shown. */
   gboolean approver_running;
   /* nostrc-jppi: identities in the signer's key store, read from its
@@ -72,15 +72,15 @@ void gnostr_signer_start_async(GCancellable *cancellable,
                                gpointer user_data);
 gboolean gnostr_signer_start_finish(GAsyncResult *result, GError **error);
 
-/* nostrc-jppi: open GNostr Signer's window (the approval UI). The desktop
+/* nostrc-jppi: open Grotto's window (the approval UI). The desktop
  * entry is DBusActivatable, which only works where its D-Bus service file is
- * installed, so the gnostr-signer program on PATH is started instead when
+ * installed, so the grotto program on PATH is started instead when
  * there is one; a running instance just presents its window. */
 gboolean gnostr_signer_open_app(GError **error);
 
 /* ---- Copy (pure; transfer full; NULL = nothing to show) ---- */
 
-/* TRUE when a "Start GNostr Signer" action makes sense. */
+/* TRUE when a "Start Grotto" action makes sense. */
 gboolean gnostr_signer_status_can_start(const GnostrSignerStatus *status);
 
 /* Local-signer line on the sign-in page. NULL when the signer is running,
@@ -90,7 +90,7 @@ gboolean gnostr_signer_status_can_start(const GnostrSignerStatus *status);
  * not raise a prompt (nostrc-jppi). */
 char *gnostr_signer_status_login_text(const GnostrSignerStatus *status);
 
-/* nostrc-jppi: TRUE when "Open GNostr Signer" is the useful action: the
+/* nostrc-jppi: TRUE when "Open Grotto" is the useful action: the
  * daemon runs but its window, which shows approval prompts, does not. */
 gboolean gnostr_signer_status_can_open(const GnostrSignerStatus *status);
 
@@ -117,7 +117,7 @@ char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
 
 /* nostrc-jppi: main-window banner for an approval problem while the signer
  * daemon runs. NULL when there is none, when the daemon is not running (the
- * status banner covers that), or for NO_APPROVER once GNostr Signer's
+ * status banner covers that), or for NO_APPROVER once Grotto's
  * window is open. */
 char *gnostr_signer_status_approval_text(const GnostrSignerStatus *status,
                                          GnostrSignerApproval approval);

@@ -2374,7 +2374,7 @@ endif()
 # ────────────────────────────────────────────────────────────────
 # Wave 3 / #14: NIP-29 + NIP-17 background notification daemon
 #
-# Standalone binary — deliberately separate from gnostr-signer-daemon
+# Standalone binary — deliberately separate from grotto-daemon
 # (Finding 4: cannot share the signer's key surface; lifecycle mismatch;
 # goa-postmortem "don't fork/overload desktop-service daemons"). Owns
 # GApplication ID `org.nostr.NotifyDaemon` so its `app.open-in-gnostr`

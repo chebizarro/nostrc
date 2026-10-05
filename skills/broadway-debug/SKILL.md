@@ -4,7 +4,7 @@ description: >
   Closed-loop UI debugging for GTK4 applications using the Broadway HTML5 backend
   and Playwright MCP. Covers persistent browser sessions across rebuilds, GTK test
   utilities for widget manipulation, accessibility snapshot inspection, and rapid
-  iteration on visual/interaction bugs in gnostr, gnostr-signer, and other nostrc
+  iteration on visual/interaction bugs in gnostr, grotto, and other nostrc
   GTK apps.
 allowed-tools: "Bash,Read,mcp__playwright__*,mcp__RepoPrompt__*"
 version: "1.0.0"
@@ -95,12 +95,12 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 browser_snapshot()
 ```
 
-### For gnostr-signer
+### For grotto
 
 ```bash
 GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
-  GSETTINGS_SCHEMA_DIR=build/apps/gnostr-signer \
-  build/apps/gnostr-signer/gnostr-signer
+  GSETTINGS_SCHEMA_DIR=build/apps/grotto \
+  build/apps/grotto/grotto
 ```
 
 ### Multiple apps on different displays
@@ -111,7 +111,7 @@ BROADWAY_DISPLAY=5 BROADWAY_PORT=8080 ./scripts/run-broadway.sh
 
 # App 2 on display :6, port 8081 (in another terminal)
 BROADWAY_DISPLAY=6 BROADWAY_PORT=8081 \
-  GNOSTR_BIN=build/apps/gnostr-signer/gnostr-signer \
+  GNOSTR_BIN=build/apps/grotto/grotto \
   ./scripts/run-broadway.sh
 ```
 

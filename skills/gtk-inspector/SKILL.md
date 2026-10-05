@@ -163,8 +163,8 @@ box, scrolledwindow, listview {
 | App | CSS file | Purpose |
 |-----|----------|---------|
 | gnostr | `apps/gnostr/data/ui/styles/gnostr.css` | App theme |
-| gnostr-signer | `apps/gnostr-signer/data/css/app.css` | Signer theme |
-| gnostr-signer | `apps/gnostr-signer/data/css/high-contrast.css` | Accessibility |
+| grotto | `apps/grotto/data/css/app.css` | Signer theme |
+| grotto | `apps/grotto/data/css/high-contrast.css` | Accessibility |
 
 ### 3. Visual Panel — Layout & Rendering Debug
 
@@ -264,7 +264,7 @@ Playwright can interact with both. Here's how the LLM can use it:
 browser_snapshot()
 
 # The snapshot will show TWO windows:
-# - The app window (GNostr, GNostr Signer, etc.)
+# - The app window (GNostr, Grotto, etc.)
 # - The Inspector window ("GTK Inspector")
 # Each has accessible refs you can click
 ```

@@ -59,13 +59,13 @@ build/nips/nip55l/nostr-signer-daemon
 
 ### D-Bus activation
 
-`org.nostr.Signer.service` is owned by **gnostr-signer**, which activates
-`gnostr-signer-daemon` (the same `nips/nip55l` GLib service plus the GUI's
+`org.nostr.Signer.service` is owned by **grotto**, which activates
+`grotto-daemon` (the same `nips/nip55l` GLib service plus the GUI's
 approval flow). This tree does **not** install an activation file by default,
 so the two packages never ship conflicting copies of the same path.
 
 Headless installs that want `nostr-signer-daemon` auto-activated without
-gnostr-signer build with:
+grotto build with:
 
 ```
 cmake -S . -B build -DENABLE_NIP55L_STANDALONE_ACTIVATION=ON
@@ -73,7 +73,7 @@ cmake -S . -B build -DENABLE_NIP55L_STANDALONE_ACTIVATION=ON
 
 which configures `dbus/org.nostr.Signer.service.in` (absolute `Exec=` path)
 and installs it to `share/dbus-1/services/`. Do not enable it alongside a
-gnostr-signer package.
+grotto package.
 
 ## Key resolution order
 
@@ -107,14 +107,14 @@ If none are found: returns NOT_FOUND.
   shared; prompts are the same `ApprovalRequested`.
 - **Approval** — without a grant: `ApprovalRequested(principal, npub, kind,
   preview, id)`; identical queued calls from one connection share it;
-  `ApproveRequest` only from `<bindir>/gnostr-signer` (or its Flatpak), fails
-  fast when no approval UI owns `org.gnostr.Signer`, expires after 300 s.
+  `ApproveRequest` only from `<bindir>/grotto` (or its Flatpak), fails
+  fast when no approval UI owns `org.nostr.Grotto`, expires after 300 s.
 - **Defaults** — first-party headless services (nostr-homed helpers,
   `nostr-notify-daemon`) are granted `get_public_key`/`get_relays`, and
   `nostr-homectl` `nip44_decrypt`, by executable (CMake `NIP55L_DEFAULT_GRANTS`).
 - **Trust lists** (CMake cache): `NIP55L_ORIGIN_BRIDGE_PATHS`,
-  `NIP55L_APPROVER_PATHS`, `NIP55L_APPROVER_FLATPAK_ID`,
-  `NIP55L_APPROVER_BUS_NAME`. Test builds (`NIP55L_TEST_TRUST_ENV`, default
+  `NIP55L_APPROVAL_UI_PATHS`, `NIP55L_APPROVAL_UI_FLATPAK_ID`,
+  `NIP55L_APPROVAL_UI_BUS_NAME`. Test builds (`NIP55L_TEST_TRUST_ENV`, default
   `BUILD_TESTING`) honour `NOSTR_SIGNER_TEST_ORIGIN_BRIDGES` /
   `NOSTR_SIGNER_TEST_APPROVERS`.
 - **macOS** — the bus reports no client PIDs, so callers are keyed as
@@ -176,8 +176,8 @@ already take one) has a `…ForApp` twin with a trailing `app_id`.
 - `GetRelays() -> (s relaysJson)`
   - JSON array of the user's explicitly configured relays. Sources, first
     match wins: `$XDG_CONFIG_HOME/nostr/relays.conf` (a JSON array of
-    `ws://`/`wss://` URL strings), then the relay list set in gnostr-signer
-    (GSettings `org.gnostr.Signer` `relays`, user-written value only, not the
+    `ws://`/`wss://` URL strings), then the relay list set in grotto
+    (GSettings `org.nostr.Grotto` `relays`, user-written value only, not the
     schema default).
   - No network access: NIP-65 lists are never fetched to answer this.
   - `org.nostr.Signer.Error.NotFound` when nothing is configured — callers
@@ -252,5 +252,5 @@ nostr-signer-cli nip44-decrypt "$C" <peer_hex>
 - Structured fuzz harness for `StoreKey` / `SignEvent` / `GetRelays` / NIP-44
   base64 inputs (deferred from D1.a; tracked separately)
 - Real-service D-Bus contract test on a private `GTestDBus` bus (deferred; the
-  in-tree consumer coverage lives in `apps/gnostr-signer/tests/test-dbus.c`
+  in-tree consumer coverage lives in `apps/grotto/tests/test-dbus.c`
   and `gnome/nostr-homed/tests/integration/test_mock_signer_contract.c`)

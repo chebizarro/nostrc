@@ -1,0 +1,8 @@
+# Grotto daemon
+usr/bin/grotto-daemon
+
+# D-Bus service file (session bus)
+usr/share/dbus-1/services/org.nostr.Signer.service
+
+# Systemd user service
+usr/share/systemd/user/grotto-daemon.service

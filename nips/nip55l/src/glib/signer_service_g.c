@@ -399,7 +399,7 @@ static void return_convkey_error(const Reply *invocation, int rc){
 static void return_no_key(const Reply *invocation, SignerOp op, int rc){
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND || rc == NOSTR_SIGNER_ERROR_INVALID_KEY) {
     reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_KEY,
-      op == OP_GET_PUBLIC_KEY ? "No key configured. Please set up a key in GNostr Signer first."
+      op == OP_GET_PUBLIC_KEY ? "No key configured. Please set up a key in Grotto first."
                               : "no key configured for this identity");
   } else {
     gchar *msg = g_strdup_printf("key lookup failed (rc=%d)", rc);
@@ -453,11 +453,11 @@ static gchar *build_preview(SignerOp op, const char *a, const char *b){
   return g_strdup("");
 }
 
-/* GetRelays source 2: the relay set a user configured in the gnostr-signer
- * GUI (GSettings org.gnostr.Signer "relays"). Only an explicitly written
+/* GetRelays source 2: the relay set a user configured in the grotto
+ * GUI (GSettings org.nostr.Grotto "relays"). Only an explicitly written
  * value counts; the schema default is a list of public relays, not the
  * user's configuration. Absent schema (headless nip55l install) = no source. */
-#define GNOSTR_SIGNER_SCHEMA_ID "org.gnostr.Signer"
+#define GNOSTR_SIGNER_SCHEMA_ID "org.nostr.Grotto"
 static int get_relays_from_gsettings(char **out_json){
   *out_json = NULL;
   GSettingsSchemaSource *src = g_settings_schema_source_get_default();
@@ -488,7 +488,7 @@ static int perform_get_relays(const Reply *invocation){
   if (rc == NOSTR_SIGNER_ERROR_NOT_FOUND) {
     /* Expected state, not a failure: callers fall back to their own relays. */
     reply_error(invocation, ORG_NOSTR_SIGNER_ERR_NOT_FOUND,
-      "no relays configured ($XDG_CONFIG_HOME/nostr/relays.conf or gnostr-signer relays)");
+      "no relays configured ($XDG_CONFIG_HOME/nostr/relays.conf or grotto relays)");
     return rc;
   }
   if (rc == NOSTR_SIGNER_ERROR_INVALID_JSON) {
@@ -602,7 +602,7 @@ static Pending *pending_find_joinable(const char *sender, SignerOp op, const Sig
 }
 
 #ifndef NIP55L_APPROVER_BUS_NAME
-#define NIP55L_APPROVER_BUS_NAME "org.gnostr.Signer"
+#define NIP55L_APPROVER_BUS_NAME "org.nostr.Grotto"
 #endif
 /* Is an approval UI on the bus? Without one a prompt could never be
  * answered, so the call fails at once instead of hanging until it expires. */
@@ -721,7 +721,7 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
   }
   if (!approver_present(bus)) {
     reply_approval_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_APPROVER,
-      "approval required but no approval agent is running (start GNostr Signer)");
+      "approval required but no approval agent is running (start Grotto)");
     return;
   }
 

@@ -38,7 +38,7 @@ typedef struct {
   int conn_fd;  /* the connection; for liveness checks only (never read/write it) */
 } Nip5fPeer;
 
-/* Servers that decide per caller (gnostr-signer-daemon) install hooks; then
+/* Servers that decide per caller (grotto-daemon) install hooks; then
  * every method goes through @request and the built-in handlers are never used.
  *   open    - called once per connection, on its thread, right after accept
  *             (before the handshake: nothing read from the client yet).

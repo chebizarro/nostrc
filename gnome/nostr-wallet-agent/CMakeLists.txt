@@ -96,7 +96,7 @@ if (NWA_GIOUNIX_FOUND)
 endif()
 target_compile_options(nostr-wallet-agent-core PRIVATE ${NWA_WARNING_FLAGS})
 # The only executable allowed to act for a web origin (*For methods): the
-# browser bridge from apps/gnostr-signer/native-host, installed by the same
+# browser bridge from apps/grotto/native-host, installed by the same
 # tree with the same libexecdir.
 # The settings app trusted to manage grants and budgets (same exe rule):
 # gnome/nostr-settings, installed by the same tree to the same bindir.
@@ -168,7 +168,7 @@ if (BUILD_TESTING)
 
   # A NIP-47 wallet service + relay in one process on 127.0.0.1, for tests
   # that run the real agent binary paired (here and in the browser bridge's
-  # WebLN e2e, apps/gnostr-signer/native-host). Needs the test pairing hook.
+  # WebLN e2e, apps/grotto/native-host). Needs the test pairing hook.
   pkg_check_modules(NWA_GIOUNIX_T REQUIRED IMPORTED_TARGET gio-unix-2.0)
   add_executable(nwa-fixture-wallet tests/nwa-fixture-wallet.c)
   target_link_libraries(nwa-fixture-wallet PRIVATE nostr-wallet-agent-core

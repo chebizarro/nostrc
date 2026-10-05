@@ -261,7 +261,7 @@ it). `nostr-seal-gtk` does not offer publishing yet.
 ## Not yet
 
 * A "Publish" button in `nostr-seal-gtk`.
-* `gnostr-signer-daemon` exports the same nip55l GLib service, so it serves
-  `NIP44DeriveConversationKey` as-is; the gnostr-signer approval dialog shows
+* `grotto-daemon` exports the same nip55l GLib service, so it serves
+  `NIP44DeriveConversationKey` as-is; the grotto approval dialog shows
   it with the generic kind/preview text, and its remembered-decision store is
   keyed by (app, account) without the request kind — follow-up bead.

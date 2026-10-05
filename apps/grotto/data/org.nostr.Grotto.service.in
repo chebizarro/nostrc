@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.nostr.Grotto
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/grotto --gapplication-service

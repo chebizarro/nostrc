@@ -43,7 +43,7 @@ bridge_report_not_initialized(GAsyncReadyCallback callback,
 {
   GTask *task = g_task_new(NULL, NULL, callback, user_data);
   g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                          "gnostr signer bridge not installed");
+                          "grotto bridge not installed");
   g_object_unref(task);
 }
 
@@ -81,7 +81,7 @@ gnostr_signer_bridge_sign_event_finish(GAsyncResult *res,
     return FALSE;
   }
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                      "gnostr signer bridge not installed");
+                      "grotto bridge not installed");
   return FALSE;
 }
 
@@ -92,6 +92,6 @@ gnostr_signer_bridge_proxy_get(GError **error)
     return s_bridge.proxy_get(error);
   }
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                      "gnostr signer bridge not installed");
+                      "grotto bridge not installed");
   return NULL;
 }

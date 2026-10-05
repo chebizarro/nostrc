@@ -47,7 +47,7 @@
  * the legacy signer-acl.ini and a claimed app_id do not, and a client that
  * hangs up while waiting drops its request.
  *
- * apps/gnostr-signer/tests/test-dbus.c:55-60,117-143 was the private-bus
+ * apps/grotto/tests/test-dbus.c:55-60,117-143 was the private-bus
  * pattern reference, but that test drives a mock: the point of this one is
  * that the real daemon speaks the same contract, using the exact GLib
  * service (signer_service_g.c → signer_dbus.[ch]) an installed system
@@ -110,7 +110,7 @@
 #define ERR_TIMED_OUT "org.nostr.Signer.Error.ApprovalTimedOut"
 #define ERR_NO_AGENT  "org.nostr.Signer.Error.NoApprovalAgent"
 #define ERR_IDENTITY  "org.nostr.Signer.Error.IdentityChanged"
-#define APPROVER_NAME "org.gnostr.Signer"
+#define APPROVER_NAME "org.nostr.Grotto"
 
 #define CHECK(cond) do { if (!(cond)) { \
     g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond); exit(1); \
@@ -315,7 +315,7 @@ static const char *pr(const Ctx *ctx, const char *app) {
 typedef struct {
   gboolean approver;     /* this process may answer ApproveRequest */
   gboolean bridge;       /* this process may assert web origins */
-  gboolean own_ui_name;  /* own org.gnostr.Signer (an approval agent is present) */
+  gboolean own_ui_name;  /* own org.nostr.Grotto (an approval agent is present) */
 } Trust;
 static const Trust TRUST_UI = { TRUE, FALSE, TRUE };
 
@@ -1425,7 +1425,7 @@ static GError *answer_parked(Ctx *ctx, GDBusConnection *c, const char *peer_pk,
 }
 
 static void test_typed_approval_errors(Ctx *ctx, const char *swap_sk) {
-  static const char no_agent[] = "approval required but no approval agent is running (start GNostr Signer)";
+  static const char no_agent[] = "approval required but no approval agent is running (start Grotto)";
   static const char changed[] = "the identity changed while awaiting approval";
   GError *err = NULL;
   char *peer_sk = nostr_key_generate_private();
@@ -2279,7 +2279,7 @@ static void phase3_pre_daemon(Ctx *ctx, gpointer data) {
 
   seed(&gnostr_secret_legacy_signer_key_schema, "Nostr Key: Legacy Main",
        p->legacy_signer.sk_hex,
-       "application", "gnostr-signer", "label", "Legacy Main",
+       "application", "grotto", "label", "Legacy Main",
        "npub", p->legacy_signer.npub, "key_type", "nostr",
        "created_at", "2025-01-01T00:00:00Z", NULL);
   seed(&gnostr_secret_legacy_helper_schema, "Nostr key", p->legacy_helper.nsec,
@@ -2483,7 +2483,7 @@ static void run_phase3(void) {
     TestKey late;
     test_key_new(&late);
     seed(&gnostr_secret_legacy_signer_key_schema, "Nostr Key: Late", late.sk_hex,
-         "application", "gnostr-signer", "label", "Late", "npub", late.npub,
+         "application", "grotto", "label", "Late", "npub", late.npub,
          "key_type", "nostr", NULL);
     nostr_nip55l_keyring_migration r;
     CHECK(nostr_nip55l_migrate_legacy_keys(&r) == 0);

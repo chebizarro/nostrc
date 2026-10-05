@@ -2,7 +2,7 @@
  * GnostrLogin - Login Dialog for NIP-55L and NIP-46 Authentication
  *
  * Provides sign-in options:
- * 1. NIP-55L: Local signer via D-Bus (gnostr-signer)
+ * 1. NIP-55L: Local signer via D-Bus (grotto)
  * 2. NIP-46: Remote signer via bunker:// URI
  */
 

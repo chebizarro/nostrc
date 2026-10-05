@@ -99,7 +99,7 @@ template $GnostrLogin: Adw.Bin {
                             }
 
                             Label {
-                                label: _("GNostr never stores your private key. Sign in with GNostr Signer on this computer, or pair a remote signer.");
+                                label: _("GNostr never stores your private key. Sign in with Grotto on this computer, or pair a remote signer.");
                                 wrap: true;
                                 max-width-chars: 45;
                                 justify: center;
@@ -157,7 +157,7 @@ template $GnostrLogin: Adw.Bin {
                                         valign: center;
 
                                         Label {
-                                            label: _("GNostr Signer");
+                                            label: _("Grotto");
                                             xalign: 0;
 
                                             styles [
@@ -190,16 +190,16 @@ template $GnostrLogin: Adw.Bin {
                                     }
 
                                     Button btn_start_signer {
-                                        label: _("Start GNostr Signer");
+                                        label: _("Start Grotto");
                                         visible: false;
-                                        tooltip-text: _("Start the GNostr Signer service on this computer");
+                                        tooltip-text: _("Start the Grotto service on this computer");
                                         clicked => $on_start_signer_clicked();
                                     }
 
                                     Button btn_local_signer {
-                                        label: _("Sign In with GNostr Signer");
+                                        label: _("Sign In with Grotto");
                                         sensitive: false;
-                                        tooltip-text: _("Sign in with a key held by GNostr Signer");
+                                        tooltip-text: _("Sign in with a key held by Grotto");
                                         clicked => $on_local_signer_clicked();
 
                                         styles [

@@ -22,7 +22,7 @@ Nostrc is a monorepo implementing the Nostr protocol in C, from low-level crypto
 | App | Directory | Purpose |
 |-----|-----------|---------|
 | **gnostr** | `apps/gnostr/` | GTK4 Nostr desktop client |
-| **gnostr-signer** | `apps/gnostr-signer/` | D-Bus signing service (NIP-46 bunker) |
+| **grotto** | `apps/grotto/` | D-Bus signing service (NIP-46 bunker) |
 | **relayd** | `apps/relayd/` | Nostr relay daemon |
 | **relayctl** | `apps/relayctl/` | Relay management CLI |
 | **grelay** | `apps/grelay/` | GTK relay monitor |
@@ -72,7 +72,7 @@ Nostrc is a monorepo implementing the Nostr protocol in C, from low-level crypto
           └──────────────────────┼───────────────────────┘
                                  │
                     ┌────────────▼─────────────┐
-                    │     gnostr / gnostr-signer│
+                    │     gnostr / grotto│
                     │   relayd / relayctl       │
                     │   (applications)          │
                     └──────────────────────────┘
@@ -288,7 +288,7 @@ See [docs/TESTING.md](docs/TESTING.md) for the comprehensive test strategy.
 ├── marmot-gobject/     # GObject wrappers for libmarmot
 ├── apps/
 │   ├── gnostr/         # GTK4 desktop client
-│   ├── gnostr-signer/  # D-Bus signing service
+│   ├── grotto/  # D-Bus signing service
 │   ├── relayd/         # Relay daemon
 │   ├── relayctl/       # Relay management CLI
 │   └── grelay/         # GTK relay monitor

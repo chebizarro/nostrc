@@ -29,7 +29,7 @@ Bead: `nostrc-jjyp`. WebLN is described in [WebLN](#webln).
 
 ## Install
 
-You need three things: the signer daemon (`gnostr-signer` / its
+You need three things: the signer daemon (`grotto` / its
 `nostr-signer-daemon`, owning `org.nostr.Signer` on the session bus), the
 native host, and the extension.
 
@@ -48,11 +48,11 @@ Each manifest is pinned to this extension (`allowed_extensions` /
 **not** install the extension itself.
 
 From a source build (`-DENABLE_NOSTR_SIGNER_WEBEXT_HOST=ON` or the
-standalone `cmake -S apps/gnostr-signer/native-host -B build`), install
+standalone `cmake -S apps/grotto/native-host -B build`), install
 per-user manifests instead of the system ones:
 
 ```sh
-apps/gnostr-signer/native-host/install.sh --host "$PWD/build/nostr-signer-webext-host" --all
+apps/grotto/native-host/install.sh --host "$PWD/build/nostr-signer-webext-host" --all
 #   --firefox          ~/.mozilla/native-messaging-hosts/
 #   --flatpak-firefox  ~/.var/app/org.mozilla.firefox/.mozilla/native-messaging-hosts/
 #   --chromium         ~/.config/chromium/NativeMessagingHosts/
@@ -273,7 +273,7 @@ Promises from `window.nostr` reject with an `Error` whose `.code` is one of:
   DER key, mapped `0-f` → `a-p`). Only the public half is in the tree;
   publishing on the Chrome Web Store needs the matching private key or a
   new key + id (update `NMH_CHROMIUM_EXTENSION_ID` in
-  `apps/gnostr-signer/native-host/CMakeLists.txt` and `install.sh`).
+  `apps/grotto/native-host/CMakeLists.txt` and `install.sh`).
 
 ## Known limitations
 
@@ -384,4 +384,4 @@ NIP-47 capability).
   `test_nmh_e2e` driving the real host against the real
   `nostr-signer-daemon` on a private bus, and `test_nmh_webln_e2e` driving
   it against the real `nostr-wallet-agent` (see
-  `apps/gnostr-signer/native-host/README.md`).
+  `apps/grotto/native-host/README.md`).

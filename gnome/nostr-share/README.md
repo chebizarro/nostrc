@@ -26,7 +26,7 @@ dialog shows:
 - **Show event JSON**: exactly what your signer will be asked to sign.
 
 Nothing is uploaded or published until you press **Publish**, and every
-signature goes through your `org.nostr.Signer` (gnostr-signer), which may
+signature goes through your `org.nostr.Signer` (grotto), which may
 ask for approval.
 
 ### Command line

@@ -266,7 +266,7 @@ caller is identified and named as the link's opener).
 <a id="web-origins-browser-bridge"></a>
 **Web origins (browser bridge).** The WebLN browser extension reaches the
 agent through its native-messaging host `nostr-signer-webext-host`
-(`apps/gnostr-signer/native-host/`). The browser spawns that host, so it
+(`apps/grotto/native-host/`). The browser spawns that host, so it
 inherits the browser's cgroup and would be identified as the browser: every
 website would share one budget and one "Always allow". The `*For` methods
 therefore take the page origin as first argument, under one rule — **only the
@@ -448,7 +448,7 @@ caller identification.
   foreign uid) and the web-origin principal.
 * `test_budget` also covers web origins as opaque budget keys.
 * The `*For` methods are exercised end to end against the real agent binary
-  by `apps/gnostr-signer/native-host/tests/test_nm_webln_e2e.c` (browser
+  by `apps/grotto/native-host/tests/test_nm_webln_e2e.c` (browser
   bridge allowed, any other caller `Denied`) and, paired with a wallet, by
   `test_nm_webln_paired_e2e.c` (per-site budget auto-pay, `BudgetExceeded`,
   per-origin read grant, invoices).

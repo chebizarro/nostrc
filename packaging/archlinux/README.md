@@ -9,7 +9,7 @@ The PKGBUILD creates two packages:
 | Package | Description |
 |---------|-------------|
 | `gnostr` | GTK4 Nostr client for the GNOME desktop |
-| `gnostr-signer` | NIP-46 Remote Signer with GTK4 UI and systemd daemon |
+| `grotto` | NIP-46 Remote Signer with GTK4 UI and systemd daemon |
 
 ## Installation from AUR (when published)
 
@@ -17,11 +17,11 @@ Using an AUR helper like `yay` or `paru`:
 
 ```bash
 # Install both packages
-yay -S gnostr gnostr-signer
+yay -S gnostr grotto
 
 # Or install individually
 yay -S gnostr
-yay -S gnostr-signer
+yay -S grotto
 ```
 
 Or manually:
@@ -41,7 +41,7 @@ To test the PKGBUILD locally:
 makepkg -s
 
 # Install built packages
-sudo pacman -U gnostr-*.pkg.tar.zst gnostr-signer-*.pkg.tar.zst
+sudo pacman -U gnostr-*.pkg.tar.zst grotto-*.pkg.tar.zst
 ```
 
 ## Updating the PKGBUILD
@@ -77,17 +77,17 @@ For new releases:
 
 ## Using the Daemon
 
-After installing gnostr-signer, enable the daemon:
+After installing grotto, enable the daemon:
 
 ```bash
 # Enable and start the daemon
-systemctl --user enable --now gnostr-signer-daemon
+systemctl --user enable --now grotto-daemon
 
 # Check status
-systemctl --user status gnostr-signer-daemon
+systemctl --user status grotto-daemon
 
 # View logs
-journalctl --user -u gnostr-signer-daemon -f
+journalctl --user -u grotto-daemon -f
 ```
 
 ## Dependencies
@@ -97,7 +97,7 @@ journalctl --user -u gnostr-signer-daemon -f
 - jansson, libsecp256k1, libsodium
 - libsoup3, openssl, nsync
 
-### Runtime (gnostr-signer)
+### Runtime (grotto)
 - Same as gnostr plus libsecret
 - Optional: p11-kit for HSM support
 

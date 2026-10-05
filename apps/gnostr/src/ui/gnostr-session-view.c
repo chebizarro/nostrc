@@ -815,7 +815,7 @@ static void on_account_remove_clicked(GtkButton *btn, gpointer user_data) {
   g_autofree char *display = truncate_npub(npub);
   g_autofree char *detail = g_strdup_printf(
       _("GNostr will forget %s on this device. Your key is not deleted: it "
-        "stays in GNostr Signer, where you can remove it if you no longer need it."),
+        "stays in Grotto, where you can remove it if you no longer need it."),
       display);
   gtk_alert_dialog_set_detail(dialog, detail);
   gtk_alert_dialog_set_buttons(dialog,

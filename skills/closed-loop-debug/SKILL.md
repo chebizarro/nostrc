@@ -13,7 +13,7 @@ version: "1.0.0"
 # Closed-Loop Debug Workflow for nostrc GTK Apps
 
 A deterministic methodology for LLM agents to identify, reproduce, diagnose, fix,
-and verify bugs in gnostr, gnostr-signer, and other GTK4 applications in the nostrc
+and verify bugs in gnostr, grotto, and other GTK4 applications in the nostrc
 stack — without human intervention between iterations.
 
 ## The Loop
@@ -339,16 +339,16 @@ GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
 cd build-debug && ctest -R gnostr --output-on-failure
 ```
 
-### gnostr-signer
+### grotto
 
 ```bash
 # Debug build
-build-debug/apps/gnostr-signer/gnostr-signer
+build-debug/apps/grotto/grotto
 
 # Broadway
 GDK_BACKEND=broadway BROADWAY_DISPLAY=:5 \
-  GSETTINGS_SCHEMA_DIR=build-debug/apps/gnostr-signer \
-  build-debug/apps/gnostr-signer/gnostr-signer
+  GSETTINGS_SCHEMA_DIR=build-debug/apps/grotto \
+  build-debug/apps/grotto/grotto
 
 # Tests
 cd build-debug && ctest -R signer --output-on-failure

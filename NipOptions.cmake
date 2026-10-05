@@ -280,15 +280,15 @@ if(ENABLE_NIP94)
 endif()
 
 # DBus signer (nip55l)
-# Always add nip55l — the core library is needed by gnostr-signer on all
+# Always add nip55l — the core library is needed by grotto on all
 # platforms; only the GLib/DBus layer is conditionally built inside the
 # subdirectory based on GIO availability.
 option(ENABLE_NIP55L "Enable nip55l GLib/DBus layer" ON)
-# org.nostr.Signer.service belongs to apps/gnostr-signer. Turn this on only
-# for headless installs that ship nostr-signer-daemon without gnostr-signer;
-# apps/gnostr-signer refuses to configure alongside it.
+# org.nostr.Signer.service belongs to apps/grotto. Turn this on only
+# for headless installs that ship nostr-signer-daemon without grotto;
+# apps/grotto refuses to configure alongside it.
 option(ENABLE_NIP55L_STANDALONE_ACTIVATION
-  "Install nips/nip55l's own org.nostr.Signer D-Bus activation file (conflicts with gnostr-signer)" OFF)
+  "Install nips/nip55l's own org.nostr.Signer D-Bus activation file (conflicts with grotto)" OFF)
 add_subdirectory(nips/nip55l)
 
 

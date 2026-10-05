@@ -183,7 +183,7 @@
     </method>
     <!-- GetRelays: JSON array of the user's explicitly configured relay
          URLs, from $XDG_CONFIG_HOME/nostr/relays.conf, else the relays set
-         in gnostr-signer. Never fetched from the network. Returns
+         in grotto. Never fetched from the network. Returns
          Error.NotFound when nothing is configured - callers fall back to
          their own relay set - and Error.InvalidConfig for a malformed
          relays.conf. -->
@@ -205,7 +205,7 @@
       <arg type="b" direction="out" name="ok" />
     </method>
     <!-- ApproveRequest / GetApprovalInfo: only the installed approval UI
-         (gnostr-signer, by executable path and inode, or its Flatpak) may
+         (grotto, by executable path and inode, or its Flatpak) may
          call these; anyone else gets Error.PermissionDenied. remember=true
          stores the decision for (principal, identity, kind), for
          ttl_seconds or forever (0); it is ignored for an unidentified

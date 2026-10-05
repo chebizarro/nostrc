@@ -76,7 +76,7 @@ struct _GnostrMainWindow {
   GCancellable *signer_status_cancellable;
   GCancellable *signer_start_cancellable;
   gboolean signer_starting;
-  /* nostrc-jppi: GNostr Signer's window (org.gnostr.Signer, the approval
+  /* nostrc-jppi: Grotto's window (org.nostr.Grotto, the approval
    * UI): watched so approval problems clear and a stalled restore retries
    * when it opens; the banner button then opens it instead of starting the
    * daemon. */

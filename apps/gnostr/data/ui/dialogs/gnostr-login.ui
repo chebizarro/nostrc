@@ -106,7 +106,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">GNostr never stores your private key. Sign in with GNostr Signer on this computer, or pair a remote signer.</property>
+                                <property name="label" translatable="yes">GNostr never stores your private key. Sign in with Grotto on this computer, or pair a remote signer.</property>
                                 <property name="wrap">true</property>
                                 <property name="max-width-chars">45</property>
                                 <property name="justify">2</property>
@@ -164,7 +164,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="valign">3</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">GNostr Signer</property>
+                                            <property name="label" translatable="yes">Grotto</property>
                                             <property name="xalign">0</property>
                                             <style>
                                               <class name="heading"/>
@@ -200,17 +200,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="btn_start_signer">
-                                        <property name="label" translatable="yes">Start GNostr Signer</property>
+                                        <property name="label" translatable="yes">Start Grotto</property>
                                         <property name="visible">false</property>
-                                        <property name="tooltip-text" translatable="yes">Start the GNostr Signer service on this computer</property>
+                                        <property name="tooltip-text" translatable="yes">Start the Grotto service on this computer</property>
                                         <signal name="clicked" handler="on_start_signer_clicked"/>
                                       </object>
                                     </child>
                                     <child>
                                       <object class="GtkButton" id="btn_local_signer">
-                                        <property name="label" translatable="yes">Sign In with GNostr Signer</property>
+                                        <property name="label" translatable="yes">Sign In with Grotto</property>
                                         <property name="sensitive">false</property>
-                                        <property name="tooltip-text" translatable="yes">Sign in with a key held by GNostr Signer</property>
+                                        <property name="tooltip-text" translatable="yes">Sign in with a key held by Grotto</property>
                                         <signal name="clicked" handler="on_local_signer_clicked"/>
                                         <style>
                                           <class name="suggested-action"/>

@@ -1,0 +1,3 @@
+version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/grotto-$1.tar.gz/ \
+  https://github.com/gnostr-org/grotto/tags .*/v?(\d[\d.]+)\.tar\.gz

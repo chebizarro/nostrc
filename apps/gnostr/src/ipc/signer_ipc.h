@@ -10,7 +10,7 @@ G_BEGIN_DECLS
 typedef NostrOrgNostrSigner NostrSignerProxy;
 
 /* nostrc-jppi: default timeout of calls on the shared proxy. nip55l 0.4.0
- * parks an approval-gated call until the user answers GNostr Signer's
+ * parks an approval-gated call until the user answers Grotto's
  * prompt and fails it with Error.ApprovalDenied ("approval timed out")
  * after 300 s; GDBus' default 25 s would give up while the prompt is still
  * on screen and report a bare timeout instead. Calls are asynchronous, so

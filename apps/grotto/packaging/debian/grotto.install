@@ -1,0 +1,17 @@
+# Grotto GTK application
+usr/bin/grotto
+
+# Desktop file and icons. The file id must stay org.nostr.Grotto: it is
+# DBusActivatable, and its id is the bus name the launcher activates.
+usr/share/applications/org.nostr.Grotto.desktop
+usr/share/icons/hicolor/*/apps/org.nostr.Grotto.*
+
+# D-Bus activation of the GUI (org.nostr.Grotto; the daemon's
+# org.nostr.Signer.service is in grotto-daemon)
+usr/share/dbus-1/services/org.nostr.Grotto.service
+
+# GSettings schema
+usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
+
+# AppStream metadata
+usr/share/metainfo/org.nostr.Grotto.metainfo.xml

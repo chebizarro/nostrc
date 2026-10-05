@@ -22,7 +22,7 @@
       <li>Profile management and editing</li>
       <li>Direct messaging (NIP-17)</li>
       <li>Relay management</li>
-      <li>Integration with GNostr Signer for secure key management</li>
+      <li>Integration with Grotto for secure key management</li>
       <li>Nostr Wallet Connect (NIP-47) for Lightning payments</li>
       <li>Blossom media uploads</li>
     </ul>

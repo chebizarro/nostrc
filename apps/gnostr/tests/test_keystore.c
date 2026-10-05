@@ -10,7 +10,7 @@
  *                                   activatable fake org.nostr.Signer:
  *                                   ACTIVATABLE → RUNNING once owned, and
  *                                   StartServiceByName failure is reported;
- *                                   org.gnostr.Signer (approval window)
+ *                                   org.nostr.Grotto (approval window)
  *                                   owned or not (nostrc-jppi)
  *   /keystore/macos-migration       macOS: the daemon imports legacy
  *                                   Keychain items itself (nostrc-de9h)
@@ -70,7 +70,7 @@ static void test_copy(void) {
   g_assert_true(gnostr_signer_status_can_open(&st));
   g_assert_false(gnostr_signer_status_can_start(&st));
   g_autofree char *closed = gnostr_signer_status_login_text(&st);
-  g_assert_nonnull(strstr(closed, "open GNostr Signer first"));
+  g_assert_nonnull(strstr(closed, "open Grotto first"));
   /* Its window being closed is no reason for read-only or a banner ... */
   g_assert_false(gnostr_signer_status_is_read_only(&st, GNOSTR_SIGNER_NEED_ACTIVE));
   g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_ACTIVE));
@@ -78,7 +78,7 @@ static void test_copy(void) {
   /* ... until a request actually needed it. */
   g_autofree char *need_window =
       gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_NO_APPROVER);
-  g_assert_nonnull(strstr(need_window, "Open GNostr Signer"));
+  g_assert_nonnull(strstr(need_window, "Open Grotto"));
   g_autofree char *refused =
       gnostr_signer_status_approval_text(&st, GNOSTR_SIGNER_APPROVAL_REFUSED);
   g_assert_nonnull(strstr(refused, "refuse"));
@@ -137,7 +137,7 @@ static void test_copy(void) {
   st.legacy_auto_migrates = TRUE;
   g_autofree char *legacy = gnostr_signer_status_legacy_text(&st);
   g_assert_nonnull(strstr(legacy, "2 private keys"));
-  g_assert_nonnull(strstr(legacy, "Start GNostr Signer"));
+  g_assert_nonnull(strstr(legacy, "Start Grotto"));
   g_autofree char *banner3 = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE);
   g_assert_nonnull(strstr(banner3, "older GNostr"));
   st.legacy_keys = 1;
@@ -146,7 +146,7 @@ static void test_copy(void) {
   st.legacy_auto_migrates = FALSE;
   g_autofree char *legacy2 = gnostr_signer_status_legacy_text(&st);
   g_assert_nonnull(strstr(legacy2, "1 private key "));
-  g_assert_nonnull(strstr(legacy2, "Import them in GNostr Signer"));
+  g_assert_nonnull(strstr(legacy2, "Import them in Grotto"));
   g_assert_null(gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE));
 
   /* No copy anywhere claims GNostr stores the key. */
@@ -225,11 +225,11 @@ static void test_presence(void) {
   st = wait_status();
   g_assert_cmpint(st.presence, ==, GNOSTR_SIGNER_PRESENCE_RUNNING);
   g_assert_false(gnostr_signer_status_can_start(&st));
-  /* nostrc-jppi: the daemon alone, without GNostr Signer's window. */
+  /* nostrc-jppi: the daemon alone, without Grotto's window. */
   g_assert_false(st.approver_running);
   g_assert_true(gnostr_signer_status_can_open(&st));
 
-  /* Once org.gnostr.Signer (the approval UI) is owned too, it is seen. */
+  /* Once org.nostr.Grotto (the approval UI) is owned too, it is seen. */
   r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
                                   "org.freedesktop.DBus", "RequestName",
                                   g_variant_new("(su)", GNOSTR_SIGNER_APPROVER_BUS_NAME, 4u),
@@ -392,7 +392,7 @@ static void test_macos_migration(void) {
   GnostrSignerStatus st = { .presence = GNOSTR_SIGNER_PRESENCE_ACTIVATABLE, .legacy_keys = 1,
                             .legacy_auto_migrates = gnostr_keystore_legacy_migrates_automatically() };
   g_autofree char *legacy = gnostr_signer_status_legacy_text(&st);
-  g_assert_nonnull(strstr(legacy, "Start GNostr Signer"));
+  g_assert_nonnull(strstr(legacy, "Start Grotto"));
   g_assert_nonnull(strstr(legacy, "Keychain"));
   g_assert_null(strstr(legacy, "Import them"));
   g_autofree char *banner = gnostr_signer_status_banner_text(&st, GNOSTR_SIGNER_NEED_NONE);

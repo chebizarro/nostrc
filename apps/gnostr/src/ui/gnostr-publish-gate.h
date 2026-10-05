@@ -1,7 +1,7 @@
 /*
  * gnostr-publish-gate — per-note actions follow read-only mode (nostrc-46h7).
  *
- * nostrc-lwzv turns publishing off while a GNostr Signer (NIP-55L) session
+ * nostrc-lwzv turns publishing off while a Grotto (NIP-55L) session
  * has no signer to sign with, and guards every publish entry point with the
  * banner's explanation. This module also greys out the per-note actions
  * (reply, repost, like, zap, pin, bookmark) on every NostrGtkNoteCardRow:

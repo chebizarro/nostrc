@@ -2,7 +2,7 @@
  * NIP-5F Socket Connection Handler
  *
  * One thread per connection: handshake, then request frames until the
- * client disconnects. With server hooks installed (gnostr-signer-daemon)
+ * client disconnects. With server hooks installed (grotto-daemon)
  * every method goes through hooks.request, which decides per caller; the
  * built-in handlers (keys from the server's environment) serve only servers
  * started without hooks, such as nostr-signer-sockd.

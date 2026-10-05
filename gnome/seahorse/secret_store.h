@@ -56,7 +56,7 @@ G_BEGIN_DECLS
  *   created_at      ISO-8601 timestamp (optional) */
 extern const SecretSchema gnostr_secret_schema;
 
-/* Legacy: apps/gnostr-signer/src/secret-storage.c (removed)
+/* Legacy: apps/grotto/src/secret-storage.c (removed)
  * {application,label,npub,key_type,created_at}. Secret is 64-hex. */
 extern const SecretSchema gnostr_secret_legacy_signer_key_schema;
 

@@ -172,7 +172,7 @@ if [ "$MODE" = sanitizers ]; then
   BUILD_ARGS=(--target "${GH_SAN_TARGETS[@]}")
   BUILT="groundhog and the sanitizer tests"
 else
-  # BLUEPRINT_COMPILER=OFF: Gnostr, gnostr-signer and nostr-gtk compile .blp
+  # BLUEPRINT_COMPILER=OFF: Gnostr, grotto and nostr-gtk compile .blp
   # into their committed data/ui/*.ui, and Noble'"'"'s blueprint-compiler 0.12
   # cannot compile Gnostr'"'"'s; all four components then bundle the committed
   # .ui. Blueprint output is platform independent: the macOS stage and

@@ -19,7 +19,7 @@ Defaults:
 - DBUS_SIGNER_BUS_NAME: "org.nostr.Signer"
 
 D-Bus signer mapping
-- This repository already includes D-Bus assets under `apps/gnostr-signer/` and `nips/nip55l/dbus/` using both `org.nostr.Signer` and `com.nostr.Signer` names.
+- This repository already includes D-Bus assets under `apps/grotto/` and `nips/nip55l/dbus/` using both `org.nostr.Signer` and `com.nostr.Signer` names.
 - nostr-homed prefers `org.nostr.Signer` by default, but will also probe `com.nostr.Signer` for compatibility. See `src/common/nip46_client_dbus.c` for name probing.
 
 Build

@@ -11,7 +11,7 @@ pkg_check_modules(GNOSTR_SECRET_DEPS REQUIRED IMPORTED_TARGET
 add_library(gnostr-secret STATIC secret_store.c secret_store.h)
 target_link_libraries(gnostr-secret PUBLIC PkgConfig::GNOSTR_SECRET_DEPS)
 # Consumers include "seahorse/secret_store.h" (the bare name collides with
-# apps/gnostr-signer/src/secret_store.h).
+# apps/grotto/src/secret_store.h).
 target_include_directories(gnostr-secret PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/..>)
 target_compile_features(gnostr-secret PRIVATE c_std_11)

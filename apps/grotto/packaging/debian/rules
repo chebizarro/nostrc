@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+# Debian rules file for grotto
+
+export DH_VERBOSE = 1
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# Use Ninja for faster builds
+export DH_CMAKE_GENERATOR = Ninja
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) \
+		-DBUILD_SIGNER_TESTS=OFF \
+		-DGNOSTR_SIGNER_WITH_PKCS11=ON
+
+override_dh_auto_build:
+	dh_auto_build -- grotto grotto-daemon
+
+override_dh_auto_install:
+	dh_auto_install
+	# The D-Bus activation files are configure_file()d by CMake; fail the build
+	# if an unconfigured @VAR@ literal ever reaches the package again.
+	! grep -q '@' debian/tmp/usr/share/dbus-1/services/org.nostr.Signer.service
+	! grep -q '@' debian/tmp/usr/share/dbus-1/services/org.nostr.Grotto.service
+
+override_dh_installsystemd:
+	dh_installsystemd --user --name=grotto-daemon
+
+# Don't run tests during build (they require D-Bus session)
+override_dh_auto_test:
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info

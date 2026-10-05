@@ -23,7 +23,7 @@ gboolean nip55l_nip5f_start(const gchar *socket_path, GError **error);
 void     nip55l_nip5f_stop(void);
 
 /* Serve a connection a transport accepted and authenticated itself (the
- * gnostr-signer-daemon TCP lane, after its token check, handshake done).
+ * grotto-daemon TCP lane, after its token check, handshake done).
  * No kernel credentials: the caller is unidentified, so it is prompted every
  * time and nothing is remembered for it. Takes ownership of @fd when it
  * returns TRUE. */

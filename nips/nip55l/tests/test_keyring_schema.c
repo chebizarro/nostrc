@@ -43,7 +43,7 @@ static void test_schema_shape(void) {
                                  "owner_uid", "owner_username", NULL };
   /* Former Seahorse helper attributes. */
   const char *helper_attrs[] = { "curve", "origin", "hardware_slot", NULL };
-  /* Written by apps/gnostr-signer/src/secret_store.c under the same name. */
+  /* Written by apps/grotto/src/secret_store.c under the same name. */
   const char *app_attrs[] = { "fingerprint", "created_at", NULL };
   for (int i = 0; daemon_attrs[i]; i++) CHECK(schema_has(&gnostr_secret_schema, daemon_attrs[i]));
   for (int i = 0; helper_attrs[i]; i++) CHECK(schema_has(&gnostr_secret_schema, helper_attrs[i]));
@@ -121,7 +121,7 @@ static GHashTable *attrs_of(const char *const *kv) {
 }
 
 static void test_legacy_signer_key_mapping(void) {
-  const char *kv[] = { "application", "gnostr-signer", "label", "Main",
+  const char *kv[] = { "application", "grotto", "label", "Main",
                        "npub", NPUB, "key_type", "nostr",
                        "created_at", "2025-05-05T05:05:05Z", NULL };
   GHashTable *legacy = attrs_of(kv);

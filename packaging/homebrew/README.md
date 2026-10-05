@@ -7,7 +7,7 @@ This directory contains Homebrew formulas for installing Gnostr on macOS.
 | Formula | Description |
 |---------|-------------|
 | `gnostr.rb` | GTK4 Nostr client for the GNOME desktop |
-| `gnostr-signer.rb` | NIP-46 Remote Signer with GTK4 UI and background daemon |
+| `grotto.rb` | NIP-46 Remote Signer with GTK4 UI and background daemon |
 
 ## Installation
 
@@ -16,7 +16,7 @@ This directory contains Homebrew formulas for installing Gnostr on macOS.
 ```bash
 # Install from local formula file
 brew install --build-from-source ./gnostr.rb
-brew install --build-from-source ./gnostr-signer.rb
+brew install --build-from-source ./grotto.rb
 ```
 
 ### From HEAD (Latest Development)
@@ -36,7 +36,7 @@ brew tap gnostr/gnostr
 
 # Install
 brew install gnostr
-brew install gnostr-signer
+brew install grotto
 ```
 
 ## Dependencies
@@ -52,18 +52,18 @@ The formulas automatically install required dependencies:
 ### Optional Dependencies
 
 - `gstreamer` - For video playback (gnostr)
-- `p11-kit` - For PKCS#11 HSM support (gnostr-signer)
+- `p11-kit` - For PKCS#11 HSM support (grotto)
 
 ## Running the Signer Daemon
 
-To start the gnostr-signer-daemon automatically at login:
+To start the grotto-daemon automatically at login:
 
 ```bash
 # Copy launchd plist
-cp /opt/homebrew/opt/gnostr-signer/LaunchAgents/org.gnostr.Signer.daemon.plist ~/Library/LaunchAgents/
+cp /opt/homebrew/opt/grotto/LaunchAgents/org.nostr.Grotto.daemon.plist ~/Library/LaunchAgents/
 
 # Load the daemon
-launchctl load ~/Library/LaunchAgents/org.gnostr.Signer.daemon.plist
+launchctl load ~/Library/LaunchAgents/org.nostr.Grotto.daemon.plist
 
 # Check status
 launchctl list | grep gnostr

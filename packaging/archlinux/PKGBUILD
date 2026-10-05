@@ -2,7 +2,7 @@
 # Contributor: nostrc developers
 
 pkgbase=gnostr
-pkgname=('gnostr' 'gnostr-signer')
+pkgname=('gnostr' 'grotto')
 pkgver=0.1.0
 pkgrel=1
 pkgdesc="GTK4 Nostr client and NIP-46 remote signer for Linux"
@@ -87,7 +87,7 @@ package_gnostr() {
   done
 }
 
-package_gnostr-signer() {
+package_grotto() {
   pkgdesc="NIP-46 Remote Signer for Nostr - GTK4 app with background daemon"
   depends=(
     'gtk4'
@@ -108,39 +108,39 @@ package_gnostr-signer() {
   cd "nostrc-${pkgver}"
 
   # Install binaries
-  install -Dm755 build/apps/gnostr-signer/gnostr-signer "${pkgdir}/usr/bin/gnostr-signer"
-  install -Dm755 build/apps/gnostr-signer/gnostr-signer-daemon "${pkgdir}/usr/bin/gnostr-signer-daemon"
+  install -Dm755 build/apps/grotto/grotto "${pkgdir}/usr/bin/grotto"
+  install -Dm755 build/apps/grotto/grotto-daemon "${pkgdir}/usr/bin/grotto-daemon"
 
   # Install desktop file
-  install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.desktop \
-    "${pkgdir}/usr/share/applications/org.gnostr.Signer.desktop"
+  install -Dm644 apps/grotto/data/org.nostr.Grotto.desktop \
+    "${pkgdir}/usr/share/applications/org.nostr.Grotto.desktop"
 
   # Install icons
   for size in 16 32 48 64 128 256; do
-    if [[ -f "apps/gnostr-signer/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png" ]]; then
-      install -Dm644 "apps/gnostr-signer/data/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png" \
-        "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/org.gnostr.Signer.png"
+    if [[ -f "apps/grotto/data/icons/hicolor/${size}x${size}/apps/org.nostr.Grotto.png" ]]; then
+      install -Dm644 "apps/grotto/data/icons/hicolor/${size}x${size}/apps/org.nostr.Grotto.png" \
+        "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/org.nostr.Grotto.png"
     fi
   done
-  if [[ -f "apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg" ]]; then
-    install -Dm644 "apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg" \
-      "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.gnostr.Signer.svg"
+  if [[ -f "apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg" ]]; then
+    install -Dm644 "apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg" \
+      "${pkgdir}/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg"
   fi
 
   # Install GSettings schemas
-  for schema in apps/gnostr-signer/data/schemas/*.xml; do
+  for schema in apps/grotto/data/schemas/*.xml; do
     if [[ -f "$schema" ]]; then
       install -Dm644 "$schema" "${pkgdir}/usr/share/glib-2.0/schemas/$(basename $schema)"
     fi
   done
 
   # Install systemd user service
-  install -Dm644 apps/gnostr-signer/daemon/packaging/systemd/user/gnostr-signer-daemon.service \
-    "${pkgdir}/usr/lib/systemd/user/gnostr-signer-daemon.service"
+  install -Dm644 apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service \
+    "${pkgdir}/usr/lib/systemd/user/grotto-daemon.service"
 
   # Install D-Bus service file
-  if [[ -f "apps/gnostr-signer/data/org.gnostr.Signer.service" ]]; then
-    install -Dm644 apps/gnostr-signer/data/org.gnostr.Signer.service \
-      "${pkgdir}/usr/share/dbus-1/services/org.gnostr.Signer.service"
+  if [[ -f "apps/grotto/data/org.nostr.Grotto.service" ]]; then
+    install -Dm644 apps/grotto/data/org.nostr.Grotto.service \
+      "${pkgdir}/usr/share/dbus-1/services/org.nostr.Grotto.service"
   fi
 }

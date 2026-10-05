@@ -292,7 +292,7 @@ static int test_nip44_unicode(const char *peer_pk_hex) {
 /* Test 6: GetRelays returns either a valid JSON array of relays or NOT_FOUND
  *
  * As of nip55l 0.2.0 GetRelays no longer returns a stub "[]" placeholder: it
- * reads $XDG_CONFIG_HOME/nostr/relays.conf (or the gnostr-signer relays
+ * reads $XDG_CONFIG_HOME/nostr/relays.conf (or the grotto relays
  * GSetting) and returns NOT_FOUND when neither source has an entry. Callers
  * fall back to their own configured relays; treating this as fatal was the
  * old contract. Nothing this integration harness owns writes a relays.conf

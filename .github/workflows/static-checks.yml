@@ -40,3 +40,6 @@ jobs:
         # as read from groundhog-ci.yml, so a change to that job the stage
         # cannot reproduce fails here; and only for pushes touching its paths.
         run: bash scripts/test-sanitizer-gate.sh
+
+      - name: Old signer names stay gone (W31)
+        run: bash scripts/check-grotto-names.sh

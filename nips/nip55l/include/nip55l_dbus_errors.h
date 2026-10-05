@@ -1,7 +1,7 @@
 #ifndef NIP55L_DBUS_ERRORS_H
 #define NIP55L_DBUS_ERRORS_H
 
-/* Canonical D-Bus error names for GNostr Signer (NIP-55L) */
+/* Canonical D-Bus error names for Grotto (NIP-55L) */
 #define ORG_NOSTR_SIGNER_ERR_PERMISSION     "org.nostr.Signer.Error.PermissionDenied"
 #define ORG_NOSTR_SIGNER_ERR_RATELIMIT      "org.nostr.Signer.Error.RateLimited"
 #define ORG_NOSTR_SIGNER_ERR_APPROVAL       "org.nostr.Signer.Error.ApprovalDenied"

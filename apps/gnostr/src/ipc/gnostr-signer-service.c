@@ -201,7 +201,7 @@ set_state(GnostrSignerService *self, GnostrSignerState new_state)
 
 /* ---- nostrc-jppi: nip55l 0.4.0 approval gating ---- */
 
-G_DEFINE_QUARK(gnostr-signer-error-quark, gnostr_signer_error)
+G_DEFINE_QUARK(grotto-error-quark, gnostr_signer_error)
 
 #define NIP55L_DBUS_ERROR_PREFIX "org.nostr.Signer.Error."
 
@@ -228,38 +228,38 @@ gnostr_signer_error_from_dbus(const GError *error)
      * these phrases disappear from it. */
     if (strstr(why, "no approval agent"))
       return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER,
-          _("GNostr Signer needs your approval for this, but its window is closed. "
-            "Open GNostr Signer and try again."));
+          _("Grotto needs your approval for this, but its window is closed. "
+            "Open Grotto and try again."));
     if (strstr(why, "timed out"))
       return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT,
-          _("Nobody answered GNostr Signer’s approval request in time."));
+          _("Nobody answered Grotto’s approval request in time."));
     if (strstr(why, "denied by policy"))
       return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED_BY_RULE,
-          _("GNostr Signer is set to refuse this request from GNostr. You can change "
-            "that in GNostr Signer."));
+          _("Grotto is set to refuse this request from GNostr. You can change "
+            "that in Grotto."));
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED,
-        _("GNostr Signer: the request was denied."));
+        _("Grotto: the request was denied."));
   }
   if (g_strcmp0(name, "RateLimited") == 0)
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_RATE_LIMITED,
-        _("GNostr Signer is still waiting for your answer to earlier requests. "
+        _("Grotto is still waiting for your answer to earlier requests. "
           "Answer those, then try again."));
   if (g_strcmp0(name, "NoKeyConfigured") == 0)
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_KEY,
-        _("GNostr Signer holds no key for this account."));
+        _("Grotto holds no key for this account."));
   if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
       g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NOT_RUNNING,
-        _("GNostr Signer is not running."));
+        _("Grotto is not running."));
   if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NO_REPLY) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMEOUT) ||
       g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMED_OUT))
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT,
-        _("GNostr Signer did not answer in time."));
+        _("Grotto did not answer in time."));
   return g_error_new(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_FAILED,
-                     _("GNostr Signer: %s"), *why ? why : _("unknown error"));
+                     _("Grotto: %s"), *why ? why : _("unknown error"));
 }
 
 static void
@@ -306,7 +306,7 @@ nip55l_call_failed(GnostrSignerService *self, GError *error)
   g_clear_error(&error);
   if (!mapped)
     return g_error_new_literal(GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_FAILED,
-                               _("GNostr Signer: unknown error"));
+                               _("Grotto: unknown error"));
   GnostrSignerApproval approval = GNOSTR_SIGNER_APPROVAL_OK;
   if (g_error_matches(mapped, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_APPROVER))
     approval = GNOSTR_SIGNER_APPROVAL_NO_APPROVER;
@@ -508,7 +508,7 @@ nip55l_current_user(GnostrSignerService *self, char **out_pubkey_hex, GError **e
   const char *npub = n19 ? gnostr_nip19_get_bech32(n19) : NULL;
   if (!npub || !g_str_has_prefix(npub, "npub1")) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                        "No account is selected for GNostr Signer - please sign in again");
+                        "No account is selected for Grotto - please sign in again");
     return NULL;
   }
   if (out_pubkey_hex)
@@ -1290,7 +1290,7 @@ on_restore_pubkey(GObject *source, GAsyncResult *res, gpointer user_data)
   if (!active_hex || g_strcmp0(active_hex, r->pubkey_hex) != 0) {
     /* Groundhog rule: never silently continue as a different pubkey. */
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
-                            "GNostr Signer is using a different account");
+                            "Grotto is using a different account");
     g_object_unref(task);
     return;
   }
@@ -1350,7 +1350,7 @@ on_restore_has_owner(GObject *source, GAsyncResult *res, gpointer user_data)
       g_task_return_error(task, error);
     else
       g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                              "GNostr Signer is not running");
+                              "Grotto is not running");
     g_object_unref(task);
     return;
   }

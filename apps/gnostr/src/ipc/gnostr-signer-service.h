@@ -2,7 +2,7 @@
  * GnostrSignerService - Unified Signing Service for NIP-55L and NIP-46
  *
  * Abstracts the signing mechanism so the app can use either:
- * - NIP-55L: Local signer via D-Bus (gnostr-signer)
+ * - NIP-55L: Local signer via D-Bus (grotto)
  * - NIP-46: Remote signer via relay communication
  *
  * The service automatically uses the appropriate method based on how
@@ -22,7 +22,7 @@ G_BEGIN_DECLS
 /**
  * GNOSTR_SIGNER_ERROR:
  *
- * nostrc-jppi: errors from GNostr Signer (NIP-55L) calls, mapped from the
+ * nostrc-jppi: errors from Grotto (NIP-55L) calls, mapped from the
  * nip55l 0.4.0 D-Bus errors. Their messages are user-facing. Every NIP-55L
  * completion (sign, NIP-44, session restore) reports these instead of raw
  * "GDBus.Error:org.nostr.Signer.Error.…" text; cancellation stays
@@ -32,7 +32,7 @@ G_BEGIN_DECLS
 GQuark gnostr_signer_error_quark(void);
 
 typedef enum {
-  GNOSTR_SIGNER_ERROR_NO_APPROVER,    /* needs a prompt; GNostr Signer's window is closed */
+  GNOSTR_SIGNER_ERROR_NO_APPROVER,    /* needs a prompt; Grotto's window is closed */
   GNOSTR_SIGNER_ERROR_DENIED,         /* the user denied this request */
   GNOSTR_SIGNER_ERROR_DENIED_BY_RULE, /* a saved "deny" rule refused it */
   GNOSTR_SIGNER_ERROR_TIMED_OUT,      /* nobody answered the prompt / no reply */
@@ -192,7 +192,7 @@ gboolean gnostr_signer_service_login_finish(GnostrSignerService *self,
  * gnostr_signer_service_get_approval:
  * @self: The signer service
  *
- * nostrc-jppi: what recent GNostr Signer answers say about GNostr's
+ * nostrc-jppi: what recent Grotto answers say about GNostr's
  * standing (no approval window open, or a saved "deny" rule). Changes emit
  * "approval-changed" on the main context. A NIP-55L answer that needed no
  * prompt clears NO_APPROVER; sign-in/sign-out and
@@ -204,7 +204,7 @@ GnostrSignerApproval gnostr_signer_service_get_approval(GnostrSignerService *sel
  * gnostr_signer_service_reset_approval:
  * @self: The signer service
  *
- * Forget the approval state, e.g. once GNostr Signer's window opens (the
+ * Forget the approval state, e.g. once Grotto's window opens (the
  * user can now answer prompts or change a rule).
  */
 void gnostr_signer_service_reset_approval(GnostrSignerService *self);
@@ -287,7 +287,7 @@ void gnostr_signer_service_clear_saved_credentials(GnostrSignerService *self);
  * @self: the signer service
  * @npub: the saved account (current-npub; npub1… or 64-hex)
  *
- * nostrc-vuwu: resume a session that signed in through GNostr Signer
+ * nostrc-vuwu: resume a session that signed in through Grotto
  * (org.nostr.Signer, NIP-55L). Succeeds only when the signer is already
  * running (it is never auto-started here) and its GetPublicKey() is @npub;
  * then the service uses NIP-55L as @npub. Errors: G_IO_ERROR_NOT_FOUND (not

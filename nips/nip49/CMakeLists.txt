@@ -30,7 +30,7 @@ else()
   target_link_libraries(nostr_nip49_core PUBLIC nostr nip19 sodium)
 endif()
 
-# Build GLib wrapper when GLib is available (for GTK apps like gnostr-signer)
+# Build GLib wrapper when GLib is available (for GTK apps like grotto)
 find_package(PkgConfig QUIET)
 if (PkgConfig_FOUND)
   pkg_check_modules(GLIB2 QUIET glib-2.0)

@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=org.nostr.Signer
-Exec=/app/bin/gnostr-signer-daemon

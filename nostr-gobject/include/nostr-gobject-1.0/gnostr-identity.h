@@ -29,7 +29,7 @@ G_BEGIN_DECLS
  * @npub: The bech32-encoded public key (npub1...)
  * @label: Human-readable label (e.g., NIP-05 name)
  * @signer_holds_key: Whether the local signer's key store (org.nostr.Signer,
- *   e.g. GNostr Signer) holds this identity. The client itself never does.
+ *   e.g. Grotto) holds this identity. The client itself never does.
  * @signer_type: Hint only — "nip55l" when @signer_holds_key, otherwise
  *   "external" (NIP-46 or unknown). Do not route signing by it; the app's
  *   signer service knows the method actually in use.

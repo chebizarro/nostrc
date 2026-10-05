@@ -2,7 +2,7 @@
 # GitHub Actions Workflow: Windows Build
 # =============================================================================
 #
-# Builds GNostr Signer for Windows using MSYS2/MinGW-w64 and creates an
+# Builds Grotto for Windows using MSYS2/MinGW-w64 and creates an
 # NSIS installer package.
 #
 # Triggers:
@@ -175,24 +175,24 @@ jobs:
 
       - name: Bundle dependencies
         run: |
-          cd apps/gnostr-signer/packaging/windows
+          cd apps/grotto/packaging/windows
           ./bundle-deps.sh --build-dir ../../../../build --output-dir ../../../../build/deps
 
       - name: Create NSIS installer
         run: |
-          cd apps/gnostr-signer/packaging/windows
+          cd apps/grotto/packaging/windows
           makensis \
             -DVERSION=${{ steps.version.outputs.version }} \
             -DARCH=x64 \
             -DBUILD_DIR=../../../../build \
             -DDEPS_DIR=../../../../build/deps \
-            gnostr-signer.nsi
+            grotto.nsi
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: GNostrSigner-${{ steps.version.outputs.version }}-x64-setup
-          path: apps/gnostr-signer/packaging/windows/GNostrSigner-*.exe
+          path: apps/grotto/packaging/windows/GNostrSigner-*.exe
           if-no-files-found: error
 
       - name: Upload portable build
@@ -200,8 +200,8 @@ jobs:
         with:
           name: GNostrSigner-${{ steps.version.outputs.version }}-x64-portable
           path: |
-            build/apps/gnostr-signer/gnostr-signer.exe
-            build/apps/gnostr-signer/gnostr-signer-daemon.exe
+            build/apps/grotto/grotto.exe
+            build/apps/grotto/grotto-daemon.exe
             build/deps/
 
   release:

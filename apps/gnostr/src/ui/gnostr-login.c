@@ -2,11 +2,11 @@
  * GnostrLogin - Login Dialog for NIP-55L and NIP-46 Authentication
  *
  * Provides sign-in options:
- * 1. NIP-55L: Local signer via D-Bus (gnostr-signer)
+ * 1. NIP-55L: Local signer via D-Bus (grotto)
  * 2. NIP-46: Remote signer via bunker:// URI with QR code display
  *
  * nostrc-e5nz: GNostr never holds private keys, so there is no "import
- * nsec" here. Adding a key means creating or importing it in GNostr Signer;
+ * nsec" here. Adding a key means creating or importing it in Grotto;
  * this page reports whether that signer is running, installed or missing,
  * offers to start it, and flags keys an older GNostr stored itself.
  */
@@ -96,7 +96,7 @@ struct _GnostrLogin {
   gboolean connecting_bunker;
   gboolean local_signer_available;
   guint signer_watch_id;             /* g_bus_watch_name on org.nostr.Signer */
-  guint approver_watch_id;           /* nostrc-jppi: ... on org.gnostr.Signer */
+  guint approver_watch_id;           /* nostrc-jppi: ... on org.nostr.Grotto */
   gboolean starting_signer;          /* StartServiceByName in flight */
   gboolean start_opens_app;          /* nostrc-jppi: btn_start_signer opens the window */
   gboolean recheck_pending;          /* signer changed while a check ran */
@@ -689,7 +689,7 @@ static void gnostr_login_init(GnostrLogin *self) {
                                            on_signer_name_appeared,
                                            on_signer_name_vanished,
                                            self, NULL);
-  /* nostrc-jppi: and when GNostr Signer's window, which answers approval
+  /* nostrc-jppi: and when Grotto's window, which answers approval
    * prompts, opens or closes. */
   self->approver_watch_id = g_bus_watch_name(G_BUS_TYPE_SESSION,
                                              GNOSTR_SIGNER_APPROVER_BUS_NAME,
@@ -737,7 +737,7 @@ NostrNip46Session *gnostr_login_take_nip46_session(GnostrLogin *self) {
 
 /* nostrc-jppi: nip55l 0.4.0 approval-gates every signer method, GetPublicKey
  * included. This page therefore never asks the signer anything until the
- * user presses "Sign In": presence, whether GNostr Signer's window (the
+ * user presses "Sign In": presence, whether Grotto's window (the
  * approval UI) is open and how many identities it holds all come from the
  * bus and the key store's attributes (gnostr_signer_status_query_async), so
  * opening the page raises no prompt and never blocks the main thread. */
@@ -765,10 +765,10 @@ static void on_login_status_ready(GObject *source, GAsyncResult *res, gpointer u
   gboolean can_open = ok && gnostr_signer_status_can_open(&st);
   self->start_opens_app = can_open;
   gtk_button_set_label(GTK_BUTTON(self->btn_start_signer),
-                       can_open ? _("Open GNostr Signer") : _("Start GNostr Signer"));
+                       can_open ? _("Open Grotto") : _("Start Grotto"));
   gtk_widget_set_tooltip_text(self->btn_start_signer,
-      can_open ? _("Open GNostr Signer’s window, where it asks for your approval")
-               : _("Start the GNostr Signer service on this computer"));
+      can_open ? _("Open Grotto’s window, where it asks for your approval")
+               : _("Start the Grotto service on this computer"));
   gtk_widget_set_visible(self->btn_start_signer,
                          can_open || (ok && gnostr_signer_status_can_start(&st)));
   gtk_widget_set_sensitive(self->btn_start_signer, !self->starting_signer);
@@ -778,12 +778,12 @@ static void on_login_status_ready(GObject *source, GAsyncResult *res, gpointer u
       /* Unknown: let the user try; the sign-in says what goes wrong. */
       self->local_signer_available = TRUE;
       gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                         _("Could not check GNostr Signer. You can still try to sign in."));
+                         _("Could not check Grotto. You can still try to sign in."));
     } else {
       g_autofree char *text = gnostr_signer_status_login_text(&st);
       self->local_signer_available = st.presence == GNOSTR_SIGNER_PRESENCE_RUNNING;
       gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                         text ? text : _("GNostr Signer is ready."));
+                         text ? text : _("Grotto is ready."));
     }
     gtk_widget_set_sensitive(self->btn_local_signer, self->local_signer_available);
   }
@@ -809,7 +809,7 @@ static void on_signer_name_vanished(GDBusConnection *connection, const gchar *na
   check_local_signer_availability(GNOSTR_LOGIN(user_data));
 }
 
-/* nostrc-jppi: GNostr Signer's window (the approval UI) opened or closed. */
+/* nostrc-jppi: Grotto's window (the approval UI) opened or closed. */
 static void on_approver_changed(GDBusConnection *connection, const gchar *name,
                                 const gchar *owner, gpointer user_data) {
   (void)connection; (void)name; (void)owner;
@@ -833,7 +833,7 @@ static void on_signer_started(GObject *source, GAsyncResult *res, gpointer user_
   self->starting_signer = FALSE;
   gtk_widget_set_sensitive(self->btn_start_signer, TRUE);
   if (!ok) {
-    g_autofree char *msg = g_strdup_printf(_("Could not start GNostr Signer: %s"),
+    g_autofree char *msg = g_strdup_printf(_("Could not start Grotto: %s"),
                                            error ? error->message : _("unknown error"));
     show_toast(self, msg);
   }
@@ -850,7 +850,7 @@ static void on_start_signer_clicked(GtkButton *btn, gpointer user_data) {
     /* The approver watch re-checks once the window is up. */
     g_autoptr(GError) error = NULL;
     if (!gnostr_signer_open_app(&error)) {
-      g_autofree char *msg = g_strdup_printf(_("Could not open GNostr Signer: %s"),
+      g_autofree char *msg = g_strdup_printf(_("Could not open Grotto: %s"),
                                              error->message);
       show_toast(self, msg);
     }
@@ -858,7 +858,7 @@ static void on_start_signer_clicked(GtkButton *btn, gpointer user_data) {
   }
   self->starting_signer = TRUE;
   gtk_widget_set_sensitive(self->btn_start_signer, FALSE);
-  gtk_label_set_text(GTK_LABEL(self->lbl_local_status), _("Starting GNostr Signer…"));
+  gtk_label_set_text(GTK_LABEL(self->lbl_local_status), _("Starting Grotto…"));
   gnostr_signer_start_async(self->cancellable, on_signer_started, g_object_ref(self));
 }
 
@@ -881,7 +881,7 @@ static void check_local_signer_availability(GnostrLogin *self) {
 }
 
 /* nostrc-jppi: the one signer call this page makes, on the user's request.
- * Asynchronous: GNostr Signer may show an approval prompt first, and the
+ * Asynchronous: Grotto may show an approval prompt first, and the
  * shared proxy waits for the answer (GNOSTR_SIGNER_CALL_TIMEOUT_MS). */
 static void on_local_pubkey_ready(GObject *source, GAsyncResult *res, gpointer user_data) {
   GnostrLogin *self = GNOSTR_LOGIN(user_data); /* ref held by the call */
@@ -900,13 +900,13 @@ static void on_local_pubkey_ready(GObject *source, GAsyncResult *res, gpointer u
 
   if (!ok || !npub || !*npub) {
     g_autoptr(GError) mapped = gnostr_signer_error_from_dbus(error);
-    const char *msg = mapped ? mapped->message : _("GNostr Signer did not return a public key");
+    const char *msg = mapped ? mapped->message : _("Grotto did not return a public key");
     if (g_error_matches(mapped, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_KEY))
-      msg = _("GNostr Signer holds no key yet. Create or import one in GNostr "
+      msg = _("Grotto holds no key yet. Create or import one in GNostr "
               "Signer, then sign in. GNostr never stores private keys.");
     g_debug("[LOGIN] GetPublicKey failed: %s", error ? error->message : "empty reply");
     show_toast(self, msg);
-    /* Refresh the status line; it offers "Open GNostr Signer" when its
+    /* Refresh the status line; it offers "Open Grotto" when its
      * window is what was missing. */
     check_local_signer_availability(self);
     g_object_unref(self);
@@ -926,7 +926,7 @@ static void on_local_signer_clicked(GtkButton *btn, gpointer user_data) {
   g_autoptr(GError) error = NULL;
   NostrSignerProxy *proxy = gnostr_signer_proxy_get(&error);
   if (!proxy) {
-    show_toast(self, _("Could not connect to GNostr Signer"));
+    show_toast(self, _("Could not connect to Grotto"));
     return;
   }
 
@@ -934,7 +934,7 @@ static void on_local_signer_clicked(GtkButton *btn, gpointer user_data) {
   gtk_widget_set_visible(self->spinner_local, TRUE);
   gtk_widget_set_sensitive(self->btn_local_signer, FALSE);
   gtk_label_set_text(GTK_LABEL(self->lbl_local_status),
-                     _("Waiting for GNostr Signer… If it asks, approve GNostr there."));
+                     _("Waiting for Grotto… If it asks, approve GNostr there."));
   nostr_org_nostr_signer_call_get_public_key(proxy, self->cancellable, on_local_pubkey_ready,
                                              g_object_ref(self));
 }

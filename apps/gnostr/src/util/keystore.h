@@ -2,9 +2,9 @@
  * Identity metadata shim (nostrc-e5nz)
  *
  * GNostr never holds private keys. Signing and encryption go through a
- * signer: org.nostr.Signer over D-Bus (GNostr Signer / the nip55l daemon)
+ * signer: org.nostr.Signer over D-Bus (Grotto / the nip55l daemon)
  * or a NIP-46 remote signer (see ipc/gnostr-signer-service.h). Keys are
- * created, imported, backed up and removed in GNostr Signer.
+ * created, imported, backed up and removed in Grotto.
  *
  * This module only reads *metadata* — npub and label, never secrets — and
  * never writes or deletes anything:
@@ -79,7 +79,7 @@ GList *gnostr_keystore_list_legacy_keys(GError **error);
  * Returns: %TRUE if the signer daemon imports legacy client keys by itself
  *   when it starts (Linux: org.gnostr.NostrKey is on its migration list;
  *   macOS: the "org.gnostr.Client" Keychain items, nostrc-de9h);
- *   %FALSE if the user must import them in GNostr Signer by hand.
+ *   %FALSE if the user must import them in Grotto by hand.
  */
 gboolean gnostr_keystore_legacy_migrates_automatically(void);
 

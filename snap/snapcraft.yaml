@@ -3,7 +3,7 @@ base: core22
 version: 0.1.0
 summary: GNostr tools (CLI, Signer, Daemon)
 description: |
-  Nostr client tools including the GNostr Signer GTK app, a background daemon,
+  Nostr client tools including the Grotto GTK app, a background daemon,
   and a CLI utility. Built from source with CMake.
 
 grade: stable
@@ -12,11 +12,11 @@ confinement: classic
 apps:
   gnostr:
     command: usr/bin/gnostr
-  gnostr-signer:
-    command: usr/bin/gnostr-signer
-    desktop: usr/share/applications/gnostr-signer.desktop
-  gnostr-signer-daemon:
-    command: usr/bin/gnostr-signer-daemon
+  grotto:
+    command: usr/bin/grotto
+    desktop: usr/share/applications/grotto.desktop
+  grotto-daemon:
+    command: usr/bin/grotto-daemon
 
 parts:
   nostrc:
@@ -48,10 +48,10 @@ parts:
       cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
       # Install desktop file and icon for signer
       mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
-      if [ -f apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop ]; then
-        cp apps/gnostr-signer/packaging/appimage/gnostr-signer.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
+      if [ -f apps/grotto/packaging/appimage/grotto.desktop ]; then
+        cp apps/grotto/packaging/appimage/grotto.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
       fi
-      if [ -f apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg ]; then
+      if [ -f apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg ]; then
         mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
-        cp apps/gnostr-signer/data/icons/hicolor/scalable/apps/org.gnostr.Signer.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
+        cp apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
       fi

@@ -122,12 +122,12 @@ case "$action" in
         >>"$run_dir/keyring.log" 2>&1
     fi
     launch daemon daemon.log env \
-      "GSETTINGS_SCHEMA_DIR=$build/apps/gnostr-signer" \
+      "GSETTINGS_SCHEMA_DIR=$build/apps/grotto" \
       NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 \
       NOSTR_SIGNER_TEST_PENDING_TTL_S=1800 \
-      "NOSTR_SIGNER_TEST_APPROVERS=$build/apps/gnostr-signer/gnostr-signer" \
+      "NOSTR_SIGNER_TEST_APPROVERS=$build/apps/grotto/grotto" \
       "NOSTR_SIGNER_SECKEY_HEX=$(cat "$run_dir/throwaway.hex")" \
-      "$build/apps/gnostr-signer/gnostr-signer-daemon"
+      "$build/apps/grotto/grotto-daemon"
     sleep 1
     # StoreKey is the real signer D-Bus API, not a Groundhog MLS test hook.
     w27_run_file "$run_dir/store-key.log"
@@ -135,8 +135,8 @@ case "$action" in
       --method org.nostr.Signer.StoreKey "$(cat "$run_dir/throwaway.hex")" \
       "W27 throwaway $(hostname)" >"$run_dir/store-key.log"
     launch signer signer.log env \
-      "GSETTINGS_SCHEMA_DIR=$build/apps/gnostr-signer" \
-      "$build/apps/gnostr-signer/gnostr-signer"
+      "GSETTINGS_SCHEMA_DIR=$build/apps/grotto" \
+      "$build/apps/grotto/grotto"
     start_groundhog
     ;;
   restart-groundhog)

@@ -895,7 +895,7 @@ gnostr_main_window_on_account_remove_requested_internal(GnostrSessionView *view,
 static void start_signed_in_services(GnostrMainWindow *self);
 
 /* nostrc-vuwu: a saved account without NIP-46 credentials signed in through
- * GNostr Signer (org.nostr.Signer, NIP-55L). */
+ * Grotto (org.nostr.Signer, NIP-55L). */
 static gboolean
 saved_account_uses_local_signer(char **out_npub)
 {
@@ -926,15 +926,15 @@ on_nip55l_restored(GObject *source, GAsyncResult *res, gpointer user_data)
 
   if (!ok) {
     if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED)) {
-      g_warning("[AUTH] Not restoring the GNostr Signer session: %s", error->message);
+      g_warning("[AUTH] Not restoring the Grotto session: %s", error->message);
       gnostr_main_window_show_toast(GTK_WIDGET(self),
-          _("GNostr Signer is using a different account. Sign in again to continue."));
+          _("Grotto is using a different account. Sign in again to continue."));
     } else if (g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_DENIED) ||
                g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_TIMED_OUT) ||
                g_error_matches(error, GNOSTR_SIGNER_ERROR, GNOSTR_SIGNER_ERROR_NO_KEY)) {
       /* nostrc-jppi: the prompt for GNostr's get_public_key was refused or
        * left unanswered: stay signed out and say so; no automatic retry. */
-      g_message("[AUTH] GNostr Signer session not restored: %s", error->message);
+      g_message("[AUTH] Grotto session not restored: %s", error->message);
       g_autofree char *msg = g_strdup_printf(_("%s You are signed out; sign in again to "
                                                "continue."), error->message);
       gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
@@ -943,7 +943,7 @@ on_nip55l_restored(GObject *source, GAsyncResult *res, gpointer user_data)
        * nostrc-jppi: its window closed (NO_APPROVER) or a saved rule
        * refusing GNostr (DENIED_BY_RULE): the service's approval state puts
        * that on the banner, and the window opening retries. */
-      g_debug("[AUTH] GNostr Signer session not restored yet: %s",
+      g_debug("[AUTH] Grotto session not restored yet: %s",
               error ? error->message : "unknown");
     }
     g_object_unref(self);
@@ -953,14 +953,14 @@ on_nip55l_restored(GObject *source, GAsyncResult *res, gpointer user_data)
   const char *hex = gnostr_signer_service_get_pubkey(gnostr_signer_service_get_default());
   g_free(self->user_pubkey_hex);
   self->user_pubkey_hex = g_strdup(hex);
-  g_message("[AUTH] Restored GNostr Signer (NIP-55L) session for %.16s...", hex);
+  g_message("[AUTH] Restored Grotto (NIP-55L) session for %.16s...", hex);
   if (self->session_view && GNOSTR_IS_SESSION_VIEW(self->session_view))
     gnostr_session_view_set_authenticated(self->session_view, TRUE);
   start_signed_in_services(self);
   g_object_unref(self);
 }
 
-/* nostrc-vuwu: resume a NIP-55L session once GNostr Signer is running and
+/* nostrc-vuwu: resume a NIP-55L session once Grotto is running and
  * confirms it holds the saved account. Called at startup and whenever
  * org.nostr.Signer appears on the bus. */
 void
@@ -1012,10 +1012,10 @@ gnostr_main_window_restore_session_services_internal(GnostrMainWindow *self)
         }
       }
     } else if (saved_account_uses_local_signer(NULL)) {
-      /* nostrc-vuwu: signed in through GNostr Signer. Stay signed out until
+      /* nostrc-vuwu: signed in through Grotto. Stay signed out until
        * the signer confirms it holds this account (async; never as the
        * signer's default identity). */
-      g_debug("[MAIN] Restoring the GNostr Signer (NIP-55L) session");
+      g_debug("[MAIN] Restoring the Grotto (NIP-55L) session");
       gnostr_main_window_try_restore_nip55l_internal(self);
     }
 

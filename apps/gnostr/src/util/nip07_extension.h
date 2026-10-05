@@ -108,7 +108,7 @@ void gnostr_nip07_relay_free(GnostrNip07Relay *relay);
 const char *gnostr_nip07_request_to_string(GnostrNip07Request request);
 
 /* ---- D-Bus Client Functions ---- */
-/* These functions call a NIP-07 D-Bus service (like gnostr-signer or similar) */
+/* These functions call a NIP-07 D-Bus service (like grotto or similar) */
 
 /**
  * gnostr_nip07_get_public_key:

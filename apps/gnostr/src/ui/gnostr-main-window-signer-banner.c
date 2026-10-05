@@ -10,7 +10,7 @@
  * for its absence. Keys an older GNostr stored itself are also flagged
  * while the signer that would import them is not running.
  *
- * nostrc-jppi: with nip55l 0.4.0 the daemon may run while GNostr Signer's
+ * nostrc-jppi: with nip55l 0.4.0 the daemon may run while Grotto's
  * window - the only approval UI - is closed; a request that needs a prompt
  * then fails at once. The banner then says so and offers to open the
  * window, and likewise when a saved rule refuses GNostr.
@@ -83,7 +83,7 @@ on_status_ready(GObject *source, GAsyncResult *res, gpointer user_data)
     /* nostrc-lwzv: read-only keeps history visible but turns publishing off,
      * with the banner's explanation. */
     set_publish_blocked(self, ok && gnostr_signer_status_is_read_only(&st, need) ? text : NULL);
-    /* nostrc-jppi: the daemon runs, but a request needed GNostr Signer's
+    /* nostrc-jppi: the daemon runs, but a request needed Grotto's
      * window (closed) or a saved rule refused GNostr. Not read-only: other
      * kinds may be allowed; each failing action says why itself. */
     gboolean approval = FALSE;
@@ -96,9 +96,9 @@ on_status_ready(GObject *source, GAsyncResult *res, gpointer user_data)
     if (text) {
       const char *button = NULL;
       if (approval)
-        button = _("Open GNostr Signer");
+        button = _("Open Grotto");
       else if (gnostr_signer_status_can_start(&st) && !self->signer_starting)
-        button = _("Start GNostr Signer");
+        button = _("Start Grotto");
       adw_banner_set_title(self->signer_banner, text);
       adw_banner_set_button_label(self->signer_banner, button);
     }
@@ -130,7 +130,7 @@ on_signer_started(GObject *source, GAsyncResult *res, gpointer user_data)
   gboolean ok = gnostr_signer_start_finish(res, &error);
   self->signer_starting = FALSE;
   if (!ok && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) && self->signer_banner) {
-    g_autofree char *msg = g_strdup_printf(_("Could not start GNostr Signer: %s"),
+    g_autofree char *msg = g_strdup_printf(_("Could not start Grotto: %s"),
                                            error ? error->message : _("unknown error"));
     gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
   }
@@ -148,7 +148,7 @@ on_banner_button_clicked(AdwBanner *banner, gpointer user_data)
     /* The approver watch refreshes the banner once the window is up. */
     g_autoptr(GError) error = NULL;
     if (!gnostr_signer_open_app(&error)) {
-      g_autofree char *msg = g_strdup_printf(_("Could not open GNostr Signer: %s"),
+      g_autofree char *msg = g_strdup_printf(_("Could not open Grotto: %s"),
                                              error->message);
       gnostr_main_window_show_toast(GTK_WIDGET(self), msg);
     }
@@ -158,7 +158,7 @@ on_banner_button_clicked(AdwBanner *banner, gpointer user_data)
     return;
   self->signer_starting = TRUE;
   adw_banner_set_button_label(banner, NULL);
-  adw_banner_set_title(banner, _("Starting GNostr Signer…"));
+  adw_banner_set_title(banner, _("Starting Grotto…"));
   /* Own cancellable: a refresh (e.g. the name-appeared callback that the
    * activation itself triggers) must not cancel the start. Only dispose does. */
   if (!self->signer_start_cancellable)
@@ -175,7 +175,7 @@ on_signer_name_appeared(GDBusConnection *c, const gchar *name, const gchar *owne
   /* The shared proxy may have cached "not available"; start fresh. */
   gnostr_signer_proxy_reset();
   gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
-  /* nostrc-vuwu: a GNostr Signer session left signed out at startup
+  /* nostrc-vuwu: a Grotto session left signed out at startup
    * (signer not running yet) resumes now, if the signer holds the account. */
   gnostr_main_window_try_restore_nip55l_internal(GNOSTR_MAIN_WINDOW(user_data));
 }
@@ -187,7 +187,7 @@ on_signer_name_vanished(GDBusConnection *c, const gchar *name, gpointer user_dat
   gnostr_main_window_signer_banner_refresh_internal(GNOSTR_MAIN_WINDOW(user_data));
 }
 
-/* nostrc-jppi: GNostr Signer's window opened: prompts can be answered and
+/* nostrc-jppi: Grotto's window opened: prompts can be answered and
  * rules changed there, so forget earlier approval failures and retry a
  * restore that stalled on one. */
 static void

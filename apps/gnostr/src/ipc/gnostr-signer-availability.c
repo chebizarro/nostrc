@@ -147,10 +147,10 @@ gboolean gnostr_signer_start_finish(GAsyncResult *result, GError **error) {
 }
 
 gboolean gnostr_signer_open_app(GError **error) {
-  g_autofree char *program = g_find_program_in_path("gnostr-signer");
+  g_autofree char *program = g_find_program_in_path("grotto");
   if (!program) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
-                        _("GNostr Signer is not installed"));
+                        _("Grotto is not installed"));
     return FALSE;
   }
   char *argv[] = { program, NULL };
@@ -173,21 +173,21 @@ char *gnostr_signer_status_login_text(const GnostrSignerStatus *status) {
   switch (status->presence) {
     case GNOSTR_SIGNER_PRESENCE_RUNNING:
       if (status->signer_keys == 0)
-        return g_strdup(_("GNostr Signer is running but holds no key yet. Create or "
-                          "import one in GNostr Signer."));
+        return g_strdup(_("Grotto is running but holds no key yet. Create or "
+                          "import one in Grotto."));
       if (!status->approver_running)
-        return g_strdup(_("GNostr Signer is running, but its window is closed. Signing "
-                          "in asks for your approval there: open GNostr Signer first."));
+        return g_strdup(_("Grotto is running, but its window is closed. Signing "
+                          "in asks for your approval there: open Grotto first."));
       return NULL;
     case GNOSTR_SIGNER_PRESENCE_ACTIVATABLE:
-      return g_strdup(_("GNostr Signer is installed but not running. Start it to "
+      return g_strdup(_("Grotto is installed but not running. Start it to "
                         "sign in with a key on this computer."));
     case GNOSTR_SIGNER_PRESENCE_NOT_INSTALLED:
-      return g_strdup(_("GNostr Signer is not installed. Install it to keep your key "
+      return g_strdup(_("Grotto is not installed. Install it to keep your key "
                         "on this computer, or use a remote signer."));
     case GNOSTR_SIGNER_PRESENCE_NO_BUS:
     default:
-      return g_strdup(_("No desktop session bus, so GNostr Signer cannot be reached. "
+      return g_strdup(_("No desktop session bus, so Grotto cannot be reached. "
                         "Use a remote signer."));
   }
 }
@@ -197,36 +197,36 @@ char *gnostr_signer_status_legacy_text(const GnostrSignerStatus *status) {
   if (status->legacy_keys == 0) return NULL;
   const char *head = g_dngettext(NULL,
       "An older version of GNostr saved %u private key itself. GNostr no longer "
-      "keeps keys; GNostr Signer does.",
+      "keeps keys; Grotto does.",
       "An older version of GNostr saved %u private keys itself. GNostr no longer "
-      "keeps keys; GNostr Signer does.",
+      "keeps keys; Grotto does.",
       status->legacy_keys);
   const char *tail;
   if (!status->legacy_auto_migrates)
-    tail = _("Import them in GNostr Signer, then delete the old “org.gnostr.Client” "
+    tail = _("Import them in Grotto, then delete the old “org.gnostr.Client” "
              "items from your keychain.");
 #ifdef __APPLE__
   /* nostrc-de9h: the daemon reads each old item once; the Keychain may ask
    * to allow that, and a dismissed prompt only postpones the item. */
   else if (status->presence == GNOSTR_SIGNER_PRESENCE_RUNNING)
-    tail = _("GNostr Signer moves them into its own Keychain items when it starts; if "
-             "they are still listed, restart GNostr Signer and allow its Keychain "
+    tail = _("Grotto moves them into its own Keychain items when it starts; if "
+             "they are still listed, restart Grotto and allow its Keychain "
              "access.");
   else if (status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE)
-    tail = _("Start GNostr Signer to move them into its own Keychain items (the "
+    tail = _("Start Grotto to move them into its own Keychain items (the "
              "Keychain may ask to allow this).");
   else
-    tail = _("Install GNostr Signer; it moves them into its own Keychain items when it "
+    tail = _("Install Grotto; it moves them into its own Keychain items when it "
              "first starts.");
 #else
   else if (status->presence == GNOSTR_SIGNER_PRESENCE_RUNNING)
-    tail = _("GNostr Signer moves them into its keyring when it starts; if they are "
-             "still listed, unlock your keyring and restart GNostr Signer.");
+    tail = _("Grotto moves them into its keyring when it starts; if they are "
+             "still listed, unlock your keyring and restart Grotto.");
   else if (status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE)
-    tail = _("Start GNostr Signer to move them into its keyring (your keyring may ask "
+    tail = _("Start Grotto to move them into its keyring (your keyring may ask "
              "to be unlocked).");
   else
-    tail = _("Install GNostr Signer; it moves them into its keyring when it first starts.");
+    tail = _("Install Grotto; it moves them into its keyring when it first starts.");
 #endif
   g_autofree char *first = g_strdup_printf(head, status->legacy_keys);
   return g_strdup_printf("%s %s", first, tail);
@@ -246,26 +246,26 @@ char *gnostr_signer_status_banner_text(const GnostrSignerStatus *status,
   if (need == GNOSTR_SIGNER_NEED_ACTIVE) {
     /* Signing resumes by itself once the signer is back. */
     return g_strdup(startable
-        ? _("GNostr Signer is not running. GNostr keeps no keys of its own, so it is "
+        ? _("Grotto is not running. GNostr keeps no keys of its own, so it is "
             "read-only until the signer runs.")
-        : _("GNostr Signer is not available. GNostr keeps no keys of its own, so it is "
-            "read-only: install GNostr Signer or sign in with a remote signer."));
+        : _("Grotto is not available. GNostr keeps no keys of its own, so it is "
+            "read-only: install Grotto or sign in with a remote signer."));
   }
   if (need == GNOSTR_SIGNER_NEED_SIGNED_OUT) {
     /* nostrc-vuwu: once the signer runs, the session resumes by itself if
      * the signer holds this account; otherwise the user signs in again. */
     return g_strdup(startable
-        ? _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
+        ? _("You are signed out: GNostr keeps no keys of its own and Grotto is "
             "not running. Start it to continue; if it uses a different account, sign "
             "in again.")
-        : _("You are signed out: GNostr keeps no keys of its own and GNostr Signer is "
+        : _("You are signed out: GNostr keeps no keys of its own and Grotto is "
             "not available. Install it, or sign in with a remote signer."));
   }
   if (status->legacy_keys > 0 && status->legacy_auto_migrates) {
     return g_strdup(status->presence == GNOSTR_SIGNER_PRESENCE_ACTIVATABLE
-        ? _("Keys saved by an older GNostr are waiting for GNostr Signer. Start it to "
+        ? _("Keys saved by an older GNostr are waiting for Grotto. Start it to "
             "move them into its key store.")
-        : _("Keys saved by an older GNostr are waiting for GNostr Signer. Install it to "
+        : _("Keys saved by an older GNostr are waiting for Grotto. Install it to "
             "move them into its key store."));
   }
   return NULL;
@@ -280,11 +280,11 @@ char *gnostr_signer_status_approval_text(const GnostrSignerStatus *status,
     case GNOSTR_SIGNER_APPROVAL_NO_APPROVER:
       if (status->approver_running)
         return NULL;
-      return g_strdup(_("GNostr Signer needs your approval for a request from GNostr, "
-                        "but its window is closed. Open GNostr Signer to answer it."));
+      return g_strdup(_("Grotto needs your approval for a request from GNostr, "
+                        "but its window is closed. Open Grotto to answer it."));
     case GNOSTR_SIGNER_APPROVAL_REFUSED:
-      return g_strdup(_("GNostr Signer is set to refuse some of GNostr’s requests. "
-                        "Change that in GNostr Signer to use them again."));
+      return g_strdup(_("Grotto is set to refuse some of GNostr’s requests. "
+                        "Change that in Grotto to use them again."));
     case GNOSTR_SIGNER_APPROVAL_OK:
     default:
       return NULL;

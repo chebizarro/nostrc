@@ -52,7 +52,7 @@ Use the generic WebDAV provider that upstream GOA has shipped since
 GNOME 46 (3.46+, April 2024). Build a localhost DAV bridge
 (`nostr-dav`) that translates CalDAV/CardDAV/WebDAV to Nostr via the
 existing `org.nostr.Signer` D-Bus interface (which is complete and
-production-grade -- see `apps/gnostr-signer/data/dbus/org.nostr.Signer.xml`).
+production-grade -- see `apps/grotto/data/dbus/org.nostr.Signer.xml`).
 
 All new code stays in C11 to match the rest of the repo. HTTP server
 via libsoup-3; DAV XML via libxml2; concurrency via libgo/fiber where
@@ -135,7 +135,7 @@ module will build and install, but never load.
 The Feb 2 2026 account-picker UI (commit 312fc3d6) is ~400 lines of
 solid GTK4 code. It does not justify keeping dead code in the tree.
 If the picker is wanted later, lift it from git history into
-`apps/gnostr-signer/src/ui/sheets/` at that point.
+`apps/grotto/src/ui/sheets/` at that point.
 
 ## Tasks
 
@@ -367,9 +367,9 @@ Settings with no shell commands beyond the install.
 ## Scope
 
 - systemd `--user` unit for `nostr-dav.service`, with
-  `Requires=gnostr-signer.service` / `After=gnostr-signer.service`.
+  `Requires=grotto.service` / `After=grotto.service`.
 - First-run wizard implemented as a new sheet in
-  `apps/gnostr-signer/src/ui/sheets/` ("Add to Online Accounts").
+  `apps/grotto/src/ui/sheets/` ("Add to Online Accounts").
   Consistent with the existing signer UI (GTK4/libadwaita, C11).
 - Wizard steps:
   1. Start `nostr-dav.service`.
@@ -385,7 +385,7 @@ Settings with no shell commands beyond the install.
 ## Acceptance
 
 - Clean Ubuntu 24.04 VM + Fedora 40 VM: install the package, launch
-  gnostr-signer, click "Add to Online Accounts", click through the
+  grotto, click "Add to Online Accounts", click through the
   wizard. Within 60 seconds the WebDAV account is added and GNOME
   Calendar shows at least one test event.
 - Uninstall cleanly: `systemctl --user disable --now nostr-dav` plus
@@ -460,7 +460,7 @@ storage" before Blossom, etc.).
   WebDAV provider in 3.46 (April 2024).
 - Document the `org.nostr.Signer` D-Bus interface as the stable
   trust boundary and link to
-  `apps/gnostr-signer/data/dbus/org.nostr.Signer.xml`.
+  `apps/grotto/data/dbus/org.nostr.Signer.xml`.
 
 ## Acceptance
 

@@ -25,7 +25,7 @@ The server resolves the secret key in this order: KEY → SECKEY_HEX → NSEC. S
   any such peer: it is a development tool for a key you handed to it. There is
   no per-app ACL (the old `signer-acl.ini` lookup keyed on a claimed `app_id`
   was removed, nostrc-q23h).
-- `gnostr-signer-daemon` / `nostr-signer-daemon` start the socket with
+- `grotto-daemon` / `nostr-signer-daemon` start the socket with
   `nostr_nip5f_server_start_with_hooks()` (via nips/nip55l `nip55l_nip5f.h`),
   when `NOSTR_SIGNER_ENDPOINT=unix:<path>` is set. Then every method is
   decided like the org.nostr.Signer D-Bus call from the same process: the

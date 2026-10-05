@@ -22,7 +22,7 @@ service's own store, so the service stays the single source of truth.
 |---|---|---|---|
 | Identity | active identity, relays | `org.nostr.Signer` `GetPublicKey` / `GetRelays` | no (read-only) |
 | Identity | identities in the keyring | Secret Service, schema `org.gnostr.Signer/identity` (`gnostr_secret_store_find_all`, attributes only — no secrets, no unlock) | no |
-| Identity | Passwords and Keys / signer settings | launches `org.gnome.seahorse.Application.desktop` / `org.gnostr.Signer.desktop` action `settings` | — |
+| Identity | Passwords and Keys / signer settings | launches `org.gnome.seahorse.Application.desktop` / `org.nostr.Grotto.desktop` action `settings` | — |
 | Relays | session relay on/off | systemd `--user`: `nostr-session-relay.socket` (+ `.service`) via `org.freedesktop.systemd1` | unit enablement |
 | Relays | live statistics | `org.nostr.SessionRelay1.GetStats` (never auto-started) | no |
 | Relays | storage limits | `~/.config/nostr/session-relay.conf`, flat `retention_*` keys | only once the relay reports `RetentionSupported` (not yet — `nostrc-prqu.17`) |

@@ -147,7 +147,7 @@ ns_signer_connect(gchar **out_pubkey_hex, GError **error)
     g_set_error(error, NS_ERROR, NS_ERROR_NO_SIGNER,
                 "no signer: org.nostr.Signer is not available on the session "
                 "bus (%s%s%s). Install and unlock a NIP-55L signer (e.g. "
-                "gnostr-signer) and try again.",
+                "grotto) and try again.",
                 remote ? remote : "", remote ? ": " : "", local->message);
     g_clear_error(&local);
     return NULL;

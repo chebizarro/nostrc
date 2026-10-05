@@ -887,7 +887,7 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-publish-gate PROPERTIES
     LABELS "gtk;widget;unit;gnostr")
 
-  # GNostr Signer (NIP-55L) session restore + identity selection
+  # Grotto (NIP-55L) session restore + identity selection
   # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private test bus
   # (tests/common/nostrc-test-bus.h).
   include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcTestBus.cmake)

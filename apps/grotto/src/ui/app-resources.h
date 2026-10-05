@@ -1,0 +1,10 @@
+#ifndef APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H
+#define APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H
+
+// Global resource path for Grotto UI templates
+// All GtkBuilder templates are compiled into GResource under this prefix.
+// gtk_widget_class_set_template_from_resource expects a resource PATH (not URI).
+#ifndef APP_RESOURCE_PATH
+#define APP_RESOURCE_PATH "/org/gnostr/signer"
+#endif
+#endif /* APPS_GNOSTR_SIGNER_UI_APP_RESOURCES_H */

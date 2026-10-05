@@ -640,16 +640,16 @@ cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E 
 /Applications/Xcode.app/Contents/Developer/usr/bin/make  -f tests/CMakeFiles/microbench_json.dir/build.make tests/CMakeFiles/microbench_json.dir/build
 make[2]: Nothing to be done for `tests/CMakeFiles/microbench_json.dir/build'.
 [ 88%] Built target microbench_json
-/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/depend
-cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/DependInfo.cmake "--color="
-/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build
-make[2]: Nothing to be done for `apps/gnostr-signer/CMakeFiles/gnostr-signer.dir/build'.
-[ 94%] Built target gnostr-signer
-/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/depend
-cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/DependInfo.cmake "--color="
-/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build.make apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build
-make[2]: Nothing to be done for `apps/gnostr-signer/CMakeFiles/gnostr-signer-daemon.dir/build'.
-[ 95%] Built target gnostr-signer-daemon
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/grotto/CMakeFiles/grotto.dir/build.make apps/grotto/CMakeFiles/grotto.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/grotto /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/grotto /Users/bizarro/Documents/Projects/nostrc/build/apps/grotto/CMakeFiles/grotto.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/grotto/CMakeFiles/grotto.dir/build.make apps/grotto/CMakeFiles/grotto.dir/build
+make[2]: Nothing to be done for `apps/grotto/CMakeFiles/grotto.dir/build'.
+[ 94%] Built target grotto
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/grotto/CMakeFiles/grotto-daemon.dir/build.make apps/grotto/CMakeFiles/grotto-daemon.dir/depend
+cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/grotto /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/grotto /Users/bizarro/Documents/Projects/nostrc/build/apps/grotto/CMakeFiles/grotto-daemon.dir/DependInfo.cmake "--color="
+/Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/grotto/CMakeFiles/grotto-daemon.dir/build.make apps/grotto/CMakeFiles/grotto-daemon.dir/build
+make[2]: Nothing to be done for `apps/grotto/CMakeFiles/grotto-daemon.dir/build'.
+[ 95%] Built target grotto-daemon
 /Applications/Xcode.app/Contents/Developer/usr/bin/make  -f apps/gnostr/CMakeFiles/gnostr.dir/build.make apps/gnostr/CMakeFiles/gnostr.dir/depend
 cd /Users/bizarro/Documents/Projects/nostrc/build && /opt/homebrew/bin/cmake -E cmake_depends "Unix Makefiles" /Users/bizarro/Documents/Projects/nostrc /Users/bizarro/Documents/Projects/nostrc/apps/gnostr /Users/bizarro/Documents/Projects/nostrc/build /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr /Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/CMakeFiles/gnostr.dir/DependInfo.cmake "--color="
 Dependencies file "apps/gnostr/CMakeFiles/gnostr.dir/src/ui/gnostr-timeline-view.c.o.d" is newer than depends file "/Users/bizarro/Documents/Projects/nostrc/build/apps/gnostr/CMakeFiles/gnostr.dir/compiler_depend.internal".

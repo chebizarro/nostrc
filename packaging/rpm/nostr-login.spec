@@ -509,7 +509,7 @@ Requires:       glib2
 Requires:       libxml2
 Requires:       sqlite
 Requires:       json-glib
-Recommends:     gnostr-signer-daemon
+Recommends:     grotto-daemon
 Recommends:     nostrc-session-relay%{?_isa} = %{version}-%{release}
 %{?systemd_requires}
 
@@ -526,7 +526,7 @@ the daemon uses libsoup-3 for both the HTTP DAV server and the
 upstream WebSocket relay client.
 
 Enable with `systemctl --user enable --now nostr-dav.service`. Token
-bootstrap happens through `gnostr-signer-daemon`; the token file
+bootstrap happens through `grotto-daemon`; the token file
 lives under `$XDG_STATE_HOME/nostr-dav/`.
 
 # --- Sub-package: nostr-dispatcher (nostrc-1v65) -----------------------------
@@ -556,7 +556,7 @@ Summary:        Share to Nostr from any GNOME app's Open With menu
 Requires:       libnostr-publish%{?_isa} = %{version}-%{release}
 Requires:       libhanami%{?_isa} = %{version}-%{release}
 Requires:       libnostr-nips%{?_isa} = %{version}-%{release}
-Recommends:     gnostr-signer-daemon
+Recommends:     grotto-daemon
 Recommends:     git
 Suggests:       nostr-dav%{?_isa} = %{version}-%{release}
 %description -n nostr-share
@@ -1478,7 +1478,7 @@ fi
   client / FUSE surfaces (plan §5.1 #21a).
 - ENABLE_NIP55L_STANDALONE_ACTIVATION explicit OFF; the pre-existing
   cleanup that removes org.nostr.Signer.service from the buildroot is
-  retained so gnostr-signer's own spec remains the sole owner
+  retained so grotto's own spec remains the sole owner
   (Milestone-A D3 dedup).
 - Rename smb.conf.standalone.sample and smb-credentiald.conf.sample
   into /etc/nostr-auth/ as %config(noreplace) conffiles; sample

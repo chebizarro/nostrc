@@ -18,7 +18,7 @@ nostrc (0.4.0-1) UNRELEASED; urgency=medium
     (scripts/check-authd-dep-purity.sh) against nostr-authd + pam_nostr
     so package builds fail on any new hanami/porthome/nip55l/FUSE
     dependency edge.
-  * ENABLE_NIP55L_STANDALONE_ACTIVATION explicit OFF; gnostr-signer's
+  * ENABLE_NIP55L_STANDALONE_ACTIVATION explicit OFF; grotto's
     debian package remains the sole owner of org.nostr.Signer.service
     (Milestone-A D3 dedup).
   * Rename smb.conf.standalone.sample + smb-credentiald.conf.sample into

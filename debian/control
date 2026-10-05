@@ -334,7 +334,7 @@ Architecture: any
 Multi-Arch: foreign
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: gnostr-signer-daemon,
+Recommends: grotto-daemon,
             nostrc-session-relay (>= ${source:Version})
 Description: Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
  nostr-dav is the loopback (`127.0.0.1:7680`) DAV bridge that lets
@@ -349,7 +349,7 @@ Description: Localhost CalDAV / CardDAV / WebDAV bridge for Nostr (Wave 4)
  upstream WebSocket relay client.
  .
  Enable with `systemctl --user enable --now nostr-dav.service`. Token
- bootstrap happens through `gnostr-signer-daemon`; the token file
+ bootstrap happens through `grotto-daemon`; the token file
  lives under `$XDG_STATE_HOME/nostr-dav/`.
 
 Package: nostr-share
@@ -357,7 +357,7 @@ Section: net
 Architecture: any
 Multi-Arch: foreign
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: gnostr-signer-daemon, git
+Recommends: grotto-daemon, git
 Suggests: nostr-dav (>= ${source:Version}),
           nostrc-session-relay (>= ${source:Version})
 Description: Share to Nostr from any GNOME app's Open With menu

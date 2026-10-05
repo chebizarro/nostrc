@@ -28,7 +28,7 @@
 #define NIP55L_APPROVER_PATHS ""
 #endif
 #ifndef NIP55L_APPROVER_FLATPAK_ID
-#define NIP55L_APPROVER_FLATPAK_ID "org.gnostr.Signer"
+#define NIP55L_APPROVER_FLATPAK_ID "org.nostr.Grotto"
 #endif
 
 void

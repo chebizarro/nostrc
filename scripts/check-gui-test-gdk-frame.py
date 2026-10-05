@@ -122,7 +122,7 @@ def main():
     failures = []
     checked = 0
     for dirname in ('gnome/groundhog/tests', 'apps/gnostr/tests',
-                    'nostr-gtk/tests', 'apps/gnostr-signer/tests',
+                    'nostr-gtk/tests', 'apps/grotto/tests',
                     'apps/gnostr/plugins'):
         for path in sorted((args.root / dirname).rglob('*.c')):
             if dirname == 'apps/gnostr/plugins' and 'tests' not in path.parts:

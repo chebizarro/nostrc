@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=org.nostr.Signer
+Exec=@CMAKE_INSTALL_FULL_BINDIR@/grotto-daemon
+SystemdService=grotto-daemon.service
+AssumedAppArmorLabel=unconfined
