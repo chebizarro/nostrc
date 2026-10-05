@@ -72,7 +72,8 @@ template $GhSidebarPage: Adw.NavigationPage {
       search-mode-enabled: bind search_button.active bidirectional;
 
       child: SearchEntry search_entry {
-        placeholder-text: _("Search conversations");
+        placeholder-text: _("Search titles or npubs");
+        tooltip-text: _("Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.");
         hexpand: true;
 
         accessibility {
@@ -187,12 +188,12 @@ template $GhSidebarPage: Adw.NavigationPage {
             hscrollbar-policy: never;
 
             child: ListView list {
-              styles [
               margin-top: 12;
               margin-bottom: 12;
               margin-start: 12;
               margin-end: 12;
               show-separators: true;
+              styles [
                 "navigation-sidebar",
               ]
 
@@ -239,7 +240,7 @@ template $GhSidebarPage: Adw.NavigationPage {
         child: Adw.StatusPage no_results_page {
           icon-name: "system-search-symbolic";
           title: _("No Results");
-          description: _("No conversation matches your search.");
+          description: _("No title, request subject or participant npub matches. Try another search or press Escape to clear it.");
           hexpand: true;
           vexpand: true;
 

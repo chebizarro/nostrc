@@ -35,6 +35,7 @@ struct _GhSidebarPage {
   gchar *account_title;          /* gh_sidebar_page_set_title(); NULL: title */
   GhStatusBanner banner;         /* last shown */
   gboolean show_requests;
+  gboolean updating_search;
   gboolean show_previews;
   guint invitations;             /* pending encrypted-group invitations */
 };
@@ -64,7 +65,8 @@ conversation_page(GhSidebarPage *self)
   guint conversations = model_n_items(self->conversations);
   guint requests = model_n_items(self->requests);
   gboolean listed = self->show_requests
-    ? requests > 0 : conversations + requests + self->invitations > 0;
+    ? requests > 0 : conversations + requests > 0 ||
+                    (!*self->search_text && self->invitations > 0);
   if (listed)
     return "conversations";
   if (*self->search_text)
@@ -77,6 +79,9 @@ conversation_page(GhSidebarPage *self)
 static void
 update_page(GhSidebarPage *self)
 {
+  /* Both filtered models must settle before deciding whether Requests is empty. */
+  if (self->updating_search)
+    return;
   guint requests = model_n_items(self->requests);
   /* Nothing left to list in Message Requests (accepted, or filtered away
    * by a search that has since been cleared): return to conversations. */
@@ -94,7 +99,7 @@ update_page(GhSidebarPage *self)
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->requests_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   gtk_widget_set_visible(GTK_WIDGET(self->invitations_button),
-                         !self->show_requests && self->invitations > 0);
+                         !self->show_requests && !*self->search_text && self->invitations > 0);
   g_autofree gchar *invitations = g_strdup_printf("%u", self->invitations);
   gtk_label_set_text(self->invitations_count, invitations);
   g_autofree gchar *invitations_label = g_strdup_printf(
@@ -168,8 +173,26 @@ on_search_changed(GhSidebarPage *self)
     return;
   g_free(self->search_text);
   self->search_text = g_steal_pointer(&text);
+  self->updating_search = TRUE;
   g_object_notify_by_pspec(G_OBJECT(self), sidebar_props[SIDEBAR_PROP_SEARCH_TEXT]);
+  self->updating_search = FALSE;
   update_page(self);
+}
+
+/* Escape and closing the search toggle have the same, immediate result. */
+static void
+on_stop_search(GhSidebarPage *self)
+{
+  gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
+  gtk_search_bar_set_search_mode(self->search_bar, FALSE);
+  gtk_widget_grab_focus(GTK_WIDGET(self->search_button));
+}
+
+static void
+on_search_mode_changed(GhSidebarPage *self)
+{
+  if (!gtk_search_bar_get_search_mode(self->search_bar))
+    gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
 }
 
 static void
@@ -187,6 +210,10 @@ leave_requests(GtkWidget *widget, GVariant *args, gpointer data)
   GhSidebarPage *self = GH_SIDEBAR_PAGE(widget);
   (void)args;
   (void)data;
+  if (gtk_search_bar_get_search_mode(self->search_bar) || *self->search_text) {
+    on_stop_search(self);
+    return TRUE;
+  }
   if (!self->show_requests)
     return FALSE;
   gh_sidebar_page_set_show_requests(self, FALSE);
@@ -323,8 +350,12 @@ gh_sidebar_page_init(GhSidebarPage *self)
                            G_CALLBACK(on_selected_item), self);
   gtk_list_view_set_model(self->list, GTK_SELECTION_MODEL(self->selection));
   gtk_search_bar_connect_entry(self->search_bar, GTK_EDITABLE(self->search_entry));
-  g_signal_connect_swapped(self->search_entry, "search-changed",
+  g_signal_connect_swapped(self->search_entry, "notify::text",
                            G_CALLBACK(on_search_changed), self);
+  g_signal_connect_swapped(self->search_entry, "stop-search",
+                           G_CALLBACK(on_stop_search), self);
+  g_signal_connect_swapped(self->search_bar, "notify::search-mode-enabled",
+                           G_CALLBACK(on_search_mode_changed), self);
   update_page(self);
 }
 

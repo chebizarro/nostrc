@@ -611,6 +611,191 @@ test_search(Fixture *f, gconstpointer data)
   g_assert_cmpstr(gtk_label_get_text(count), ==, "2");
 }
 
+/* W29: exercise the editable signal, not the delayed search-changed signal. */
+static void
+test_search_live_scope(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkEditable *entry = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry");
+  gh_sidebar_page_start_search(f->sidebar);
+  gtk_editable_set_text(entry, "  oK cL  ");
+  g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "oK cL");
+  GhConversation *const book[] = { f->ac };
+  assert_list(f, book, 1);
+  gtk_editable_set_text(entry, npub[2]);
+  GhConversation *const peer[] = { f->ab };
+  assert_list(f, peer, 1);
+  /* A substring of an npub works, not just the abbreviated displayed title. */
+  g_autofree gchar *part = g_strndup(npub[2] + 18, 20);
+  gtk_editable_set_text(entry, part);
+  assert_list(f, peer, 1);
+  for (guint previews = 0; previews < 2; previews++) {
+    gh_sidebar_page_set_show_previews(f->sidebar, previews);
+    gtk_editable_set_text(entry, "reply from B");
+    assert_list(f, NULL, 0);
+    g_assert_cmpstr(gtk_stack_get_visible_child_name(gh_sidebar_page_get_stack(f->sidebar)),
+                    ==, "no-results");
+    gtk_editable_set_text(entry, "");
+  }
+  /* Whitespace restores all conversations immediately. */
+  gtk_editable_set_text(entry, "   ");
+  GhConversation *const all[] = { f->ab, f->ac };
+  assert_list(f, all, 2);
+}
+
+static void
+test_search_requests_empty(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GtkEditable *entry = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry");
+  GtkStack *stack = gh_sidebar_page_get_stack(f->sidebar);
+  gh_sidebar_page_start_search(f->sidebar);
+  add(f->store, 5, 1, f->now, "message-only word", "Knitting plans");
+  gtk_editable_set_text(entry, "KNITTING");
+  assert_list(f, NULL, 0);
+  GtkWidget *requests = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "requests_button");
+  g_assert_true(gtk_widget_get_visible(requests));
+  gh_sidebar_page_set_show_requests(f->sidebar, TRUE);
+  GhConversation *const match[] = { f->ae };
+  assert_list(f, match, 1);
+  gtk_editable_set_text(entry, "no matching metadata");
+  g_assert_true(gh_sidebar_page_get_show_requests(f->sidebar));
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "no-results");
+  gtk_editable_set_text(entry, "knitting");
+  assert_list(f, match, 1);
+  /* A metadata change also refilters without retyping. */
+  add(f->store, 5, 1, f->now + 1, "hello", "Changed subject");
+  assert_list(f, NULL, 0);
+  gh_sidebar_page_set_show_requests(f->sidebar, FALSE);
+  /* Invitations are a separate flow and must not mask no-results. */
+  gh_sidebar_page_set_invitations(f->sidebar, 2);
+  g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "no-results");
+  GtkWidget *invitations = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "invitations_button");
+  g_assert_false(gtk_widget_get_visible(invitations));
+  gtk_editable_set_text(entry, "");
+  g_assert_true(gtk_widget_get_visible(invitations));
+}
+
+static gboolean is_collapsed_with_rows(gpointer data);
+
+static void
+test_search_clear_and_focus(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  present(f, 360, 600);
+  spin_until(is_collapsed_with_rows, f);
+  g_assert_true(gh_window_open_item(f->window, f->ab));
+  g_assert_true(gh_window_get_content_visible(f->window));
+  /* win.search is the Ctrl+F target (accelerators tested in shell-layout). */
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.search", NULL));
+  g_assert_false(gh_window_get_content_visible(f->window));
+  GtkWidget *entry = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry");
+  GtkSearchBar *bar = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_bar");
+  GtkToggleButton *toggle = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_button");
+  GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(f->window));
+  g_assert_true(focus == entry || gtk_widget_is_ancestor(focus, entry));
+  gtk_editable_set_text(GTK_EDITABLE(entry), "book");
+  g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "book");
+  /* Escape's GtkSearchEntry action signal, including in Requests mode. */
+  gh_sidebar_page_set_show_requests(f->sidebar, TRUE);
+  g_signal_emit_by_name(entry, "stop-search");
+  g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
+  g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "");
+  g_assert_false(gtk_search_bar_get_search_mode(bar));
+  g_assert_false(gtk_toggle_button_get_active(toggle));
+  g_assert_true(gh_sidebar_page_get_show_requests(f->sidebar));
+  g_assert_cmpuint(g_list_model_get_n_items(list_model(f->sidebar)), ==, 2);
+  gh_sidebar_page_set_show_requests(f->sidebar, FALSE);
+  gh_sidebar_page_start_search(f->sidebar);
+  gtk_editable_set_text(GTK_EDITABLE(entry), "book");
+  g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "book");
+  gtk_toggle_button_set_active(toggle, FALSE);
+  g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "");
+  GhConversation *const all[] = { f->ab, f->ac };
+  assert_list(f, all, 2);
+}
+
+static void
+test_sidebar_spacing(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  present(f, 900, 600);
+  spin_until(has_rows, f);
+  GtkWidget *list = GTK_WIDGET(gh_sidebar_page_get_list(f->sidebar));
+  g_assert_cmpint(gtk_widget_get_margin_start(list), ==, 12);
+  g_assert_cmpint(gtk_widget_get_margin_end(list), ==, 12);
+  g_assert_cmpint(gtk_widget_get_margin_top(list), ==, 12);
+  g_assert_cmpint(gtk_widget_get_margin_bottom(list), ==, 12);
+  g_assert_true(gtk_list_view_get_show_separators(GTK_LIST_VIEW(list)));
+  GtkWidget *row = GTK_WIDGET(row_for(f->sidebar, f->ab));
+  g_assert_cmpint(gtk_widget_get_margin_top(row), ==, 6);
+  g_assert_cmpint(gtk_widget_get_margin_bottom(row), ==, 6);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  g_assert_cmpint(gtk_widget_get_height(row), >=, 40);
+}
+
+static void
+test_header_title(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *name = "Book Club - planning our autumn reading weekend together";
+  add(f->store, 1, 2, f->now, "Let's plan", name);
+  present(f, 900, 600);
+  spin_until(has_rows, f);
+  g_assert_true(gh_window_open_item(f->window, f->ab));
+  GtkLabel *title = template_child(f->content, GH_TYPE_CONTENT_PAGE, "title_label");
+  GtkLabel *subtitle = template_child(f->content, GH_TYPE_CONTENT_PAGE, "subtitle_label");
+  g_assert_cmpstr(gtk_label_get_text(title), ==, name);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(title)), ==, name);
+  g_assert_cmpint(gtk_label_get_ellipsize(title), ==, PANGO_ELLIPSIZE_MIDDLE);
+  g_assert_false(gtk_label_get_wrap(title));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  PangoLayout *wide_layout = gtk_label_get_layout(title);
+  if (pango_layout_is_ellipsized(wide_layout)) {
+    PangoLayout *natural = pango_layout_copy(wide_layout);
+    pango_layout_set_width(natural, -1);
+    pango_layout_set_ellipsize(natural, PANGO_ELLIPSIZE_NONE);
+    int natural_width = 0;
+    pango_layout_get_pixel_size(natural, &natural_width, NULL);
+    g_assert_cmpint(natural_width, >, gtk_widget_get_width(GTK_WIDGET(title)));
+    g_object_unref(natural);
+  }
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(subtitle)));
+  g_assert_cmpstr(gtk_label_get_text(subtitle), ==, "Private · end-to-end encrypted");
+  /* Metadata changes reach the visible title and tooltip, as plain text. */
+  add(f->store, 1, 2, f->now + 1, "next", "<Autumn & winter>");
+  g_assert_cmpstr(gtk_label_get_text(title), ==, "<Autumn & winter>");
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(title)), ==, "<Autumn & winter>");
+  g_assert_false(gtk_label_get_use_markup(title));
+}
+
+static void
+test_header_title_folded(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *name = "Book Club - planning our autumn reading weekend together";
+  add(f->store, 1, 2, f->now, "Let's plan", name);
+  present(f, 360, 294);
+  spin_until(is_collapsed_with_rows, f);
+  g_assert_true(gh_window_open_item(f->window, f->ab));
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  GtkLabel *title = template_child(f->content, GH_TYPE_CONTENT_PAGE, "narrow_title_label");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(title)));
+  g_assert_cmpstr(gtk_label_get_text(title), ==, name);
+  g_assert_true(gtk_label_get_wrap(title));
+  PangoLayout *layout = gtk_label_get_layout(title);
+  g_assert_cmpint(pango_layout_get_line_count(layout), >, 1);
+  g_assert_cmpint(pango_layout_get_line_count(layout), <=, 2);
+  g_assert_false(pango_layout_is_ellipsized(layout));
+  const PangoLayoutLine *last = pango_layout_get_line_readonly(
+      layout, pango_layout_get_line_count(layout) - 1);
+  g_assert_cmpuint(last->start_index + last->length, ==, strlen(name));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(title)), ==, name);
+  /* Some headless window managers realize a requested 360px window smaller. */
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(f->window)), <=, 360);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(f->window)), >=, 300);
+}
+
 static gboolean
 has_message_items(gpointer data)
 {
@@ -948,6 +1133,8 @@ test_screenshots(Fixture *f, gconstpointer data)
     g_test_skip("GROUNDHOG_TEST_SCREENSHOTS is not set");
     return;
   }
+  add(f->store, 1, 2, f->now, "Let's plan our next meeting.",
+      "Book Club - planning our autumn reading weekend together");
   /* Switching the color scheme re-parses the theme, and some GTK builds
    * (e.g. Homebrew GTK 4.22 with libadwaita 1.9) warn about libadwaita's own
    * CSS then: warnings are not fatal while taking screenshots (criticals
@@ -1133,8 +1320,6 @@ test_time_format(void)
     gh_conversation_row_format_message_time(at - 86400 - 60, now);
   g_assert_cmpstr(message_yesterday, ==, "Yesterday 15:29");
 }
-  add(f->store, 1, 2, f->now, "Let's plan our next meeting.",
-      "Book Club - planning our autumn reading weekend together");
 
 int
 main(int argc, char **argv)
@@ -1169,6 +1354,12 @@ main(int argc, char **argv)
   ADD("requests-are-separate", test_requests_are_separate);
   ADD("request-subject-secondary", test_request_subject_secondary);
   ADD("search", test_search);
+  ADD("search-live-scope", test_search_live_scope);
+  ADD("search-requests-empty", test_search_requests_empty);
+  ADD("search-clear-and-focus", test_search_clear_and_focus);
+  ADD("sidebar-spacing", test_sidebar_spacing);
+  ADD("header-title", test_header_title);
+  ADD("header-title-folded", test_header_title_folded);
   ADD("selection-shows-messages", test_selection_shows_messages);
   ADD("empty-and-banner", test_empty_and_banner);
   ADD("collapsed-360x294", test_collapsed_360x294);

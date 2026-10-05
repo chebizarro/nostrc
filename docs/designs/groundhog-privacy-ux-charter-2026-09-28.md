@@ -984,7 +984,10 @@ If blueprint-compiler 0.12 (the CI version) rejects a `template ListHeader` insi
   - Sorted by pinned rank, then `last-activity` descending.
   - Sections "Pinned" and "Recent" come from the `section-sorter` (GTK 4.12); there are no headers when nothing is pinned.
   - *(Amended 2026-09-29, nostrc-qp24.86: pinned conversations are listed in the order they were pinned, a new pin after the others; a new message does not move a pinned conversation. The pin is `conversations.pinned_rank` in the encrypted store (PD-11), never GSettings, and never published.)*
-  - The filter covers search text (title and participant names; message bodies only through FTS on explicit "Search Messages") and excludes requests.
+  - **Search model (W29, nostrc-lol6):** local, case-insensitive substring matching over conversation titles, request subjects and every participant's full npub. Leading/trailing whitespace is ignored. Participant display names match only when they form the conversation title; message bodies, previews, relay addresses and group invitations are not searched. No network lookup, plaintext index or "Search Messages" action is provided.
+  - Filtering is live on each edit (no Enter required), with the same rules in Conversations and Message Requests. Matching requests remain separate: their entry shows the filtered count; open it to view them. Metadata updates refilter without retyping. Invitations hide during a nonempty search and never mask "No Results".
+  - Ctrl+F always reveals and focuses sidebar search, returning to the list when folded. The search button and typing in the list use the same entry. Escape clears and closes search first (including in Requests); a subsequent Escape leaves Requests. Closing the toggle also clears. Empty/whitespace queries restore the list. No matches shows "No Results" with an explanation and Escape hint, distinct from "No Conversations".
+  - The navigation list has 12px outer margins, padded rows and separators using GTK 4.14/libadwaita 1.5 patterns.
   - A single-click-activate row runs `win.show-conversation`.
 - **Requests entry.** When requests exist, a first row "Message Requests · N" opens `content_stack:requests`.
 - **Row states.**

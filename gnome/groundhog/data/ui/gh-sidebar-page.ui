@@ -66,7 +66,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="search-mode-enabled" bind-source="search_button" bind-property="active" bind-flags="sync-create|bidirectional"/>
             <property name="child">
               <object class="GtkSearchEntry" id="search_entry">
-                <property name="placeholder-text" translatable="yes">Search conversations</property>
+                <property name="placeholder-text" translatable="yes">Search titles or npubs</property>
+                <property name="tooltip-text" translatable="yes">Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.</property>
                 <property name="hexpand">true</property>
                 <accessibility>
                   <property name="label" translatable="yes">Search conversations</property>
@@ -185,12 +186,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="hscrollbar-policy">2</property>
                         <property name="child">
                           <object class="GtkListView" id="list">
-                            <style>
                             <property name="margin-top">12</property>
                             <property name="margin-bottom">12</property>
                             <property name="margin-start">12</property>
                             <property name="margin-end">12</property>
                             <property name="show-separators">true</property>
+                            <style>
                               <class name="navigation-sidebar"/>
                             </style>
                             <accessibility>
@@ -240,7 +241,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="AdwStatusPage" id="no_results_page">
                     <property name="icon-name">system-search-symbolic</property>
                     <property name="title" translatable="yes">No Results</property>
-                    <property name="description" translatable="yes">No conversation matches your search.</property>
+                    <property name="description" translatable="yes">No title, request subject or participant npub matches. Try another search or press Escape to clear it.</property>
                     <property name="hexpand">true</property>
                     <property name="vexpand">true</property>
                     <style>
