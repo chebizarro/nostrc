@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| W29 main-window polish and local metadata-search contract (nostrc-lol6) | groundhog | 0.12.0 | No further bump: UI bug fixes and internal, uninstalled shell helper changes folded into unreleased 0.12.0; no public API, wire or storage change. |
 | W28 About dialog release-review link and no-email regression guard | groundhog | 0.12.0 | No further bump: qualified About copy and a GUI test folded into unreleased 0.12.0; no API or format change. |
 | W28 release-review interoperability and Blossom consent-copy corrections | groundhog | 0.12.0 | No further bump: user-facing wording and matching UI assertions are folded into the unreleased 0.12.0 MINOR; no API, wire or storage-format change. |
 | W28 About dialog owner credit and Nostr identity (Biz, copyable npub link) | groundhog | 0.12.0 | No further bump: shipped UI metadata change is folded into the unreleased 0.12.0 MINOR; no new API or incompatible format. |

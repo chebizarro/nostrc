@@ -674,7 +674,7 @@ widget_visible(gpointer data)
 }
 
 /* nostrc-qp24.86: the conversation header's menu (charter §7.4
- * conversation_menu): shown with a private conversation; Conversation Info,
+ * conversation_menu): shown with a private conversation;
  * Pin or Unpin, Mute…, Disappearing Messages… (Conversation Info at its
  * timer) and Delete Conversation…, each for the shown conversation. */
 static void
@@ -692,6 +692,23 @@ test_gui_header_menu(void)
   g_assert_cmpstr(gtk_widget_get_tooltip_text(button), ==, "Conversation Menu");
   GMenuModel *model = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
   g_assert_cmpint(g_menu_model_get_n_items(model), ==, 3);
+  g_autoptr(GMenuModel) first = g_menu_model_get_item_link(model, 0, G_MENU_LINK_SECTION);
+  g_assert_cmpint(g_menu_model_get_n_items(first), ==, 3);
+  for (gint i = 0; i < g_menu_model_get_n_items(first); i++) {
+    g_autofree gchar *action = NULL;
+    g_menu_model_get_item_attribute(first, i, G_MENU_ATTRIBUTE_ACTION, "s", &action);
+    g_assert_cmpstr(action, !=, "win.conversation-info");
+  }
+  GtkWidget *info_button = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(content),
+      GH_TYPE_CONTENT_PAGE, "info_button"));
+  g_assert_true(gtk_widget_get_visible(info_button));
+  g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(info_button)), ==,
+                  "win.conversation-info");
+  g_signal_emit_by_name(info_button, "clicked");
+  spin_until(dialog_shown, &g);
+  g_assert_true(GH_IS_CONVERSATION_INFO_DIALOG(visible_dialog(&g)));
+  adw_dialog_force_close(visible_dialog(&g));
+  spin_until(no_dialog, &g);
   GActionGroup *actions = G_ACTION_GROUP(g.window);
   g_assert_true(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
   g_assert_false(g_action_group_get_action_enabled(actions, "unpin-shown-conversation"));
@@ -849,14 +866,14 @@ test_gui_contact_title(void)
   GhConversationRow *row = row_of(&g, conversation);
   g_assert_true(gh_window_open_item(g.window, conversation));
   drain_idle();
-  AdwWindowTitle *header = gh_content_page_get_window_title(gh_window_get_content(g.window));
+  GhContentPage *header = gh_window_get_content(g.window);
   g_autofree gchar *npubs = g_strdup(gh_conversation_get_title(conversation));
-  g_assert_cmpstr(adw_window_title_get_title(header), ==, npubs);
+  g_assert_cmpstr(gh_content_page_get_title(header), ==, npubs);
   gh_conversation_set_contact_title(conversation, "Alice");
-  g_assert_cmpstr(adw_window_title_get_title(header), ==, "Alice");
+  g_assert_cmpstr(gh_content_page_get_title(header), ==, "Alice");
   g_assert_true(g_str_has_prefix(gh_conversation_row_get_summary(row), "Alice. "));
   gh_conversation_set_contact_title(conversation, NULL);
-  g_assert_cmpstr(adw_window_title_get_title(header), ==, npubs);
+  g_assert_cmpstr(gh_content_page_get_title(header), ==, npubs);
   gui_down(&g);
 }
 

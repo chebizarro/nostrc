@@ -1000,6 +1000,8 @@ If blueprint-compiler 0.12 (the CI version) rejects a `template ListHeader` insi
 
 ### 7.6 Message view
 
+- **Header (W29, nostrc-lol6):** the full conversation title is kept as plain text and in its tooltip, ellipsized in the middle when constrained. At content widths ≤600sp (including folded navigation), the title moves to a full-width row below the header controls, wraps at word/character boundaries to at most two lines without ellipsization at the 360px minimum, and keeps the complete title in its tooltip. At wider widths middle ellipsization applies only when the title cannot fit. The privacy/member-count subtitle remains separate and has its own full-text tooltip. The header-bar Conversation Info button and Ctrl+I remain; the redundant Conversation Info entry in the header menu is removed. The sidebar row context menu retains Info for conversations that are not open.
+
 - **Bubbles** (`style.css`, section owned by G12):
   - `.message-bubble { border-radius: 18px; padding: 6px 12px; }`
   - `.incoming { background: @card_bg_color; }`

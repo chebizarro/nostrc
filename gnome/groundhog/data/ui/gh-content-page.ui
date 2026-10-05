@@ -170,10 +170,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <menu id="conversation_menu">
     <section>
       <item>
-        <attribute name="label" translatable="yes">Conversation _Info</attribute>
-        <attribute name="action">win.conversation-info</attribute>
-      </item>
-      <item>
         <attribute name="label" translatable="yes">_Rename Group…</attribute>
         <attribute name="action">win.rename-shown-group</attribute>
         <attribute name="hidden-when">action-disabled</attribute>
