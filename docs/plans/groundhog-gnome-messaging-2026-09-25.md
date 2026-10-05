@@ -261,3 +261,25 @@ whether a public-relay rerun is required, and reactions/media must land first (o
 ### W28 (2026-10-04) — encrypted-groups release gate
 
 Owner decision for nostrc-7gx7 step 3: the adopted-format White Noise/MDK 0.11 exchange and older MDK 0.8 matrix (W25), Groundhog two-device acceptance (W27), and supported-server public-relay attachment run (W27) satisfy the gate. Encrypted groups now run in the default build; the obsolete development preview switch and test-control feature override are retired. The release copy names the two public, linkable KeyPackages; newer/older format split; member visibility; relay ciphertext, timing and routing; no history export; potentially local leave until an admin removes the member; and Blossom server IP and blob-size exposure. Groundhog 0.12.0 remains unreleased: this is the MINOR release that includes the flip, not a second bump to 0.13.0. The integrator closes nostrc-7gx7 after landing.
+
+### W28 (2026-10-04) — encrypted groups released; hardening backlog
+
+Owner decision 2026-10-04: **"flip it."** `GH_FEATURE_ENCRYPTED_GROUPS` is on by default (K, nostrc-7gx7 closed); the
+preview gate is retired; Groundhog 0.12.0's metainfo carries the disclosures with the verified interop scope (White Noise /
+MDK 0.11 and MDK 0.8-era apps through the older format; some intermediate Marmot versions cannot join); About credits
+Biz with a copyable `nostr:` identity link. Each slice independently reviewed (docs/reviews/w28-*-review-2026-10-04.md):
+
+- **A — GUI lifetimes** (hn8y, fezs, y2ku, i0c0): two real teardown bugs (conversation-menu notifications on freed
+  attachment data; clipboard completion on a disposed composer), a seeded completion-jitter harness across the GUI async
+  paths, GTK skipped-frame tolerance enforced for every GUI test. hn8y stays open: the original gate assertion was never
+  reproduced.
+- **B — relayd WebSocket subprotocol** (hja5): libnostr no longer offers `wss` as a subprotocol (NIP-01 has none); relayd
+  tolerates legacy offers; and a real relayd bug found on the way — `OK true` was sent before the event was committed —
+  fixed with asynchronous, ordered acknowledgements that never block the service loop (libnostr 1.1.3).
+- **C — reactions before their target** (r41l): pending reactions and NIP-09 tombstones with known-room admission,
+  per-author-per-room, per-room and per-author account quotas, arrival-order eviction; store schema v8 with a real v7
+  fixture migration test.
+- **D — timing flakes** (rnql, d9r6, i3wq, 12m0, h5zs): load-sensitive assertions replaced by the conditions they guard; a
+  serial `perf` stage in the Linux gate with a calibrated budget (≈1.5× passes, ≥3× fails); relayd D-Bus stop race fixed.
+- Earlier in the day: real-network attachment delivery evidence over the project relay and White Noise's media servers
+  (bz4g closed), first-use server choice and 0x800b policy pinning (5nln), KeyPackage republication on relay change (qaqh).
