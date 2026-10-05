@@ -815,3 +815,5 @@
 {"id":"int-7dcdf564","kind":"field_change","created_at":"2026-10-05T16:31:32.1152Z","actor":"Biz","issue_id":"nostrc-lz9e","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-318ba916","kind":"field_change","created_at":"2026-10-05T16:31:32.682193Z","actor":"Biz","issue_id":"nostrc-p9y4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-faf7af25","kind":"field_change","created_at":"2026-10-05T16:31:33.176207Z","actor":"Biz","issue_id":"nostrc-30gt","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-e6cf7d08","kind":"field_change","created_at":"2026-10-05T17:10:59.486639Z","actor":"Biz","issue_id":"nostrc-f7fm","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-74f2b06a","kind":"field_change","created_at":"2026-10-05T17:10:59.968651Z","actor":"Biz","issue_id":"nostrc-exnn","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
