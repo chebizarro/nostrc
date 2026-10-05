@@ -27,9 +27,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <limits.h>
+#include "nostrc-test-bus.h"
 #ifdef __APPLE__
 #include <libproc.h>
-#include "nostrc-test-bus.h"
 #endif
 
 #ifndef NMH_DAEMON_PATH
