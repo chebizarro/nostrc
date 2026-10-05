@@ -42,3 +42,23 @@ Only this review document is committed. No push was performed.
 - Version: this Groundhog PATCH-class correction remains folded into unreleased 0.12.0; no further version bump or other component bump is required.
 
 Only the review document is committed. No push was performed.
+
+## Final addendum — round-3 re-review of `a4aff716` (2026-10-04)
+
+**Final verdict: CHANGES-REQUIRED.** The 1,000-room unknown-room flood is now rejected without evicting a known room's pending reaction or tombstone; same-second eviction now follows a persisted arrival sequence; an existing tombstone refreshes at account capacity. The new admission ceiling has a distinct denial-of-service problem.
+
+### Finding
+
+1. **High — one author can fill the account ceiling and block another known room's legitimate deferred reaction/deletion.** `gnome/groundhog/src/store/gh-store-reactions.c:27-41,44-74,223-230,287-300`; `gnome/groundhog/tests/store/test_store_conversations.c:1969-2000`. The ceiling is 4,096 rows **per table**. Once full, `has_deferred_capacity` rejects a new entry in an under-quota room unless that entry already exists or its own author/room or room bucket is full. `lookup_room` treats any conversation row as known, regardless of request/acceptance state. One sender can create 64 NIP-17 room keys by including A and a different valid extra `p` tag in each incoming chat rumor (`gh-nip17-inbox.c:286-305,434-450`); 64 pending reactions or deletion references in each room fill a table while obeying the 64-per-author/per-room limit. I repeated the account-cap fixture with all 4,096 rows attributed to **one** sender; the test still passed, including rejection of a new pending reaction and tombstone in a separately known, under-quota room. Existing rows are not evicted, but a sender can deny future legitimate reconciliation for seven days by maintaining the ceiling. The committed test seeds 64 known rooms directly and spreads rows over 64 authors, so it does not catch this one-author starvation. Add an account-wide *per-author* (and preferably unaccepted-room) budget or a reserved/prioritized admission policy, with a one-author, many-known-room regression that requires the legitimate new room to retain its reaction and deletion notice.
+
+### Re-verification
+
+- The branch's 1,000 distinct unknown-room probe passed: only the known room's one pending reaction and one tombstone remained. Reverting the *complete* known-room fix (the admission checks and unknown-room pruning) made it fail with 1,001 pending rows; removing only the admission check did not fail because pruning is a second guard.
+- Same-second cap probe passed: `zzz-old` was evicted and later `aaa-new` retained for both tables. Restoring the old `received_at`/event-ID sort made the test fail. SQLite `INTEGER PRIMARY KEY AUTOINCREMENT` supplies the persisted arrival ordinal.
+- At capacity the tombstone-refresh check passed; changing its conflict action to `DO NOTHING` made the receipt/sequence assertion fail. Raising the account ceiling made the account-cap test fail at 4,097 pending rows. All temporary mutations and the one-author test probe were restored.
+- The clean macOS Groundhog+MDK 0.11 Ninja build, `check-unsequenced-args.py`, `groundhog-store*`, `groundhog-e2e-dm`, reactions, privacy-static, and the White Noise reaction case passed. The macOS-only keyring-inapplicable store test was skipped; MDK image/artifact fixtures passed. The changed tests live in already-registered CI binaries.
+- Linux sanitizer gate: `scripts/linux-gate.sh --sanitizers /tmp/rv-w28-reaction-ordering-r3` passed all 60 registered tests; the source-input check covered all 972 inputs.
+- Integration: author commits `5226ad6c`, `4d52307e`, `6d96830c`, `a4aff716`, and all three review-doc commits cherry-picked without conflict onto `origin/master` `8e1eba55` in a disposable reviewer worktree; the worktree was removed.
+- Version: the Groundhog PATCH-class changes remain folded into unreleased 0.12.0; no further bump or other component bump is needed.
+
+Only the review document is committed. No push was performed.
