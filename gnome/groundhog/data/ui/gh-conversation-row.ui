@@ -7,6 +7,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GhConversationRow" parent="GtkWidget">
+    <property name="margin-top">6</property>
+    <property name="margin-bottom">6</property>
+    <property name="margin-start">6</property>
+    <property name="margin-end">6</property>
     <property name="layout-manager">
       <object class="GtkBoxLayout">
         <property name="spacing">12</property>
