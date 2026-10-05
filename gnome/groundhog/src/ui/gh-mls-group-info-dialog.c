@@ -1,4 +1,5 @@
 #include "gh-mls-group-info-dialog.h"
+#include "../app/gh-test-async-control.h"
 
 #include "gh-mls-attachments.h"
 
@@ -318,6 +319,9 @@ typedef struct {
 static void
 media_updated(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("group-info-service", "media_updated", source, result,
+                                  media_updated, data))
+    return;
   MediaUpdate *update = data;
   g_autoptr(GError) error = NULL;
   gboolean ok = gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error);
@@ -578,12 +582,15 @@ typedef struct {
 static void
 change_done(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("group-info-service", "change_done", source, result,
+                                  change_done, data))
+    return;
   Change *change = data;
   GhMlsGroupInfoDialog *self = change->self;
   g_autoptr(GError) error = NULL;
   gboolean ok = gh_mls_service_change_finish(GH_MLS_SERVICE(source), result, &error);
   self->pending--;
-  if (!gtk_widget_in_destruction(GTK_WIDGET(self))) {
+  if (!self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self))) {
     if (ok) {
       toast(self, change->done);
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -741,13 +748,16 @@ typedef struct {
 static void
 verify_finished(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("group-info-service", "verify_finished", source, result,
+                                  verify_finished, data))
+    return;
   Verify *verify = data;
   GhMlsGroupInfoDialog *self = verify->self;
   g_autoptr(GError) error = NULL;
   GhMlsMemberIdentity identity =
     gh_mls_service_verify_member_finish(GH_MLS_SERVICE(source), result, &error);
   self->pending--;
-  if (!gtk_widget_in_destruction(GTK_WIDGET(self)) &&
+  if (!self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self)) &&
       !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     g_autofree gchar *words = gh_mls_verify_result_copy(identity, error, verify->name);
     toast(self, words);
@@ -821,7 +831,7 @@ picture_finished(GhMlsGroupInfoDialog *self, const GError *error, gboolean uploa
 {
   g_clear_object(&self->picture_op);
   self->pending--;
-  if (gtk_widget_in_destruction(GTK_WIDGET(self)))
+  if (self->disposing || gtk_widget_in_destruction(GTK_WIDGET(self)))
     return;
   if (!error) {
     if (done)
@@ -843,13 +853,16 @@ picture_finished(GhMlsGroupInfoDialog *self, const GError *error, gboolean uploa
 static void
 on_picture_fetched(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_picture_fetched", source, result,
+                                  on_picture_fetched, data))
+    return;
   GhMlsGroupInfoDialog *self = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GBytes) picture =
     gh_mls_attachments_fetch_picture_finish(GH_MLS_ATTACHMENTS(source), result, &error);
   picture_finished(self, picture ? NULL : error, FALSE, NULL);
   /* W25 review N4: said, not only shown. */
-  if (picture && !gtk_widget_in_destruction(GTK_WIDGET(self)) &&
+  if (picture && !self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self)) &&
       gtk_widget_get_mapped(GTK_WIDGET(self)))
     gtk_accessible_announce(GTK_ACCESSIBLE(self), _("The group’s picture is shown"),
                             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
@@ -891,6 +904,9 @@ set_call_free(SetCall *call)
 static void
 on_picture_set(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_picture_set", source, result,
+                                  on_picture_set, data))
+    return;
   SetCall *call = data;
   GhMlsGroupInfoDialog *self = call->self;
   g_autoptr(GError) error = NULL;
@@ -902,7 +918,7 @@ on_picture_set(GObject *source, GAsyncResult *result, gpointer data)
                                               GH_MLS_SERVICE_ERROR_SERVERS_CHANGED);
   picture_finished(self, ok || ask_again ? NULL : error, TRUE,
                    ok ? _("The group’s picture was changed") : NULL);
-  if (ask_again && !gtk_widget_in_destruction(GTK_WIDGET(self)))
+  if (ask_again && !self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self)))
     gh_mls_group_info_dialog_set_picture(self, call->file, call->mime);
   set_call_free(call);
 }
@@ -910,6 +926,9 @@ on_picture_set(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_picture_removed(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_picture_removed", source, result,
+                                  on_picture_removed, data))
+    return;
   GhMlsGroupInfoDialog *self = data;
   g_autoptr(GError) error = NULL;
   gboolean ok = GH_IS_MLS_SERVICE(source)
@@ -993,13 +1012,16 @@ gh_mls_group_info_dialog_get_remove_picture_dialog(GhMlsGroupInfoDialog *self)
 static void
 on_picture_read(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_picture_read", source, result,
+                                  on_picture_read, data))
+    return;
   GhMlsGroupInfoDialog *self = data;
   (void)source;
   g_autoptr(GError) error = NULL;
   g_autofree gchar *type = NULL;
   g_autoptr(GBytes) bytes = gh_mls_media_read_file_finish(result, NULL, &type, &error);
   self->pending--;
-  if (!gtk_widget_in_destruction(GTK_WIDGET(self))) {
+  if (!self->disposing && !gtk_widget_in_destruction(GTK_WIDGET(self))) {
     if (bytes) {
       gh_mls_group_info_dialog_set_picture(self, bytes, type);
     } else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
@@ -1014,10 +1036,14 @@ on_picture_read(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_picture_chosen(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_picture_chosen", source, result,
+                                  on_picture_chosen, data))
+    return;
   GhMlsGroupInfoDialog *self = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GFile) file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, &error);
-  if (file && self->files && !gtk_widget_in_destruction(GTK_WIDGET(self))) {
+  if (file && self->files && !self->disposing &&
+      !gtk_widget_in_destruction(GTK_WIDGET(self))) {
     /* A file on this device only, refused over the limit before it is read
      * (gh-mls-media.h step 1). */
     self->pending++;

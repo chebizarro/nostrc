@@ -98,6 +98,7 @@ if(BUILD_TESTING)
       ${PROJECT_ROOT}/libnostr/include
       ${PROJECT_ROOT}/libgo/include
       ${CMAKE_BINARY_DIR}/apps/gnostr/generated
+      ${PROJECT_ROOT}/tests/common
     )
     # The offline backend stands in for the host's signer, so it does the same
     # NIP-44 self-ECDH in-process that the real signer does out of it.

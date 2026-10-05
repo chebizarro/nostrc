@@ -1,4 +1,5 @@
 #include "gh-attachment-ui.h"
+#include "gh-test-async-control.h"
 
 #include "gh-attachment-card.h"
 #include "gh-composer.h"
@@ -404,6 +405,9 @@ upload_done(GhAttachmentUi *ui, Offer *offer, const GhNip17File *file, gboolean 
 static void
 on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_uploaded", source, result,
+                                  on_uploaded, data))
+    return;
   UploadOp *op = data;
   GhAttachmentUi *ui = ui_of(op->window);
   g_autoptr(GError) error = NULL;
@@ -424,6 +428,9 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_group_sent(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_group_sent", source, result,
+                                  on_group_sent, data))
+    return;
   UploadOp *op = data;
   (void)source;
   GhAttachmentUi *ui = ui_of(op->window);
@@ -686,6 +693,9 @@ load_op_free(LoadOp *op)
 static void
 on_loaded(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_loaded", source, result,
+                                  on_loaded, data))
+    return;
   LoadOp *op = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GBytes) bytes = g_file_load_bytes_finish(G_FILE(source), result, NULL, &error);
@@ -704,6 +714,9 @@ on_loaded(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_filesystem_info(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_filesystem_info", source, result,
+                                  on_filesystem_info, data))
+    return;
   LoadOp *op = data;
   g_autoptr(GFileInfo) fs = g_file_query_filesystem_info_finish(G_FILE(source), result, NULL);
   const gchar *type = fs ? g_file_info_get_attribute_string(fs, G_FILE_ATTRIBUTE_FILESYSTEM_TYPE)
@@ -724,6 +737,9 @@ on_filesystem_info(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_file_info(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_file_info", source, result,
+                                  on_file_info, data))
+    return;
   LoadOp *op = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GFileInfo) info = g_file_query_info_finish(G_FILE(source), result, &error);
@@ -793,6 +809,9 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
 static void
 on_file_chosen(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_file_chosen", source, result,
+                                  on_file_chosen, data))
+    return;
   GtkWidget *window = data; /* a reference */
   g_autoptr(GError) error = NULL;
   g_autoptr(GFile) file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, &error);
@@ -1028,6 +1047,9 @@ on_open_saved(AdwToast *toast_widget, GFile *file)
 static void
 on_saved(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_saved", source, result,
+                                  on_saved, data))
+    return;
   SaveOp *op = data;
   g_autoptr(GError) error = NULL;
   gboolean ok = g_file_replace_contents_finish(G_FILE(source), result, NULL, &error);
@@ -1070,6 +1092,9 @@ save_to(SaveOp *op, GFile *file)
 static void
 on_save_chosen(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("media-attachment", "on_save_chosen", source, result,
+                                  on_save_chosen, data))
+    return;
   SaveOp *op = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GFile) file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(source), result, &error);

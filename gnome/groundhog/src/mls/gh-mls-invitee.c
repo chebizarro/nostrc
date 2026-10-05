@@ -1,6 +1,7 @@
 #include "gh-mls-invitee.h"
 
 #include "gh-mls-key-packages.h"
+#include "../app/gh-test-async-control.h"
 
 #include <string.h>
 
@@ -50,6 +51,32 @@ gh_mls_invitee_classify(const GhMlsKeyPackage *key_package, const GError *error,
   return GH_MLS_INVITEE_FAILED;
 }
 
+typedef struct {
+  GTask *task;
+  GError *error;
+  GhMlsInviteeState state;
+} DeferredCheck;
+
+static gboolean
+deferred_check_done(gpointer data)
+{
+  DeferredCheck *deferred = data;
+  if (deferred->error)
+    g_task_return_error(deferred->task, g_steal_pointer(&deferred->error));
+  else
+    g_task_return_int(deferred->task, deferred->state);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+deferred_check_free(gpointer data)
+{
+  DeferredCheck *deferred = data;
+  g_clear_object(&deferred->task);
+  g_clear_error(&deferred->error);
+  g_free(deferred);
+}
+
 static void
 lookup_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -57,12 +84,16 @@ lookup_done(GObject *source, GAsyncResult *result, gpointer data)
   GTask *task = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMlsKeyPackage) key_package = gh_mls_key_package_lookup_finish(result, &error);
-  if (!key_package && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-    g_task_return_error(task, g_steal_pointer(&error));
-  else
-    g_task_return_int(task, gh_mls_invitee_classify(key_package, error,
-                                                    GPOINTER_TO_INT(g_task_get_task_data(task))));
-  g_object_unref(task);
+  gboolean cancelled = !key_package &&
+    g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  GhMlsInviteeState state = cancelled ? GH_MLS_INVITEE_CHECKING :
+    gh_mls_invitee_classify(key_package, error, GPOINTER_TO_INT(g_task_get_task_data(task)));
+  DeferredCheck *deferred = g_new0(DeferredCheck, 1);
+  deferred->task = task;
+  deferred->error = cancelled ? g_steal_pointer(&error) : NULL;
+  deferred->state = state;
+  gh_test_async_complete("mls-invitee", g_task_get_name(task), g_task_get_context(task),
+                         deferred_check_done, deferred, deferred_check_free);
 }
 
 void
@@ -75,6 +106,7 @@ gh_mls_invitee_check_async(GhAccountController *accounts, GSettings *settings,
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts));
   GTask *task = g_task_new(NULL, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_mls_invitee_check_async);
+  g_task_set_name(task, pubkey);
   g_task_set_task_data(task, GINT_TO_POINTER(gh_mls_requires_proofs(settings)), NULL);
   /* The service's own lookup sources (gh-mls-service.c discovery_relays()):
    * the lookup skips any URL it can't use. */

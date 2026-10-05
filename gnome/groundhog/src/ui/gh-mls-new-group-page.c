@@ -1,4 +1,5 @@
 #include "gh-mls-new-group-page.h"
+#include "../app/gh-test-async-control.h"
 
 #include "gh-mls-copy.h"
 #include "gh-mls-invitee-picker.h"
@@ -112,6 +113,7 @@ struct _GhMlsNewGroupPage {
   const gchar *notice;     /* the group's format said, or NULL (static) */
   GhMlsKeyPackageFormat format; /* the format shown: what Create asks for (review M2) */
   GCancellable *creating;  /* the running create */
+  gboolean disposing;
   GhMlsGroup *group;       /* made by Create */
   guint invited;
 };
@@ -381,13 +383,16 @@ gh_mls_new_group_page_dup_relays(GhMlsNewGroupPage *self)
 static void
 created(GObject *source, GAsyncResult *result, gpointer data)
 {
+  if (gh_test_async_defer_result("new-group-service", "created", source, result,
+                                  created, data))
+    return;
   g_autoptr(GhMlsNewGroupPage) self = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GhMlsGroup) group = gh_mls_service_create_group_finish(GH_MLS_SERVICE(source),
                                                                    result, &error);
   gboolean cancelled = self->creating && g_cancellable_is_cancelled(self->creating);
   g_clear_object(&self->creating);
-  if (cancelled || gtk_widget_in_destruction(GTK_WIDGET(self)))
+  if (cancelled || self->disposing || gtk_widget_in_destruction(GTK_WIDGET(self)))
     return;
   if (!group) {
     g_message("Groundhog could not create an encrypted group: %s", error->message);
@@ -625,6 +630,7 @@ static void
 gh_mls_new_group_page_dispose(GObject *object)
 {
   GhMlsNewGroupPage *self = GH_MLS_NEW_GROUP_PAGE(object);
+  self->disposing = TRUE;
   if (self->creating) {
     g_cancellable_cancel(self->creating);
     g_clear_object(&self->creating);

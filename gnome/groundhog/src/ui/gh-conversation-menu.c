@@ -3,6 +3,7 @@
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
 #include "gh-shell.h"
+#include "../app/gh-test-async-control.h"
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -20,9 +21,11 @@ typedef struct {
   GDestroyNotify destroy;
   gchar *last_toast;
   GhConversation *shown; /* the header menu's conversation (a reference), or NULL */
+  gboolean destroyed;
 } MenuAttach;
 
 static void sync_header(MenuAttach *attach);
+static void sync_header_now(MenuAttach *attach);
 
 static void
 watch_shown(MenuAttach *attach, GhConversation *conversation)
@@ -37,6 +40,13 @@ watch_shown(MenuAttach *attach, GhConversation *conversation)
     g_signal_connect_swapped(conversation, "notify::is-request", G_CALLBACK(sync_header),
                              attach);
   }
+}
+
+static void
+on_window_destroy(MenuAttach *attach)
+{
+  attach->destroyed = TRUE;
+  watch_shown(attach, NULL);
 }
 
 static void
@@ -456,8 +466,10 @@ set_enabled(MenuAttach *attach, const gchar *name, gboolean enabled)
  * Pin and Unpin only the one that applies. Rename shows for groups only
  * (nostrc-0srb). */
 static void
-sync_header(MenuAttach *attach)
+sync_header_now(MenuAttach *attach)
 {
+  if (attach->destroyed || gtk_widget_in_destruction(GTK_WIDGET(attach->window)))
+    return;
   GhConversation *conversation = shown_private(attach);
   GhConversation *group = shown_group(attach);
   watch_shown(attach, conversation ? conversation : group);
@@ -470,6 +482,55 @@ sync_header(MenuAttach *attach)
   set_enabled(attach, "rename-shown-group", group != NULL);
   gtk_widget_set_visible(gh_content_page_get_menu_button(gh_window_get_content(attach->window)),
                          conversation != NULL || group != NULL);
+}
+
+typedef struct {
+  GWeakRef window;
+} MenuSync;
+
+static gboolean
+menu_sync_deliver(gpointer data)
+{
+  MenuSync *sync = data;
+  g_autoptr(GhWindow) window = g_weak_ref_get(&sync->window);
+  MenuAttach *attach = window ? g_object_get_data(G_OBJECT(window), ATTACH_DATA) : NULL;
+  if (attach && !attach->destroyed)
+    sync_header_now(attach);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+menu_sync_free(gpointer data)
+{
+  MenuSync *sync = data;
+  g_weak_ref_clear(&sync->window);
+  g_free(sync);
+}
+
+static void
+queue_header_sync(GhWindow *window, const gchar *reason)
+{
+  MenuSync *sync = g_new0(MenuSync, 1);
+  g_weak_ref_init(&sync->window, window);
+  gh_test_async_complete("conversation-menu", reason, NULL, menu_sync_deliver, sync,
+                         menu_sync_free);
+}
+
+static void
+sync_header(MenuAttach *attach)
+{
+  if (!attach->destroyed)
+    queue_header_sync(attach->window, "conversation");
+}
+
+/* The stack/view can outlive the window if another owner still references
+ * them. Bind their notifications weakly to the window, not to its data. */
+static void
+sync_header_window(GhWindow *window)
+{
+  MenuAttach *attach = g_object_get_data(G_OBJECT(window), ATTACH_DATA);
+  if (attach && !attach->destroyed)
+    queue_header_sync(window, "child");
 }
 
 /* Each header item runs the row action of the same name for the shown
@@ -535,6 +596,7 @@ gh_conversation_menu_attach(GhWindow *window, GhConversationInfoServicesFunc ser
   attach->user_data = user_data;
   attach->destroy = destroy;
   g_object_set_data_full(G_OBJECT(window), ATTACH_DATA, attach, attach_free);
+  g_signal_connect_swapped(window, "destroy", G_CALLBACK(on_window_destroy), attach);
   const GActionEntry entries[] = {
     { "show-conversation-info", on_show_info, "s", NULL, NULL, { 0 } },
     { "mute-conversation", on_mute, "s", NULL, NULL, { 0 } },
@@ -554,12 +616,13 @@ gh_conversation_menu_attach(GhWindow *window, GhConversationInfoServicesFunc ser
   g_action_map_add_action_entries(G_ACTION_MAP(window), entries, G_N_ELEMENTS(entries), attach);
   /* The header menu follows the shown conversation. */
   GhContentPage *content = gh_window_get_content(window);
-  g_signal_connect_swapped(gh_content_page_get_stack(content), "notify::visible-child-name",
-                           G_CALLBACK(sync_header), attach);
+  g_signal_connect_object(gh_content_page_get_stack(content), "notify::visible-child-name",
+                          G_CALLBACK(sync_header_window), window, G_CONNECT_SWAPPED);
   GtkWidget *view = gh_content_page_get_view(content);
   if (GH_IS_CONVERSATION_VIEW(view))
-    g_signal_connect_swapped(view, "notify::conversation", G_CALLBACK(sync_header), attach);
-  sync_header(attach);
+    g_signal_connect_object(view, "notify::conversation", G_CALLBACK(sync_header_window),
+                            window, G_CONNECT_SWAPPED);
+  sync_header_now(attach);
 
   GtkEventController *keys = gtk_shortcut_controller_new();
   gtk_shortcut_controller_add_shortcut(

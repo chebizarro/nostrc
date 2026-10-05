@@ -3,6 +3,7 @@
 #include "../ui/gn-communikeys-composer.h"
 
 #include <gtk/gtk.h>
+#include "nostrc-test-gdk-frame.h"
 
 static gboolean gtk_available;
 
@@ -41,6 +42,7 @@ static void test_empty_panel_constructs_and_disposes(void) {
 
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   gtk_available = gtk_init_check();
   g_test_add_func("/communikeys/ui/composer-text",
                   test_composer_text_roundtrip);

@@ -169,6 +169,7 @@ main(int argc, char **argv)
     adw_init();
   }
   g_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   if (gui)
     nostrc_test_tolerate_gdk_frame_warning();
   if (gui)

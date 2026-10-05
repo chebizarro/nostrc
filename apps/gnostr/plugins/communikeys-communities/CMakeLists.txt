@@ -89,6 +89,7 @@ if(BUILD_TESTING)
       ${PROJECT_ROOT}/libnostr/include
       ${PROJECT_ROOT}/libgo/include
       ${CMAKE_BINARY_DIR}/apps/gnostr/generated
+      ${PROJECT_ROOT}/tests/common
     )
     target_link_libraries(${test_target} PRIVATE
       PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::JSON_GLIB

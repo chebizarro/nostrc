@@ -25,6 +25,9 @@ jobs:
         # beside size, breaks here and nowhere else (nostrc-qp24.91).
         run: python3 scripts/check-unsequenced-args.py --self-test
 
+      - name: Every GUI test installs narrow GDK frame tolerance
+        run: python3 scripts/check-gui-test-gdk-frame.py --self-test
+
       - name: Install build and display dependencies
         run: |
           sudo apt-get update
@@ -162,6 +165,9 @@ jobs:
             echo 'Groundhog test unexpectedly skipped or did not run' >&2
             exit 1
           fi
+
+      - name: Stress GUI lifetime callbacks with deterministic completion jitter
+        run: scripts/test-groundhog-gui-lifetimes.sh build 2
 
       - name: White Noise AAC/MP4 voice interop with MDK 0.11
         run: |

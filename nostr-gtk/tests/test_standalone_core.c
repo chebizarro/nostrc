@@ -10,6 +10,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include "nostrc-test-gdk-frame.h"
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/nostr-gtk.h>
 
@@ -127,6 +128,7 @@ int
 main (int argc, char *argv[])
 {
   gtk_test_init (&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
 
   g_test_add_func ("/nostr-gtk/standalone/init-registers-core",
                    test_init_registers_core);

@@ -4,6 +4,7 @@
  * test_image_viewer_remote_media.c - Privacy gate coverage for image viewer fetches.
  */
 
+#include "nostrc-test-gdk-frame.h"
 #include <glib.h>
 #include <gio/gio.h>
 #include <gtk/gtk.h>
@@ -122,6 +123,7 @@ main(int argc, char *argv[])
   g_setenv("GSETTINGS_BACKEND", "memory", TRUE);
   g_setenv("GNOSTR_IMAGE_VIEWER_TEST_SKIP_FETCH", "1", TRUE);
   gtk_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
 
   g_test_add_func("/gnostr/image-viewer/remote-media/helper-tracks-gsettings",
                   test_remote_media_setting_helper_tracks_gsettings);

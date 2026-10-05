@@ -1368,6 +1368,42 @@ test_drop_and_paste(void)
   fixture_clear(&f);
 }
 
+/* A clipboard completion after its owner closes must not offer a file from
+ * an already-disposed composer. The private clipboard keeps this independent
+ * of other tests and the user's clipboard. */
+static void
+count_pasted_texture(GhComposer *composer, GdkTexture *texture, gpointer data)
+{
+  (void)composer;
+  (void)texture;
+  (*(guint *)data)++;
+}
+
+static void
+test_paste_after_close(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, TRUE);
+  GhConversation *bob = receive_text(&f, "Hi");
+  send_stack_select(&f.s, bob);
+  GhComposer *composer = send_stack_composer(&f.s);
+  GtkTextView *text_view = gh_composer_get_text_view(composer);
+  g_autoptr(GdkClipboard) clipboard =
+    g_object_new(GDK_TYPE_CLIPBOARD, "display", gtk_widget_get_display(GTK_WIDGET(text_view)),
+                 NULL);
+  gh_composer_set_clipboard(composer, clipboard);
+  g_autoptr(GBytes) png = make_png(200);
+  g_autoptr(GdkTexture) texture = gdk_texture_new_from_bytes(png, NULL);
+  g_assert_nonnull(texture);
+  gdk_clipboard_set_texture(clipboard, texture);
+  guint offered = 0;
+  g_signal_connect(composer, "attach-texture", G_CALLBACK(count_pasted_texture), &offered);
+  g_signal_emit_by_name(text_view, "paste-clipboard");
+  fixture_clear(&f);
+  g_assert_cmpuint(offered, ==, 0);
+}
+
 /* AT-7 in the UI: a received file's card fetches nothing until Download;
  * then the photo (after the decode guard) and Save As; Save As writes only
  * where the Save dialog chose. */
@@ -2049,6 +2085,7 @@ main(int argc, char **argv)
   ADD("opaque-server-refusal", test_opaque_server_refusal);
   ADD("consent", test_consent);
   ADD("drop-and-paste", test_drop_and_paste);
+  ADD("paste-after-close", test_paste_after_close);
   ADD("card-download-and-save", test_card_download_and_save);
   ADD("card-cancel-and-errors", test_card_cancel_and_errors);
   ADD("preferences", test_preferences);

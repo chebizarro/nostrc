@@ -201,6 +201,19 @@ endif()
 # can register with CTest.
 option(BUILD_TESTING "Build the testing tree" ON)
 enable_testing()
+if(BUILD_TESTING)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  execute_process(
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/check-gui-test-gdk-frame.py"
+            --root "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE _gui_frame_check_result
+    OUTPUT_VARIABLE _gui_frame_check_output
+    ERROR_VARIABLE _gui_frame_check_error)
+  if(NOT _gui_frame_check_result EQUAL 0)
+    message(FATAL_ERROR "GUI GDK frame tolerance check failed:
+${_gui_frame_check_output}${_gui_frame_check_error}")
+  endif()
+endif()
 
 option(BUILD_RELAYD "Build the relayd application (requires nsync)" ON)
 if (BUILD_RELAYD AND EXISTS ${CMAKE_SOURCE_DIR}/apps/relayd/CMakeLists.txt)

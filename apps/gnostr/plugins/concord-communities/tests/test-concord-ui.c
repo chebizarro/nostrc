@@ -4,6 +4,7 @@
 #include "../ui/gn-concord-invite-dialog.h"
 
 #include <gtk/gtk.h>
+#include "nostrc-test-gdk-frame.h"
 
 static gboolean gtk_available;
 
@@ -66,6 +67,7 @@ static void test_invite_dialog_constructs_empty(void) {
 
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   gtk_available = gtk_init_check();
   g_test_add_func("/concord/ui/composer-text", test_composer_text_roundtrip);
   g_test_add_func("/concord/ui/empty-panel",

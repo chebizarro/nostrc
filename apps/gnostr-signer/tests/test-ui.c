@@ -7,6 +7,7 @@
  * Mocks D-Bus and network dependencies for isolated testing.
  */
 
+#include "nostrc-test-gdk-frame.h"
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <glib.h>
@@ -2401,6 +2402,7 @@ int main(int argc, char *argv[]) {
 
   /* Initialize GTK test framework */
   gtk_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
 
   /* Window creation and destruction tests */
   g_test_add("/ui/window/creation", TestUIFixture, NULL,

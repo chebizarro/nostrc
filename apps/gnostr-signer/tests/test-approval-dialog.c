@@ -18,6 +18,7 @@
  * Every test presents the dialog in a window, so the close path is
  * libadwaita's own: adw_dialog_close() -> ::closed -> the class handler.
  */
+#include "nostrc-test-gdk-frame.h"
 #include <adwaita.h>
 #include <gtk/gtk.h>
 #include <string.h>
@@ -328,9 +329,7 @@ int main(int argc, char *argv[]) {
 #endif
 
   g_test_init(&argc, &argv, NULL);
-  /* Criticals stay fatal (a g_return_if_fail in the dialog fails the test);
-   * warnings do not, as host theme CSS warns during gtk_init() on macOS. */
-  g_log_set_always_fatal(G_LOG_FATAL_MASK | G_LOG_LEVEL_CRITICAL);
+  nostrc_test_tolerate_gdk_frame_warning();
   gtk_init();
   adw_init();
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);

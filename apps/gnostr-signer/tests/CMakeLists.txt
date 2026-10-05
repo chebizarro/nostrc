@@ -208,7 +208,7 @@ pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4)
 pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1)
 
 add_executable(test-ui test-ui.c)
-target_include_directories(test-ui PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_include_directories(test-ui PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/tests/common)
 target_link_libraries(test-ui PRIVATE
     ${SIGNER_TEST_LIBS}
     PkgConfig::GTK4
@@ -253,7 +253,7 @@ add_executable(test-approval-dialog
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/approval_dialog.c
     ${_APPROVAL_GRESOURCE_C}
 )
-target_include_directories(test-approval-dialog PRIVATE ${SIGNER_INCLUDE_DIRS})
+target_include_directories(test-approval-dialog PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/tests/common)
 target_link_libraries(test-approval-dialog PRIVATE PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB)
 target_compile_features(test-approval-dialog PRIVATE c_std_11)
 apply_test_sanitizers(test-approval-dialog)

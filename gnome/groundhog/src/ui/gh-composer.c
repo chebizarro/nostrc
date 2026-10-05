@@ -1,4 +1,5 @@
 #include "gh-composer.h"
+#include "../app/gh-test-async-control.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -55,6 +56,8 @@ struct _GhComposer {
   gpointer length_data;
   GDestroyNotify length_destroy;
   GdkClipboard *clipboard; /* what Paste reads; NULL: the text view's own */
+  GCancellable *paste_read;
+  gboolean disposing;
 };
 
 enum {
@@ -492,35 +495,88 @@ on_drop_accept(GtkDropTarget *target, GdkDrop *drop, GhComposer *self)
   return attach_possible(self) ? GDK_ACTION_COPY : 0;
 }
 
+typedef struct {
+  GWeakRef composer;
+  GCancellable *cancellable;
+} PasteRead;
+
+static PasteRead *
+paste_read_new(GhComposer *self)
+{
+  GCancellable *previous = g_steal_pointer(&self->paste_read);
+  self->paste_read = g_cancellable_new();
+  if (previous) {
+    g_cancellable_cancel(previous);
+    g_object_unref(previous);
+  }
+  PasteRead *read = g_new0(PasteRead, 1);
+  g_weak_ref_init(&read->composer, self);
+  read->cancellable = g_object_ref(self->paste_read);
+  return read;
+}
+
+static GhComposer *
+paste_read_get_composer(PasteRead *read)
+{
+  GhComposer *self = g_weak_ref_get(&read->composer);
+  if (self && (self->disposing || self->paste_read != read->cancellable ||
+               g_cancellable_is_cancelled(read->cancellable))) {
+    g_object_unref(self);
+    self = NULL;
+  }
+  return self;
+}
+
+static void
+paste_read_free(PasteRead *read, GhComposer *self)
+{
+  if (self && self->paste_read == read->cancellable)
+    g_clear_object(&self->paste_read);
+  g_clear_object(&self);
+  g_weak_ref_clear(&read->composer);
+  g_clear_object(&read->cancellable);
+  g_free(read);
+}
+
 static void
 on_texture_pasted(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhComposer *self = data; /* a reference */
+  if (gh_test_async_defer_result("clipboard", "texture", source, result,
+                                  on_texture_pasted, data))
+    return;
+  PasteRead *read = data;
   g_autoptr(GError) error = NULL;
   g_autoptr(GdkTexture) texture = gdk_clipboard_read_texture_finish(GDK_CLIPBOARD(source),
                                                                     result, &error);
-  if (texture && attach_possible(self))
+  GhComposer *self = paste_read_get_composer(read);
+  if (self && texture && attach_possible(self))
     g_signal_emit(self, signals[SIGNAL_ATTACH_TEXTURE], 0, texture);
-  else if (!texture)
-    g_debug("Composer: a pasted image could not be read: %s", error->message);
-  g_object_unref(self);
+  else if (self && !texture && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    g_debug("Composer: a pasted image could not be read: %s",
+            error ? error->message : "unknown error");
+  paste_read_free(read, self);
 }
 
 static void
 on_files_pasted(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhComposer *self = data; /* a reference */
+  if (gh_test_async_defer_result("clipboard", "files", source, result,
+                                  on_files_pasted, data))
+    return;
+  PasteRead *read = data;
   g_autoptr(GError) error = NULL;
   const GValue *value = gdk_clipboard_read_value_finish(GDK_CLIPBOARD(source), result, &error);
-  if (value && G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && attach_possible(self)) {
+  GhComposer *self = paste_read_get_composer(read);
+  if (self && value && G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && attach_possible(self)) {
     GSList *files = gdk_file_list_get_files(g_value_get_boxed(value));
     if (files)
       g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, files->data);
     g_slist_free(files);
-  } else if (!value) {
-    g_debug("Composer: pasted files could not be read: %s", error->message);
+  } else if (self && !value && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_debug("Composer: pasted files could not be read: %s",
+            error ? error->message : "unknown error");
   }
-  g_object_unref(self);
+  paste_read_free(read, self);
 }
 
 /* Paste (Ctrl+V, the context menu) of an image, or of copied files without
@@ -533,13 +589,15 @@ on_paste_clipboard(GtkTextView *text_view, GhComposer *self)
   GdkContentFormats *formats = gdk_clipboard_get_formats(clipboard);
   if (attach_possible(self) && gdk_content_formats_contain_gtype(formats, GDK_TYPE_TEXTURE)) {
     g_signal_stop_emission_by_name(text_view, "paste-clipboard");
-    gdk_clipboard_read_texture_async(clipboard, NULL, on_texture_pasted, g_object_ref(self));
+    PasteRead *read = paste_read_new(self);
+    gdk_clipboard_read_texture_async(clipboard, read->cancellable, on_texture_pasted, read);
   } else if (attach_possible(self) &&
              gdk_content_formats_contain_gtype(formats, GDK_TYPE_FILE_LIST) &&
              !gdk_content_formats_contain_gtype(formats, G_TYPE_STRING)) {
     g_signal_stop_emission_by_name(text_view, "paste-clipboard");
-    gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT, NULL,
-                                   on_files_pasted, g_object_ref(self));
+    PasteRead *read = paste_read_new(self);
+    gdk_clipboard_read_value_async(clipboard, GDK_TYPE_FILE_LIST, G_PRIORITY_DEFAULT,
+                                   read->cancellable, on_files_pasted, read);
   }
   /* Anything else continues to GtkTextView's own paste, as text. */
 }
@@ -617,6 +675,10 @@ static void
 gh_composer_dispose(GObject *object)
 {
   GhComposer *self = GH_COMPOSER(object);
+  self->disposing = TRUE;
+  if (self->paste_read)
+    g_cancellable_cancel(self->paste_read);
+  g_clear_object(&self->paste_read);
   /* A draft typed in the last second is still reported (window closed). */
   if (self->buffer)
     gh_composer_flush_draft(self);

@@ -23,6 +23,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include "nostrc-test-gdk-frame.h"
 #include <gtk/gtk.h>
 #include <glib.h>
 #include "gnostr-testkit.h"
@@ -287,6 +288,7 @@ int
 main(int argc, char *argv[])
 {
     gtk_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
 
     g_test_add("/gnostr/real-bind/ndb-violations",
                RealBindFixture, NULL,

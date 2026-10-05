@@ -12,6 +12,7 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
+#include "nostrc-test-gdk-frame.h"
 #include "ui/gnostr-publish-gate.h"
 
 #include <gtk/gtk.h>
@@ -117,6 +118,7 @@ int
 main(int argc, char **argv)
 {
   gtk_test_init(&argc, &argv, NULL);
+  nostrc_test_tolerate_gdk_frame_warning();
   g_resources_register(nostr_gtk_get_resource());
   g_test_add_func("/publish-gate/note-cards", test_gate);
   return g_test_run();

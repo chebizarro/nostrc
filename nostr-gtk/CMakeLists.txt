@@ -391,6 +391,7 @@ if(BUILD_TESTING)
     SOURCES tests/test_standalone_core.c
     LIBS    nostr_gtk PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2 PkgConfig::GOBJECT2
   )
+  target_include_directories(test_nostr_gtk_standalone_core PRIVATE ${PROJECT_ROOT}/tests/common)
 
   # Gnostr-coupled widget tests. They link the real Gnostr app-layer
   # implementations from gnostr-widget-test-support (apps/gnostr), which is

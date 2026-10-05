@@ -879,6 +879,7 @@ if (BUILD_TESTING)
     ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
     TIMEOUT 60)
   target_include_directories(gnostr-test-publish-gate PRIVATE
+    ${PROJECT_ROOT}/tests/common
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_ROOT}/nostr-gtk/include)
   set_tests_properties(gnostr-test-publish-gate PROPERTIES
@@ -1200,6 +1201,7 @@ if (BUILD_TESTING)
     target_compile_definitions(gnostr-test-image-viewer-remote-media PRIVATE HAVE_SOUP3=1)
   endif()
   target_include_directories(gnostr-test-image-viewer-remote-media PRIVATE
+    ${PROJECT_ROOT}/tests/common
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/nostr-gtk/include
@@ -1928,6 +1930,7 @@ if (BUILD_TESTING)
       TIMEOUT 180
     )
     target_include_directories(gnostr-test-real-bind-latency PRIVATE
+    ${PROJECT_ROOT}/tests/common
       ${CMAKE_CURRENT_SOURCE_DIR}/src
       ${CMAKE_CURRENT_SOURCE_DIR}/src/model
       ${PROJECT_ROOT}/nostr-gobject/include

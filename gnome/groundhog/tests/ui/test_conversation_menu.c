@@ -654,6 +654,25 @@ test_gui_pin_and_read(void)
   gui_down(&g);
 }
 
+typedef struct {
+  GActionGroup *actions;
+  const gchar *name;
+  gboolean enabled;
+} ActionStateWait;
+
+static gboolean
+action_state_is(gpointer data)
+{
+  ActionStateWait *wait = data;
+  return g_action_group_get_action_enabled(wait->actions, wait->name) == wait->enabled;
+}
+
+static gboolean
+widget_visible(gpointer data)
+{
+  return gtk_widget_get_visible(GTK_WIDGET(data));
+}
+
 /* nostrc-qp24.86: the conversation header's menu (charter §7.4
  * conversation_menu): shown with a private conversation; Conversation Info,
  * Pin or Unpin, Mute…, Disappearing Messages… (Conversation Info at its
@@ -669,8 +688,7 @@ test_gui_header_menu(void)
   GtkWidget *button = gh_content_page_get_menu_button(content);
   g_assert_false(gtk_widget_get_visible(button));
   g_assert_true(gh_window_open_item(g.window, alice));
-  drain_idle();
-  g_assert_true(gtk_widget_get_visible(button));
+  spin_until(widget_visible, button);
   g_assert_cmpstr(gtk_widget_get_tooltip_text(button), ==, "Conversation Menu");
   GMenuModel *model = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
   g_assert_cmpint(g_menu_model_get_n_items(model), ==, 3);
@@ -681,6 +699,8 @@ test_gui_header_menu(void)
   g_action_group_activate_action(actions, "pin-shown-conversation", NULL);
   drain_idle();
   g_assert_true(gh_conversation_get_pinned(alice));
+  ActionStateWait pin_disabled = { actions, "pin-shown-conversation", FALSE };
+  spin_until(action_state_is, &pin_disabled);
   g_assert_false(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
   g_assert_true(g_action_group_get_action_enabled(actions, "unpin-shown-conversation"));
   g_action_group_activate_action(actions, "unpin-shown-conversation", NULL);
@@ -720,11 +740,31 @@ test_gui_header_menu(void)
   g_assert_true(gh_window_open_item(g.window, group));
   drain_idle();
   g_assert_true(gtk_widget_get_visible(button));
+  ActionStateWait rename_enabled = { actions, "rename-shown-group", TRUE };
+  spin_until(action_state_is, &rename_enabled);
   g_assert_true(g_action_group_get_action_enabled(actions, "rename-shown-group"));
   g_assert_false(g_action_group_get_action_enabled(actions, "mute-shown-conversation"));
   g_assert_false(g_action_group_get_action_enabled(actions, "pin-shown-conversation"));
   g_assert_false(g_action_group_get_action_enabled(actions, "delete-shown-conversation"));
   gui_down(&g);
+}
+
+/* The menu's signal callbacks must not retain their attachment after the
+ * window is destroyed, even if a child is kept alive by another owner. */
+static void
+test_gui_header_menu_lifetime(void)
+{
+  Gui g;
+  gui_up(&g);
+  GhContentPage *content = gh_window_get_content(g.window);
+  g_autoptr(GtkStack) stack = g_object_ref(gh_content_page_get_stack(content));
+  g_autoptr(GtkWidget) view = g_object_ref(gh_content_page_get_view(content));
+  gtk_window_destroy(GTK_WINDOW(g.window));
+  drain_idle();
+  g_object_notify(G_OBJECT(stack), "visible-child-name");
+  if (GH_IS_CONVERSATION_VIEW(view))
+    g_object_notify(G_OBJECT(view), "conversation");
+  account_down(&g.account);
 }
 
 /* Shift+F10 / Menu on the focused row opens its menu; a request has no
@@ -972,6 +1012,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/conversation-menu-gui/blocked-page", test_gui_blocked_page);
     g_test_add_func("/groundhog/conversation-menu-gui/pin-and-read", test_gui_pin_and_read);
     g_test_add_func("/groundhog/conversation-menu-gui/header-menu", test_gui_header_menu);
+    g_test_add_func("/groundhog/conversation-menu-gui/header-menu-lifetime",
+                    test_gui_header_menu_lifetime);
     status = g_test_run();
     goto out;
   }
