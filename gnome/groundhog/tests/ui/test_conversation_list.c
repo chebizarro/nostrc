@@ -453,7 +453,7 @@ test_requests_are_separate(Fixture *f, gconstpointer data)
                   "requests");
   g_assert_true(gh_requests_view_get_request(gh_conversation_list_get_requests_view(f->window)) ==
                 f->ad);
-  g_assert_cmpstr(adw_window_title_get_subtitle(gh_content_page_get_window_title(f->content)),
+  g_assert_cmpstr(gh_content_page_get_subtitle(f->content),
                   ==, "Message request · end-to-end encrypted");
 
   /* Accepting (locally) moves it to the conversations, in activity order;
@@ -527,15 +527,15 @@ test_request_subject_secondary(Fixture *f, gconstpointer data)
   g_assert_true(gh_sidebar_page_select_relative(f->sidebar, 1));
   g_assert_true(gh_requests_view_get_request(gh_conversation_list_get_requests_view(f->window)) ==
                 f->ae);
-  AdwWindowTitle *header = gh_content_page_get_window_title(f->content);
-  g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
+  GhContentPage *header = f->content;
+  g_assert_cmpstr(gh_content_page_get_title(header), ==, title);
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(f->content)), ==, title);
-  g_assert_cmpstr(adw_window_title_get_subtitle(header), ==,
+  g_assert_cmpstr(gh_content_page_get_subtitle(header), ==,
                   "“You won a prize” · Message request · end-to-end encrypted");
   /* A later subject changes the secondary text, never the title. */
   add(f->store, 5, 1, f->now - 20, "last chance", "Final notice");
-  g_assert_cmpstr(adw_window_title_get_title(header), ==, title);
-  g_assert_cmpstr(adw_window_title_get_subtitle(header), ==,
+  g_assert_cmpstr(gh_content_page_get_title(header), ==, title);
+  g_assert_cmpstr(gh_content_page_get_subtitle(header), ==,
                   "“Final notice” · Message request · end-to-end encrypted");
   g_assert_cmpstr(row_text(ae, "title_label"), ==, title);
   g_assert_cmpstr(row_text(ae, "preview_label"), ==, "Final notice");
@@ -644,7 +644,7 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   present(f, 900, 600);
   spin_until(has_rows, f);
   GtkStack *content_stack = gh_content_page_get_stack(f->content);
-  AdwWindowTitle *title = gh_content_page_get_window_title(f->content);
+  GhContentPage *title = f->content;
   g_assert_cmpstr(gtk_stack_get_visible_child_name(content_stack), ==, "none");
   g_assert_cmpuint(gh_conversation_get_unread_count(f->ab), ==, 1);
 
@@ -654,8 +654,8 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   g_assert_true(gh_sidebar_page_get_selected(f->sidebar) == f->ab);
   g_assert_true(shown_messages(f->content) == G_LIST_MODEL(f->ab));
   g_assert_cmpstr(gtk_stack_get_visible_child_name(content_stack), ==, "conversation");
-  g_assert_cmpstr(adw_window_title_get_title(title), ==, gh_conversation_get_title(f->ab));
-  g_assert_cmpstr(adw_window_title_get_subtitle(title), ==, "Private · end-to-end encrypted");
+  g_assert_cmpstr(gh_content_page_get_title(title), ==, gh_conversation_get_title(f->ab));
+  g_assert_cmpstr(gh_content_page_get_subtitle(title), ==, "Private · end-to-end encrypted");
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(f->content)), ==,
                   gh_conversation_get_title(f->ab));
   /* Opening it is reading it (locally only); the badge goes. */
@@ -692,7 +692,7 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.next-conversation",
                                            NULL));
   g_assert_true(gh_sidebar_page_get_selected(f->sidebar) == f->ac);
-  g_assert_cmpstr(adw_window_title_get_title(title), ==, "Book Club");
+  g_assert_cmpstr(gh_content_page_get_title(title), ==, "Book Club");
   g_assert_false(gh_sidebar_page_select_relative(f->sidebar, 1));
 
   /* The shown conversation moving to the top keeps it selected and shown. */
@@ -712,7 +712,7 @@ test_selection_shows_messages(Fixture *f, gconstpointer data)
 
   gh_sidebar_page_unselect(f->sidebar);
   g_assert_cmpstr(gtk_stack_get_visible_child_name(content_stack), ==, "none");
-  g_assert_cmpstr(adw_window_title_get_title(title), ==, "Messages");
+  g_assert_cmpstr(gh_content_page_get_title(title), ==, "Messages");
 }
 
 static void
@@ -1133,6 +1133,8 @@ test_time_format(void)
     gh_conversation_row_format_message_time(at - 86400 - 60, now);
   g_assert_cmpstr(message_yesterday, ==, "Yesterday 15:29");
 }
+  add(f->store, 1, 2, f->now, "Let's plan our next meeting.",
+      "Book Club - planning our autumn reading weekend together");
 
 int
 main(int argc, char **argv)

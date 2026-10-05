@@ -17,103 +17,153 @@ using Adw 1;
 template $GhContentPage: Adw.NavigationPage {
   title: _("Messages");
 
-  child: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar {
-      title-widget: Adw.WindowTitle window_title {
-        title: _("Messages");
-      };
+  child: Adw.BreakpointBin header_bin {
+    width-request: 300;
+    height-request: 200;
 
-      [end]
-      MenuButton menu_button {
-        visible: false;
-        icon-name: "view-more-symbolic";
-        tooltip-text: _("Conversation Menu");
-        menu-model: conversation_menu;
+    child: Adw.ToolbarView {
+      [top]
+      Adw.HeaderBar {
+        centering-policy: loose;
+        title-widget: Box {
+          orientation: vertical;
+          valign: center;
 
-        accessibility {
-          label: _("Conversation Menu");
+          Label title_label {
+            label: _("Messages");
+            ellipsize: middle;
+            wrap-mode: word_char;
+            lines: 2;
+            justify: center;
+            styles ["title"]
+          }
+
+          Label subtitle_label {
+            visible: false;
+            ellipsize: end;
+            styles ["subtitle"]
+          }
+        };
+
+        [end]
+        MenuButton menu_button {
+          visible: false;
+          icon-name: "view-more-symbolic";
+          tooltip-text: _("Conversation Menu");
+          menu-model: conversation_menu;
+
+          accessibility {
+            label: _("Conversation Menu");
+          }
+        }
+
+        // Conversation Info (charter §7.4, G19): shown with a conversation;
+        // win.conversation-info comes from gh-conversation-info-dialog.c.
+        [end]
+        Button info_button {
+          visible: false;
+          icon-name: "help-about-symbolic";
+          tooltip-text: _("Conversation Info");
+          action-name: "win.conversation-info";
+
+          accessibility {
+            label: _("Conversation Info");
+          }
         }
       }
 
-      // Conversation Info (charter §7.4, G19): shown with a conversation;
-      // win.conversation-info comes from gh-conversation-info-dialog.c.
-      [end]
-      Button info_button {
-        visible: false;
-        icon-name: "help-about-symbolic";
-        tooltip-text: _("Conversation Info");
-        action-name: "win.conversation-info";
+      content: Box {
+        orientation: vertical;
 
-        accessibility {
-          label: _("Conversation Info");
+        Label narrow_title_label {
+          visible: false;
+          wrap: true;
+          wrap-mode: word_char;
+          lines: 2;
+          ellipsize: none;
+          justify: center;
+          margin-start: 12;
+          margin-end: 12;
+          margin-top: 6;
+          margin-bottom: 6;
+          styles ["title"]
         }
+
+        Stack content_stack {
+          StackPage {
+            name: "none";
+
+            child: Adw.StatusPage none_page {
+              icon-name: "mail-read-symbolic";
+              title: _("No Conversation Selected");
+              description: _("Choose a conversation to read its messages.");
+              hexpand: true;
+              vexpand: true;
+
+              styles [
+                "groundhog-shell-status",
+              ]
+            };
+          }
+
+          StackPage {
+            name: "conversation";
+
+            child: Adw.BreakpointBin conversation_bin {
+              width-request: 300;
+              height-request: 200;
+
+              child: Box {
+                orientation: vertical;
+
+                Adw.Bin conversation_slot {
+                  vexpand: true;
+                }
+
+                $GhComposer composer {}
+              };
+
+              // Only the last matching breakpoint applies, so both at once is
+              // its own, last.
+              Adw.Breakpoint {
+                condition ("max-width: 480sp")
+
+                setters {
+                  composer.compact: true;
+                }
+              }
+
+              Adw.Breakpoint {
+                condition ("max-height: 360sp")
+
+                setters {
+                  composer.max-lines: 3;
+                }
+              }
+
+              Adw.Breakpoint {
+                condition ("max-width: 480sp and max-height: 360sp")
+
+                setters {
+                  composer.compact: true;
+                  composer.max-lines: 3;
+                }
+              }
+            };
+          }
+        }
+      };
+    };
+
+    Adw.Breakpoint {
+      condition ("max-width: 600sp")
+
+      setters {
+        title_label.visible: false;
+        subtitle_label.visible: false;
+        narrow_title_label.visible: true;
       }
     }
-
-    content: Stack content_stack {
-      StackPage {
-        name: "none";
-
-        child: Adw.StatusPage none_page {
-          icon-name: "mail-read-symbolic";
-          title: _("No Conversation Selected");
-          description: _("Choose a conversation to read its messages.");
-          hexpand: true;
-          vexpand: true;
-
-          styles [
-            "groundhog-shell-status",
-          ]
-        };
-      }
-
-      StackPage {
-        name: "conversation";
-
-        child: Adw.BreakpointBin conversation_bin {
-          width-request: 300;
-          height-request: 200;
-
-          child: Box {
-            orientation: vertical;
-
-            Adw.Bin conversation_slot {
-              vexpand: true;
-            }
-
-            $GhComposer composer {}
-          };
-
-          // Only the last matching breakpoint applies, so both at once is
-          // its own, last.
-          Adw.Breakpoint {
-            condition ("max-width: 480sp")
-
-            setters {
-              composer.compact: true;
-            }
-          }
-
-          Adw.Breakpoint {
-            condition ("max-height: 360sp")
-
-            setters {
-              composer.max-lines: 3;
-            }
-          }
-
-          Adw.Breakpoint {
-            condition ("max-width: 480sp and max-height: 360sp")
-
-            setters {
-              composer.compact: true;
-              composer.max-lines: 3;
-            }
-          }
-        };
-      }
-    };
   };
 }
 

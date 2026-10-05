@@ -626,7 +626,9 @@ gh_sidebar_page_get_focus_target(GhSidebarPage *self)
 
 struct _GhContentPage {
   AdwNavigationPage parent_instance;
-  AdwWindowTitle *window_title;
+  GtkLabel *title_label;
+  GtkLabel *narrow_title_label;
+  GtkLabel *subtitle_label;
   GtkButton *info_button;
   GtkWidget *menu_button;
   GtkStack *content_stack;
@@ -661,7 +663,9 @@ gh_content_page_class_init(GhContentPageClass *klass)
   g_type_ensure(GH_TYPE_COMPOSER);
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-content-page.ui");
-  gtk_widget_class_bind_template_child(widget_class, GhContentPage, window_title);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, title_label);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, narrow_title_label);
+  gtk_widget_class_bind_template_child(widget_class, GhContentPage, subtitle_label);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, info_button);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, menu_button);
   gtk_widget_class_bind_template_child(widget_class, GhContentPage, content_stack);
@@ -685,11 +689,18 @@ gh_content_page_get_stack(GhContentPage *self)
   return self->content_stack;
 }
 
-AdwWindowTitle *
-gh_content_page_get_window_title(GhContentPage *self)
+const gchar *
+gh_content_page_get_title(GhContentPage *self)
 {
   g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
-  return self->window_title;
+  return gtk_label_get_text(self->title_label);
+}
+
+const gchar *
+gh_content_page_get_subtitle(GhContentPage *self)
+{
+  g_return_val_if_fail(GH_IS_CONTENT_PAGE(self), NULL);
+  return gtk_label_get_text(self->subtitle_label);
 }
 
 void
@@ -742,8 +753,13 @@ gh_content_page_set_title(GhContentPage *self, const gchar *title, const gchar *
   g_return_if_fail(GH_IS_CONTENT_PAGE(self));
   const gchar *shown = title && *title ? title : self->default_title;
   adw_navigation_page_set_title(ADW_NAVIGATION_PAGE(self), shown);
-  adw_window_title_set_title(self->window_title, shown);
-  adw_window_title_set_subtitle(self->window_title, subtitle ? subtitle : "");
+  gtk_label_set_text(self->title_label, shown);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->title_label), shown);
+  gtk_label_set_text(self->narrow_title_label, shown);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->narrow_title_label), shown);
+  gtk_label_set_text(self->subtitle_label, subtitle ? subtitle : "");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->subtitle_label), subtitle);
+  gtk_widget_set_visible(GTK_WIDGET(self->subtitle_label), subtitle && *subtitle);
 }
 
 GtkWidget *

@@ -1319,7 +1319,7 @@ test_gui_header_button(void)
   g_assert_true(g_action_get_enabled(action));
   g_assert_cmpstr(gtk_widget_get_tooltip_text(button), ==, "Conversation Info");
   /* The header subtitle comes from the privacy summary (§2.2 surface 1). */
-  g_assert_cmpstr(adw_window_title_get_subtitle(gh_content_page_get_window_title(content)), ==,
+  g_assert_cmpstr(gh_content_page_get_subtitle(content), ==,
                   "Private · end-to-end encrypted");
 
   g_action_activate(action, NULL);

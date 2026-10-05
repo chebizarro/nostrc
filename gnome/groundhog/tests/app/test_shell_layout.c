@@ -337,9 +337,9 @@ test_content_page_structure(void)
 
   gh_content_page_set_title(page, "Alice", "Private · end-to-end encrypted");
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(page)), ==, "Alice");
-  g_assert_cmpstr(adw_window_title_get_title(gh_content_page_get_window_title(page)), ==,
+  g_assert_cmpstr(gh_content_page_get_title(page), ==,
                   "Alice");
-  g_assert_cmpstr(adw_window_title_get_subtitle(gh_content_page_get_window_title(page)), ==,
+  g_assert_cmpstr(gh_content_page_get_subtitle(page), ==,
                   "Private · end-to-end encrypted");
   gh_content_page_set_title(page, NULL, NULL);
   g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(page)), ==, "Messages");

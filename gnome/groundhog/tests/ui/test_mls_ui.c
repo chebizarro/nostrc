@@ -866,8 +866,7 @@ no_dialog(gpointer window)
 static const gchar *
 header_subtitle(GhWindow *window)
 {
-  return adw_window_title_get_subtitle(
-    gh_content_page_get_window_title(gh_window_get_content(window)));
+  return gh_content_page_get_subtitle(gh_window_get_content(window));
 }
 
 typedef struct {

@@ -9,102 +9,161 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="GhContentPage" parent="AdwNavigationPage">
     <property name="title" translatable="yes">Messages</property>
     <property name="child">
-      <object class="AdwToolbarView">
-        <child type="top">
-          <object class="AdwHeaderBar">
-            <property name="title-widget">
-              <object class="AdwWindowTitle" id="window_title">
-                <property name="title" translatable="yes">Messages</property>
-              </object>
-            </property>
-            <child type="end">
-              <object class="GtkMenuButton" id="menu_button">
-                <property name="visible">false</property>
-                <property name="icon-name">view-more-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Conversation Menu</property>
-                <property name="menu-model">conversation_menu</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Conversation Menu</property>
-                </accessibility>
+      <object class="AdwBreakpointBin" id="header_bin">
+        <property name="width-request">300</property>
+        <property name="height-request">200</property>
+        <property name="child">
+          <object class="AdwToolbarView">
+            <child type="top">
+              <object class="AdwHeaderBar">
+                <property name="centering-policy">0</property>
+                <property name="title-widget">
+                  <object class="GtkBox">
+                    <property name="orientation">1</property>
+                    <property name="valign">3</property>
+                    <child>
+                      <object class="GtkLabel" id="title_label">
+                        <property name="label" translatable="yes">Messages</property>
+                        <property name="ellipsize">2</property>
+                        <property name="wrap-mode">2</property>
+                        <property name="lines">2</property>
+                        <property name="justify">2</property>
+                        <style>
+                          <class name="title"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkLabel" id="subtitle_label">
+                        <property name="visible">false</property>
+                        <property name="ellipsize">3</property>
+                        <style>
+                          <class name="subtitle"/>
+                        </style>
+                      </object>
+                    </child>
+                  </object>
+                </property>
+                <child type="end">
+                  <object class="GtkMenuButton" id="menu_button">
+                    <property name="visible">false</property>
+                    <property name="icon-name">view-more-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Conversation Menu</property>
+                    <property name="menu-model">conversation_menu</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Conversation Menu</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child type="end">
+                  <object class="GtkButton" id="info_button">
+                    <property name="visible">false</property>
+                    <property name="icon-name">help-about-symbolic</property>
+                    <property name="tooltip-text" translatable="yes">Conversation Info</property>
+                    <property name="action-name">win.conversation-info</property>
+                    <accessibility>
+                      <property name="label" translatable="yes">Conversation Info</property>
+                    </accessibility>
+                  </object>
+                </child>
               </object>
             </child>
-            <child type="end">
-              <object class="GtkButton" id="info_button">
-                <property name="visible">false</property>
-                <property name="icon-name">help-about-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Conversation Info</property>
-                <property name="action-name">win.conversation-info</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Conversation Info</property>
-                </accessibility>
-              </object>
-            </child>
-          </object>
-        </child>
-        <property name="content">
-          <object class="GtkStack" id="content_stack">
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">none</property>
-                <property name="child">
-                  <object class="AdwStatusPage" id="none_page">
-                    <property name="icon-name">mail-read-symbolic</property>
-                    <property name="title" translatable="yes">No Conversation Selected</property>
-                    <property name="description" translatable="yes">Choose a conversation to read its messages.</property>
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
+            <property name="content">
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <child>
+                  <object class="GtkLabel" id="narrow_title_label">
+                    <property name="visible">false</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="lines">2</property>
+                    <property name="ellipsize">0</property>
+                    <property name="justify">2</property>
+                    <property name="margin-start">12</property>
+                    <property name="margin-end">12</property>
+                    <property name="margin-top">6</property>
+                    <property name="margin-bottom">6</property>
                     <style>
-                      <class name="groundhog-shell-status"/>
+                      <class name="title"/>
                     </style>
                   </object>
-                </property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">conversation</property>
-                <property name="child">
-                  <object class="AdwBreakpointBin" id="conversation_bin">
-                    <property name="width-request">300</property>
-                    <property name="height-request">200</property>
-                    <property name="child">
-                      <object class="GtkBox">
-                        <property name="orientation">1</property>
-                        <child>
-                          <object class="AdwBin" id="conversation_slot">
+                </child>
+                <child>
+                  <object class="GtkStack" id="content_stack">
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">none</property>
+                        <property name="child">
+                          <object class="AdwStatusPage" id="none_page">
+                            <property name="icon-name">mail-read-symbolic</property>
+                            <property name="title" translatable="yes">No Conversation Selected</property>
+                            <property name="description" translatable="yes">Choose a conversation to read its messages.</property>
+                            <property name="hexpand">true</property>
                             <property name="vexpand">true</property>
+                            <style>
+                              <class name="groundhog-shell-status"/>
+                            </style>
                           </object>
-                        </child>
-                        <child>
-                          <object class="GhComposer" id="composer"></object>
-                        </child>
-                      </object>
-                    </property>
-                    <child>
-                      <object class="AdwBreakpoint">
-                        <condition>max-width: 480sp</condition>
-                        <setter object="composer" property="compact">true</setter>
+                        </property>
                       </object>
                     </child>
                     <child>
-                      <object class="AdwBreakpoint">
-                        <condition>max-height: 360sp</condition>
-                        <setter object="composer" property="max-lines">3</setter>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="AdwBreakpoint">
-                        <condition>max-width: 480sp and max-height: 360sp</condition>
-                        <setter object="composer" property="compact">true</setter>
-                        <setter object="composer" property="max-lines">3</setter>
+                      <object class="GtkStackPage">
+                        <property name="name">conversation</property>
+                        <property name="child">
+                          <object class="AdwBreakpointBin" id="conversation_bin">
+                            <property name="width-request">300</property>
+                            <property name="height-request">200</property>
+                            <property name="child">
+                              <object class="GtkBox">
+                                <property name="orientation">1</property>
+                                <child>
+                                  <object class="AdwBin" id="conversation_slot">
+                                    <property name="vexpand">true</property>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GhComposer" id="composer"></object>
+                                </child>
+                              </object>
+                            </property>
+                            <child>
+                              <object class="AdwBreakpoint">
+                                <condition>max-width: 480sp</condition>
+                                <setter object="composer" property="compact">true</setter>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwBreakpoint">
+                                <condition>max-height: 360sp</condition>
+                                <setter object="composer" property="max-lines">3</setter>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="AdwBreakpoint">
+                                <condition>max-width: 480sp and max-height: 360sp</condition>
+                                <setter object="composer" property="compact">true</setter>
+                                <setter object="composer" property="max-lines">3</setter>
+                              </object>
+                            </child>
+                          </object>
+                        </property>
                       </object>
                     </child>
                   </object>
-                </property>
+                </child>
               </object>
-            </child>
+            </property>
           </object>
         </property>
+        <child>
+          <object class="AdwBreakpoint">
+            <condition>max-width: 600sp</condition>
+            <setter object="title_label" property="visible">false</setter>
+            <setter object="subtitle_label" property="visible">false</setter>
+            <setter object="narrow_title_label" property="visible">true</setter>
+          </object>
+        </child>
       </object>
     </property>
   </template>

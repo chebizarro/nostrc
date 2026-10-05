@@ -25,7 +25,7 @@ G_BEGIN_DECLS
  * conversations) and "show-previews" (rows may show message text; default
  * FALSE, see gh_conversation_list_attach()). The action
  * "sidebar.show-requests" (boolean parameter) switches the list; Escape
- * leaves Message Requests. */
+ * clears/closes search first, then leaves Message Requests. */
 #define GH_TYPE_SIDEBAR_PAGE (gh_sidebar_page_get_type())
 G_DECLARE_FINAL_TYPE(GhSidebarPage, gh_sidebar_page, GH, SIDEBAR_PAGE, AdwNavigationPage)
 
@@ -105,7 +105,8 @@ GtkWidget *gh_sidebar_page_get_focus_target(GhSidebarPage *self);
 G_DECLARE_FINAL_TYPE(GhContentPage, gh_content_page, GH, CONTENT_PAGE, AdwNavigationPage)
 
 GtkStack *gh_content_page_get_stack(GhContentPage *self);
-AdwWindowTitle *gh_content_page_get_window_title(GhContentPage *self);
+const gchar *gh_content_page_get_title(GhContentPage *self);
+const gchar *gh_content_page_get_subtitle(GhContentPage *self);
 /* The conversation page's view; set once. */
 void gh_content_page_set_view(GhContentPage *self, GtkWidget *view);
 GtkWidget *gh_content_page_get_view(GhContentPage *self);
