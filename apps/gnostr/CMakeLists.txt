@@ -846,7 +846,9 @@ if (BUILD_TESTING)
     target_link_libraries(gnostr-test-keystore PRIVATE PkgConfig::LIBSECRET gnostr-secret)
   endif()
   # nostr: gnostr-app-bridge.c references nostr_event_free.
-  target_link_libraries(gnostr-test-keystore PRIVATE nostr PkgConfig::GLIB PkgConfig::GIO)
+  # nostrc-gcu4: a private bus bound to the test's lifetime, never GTestDBus.
+  include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcTestBus.cmake)
+  target_link_libraries(gnostr-test-keystore PRIVATE nostr PkgConfig::GLIB PkgConfig::GIO nostrc-test-bus)
   _gnostr_apply_sanitizers(gnostr-test-keystore)
   add_test(NAME gnostr-test-keystore COMMAND gnostr-test-keystore)
   set_tests_properties(gnostr-test-keystore PROPERTIES

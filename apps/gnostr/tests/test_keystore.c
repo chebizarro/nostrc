@@ -6,7 +6,7 @@
  *
  *   /signer-availability/copy       pure UX decisions: which text, when a
  *                                   banner shows, when "Start" is offered
- *   /signer-availability/presence   private session bus (GTestDBus) with an
+ *   /signer-availability/presence   private session bus (nostrc-test-bus) with an
  *                                   activatable fake org.nostr.Signer:
  *                                   ACTIVATABLE → RUNNING once owned, and
  *                                   StartServiceByName failure is reported;
@@ -30,6 +30,8 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+#include "nostrc-test-bus.h"
+
 #include "../src/util/keystore.h"
 #include "../src/ipc/gnostr-signer-availability.h"
 #include <nostr-gobject-1.0/gnostr-app-bridge.h>
@@ -40,7 +42,7 @@
 #include "seahorse/secret_store.h"
 #endif
 
-static GTestDBus *s_bus;
+static NostrcTestBus *s_bus;
 static gboolean s_have_bus;
 
 /* ---- copy ---- */
@@ -461,10 +463,10 @@ int main(int argc, char *argv[]) {
   gchar *dbus_daemon = g_find_program_in_path("dbus-daemon");
   if (dbus_daemon) {
     gchar *service_dir = g_build_filename(root, "services", NULL);
-    s_bus = g_test_dbus_new(G_TEST_DBUS_NONE);
-    g_test_dbus_add_service_dir(s_bus, service_dir);
+    s_bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+    nostrc_test_bus_add_service_dir(s_bus, service_dir);
     g_free(service_dir);
-    g_test_dbus_up(s_bus);
+    nostrc_test_bus_up(s_bus);
     s_have_bus = TRUE;
   }
   g_free(dbus_daemon);
@@ -472,9 +474,9 @@ int main(int argc, char *argv[]) {
   g_test_add_func("/keystore/shim-basics", test_shim_basics);
   g_test_add_func("/keystore/macos-migration", test_macos_migration);
   g_test_add_func("/signer-availability/copy", test_copy);
-  g_test_add_func("/signer-availability/presence", test_presence);
+  nostrc_test_bus_add_func("/signer-availability/presence", test_presence);
 #ifdef HAVE_LIBSECRET
-  g_test_add_func("/keystore/identity-list", test_identity_list);
+  nostrc_test_bus_add_func("/keystore/identity-list", test_identity_list);
 #endif
 
   int rc = g_test_run();
@@ -490,25 +492,14 @@ int main(int argc, char *argv[]) {
     g_clear_object(&s_keyring);
   }
 #endif
-  if (s_bus) {
-    if (used_keyring) {
-      /* libsecret's sync API parks proxies (and their session-bus refs) on
-       * private main contexts that are never iterated again, so the bus
-       * singleton is never finalized and g_test_dbus_down — also run by
-       * GTestDBus's dispose — stalls on its weak-notify timeout. Same fix
-       * as nips/nip55l/tests/test_signer_dbus_contract.c: stop the bus
-       * without that check and let process exit reclaim the GTestDBus. */
-      GDBusConnection *singleton = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-      if (singleton) {
-        g_dbus_connection_set_exit_on_close(singleton, FALSE);
-        g_object_unref(singleton);
-      }
-      g_test_dbus_stop(s_bus);
-    } else {
-      g_test_dbus_down(s_bus);
-      g_object_unref(s_bus);
-    }
+  if (s_bus && !used_keyring) {
+    nostrc_test_bus_down(s_bus); /* stops the daemon and frees the bus */
   }
+  /* With a keyring, libsecret's sync API parks proxies (and their session-bus
+   * refs) on private main contexts that are never iterated again, so the bus
+   * singleton is never finalized and nostrc_test_bus_down() would report it as
+   * a leak. Leave the bus up: the test-bus lifeline stops its daemon and
+   * removes its directories when this process exits. */
   rm_rf(root);
   g_free(root);
   return rc;
