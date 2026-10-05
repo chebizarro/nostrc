@@ -41,17 +41,17 @@
     <key name="load-remote-images" type="b">
       <default>false</default>
       <summary>Load images in messages</summary>
-      <description>Whether images linked from messages may be loaded without asking first. Off: nothing is fetched unless you load an image yourself, because loading it shows your IP address to its host unless you use Tor. Reserved; not used yet.</description>
+      <description>Off by default: ask before each requested item. An explicit allow can remember consent only for the open conversation, until you leave it. Turning this off revokes that consent and cancels pending loads. Turning it on alone does not grant consent or fetch anything. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
     </key>
     <key name="link-previews" type="b">
       <default>false</default>
       <summary>Link previews</summary>
-      <description>Whether a link preview may be fetched without asking first. Off: nothing is fetched unless you ask for a preview of a message and confirm. Reserved; not used yet.</description>
+      <description>Off by default: ask before each requested item. An explicit allow can remember consent only for the open conversation, until you leave it. Turning this off revokes that consent and cancels pending loads. Turning it on alone does not grant consent or fetch anything. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
     </key>
     <key name="load-profile-pictures" type="b">
       <default>false</default>
       <summary>Load profile pictures</summary>
-      <description>Whether profile pictures are downloaded. Off, because fetching a picture shows your IP address to its host. Reserved; not used yet.</description>
+      <description>Off by default: ask before each requested item. An explicit allow can remember consent only for the open conversation, until you leave it. Turning this off revokes that consent and cancels pending loads. Turning it on alone does not grant consent or fetch anything. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
     </key>
 
     <!-- Privacy / Conversations -->

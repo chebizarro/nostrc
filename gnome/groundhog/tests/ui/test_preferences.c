@@ -1059,18 +1059,23 @@ test_published_relays(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(group));
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(inbox)));
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(write)));
-  /* Each list has a header row + relay rows + an add-entry row. */
-  g_assert_cmpuint(n_rows(inbox), ==, 4); /* header + 2 relays + add */
-  g_assert_cmpuint(n_rows(write), ==, 3); /* header + 1 relay + add */
-  g_assert_cmpstr(row_title(inbox, 1), ==, "wss://inbox.example.com");
-  g_assert_cmpstr(row_title(inbox, 2), ==, "wss://inbox2.example.com");
-  g_assert_cmpstr(row_title(write, 1), ==, "wss://relay.example.com");
+  /* Group headings sit outside the boxed lists; only real URLs and an
+   * add-entry row are inside them. */
+  AdwPreferencesGroup *inbox_group = child(f, "inbox_relays_group");
+  AdwPreferencesGroup *write_group = child(f, "write_relays_group");
+  g_assert_cmpstr(adw_preferences_group_get_title(inbox_group), ==, "Message Relays (Inbox)");
+  g_assert_cmpstr(adw_preferences_group_get_title(write_group), ==, "Publish Relays");
+  g_assert_cmpuint(n_rows(inbox), ==, 3);
+  g_assert_cmpuint(n_rows(write), ==, 2);
+  g_assert_cmpstr(row_title(inbox, 0), ==, "wss://inbox.example.com");
+  g_assert_cmpstr(row_title(inbox, 1), ==, "wss://inbox2.example.com");
+  g_assert_cmpstr(row_title(write, 0), ==, "wss://relay.example.com");
 
   /* Only inbox relays, no write relays: section shown, write list hidden. */
   gh_preferences_dialog_set_published_relays(f->dialog, inbox_urls, NULL);
   g_assert_true(gtk_widget_get_visible(group));
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(inbox)));
-  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(write)));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(write_group)));
 
   /* Clearing both hides the section. */
   gh_preferences_dialog_set_published_relays(f->dialog, NULL, NULL);
@@ -1084,6 +1089,118 @@ test_published_relays(Fixture *f, gconstpointer data)
   g_signal_emit_by_name(change, "clicked");
   drain_idle();
   g_assert_cmpuint(changed, ==, 1);
+}
+
+static GtkWidget *icon_button(GtkWidget *widget, const gchar *icon);
+
+static void
+test_relay_layout(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *urls[] = { "wss://relay.example.com", NULL };
+  gh_preferences_dialog_set_published_relays(f->dialog, urls, urls);
+  present(f, 900, 900);
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(f->dialog), "network");
+  drain_idle();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  const gchar *lists[] = { "inbox_relays_list", "write_relays_list" };
+  const gchar *groups[] = { "inbox_relays_group", "write_relays_group" };
+  for (guint i = 0; i < G_N_ELEMENTS(lists); i++) {
+    GtkWidget *group = child(f, groups[i]);
+    GtkListBox *list = child(f, lists[i]);
+    GtkWidget *url = GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0));
+    GtkWidget *entry = GTK_WIDGET(gtk_list_box_get_row_at_index(list, 1));
+    g_assert_true(ADW_IS_PREFERENCES_GROUP(group));
+    g_assert_true(ADW_IS_ACTION_ROW(url));
+    g_assert_true(ADW_IS_ENTRY_ROW(entry));
+    g_assert_cmpuint(n_rows(list), ==, 2); /* no disabled pseudo-heading */
+    g_assert_true(gtk_widget_get_sensitive(url));
+    g_assert_cmpint(gtk_widget_get_width(url), >, 200);
+    g_assert_cmpint(gtk_widget_get_width(url), ==, gtk_widget_get_width(entry));
+    GtkWidget *remove = icon_button(url, "edit-delete-symbolic");
+    GtkWidget *add = icon_button(entry, "list-add-symbolic");
+    g_assert_nonnull(remove);
+    g_assert_nonnull(add);
+    g_assert_cmpint(gtk_widget_get_valign(remove), ==, GTK_ALIGN_CENTER);
+    g_assert_cmpint(gtk_widget_get_valign(add), ==, GTK_ALIGN_CENTER);
+  }
+}
+
+typedef struct { guint adds, removes; gint kind; gchar *url; } RelayEdits;
+static void relay_added(GhPreferencesDialog *dialog, gint kind, const gchar *url, RelayEdits *edits)
+{
+  (void)dialog;
+  edits->adds++; edits->kind = kind;
+  g_free(edits->url); edits->url = g_strdup(url);
+}
+static void relay_removed(GhPreferencesDialog *dialog, gint kind, const gchar *url, RelayEdits *edits)
+{
+  (void)dialog;
+  edits->removes++; edits->kind = kind;
+  g_free(edits->url); edits->url = g_strdup(url);
+}
+static GtkWidget *icon_button(GtkWidget *widget, const gchar *icon)
+{
+  if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_button_get_icon_name(GTK_BUTTON(widget)), icon) == 0) return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = icon_button(c, icon);
+    if (found) return found;
+  }
+  return NULL;
+}
+static void test_relay_controls(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *urls[] = { "wss://relay.example.com", NULL };
+  gh_preferences_dialog_set_published_relays(f->dialog, urls, urls);
+  present(f, 800, 700);
+  adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(f->dialog), "network");
+  RelayEdits edits = { 0 };
+  g_signal_connect(f->dialog, "add-relay", G_CALLBACK(relay_added), &edits);
+  g_signal_connect(f->dialog, "remove-relay", G_CALLBACK(relay_removed), &edits);
+  const gchar *lists[] = { "inbox_relays_list", "write_relays_list" };
+  for (guint i = 0; i < 2; i++) {
+    GtkListBox *list = child(f, lists[i]);
+    GtkWidget *entry = GTK_WIDGET(gtk_list_box_get_row_at_index(list, 1));
+    g_assert_true(ADW_IS_ENTRY_ROW(entry));
+    GtkWidget *add = icon_button(entry, "list-add-symbolic");
+    g_assert_nonnull(add);
+    g_assert_true(gtk_widget_get_focusable(add));
+    const gchar *label = i == 0 ? "Add Message Relay" : "Add Publish Relay";
+    gtk_test_accessible_assert_property(add, GTK_ACCESSIBLE_PROPERTY_LABEL, label);
+    gtk_widget_grab_focus(entry);
+    gtk_widget_child_focus(entry, GTK_DIR_TAB_FORWARD);
+    gtk_editable_set_text(GTK_EDITABLE(entry), "http://127.0.0.1/not-a-relay");
+    g_signal_emit_by_name(add, "clicked");
+    g_assert_cmpuint(edits.adds, ==, i);
+    g_assert_true(gtk_widget_has_css_class(entry, "error"));
+    g_assert_nonnull(gtk_widget_get_tooltip_text(entry));
+    gtk_editable_set_text(GTK_EDITABLE(entry), urls[0]);
+    g_signal_emit_by_name(entry, "entry-activated");
+    g_assert_cmpuint(edits.adds, ==, i);
+    g_assert_true(gtk_widget_has_css_class(entry, "error"));
+    gtk_editable_set_text(GTK_EDITABLE(entry), "  wss://new.example.com/  ");
+    g_signal_emit_by_name(add, "clicked");
+    g_assert_cmpuint(edits.adds, ==, i + 1);
+    g_assert_cmpint(edits.kind, ==, i == 0 ? 10050 : 10002);
+    g_assert_cmpstr(edits.url, ==, "wss://new.example.com");
+    g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
+    /* No optimistic replacement: the service owns the signed full-list update. */
+    g_assert_cmpuint(n_rows(list), ==, 2);
+    GtkWidget *remove = icon_button(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 0)), "edit-delete-symbolic");
+    gtk_test_accessible_assert_property(remove, GTK_ACCESSIBLE_PROPERTY_LABEL, "Remove wss://relay.example.com");
+    g_signal_emit_by_name(remove, "clicked");
+    g_assert_cmpuint(edits.removes, ==, i + 1);
+    g_assert_cmpint(edits.kind, ==, i == 0 ? 10050 : 10002);
+    g_assert_cmpstr(edits.url, ==, urls[0]);
+    g_assert_cmpuint(n_rows(list), ==, 2);
+  }
+  const gchar *empty[] = { NULL };
+  gh_preferences_dialog_set_published_relays(f->dialog, empty, empty);
+  g_assert_true(gtk_widget_get_visible(child(f, "published_relays_group")));
+  g_assert_cmpuint(n_rows(child(f, "inbox_relays_list")), ==, 1);
+  g_signal_handlers_disconnect_by_data(f->dialog, &edits);
+  g_free(edits.url);
 }
 
 static void
@@ -1447,6 +1564,8 @@ take_shot(GSettings *settings, const char *dir, const char *page, gboolean confi
   GhPreferencesDialog *dialog = gh_preferences_dialog_new(settings, gh_features_for_preferences());
   GObject *target = g_object_new(G_TYPE_OBJECT, NULL);
   gh_preferences_dialog_set_account(dialog, NPUB, "Alice");
+  const gchar *published[] = { "wss://relay.example.com", NULL };
+  gh_preferences_dialog_set_published_relays(dialog, published, published);
   gh_preferences_dialog_set_forget_func(dialog, fake_forget_async, fake_forget_finish, target);
   present_window(GTK_WINDOW(window), width, height);
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
@@ -1458,6 +1577,10 @@ take_shot(GSettings *settings, const char *dir, const char *page, gboolean confi
                       GTK_WINDOW(window) };
     g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "prefs.delete-all", NULL));
     spin_until(alert_shown, &wait);
+  }
+  if (g_getenv("GROUNDHOG_PREFS_SHOT")) {
+    GtkListBox *list = GTK_LIST_BOX(gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_PREFERENCES_DIALOG, "inbox_relays_list"));
+    gtk_widget_grab_focus(GTK_WIDGET(gtk_list_box_get_row_at_index(list, 1)));
   }
   drain_idle();
   gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
@@ -1474,6 +1597,10 @@ test_screenshots(Fixture *f, gconstpointer data)
   const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
   if (!dir || !*dir) {
     g_test_skip("GROUNDHOG_TEST_SCREENSHOTS is not set");
+    return;
+  }
+  if (g_getenv("GROUNDHOG_PREFS_SHOT")) {
+    take_shot(f->settings, dir, "network", FALSE, 900, 700, "prefs");
     return;
   }
   /* As in test_conversation_list.c: switching the color scheme may warn about
@@ -1550,6 +1677,8 @@ main(int argc, char **argv)
   ADD("older-marmot-switch-no-producer", test_older_marmot_switch,
       all & ~GH_PREFERENCES_FEATURE_ADOPTED_KEY_PACKAGES);
   ADD("published-relays", test_published_relays, all);
+  ADD("relay-layout", test_relay_layout, all);
+  ADD("relay-controls", test_relay_controls, all);
   ADD("delete-all-runs-forget", test_delete_all_runs_forget, build);
   ADD("delete-all-outlives-dialog", test_delete_all_outlives_dialog, build);
   ADD("minimum-size-layout", test_minimum_size_layout, build);

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # toolchain (all workflows; clang for nostrc-ci, signet-ci, libgo-ci)
     build-essential cmake ninja-build pkg-config clang \
     # groundhog-ci.yml "Install build and display dependencies"
-    libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+    libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
     libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \

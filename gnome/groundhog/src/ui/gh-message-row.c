@@ -41,6 +41,12 @@ struct _GhMessageRow {
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
   GtkButton *preview_button;
+  GtkButton *image_button;
+  GtkButton *picture_button;
+  GtkPicture *remote_image;
+  GtkPicture *profile_picture;
+  GtkBox *web_box;
+  GtkLabel *web_error;
   GtkLabel *preview_title;
   GtkLabel *preview_text;
   GtkBox *meta_box;
@@ -319,8 +325,39 @@ update_expiry(GhMessageRow *self)
 }
 
 static void
+update_web_images(GhMessageRow *self)
+{
+  gboolean available = self->message && self->view &&
+    gh_conversation_view_has_web_content(self->view) &&
+    !gh_message_get_withdrawn(self->message);
+  g_autofree gchar *picture = available
+    ? gh_conversation_view_dup_picture_uri(self->view, self->message) : NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->image_button), available && self->preview_uri);
+  gtk_widget_set_visible(GTK_WIDGET(self->picture_button), picture != NULL);
+  gboolean failed = FALSE;
+  for (guint i = GH_WEB_IMAGE; i <= GH_WEB_PICTURE; i++) {
+    GtkPicture *image = i == GH_WEB_IMAGE ? self->remote_image : self->profile_picture;
+    GtkButton *button = i == GH_WEB_IMAGE ? self->image_button : self->picture_button;
+    GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+    GdkTexture *texture = available
+      ? gh_conversation_view_get_web_texture(self->view, self->message, i, &state) : NULL;
+    gtk_picture_set_paintable(image, texture ? GDK_PAINTABLE(texture) : NULL);
+    gtk_widget_set_visible(GTK_WIDGET(image), texture != NULL);
+    gtk_widget_set_sensitive(GTK_WIDGET(button), state == GH_LINK_PREVIEW_NONE || state == GH_LINK_PREVIEW_FAILED);
+    failed |= state == GH_LINK_PREVIEW_FAILED;
+    if (self->message) {
+      g_autofree gchar *id = g_strconcat(i == GH_WEB_IMAGE ? "image:" : "picture:",
+                                        gh_message_get_rumor_id(self->message), NULL);
+      gtk_actionable_set_action_target(GTK_ACTIONABLE(button), "s", id);
+    }
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->web_error), failed);
+}
+
+static void
 update_preview(GhMessageRow *self)
 {
+  update_web_images(self);
   /* Only with a fetcher (W13b review, non-blocking #1). */
   gboolean offered = self->message && self->preview_uri && self->view &&
                      gh_conversation_view_get_previews_available(self->view);
@@ -639,9 +676,8 @@ on_activate_link(GhMessageRow *self, const gchar *uri)
 static void
 on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
 {
-  if (self->message &&
-      (!rumor_id || g_strcmp0(gh_message_get_rumor_id(self->message), rumor_id) == 0))
-    update_preview(self);
+  (void)rumor_id;
+  if (self->message) update_preview(self);
 }
 
 static void
@@ -920,6 +956,12 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, image_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, picture_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, remote_image);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, profile_picture);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_error);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_title);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_text);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, meta_box);
@@ -945,6 +987,8 @@ gh_message_row_init(GhMessageRow *self)
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", "");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->image_button), "s", "");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->picture_button), "s", "");
   self->run_start = TRUE;
   g_signal_connect(self->reaction_bar, "reaction-toggled",
                    G_CALLBACK(on_reaction_toggled), self);

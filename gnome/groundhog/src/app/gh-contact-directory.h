@@ -104,6 +104,8 @@ gboolean gh_contact_directory_is_accepted(GhContactDirectory *self, const gchar 
 const gchar *gh_contact_directory_get_display_name(GhContactDirectory *self,
                                                    const gchar *pubkey);
 const gchar *gh_contact_directory_get_nip05(GhContactDirectory *self, const gchar *pubkey);
+/* Cached picture URL only, never a lookup or an HTTP request. Transfer full. */
+gchar *gh_contact_directory_dup_picture_uri(GhContactDirectory *self, const gchar *pubkey);
 /* A title for an accepted conversation from its peers' cached display names,
  * ", "-joined, or NULL when it is a request, a note to self, or any peer has
  * no cached name (the conversation's own title applies then). */

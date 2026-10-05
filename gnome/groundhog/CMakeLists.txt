@@ -3009,6 +3009,18 @@ if (TARGET groundhog-mls-files AND TARGET groundhog-mls-ui AND TARGET groundhog-
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS_FILES=1)
 endif()
 # --- end G22 attachment UI ---
+# W29 consent-gated web content: shared HTTP policy, built-in image decoder.
+if (TARGET groundhog-conversation-ui AND TARGET groundhog-net)
+  pkg_check_modules(GROUNDHOG_WEB_XML REQUIRED IMPORTED_TARGET libxml-2.0)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-web-content.c src/media/gh-metadata-strip.c)
+  target_include_directories(groundhog-conversation-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
+  target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-net PkgConfig::GROUNDHOG_WEB_XML)
+endif()
+if (TARGET test-groundhog-conversation-view AND TARGET groundhog-preferences)
+  target_sources(test-groundhog-conversation-view PRIVATE tests/media/blossom-fixture.c)
+  target_include_directories(test-groundhog-conversation-view PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
+  target_link_libraries(test-groundhog-conversation-view PRIVATE groundhog-preferences)
+endif()
 # --- W13c preference gates (keep last) ---
 # test_preferences asserts the Preferences rows of this build from
 # src/app/gh-features.h, whose features follow the executable's

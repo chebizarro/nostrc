@@ -440,6 +440,7 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   g_object_set_data_full(G_OBJECT(window), LIST_DATA, list, list_free);
   list->view = g_object_ref_sink(GH_CONVERSATION_VIEW(gh_conversation_view_new()));
   gh_conversation_view_set_settings(list->view, settings);
+  gh_conversation_view_enable_web_content(list->view, NULL, NULL);
   gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
   list->requests_view = GH_REQUESTS_VIEW(gh_requests_view_new());
   gtk_stack_add_named(gh_content_page_get_stack(list->content), GTK_WIDGET(list->requests_view),

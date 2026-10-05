@@ -600,15 +600,20 @@ gh_timeline_init(GhTimeline *self)
 typedef struct {
   GhLinkPreviewState state;
   gchar *uri;
+  gchar *sender;
   gchar *title;
   gchar *description;
+  GhWebKind kind;
+  GdkTexture *texture;
 } Preview;
 
 static void
 preview_free(Preview *preview)
 {
   g_free(preview->uri);
+  g_free(preview->sender);
   g_free(preview->title);
+  g_clear_object(&preview->texture);
   g_free(preview->description);
   g_free(preview);
 }
@@ -670,6 +675,11 @@ struct _GhConversationView {
   /* Links and previews */
   gchar *pending_link;     /* awaiting confirmation */
   gchar *pending_preview;  /* rumor id awaiting consent */
+  GhWebContent *web;
+  GhPictureUriFunc picture_uri;
+  GObject *picture_source;
+  GHashTable *allowed_senders; /* kind + sender, for the open conversation only */
+  guint64 web_generation;
   GHashTable *previews;    /* rumor id -> Preview */
   GCancellable *cancellable;
   GhLinkPreviewFetch fetch;
@@ -1080,6 +1090,14 @@ close_dialog(AdwDialog *dialog)
     adw_dialog_force_close(dialog);
 }
 
+static void
+on_request_changed(GhConversationView *self)
+{
+  /* A newly accepted request may offer explicit web actions; a request may
+   * never offer one. Refresh the bound rows when that status changes. */
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
 static gboolean
 is_multi_party(GhConversation *conversation)
 {
@@ -1094,6 +1112,8 @@ cancel_previews(GhConversationView *self)
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
+  self->web_generation++;
+  g_hash_table_remove_all(self->allowed_senders);
   g_hash_table_remove_all(self->previews);
   g_clear_pointer(&self->pending_preview, g_free);
   g_clear_pointer(&self->pending_link, g_free);
@@ -1138,6 +1158,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::unread-count", G_CALLBACK(update_older),
+                            self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::is-request", G_CALLBACK(on_request_changed),
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(self->timeline, "items-changed", G_CALLBACK(on_timeline_changed),
                             self, G_CONNECT_SWAPPED);
@@ -1377,6 +1399,7 @@ set_preview_state(GhConversationView *self, const gchar *rumor_id, GhLinkPreview
 typedef struct {
   GWeakRef view;
   gchar *rumor_id;
+  guint64 generation;
 } FetchClosure;
 
 static void
@@ -1387,11 +1410,12 @@ on_preview_fetched(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GhConversationView) self = g_weak_ref_get(&closure->view);
   g_weak_ref_clear(&closure->view);
   g_autofree gchar *rumor_id = closure->rumor_id;
+  guint64 generation = closure->generation;
   g_free(closure);
   g_autofree gchar *title = NULL;
   g_autofree gchar *description = NULL;
   g_autoptr(GError) error = NULL;
-  if (!self || !self->finish)
+  if (!self || self->web_generation != generation || !self->finish)
     return;
   gboolean ok = self->finish(result, &title, &description, &error, self->fetch_data);
   if (!ok && g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
@@ -1409,12 +1433,38 @@ on_preview_fetched(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
+on_web_fetched(GObject *source, GAsyncResult *answer, gpointer data)
+{
+  FetchClosure *closure = data;
+  g_autoptr(GhConversationView) self = g_weak_ref_get(&closure->view);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhWebResult) result = gh_web_content_load_finish(GH_WEB_CONTENT(source), answer, &error);
+  if (self && self->web_generation == closure->generation) {
+    Preview *preview = preview_for(self, closure->rumor_id);
+    if (preview && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      if (result) {
+        g_free(preview->title);
+        g_free(preview->description);
+        preview->title = g_steal_pointer(&result->title);
+        preview->description = g_steal_pointer(&result->description);
+        g_set_object(&preview->texture, result->texture);
+      }
+      set_preview_state(self, closure->rumor_id, result ? GH_LINK_PREVIEW_LOADED : GH_LINK_PREVIEW_FAILED);
+      g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+    }
+  }
+  g_weak_ref_clear(&closure->view);
+  g_free(closure->rumor_id);
+  g_free(closure);
+}
+
+static void
 fetch_preview(GhConversationView *self, const gchar *rumor_id)
 {
   Preview *preview = preview_for(self, rumor_id);
   if (!preview)
     return;
-  if (!self->fetch || !self->finish) {
+  if (!self->web && (!self->fetch || !self->finish)) {
     /* The fetcher went away while the user was asked: load nothing. */
     set_preview_state(self, rumor_id, GH_LINK_PREVIEW_UNAVAILABLE);
     return;
@@ -1425,6 +1475,12 @@ fetch_preview(GhConversationView *self, const gchar *rumor_id)
   FetchClosure *closure = g_new0(FetchClosure, 1);
   g_weak_ref_init(&closure->view, self);
   closure->rumor_id = g_strdup(rumor_id);
+  closure->generation = self->web_generation;
+  if (self->web) {
+    gh_web_content_load_async(self->web, preview->uri, preview->kind, self->cancellable,
+                              on_web_fetched, closure);
+    return;
+  }
   self->fetch(preview->uri, self->cancellable, on_preview_fetched, closure, self->fetch_data);
 }
 
@@ -1437,10 +1493,13 @@ settings_has_key(GSettings *settings, const gchar *key)
 }
 
 static gboolean
-previews_allowed(GhConversationView *self)
+previews_allowed(GhConversationView *self, Preview *preview)
 {
-  return self->settings && settings_has_key(self->settings, LINK_PREVIEWS_KEY) &&
-         g_settings_get_boolean(self->settings, LINK_PREVIEWS_KEY);
+  const gchar *key = gh_web_content_setting(preview->kind);
+  if (!self->settings || !settings_has_key(self->settings, key) ||
+      !g_settings_get_boolean(self->settings, key)) return FALSE;
+  g_autofree gchar *sender_key = g_strdup_printf("%u:%s", preview->kind, preview->sender);
+  return g_hash_table_contains(self->allowed_senders, sender_key);
 }
 
 static gboolean
@@ -1456,40 +1515,54 @@ static gchar *
 consent_body(GhConversationView *self, const gchar *host)
 {
   if (tor_mode(self))
-    return g_strdup_printf(_("This connects to %s through Tor to load a preview of the link."),
+    return g_strdup_printf(_("This connects to %s through Tor to load this web content."),
                            host);
-  return g_strdup_printf(_("This connects to %s from your IP address to load a preview of the "
-                           "link, so that website learns your IP address."), host);
+  return g_strdup_printf(_("This connects to %s from your IP address to load this web "
+                           "content, so that website learns your IP address."), host);
 }
 
 static void
 show_preview(GhConversationView *self, const gchar *rumor_id)
 {
+  GhWebKind kind = GH_WEB_PREVIEW;
+  const gchar *message_id = rumor_id;
+  if (g_str_has_prefix(rumor_id, "image:")) { kind = GH_WEB_IMAGE; message_id += 6; }
+  if (g_str_has_prefix(rumor_id, "picture:")) { kind = GH_WEB_PICTURE; message_id += 8; }
   GhMessage *message = self->conversation
-                         ? gh_conversation_lookup_message(self->conversation, rumor_id)
+                         ? gh_conversation_lookup_message(self->conversation, message_id)
                          : NULL;
+  if (self->pending_preview || !message || gh_message_get_withdrawn(message) ||
+      gh_conversation_get_is_request(self->conversation)) return;
   /* No fetcher, no preview: never ask consent for a fetch that can't happen
    * (W13b review, non-blocking #1). */
   if (!message || !gh_conversation_view_get_previews_available(self))
     return;
-  g_autofree gchar *uri = gh_link_policy_dup_preview_uri(gh_message_get_content(message));
+  if (kind != GH_WEB_PREVIEW && !self->web) return;
+  g_autofree gchar *uri = kind == GH_WEB_PICTURE
+    ? gh_conversation_view_dup_picture_uri(self, message)
+    : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
   if (!uri)
     return;
   Preview *preview = preview_for(self, rumor_id);
   if (!preview) {
     preview = g_new0(Preview, 1);
     preview->uri = g_steal_pointer(&uri);
+    preview->sender = g_strdup(gh_message_get_sender(message));
+    preview->kind = kind;
     g_hash_table_insert(self->previews, g_strdup(rumor_id), preview);
   }
   if (preview->state != GH_LINK_PREVIEW_NONE && preview->state != GH_LINK_PREVIEW_FAILED)
     return;
-  if (previews_allowed(self)) {
+  if (previews_allowed(self, preview)) {
     fetch_preview(self, rumor_id);
     return;
   }
   /* Consent first (charter §2.1, P9): who is contacted, and how. */
   g_autofree gchar *host = gh_link_policy_dup_host(preview->uri);
   g_autofree gchar *body = consent_body(self, host);
+  adw_alert_dialog_set_heading(self->preview_dialog, kind == GH_WEB_PREVIEW
+    ? _("Show Link Preview?") : kind == GH_WEB_IMAGE ? _("Load Image?") : _("Load Profile Picture?"));
+  adw_alert_dialog_set_response_label(self->preview_dialog, "preview-show", _("_Allow"));
   adw_alert_dialog_set_body(self->preview_dialog, body);
   gtk_check_button_set_active(self->preview_dont_ask, FALSE);
   gtk_widget_set_visible(GTK_WIDGET(self->preview_dont_ask),
@@ -1510,11 +1583,15 @@ on_preview_response(GhConversationView *self, const gchar *response)
     set_preview_state(self, rumor_id, GH_LINK_PREVIEW_NONE);
     return;
   }
-  /* "Don't ask again" is kept only for a fetch that happens. */
+  Preview *preview = preview_for(self, rumor_id);
+  if (!preview) return;
+  const gchar *key = gh_web_content_setting(preview->kind);
   if (gtk_check_button_get_active(self->preview_dont_ask) && self->settings &&
-      settings_has_key(self->settings, LINK_PREVIEWS_KEY) &&
-      gh_conversation_view_get_previews_available(self))
-    g_settings_set_boolean(self->settings, LINK_PREVIEWS_KEY, TRUE);
+      settings_has_key(self->settings, key)) {
+    g_settings_set_boolean(self->settings, key, TRUE);
+    g_hash_table_add(self->allowed_senders,
+                     g_strdup_printf("%u:%s", preview->kind, preview->sender));
+  }
   fetch_preview(self, rumor_id);
 }
 
@@ -1555,7 +1632,81 @@ gboolean
 gh_conversation_view_get_previews_available(GhConversationView *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
-  return self->fetch != NULL && self->finish != NULL;
+  return self->conversation && !gh_conversation_get_is_request(self->conversation) &&
+         (self->web || (self->fetch != NULL && self->finish != NULL));
+}
+
+void
+gh_conversation_view_enable_web_content(GhConversationView *self,
+                                         const GhHttpTransport *transport, gpointer data)
+{
+  cancel_previews(self);
+  g_clear_object(&self->web);
+  self->web = gh_web_content_new(self->settings, transport, data);
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+gboolean gh_conversation_view_has_web_content(GhConversationView *self)
+{
+  return self->web && self->conversation && !gh_conversation_get_is_request(self->conversation);
+}
+
+static void
+on_picture_source_changed(GhConversationView *self, const gchar *pubkey, GObject *source)
+{
+  (void)pubkey;
+  (void)source;
+  /* A cached kind-0 picture URL may arrive after the rows were built. */
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+void
+gh_conversation_view_set_picture_source(GhConversationView *self, GhPictureUriFunc func, GObject *source)
+{
+  if (self->picture_source)
+    g_signal_handlers_disconnect_by_data(self->picture_source, self);
+  self->picture_uri = func;
+  g_set_object(&self->picture_source, source);
+  if (source && g_signal_lookup("profile-changed", G_OBJECT_TYPE(source)))
+    g_signal_connect_object(source, "profile-changed", G_CALLBACK(on_picture_source_changed),
+                            self, G_CONNECT_SWAPPED);
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+gchar *
+gh_conversation_view_dup_picture_uri(GhConversationView *self, GhMessage *message)
+{
+  if (!self->web || !self->picture_uri || !self->conversation ||
+      gh_conversation_get_is_request(self->conversation)) return NULL;
+  gchar *uri = self->picture_uri(gh_message_get_sender(message), self->picture_source);
+  if (uri && !gh_link_policy_can_preview(uri)) g_clear_pointer(&uri, g_free);
+  return uri;
+}
+
+GdkTexture *
+gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *message,
+                                      GhWebKind kind, GhLinkPreviewState *state)
+{
+  g_autofree gchar *id = g_strconcat(kind == GH_WEB_IMAGE ? "image:" : "picture:",
+                                    gh_message_get_rumor_id(message), NULL);
+  Preview *preview = preview_for(self, id);
+  *state = preview ? preview->state : GH_LINK_PREVIEW_NONE;
+  return preview ? preview->texture : NULL;
+}
+
+static void
+web_setting_changed(GSettings *settings, const gchar *key, GhConversationView *self)
+{
+  (void)settings;
+  for (guint i = 0; i < GH_WEB_N_KINDS; i++) {
+    if (!g_str_equal(key, gh_web_content_setting(i))) continue;
+    if (!g_settings_get_boolean(self->settings, key)) {
+      cancel_previews(self);
+      close_dialog(ADW_DIALOG(self->preview_dialog));
+      g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+    }
+    return;
+  }
 }
 
 /* ---- conversation states ---------------------------------------------------------------- */
@@ -1877,8 +2028,13 @@ gh_conversation_view_set_settings(GhConversationView *self, GSettings *settings)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
   g_return_if_fail(!settings || G_IS_SETTINGS(settings));
-  if (g_set_object(&self->settings, settings))
-    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SETTINGS]);
+  if (self->settings == settings) return;
+  if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);
+  cancel_previews(self);
+  g_set_object(&self->settings, settings);
+  if (settings) g_signal_connect_object(settings, "changed", G_CALLBACK(web_setting_changed), self, 0);
+  if (self->web) gh_conversation_view_enable_web_content(self, NULL, NULL);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SETTINGS]);
 }
 
 gboolean
@@ -1958,6 +2114,11 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
+  if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);
+  g_clear_object(&self->web);
+  if (self->picture_source)
+    g_signal_handlers_disconnect_by_data(self->picture_source, self);
+  g_clear_object(&self->picture_source);
   g_clear_object(&self->settings);
   g_clear_object(&self->reactions);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONVERSATION_VIEW);
@@ -1969,6 +2130,7 @@ gh_conversation_view_finalize(GObject *object)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(object);
   g_hash_table_unref(self->previews);
+  g_hash_table_unref(self->allowed_senders);
   g_free(self->pending_link);
   g_free(self->pending_preview);
   g_free(self->last_announcement);
@@ -2056,6 +2218,7 @@ gh_conversation_view_init(GhConversationView *self)
   self->sticky = TRUE;
   self->previews = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                          (GDestroyNotify)preview_free);
+  self->allowed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   g_autoptr(GtkListItemFactory) headers = gtk_builder_list_item_factory_new_from_resource(
     NULL, "/org/nostr/Groundhog/ui/gh-day-separator.ui");
   gtk_list_view_set_header_factory(self->message_list, headers);

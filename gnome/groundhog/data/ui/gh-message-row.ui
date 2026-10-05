@@ -122,6 +122,70 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
+      <object class="GtkBox" id="web_box">
+        <property name="orientation">1</property>
+        <property name="spacing">6</property>
+        <child>
+          <object class="GtkButton" id="picture_button">
+            <property name="visible">false</property>
+            <property name="label" translatable="yes">Load Profile Picture</property>
+            <property name="halign">1</property>
+            <property name="action-name">conversation.show-preview</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkPicture" id="profile_picture">
+            <property name="visible">false</property>
+            <property name="can-shrink">true</property>
+            <property name="content-fit">1</property>
+            <property name="width-request">48</property>
+            <property name="height-request">48</property>
+            <property name="halign">1</property>
+            <accessibility>
+              <property name="label" translatable="yes">Sender's profile picture</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="image_button">
+            <property name="visible">false</property>
+            <property name="label" translatable="yes">Load Linked Image</property>
+            <property name="halign">1</property>
+            <property name="action-name">conversation.show-preview</property>
+            <style>
+              <class name="flat"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkPicture" id="remote_image">
+            <property name="visible">false</property>
+            <property name="can-shrink">true</property>
+            <property name="content-fit">1</property>
+            <property name="height-request">180</property>
+            <accessibility>
+              <property name="label" translatable="yes">Image linked in this message</property>
+            </accessibility>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="web_error">
+            <property name="visible">false</property>
+            <property name="label" translatable="yes">The image couldn't be loaded.</property>
+            <property name="wrap">true</property>
+            <property name="xalign">0</property>
+            <style>
+              <class name="error"/>
+              <class name="caption"/>
+            </style>
+          </object>
+        </child>
+      </object>
+    </child>
+    <child>
       <object class="GtkBox" id="preview_box">
         <property name="visible">false</property>
         <property name="orientation">1</property>

@@ -5,6 +5,8 @@
 #include "gh-conversation.h"
 #include "gh-delivery-indicator.h"
 
+#include "gh-web-content.h"
+
 G_BEGIN_DECLS
 
 typedef struct _GhMessageRow GhMessageRow;
@@ -161,6 +163,16 @@ void gh_conversation_view_set_delivery_report_func(GhConversationView *self,
 GhDeliveryReport *gh_conversation_view_dup_delivery_report(GhConversationView *self,
                                                            GhMessage *message);
 
+/* Production web loader. No fetch until a per-item confirmation. Remembered
+ * consent lasts only for the open conversation and is revoked by Preferences. */
+void gh_conversation_view_enable_web_content(GhConversationView *self,
+                                             const GhHttpTransport *transport, gpointer data);
+typedef gchar *(*GhPictureUriFunc)(const gchar *pubkey, gpointer data);
+void gh_conversation_view_set_picture_source(GhConversationView *self, GhPictureUriFunc func,
+                                              GObject *source);
+gboolean gh_conversation_view_has_web_content(GhConversationView *self);
+gchar *gh_conversation_view_dup_picture_uri(GhConversationView *self, GhMessage *message);
+
 /* A link preview fetcher (charter §2.1: the configured network mode, GET over
  * https only, bounded). It is only ever called after the user asked for a
  * preview. finish returns TRUE with title and description (either may be
@@ -186,6 +198,9 @@ typedef enum {
   GH_LINK_PREVIEW_FAILED,
   GH_LINK_PREVIEW_UNAVAILABLE  /* the fetcher was removed while asking: nothing loaded */
 } GhLinkPreviewState;
+GdkTexture *gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *message,
+                                                 GhWebKind kind, GhLinkPreviewState *state);
+
 
 /* The preview state of @message; title and description (nullable, borrowed)
  * for LOADED. The view emits "preview-changed" (rumor id) when it changes. */

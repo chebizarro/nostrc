@@ -108,7 +108,9 @@ struct _GhPreferencesDialog {
   Binding *blossom_binding;
   /* nostrc-mi1z: Where People Reach You. */
   GtkWidget *published_relays_group;
+  AdwPreferencesGroup *inbox_relays_group;
   GtkListBox *inbox_relays_list;
+  AdwPreferencesGroup *write_relays_group;
   GtkListBox *write_relays_list;
   GtkWidget *published_relays_change;
   GtkWidget *inbox_add_entry;       /* nostrc-mi1z: inline add */
@@ -908,60 +910,114 @@ relay_row_new(const gchar *url, gint kind)
   AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), url);
   adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-  /* Remove button. */
-  if (kind != 0) {
-    GtkWidget *button = gtk_button_new_from_icon_name("edit-delete-symbolic");
-    gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
-    gtk_button_set_has_frame(GTK_BUTTON(button), FALSE);
-    gtk_widget_set_tooltip_text(button, _("Remove"));
-    g_object_set_data(G_OBJECT(button), "relay-kind", GINT_TO_POINTER(kind));
-    g_object_set_data_full(G_OBJECT(button), "relay-url", g_strdup(url), g_free);
-    g_signal_connect(button, "clicked", G_CALLBACK(on_remove_relay), NULL);
-    adw_action_row_add_suffix(row, button);
-  }
+  g_object_set_data_full(G_OBJECT(row), "published-relay", g_strdup(url), g_free);
+  adw_action_row_set_title_lines(row, 1);
+  GtkWidget *button = gtk_button_new_from_icon_name("edit-delete-symbolic");
+  gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+  gtk_button_set_has_frame(GTK_BUTTON(button), FALSE);
+  g_autofree gchar *label = g_strdup_printf(_("Remove %s"), url);
+  gtk_widget_set_tooltip_text(button, label);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  g_object_set_data(G_OBJECT(button), "relay-kind", GINT_TO_POINTER(kind));
+  g_object_set_data_full(G_OBJECT(button), "relay-url", g_strdup(url), g_free);
+  g_signal_connect(button, "clicked", G_CALLBACK(on_remove_relay), NULL);
+  adw_action_row_add_suffix(row, button);
   return GTK_WIDGET(row);
+}
+
+static void
+relay_entry_error(AdwEntryRow *entry, const gchar *message)
+{
+  if (message) gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
+  else gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(entry), message);
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(gtk_widget_get_ancestor(GTK_WIDGET(entry), GH_TYPE_PREFERENCES_DIALOG));
+  if (message && self) adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                  message ? message : "", -1);
 }
 
 static void
 on_add_relay_activate(AdwEntryRow *entry, gpointer data)
 {
+  (void)data;
   GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(gtk_widget_get_ancestor(
     GTK_WIDGET(entry), GH_TYPE_PREFERENCES_DIALOG));
-  if (!self)
-    return;
-  gint kind = GPOINTER_TO_INT(data);
+  if (!self) return;
+  gint kind = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(entry), "relay-kind"));
   const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
-  if (!text || !*text)
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *mode = self->settings ? g_settings_get_string(self->settings, "network-mode") : NULL;
+  g_autofree gchar *url = gh_preferences_normalize_relay_url(text, g_strcmp0(mode, "tor") == 0, &error);
+  if (!url) {
+    relay_entry_error(entry, error ? error->message : _("Enter a relay address"));
     return;
-  g_autofree gchar *url = gh_preferences_normalize_relay_url(text, FALSE, NULL);
-  if (!url)
-    return;
-  g_signal_emit(self, signals[SIGNAL_ADD_RELAY], 0, kind, url);
+  }
+  GtkWidget *list = gtk_widget_get_parent(GTK_WIDGET(entry));
+  guint count = 0;
+  for (GtkWidget *row = gtk_widget_get_first_child(list); row; row = gtk_widget_get_next_sibling(row)) {
+    const gchar *existing = g_object_get_data(G_OBJECT(row), "published-relay");
+    if (!existing) continue;
+    count++;
+    if (g_str_equal(existing, url)) {
+      relay_entry_error(entry, _("This relay is already in the list"));
+      return;
+    }
+  }
+  if (count >= 16) { relay_entry_error(entry, _("At most 16 relays can be added")); return; }
+  relay_entry_error(entry, NULL);
+  /* A synchronous signal handler may rebuild the list. Do not touch the
+   * old entry after emitting; publication still belongs to GhRelayListSetup. */
   gtk_editable_set_text(GTK_EDITABLE(entry), "");
+  g_signal_emit(self, signals[SIGNAL_ADD_RELAY], 0, kind, url);
 }
 
-/* An AdwEntryRow that emits add-relay on activation. */
+static void
+on_relay_add_clicked(GtkButton *button, AdwEntryRow *entry)
+{
+  (void)button;
+  on_add_relay_activate(entry, NULL);
+}
+
+static void
+on_relay_entry_changed(GtkEditable *entry, gpointer data)
+{
+  (void)data;
+  relay_entry_error(ADW_ENTRY_ROW(entry), NULL);
+}
+
 static GtkWidget *
 relay_add_entry_new(gint kind)
 {
   AdwEntryRow *row = ADW_ENTRY_ROW(adw_entry_row_new());
-  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), _("Add relay…"));
-  g_signal_connect(row, "entry-activated", G_CALLBACK(on_add_relay_activate),
-                   GINT_TO_POINTER(kind));
+  const gchar *label = kind == 10050 ? _("Add Message Relay") : _("Add Publish Relay");
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), label);
+  adw_entry_row_set_input_purpose(row, GTK_INPUT_PURPOSE_URL);
+  g_object_set_data(G_OBJECT(row), "relay-kind", GINT_TO_POINTER(kind));
+  g_signal_connect(row, "entry-activated", G_CALLBACK(on_add_relay_activate), NULL);
   GtkWidget *button = gtk_button_new_from_icon_name("list-add-symbolic");
   gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
   gtk_button_set_has_frame(GTK_BUTTON(button), FALSE);
-  gtk_widget_set_tooltip_text(button, _("Add"));
-  g_signal_connect_swapped(button, "clicked", G_CALLBACK(on_add_relay_activate),
-                           row);
+  gtk_widget_set_tooltip_text(button, label);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  g_signal_connect(button, "clicked", G_CALLBACK(on_relay_add_clicked), row);
   adw_entry_row_add_suffix(row, button);
   return GTK_WIDGET(row);
 }
 
 static void
-fill_relay_list(GtkListBox *list, const gchar *const *relays, const gchar *header,
+append_relay_entry(GtkListBox *list, gint kind, GtkWidget **out)
+{
+  *out = relay_add_entry_new(kind);
+  gtk_list_box_append(list, *out);
+  g_signal_connect(*out, "changed", G_CALLBACK(on_relay_entry_changed), NULL);
+}
+
+static void
+fill_relay_list(AdwPreferencesGroup *group, GtkListBox *list, const gchar *const *relays,
                 gint kind, GtkWidget **add_entry_out)
 {
+  if (add_entry_out) *add_entry_out = NULL;
   /* Clear the existing rows (leave the placeholder). */
   for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(list));
        child; ) {
@@ -970,33 +1026,14 @@ fill_relay_list(GtkListBox *list, const gchar *const *relays, const gchar *heade
       gtk_list_box_remove(list, child);
     child = next;
   }
-  if (!relays) {
-    /* No list of this kind exists: hide entirely. */
-    gtk_widget_set_visible(GTK_WIDGET(list), FALSE);
-    return;
-  }
-  if (!relays[0]) {
-    /* The list exists but is empty: show only the add entry. */
-    gtk_widget_set_visible(GTK_WIDGET(list), kind != 0);
-    if (kind != 0 && add_entry_out) {
-      *add_entry_out = relay_add_entry_new(kind);
-      gtk_list_box_append(list, *add_entry_out);
-    }
-    return;
-  }
-  gtk_widget_set_visible(GTK_WIDGET(list), TRUE);
-  /* Header row. */
-  GtkWidget *hdr = relay_row_new(header, 0);
-  gtk_widget_add_css_class(hdr, "dim-label");
-  gtk_widget_set_sensitive(hdr, FALSE);
-  gtk_list_box_append(list, hdr);
+  /* Each list lives in its own HIG preferences group: a missing list hides
+   * the group, while an empty published list still offers an add entry. */
+  gtk_widget_set_visible(GTK_WIDGET(group), relays != NULL);
+  if (!relays) return;
   for (guint i = 0; relays[i]; i++)
     gtk_list_box_append(list, relay_row_new(relays[i], kind));
-  /* Add entry at the bottom. */
-  if (kind != 0 && add_entry_out) {
-    *add_entry_out = relay_add_entry_new(kind);
-    gtk_list_box_append(list, *add_entry_out);
-  }
+  if (add_entry_out)
+    append_relay_entry(list, kind, add_entry_out);
 }
 
 static void
@@ -1015,12 +1052,11 @@ gh_preferences_dialog_set_published_relays(GhPreferencesDialog *self,
   g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
   if (self->disposed)
     return;
-  gboolean has_any = (inbox_relays && inbox_relays[0]) ||
-                     (write_relays && write_relays[0]);
+  gboolean has_any = inbox_relays != NULL || write_relays != NULL;
   gtk_widget_set_visible(self->published_relays_group, has_any);
-  fill_relay_list(self->inbox_relays_list, inbox_relays, _("Message Relays (Inbox)"),
+  fill_relay_list(self->inbox_relays_group, self->inbox_relays_list, inbox_relays,
                   10050, &self->inbox_add_entry);
-  fill_relay_list(self->write_relays_list, write_relays, _("Publish Relays"),
+  fill_relay_list(self->write_relays_group, self->write_relays_list, write_relays,
                   10002, &self->write_add_entry);
 }
 
@@ -1670,7 +1706,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(delete_group);
   BIND(delete_all_dialog);
   BIND(published_relays_group);
+  BIND(inbox_relays_group);
   BIND(inbox_relays_list);
+  BIND(write_relays_group);
   BIND(write_relays_list);
   BIND(published_relays_change);
 #undef BIND

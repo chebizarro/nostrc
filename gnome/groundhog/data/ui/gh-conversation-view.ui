@@ -213,7 +213,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="close-response">preview-cancel</property>
     <property name="extra-child">
       <object class="GtkCheckButton" id="preview_dont_ask">
-        <property name="label" translatable="yes">_Don't ask again</property>
+        <property name="label" translatable="yes">Allow in this conversation until I leave</property>
         <property name="use-underline">true</property>
       </object>
     </property>

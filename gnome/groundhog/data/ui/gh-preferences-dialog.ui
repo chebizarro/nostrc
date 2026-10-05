@@ -61,18 +61,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="remote_images_row">
                 <property name="title" translatable="yes">Load Images in Messages</property>
-                <property name="subtitle" translatable="yes">Without asking each time</property>
+                <property name="subtitle" translatable="yes">An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically</property>
               </object>
             </child>
             <child>
               <object class="AdwSwitchRow" id="link_previews_row">
                 <property name="title" translatable="yes">Link Previews</property>
-                <property name="subtitle" translatable="yes">Without asking each time</property>
+                <property name="subtitle" translatable="yes">An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically</property>
               </object>
             </child>
             <child>
               <object class="AdwSwitchRow" id="profile_pictures_row">
                 <property name="title" translatable="yes">Load Profile Pictures</property>
+                <property name="subtitle" translatable="yes">An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically</property>
               </object>
             </child>
             <child>
@@ -407,60 +408,52 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="title" translatable="yes">Where People Reach You</property>
             <property name="description" translatable="yes">The relays your account publishes so other people and apps can find you and deliver messages. Changing them asks your signer to sign the update.</property>
             <child>
-              <object class="GtkListBox" id="inbox_relays_list">
-                <property name="selection-mode">0</property>
-                <style>
-                  <class name="boxed-list"/>
-                </style>
-                <accessibility>
-                  <property name="label" translatable="yes">Message relays</property>
-                </accessibility>
-                <child type="placeholder">
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">No message relays published</property>
-                    <property name="margin-top">12</property>
-                    <property name="margin-bottom">12</property>
-                    <property name="margin-start">12</property>
-                    <property name="margin-end">12</property>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">18</property>
+                <child>
+                  <object class="AdwPreferencesGroup" id="inbox_relays_group">
+                    <property name="title" translatable="yes">Message Relays (Inbox)</property>
+                    <child>
+                      <object class="GtkListBox" id="inbox_relays_list">
+                        <property name="selection-mode">0</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <accessibility>
+                          <property name="label" translatable="yes">Message relays</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="AdwPreferencesGroup" id="write_relays_group">
+                    <property name="title" translatable="yes">Publish Relays</property>
+                    <child>
+                      <object class="GtkListBox" id="write_relays_list">
+                        <property name="selection-mode">0</property>
+                        <style>
+                          <class name="boxed-list"/>
+                        </style>
+                        <accessibility>
+                          <property name="label" translatable="yes">Publish relays</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="published_relays_change">
+                    <property name="label" translatable="yes">_Change Relays…</property>
+                    <property name="use-underline">true</property>
+                    <property name="halign">1</property>
+                    <property name="action-name">prefs.change-relays</property>
                     <style>
-                      <class name="dim-label"/>
+                      <class name="pill"/>
                     </style>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkListBox" id="write_relays_list">
-                <property name="selection-mode">0</property>
-                <style>
-                  <class name="boxed-list"/>
-                </style>
-                <accessibility>
-                  <property name="label" translatable="yes">Publish relays</property>
-                </accessibility>
-                <child type="placeholder">
-                  <object class="GtkLabel">
-                    <property name="label" translatable="yes">No publish relays</property>
-                    <property name="margin-top">12</property>
-                    <property name="margin-bottom">12</property>
-                    <property name="margin-start">12</property>
-                    <property name="margin-end">12</property>
-                    <style>
-                      <class name="dim-label"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkButton" id="published_relays_change">
-                <property name="label" translatable="yes">_Change Relays…</property>
-                <property name="use-underline">true</property>
-                <property name="halign">1</property>
-                <property name="action-name">prefs.change-relays</property>
-                <style>
-                  <class name="pill"/>
-                </style>
               </object>
             </child>
           </object>

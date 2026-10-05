@@ -130,6 +130,48 @@ template $GhMessageRow: Widget {
     visible: false;
   }
 
+  Box web_box {
+    orientation: vertical;
+    spacing: 6;
+    Button picture_button {
+      visible: false;
+      label: _("Load Profile Picture");
+      halign: start;
+      action-name: "conversation.show-preview";
+      styles ["flat"]
+    }
+    Picture profile_picture {
+      visible: false;
+      can-shrink: true;
+      content-fit: contain;
+      width-request: 48;
+      height-request: 48;
+      halign: start;
+      accessibility { label: _("Sender's profile picture"); }
+    }
+    Button image_button {
+      visible: false;
+      label: _("Load Linked Image");
+      halign: start;
+      action-name: "conversation.show-preview";
+      styles ["flat"]
+    }
+    Picture remote_image {
+      visible: false;
+      can-shrink: true;
+      content-fit: contain;
+      height-request: 180;
+      accessibility { label: _("Image linked in this message"); }
+    }
+    Label web_error {
+      visible: false;
+      label: _("The image couldn't be loaded.");
+      wrap: true;
+      xalign: 0;
+      styles ["error", "caption"]
+    }
+  }
+
   Box preview_box {
     visible: false;
     orientation: vertical;

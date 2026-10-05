@@ -1268,6 +1268,19 @@ gh_contact_directory_get_nip05(GhContactDirectory *self, const gchar *pubkey)
 }
 
 gchar *
+gh_contact_directory_dup_picture_uri(GhContactDirectory *self, const gchar *pubkey)
+{
+  Contact *contact = accepted_contact(self, pubkey);
+  if (!contact || !contact->profile_json) return NULL;
+  g_autofree gchar *content = json_string(contact->profile_json, "content");
+  if (!content) return NULL;
+  gchar *uri = json_string(content, "picture");
+  if (uri && (strlen(uri) > 4096 || !g_utf8_validate(uri, -1, NULL)))
+    g_clear_pointer(&uri, g_free);
+  return uri;
+}
+
+gchar *
 gh_contact_directory_dup_conversation_title(GhContactDirectory *self,
                                             GhConversation *conversation)
 {

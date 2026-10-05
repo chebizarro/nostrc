@@ -63,16 +63,17 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
       Adw.SwitchRow remote_images_row {
         title: _("Load Images in Messages");
-        subtitle: _("Without asking each time");
+        subtitle: _("An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically");
       }
 
       Adw.SwitchRow link_previews_row {
         title: _("Link Previews");
-        subtitle: _("Without asking each time");
+        subtitle: _("An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically");
       }
 
       Adw.SwitchRow profile_pictures_row {
         title: _("Load Profile Pictures");
+        subtitle: _("An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically");
       }
 
       // Hidden while nothing here can load; without Tor its text drops the
@@ -404,65 +405,37 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       title: _("Where People Reach You");
       description: _("The relays your account publishes so other people and apps can find you and deliver messages. Changing them asks your signer to sign the update.");
 
-      ListBox inbox_relays_list {
-        selection-mode: none;
+      Box {
+        orientation: vertical;
+        spacing: 18;
 
-        styles [
-          "boxed-list",
-        ]
+        Adw.PreferencesGroup inbox_relays_group {
+          title: _("Message Relays (Inbox)");
 
-        accessibility {
-          label: _("Message relays");
+          ListBox inbox_relays_list {
+            selection-mode: none;
+            styles ["boxed-list"]
+            accessibility { label: _("Message relays"); }
+          }
         }
 
-        [placeholder]
-        Label {
-          label: _("No message relays published");
-          margin-top: 12;
-          margin-bottom: 12;
-          margin-start: 12;
-          margin-end: 12;
+        Adw.PreferencesGroup write_relays_group {
+          title: _("Publish Relays");
 
-          styles [
-            "dim-label",
-          ]
-        }
-      }
-
-      ListBox write_relays_list {
-        selection-mode: none;
-
-        styles [
-          "boxed-list",
-        ]
-
-        accessibility {
-          label: _("Publish relays");
+          ListBox write_relays_list {
+            selection-mode: none;
+            styles ["boxed-list"]
+            accessibility { label: _("Publish relays"); }
+          }
         }
 
-        [placeholder]
-        Label {
-          label: _("No publish relays");
-          margin-top: 12;
-          margin-bottom: 12;
-          margin-start: 12;
-          margin-end: 12;
-
-          styles [
-            "dim-label",
-          ]
+        Button published_relays_change {
+          label: _("_Change Relays…");
+          use-underline: true;
+          halign: start;
+          action-name: "prefs.change-relays";
+          styles ["pill"]
         }
-      }
-
-      Button published_relays_change {
-        label: _("_Change Relays…");
-        use-underline: true;
-        halign: start;
-        action-name: "prefs.change-relays";
-
-        styles [
-          "pill",
-        ]
       }
     }
 

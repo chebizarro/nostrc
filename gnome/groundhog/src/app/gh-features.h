@@ -53,9 +53,9 @@ G_BEGIN_DECLS
 /* G13: the composer sends through the durable outbox (gh-send-ui.c); a build
  * without it disables the composer, so Enter has nothing to send. */
 #define GH_FEATURE_COMPOSER         GROUNDHOG_HAVE_OUTBOX
-#define GH_FEATURE_REMOTE_IMAGES    0 /* no remote image loader */
-#define GH_FEATURE_PROFILE_PICTURES 0 /* no profile picture fetcher */
-#define GH_FEATURE_LINK_PREVIEWS    0 /* no link preview fetcher */
+#define GH_FEATURE_REMOTE_IMAGES    1
+#define GH_FEATURE_PROFILE_PICTURES 1
+#define GH_FEATURE_LINK_PREVIEWS    1
 #define GH_FEATURE_REQUEST_FILTER   0 /* message requests are always kept apart */
 /* G21/G22: encrypted Blossom attachments (src/media/gh-attachments.c,
  * src/app/gh-attachment-ui.c, run by gh-app-services.c with the store); a

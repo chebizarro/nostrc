@@ -1596,6 +1596,12 @@ new_message_teardown(GhAppServices *self)
 
 #if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_OUTBOX
 /* What the contact directory has cached; never a lookup. */
+static gchar *
+directory_picture_uri(const gchar *pubkey, gpointer data)
+{
+  return gh_contact_directory_dup_picture_uri(GH_CONTACT_DIRECTORY(data), pubkey);
+}
+
 static const gchar *
 directory_display_name(gpointer data, const gchar *pubkey)
 {
@@ -1897,6 +1903,8 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_OUTBOX
   GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
   if (directory) {
+    gh_conversation_view_set_picture_source(GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window))),
+                                             directory_picture_uri, G_OBJECT(directory));
     new_message.inboxes = GH_INBOX_RESOLVER(directory);
     new_message.display_name = directory_display_name;
     new_message.claimed_nip05 = directory_claimed_nip05;

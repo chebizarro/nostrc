@@ -168,7 +168,7 @@ Each default has an ID, a rationale and a test. Test IDs are defined in §9.
 
 ### 2.1 Optional previews and remote media, done safely (all off by default)
 
-- **Trigger.** A per-message "Show Preview" or "Load Image" button. The first use shows an `AdwAlertDialog` naming the host and the current network mode: "This connects to example.com from your IP address" or "…through Tor". It has a "Don't ask again" option that sets `link-previews` or `load-remote-images` globally.
+- **Trigger.** A per-message "Show Preview", "Load Linked Image", or "Load Profile Picture" button is offered only when a fetcher exists and the conversation is not a Message Request. Every new sender and content type first shows an `AdwAlertDialog` naming the host and current network mode: "This connects to example.com from your IP address" or "…through Tor". "Don't ask again" remembers that sender and content type only while this conversation remains open; leaving it forgets the permission. The corresponding Web Content switch starts off, turning it on alone never grants consent or fetches anything, and turning it off revokes remembered permission and cancels pending loads.
 - **Fetch.** `GhNet` HTTP session, same network mode as relays. GET only; `https` (or `http` to `.onion` in Tor mode); no cookies, cache or `Referer`; at most 3 redirects, each re-checked; 10 s timeout.
   - Preview HTML: at most 256 KiB, parsing only `<head>` for `og:title`, `og:description` and `og:image`.
   - Images: at most 2 MiB, PNG or JPEG by magic bytes. Header dimensions ≤ 4096×4096 are checked before decoding with `gdk_texture_new_from_bytes` (GTK's built-in PNG/JPEG loaders, not gdk-pixbuf).

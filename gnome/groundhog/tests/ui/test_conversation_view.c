@@ -21,6 +21,8 @@
 
 #include "nostrc-test-gdk-frame.h"
 #include "gh-conversation-private.h"
+#include "gh-preferences-dialog.h"
+#include "blossom-fixture.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
 #include "gh-timeline-row.h"
@@ -943,6 +945,7 @@ test_links(Fixture *f, gconstpointer data)
   GhMessage *m = add_dm(f->store, 2, 1, noon_today(), text);
   GhConversation *conversation = room_of(f->store, m);
   gh_conversation_mark_read(conversation);
+  gh_conversation_accept(conversation);
   show(f, conversation, 700, 600);
   GhMessageRow *row = row_for(f->view, m);
 
@@ -1069,6 +1072,7 @@ test_link_previews(Fixture *f, gconstpointer data)
   GhMessage *third = add_dm(f->store, 2, 1, t + 1800, "last https://third.example/y");
   GhConversation *conversation = room_of(f->store, news);
   gh_conversation_mark_read(conversation);
+  gh_conversation_accept(conversation);
   show(f, conversation, 700, 700);
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   GtkCheckButton *dont_ask = view_child(f->view, "preview_dont_ask");
@@ -1145,6 +1149,234 @@ test_link_previews(Fixture *f, gconstpointer data)
   g_assert_true(shown(button));
   g_assert_true(gtk_widget_get_sensitive(button));
   spin_until(not_loading, f);
+}
+
+static void
+test_sender_scoped_consent(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  const guint to_ac[] = { 1, 3, 0 }, to_ab[] = { 1, 2, 0 };
+  GhMessage *first = add_to(f->store, 2, to_ac, t,
+                            "https://sender-two.example/one", "Weekend Hike");
+  GhMessage *same_sender = add_to(f->store, 2, to_ac, t + 60,
+                                  "https://sender-two.example/two", NULL);
+  GhMessage *other_sender = add_to(f->store, 3, to_ab, t + 120,
+                                   "https://sender-three.example/one", NULL);
+  GhConversation *conversation = room_of(f->store, first);
+  g_assert_true(room_of(f->store, other_sender) == conversation);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 700, 700);
+  gh_conversation_view_set_link_preview_fetcher(f->view, fake_fetch, fake_finish, f, NULL);
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  GtkCheckButton *dont_ask = view_child(f->view, "preview_dont_ask");
+
+  click(row_child(row_for(f->view, first), "preview_button"));
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(f->fetches, ==, 0);
+  gtk_check_button_set_active(dont_ask, TRUE);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  g_assert_cmpuint(f->fetches, ==, 1);
+  answer_fetch(f, "First", NULL);
+  StateWait first_loaded = { f, first, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &first_loaded);
+
+  click(row_child(row_for(f->view, same_sender), "preview_button"));
+  g_assert_false(dialog_presented(dialog));
+  g_assert_cmpuint(f->fetches, ==, 2);
+  answer_fetch(f, "Second", NULL);
+  StateWait second_loaded = { f, same_sender, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &second_loaded);
+
+  /* A group member cannot inherit another member's permission. */
+  click(row_child(row_for(f->view, other_sender), "preview_button"));
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(f->fetches, ==, 2);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+
+  /* A different conversation cannot inherit the first one's setting, even
+   * though the global switch is now on. Returning also asks afresh. */
+  GhMessage *different = add_dm(f->store, 4, 1, t + 180,
+                                "https://sender-four.example/one");
+  GhConversation *different_room = room_of(f->store, different);
+  gh_conversation_accept(different_room);
+  gh_conversation_view_set_conversation(f->view, different_room);
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s",
+                             gh_message_get_rumor_id(different));
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(f->fetches, ==, 2);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  gh_conversation_view_set_conversation(f->view, conversation);
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s",
+                             gh_message_get_rumor_id(same_sender));
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(f->fetches, ==, 2);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  g_settings_reset(f->settings, "link-previews");
+}
+
+typedef struct { GObject parent_instance; } TestPictureSource;
+typedef struct { GObjectClass parent_class; } TestPictureSourceClass;
+G_DEFINE_TYPE(TestPictureSource, test_picture_source, G_TYPE_OBJECT)
+static void test_picture_source_class_init(TestPictureSourceClass *klass)
+{
+  g_signal_new("profile-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+}
+static void test_picture_source_init(TestPictureSource *self) { (void)self; }
+
+/* Same local HTTP fixture as the attachment tests; the injected transport
+ * changes only https to loopback http. Parsing, bounds, cancellation and the
+ * real GhNetHttp request run normally. Production refuses private addresses. */
+static void
+web_local_get(gpointer data, const gchar *uri, gsize limit, GCancellable *cancel,
+              GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_assert_true(g_str_has_prefix(uri, "https://127.0.0.1:"));
+  g_autofree gchar *local = g_strconcat("http://", uri + strlen("https://"), NULL);
+  gh_net_http_get_accept_async(data, local, "*/*", limit, cancel, callback, user_data);
+}
+static GBytes *web_local_finish(gpointer data, GAsyncResult *result, GError **error)
+{ return gh_net_http_get_finish(data, result, error); }
+static gchar *web_picture_uri(const gchar *pubkey, gpointer data)
+{
+  g_assert_cmpstr(pubkey, ==, hex[2]);
+  return g_strdup(g_object_get_data(data, "picture"));
+}
+typedef struct { Fixture *f; GhMessage *message; GhWebKind kind; } WebWait;
+static gboolean web_loaded(gpointer data)
+{
+  WebWait *wait = data;
+  if (wait->kind == GH_WEB_PREVIEW)
+    return preview_state(wait->f, wait->message) == GH_LINK_PREVIEW_LOADED;
+  GhLinkPreviewState state;
+  return gh_conversation_view_get_web_texture(wait->f->view, wait->message, wait->kind, &state) != NULL;
+}
+static gboolean web_held(gpointer data) { return blossom_fixture_held(data) > 0; }
+
+static void
+test_web_consent(Fixture *f, gconstpointer data)
+{
+  GhWebKind kind = GPOINTER_TO_UINT(data);
+  const gchar *key = gh_web_content_setting(kind);
+  g_settings_set_boolean(f->settings, key, FALSE);
+  g_settings_set_string(f->settings, "network-mode", "none");
+  BlossomFixture *server = blossom_fixture_new();
+  g_autoptr(GBytes) body = NULL;
+  if (kind == GH_WEB_PREVIEW) {
+    const gchar *html = "<html><head><meta property='og:title' content='Local story'>"
+      "<meta property='og:description' content='Only head text'>"
+      "<meta property='og:image' content='https://127.0.0.1:1/not-fetched'></head>"
+      "<body><img src='https://127.0.0.1:1/not-fetched'></body></html>";
+    body = g_bytes_new(html, strlen(html));
+  } else {
+    guint8 pixel[] = { 255, 0, 0, 255 };
+    g_autoptr(GBytes) pixels = g_bytes_new(pixel, sizeof pixel);
+    g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, pixels, 4));
+    body = gdk_texture_save_to_png_bytes(texture);
+  }
+  g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
+  blossom_fixture_put_blob(server, hash, body);
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s", blossom_fixture_port(server), hash);
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), uri);
+  GhConversation *conversation = room_of(f->store, message);
+  show(f, conversation, 700, 700);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(f->settings);
+  static const GhHttpTransport transport = { web_local_get, web_local_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, http);
+  g_autoptr(GObject) source = g_object_new(test_picture_source_get_type(), NULL);
+  if (kind != GH_WEB_PICTURE)
+    g_object_set_data_full(source, "picture", g_strdup(uri), g_free);
+  gh_conversation_view_set_picture_source(f->view, web_picture_uri, source);
+  g_autoptr(GhPreferencesDialog) prefs = g_object_ref_sink(gh_preferences_dialog_new(f->settings,
+    GH_PREFERENCES_FEATURE_LINK_PREVIEWS | GH_PREFERENCES_FEATURE_REMOTE_IMAGES |
+    GH_PREFERENCES_FEATURE_PROFILE_PICTURES));
+  AdwSwitchRow *setting = ADW_SWITCH_ROW(gh_preferences_dialog_get_key_widget(prefs, key));
+  g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(setting)));
+  g_assert_false(adw_switch_row_get_active(setting));
+  drain_idle();
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  const gchar *button_name = kind == GH_WEB_PREVIEW ? "preview_button"
+    : kind == GH_WEB_IMAGE ? "image_button" : "picture_button";
+  GtkWidget *button = row_child(row_for(f->view, message), button_name);
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  /* A Message Request offers no web action; even direct action activation
+   * cannot trigger consent or traffic. Acceptance reveals the action. */
+  g_assert_true(gh_conversation_get_is_request(conversation));
+  g_assert_false(shown(kind == GH_WEB_PREVIEW
+    ? row_child(row_for(f->view, message), "preview_box") : button));
+  g_autofree gchar *request_id = g_strconcat(kind == GH_WEB_PREVIEW ? "" :
+    kind == GH_WEB_IMAGE ? "image:" : "picture:", gh_message_get_rumor_id(message), NULL);
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s", request_id);
+  drain_idle();
+  g_assert_false(dialog_presented(dialog));
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  gh_conversation_accept(conversation);
+  if (kind == GH_WEB_PICTURE) {
+    g_assert_false(shown(button));
+    /* Kind-0 metadata can arrive after the row: expose the action then. */
+    g_object_set_data_full(source, "picture", g_strdup(uri), g_free);
+    g_signal_emit_by_name(source, "profile-changed", hex[2]);
+  }
+  g_assert_true(shown(button));
+  click(button);
+  spin_until(dialog_presented, dialog);
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(dialog), "127.0.0.1"));
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  drain_idle();
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  /* A global preference alone must never grant consent. */
+  adw_switch_row_set_active(setting, TRUE);
+  click(button);
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  gtk_check_button_set_active(view_child(f->view, "preview_dont_ask"), TRUE);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  WebWait loaded = { f, message, kind };
+  spin_until(web_loaded, &loaded);
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 1);
+  if (kind == GH_WEB_PREVIEW) {
+    const gchar *title = NULL;
+    gh_conversation_view_get_link_preview(f->view, message, &title, NULL);
+    g_assert_cmpstr(title, ==, "Local story");
+  }
+  /* Revocation clears results and consent. A pending request cannot restore
+   * the old result after its callback arrives, even in the same room. */
+  adw_switch_row_set_active(setting, FALSE);
+  g_assert_false(web_loaded(&loaded));
+  blossom_fixture_set_hold(server, TRUE);
+  click(row_child(row_for(f->view, message), button_name));
+  spin_until(dialog_presented, dialog);
+  gtk_check_button_set_active(view_child(f->view, "preview_dont_ask"), TRUE);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  spin_until(web_held, server);
+  adw_switch_row_set_active(setting, FALSE);
+  blossom_fixture_release_held(server);
+  drain_idle();
+  g_assert_false(web_loaded(&loaded));
+  /* Returning to a room doesn't restore permission, even with the preference on. */
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_set_conversation(f->view, conversation);
+  adw_switch_row_set_active(setting, TRUE);
+  g_autofree gchar *id = g_strconcat(kind == GH_WEB_PREVIEW ? "" : kind == GH_WEB_IMAGE ? "image:" : "picture:",
+                                    gh_message_get_rumor_id(message), NULL);
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s", id);
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 2);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  g_settings_reset(f->settings, key);
+  blossom_fixture_free(server);
 }
 
 /* ---- expiry ---------------------------------------------------------------------------- */
@@ -1928,6 +2160,7 @@ main(int argc, char **argv)
   ADD("delivery-indicator", test_delivery_indicator);
   ADD("links", test_links);
   ADD("link-previews", test_link_previews);
+  ADD("sender-scoped-consent", test_sender_scoped_consent);
   ADD("file-message", test_file_message);
   ADD("expiry", test_expiry);
   ADD("scrolling", test_scrolling);
@@ -1937,6 +2170,10 @@ main(int argc, char **argv)
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);
   ADD("wide-is-not-compact", test_wide_is_not_compact);
+  for (guint kind = 0; kind < GH_WEB_N_KINDS; kind++) {
+    g_autofree gchar *path = g_strdup_printf("/groundhog/conversation-view/web-consent/%s", gh_web_content_setting(kind));
+    g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
+  }
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);
   g_test_add_func("/groundhog/conversation-view/screenshots", test_screenshots);
