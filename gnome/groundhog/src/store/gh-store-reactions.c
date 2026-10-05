@@ -11,6 +11,7 @@ struct _GhStoreReactions {
 G_DEFINE_FINAL_TYPE(GhStoreReactions, gh_store_reactions, G_TYPE_OBJECT)
 
 #define REACTION_AUTHOR_ROOM_LIMIT 64
+#define REACTION_AUTHOR_ACCOUNT_LIMIT 256
 #define REACTION_ROOM_LIMIT 512
 #define REACTION_ACCOUNT_LIMIT 4096
 #define REACTION_PENDING_SECONDS (7 * 24 * 60 * 60)
@@ -39,43 +40,6 @@ lookup_room(sqlite3 *db, const gchar *room_id, gboolean *known, GError **error)
   if (rc == SQLITE_ROW)
     *known = TRUE;
   return rc == SQLITE_ROW || sql_error(db, rc, "lookup room", error);
-}
-
-/* Existing keys add no row. At the account ceiling, a new key may only
- * replace an entry in its own full author/room or room bucket: an unrelated
- * room must never evict an under-quota known room. */
-static gboolean
-has_deferred_capacity(sqlite3 *db, const gchar *table, const gchar *room,
-                      const gchar *sender, const gchar *rid,
-                      gboolean *available, GError **error)
-{
-  *available = FALSE;
-  g_autofree gchar *sql = g_strdup_printf(
-    "SELECT (SELECT count(*) FROM %s) < " G_STRINGIFY(REACTION_ACCOUNT_LIMIT)
-    " OR (SELECT count(*) FROM %s WHERE room_id = ?1 AND sender_pubkey = ?2) >= "
-    G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT)
-    " OR (SELECT count(*) FROM %s WHERE room_id = ?1) >= "
-    G_STRINGIFY(REACTION_ROOM_LIMIT)
-    " OR EXISTS (SELECT 1 FROM %s WHERE room_id = ?1 AND sender_pubkey = ?2 "
-    "AND reaction_msg_id = ?3)", table, table, table, table);
-  sqlite3_stmt *stmt = NULL;
-  if (!sql_error(db, sqlite3_prepare_v2(db, sql, -1, &stmt, NULL),
-                 "prepare deferred capacity", error))
-    return FALSE;
-  sqlite3_bind_text(stmt, 1, room, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 2, sender, -1, SQLITE_TRANSIENT);
-  sqlite3_bind_text(stmt, 3, rid, -1, SQLITE_TRANSIENT);
-  int rc = sqlite3_step(stmt);
-  if (rc == SQLITE_ROW)
-    *available = sqlite3_column_int(stmt, 0) != 0;
-  sqlite3_finalize(stmt);
-  if (rc == SQLITE_ROW)
-    return TRUE;
-  if (rc == SQLITE_DONE) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "No deferred capacity result");
-    return FALSE;
-  }
-  return sql_error(db, rc, "check deferred capacity", error);
 }
 
 static gboolean
@@ -107,7 +71,31 @@ prune_deferred(sqlite3 *db, GError **error)
     "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
     "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
     "PARTITION BY room_id ORDER BY arrival_seq DESC) AS n "
-    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");";
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");"
+    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ACCOUNT_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ACCOUNT_LIMIT) ");"
+    /* An author's nth-newest row is its oldest when it has n rows left.
+     * Descending n therefore drains the heaviest authors first, rebalancing
+     * after each removal; arrival_seq breaks ties oldest-first. The newest
+     * arrival survives rather than being rejected at a full account. */
+    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) ORDER BY n DESC, arrival_seq ASC "
+    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(REACTION_ACCOUNT_LIMIT) ") "
+    "FROM pending_reactions));"
+    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) ORDER BY n DESC, arrival_seq ASC "
+    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(REACTION_ACCOUNT_LIMIT) ") "
+    "FROM reaction_tombstones));";
   return sql_error(db, sqlite3_exec(db, sql, NULL, NULL, NULL), "prune reactions", error);
 }
 
@@ -221,13 +209,6 @@ delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
     return FALSE;
   }
   if (conversation_id < 0) {
-    gboolean available = FALSE;
-    if (!has_deferred_capacity(db, "pending_reactions", room_id,
-                               gh_reaction_get_sender(reaction),
-                               gh_reaction_get_reaction_rumor_id(reaction), &available, error))
-      return FALSE;
-    if (!available)
-      return FALSE;
     sqlite3_stmt *pending = NULL;
     rc = sqlite3_prepare_v2(db,
       "INSERT OR IGNORE INTO pending_reactions "
@@ -292,28 +273,21 @@ delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender
   if (!prune_deferred(db, error))
     return FALSE;
   sqlite3_stmt *stmt = NULL;
-  gboolean keep_notice = FALSE;
-  if (!has_deferred_capacity(db, "reaction_tombstones", room, sender, rid,
-                             &keep_notice, error))
-    return FALSE;
-  int rc = SQLITE_OK;
-  if (keep_notice) {
-    rc = sqlite3_prepare_v2(db,
+  int rc = sqlite3_prepare_v2(db,
     "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
     "VALUES (?, ?, ?, CAST(strftime('%s','now') AS INTEGER)) "
     "ON CONFLICT(reaction_msg_id, room_id, sender_pubkey) DO UPDATE SET "
     "received_at = excluded.received_at, arrival_seq = excluded.arrival_seq",
     -1, &stmt, NULL);
-    if (!sql_error(db, rc, "prepare deletion notice", error))
-      return FALSE;
-    sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, room, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
-    rc = sqlite3_step(stmt);
-    sqlite3_finalize(stmt);
-    if (!sql_error(db, rc, "write deletion notice", error))
-      return FALSE;
-  }
+  if (!sql_error(db, rc, "prepare deletion notice", error))
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, rid, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, room, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
+  rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (!sql_error(db, rc, "write deletion notice", error))
+    return FALSE;
   rc = sqlite3_prepare_v2(db,
     "DELETE FROM pending_reactions WHERE reaction_msg_id = ? AND room_id = ? "
     "AND sender_pubkey = ?", -1, &stmt, NULL);

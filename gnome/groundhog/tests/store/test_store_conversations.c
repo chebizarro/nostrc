@@ -1966,13 +1966,9 @@ test_reaction_unknown_room_flood(void)
 }
 
 static void
-test_reaction_account_cap(void)
+seed_full_reaction_account(Fixture *f)
 {
-  Fixture f;
-  fixture_init(&f, ACCOUNT_A, 0);
-  ReactionHarness r = { 0 };
-  reaction_harness_open(&f, &r);
-  g_assert_true(gh_store_exec(f.store,
+  g_assert_true(gh_store_exec(f->store,
     "WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<63) "
     "INSERT INTO conversations (backend,backend_key,created_at,last_activity) "
     "SELECT 1,printf('cap-room-%03d',x),1,1 FROM n;"
@@ -1987,6 +1983,83 @@ test_reaction_account_cap(void)
     "INSERT INTO reaction_tombstones (reaction_msg_id,room_id,sender_pubkey,received_at) "
     "SELECT printf('cap-tombstone-%04d',x),printf('cap-room-%03d',(x-1)/64),"
     "printf('sender-%03d',(x-1)%64),2000000000 FROM n", NULL));
+}
+
+static void
+test_reaction_known_room_author_flood(gconstpointer data)
+{
+  const gchar *table = data;
+  gboolean tombstones = g_str_equal(table, "reaction_tombstones");
+  const gchar *prefix = tombstones ? "cap-tombstone" : "cap-pending";
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  seed_full_reaction_account(&f);
+  /* A store populated under the old policy: one author has 64 entries in
+   * each of 64 known rooms, filling both account tables. */
+  char *sql = sqlite3_mprintf(
+    "UPDATE pending_reactions SET sender_pubkey = %Q;"
+    "UPDATE reaction_tombstones SET sender_pubkey = %Q", PEER_Q, PEER_Q);
+  g_assert_true(gh_store_exec(f.store, sql, NULL));
+  sqlite3_free(sql);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s", table), ==, 4096);
+
+  if (tombstones) {
+    g_assert_true(gh_reaction_store_delete_event(r.model, "legitimate-new", PEER_P,
+                                                  "cap-new-room", NULL));
+  } else {
+    g_autoptr(GhReaction) next = gh_reaction_new("future-target", "legitimate-new",
+                                                 PEER_P, "+", T0, "cap-new-room");
+    g_assert_false(gh_reaction_store_admit(r.model, next, NULL));
+  }
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE "
+                                   "reaction_msg_id = 'legitimate-new'", table), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s", table), ==, 257);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE sender_pubkey = '%s'",
+                                   table, PEER_Q), ==, 256);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE reaction_msg_id = '%s-0001'",
+                                   table, prefix), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE reaction_msg_id = '%s-4096'",
+                                   table, prefix), ==, 1);
+
+  /* Continued traffic replaces this author's own oldest arrival across rooms,
+   * not the other author's entry in the newly admitted room. */
+  if (tombstones) {
+    g_assert_true(gh_reaction_store_delete_event(r.model, "flood-next", PEER_Q,
+                                                  "cap-room-000", NULL));
+  } else {
+    g_autoptr(GhReaction) next = gh_reaction_new("future-target", "flood-next",
+                                                 PEER_Q, "+", T0, "cap-room-000");
+    g_assert_false(gh_reaction_store_admit(r.model, next, NULL));
+  }
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s", table), ==, 257);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE sender_pubkey = '%s'",
+                                   table, PEER_Q), ==, 256);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE reaction_msg_id = '%s-3841'",
+                                   table, prefix), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM %s WHERE reaction_msg_id IN "
+                                   "('legitimate-new', 'flood-next')", table), ==, 2);
+  reaction_harness_close(&f, &r);
+  fixture_clear(&f);
+}
+
+static void
+test_reaction_account_cap(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  ReactionHarness r = { 0 };
+  reaction_harness_open(&f, &r);
+  seed_full_reaction_account(&f);
+  /* The oldest arrival belongs to a light author. At the account ceiling,
+   * choose the heaviest author's oldest entry, not the account's oldest. */
+  char *sql = sqlite3_mprintf(
+    "UPDATE pending_reactions SET sender_pubkey = %Q WHERE reaction_msg_id = 'cap-pending-0001';"
+    "UPDATE reaction_tombstones SET sender_pubkey = %Q WHERE reaction_msg_id = 'cap-tombstone-0001'",
+    PEER_R, PEER_R);
+  g_assert_true(gh_store_exec(f.store, sql, NULL));
+  sqlite3_free(sql);
   g_autoptr(GhReaction) next = gh_reaction_new("future-target", "cap-new-pending",
                                                PEER_P, "+", T0, "cap-new-room");
   g_assert_false(gh_reaction_store_admit(r.model, next, NULL));
@@ -1999,15 +2072,24 @@ test_reaction_account_cap(void)
   g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
                                    "reaction_msg_id = 'cap-tombstone-0001'"), ==, 1);
 
-  /* Repeating a deletion adds no row, even when this under-quota room cannot
-   * admit another tombstone at the account ceiling. Keep its receipt fresh. */
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions WHERE "
+                                   "reaction_msg_id = 'cap-new-pending'"), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'cap-new-tombstone'"), ==, 1);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM pending_reactions WHERE "
+                                   "reaction_msg_id = 'cap-pending-0002'"), ==, 0);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = 'cap-tombstone-0002'"), ==, 0);
+
+  /* Repeating a deletion adds no row and still refreshes its receipt at the
+   * account ceiling. */
   g_assert_true(gh_store_exec(f.store,
     "UPDATE reaction_tombstones SET received_at = CAST(strftime('%s','now') AS INTEGER) - 60 "
     "WHERE reaction_msg_id = 'cap-tombstone-0001'", NULL));
   gint64 previous_receipt = sql_int(f.store,
     "SELECT received_at FROM reaction_tombstones WHERE reaction_msg_id = 'cap-tombstone-0001'");
   gint64 previous_sequence = sql_int(f.store, "SELECT max(arrival_seq) FROM reaction_tombstones");
-  g_assert_true(gh_reaction_store_delete_event(r.model, "cap-tombstone-0001", "sender-000",
+  g_assert_true(gh_reaction_store_delete_event(r.model, "cap-tombstone-0001", PEER_R,
                                                 "cap-room-000", NULL));
   g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 4096);
   g_assert_cmpint(sql_int(f.store, "SELECT received_at FROM reaction_tombstones WHERE "
@@ -2061,6 +2143,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/reaction-ordering/unknown-room-flood",
                   test_reaction_unknown_room_flood);
   g_test_add_func("/groundhog/reaction-ordering/account-cap", test_reaction_account_cap);
+  g_test_add_data_func("/groundhog/reaction-ordering/known-room-author-flood/pending",
+                       "pending_reactions", test_reaction_known_room_author_flood);
+  g_test_add_data_func("/groundhog/reaction-ordering/known-room-author-flood/tombstone",
+                       "reaction_tombstones", test_reaction_known_room_author_flood);
   int status = g_test_run();
   g_free(ACCOUNT_A);
   g_free(ACCOUNT_B);
