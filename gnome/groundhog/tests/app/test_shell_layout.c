@@ -687,6 +687,12 @@ is_collapsed(gpointer data)
 }
 
 static gboolean
+is_not_collapsed(gpointer data)
+{
+  return !is_collapsed(data);
+}
+
+static gboolean
 is_expanded(gpointer data)
 {
   return is_laid_out(data) && !adw_navigation_split_view_get_collapsed(
@@ -730,6 +736,51 @@ test_breakpoint_collapses_below_600sp(void)
     adw_breakpoint_condition_to_string(adw_breakpoint_get_condition(breakpoint));
   g_assert_cmpstr(condition, ==, "max-width: 600sp");
   gtk_window_destroy(GTK_WINDOW(narrow));
+}
+
+/* W29 (nostrc-lol6): a long conversation title is readable at every width.
+ * Wide: the header label shows it (middle-ellipsized only when it truly
+ * cannot fit). Narrow (<= 600sp): the header label gives way to a full-width
+ * two-line label that wraps and never ellipsizes, so the title the owner
+ * saw cut to uselessness at 360px reads in full. */
+static void
+test_narrow_title_not_truncated(void)
+{
+  const gchar *title = "Weekend hiking plans with the whole Groundhog burrow crew 2026";
+  GhWindow *window = new_mapped_window(360, 294);
+  spin_until(is_collapsed, window);
+  GhContentPage *page = gh_window_get_content(window);
+  gh_content_page_set_title(page, title, NULL);
+  gh_content_page_set_conversation_shown(page, TRUE);
+  /* Collapsed, the content page is only laid out once it is shown. */
+  adw_navigation_split_view_set_show_content(gh_window_get_split(window), TRUE);
+  drain_idle();
+  GtkLabel *narrow = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(page),
+                                                             GH_TYPE_CONTENT_PAGE,
+                                                             "narrow_title_label"));
+  GtkLabel *header = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(page),
+                                                             GH_TYPE_CONTENT_PAGE,
+                                                             "title_label"));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(narrow)));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(header)));
+  g_assert_cmpstr(gtk_label_get_text(narrow), ==, title);
+  PangoLayout *layout = gtk_label_get_layout(narrow);
+  g_assert_false(pango_layout_is_ellipsized(layout));
+  g_assert_cmpint(pango_layout_get_line_count(layout), <=, 2);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(narrow)), >, 0);
+  g_assert_cmpint(gtk_widget_get_width(GTK_WIDGET(narrow)), <=, 360);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(narrow)), ==, title);
+
+  /* Wide again: the header label takes over, with the full text available. */
+  gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
+  drain_idle();
+  spin_until(is_not_collapsed, window);
+  drain_idle();
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(header)));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(narrow)));
+  g_assert_cmpstr(gtk_label_get_text(header), ==, title);
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(header)), ==, title);
+  gtk_window_destroy(GTK_WINDOW(window));
 }
 
 /* UX-1: mapped at the 360x294 minimum, the window is collapsed, the sidebar
@@ -822,6 +873,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/shell/breakpoint-collapses-below-600sp",
                   test_breakpoint_collapses_below_600sp);
   g_test_add_func("/groundhog/shell/minimum-size-layout", test_minimum_size_layout);
+  g_test_add_func("/groundhog/shell/narrow-title-not-truncated", test_narrow_title_not_truncated);
   g_test_add_func("/groundhog/shell/rtl-construction-is-safe", test_rtl_construction_is_safe);
   return g_test_run();
 }
