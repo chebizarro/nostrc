@@ -1099,7 +1099,7 @@ test_relay_layout(Fixture *f, gconstpointer data)
   (void)data;
   const gchar *urls[] = { "wss://relay.example.com", NULL };
   gh_preferences_dialog_set_published_relays(f->dialog, urls, urls);
-  present(f, 900, 900);
+  present(f, 800, 700);
   adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(f->dialog), "network");
   drain_idle();
   gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
