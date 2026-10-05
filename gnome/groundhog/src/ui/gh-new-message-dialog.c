@@ -1386,6 +1386,39 @@ present_dialog(GhWindow *window, gpointer data)
 }
 
 static void
+open_uri(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  Attachment *attachment = data;
+  const char *uri = g_variant_get_string(parameter, NULL);
+  g_autoptr(GhRecipientInput) input = gh_recipient_input_parse(uri);
+  const char *account = gh_conversation_store_get_account(attachment->config.conversations);
+  const char *problem = NULL;
+  if (!account)
+    problem = _("Select an account, then open this link again.");
+  else if (g_ascii_strncasecmp(uri, "nostr:", 6) != 0 ||
+           input->kind != GH_RECIPIENT_INPUT_PUBKEY)
+    problem = _("This link is not an npub or nprofile for a person.");
+  else if (g_strcmp0(input->pubkey, account) == 0)
+    problem = _("This is your own key. Use Note to Self in New Message.");
+  if (problem) {
+    AdwDialog *notice = adw_alert_dialog_new(_("Cannot Open Message Link"), problem);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(notice), "close", _("Close"));
+    adw_dialog_present(notice, GTK_WIDGET(attachment->window));
+    return;
+  }
+  GhNewMessageConfig config = attachment->config;
+  /* A nostr: person link explicitly starts NIP-17, regardless of the user's
+   * preferred protocol. No KeyPackage lookup or contact acceptance on open. */
+  config.create_marmot_dm = NULL;
+  GhNewMessageDialog *dialog = gh_new_message_dialog_new(&config);
+  add_recipient(dialog, input->pubkey, NULL);
+  g_signal_connect(dialog, "conversation-started", G_CALLBACK(on_started), attachment);
+  g_signal_connect_after(dialog, "closed", G_CALLBACK(on_closed), attachment);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attachment->window));
+}
+
+static void
 sync_enabled(GhWindow *window, GParamSpec *pspec, GhConversationStore *conversations)
 {
   (void)pspec;
@@ -1413,4 +1446,7 @@ gh_new_message_attach(GhWindow *window, const GhNewMessageConfig *config)
   g_signal_connect_object(config->conversations, "notify::account", G_CALLBACK(sync_enabled),
                           window, G_CONNECT_SWAPPED);
   sync_enabled(window, NULL, config->conversations);
+  g_autoptr(GSimpleAction) uri_action = g_simple_action_new("message-uri", G_VARIANT_TYPE_STRING);
+  g_signal_connect(uri_action, "activate", G_CALLBACK(open_uri), attachment);
+  g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(uri_action));
 }

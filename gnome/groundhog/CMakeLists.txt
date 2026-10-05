@@ -41,7 +41,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
-  gh-add-contact-dialog
+  gh-add-contact-dialog gh-issue-dialog
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
@@ -3051,3 +3051,26 @@ foreach(_gdk_frame_test
       ${CMAKE_SOURCE_DIR}/tests/common)
   endif()
 endforeach()
+
+# NIP-34 reports share gnostr's libnip34 builder; no new protocol implementation.
+if (TARGET groundhog-inbox-setup)
+  if (NOT TARGET nip34)
+    add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34)
+  endif()
+  add_library(groundhog-issue STATIC src/ui/gh-issue-dialog.c)
+  target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup nip34 PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(groundhog-issue PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-issue)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ISSUE=1)
+endif()
+
+if (TARGET test-groundhog-about AND TARGET groundhog-issue AND TARGET groundhog-new-message)
+  target_sources(test-groundhog-about PRIVATE tests/ui/test_about_flows.c src/app/gh-inbox-resolver.c)
+  target_include_directories(test-groundhog-about PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+  target_link_libraries(test-groundhog-about PRIVATE groundhog-issue groundhog-new-message nostrc-test-bus)
+  target_compile_definitions(test-groundhog-about PRIVATE GH_ABOUT_FLOWS=1)
+  add_dependencies(test-groundhog-about groundhog-test-schemas)
+  set_tests_properties(groundhog-about groundhog-about-gui PROPERTIES TIMEOUT 120
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+endif()

@@ -20,7 +20,38 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 
 ## 0. Summary
 
-### 0.1 Key decisions
+### About links and public issue reports (W29, nostrc-lz9e)
+
+- The developer's `nostr:` link stays in Groundhog. Application URI activation
+  and About links decode npub/nprofile offline, discard relay hints, and open
+  New Message with one recipient. This path explicitly uses NIP-17, not the
+  default Marmot preference. Opening never sends, accepts a request, unblocks
+  a person, or looks up a profile/inbox. The existing confirmation, blocked
+  conversation warning, explicit lookup consent and Start Conversation rules
+  apply. Without an account, explain that the user must select one and reopen
+  the link. Invalid/non-person URIs never fall through to an external handler.
+  The desktop entry accepts explicitly passed NIP-21 URIs with `%U` but does
+  not claim `x-scheme-handler/nostr`: `nostr-dispatcher` remains the sole
+  system handler and routes links by kind.
+- About → Report an Issue opens a public NIP-34 composer, not a private chat.
+  The GitHub issues page remains a secondary external link. It targets the
+  same nostrc repository announcement as gnostr (`30617`, owner Biz, `d=nostrc`)
+  using the same libnip34 issue builder. Unlike a diagnostic uploader, it adds
+  no logs, attachments, system information or conversation data.
+- The editable relay list starts with the user's discovery settings (empty
+  when unconfigured). There is no implicit repository lookup or hidden relay
+  fallback. Review shows the exact title/body, normalized relays, account
+  pubkey, repository address and labels/maintainer/alt text. It explains that
+  the signed kind-1621 event and its timestamp are public, attributable and
+  cannot reliably be deleted. Cancel is the default. Only **Publish Public
+  Issue** builds the event and asks Nostr Signer; only those displayed relays
+  receive it. There is no additional status event or account AUTH.
+- Closing cancels pending signing/publication; changing accounts invalidates
+  the preview. Once an EVENT is sent it cannot be recalled. A relay's OK is
+  required for confirmation; partial acceptance and unconfirmed publication
+  are described honestly. No automatic retry creates another issue.
+
+## 0.1 Key decisions
 
 1. **No read receipts, typing indicators, presence or "delivered/read" states. Ever.** Status never claims more than a relay-local `OK`. The strongest outgoing state is "Sent", defined as "accepted by at least one of each recipient's inbox relays", with details on demand.
 2. **Nothing is fetched from the web by default.** This covers link previews, remote images, profile pictures, NIP-05 lookups and attachment downloads. Each is an explicit, per-item action that goes through the configured network mode.

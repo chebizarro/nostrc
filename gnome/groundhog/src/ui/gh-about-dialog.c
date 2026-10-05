@@ -9,6 +9,37 @@
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 #endif
 
+/* Internal links never fall through to an external URI handler. */
+static gboolean
+activate_link(AdwAboutDialog *about, const char *uri, gpointer data)
+{
+  (void)data;
+  const char *action = NULL;
+  if (g_ascii_strncasecmp(uri, "nostr:", 6) == 0)
+    action = "win.message-uri";
+  else if (g_str_equal(uri, "groundhog:report-issue"))
+    action = "app.report-issue";
+  else
+    return FALSE;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(about));
+  if (root) {
+    g_autofree gchar *destination = g_strdup(uri);
+    g_object_ref(root);
+    adw_dialog_close(ADW_DIALOG(about));
+    gboolean handled = g_str_equal(action, "win.message-uri")
+      ? gtk_widget_activate_action(GTK_WIDGET(root), action, "s", destination)
+      : gtk_widget_activate_action(GTK_WIDGET(root), action, NULL);
+    if (!handled) {
+      AdwDialog *notice = adw_alert_dialog_new(_("Not Available"),
+        _("Open Groundhog and select an account to use this action."));
+      adw_alert_dialog_add_response(ADW_ALERT_DIALOG(notice), "close", _("Close"));
+      adw_dialog_present(notice, GTK_WIDGET(root));
+    }
+    g_object_unref(root);
+  }
+  return TRUE;
+}
+
 void
 gh_about_dialog_register_icons(void)
 {
@@ -37,10 +68,14 @@ gh_about_dialog_new(void)
   adw_about_dialog_add_link(about, owner_npub, nostr_uri);
   adw_about_dialog_set_license_type(about, GTK_LICENSE_MIT_X11);
   adw_about_dialog_set_website(about, "https://github.com/chebizarro/nostrc");
-  adw_about_dialog_set_issue_url(about, "https://github.com/chebizarro/nostrc/issues");
+  adw_about_dialog_set_issue_url(about, "groundhog:report-issue");
+  adw_about_dialog_add_link(about, _("Issues on GitHub"),
+                            "https://github.com/chebizarro/nostrc/issues");
+  g_signal_connect(about, "activate-link", G_CALLBACK(activate_link), NULL);
   /* The metainfo summary, then what the app promises (charter §2.2). */
   adw_about_dialog_set_comments(about,
-      _("A calm home for Nostr conversations.\n\n"
+      _("Private messaging that keeps its head down. Groundhog gives your "
+        "conversations a burrow of their own, and shows up when it matters.\n\n"
         "Private messages and encrypted groups with compatible Nostr apps. "
         "Your private key stays in Nostr Signer, and nothing loads from the web "
         "unless you ask."));

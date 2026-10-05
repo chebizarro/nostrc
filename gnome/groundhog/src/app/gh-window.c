@@ -349,10 +349,26 @@ on_quit(GSimpleAction *action, GVariant *parameter, gpointer data)
   g_application_quit(G_APPLICATION(data));
 }
 
+static void
+on_open(GApplication *app, GFile **files, gint n_files, const gchar *hint, gpointer data)
+{
+  (void)hint;
+  (void)data;
+  g_application_activate(app);
+  GtkWindow *window = gtk_application_get_active_window(GTK_APPLICATION(app));
+  if (!window)
+    return;
+  for (gint i = 0; i < n_files; i++) {
+    g_autofree gchar *uri = g_file_get_uri(files[i]);
+    gtk_widget_activate_action(GTK_WIDGET(window), "win.message-uri", "s", uri);
+  }
+}
+
 void
 gh_window_setup_application(GtkApplication *app)
 {
   g_return_if_fail(GTK_IS_APPLICATION(app));
+  g_signal_connect(app, "open", G_CALLBACK(on_open), NULL);
   const GActionEntry app_actions[] = {
     { "quit", on_quit, NULL, NULL, NULL, { 0 } },
   };

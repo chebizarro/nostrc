@@ -13,6 +13,11 @@
 #include "nostrc-test-gdk-frame.h"
 
 void groundhog_register_resource(void);
+#ifdef GH_ABOUT_FLOWS
+void gh_test_about_flows_register(void);
+void gh_test_about_flows_setup(void);
+void gh_test_about_flows_teardown(void);
+#endif
 
 static void
 test_icon_resource(void)
@@ -131,7 +136,9 @@ test_gui_dialog(void)
   assert_no_email(developers[0]);
   g_assert_null(developers[1]);
   g_assert_true(g_str_has_prefix(adw_about_dialog_get_website(about), "https://"));
-  g_assert_true(g_str_has_prefix(adw_about_dialog_get_issue_url(about), "https://"));
+  g_assert_cmpstr(adw_about_dialog_get_issue_url(about), ==, "groundhog:report-issue");
+  g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "burrow"));
+  g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Your private key stays in Nostr Signer"));
   g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Nostr"));
   assert_no_email(adw_about_dialog_get_comments(about));
   assert_no_email(adw_about_dialog_get_website(about));
@@ -159,6 +166,8 @@ main(int argc, char **argv)
   gboolean gui = argc > 1 && g_strcmp0(argv[1], "--gui") == 0;
   if (gui) {
     argc--; argv++;
+    /* Xvfb has no accessibility bus; avoid a fatal GTK warning in CI. */
+    g_setenv("GTK_A11Y", "none", TRUE);
   }
   groundhog_register_resource();
   if (gui) {
@@ -167,6 +176,9 @@ main(int argc, char **argv)
       return 77;
     }
     adw_init();
+#ifdef GH_ABOUT_FLOWS
+    gh_test_about_flows_setup();
+#endif
   }
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
@@ -176,5 +188,14 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/about/gui-dialog", test_gui_dialog);
   else
     g_test_add_func("/groundhog/about/icon-resource", test_icon_resource);
-  return g_test_run();
+#ifdef GH_ABOUT_FLOWS
+  if (gui)
+    gh_test_about_flows_register();
+#endif
+  int result = g_test_run();
+#ifdef GH_ABOUT_FLOWS
+  if (gui)
+    gh_test_about_flows_teardown();
+#endif
+  return result;
 }

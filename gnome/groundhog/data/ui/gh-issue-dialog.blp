@@ -1,0 +1,53 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GhIssueDialog : Adw.Dialog {
+  title: _("Report an Issue");
+  content-width: 520;
+  content-height: 640;
+  Adw.ToolbarView {
+    [top] Adw.HeaderBar {}
+    ScrolledWindow {
+      hscrollbar-policy: never;
+      Adw.Clamp {
+        maximum-size: 540;
+        Box {
+          orientation: vertical;
+          spacing: 16;
+          margin-top: 16;
+          margin-bottom: 16;
+          margin-start: 16;
+          margin-end: 16;
+          Label {
+            label: _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm.");
+            wrap: true;
+            xalign: 0;
+          }
+          Adw.PreferencesGroup {
+            Adw.EntryRow title_row { title: _("Title"); }
+          }
+          Label { label: _("Description"); xalign: 0; }
+          Frame {
+            TextView body_view {
+              height-request: 180;
+              wrap-mode: word_char;
+              top-margin: 8;
+              bottom-margin: 8;
+              left-margin: 8;
+              right-margin: 8;
+            }
+          }
+          Adw.PreferencesGroup {
+            description: _("Starts with your discovery relays. You can choose different relays for this public report.");
+            Adw.EntryRow relays_row { title: _("Publish to Relays"); }
+          }
+          Label status { wrap: true; xalign: 0; selectable: true; }
+          Button review_button {
+            label: _("Review Public Issue…");
+            styles ["suggested-action"]
+          }
+        }
+      }
+    }
+  }
+}

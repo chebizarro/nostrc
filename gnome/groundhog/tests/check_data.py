@@ -9,16 +9,21 @@ import xml.etree.ElementTree as ET
 build = Path(sys.argv[1])
 data = Path(sys.argv[2])
 app_id = "org.nostr.Groundhog"
+# Accept either the top-level CMake build directory or its Groundhog subdir.
+if not (build / f"{app_id}.desktop").is_file():
+    build = build / "gnome" / "groundhog"
 
 desktop = configparser.ConfigParser(interpolation=None)
 desktop.optionxform = str
 desktop.read(build / f"{app_id}.desktop", encoding="utf-8")
 entry = desktop["Desktop Entry"]
 assert entry["Type"] == "Application"
-assert entry["Exec"] == "groundhog"
+assert entry["Exec"] == "groundhog %U"
 assert entry["Icon"] == app_id
 assert entry["DBusActivatable"] == "true"
-assert "MimeType" not in entry  # nostr: belongs to the shared dispatcher
+# nostr-dispatcher is the only system handler for NIP-21. Groundhog still
+# accepts an explicit `groundhog nostr:npub1...` invocation via %U.
+assert "x-scheme-handler/nostr" not in entry.get("MimeType", "")
 
 service = configparser.ConfigParser(interpolation=None)
 service.optionxform = str

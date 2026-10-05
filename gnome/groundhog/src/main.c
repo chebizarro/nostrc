@@ -386,7 +386,7 @@ activate(GApplication *app, gpointer user_data)
 int
 main(int argc, char **argv)
 {
-  GApplicationFlags flags = G_APPLICATION_DEFAULT_FLAGS;
+  GApplicationFlags flags = G_APPLICATION_HANDLES_OPEN;
   g_autoptr(AdwApplication) app = NULL;
   int status;
 

@@ -1,4 +1,7 @@
 #include "gh-about-dialog.h"
+#if GROUNDHOG_HAVE_ISSUE
+#include "gh-issue-dialog.h"
+#endif
 #include "gh-app-services.h"
 
 #if GROUNDHOG_HAVE_ACCOUNTS
@@ -1548,6 +1551,19 @@ preferences_teardown(GhAppServices *self)
 
 /* app.about (the primary menu): the About dialog, over the active window.
  * It reads only build-time constants and contacts no network. */
+#if GROUNDHOG_HAVE_ISSUE
+static void
+on_report_issue(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  GhAppServices *self = data;
+  GtkWindow *window = gtk_application_get_active_window(self->app);
+  if (window)
+    adw_dialog_present(ADW_DIALOG(gh_issue_dialog_new(self->accounts, self->settings)), GTK_WIDGET(window));
+}
+#endif
+
 static void
 on_about(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
@@ -1562,6 +1578,11 @@ static gboolean
 about_init(GhAppServices *self, GError **error)
 {
   (void)error;
+#if GROUNDHOG_HAVE_ISSUE
+  g_autoptr(GSimpleAction) report = g_simple_action_new("report-issue", NULL);
+  g_signal_connect(report, "activate", G_CALLBACK(on_report_issue), self);
+  g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(report));
+#endif
   self->about_action = g_simple_action_new("about", NULL);
   g_signal_connect(self->about_action, "activate", G_CALLBACK(on_about), self);
   g_action_map_add_action(G_ACTION_MAP(self->app), G_ACTION(self->about_action));
@@ -1572,6 +1593,7 @@ static void
 about_teardown(GhAppServices *self)
 {
   g_action_map_remove_action(G_ACTION_MAP(self->app), "about");
+  g_action_map_remove_action(G_ACTION_MAP(self->app), "report-issue");
   g_clear_object(&self->about_action);
 }
 
