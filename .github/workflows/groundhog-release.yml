@@ -1,0 +1,203 @@
+# Groundhog release (W30, nostrc-4hwv): on a groundhog-v<version> tag, build
+# every package target from one source archive, smoke-test each installed
+# package, and publish them as a GitHub pre-release.
+#
+# Each job mirrors the container recipe the packages were first verified
+# with (docs/designs/groundhog-packaging-plan-2026-10-05.md). The signer,
+# Grotto, is built from the same tree and shipped beside Groundhog.
+name: Groundhog release
+
+on:
+  push:
+    tags:
+      - 'groundhog-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  VERSION: ${{ github.ref_name }}
+
+jobs:
+  source:
+    name: Source archive
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - id: v
+        run: |
+          v="${GITHUB_REF_NAME#groundhog-v}"
+          [ "${GITHUB_REF_NAME}" = "$v" ] && v="0.0.0-$(git rev-parse --short HEAD)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - run: scripts/make-desktop-source-archive.sh "${{ steps.v.outputs.version }}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source
+          path: dist/groundhog-*.tar.gz
+          if-no-files-found: error
+
+  deb:
+    name: Debian/Ubuntu package
+    needs: source
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        run: |
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq devscripts equivs git ca-certificates xvfb dbus >/dev/null
+          tar -xzf src/groundhog-*.tar.gz
+          cd groundhog-*/
+          cp -r packaging/debian-desktop debian
+          mk-build-deps -i -r -t 'apt-get -y -qq' debian/control
+          dpkg-buildpackage -b -us -uc
+          mkdir -p ../dist && cp ../*.deb ../dist/
+      - name: Install and launch
+        run: |
+          set -eux
+          apt-get install -y -qq ./dist/*.deb
+          groundhog --version
+          xvfb-run -a dbus-run-session -- groundhog --smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  rpm:
+    name: Fedora package
+    needs: source
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:42
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        run: |
+          set -eux
+          dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon
+          tar -xzf src/groundhog-*.tar.gz
+          dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
+          rpmdev-setuptree
+          cp src/groundhog-*.tar.gz ~/rpmbuild/SOURCES/
+          rpmbuild -ba groundhog-*/packaging/rpm/groundhog.spec
+          mkdir -p dist && cp ~/rpmbuild/RPMS/*/*.rpm dist/
+      - name: Install and launch
+        run: |
+          set -eux
+          dnf install -y -q dist/groundhog-0*.rpm dist/grotto-0*.rpm
+          groundhog --version
+          xvfb-run -a dbus-run-session -- groundhog --smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm
+          path: dist/*.rpm
+
+  arch:
+    name: Arch package
+    needs: source
+    runs-on: ubuntu-24.04
+    container: archlinux:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: source, path: src }
+      - name: Build
+        run: |
+          set -eux
+          pacman -Syu --noconfirm --needed base-devel sudo xorg-server-xvfb dbus >/dev/null
+          useradd -m build && echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
+          tar -xzf src/groundhog-*.tar.gz
+          mkdir -p /home/build/pkg
+          cp groundhog-*/packaging/archlinux/groundhog/PKGBUILD src/groundhog-*.tar.gz /home/build/pkg/
+          chown -R build /home/build/pkg
+          su build -c 'cd /home/build/pkg && makepkg -s --noconfirm'
+          mkdir -p dist && cp /home/build/pkg/*.pkg.tar.zst dist/
+      - name: Install and launch
+        run: |
+          set -eux
+          pacman -U --noconfirm dist/groundhog-0*.pkg.tar.zst dist/grotto-0*.pkg.tar.zst
+          groundhog --version
+          xvfb-run -a dbus-run-session -- groundhog --smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: dist/*.pkg.tar.zst
+
+  flatpak:
+    name: Flatpak bundle
+    needs: source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install flatpak-builder and the GNOME 51 SDK
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak flatpak-builder elfutils xvfb >/dev/null
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Sdk//51 org.gnome.Platform//51
+      - name: Build and bundle
+        run: |
+          set -eux
+          flatpak-builder --user --force-clean --repo=repo build-flatpak \
+            gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml
+          mkdir -p dist
+          flatpak build-bundle repo "dist/org.nostr.Groundhog-${{ needs.source.outputs.version }}-x86_64.flatpak" \
+            org.nostr.Groundhog --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+      - name: Install and launch
+        run: |
+          set -eux
+          flatpak install --user -y --noninteractive dist/*.flatpak
+          flatpak run org.nostr.Groundhog --version
+          xvfb-run -a dbus-run-session -- flatpak run org.nostr.Groundhog --smoke
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak
+
+  nix:
+    name: Nix flake
+    needs: source
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .#groundhog .#grotto --print-out-paths -L
+      - run: nix run .#groundhog -- --version
+
+  release:
+    name: Publish pre-release
+    needs: [source, deb, rpm, arch, flatpak, nix]
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && needs.source.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**
+          prerelease: true
+          generate_release_notes: false
+          body: |
+            Groundhog ${{ needs.source.outputs.version }} (alpha) with Grotto, its signer.
+            Jobs that failed have no file here: deb ${{ needs.deb.result }}, rpm ${{ needs.rpm.result }}, arch ${{ needs.arch.result }}, flatpak ${{ needs.flatpak.result }}, nix ${{ needs.nix.result }}.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
