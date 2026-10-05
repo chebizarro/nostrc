@@ -42,6 +42,9 @@ if [[ " $* " == *" -N "* ]]; then
         if [ "${!i}" = -R ]; then
             j=$((i + 1)); regex="${!j}"; selected=""
             for t in $perf_tests; do [[ "$t" =~ $regex ]] && selected="$selected $t"; done
+        elif [ "${!i}" = -E ]; then
+            j=$((i + 1)); regex="${!j}"; selected=""
+            for t in $perf_tests; do [[ "$t" =~ $regex ]] || selected="$selected $t"; done
         fi
     done
     n=0
@@ -75,6 +78,9 @@ for ((i = 1; i <= $#; i++)); do
         selected=""
         [ "$run" != rerun ] || [ "${RERUN_SHORT:-0}" != 1 ] || continue
         for t in $tests; do [[ "$t" =~ $regex ]] && selected="$selected $t"; done
+    elif [ "${!i}" = -E ]; then
+        j=$((i + 1)); regex="${!j}"; selected=""
+        for t in $tests; do [[ "$t" =~ $regex ]] || selected="$selected $t"; done
     fi
 done
 report="${REPORT:-}"
@@ -116,7 +122,7 @@ chmod +x "$tmp/bin/"*
 
 gate() {
     : > "$tmp/trace"
-    PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=4 SMOKE_EXCLUDE='^slow$' \
+    PATH="$tmp/bin:$PATH" TRACE="$tmp/trace" JOBS=4 SMOKE_EXCLUDE="${SMOKE_EXCLUDE:-^slow$}" \
         BUILD_DIR="$tmp/build" STATE_DIR="$tmp/state" VOLUME=test-volume HISTORY_KEEP=3 \
         TAIL_LINES="${TAIL_LINES:-1}" bash "$scripts/linux-gate-smoke.sh"
 }
@@ -141,9 +147,27 @@ grep -qF -- '-L ^perf$' "$tmp/trace" || fail "perf label was not selected"
 ! grep '^CTEST .* -L ' "$tmp/trace" | grep -q -- '--parallel' || fail "perf was parallel"
 FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe other_probe" REQUIRED_PERF_TEST="perf_probe" \
     TEST_REGEX=. gate > "$tmp/out" 2>&1 || fail "multiple perf registrations were rejected"
-if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
-    TEST_REGEX='^alpha$' gate > "$tmp/out" 2>&1; then
-    fail "an unselected required perf registration passed"
+# Use the driver's actual non-native-arch exclusions, not a copy that can drift.
+emulation_names="$(sed -nE "s/^(SLOW_TESTS|BROKEN_ON_LINUX|EMULATION_ONLY|AMD64_KNOWN)='(.*)'$/\2/p" \
+    "$scripts/linux-gate.sh" | paste -sd '|' -)"
+emulation_exclude="^($emulation_names)\$"
+[[ test_nostr_gtk_bind_latency_perf =~ $emulation_exclude ]] || fail "missing emulation perf exclusion"
+FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="test_nostr_gtk_bind_latency_perf" \
+    REQUIRED_PERF_TEST=test_nostr_gtk_bind_latency_perf SMOKE_EXCLUDE="$emulation_exclude" \
+    gate > "$tmp/out" 2>&1 || fail "emulation exclusions failed the gate"
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "excluded emulation perf test ran"
+# Excluding the mandatory test must not disable other selected perf tests.
+FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="test_nostr_gtk_bind_latency_perf other_probe" \
+    REQUIRED_PERF_TEST=test_nostr_gtk_bind_latency_perf SMOKE_EXCLUDE="$emulation_exclude" \
+    gate > "$tmp/out" 2>&1 || fail "other selected perf tests failed in emulation"
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 2 ] || fail "other selected perf tests did not run"
+FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="perf_probe" REQUIRED_PERF_TEST="perf_probe" \
+    TEST_REGEX='^alpha$' gate > "$tmp/out" 2>&1 || fail "an unselected perf requirement failed the gate"
+[ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "an unselected perf test ran"
+# TEST_REGEX wins over SMOKE_EXCLUDE, including for the mandatory check.
+if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="" REQUIRED_PERF_TEST=perf_probe \
+    TEST_REGEX=. SMOKE_EXCLUDE='^perf_probe$' gate > "$tmp/out" 2>&1; then
+    fail "an exclusion overrode TEST_REGEX and hid a missing required perf test"
 fi
 if FIRST_FAIL="" RERUN_FAIL="" PERF_TESTS="" REQUIRED_PERF_TEST="perf_probe" \
     gate > "$tmp/out" 2>&1; then
@@ -356,8 +380,8 @@ project(gate_smoke_selftest NONE)
 enable_testing()
 add_test(NAME flaky_dummy COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/flaky.sh" "${CMAKE_CURRENT_BINARY_DIR}/flaky-count")
 add_test(NAME steady_dummy COMMAND sh -c "echo run >> '${CMAKE_CURRENT_BINARY_DIR}/steady-count'")
-add_test(NAME perf_dummy COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/perf.sh" "${CMAKE_CURRENT_BINARY_DIR}/perf-count")
-set_tests_properties(perf_dummy PROPERTIES LABELS perf)
+add_test(NAME test_nostr_gtk_bind_latency_perf COMMAND sh "${CMAKE_CURRENT_SOURCE_DIR}/perf.sh" "${CMAKE_CURRENT_BINARY_DIR}/perf-count")
+set_tests_properties(test_nostr_gtk_bind_latency_perf PROPERTIES LABELS perf)
 CMAKE
     # Fails its first run, passes later ones, unless ALWAYS_FAIL=1.
     cat > "$real/src/flaky.sh" <<'FLAKY'
@@ -371,7 +395,7 @@ echo run >> "$1"
 PERF
     cmake -S "$real/src" -B "$real/build" > /dev/null
     real_gate() {
-        JOBS=2 TEST_REGEX=. DISPLAY_WRAP=0 REQUIRED_PERF_TEST=perf_dummy \
+        JOBS=2 TEST_REGEX="${TEST_REGEX-.}" DISPLAY_WRAP=0 REQUIRED_PERF_TEST=test_nostr_gtk_bind_latency_perf \
             BUILD_DIR="$real/build" STATE_DIR="$real/state" \
             GATE="Real gate" SUITE="tests" bash "$scripts/linux-gate-smoke.sh"
     }
@@ -381,6 +405,10 @@ PERF
     [ "$(cat "$real/build/flaky-count")" = 2 ] || fail "real CTest: flaky_dummy not run exactly twice"
     [ "$(wc -l < "$real/build/steady-count" | tr -d ' ')" = 1 ] || fail "real CTest: a passing test was rerun"
     [ "$(wc -l < "$real/build/perf-count" | tr -d ' ')" = 1 ] || fail "real CTest: perf did not run once"
+    TEST_REGEX= SMOKE_EXCLUDE="$emulation_exclude" PERF_FAIL=1 real_gate > "$tmp/out" 2>&1 ||
+        { cat "$tmp/out"; fail "real CTest: emulation exclusions failed the gate"; }
+    [ "$(wc -l < "$real/build/perf-count" | tr -d ' ')" = 1 ] || fail "real CTest: excluded perf ran"
+    grep -q 'tests passed, 2 run' "$tmp/out" || fail "real CTest: emulation functional tests did not run"
     if PERF_FAIL=1 real_gate > "$tmp/out" 2>&1; then
         fail "real CTest: a failing serial perf test passed"
     fi

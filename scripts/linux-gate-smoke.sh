@@ -34,7 +34,8 @@
 # and SUITE ("smoke tests") for messages, DISPLAY_WRAP (1: under
 # dbus-run-session and xvfb-run; 0: bare), CTEST_TIMEOUT (120; empty: CTest's
 # default), FORBID_PATTERN (an ERE no ctest log may match, e.g. skipped tests),
-# REQUIRED_PERF_TEST (must be selected with the perf label and pass),
+# REQUIRED_PERF_TEST (when selected by TEST_REGEX/SMOKE_EXCLUDE, must be
+# registered with the perf label and pass),
 # SANITIZER_REPORTS (block, or empty), RERUN_MAX (5), PROGRESS (1: stream each
 # test's result line while the log is written; 0: summary only). An
 # interrupted run (SIGINT, SIGTERM) keeps its log so far in the history.
@@ -212,11 +213,24 @@ recent_gates() {
 # after the functional suite. A failure here blocks; RERUN_MAX applies only
 # to the parallel functional run.
 run_perf() {
-  local count expected listing log
+  local count expected listing log required="$REQUIRED_PERF_TEST"
+  # A deliberately excluded test (e.g. GTK under amd64 emulation) is not a
+  # missing registration. Use the same effective name filter as CTest; do not
+  # infer selection from the listing, which would also hide missing tests.
+  if [ -n "$required" ]; then
+    if [ "${SELECT[0]}" = -R ]; then
+      [[ "$required" =~ ${SELECT[1]} ]] || required=""
+    elif [[ "$required" =~ ${SELECT[1]} ]]; then
+      required=""
+    fi
+    if [ -z "$required" ]; then
+      echo "==> $GATE: perf requirement $REQUIRED_PERF_TEST excluded by test selection"
+    fi
+  fi
   listing="$(ctest --test-dir "$BUILD_DIR" -N -L '^perf$' "${SELECT[@]}")"
   count="$(printf '%s\n' "$listing" | awk '/Total Tests:/ { print $3 }')"
-  if [ -n "$REQUIRED_PERF_TEST" ]; then
-    expected="$(printf '%s\n' "$listing" | awk -v name="$REQUIRED_PERF_TEST" '
+  if [ -n "$required" ]; then
+    expected="$(printf '%s\n' "$listing" | awk -v name="$required" '
       /^ *Test +#[0-9]+:/ && $3 == name { n++ }
       END { print n+0 }')"
     if [ "${expected:-0}" -ne 1 ]; then
@@ -234,8 +248,8 @@ run_perf() {
     return 1
   fi
   check_forbidden "$log"
-  if [ -n "$REQUIRED_PERF_TEST" ] &&
-     [ "$(rerun_status "$log" "$REQUIRED_PERF_TEST")" != Passed ]; then
+  if [ -n "$required" ] &&
+     [ "$(rerun_status "$log" "$required")" != Passed ]; then
     cat "$log"
     echo "==> $GATE: PERF TESTS FAILED: required test $REQUIRED_PERF_TEST did not pass"
     return 1
