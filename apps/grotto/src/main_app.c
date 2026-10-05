@@ -37,9 +37,26 @@ typedef struct {
   GtkWindow *win;
   AccountsStore *accounts;
   GtkWidget *settings_page;
-  /* Track pending approval request_ids to avoid duplicate dialogs */
+  /* Track pending approval request_ids to avoid duplicate dialogs. Each
+   * entry holds the application: started as a D-Bus service for a request,
+   * it has no window, and would otherwise quit before the prompt is
+   * answered. */
   GHashTable *pending;
 } AppUI;
+
+static GtkApplication *global_app;
+
+static void ui_pending_add(AppUI *ui, const gchar *request_id) {
+  if (!ui || !ui->pending || !request_id) return;
+  g_hash_table_insert(ui->pending, g_strdup(request_id), GINT_TO_POINTER(1));
+  if (global_app) g_application_hold(G_APPLICATION(global_app));
+}
+
+static void ui_pending_remove(AppUI *ui, const gchar *request_id) {
+  if (!ui || !ui->pending || !request_id) return;
+  if (g_hash_table_remove(ui->pending, request_id) && global_app)
+    g_application_release(G_APPLICATION(global_app));
+}
 
 /* Forward declarations */
 static void apply_theme_preference(SettingsTheme theme);
@@ -49,7 +66,6 @@ static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpo
 static gboolean should_use_high_contrast(void);
 
 /* Global application instance for callbacks that need it */
-static GtkApplication *global_app = NULL;
 
 static void set_status(AppUI *ui, const char *text, const char *css_key) {
   gtk_label_set_text(ui->status, text);
@@ -210,9 +226,7 @@ static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_
             ctx && ctx->request_id?ctx->request_id:"(null)",
             ok?"true":"false", expired?"true":"false");
   /* Done with this request_id: allow future prompts for same id */
-  if (ctx && ctx->ui && ctx->ui->pending && ctx->request_id) {
-    g_hash_table_remove(ctx->ui->pending, ctx->request_id);
-  }
+  if (ctx) ui_pending_remove(ctx->ui, ctx->request_id);
   /* Expired request: the daemon no longer has this pending request.
    * Show a clear message instead of the confusing import dialog. */
   if (expired && ctx && ctx->ui && ctx->ui->win) {
@@ -314,8 +328,7 @@ static gboolean on_request_expired_timer(gpointer user_data) {
     adw_dialog_force_close(ADW_DIALOG(ctx->dialog));
     ctx->dialog = NULL;
   }
-  if (ctx->ui && ctx->ui->pending && ctx->request_id)
-    g_hash_table_remove(ctx->ui->pending, ctx->request_id);
+  ui_pending_remove(ctx->ui, ctx->request_id);
   if (ctx->ui && ctx->ui->win) {
     GtkAlertDialog *dlg = gtk_alert_dialog_new(
       "%s", "This request expired; ask the app to try again.");
@@ -373,17 +386,10 @@ static void on_approval_info(GObject *source, GAsyncResult *res, gpointer user_d
   if (ret) g_variant_unref(ret);
 }
 
-static void on_approval_requested(GDBusConnection *connection,
-                                  const gchar *sender_name,
-                                  const gchar *object_path,
-                                  const gchar *interface_name,
-                                  const gchar *signal_name,
-                                  GVariant *parameters,
-                                  gpointer user_data){
-  (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
-  AppUI *ui = (AppUI*)user_data;
-  const gchar *app_id=NULL, *identity=NULL, *kind=NULL, *preview=NULL, *request_id=NULL;
-  g_variant_get(parameters, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id);
+/* A request awaits the person's answer: from the ApprovalRequested signal,
+ * or listed by the daemon when this UI started after the request. */
+static void request_arrived(AppUI *ui, const gchar *app_id, const gchar *identity,
+                            const gchar *kind, const gchar *preview, const gchar *request_id){
   /* The main window can be created after the subscription (onboarding runs
    * first on a fresh install), so parent the dialog on whatever is active. */
   ui->win = global_app ? gtk_application_get_active_window(global_app) : NULL;
@@ -394,7 +400,7 @@ static void on_approval_requested(GDBusConnection *connection,
       return;
     }
     /* Insert as pending now to avoid races; remove in approve_call_done */
-    g_hash_table_insert(ui->pending, g_strdup(request_id), GINT_TO_POINTER(1));
+    ui_pending_add(ui, request_id);
   }
   /* nip55l >= 0.4.0 sends the npub it resolved; older signers may send the
    * caller's selector, often empty: fall back to the active identity. */
@@ -418,6 +424,38 @@ static void on_approval_requested(GDBusConnection *connection,
   } else {
     show_request_dialog(ctx, NULL, FALSE);
   }
+}
+
+static void on_approval_requested(GDBusConnection *connection,
+                                  const gchar *sender_name,
+                                  const gchar *object_path,
+                                  const gchar *interface_name,
+                                  const gchar *signal_name,
+                                  GVariant *parameters,
+                                  gpointer user_data){
+  (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
+  const gchar *app_id=NULL, *identity=NULL, *kind=NULL, *preview=NULL, *request_id=NULL;
+  g_variant_get(parameters, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id);
+  request_arrived((AppUI*)user_data, app_id, identity, kind, preview, request_id);
+}
+
+/* ListPendingRequests answered: prompt for what was already waiting. The
+ * hold taken before the call ends here; prompts hold on their own. */
+static void on_pending_listed(GObject *source, GAsyncResult *res, gpointer user_data) {
+  AppUI *ui = user_data;
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
+  if (!r) {
+    /* A daemon older than nip55l 0.7.0 has no such method: nothing to catch up on. */
+    g_debug("ListPendingRequests: %s", err ? err->message : "?");
+  } else {
+    g_autoptr(GVariantIter) it = NULL;
+    const gchar *app_id, *identity, *kind, *preview, *request_id;
+    g_variant_get(r, "(a(sssss))", &it);
+    while (g_variant_iter_loop(it, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id))
+      request_arrived(ui, app_id, identity, kind, preview, request_id);
+  }
+  if (global_app) g_application_release(G_APPLICATION(global_app));
 }
 
 static void name_appeared(GDBusConnection *conn, const gchar *name, const char *owner, gpointer user_data) {
@@ -673,7 +711,7 @@ static void on_approval_completed(GDBusConnection *connection,
   g_variant_get(parameters, "(&sb)", &request_id, &decision);
   g_debug("ApprovalCompleted: request_id=%s decision=%s", request_id ? request_id : "(null)",
           decision ? "allow" : "deny");
-  if (ui && ui->pending && request_id) g_hash_table_remove(ui->pending, request_id);
+  ui_pending_remove(ui, request_id);
 }
 
 /* Callback when async D-Bus connection completes */
@@ -707,6 +745,13 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
       NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_approval_completed, approval_ui, NULL);
   g_debug("Subscribed to %s approval signals (ids %u, %u)", SIGNER_NAME,
           deferred_dbus_signal_subscription, deferred_dbus_completed_subscription);
+  /* Requests made before this subscription (the daemon may have started this
+   * app for one) are only known by asking. Hold until the answer arrives:
+   * as a D-Bus service with no window the app would quit first. */
+  if (global_app) g_application_hold(G_APPLICATION(global_app));
+  g_dbus_connection_call(deferred_dbus_conn, SIGNER_NAME, SIGNER_PATH, SIGNER_NAME, "ListPendingRequests",
+                         NULL, G_VARIANT_TYPE("(a(sssss))"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL,
+                         on_pending_listed, approval_ui);
 
   STARTUP_TIME_END(STARTUP_PHASE_DBUS);
 }
@@ -714,6 +759,9 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
 /* Deferred initialization callback - runs after window is presented */
 static gboolean deferred_init_cb(gpointer user_data) {
   (void)user_data;
+  static gboolean done;
+  if (done) return G_SOURCE_REMOVE;
+  done = TRUE;
 
   gint64 deferred_start = startup_timing_measure_start();
 
@@ -736,6 +784,14 @@ static gboolean deferred_init_cb(gpointer user_data) {
   startup_timing_measure_end(deferred_start, "deferred-init-scheduled", 50);
 
   return G_SOURCE_REMOVE;  /* Don't repeat */
+}
+
+/* Runs whether the app was launched by the person or started by the bus for
+ * a request (--gapplication-service, which never activates): the signer
+ * subscription must exist in both cases. */
+static void on_startup(GtkApplication *app, gpointer user_data) {
+  (void)app; (void)user_data;
+  g_idle_add(deferred_init_cb, NULL);
 }
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
@@ -1010,6 +1066,7 @@ int main(int argc, char **argv) {
   const char *shortcuts_accels[] = { "<Primary>question", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.show-shortcuts", shortcuts_accels);
 
+  g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);
   g_object_unref(app);

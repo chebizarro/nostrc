@@ -618,6 +618,39 @@ static gboolean approver_present(GDBusConnection *bus){
   return has;
 }
 
+static const char NO_APPROVER_MSG[] =
+  "approval required but no approval agent is running (start Grotto)";
+
+/* StartServiceByName returned: either the approval UI owns its name now (it
+ * lists the pending requests itself), or it could not be started and the
+ * request that asked for it fails as it would have without a UI. */
+static void on_approver_summoned(GObject *source, GAsyncResult *res, gpointer data){
+  g_autofree char *id = data;
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
+  if (r) return;
+  Pending *p = pending ? g_hash_table_lookup(pending, id) : NULL;
+  if (!p) return;
+  if (approver_present(signer_bus)) return; /* started by someone else meanwhile */
+  g_message("nostr-signer: %s needs approval but the approval UI (%s) could not be started: %s",
+            p->id, NIP55L_APPROVER_BUS_NAME, err ? err->message : "?");
+  g_hash_table_steal(pending, id);
+  if (p->timeout_id) { g_source_remove(p->timeout_id); p->timeout_id = 0; }
+  pending_fail(p, ORG_NOSTR_SIGNER_ERR_NO_APPROVER, NO_APPROVER_MSG);
+  pending_finish(p, FALSE);
+}
+
+/* Ask the bus to start the approval UI for request @id. Asynchronous: the UI
+ * calls back into this daemon while it starts (ListPendingRequests), which
+ * a synchronous wait here would deadlock. */
+static void approver_summon(GDBusConnection *bus, const char *id){
+  static const gchar name[] = NIP55L_APPROVER_BUS_NAME;
+  if (!bus || name[0] == '\0') return;
+  g_dbus_connection_call(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "StartServiceByName", g_variant_new("(su)", name, 0u),
+      G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 25000, NULL, on_approver_summoned, g_strdup(id));
+}
+
 /* The access-control path for one call from @base (reached over the
  * connection @sender), whichever transport it came by. */
 static void gate(const Reply *invocation, const SignerCaller *base, const char *sender, SignerOp op,
@@ -719,11 +752,10 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
     reply_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited");
     return;
   }
-  if (!approver_present(bus)) {
-    reply_approval_error(invocation, ORG_NOSTR_SIGNER_ERR_NO_APPROVER,
-      "approval required but no approval agent is running (start Grotto)");
-    return;
-  }
+  /* No approval UI on the bus: the request is still queued, and the UI is
+   * started for it (approver_summon); it lists pending requests when it
+   * subscribes. Only if it cannot be started does the request fail. */
+  gboolean summon = !approver_present(bus);
 
   Pending *p = g_new0(Pending, 1);
   p->id = next_request_id();
@@ -747,6 +779,7 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
     who->principal ? who->principal : "",
     npub_m ? npub_m : selector,
     op_info[op].kind, p->preview, p->id);
+  if (summon) approver_summon(bus, p->id);
 }
 
 static void gated_call(NostrSigner *object, GDBusMethodInvocation *invocation, SignerOp op,
@@ -915,6 +948,27 @@ static gboolean handle_get_approval_info(NostrSigner *object, GDBusMethodInvocat
   g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(p->who->principal != NULL));
   g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(p->calls->len));
   nostr_signer_complete_get_approval_info(object, invocation, g_variant_builder_end(&b));
+  return TRUE;
+}
+
+static gboolean handle_list_pending_requests(NostrSigner *object, GDBusMethodInvocation *invocation)
+{
+  if (!require_approver(invocation)) return TRUE;
+  GVariantBuilder b;
+  g_variant_builder_init(&b, G_VARIANT_TYPE("a(sssss)"));
+  if (pending) {
+    GHashTableIter it; gpointer k, v;
+    g_hash_table_iter_init(&it, pending);
+    while (g_hash_table_iter_next(&it, &k, &v)) {
+      Pending *p = v;
+      Call *first = p->calls->len ? g_ptr_array_index(p->calls, 0) : NULL;
+      g_variant_builder_add(&b, "(sssss)",
+        p->who->principal ? p->who->principal : "",
+        p->npub ? p->npub : (first && first->selector ? first->selector : ""),
+        op_info[p->op].kind, p->preview ? p->preview : "", p->id);
+    }
+  }
+  nostr_signer_complete_list_pending_requests(object, invocation, g_variant_builder_end(&b));
   return TRUE;
 }
 
@@ -1311,6 +1365,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },
     { "handle-approve-request",               G_CALLBACK(handle_approve_request) },
     { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
+    { "handle-list-pending-requests",         G_CALLBACK(handle_list_pending_requests) },
     { "handle-list-grants",                   G_CALLBACK(handle_list_grants) },
     { "handle-revoke-grant",                  G_CALLBACK(handle_revoke_grant) },
     { "handle-enable-typed-approval-errors",  G_CALLBACK(handle_enable_typed_approval_errors) },

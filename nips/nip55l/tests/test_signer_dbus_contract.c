@@ -318,6 +318,10 @@ typedef struct {
   gboolean own_ui_name;  /* own org.nostr.Grotto (an approval agent is present) */
 } Trust;
 static const Trust TRUST_UI = { TRUE, FALSE, TRUE };
+/* No UI on the bus, but this executable is a trusted approver and (when
+ * approval_ui_service_dir is set) activatable as org.nostr.Grotto. */
+static const Trust TRUST_UI_ON_DEMAND = { TRUE, FALSE, FALSE };
+static const char *approval_ui_service_dir;
 
 /* pre_daemon runs on the private bus before the daemon is spawned (phase 3
  * starts a keyring and seeds legacy items there). extra_acl is appended to
@@ -415,6 +419,7 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
     at_exit_registered = TRUE;
   }
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
+  if (approval_ui_service_dir) g_test_dbus_add_service_dir(ctx->tbus, approval_ui_service_dir);
   g_test_dbus_up(ctx->tbus);
   live_ctx = ctx;
 
@@ -1349,17 +1354,24 @@ static void test_gating(Ctx *ctx) {
     g_clear_error(&err);
   }
 
-  /* No approval agent on the bus: a call that needs a prompt fails fast.
-   * The daemon checks its prompt rate limit before the agent, so this call
-   * too must come 100 ms after the last prompt (nostrc-oauv). */
+  /* No approval agent on the bus and none the bus can start (no service
+   * file here): the request is queued and announced, the daemon's attempt
+   * to start the UI fails, and the call is rejected (nostrc-sh5h). The
+   * daemon checks its prompt rate limit before the agent, so this call too
+   * must come 100 ms after the last prompt (nostrc-oauv). */
   {
     g_usleep(120 * 1000);
     GVariant *rel = g_dbus_connection_call_sync(ctx->bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
         "org.freedesktop.DBus", "ReleaseName", g_variant_new("(s)", APPROVER_NAME),
         G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
     CHECK(rel != NULL); g_variant_unref(rel);
-    r = no_prompt(ctx, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), &err);
+    Watch w;
+    watch_start(ctx, &w);
+    r = call(ctx->bus, "NIP04Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
     CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+    watch_drain();
+    CHECK(w.a.n_requests == 1);
+    watch_stop(ctx, &w);
   }
 
   free(peer_sk);
@@ -2507,10 +2519,84 @@ static void run_phase3(void) {
 #endif /* NIP55L_TEST_HAVE_LIBSECRET */
 
 /* ---------------------------------------------------------------------------
+ * Approval UI started on demand (nip55l 0.7.0, nostrc-sh5h)
+ * ------------------------------------------------------------------------- */
+
+/* This executable, run by the bus as org.nostr.Grotto: owns the name, lists
+ * what is pending and approves it, as the Grotto app does when it starts. */
+static int approval_ui_helper(void) {
+  GError *err = NULL;
+  const char *addr = g_getenv("DBUS_STARTER_ADDRESS");
+  if (!addr) addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+  if (!addr) { g_printerr("approval-ui: no bus address\n"); return 1; }
+  GDBusConnection *bus = g_dbus_connection_new_for_address_sync(addr,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &err);
+  if (!bus) { g_printerr("approval-ui: connect: %s\n", err->message); return 1; }
+  GVariant *r = g_dbus_connection_call_sync(bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", APPROVER_NAME, 4u),
+      G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  if (!r) { g_printerr("approval-ui: RequestName: %s\n", err->message); return 1; }
+  g_variant_unref(r);
+  r = call(bus, "ListPendingRequests", NULL, "(a(sssss))", &err);
+  if (!r) { g_printerr("approval-ui: ListPendingRequests: %s\n", err->message); return 1; }
+  GVariantIter *it = NULL;
+  const char *app_id, *identity, *kind, *preview, *id;
+  g_variant_get(r, "(a(sssss))", &it);
+  int n = 0;
+  while (g_variant_iter_loop(it, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &id)) {
+    GVariant *ok = call(bus, "ApproveRequest", g_variant_new("(sbbt)", id, TRUE, FALSE, (guint64)0), "(b)", &err);
+    if (!ok) { g_printerr("approval-ui: ApproveRequest %s: %s\n", id, err->message); return 1; }
+    g_variant_unref(ok);
+    n++;
+  }
+  g_variant_iter_free(it);
+  g_variant_unref(r);
+  g_dbus_connection_flush_sync(bus, NULL, NULL);
+  g_object_unref(bus);
+  return n == 1 ? 0 : 2;
+}
+
+/* Writes the service file that makes this executable activatable as the
+ * approval UI; returns the <servicedir>. */
+static char *write_approval_ui_service(void) {
+  GError *err = NULL;
+  char *dir = g_dir_make_tmp("nip55l_approval_ui_XXXXXX", &err);
+  CHECK(dir != NULL);
+  char *exe = self_exe();
+  char *body = g_strdup_printf("[D-BUS Service]\nName=%s\nExec=%s --approval-ui\n", APPROVER_NAME, exe);
+  char *path = g_build_filename(dir, APPROVER_NAME ".service", NULL);
+  write_file(path, body);
+  g_free(path); g_free(body); g_free(exe);
+  return dir;
+}
+
+/* No approval UI on the bus when the call arrives: the daemon announces the
+ * request, starts the UI, and the UI answers from ListPendingRequests. */
+static void test_summon_approval_ui(Ctx *ctx) {
+  GError *err = NULL;
+  char *peer_sk = nostr_key_generate_private();
+  char *peer_pk = nostr_key_get_public(peer_sk);
+  CHECK(peer_sk && peer_pk);
+  Watch w;
+  watch_start(ctx, &w);
+  GVariant *r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", peer_pk, ""), "(s)", &err);
+  if (!r) g_printerr("summoned approval: %s\n", err ? err->message : "?");
+  CHECK(r != NULL && err == NULL);
+  g_variant_unref(r);
+  watch_drain();
+  CHECK(w.a.n_requests == 1);
+  watch_stop(ctx, &w);
+  free(peer_sk);
+  free(peer_pk);
+}
+
+/* ---------------------------------------------------------------------------
  * Main
  * ------------------------------------------------------------------------- */
 
-int main(void) {
+int main(int argc, char **argv) {
+  if (argc > 1 && g_strcmp0(argv[1], "--approval-ui") == 0) return approval_ui_helper();
   /* First fixture: mutations disabled, relays absent. Exercises the read
    * lanes plus GetRelays=NotFound plus StoreKey=PermissionDenied. */
   {
@@ -2545,8 +2631,21 @@ int main(void) {
     gboolean attested = ctx.attested;
     ctx_teardown(&ctx);
     g_print("PASS gating (decrypt/pubkey/relays gated,%s remember round-trip, kind-keyed "
-            "remember, coalescing, no-agent fail-fast)\n",
+            "remember, coalescing, no-agent rejected)\n",
             attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
+  }
+
+  /* The approval UI is started by the bus for a request (nostrc-sh5h). */
+  {
+    Ctx ctx;
+    char *dir = write_approval_ui_service();
+    approval_ui_service_dir = dir;
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI_ON_DEMAND, NULL, NULL);
+    approval_ui_service_dir = NULL;
+    test_summon_approval_ui(&ctx);
+    ctx_teardown(&ctx);
+    g_free(dir);
+    g_print("PASS approval UI started on demand and answered from ListPendingRequests\n");
   }
 
   /* Leave the disconnected sender's request pending to exercise the

@@ -25,7 +25,7 @@ extern "C" {
  * (nostrc-qp24.16). 0.5.1: refuse to approve a parked D-Bus request whose
  * caller disconnected, even before its NameOwnerChanged cleanup runs. */
 #define NOSTR_NIP55L_VERSION_MAJOR 0
-#define NOSTR_NIP55L_VERSION_MINOR 6
+#define NOSTR_NIP55L_VERSION_MINOR 7
 #define NOSTR_NIP55L_VERSION_PATCH 0
 #define NOSTR_NIP55L_VERSION_STRING "0.6.0"
 
