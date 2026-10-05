@@ -1,7 +1,8 @@
 /* test-dbus.c - D-Bus interface integration tests for gnostr-signer
  *
  * Tests both org.nostr.Signer and org.gnostr.Signer D-Bus interfaces using
- * GTestDBus for isolated testing. This module verifies:
+ * a private test bus (tests/common/nostrc-test-bus.h; never GTestDBus,
+ * which hangs or orphans its daemon on macOS: nostrc-gcu4). This module verifies:
  *   - Service startup and bus name acquisition
  *   - GetPublicKey method
  *   - SignEvent method (with pre-approved ACL)
@@ -29,6 +30,7 @@
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
 #include <nostr/nip04.h>
+#include "nostrc-test-bus.h"
 
 /* D-Bus identifiers matching nip55l_dbus_names.h */
 #define TEST_BUS_NAME       "org.nostr.Signer"
@@ -55,12 +57,12 @@
 /* ===========================================================================
  * Test Fixture
  *
- * Uses GTestDBus to create an isolated session bus for each test, ensuring
+ * Uses NostrcTestBus to create an isolated session bus for each test, ensuring
  * tests don't interfere with user's actual D-Bus session or each other.
  * =========================================================================== */
 
 typedef struct {
-    GTestDBus    *dbus;
+    NostrcTestBus *dbus;
     GDBusConnection *service_conn;   /* Connection for the service */
     GDBusConnection *client_conn;    /* Connection for client proxy */
     GDBusProxy   *proxy;
@@ -946,15 +948,15 @@ fixture_setup(DbusFixture *fix, gconstpointer user_data)
     g_assert_no_error(error);
 
     /* Set up isolated D-Bus session */
-    fix->dbus = g_test_dbus_new(G_TEST_DBUS_NONE);
-    g_test_dbus_up(fix->dbus);
+    fix->dbus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+    nostrc_test_bus_up(fix->dbus);
 
     /* Create a dedicated main context and loop for the service thread */
     fix->service_context = g_main_context_new();
     fix->service_loop = g_main_loop_new(fix->service_context, FALSE);
 
     /* Get connection for the service - use the service context */
-    const gchar *bus_addr = g_test_dbus_get_bus_address(fix->dbus);
+    const gchar *bus_addr = nostrc_test_bus_get_address(fix->dbus);
 
     g_main_context_push_thread_default(fix->service_context);
     fix->service_conn = g_dbus_connection_new_for_address_sync(
@@ -1087,8 +1089,7 @@ fixture_teardown(DbusFixture *fix, gconstpointer user_data)
 
     /* Tear down test bus */
     if (fix->dbus) {
-        g_test_dbus_down(fix->dbus);
-        g_object_unref(fix->dbus);
+        nostrc_test_bus_down(fix->dbus); /* stops the daemon and frees the bus */
         fix->dbus = NULL;
     }
 

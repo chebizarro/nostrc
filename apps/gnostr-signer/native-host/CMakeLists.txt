@@ -103,10 +103,13 @@ if(BUILD_TESTING)
   endforeach()
 
   # End-to-end: the real host binary against the real nostr-signer-daemon
-  # on a private GTestDBus bus (mirrors nips/nip55l/tests/
+  # on a private test bus (nostrc-test-bus) (mirrors nips/nip55l/tests/
   # test_signer_dbus_contract.c). Needs the nip55l GLib daemon target.
   if(TARGET nostr-signer-daemon)
+    # nostrc-gcu4: a private bus bound to the test's lifetime, never GTestDBus.
+    include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/NostrcTestBus.cmake)
     add_executable(test_nmh_e2e tests/test_nm_e2e.c)
+    target_link_libraries(test_nmh_e2e PRIVATE nostrc-test-bus)
     target_compile_options(test_nmh_e2e PRIVATE ${NMH_WARN})
     target_link_libraries(test_nmh_e2e PRIVATE nmh_core)
     target_compile_definitions(test_nmh_e2e PRIVATE
@@ -119,13 +122,14 @@ if(BUILD_TESTING)
   endif()
 
   # WebLN end-to-end: the real host against the real nostr-wallet-agent on a
-  # private GTestDBus bus (headless, ephemeral pairing store). The agent is
+  # private test bus (nostrc-test-bus) (headless, ephemeral pairing store). The agent is
   # told to trust the build-tree host via its test-build-only
   # NOSTR_WALLET_AGENT_ORIGIN_BRIDGES override (defaults to BUILD_TESTING,
   # and is defined later: the agent directory is added after this one).
   if(ENABLE_NOSTR_WALLET_AGENT AND
      (NOT DEFINED NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV OR NOSTR_WALLET_AGENT_ORIGIN_BRIDGE_ENV))
     add_executable(test_nmh_webln_e2e tests/test_nm_webln_e2e.c)
+    target_link_libraries(test_nmh_webln_e2e PRIVATE nostrc-test-bus)
     target_compile_options(test_nmh_webln_e2e PRIVATE ${NMH_WARN})
     target_link_libraries(test_nmh_webln_e2e PRIVATE nmh_core)
     target_compile_definitions(test_nmh_webln_e2e PRIVATE
@@ -139,6 +143,7 @@ if(BUILD_TESTING)
     # Paired: the agent's test-build pairing hook + its fixture wallet
     # process (wallet service and relay on 127.0.0.1), nostrc-4qbt.
     add_executable(test_nmh_webln_paired_e2e tests/test_nm_webln_paired_e2e.c)
+    target_link_libraries(test_nmh_webln_paired_e2e PRIVATE nostrc-test-bus)
     target_compile_options(test_nmh_webln_paired_e2e PRIVATE ${NMH_WARN})
     target_link_libraries(test_nmh_webln_paired_e2e PRIVATE nmh_core)
     target_compile_definitions(test_nmh_webln_paired_e2e PRIVATE

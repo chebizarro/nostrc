@@ -1,5 +1,5 @@
 /* test_nm_webln_e2e — nostr-signer-webext-host (WebLN) against the real
- * nostr-wallet-agent (org.nostr.Wallet1) on a private GTestDBus bus
+ * nostr-wallet-agent (org.nostr.Wallet1) on a private test bus (nostrc-test-bus)
  * (nostrc-jjyp).
  *
  * The agent runs headless (no dialogs: anything needing the user is
@@ -35,6 +35,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "nostrc-test-bus.h"
 
 #ifndef NMH_AGENT_PATH
 #error "NMH_AGENT_PATH must point at nostr-wallet-agent"
@@ -52,7 +53,7 @@ static void fail_dump(void);
 #define CHECK(c) do { if (!(c)) { g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fail_dump(); exit(1); } } while (0)
 
 typedef struct {
-  GTestDBus *tbus;
+  NostrcTestBus *tbus;
   GSubprocess *agent;
   GSubprocess *host;
   GOutputStream *to_host;
@@ -183,8 +184,8 @@ static void setup(E2E *e) {
   g_unsetenv("DISPLAY");
   g_unsetenv("WAYLAND_DISPLAY");
 
-  e->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(e->tbus);
+  e->tbus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(e->tbus);
   e->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
   CHECK(e->bus);
 
@@ -232,8 +233,7 @@ static void teardown(E2E *e) {
   g_object_unref(e->host);
   stop_agent(e);
   g_object_unref(e->bus);
-  g_test_dbus_down(e->tbus);
-  g_object_unref(e->tbus);
+  nostrc_test_bus_down(e->tbus); /* stops the daemon and frees the bus */
   g_autofree gchar *cmd = g_strdup_printf("rm -rf '%s'", e->tmpdir);
   (void)!system(cmd);
   agent_log_path = NULL;

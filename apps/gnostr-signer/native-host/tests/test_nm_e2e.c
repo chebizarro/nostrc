@@ -2,7 +2,7 @@
  * daemon (nostrc-jjyp).
  *
  * Mirrors nips/nip55l/tests/test_signer_dbus_contract.c: a private
- * GTestDBus session bus, the actual nostr-signer-daemon on it with a
+ * private session bus (nostrc-test-bus), the actual nostr-signer-daemon on it with a
  * hermetic identity ($NOSTR_SIGNER_SECKEY_HEX, BIP-340 vector 0: sk = 3)
  * and a pre-seeded ACL, then the real host binary spawned with pipes and
  * driven with native-messaging frames exactly as a browser would:
@@ -29,6 +29,7 @@
 #include <limits.h>
 #ifdef __APPLE__
 #include <libproc.h>
+#include "nostrc-test-bus.h"
 #endif
 
 #ifndef NMH_DAEMON_PATH
@@ -44,7 +45,7 @@
 #define CHECK(c) do { if (!(c)) { g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
 typedef struct {
-  GTestDBus *tbus;
+  NostrcTestBus *tbus;
   GSubprocess *daemon;
   GSubprocess *host;
   GOutputStream *to_host;
@@ -90,7 +91,7 @@ static void on_approval_requested(GDBusConnection *c, const gchar *sender, const
 
 static void assert_approval_origin(E2E *e, const gchar *origin) {
 #ifdef __APPLE__
-  /* GTestDBus on macOS does not provide caller PIDs, so the daemon exposes
+  /* A private test bus on macOS does not provide caller PIDs, so the daemon exposes
    * its explicitly unattested claimed:<app_id> principal in the prompt. */
   g_autofree gchar *claimed = g_strconcat("claimed:", origin, NULL);
   CHECK(g_strcmp0(e->last_app_id, claimed) == 0);
@@ -256,7 +257,7 @@ static void setup(E2E *e) {
   g_setenv("NOSTR_SIGNER_TEST_ORIGIN_BRIDGES", host_real, TRUE);
   g_setenv("NOSTR_SIGNER_TEST_APPROVERS", self_real, TRUE);
   g_autofree gchar *grants = g_build_filename(gdir, "signer-grants.ini", NULL);
-  /* On a bus without caller PIDs (macOS GTestDBus), the signer deliberately
+  /* On a bus without caller PIDs (a macOS test bus), the signer deliberately
    * uses claimed:<app_id> rather than an executable or attested web origin.
    * Add only hermetic test grants for that fallback; Linux still exercises
    * executable and bridge-origin principals through its own entries. */
@@ -273,8 +274,8 @@ static void setup(E2E *e) {
   e->relays_path = g_build_filename(ndir, "relays.conf", NULL);
   write_file(e->relays_path, "[\"wss://relay.example\", \"wss://nos.lol\"]\n");
 
-  e->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(e->tbus);
+  e->tbus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(e->tbus);
 
   g_autoptr(GError) err = NULL;
   e->daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE,
@@ -321,8 +322,7 @@ static void teardown(E2E *e) {
     g_object_unref(e->daemon);
   }
   g_object_unref(e->bus);
-  g_test_dbus_down(e->tbus);
-  g_object_unref(e->tbus);
+  nostrc_test_bus_down(e->tbus); /* stops the daemon and frees the bus */
   g_autofree gchar *cmd = g_strdup_printf("rm -rf '%s'", e->tmpdir);
   int rc = system(cmd);
   (void)rc;

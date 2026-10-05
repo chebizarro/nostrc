@@ -162,10 +162,13 @@ set_tests_properties(signer/bunker PROPERTIES
 
 # ==============================================================================
 # Test: D-Bus interface integration tests
-# Uses GTestDBus for isolated session bus testing
+# Uses tests/common/nostrc-test-bus for isolated session bus testing
 # Issue: nostrc-991
 # ==============================================================================
 add_executable(test-dbus test-dbus.c)
+# nostrc-gcu4: a private bus bound to the test's lifetime, never GTestDBus.
+include(${CMAKE_CURRENT_LIST_DIR}/../../../cmake/NostrcTestBus.cmake)
+target_link_libraries(test-dbus PRIVATE nostrc-test-bus)
 target_include_directories(test-dbus PRIVATE ${SIGNER_INCLUDE_DIRS})
 target_link_libraries(test-dbus PRIVATE ${SIGNER_TEST_LIBS})
 target_link_directories(test-dbus PRIVATE ${SIGNER_TEST_LINK_DIRS})

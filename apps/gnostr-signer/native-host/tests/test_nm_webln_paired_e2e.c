@@ -1,7 +1,7 @@
 /* test_nm_webln_paired_e2e — WebLN through the real browser bridge and the
  * real nostr-wallet-agent, PAIRED with a NIP-47 wallet (nostrc-4qbt).
  *
- * Processes, all on a private GTestDBus bus, no network:
+ * Processes, all on a private test bus (nostrc-test-bus), no network:
  *   nwa-fixture-wallet   wallet service + relay on ws://127.0.0.1:<port>
  *                        (gnome/nostr-wallet-agent/tests), prints the pairing
  *   nostr-wallet-agent   headless, ephemeral, paired through its
@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "nostrc-test-bus.h"
 
 #ifndef NMH_AGENT_PATH
 #error "NMH_AGENT_PATH must point at nostr-wallet-agent"
@@ -54,7 +55,7 @@ static void fail_dump(void) {
 #define CHECK(c) do { if (!(c)) { g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); fail_dump(); exit(1); } } while (0)
 
 typedef struct {
-  GTestDBus *tbus;
+  NostrcTestBus *tbus;
   GDBusConnection *bus;
   GSubprocess *fixture, *agent, *host;
   GDataInputStream *fx_out;
@@ -228,8 +229,8 @@ static void setup(E2E *e) {
   }
   CHECK(uri);
 
-  e->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  g_test_dbus_up(e->tbus);
+  e->tbus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  nostrc_test_bus_up(e->tbus);
   e->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
   CHECK(e->bus);
   g_dbus_connection_signal_subscribe(e->bus, NULL, "org.nostr.Wallet1", "BudgetExceeded", "/org/nostr/Wallet1",
@@ -274,8 +275,7 @@ static void teardown(E2E *e) {
   g_object_unref(e->fx_out);
   g_object_unref(e->fixture);
   g_object_unref(e->bus);
-  g_test_dbus_down(e->tbus);
-  g_object_unref(e->tbus);
+  nostrc_test_bus_down(e->tbus); /* stops the daemon and frees the bus */
   g_autofree gchar *cmd = g_strdup_printf("rm -rf '%s'", e->tmpdir);
   (void)!system(cmd);
   agent_log_path = NULL;
