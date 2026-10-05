@@ -79,6 +79,10 @@ modules:
       - -DCMAKE_BUILD_TYPE=Release
       - -DBUILD_SHARED_LIBS=ON
       - -DNSYNC_ENABLE_TESTS=OFF
+      # The sandbox searches /app/lib only.
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      # Upstream still declares a CMake minimum the SDK's CMake rejects.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
       - type: git
         url: https://github.com/google/nsync.git
@@ -93,6 +97,8 @@ modules:
       - -DJANSSON_BUILD_DOCS=OFF
       - -DJANSSON_WITHOUT_TESTS=ON
       - -DJANSSON_EXAMPLES=OFF
+      # Upstream still declares a CMake minimum the SDK's CMake rejects.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
       - type: git
         url: https://github.com/akheron/jansson.git
@@ -110,11 +116,33 @@ modules:
       - -DLWS_WITH_GLIB=ON
       - -DLWS_WITH_LIBUV=OFF
       - -DLWS_WITH_LIBEVENT=OFF
+      # 4.3.3 is the release Groundhog is tested with (Ubuntu 24.04); the SDK's
+      # newer compiler and C library turn one of its warnings into an error.
+      - -DDISABLE_WERROR=ON
+      # Upstream still declares a CMake minimum the SDK's CMake rejects.
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
     sources:
       - type: git
         url: https://github.com/warmcat/libwebsockets.git
         tag: v4.3.3
         commit: 4415e84c095857629863804e941b9e1c2e9347ef
+
+  # Build-time only: sqlcipher generates its sources with tclsh, which the
+  # SDK does not have. Nothing of it is kept (see cleanup).
+  - name: tcl
+    buildsystem: autotools
+    subdir: unix
+    config-opts:
+      - --disable-shared
+    post-install:
+      - ln -sf tclsh8.6 /app/bin/tclsh
+    cleanup:
+      - '*'
+    sources:
+      - type: git
+        url: https://github.com/tcltk/tcl.git
+        tag: core-8-6-15
+        commit: 1a98213e55128c8a2136379fedfaef0c8e15320b
 
   # Encrypted SQLite for the message store.
   - name: sqlcipher
@@ -140,6 +168,7 @@ modules:
     builddir: true
     config-opts:
       - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - -DCMAKE_INSTALL_LIBDIR=lib
       - -DBUILD_GROUNDHOG=ON
       - -DBUILD_TESTING=OFF
       - -DBUILD_TESTING_FRAMEWORK=OFF
@@ -153,6 +182,8 @@ modules:
     no-make-install: true
     post-install:
       - cmake --install gnome/groundhog
+      # A package manager compiles schemas with a trigger; here nobody else does.
+      - glib-compile-schemas /app/share/glib-2.0/schemas
     sources:
       - type: dir
         path: ../../../..

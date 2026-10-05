@@ -3073,9 +3073,14 @@ endforeach()
 # NIP-34 reports share gnostr's libnip34 builder; no new protocol implementation.
 if (TARGET groundhog-inbox-setup)
   if (NOT TARGET nip34)
-    # EXCLUDE_FROM_ALL: Groundhog links nip34 statically; its headers and
-    # archive are not part of an app install.
-    add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
+    # Groundhog links nip34 statically; its headers and archive are not part
+    # of an app install, so a release build leaves its install rules out.
+    # A testing build keeps the directory whole so test-nip34 is still built.
+    if (BUILD_TESTING)
+      add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34)
+    else()
+      add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
+    endif()
   endif()
   add_library(groundhog-issue STATIC src/ui/gh-issue-dialog.c)
   target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)

@@ -130,6 +130,48 @@ unstable/24.11+.
 - macOS `.dmg` (needs notarization and the Keychain path hardened:
   nostrc-2hmd) and Windows. Snap only if someone asks.
 
+## What building it showed (2026-10-05)
+
+Built and installed on Ubuntu 24.04 x86_64 (the `gnome-dev` VM). These
+findings replace the assumptions in the target sections above where they
+differ.
+
+- **An app-only install was incomplete.** Groundhog, `grotto` and
+  `grotto-daemon` load `libnostr-json.so.1` at run time; every other in-tree
+  library is static. `cmake --install <build>/gnome/groundhog` left it behind.
+  Fixed: each app installs a private copy in `<libdir>/<app>/` with a
+  relative RUNPATH (`cmake/NostrcPrivateJsonLib.cmake`).
+- **Debian: a separate recipe, not more packages in `debian/`.** The
+  top-level recipe configures the headless flavour (`NOSTR_WITH_GLIB=OFF`,
+  shared libraries); the desktop apps need the GLib flavour, linked
+  statically. `packaging/debian-desktop/` builds `groundhog` and `grotto`
+  (app + background service in one package) through
+  `scripts/build-desktop-deb.sh`. Installed and exercised: all three bus names
+  are activatable, a call to `org.nostr.Signer` starts `grotto-daemon`,
+  `groundhog --smoke` passes.
+- **Flatpak: GNOME 51, not 47.** Flathub now carries runtimes 49, 50 and 51;
+  47 is past end of life. 51 has the GTK 4.24 / libadwaita 1.10 Groundhog is
+  developed against. The SDK has no `tclsh` (sqlcipher needs it to build), and
+  nsync, jansson and libwebsockets need small flags to configure with its
+  CMake and compiler. The older Grotto manifest pinned commits that do not
+  match their tags and was never built.
+- **The signer cannot live in a sandbox or a moving mount yet
+  (nostrc-mevv).** The daemon identifies callers through `/proc` and trusts
+  its approval UI by absolute path and inode. Inside a Flatpak it cannot
+  resolve host PIDs, and Flatpak will not export a service file for
+  `org.nostr.Signer` from an app called `org.nostr.Grotto`; inside an AppImage
+  the mount path changes on every run. So for the alpha: **Groundhog's
+  Flatpak talks to a natively installed Grotto**, there is **no Grotto
+  Flatpak**, and the **AppImage waits** for that design.
+- **First run needs Grotto open by hand (nostrc-sh5h).** The daemon rejects
+  any request that needs approval unless the Grotto app is already running,
+  and the app started as a D-Bus service does not listen for requests. This
+  is independent of packaging and is the main obstacle to a first run that
+  just works.
+- **Package metadata needs a contact address.** Debian, RPM and AUR recipes
+  require a maintainer name and email; the recipes carry the tree's existing
+  placeholder until the owner picks one.
+
 ## Risks
 
 - **The signer is the product's front door and is not ready.** Mitigation:
