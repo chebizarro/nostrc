@@ -692,6 +692,15 @@ is_not_collapsed(gpointer data)
   return !is_collapsed(data);
 }
 
+/* Shown, mapped and given a width: its Pango layout can be measured. */
+static gboolean
+is_shown_and_sized(gpointer data)
+{
+  GtkWidget *widget = data;
+  return gtk_widget_get_visible(widget) && gtk_widget_get_mapped(widget) &&
+         gtk_widget_get_width(widget) > 0;
+}
+
 static gboolean
 is_expanded(gpointer data)
 {
@@ -754,14 +763,15 @@ test_narrow_title_not_truncated(void)
   gh_content_page_set_conversation_shown(page, TRUE);
   /* Collapsed, the content page is only laid out once it is shown. */
   adw_navigation_split_view_set_show_content(gh_window_get_split(window), TRUE);
-  drain_idle();
   GtkLabel *narrow = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(page),
                                                              GH_TYPE_CONTENT_PAGE,
                                                              "narrow_title_label"));
   GtkLabel *header = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(page),
                                                              GH_TYPE_CONTENT_PAGE,
                                                              "title_label"));
-  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(narrow)));
+  /* The breakpoint applies once the content page has been shown and
+   * allocated; under load that takes more than a few idle iterations. */
+  spin_until(is_shown_and_sized, narrow);
   g_assert_false(gtk_widget_get_visible(GTK_WIDGET(header)));
   g_assert_cmpstr(gtk_label_get_text(narrow), ==, title);
   PangoLayout *layout = gtk_label_get_layout(narrow);
@@ -775,8 +785,7 @@ test_narrow_title_not_truncated(void)
   gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
   drain_idle();
   spin_until(is_not_collapsed, window);
-  drain_idle();
-  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(header)));
+  spin_until(is_shown_and_sized, header);
   g_assert_false(gtk_widget_get_visible(GTK_WIDGET(narrow)));
   g_assert_cmpstr(gtk_label_get_text(header), ==, title);
   g_assert_cmpstr(gtk_widget_get_tooltip_text(GTK_WIDGET(header)), ==, title);
