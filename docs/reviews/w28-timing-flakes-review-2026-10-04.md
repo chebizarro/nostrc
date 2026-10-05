@@ -34,3 +34,31 @@ All mutations were restored and their test targets rebuilt. The final seven touc
 - Version policy: no bump for test-only changes to nostr-gtk, Groundhog, libmarmot, or libgo; relayd is unversioned, so its shipped D-Bus bug fix has no authoritative version source to bump. Gate scripts are not a versioned component. The test-hook symbols are in internal libmarmot headers and conditional on `MARMOT_TEST_HOOKS`; no installed public API change was found.
 
 **Required before approval:** fix the static-check self-test; make the perf registration mandatory on clean gate/CI builds; tighten the perf regression signal; repair the timeout-path source cleanup.
+
+---
+
+## Final re-review addendum — `a6cb991f`, 2026-10-04
+
+**Final verdict: CHANGES-REQUIRED** for one new gate-plumbing regression below. The four findings in the first review are **resolved** by `a6cb991f`; the original findings above are retained as historical review evidence, not as open objections. This addendum was made after cherry-picking `9828f1b3` and `a6cb991f` onto the K-containing `origin/master` at `8e1eba55` (new commit IDs `34e9950e`, `747da72f`) and rebasing the review document on that pair.
+
+### Remaining finding
+
+- **Medium — the optional amd64-emulation Linux gate now fails by construction.** `scripts/linux-gate.sh:133-138` appends `test_nostr_gtk_bind_latency_perf` to `SMOKE_EXCLUDE` whenever `NOSTRC_GATE_AMD64=1` selects a non-native architecture, but `scripts/linux-gate.sh:186-187` still exports `REQUIRED_PERF_TEST=test_nostr_gtk_bind_latency_perf`. `scripts/linux-gate-smoke.sh:216-224` then requires that same test to appear in the *selected* `ctest -N -L '^perf$' -E "$SMOKE_EXCLUDE"` list. I reproduced the selection: the native filter lists one perf test; the emulation exclusion lists **zero**. Thus an emulated run reaches the end of otherwise-passing smoke tests and fails “required perf test ... is not registered and selected.” Keep the native and hosted-CI mandatory perf checks, but do not require a test the emulation mode deliberately excludes (or remove that exclusion if its CPU-relative budget is valid under emulation). The full emulated build was not run; the contradictory selection is deterministic.
+
+### Resolution probes and coverage
+
+| Earlier finding | Re-review result |
+| --- | --- |
+| Required `test-linux-gate-smoke.sh` failed | `bash scripts/test-linux-gate-smoke.sh` **passed**, including mock and real CTest cases for required registration, serial perf failure/no retry, skip, and execution after a functional rerun. `bash scripts/test-pre-push.sh` also passed. |
+| Fresh/CI perf registration absent | A new default configure registered `test_nostr_gtk_bind_latency_perf` with the `perf` label on its *first* pass. A fresh CI-shaped configure with `BUILD_APPS=OFF`, `BUILD_NOSTR_GTK=ON` also registered it. `groundhog-ci.yml` now builds the target, asserts its registration, and runs the perf label serially with a failing CTest exit blocking the job. The native Linux gate required and ran one serial perf test. |
+| 27× bind work passed | The same 100,000-operation-per-`on_bind` injection now failed the perf test at a median candidate/reference CPU ratio of **53.73** against the **3.0** limit. A smaller 500-operation injection measured **1.52×** and passed. Suppressing `bind_count++` still failed both functional and perf registrations at `0 > 0`. The nine perf samples each require positive candidate and reference bind counts and a positive reference time, so the ratio is not vacuous. |
+| Inbox timeout produced a GLib critical | Forcing `inbox_live` false failed after its deadline with `inbox did not become live: state=... relay=... detail=...`; there was no `Source ID ... was not found` critical. The new ready/timeout helper cases are registered inside `groundhog-e2e-dm`. |
+
+The other original regression guards were not loosened: channel value and post-join completion checks, Marmot refusal/parser-bound/sort checks, and relayd's bounded child-exit check remain. The D-Bus stop-source change remains correct on review; no new shipped public surface or version bump is required beyond the decisions recorded in the manifest.
+
+### Re-review verification
+
+- On `a6cb991f`: macOS Ninja rebuild passed; touched CTests **7/7 passed** on repeat (an initial `groundhog-e2e-dm` run failed at an unrelated `send_stack_select` assertion, then passed without a source change); smoke self-test and pre-push self-test passed; native Linux smoke gate passed **462 functional + 1 serial perf**; sanitizer gate passed **60/60**.
+- After cherry-picking onto K-containing `origin/master` `8e1eba55`: macOS Ninja rebuild passed; touched CTests **7/7 passed**; smoke self-test and unsequenced-argument check passed; native Linux smoke gate passed **461 functional + 1 serial perf**; sanitizer gate passed **60/60**. No mutation remains in the review worktree.
+
+**Required before approval:** reconcile the emulation-only exclusion with `REQUIRED_PERF_TEST`, then run at least the gate self-test for that selection. No push was performed.
