@@ -208,7 +208,9 @@ char *nostr_escape_string(const char *s) {
             *dst++ = '\\'; *dst++ = 'r';
             break;
         default:
-            if (iscntrl(c)) {
+            /* JSON controls are ASCII. Locale-dependent iscntrl() can
+             * classify UTF-8 continuation bytes as controls on macOS/BSD. */
+            if (c < 0x20) {
                 // emit up to 6 bytes: \uXXXX
                 int n = snprintf(dst, 7, "\\u%04x", c);
                 dst += n;

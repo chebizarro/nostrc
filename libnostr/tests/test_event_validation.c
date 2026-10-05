@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <locale.h>
 
 #include "nostr-event.h"
 #include "nostr-envelope.h"
@@ -403,7 +404,44 @@ static void test_strict_tag_separators(void) {
     printf("  [ok] strict parsing rejects malformed tag separators\n");
 }
 
+
+/* NIP-01 canonical UTF-8 is independent of LC_CTYPE. GTK selects the user's
+ * locale; macOS/BSD iscntrl() then classifies some continuation bytes as
+ * controls (nostrc-30gt). DEL also must remain literal, including in C. */
+static void test_utf8_locale_roundtrip(void) {
+    const char *content = "👍🏽 ☕ 🥾 café 日本語 \x7f \"\\\b\t\n\f\r\x01";
+    const char *locales[] = { "C", "en_US.UTF-8", "C.UTF-8" };
+    char *saved = strdup(setlocale(LC_CTYPE, NULL));
+    assert(saved != NULL);
+    int utf8_tested = 0;
+    for (size_t i = 0; i < sizeof locales / sizeof locales[0]; i++) {
+        if (!setlocale(LC_CTYPE, locales[i])) continue;
+        if (i > 0) utf8_tested++;
+        NostrEvent *event = make_signed_event(content);
+        nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("t", "☕", NULL)));
+        assert(nostr_event_sign(event, TEST_SK) == 0);
+        /* SHA-256 of independently encoded [0,pubkey,time,kind,tags,content]. */
+        assert(strcmp(event->id, "b09122e2e1434a67e0aa24fb34a78c93decee488febabf9f2350a9fe941ade2d") == 0);
+        char *json = nostr_event_serialize_compact(event);
+        assert(json != NULL);
+        assert(strstr(json, "👍🏽 ☕ 🥾 café 日本語 \x7f") != NULL);
+        assert(strstr(json, "\\u0001") != NULL);
+        NostrEvent *parsed = nostr_event_new();
+        assert(nostr_event_deserialize_signed(parsed, json, NULL) == NOSTR_EVENT_VALIDATION_OK);
+        assert(strcmp(nostr_event_get_content(parsed), content) == 0);
+        assert(nostr_event_validate(parsed, NULL) == NOSTR_EVENT_VALIDATION_OK);
+        nostr_event_free(parsed);
+        nostr_event_free(event);
+        free(json);
+    }
+    assert(utf8_tested > 0);
+    assert(setlocale(LC_CTYPE, saved) != NULL);
+    free(saved);
+    printf("  [ok] UTF-8 content, tags and canonical id are locale independent\n");
+}
+
 int main(void) {
+    test_utf8_locale_roundtrip();
     printf("libnostr canonical event validation tests:\n");
     test_valid_and_forged_declared_id();
     test_mutation_never_returns_stale_id();

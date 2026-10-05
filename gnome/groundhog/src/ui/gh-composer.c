@@ -861,6 +861,7 @@ gh_composer_init(GhComposer *self)
   update_state(self);
   update_timer(self);
   update_attach(self);
+  update_poll(self);
   update_voice(self);
 }
 
@@ -997,6 +998,7 @@ gh_composer_set_disabled_reason(GhComposer *self, const gchar *reason)
   gtk_stack_set_visible_child_name(self->composer_stack, reason ? "disabled" : "edit");
   update_state(self);
   update_attach(self);
+  update_poll(self);
   update_voice(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_DISABLED_REASON]);
 }
