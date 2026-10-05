@@ -28,7 +28,7 @@ const gchar *gh_onboarding_item_get_icon_name(GhOnboardingItem *self);
  *  account  an identity from the signer-owned store (GhAccountController);
  *           selecting writes only org.nostr.Groundhog current-npub, never
  *           Gnostr's; "Use Without an Account" finishes read-only
- *  signer   Nostr Signer's availability and an optional test: one
+ *  signer   Grotto's availability and an optional test: one
  *           signature of a never-published ephemeral event and a NIP-44
  *           round trip to the account itself
  *  inbox    the kind-10050 message relays: the account's current list when

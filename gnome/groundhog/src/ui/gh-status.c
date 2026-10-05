@@ -144,9 +144,9 @@ static const struct {
     N_("Can't reach Tor — Groundhog won't connect without it"), TRUE,
     N_("Network Settings"), GH_STATUS_ACTION_NETWORK_SETTINGS },
   { GH_STATUS_BANNER_SIGNER_UNAVAILABLE,
-    N_("Nostr Signer isn't running — messages can't be unlocked or sent"), TRUE, NULL, NULL },
+    N_("Grotto isn't running — messages can't be unlocked or sent"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_SIGNER_NO_BUS,
-    N_("Nostr Signer and notifications are unavailable: no session bus is available"), TRUE, NULL, NULL },
+    N_("Grotto and notifications are unavailable: no session bus is available"), TRUE, NULL, NULL },
   { GH_STATUS_BANNER_INBOX_ERROR,
     N_("Can't receive messages on this device"), TRUE, NULL, NULL },
   /* [Set Up]: the onboarding inbox step chooses message relays and, with
@@ -190,7 +190,7 @@ gh_status_banner_get_title(GhStatusBanner banner)
   g_return_val_if_fail(banner <= GH_STATUS_BANNER_LAST, "");
   g_assert(banner_copy[banner].banner == banner);
   if (banner == GH_STATUS_BANNER_SIGNER_NO_BUS && bus_unresponsive)
-    return _("Nostr Signer and notifications are unavailable: the session bus isn't responding");
+    return _("Grotto and notifications are unavailable: the session bus isn't responding");
   return *banner_copy[banner].title ? _(banner_copy[banner].title) : "";
 }
 

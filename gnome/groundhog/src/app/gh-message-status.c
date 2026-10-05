@@ -23,7 +23,7 @@ typedef struct {
 static const StatusCopy status_copy[] = {
   [GH_MESSAGE_STATUS_WAITING_FOR_SIGNER] = {
     N_("Waiting for approval"), "dialog-password-symbolic",
-    N_("Not sent yet. Waiting for you to approve sending in Nostr Signer.") },
+    N_("Not sent yet. Waiting for you to approve sending in Grotto.") },
   [GH_MESSAGE_STATUS_QUEUED_OFFLINE] = {
     N_("Waiting for connection"), "network-offline-symbolic",
     N_("Not sent yet. Groundhog will send it when you are back online.") },
@@ -276,7 +276,7 @@ gh_message_status_self_copy_missing(GhTargetClass self_copy, gboolean gave_up)
 const gchar *
 gh_message_status_describe_approval(void)
 {
-  return tr(N_("Waiting for your approval in Nostr Signer."));
+  return tr(N_("Waiting for your approval in Grotto."));
 }
 
 const gchar *

@@ -45,7 +45,7 @@ typedef struct {
  *    outcomes, "retry-requested" retries through the outbox,
  *    "unlock-requested" asks the inbox to offer the messages the signer did
  *    not unlock again (gh_dm_inbox_unlock()), whose count the view shows
- *    ("Waiting for Nostr Signer to unlock N messages"), and a recipient
+ *    ("Waiting for Grotto to unlock N messages"), and a recipient
  *    without a message inbox (the newest own message "Can't send") gets the
  *    view's banner.
  *  - Drafts: the composer's text is saved to the conversation's draft 1 s

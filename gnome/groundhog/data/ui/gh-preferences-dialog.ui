@@ -583,8 +583,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkStringList">
                     <items>
                       <item translatable="yes">Automatic</item>
-                      <item translatable="yes">Nostr Signer</item>
-                      <item translatable="yes">Nostr Signer (NIP-55L)</item>
+                      <item translatable="yes">Grotto</item>
+                      <item translatable="yes">Grotto (NIP-55L)</item>
                       <item translatable="yes">Remote Signer (NIP-46)</item>
                     </items>
                   </object>
@@ -593,7 +593,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             </child>
             <child>
               <object class="GtkLabel">
-                <property name="label" translatable="yes">Your private key stays in Nostr Signer. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.</property>
+                <property name="label" translatable="yes">Your private key stays in Grotto. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.</property>
                 <property name="wrap">true</property>
                 <property name="xalign">0</property>
                 <property name="margin-top">12</property>
@@ -655,7 +655,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   </object>
   <object class="AdwAlertDialog" id="delete_all_dialog">
     <property name="heading" translatable="yes">Delete All Messages on This Device?</property>
-    <property name="body" translatable="yes">Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Nostr Signer, and Gnostr isn't affected.
+    <property name="body" translatable="yes">Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Grotto, and Gnostr isn't affected.
 
 Copies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.</property>
     <property name="default-response">cancel</property>

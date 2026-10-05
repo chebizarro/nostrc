@@ -83,7 +83,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </child>
                                 <child>
                                   <object class="AdwActionRow">
-                                    <property name="title" translatable="yes">Your private key stays in Nostr Signer</property>
+                                    <property name="title" translatable="yes">Your private key stays in Grotto</property>
                                     <property name="subtitle" translatable="yes">Groundhog never sees it. The signer asks you before anything is signed or unlocked.</property>
                                     <child type="prefix">
                                       <object class="GtkImage">
@@ -197,7 +197,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <property name="margin-end">12</property>
                                         <child>
                                           <object class="GtkLabel">
-                                            <property name="label" translatable="yes">Groundhog uses an identity you already keep in Nostr Signer. Choose the one people will write to.</property>
+                                            <property name="label" translatable="yes">Groundhog uses an identity you already keep in Grotto. Choose the one people will write to.</property>
                                             <property name="wrap">true</property>
                                             <property name="xalign">0</property>
                                           </object>
@@ -281,7 +281,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <child>
           <object class="AdwNavigationPage" id="signer_page">
             <property name="tag">signer</property>
-            <property name="title" translatable="yes">Nostr Signer</property>
+            <property name="title" translatable="yes">Grotto</property>
             <property name="child">
               <object class="AdwToolbarView">
                 <child type="top">
@@ -304,7 +304,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="margin-end">12</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Your private key never leaves Nostr Signer. Whenever Groundhog sends a message or unlocks one you received, the signer asks you to approve.</property>
+                                <property name="label" translatable="yes">Your private key never leaves Grotto. Whenever Groundhog sends a message or unlocks one you received, the signer asks you to approve.</property>
                                 <property name="wrap">true</property>
                                 <property name="xalign">0</property>
                               </object>
@@ -615,7 +615,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                 </style>
                                 <child>
                                   <object class="AdwActionRow">
-                                    <property name="title" translatable="yes">Nostr Signer asks you to approve</property>
+                                    <property name="title" translatable="yes">Grotto asks you to approve</property>
                                     <property name="subtitle" translatable="yes">Your list of message relays is signed with your key.</property>
                                     <property name="title-lines">0</property>
                                     <property name="subtitle-lines">0</property>
@@ -699,7 +699,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                   <object class="AdwSwitchRow" id="relay_list_switch">
                                     <property name="active">true</property>
                                     <property name="title" translatable="yes">Let People Invite You to Encrypted Groups</property>
-                                    <property name="subtitle" translatable="yes">Also publishes a public relay list so people can find your encrypted-group invitation keys. By default two public KeyPackage events (newer and older Marmot formats) can be linked to each other and to your account. Nostr Signer asks once more. Groundhog never changes a relay list you already have.</property>
+                                    <property name="subtitle" translatable="yes">Also publishes a public relay list so people can find your encrypted-group invitation keys. By default two public KeyPackage events (newer and older Marmot formats) can be linked to each other and to your account. Grotto asks once more. Groundhog never changes a relay list you already have.</property>
                                     <property name="title-lines">0</property>
                                     <property name="subtitle-lines">0</property>
                                   </object>

@@ -47,7 +47,7 @@ If the session bus socket accepts connections but never answers the
 D-Bus AUTH handshake (common on macOS where launchd holds the socket),
 Groundhog performs a complete D-Bus connection and AUTH exchange with a
 5-second deadline before `gtk_init` or `g_application_run`. Only a stalled
-connection enters non-unique fallback mode, with the banner: "Nostr Signer
+connection enters non-unique fallback mode, with the banner: "Grotto
 and notifications are unavailable: the session bus isn't responding".
 
 ## Building

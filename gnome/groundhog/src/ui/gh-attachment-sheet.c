@@ -157,7 +157,7 @@ gh_attachment_sheet_show_consent(GhAttachmentSheet *self, const gchar *host)
   g_autofree gchar *title = g_strdup_printf(_("%s Only Accepts Files from Accounts It Knows"),
                                             host);
   g_autofree gchar *body = g_strdup_printf(
-    _("To upload there, Nostr Signer signs the upload with your account. %s then learns that "
+    _("To upload there, Grotto signs the upload with your account. %s then learns that "
       "the file is yours, when you sent it and its size. It still gets only the encrypted file, "
       "not what it contains or whom it's for."), host);
   gtk_label_set_text(self->consent_title, title);

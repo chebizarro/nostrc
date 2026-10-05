@@ -570,7 +570,7 @@ maybe_auth(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
     return;
   }
   /* The deadline bounds the relay, not the signer: an account AUTH may wait
-   * for the user in Nostr Signer (charter §4.4 R6), whose own call timeout
+   * for the user in Grotto (charter §4.4 R6), whose own call timeout
    * bounds it. on_auth_signed() starts the deadline again. */
   clear_deadline(endpoint);
 }

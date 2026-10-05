@@ -305,7 +305,7 @@ static const gchar *
 local_reason(const gchar *code)
 {
   if (g_strcmp0(code, REASON_SIGNER) == 0)
-    return "Nostr Signer didn't approve it, or couldn't be reached.";
+    return "Grotto didn't approve it, or couldn't be reached.";
   if (g_strcmp0(code, REASON_STORAGE) == 0)
     return "There wasn't enough storage space to prepare it.";
   if (g_strcmp0(code, REASON_INVALID) == 0)

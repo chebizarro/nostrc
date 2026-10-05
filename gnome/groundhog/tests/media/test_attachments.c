@@ -814,7 +814,7 @@ test_error_words(void)
     { g_io_error_quark, G_IO_ERROR_CONNECTION_CLOSED, GH_ATTACHMENTS_DOWNLOAD, FALSE, FALSE, NULL,
       "network setting changed", TRUE },
     { gh_blossom_error_quark, GH_BLOSSOM_ERROR_SIGNER, GH_ATTACHMENTS_UPLOAD, FALSE, FALSE, NULL,
-      "Nostr Signer didn't sign", TRUE },
+      "Grotto didn't sign", TRUE },
     { gh_blossom_error_quark, GH_BLOSSOM_ERROR_BAD_ANSWER, GH_ATTACHMENTS_UPLOAD, FALSE, FALSE,
       NULL, "different file", TRUE },
     { gh_blossom_error_quark, GH_BLOSSOM_ERROR_AUTH_REQUIRED, GH_ATTACHMENTS_UPLOAD, FALSE, FALSE,

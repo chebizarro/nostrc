@@ -77,7 +77,7 @@ gh_about_dialog_new(void)
       _("Private messaging that keeps its head down. Groundhog gives your "
         "conversations a burrow of their own, and shows up when it matters.\n\n"
         "Private messages and encrypted groups with compatible Nostr apps. "
-        "Your private key stays in Nostr Signer, and nothing loads from the web "
+        "Your private key stays in Grotto, and nothing loads from the web "
         "unless you ask."));
   /* Translators: put your name here, one per line, if you translated Groundhog. */
   adw_about_dialog_set_translator_credits(about, _("translator-credits"));

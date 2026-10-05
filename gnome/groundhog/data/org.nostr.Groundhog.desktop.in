@@ -2,11 +2,12 @@
 Type=Application
 Name=Groundhog
 GenericName=Messaging
-Comment=Nostr messaging (account and messaging services not yet available)
+Comment=Private messages and encrypted groups on Nostr
 Exec=groundhog %U
 Icon=org.nostr.Groundhog
 Terminal=false
 DBusActivatable=true
 StartupNotify=true
-Categories=Network;Chat;GNOME;GTK;
-Keywords=Nostr;messages;chat;
+Categories=Network;Chat;InstantMessaging;GNOME;GTK;
+Keywords=Nostr;messages;chat;messenger;private;encrypted;groups;Marmot;MLS;
+X-GNOME-UsesNotifications=true

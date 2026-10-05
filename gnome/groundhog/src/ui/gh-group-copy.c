@@ -231,8 +231,8 @@ gh_group_join_copy(GhNip29JoinState join, GhNip29Op *request, gboolean already_m
   case GH_NIP29_JOIN_REQUESTING:
     if (waiting_for_signer(request))
       return state_copy(GH_GROUP_TONE_PROGRESS, "dialog-password-symbolic",
-                        _("Waiting for Approval in Nostr Signer"),
-                        g_strdup(_("Approve the join request in Nostr Signer to send it.")));
+                        _("Waiting for Approval in Grotto"),
+                        g_strdup(_("Approve the join request in Grotto to send it.")));
     return state_copy(GH_GROUP_TONE_PROGRESS, "network-transmit-receive-symbolic",
                       _("Asking to Join…"),
                       /* TRANSLATORS: %s is a relay's host name. */
@@ -314,8 +314,8 @@ gh_group_create_copy(GhNip29JoinState join, GhNip29Op *request, gboolean has_sta
   case GH_NIP29_JOIN_CREATING:
     if (waiting_for_signer(request))
       return state_copy(GH_GROUP_TONE_PROGRESS, "dialog-password-symbolic",
-                        _("Waiting for Approval in Nostr Signer"),
-                        g_strdup(_("Approve the new group in Nostr Signer to send it.")));
+                        _("Waiting for Approval in Grotto"),
+                        g_strdup(_("Approve the new group in Grotto to send it.")));
     return gh_group_join_copy(join, request, FALSE, detail, host);
   case GH_NIP29_JOIN_MEMBER:
     copy = state_copy(has_state ? GH_GROUP_TONE_SUCCESS : GH_GROUP_TONE_PROGRESS,
@@ -423,7 +423,7 @@ gh_group_op_outcome(GhNip29Op *op)
   case GH_NIP29_OP_RETRYING:
     return g_strdup(_("The group’s relay couldn’t be reached. Groundhog tries again."));
   case GH_NIP29_OP_WAITING_FOR_SIGNER:
-    return g_strdup(_("Waiting for approval in Nostr Signer."));
+    return g_strdup(_("Waiting for approval in Grotto."));
   case GH_NIP29_OP_CANCELLED:
     return g_strdup(_("Cancelled."));
   case GH_NIP29_OP_SENDING:

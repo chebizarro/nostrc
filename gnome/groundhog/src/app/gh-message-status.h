@@ -91,7 +91,7 @@ typedef struct {
   gboolean no_inbox;         /* UNSEALED: a recipient has no usable kind-10050 */
   gboolean retry_scheduled;  /* UNSEALED: the inbox lookup failed, retrying */
   /* SEALED: a relay of this message waits for the user to approve signing
-   * in to it as the account in Nostr Signer (charter §4.4 R6): the
+   * in to it as the account in Grotto (charter §4.4 R6): the
    * self-copy's own inbox relay, or a note to self's. */
   gboolean approval_pending;
   const GhTargetClass *recipients; /* SEALED: one combined class per recipient */
@@ -110,7 +110,7 @@ gboolean gh_message_status_self_copy_missing(GhTargetClass self_copy, gboolean g
 const gchar *gh_message_status_describe_target(GhRelayPublishOutcome outcome,
                                                GhRelayOkPrefix prefix);
 /* The sentence for a relay that has not answered because signing in to it
- * waits for the user's approval in Nostr Signer (see approval_pending). */
+ * waits for the user's approval in Grotto (see approval_pending). */
 const gchar *gh_message_status_describe_approval(void);
 
 G_END_DECLS

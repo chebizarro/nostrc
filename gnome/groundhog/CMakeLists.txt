@@ -674,10 +674,12 @@ install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
-install(FILES ${GROUNDHOG_DATA}/icons/512x512/apps/org.nostr.Groundhog.png
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps)
-install(FILES ${GROUNDHOG_DATA}/icons/256x256/apps/org.nostr.Groundhog.png
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps)
+# hicolor wants 48px at least; launchers, docks and software centres pick the
+# nearest of these instead of scaling the 512px image down.
+foreach(size 48 64 128 256 512)
+  install(FILES ${GROUNDHOG_DATA}/icons/${size}x${size}/apps/org.nostr.Groundhog.png
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps)
+endforeach()
 
 if (BUILD_TESTING)
   add_test(NAME groundhog-version COMMAND groundhog --version)

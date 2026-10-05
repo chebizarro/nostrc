@@ -217,7 +217,7 @@ void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
  * messaging (nostrc-lff5): "No one in this conversation has set up private
  * messaging yet" (FALSE hides it). It takes the banner's place over a name. */
 void gh_conversation_view_set_room_without_inbox(GhConversationView *self, gboolean nobody);
-/* Charter §7.15 state 12: "Waiting for Nostr Signer to unlock N messages"
+/* Charter §7.15 state 12: "Waiting for Grotto to unlock N messages"
  * with Unlock (conversation.unlock-messages); 0 hides it. */
 void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
 /* Charter §7.15 state 13, encrypted groups (nostrc-oya4): "Some messages in

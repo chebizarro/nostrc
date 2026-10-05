@@ -239,7 +239,7 @@ probe_session_bus(GApplicationFlags *flags)
    * trigger GLib's Linux fallback to $XDG_RUNTIME_DIR/bus or X11
    * autolaunch, which may also block. */
   g_message("Groundhog: the session bus did not respond within 5 s — "
-            "Nostr Signer and notifications are unavailable (nostrc-v59q)");
+            "Grotto and notifications are unavailable (nostrc-v59q)");
   g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", TRUE);
   *flags |= G_APPLICATION_NON_UNIQUE;
   bus_fallback = TRUE;

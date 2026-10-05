@@ -287,7 +287,7 @@ static const Choice choices[] = {
   { "network-mode", { "System Settings", "No Proxy" }, { "'system'", "'none'" }, "'tor'",
     "Tor (not available in this version)" },
   { "signer-method",
-    { "Automatic", "Nostr Signer", "Nostr Signer (NIP-55L)", "Remote Signer (NIP-46)" },
+    { "Automatic", "Grotto", "Grotto (NIP-55L)", "Remote Signer (NIP-46)" },
     { "'auto'", "'local'", "'nip55l'", "'nip46'" }, "'bunker'", "Unsupported (“bunker”)" },
 };
 
@@ -998,7 +998,7 @@ test_key_package_row(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(group));
   g_assert_false(gtk_widget_get_visible(setup));  /* waiting: nothing to press */
   g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
-                          "Waiting for Nostr Signer to prove your account"));
+                          "Waiting for Grotto to prove your account"));
 
   gh_preferences_dialog_set_key_package_state(f->dialog,
                                               GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED);

@@ -23,7 +23,7 @@ const gchar *gh_mls_relay_row_get_url(GhMlsRelayRow *self);
  * (gh_new_group_dialog_add_encrypted_page()).
  *
  *  - This device's approval (GhMlsService:identity-state, followed live):
- *    "Waiting for approval in Nostr Signer…", or declined/failed with Try
+ *    "Waiting for approval in Grotto…", or declined/failed with Try
  *    Again (gh_mls_service_retry_identity()); hidden once approved.
  *  - Name, optional description, members (GhMlsInviteePicker: accepted
  *    contacts, each with its KeyPackage check) and the group relays (the

@@ -50,7 +50,7 @@ G_BEGIN_DECLS
  * is refused as auth-required again, or no challenge arrives before the
  * deadline. A refused EPHEMERAL AUTH is never retried as the account.
  * While the AUTH is being signed (an account AUTH may wait for the user in
- * Nostr Signer, charter §4.4 R6) the URL's deadline does not run; it starts
+ * Grotto, charter §4.4 R6) the URL's deadline does not run; it starts
  * again, in full, once the AUTH is sent.
  * Cancellation and signer revocation drop a pending AUTH; nothing is ever
  * signed as the account for a stale generation.

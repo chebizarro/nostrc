@@ -386,9 +386,9 @@ test_copy(void)
   g_assert_false(waiting.ready);
   g_assert_true(waiting.busy);
   g_assert_false(waiting.can_retry);
-  g_assert_cmpstr(waiting.title, ==, "Waiting for approval in Nostr Signer…");
+  g_assert_cmpstr(waiting.title, ==, "Waiting for approval in Grotto…");
   GhMlsIdentityCopy declined = gh_mls_identity_copy(GH_MLS_IDENTITY_DECLINED);
-  g_assert_cmpstr(declined.title, ==, "Declined in Nostr Signer");
+  g_assert_cmpstr(declined.title, ==, "Declined in Grotto");
   g_assert_true(declined.can_retry);
   g_assert_false(declined.busy);
   g_assert_true(gh_mls_identity_copy(GH_MLS_IDENTITY_FAILED).can_retry);
@@ -2295,25 +2295,25 @@ test_gui_enrollment(void)
   adw_dialog_set_child(dialog, GTK_WIDGET(navigation));
   adw_dialog_present(dialog, GTK_WIDGET(window));
   spin_until(gh_test_dialog_shown, dialog, "the page shown");
-  wait_text(identity_title, page, "Waiting for approval in Nostr Signer…");
+  wait_text(identity_title, page, "Waiting for approval in Grotto…");
   GtkWidget *retry = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(page),
                                                               GH_TYPE_MLS_NEW_GROUP_PAGE,
                                                               "retry_identity_button"));
   g_assert_false(gtk_widget_get_visible(retry));
   gh_mls_new_group_page_set_name(page, "Waiting");
-  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Nostr Signer first.");
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Grotto first.");
 
   /* Declined: said so, with Try Again. */
   w.signer.deny = TRUE;
   gh_test_signer_release_all(&w.signer);
-  wait_text(identity_title, page, "Declined in Nostr Signer");
+  wait_text(identity_title, page, "Declined in Grotto");
   g_assert_true(gtk_widget_get_visible(retry));
-  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Nostr Signer first.");
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Grotto first.");
 
   /* Try Again asks once more; approved, the row goes and Create only needs
    * people. */
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.retry-identity", NULL);
-  wait_text(identity_title, page, "Waiting for approval in Nostr Signer…");
+  wait_text(identity_title, page, "Waiting for approval in Grotto…");
   spin_until(a_proof_held, &w.signer, "the new proof request");
   w.signer.deny = FALSE;
   w.signer.hold = FALSE;

@@ -490,7 +490,7 @@ detail_not_sent(Msg *msg)
   if (!msg_sealed(msg)) {
     const gchar *reason = entry->last_error;
     if (g_strcmp0(reason, REASON_SIGNER) == 0)
-      return g_strdup(tr(N_("Nostr Signer didn't approve sending, or couldn't be reached.")));
+      return g_strdup(tr(N_("Grotto didn't approve sending, or couldn't be reached.")));
     if (g_strcmp0(reason, REASON_STORAGE) == 0)
       return g_strdup(tr(N_("There wasn't enough storage space to prepare this message.")));
     if (g_strcmp0(reason, REASON_INBOX_UNKNOWN) == 0 || g_strcmp0(reason, REASON_TIMED_OUT) == 0)
@@ -538,8 +538,8 @@ detail_for(Msg *msg, GhMessageStatus status)
   case GH_MESSAGE_STATUS_WAITING_FOR_SIGNER:
     /* Sealed: a relay of the own inbox waits for the account's sign-in. */
     return g_strdup(msg_sealed(msg)
-                      ? tr(N_("Approve signing in to your message relay in Nostr Signer."))
-                      : tr(N_("Approve sending in Nostr Signer.")));
+                      ? tr(N_("Approve signing in to your message relay in Grotto."))
+                      : tr(N_("Approve sending in Grotto.")));
   case GH_MESSAGE_STATUS_QUEUED_OFFLINE:
     return g_strdup(tr(N_("Groundhog will send it when you're back online.")));
   case GH_MESSAGE_STATUS_SENDING:

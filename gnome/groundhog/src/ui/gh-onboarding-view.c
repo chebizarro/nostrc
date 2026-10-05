@@ -471,25 +471,25 @@ signer_error_text(const GError *error)
   if (error->domain == GH_SIGNER_ERROR) {
     switch (error->code) {
     case GH_SIGNER_ERROR_DENIED:
-      return g_strdup(_("You declined the request in Nostr Signer. That's fine: nothing was "
+      return g_strdup(_("You declined the request in Grotto. That's fine: nothing was "
                         "sent, and Groundhog will ask again when it needs to."));
     case GH_SIGNER_ERROR_TIMED_OUT:
-      return g_strdup(_("Nostr Signer didn't get an answer in time. Try again when you're "
+      return g_strdup(_("Grotto didn't get an answer in time. Try again when you're "
                         "ready to approve."));
     case GH_SIGNER_ERROR_UNAVAILABLE:
-      return g_strdup(_("Nostr Signer isn't running, so it couldn't answer."));
+      return g_strdup(_("Grotto isn't running, so it couldn't answer."));
     case GH_SIGNER_ERROR_NO_APPROVER:
-      return g_strdup(_("Nostr Signer has no way to ask you right now. Make sure it can show "
+      return g_strdup(_("Grotto has no way to ask you right now. Make sure it can show "
                         "its approval window."));
     case GH_SIGNER_ERROR_KEY_MISMATCH:
-      return g_strdup(_("Nostr Signer answered with a different key than this account's."));
+      return g_strdup(_("Grotto answered with a different key than this account's."));
     case GH_SIGNER_ERROR_INVALID_RESULT:
-      return g_strdup(_("Nostr Signer's answer didn't check out, so Groundhog ignored it."));
+      return g_strdup(_("Grotto's answer didn't check out, so Groundhog ignored it."));
     default:
       break;
     }
   }
-  return g_strdup_printf(_("Nostr Signer couldn't finish: %s"), error->message);
+  return g_strdup_printf(_("Grotto couldn't finish: %s"), error->message);
 }
 
 /* ---- account ------------------------------------------------------------- */
@@ -552,29 +552,29 @@ update_signer_status(GhOnboardingView *self)
   const gchar *title, *subtitle, *icon;
   switch (gh_account_controller_get_signer_availability(self->config.accounts)) {
   case GH_SIGNER_AVAILABILITY_RUNNING:
-    title = _("Nostr Signer is running");
+    title = _("Grotto is running");
     subtitle = _("It's ready to ask you whenever Groundhog needs a signature.");
     icon = "emblem-ok-symbolic";
     break;
   case GH_SIGNER_AVAILABILITY_ACTIVATABLE:
-    title = _("Nostr Signer is installed");
+    title = _("Grotto is installed");
     subtitle = _("It starts by itself when Groundhog needs it.");
     icon = "emblem-ok-symbolic";
     break;
   case GH_SIGNER_AVAILABILITY_ABSENT:
-    title = _("Nostr Signer isn't available");
-    subtitle = _("Install or start Nostr Signer. Until then you can look around, but not "
-                 "send or unlock messages.");
+    title = _("Grotto isn't available");
+    subtitle = _("Install or start Grotto, the app that keeps your Nostr key. Until then "
+                 "you can look around, but not send or unlock messages.");
     icon = "dialog-warning-symbolic";
     break;
   case GH_SIGNER_AVAILABILITY_NO_BUS:
-    title = _("Nostr Signer can't be reached");
+    title = _("Grotto can't be reached");
     subtitle = _("This session has no message bus to reach the signer on.");
     icon = "dialog-warning-symbolic";
     break;
   case GH_SIGNER_AVAILABILITY_UNKNOWN:
   default:
-    title = _("Looking for Nostr Signer…");
+    title = _("Looking for Grotto…");
     subtitle = "";
     icon = "dialog-password-symbolic";
     break;
@@ -642,7 +642,7 @@ on_test_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   if (plaintext && !g_str_equal(plaintext, SIGNER_TEST_TEXT))
     g_set_error_literal(&error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT, "mismatch");
   signer_test_end(test, error,
-                  _("It works: Nostr Signer signed, locked and unlocked a test message."));
+                  _("It works: Grotto signed, locked and unlocked a test message."));
 }
 
 static void
@@ -722,7 +722,7 @@ test_signer_action(GtkWidget *widget, const char *name, GVariant *parameter)
   SignerTest *test = g_new0(SignerTest, 1);
   test->view = g_object_ref(self);
   test->cancellable = g_object_ref(self->signer_test_cancellable);
-  signer_test_show(self, TRUE, _("Waiting for you to approve in Nostr Signer…"));
+  signer_test_show(self, TRUE, _("Waiting for you to approve in Grotto…"));
   gh_account_controller_sign_with_cancellable_async(self->config.accounts, json,
     test->cancellable, on_test_signed, test);
 }
@@ -1039,7 +1039,7 @@ prepare_confirm(GhOnboardingView *self)
       _("Your relay list names no relay you publish to, so people can't find your "
         "encrypted-group keys. This adds these relays to it as relays you publish to and keeps "
         "everything else in it. By default two public KeyPackage events (newer and older "
-        "Marmot formats) can be linked to each other and to your account. Nostr Signer asks "
+        "Marmot formats) can be linked to each other and to your account. Grotto asks "
         "once more."));
   } else {
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->relay_list_switch),
@@ -1048,7 +1048,7 @@ prepare_confirm(GhOnboardingView *self)
       _("Also publishes a relay list naming these relays as where you publish, so people can "
         "find your encrypted-group keys there. By default two public KeyPackage events (newer "
         "and older Marmot formats) can be linked to each other and to your account. "
-        "Nostr Signer asks once more. Groundhog first checks that none of these relays holds "
+        "Grotto asks once more. Groundhog first checks that none of these relays holds "
         "a relay list of yours, and "
         "never changes one you already have."));
   }
@@ -1163,7 +1163,7 @@ update_later_offer(GhOnboardingView *self)
       subtitle = _("Checking that these relays hold no relay list of yours…");
       break;
     case GH_RELAY_LIST_SETUP_SIGNING:
-      subtitle = _("Approve the request in Nostr Signer to publish your relay list.");
+      subtitle = _("Approve the request in Grotto to publish your relay list.");
       break;
     case GH_RELAY_LIST_SETUP_PUBLISHING:
       subtitle = _("Publishing your relay list…");
@@ -1200,7 +1200,7 @@ update_later_offer(GhOnboardingView *self)
       show = button = TRUE;
       subtitle = _("Your relay list names no relay you publish to, so people can't invite you "
                    "to encrypted groups. Add your message relays to it as relays you publish "
-                   "to? Everything else in it is kept. Nostr Signer asks once more.");
+                   "to? Everything else in it is kept. Grotto asks once more.");
       gtk_button_set_label(GTK_BUTTON(self->relay_list_later_button), _("_Add My Relays"));
     } else if (relays &&
                gh_account_relays_get_state(relays) == GH_ACCOUNT_RELAYS_DISCOVERING) {
@@ -1293,8 +1293,8 @@ on_setup_changed(GhOnboardingView *self)
   switch (state) {
   case GH_INBOX_SETUP_SIGNING:
     icon = "dialog-password-symbolic";
-    title = _("Waiting for Nostr Signer");
-    description = g_strdup(_("Approve the request in Nostr Signer to publish your list. "
+    title = _("Waiting for Grotto");
+    description = g_strdup(_("Approve the request in Grotto to publish your list. "
                              "Nothing has been sent yet."));
     break;
   case GH_INBOX_SETUP_DONE: {
@@ -1492,7 +1492,7 @@ on_accounts_changed(GhOnboardingView *self)
       gh_account_controller_get_state(self->config.accounts) != GH_ACCOUNT_STATE_ACTIVE)
     signer_test_cancel(self);
   /* Signer vanished while its approval is pending (nostrc-a4po): cancel the
-   * publish so the user isn't stuck on "Waiting for Nostr Signer" forever. */
+   * publish so the user isn't stuck on "Waiting for Grotto" forever. */
   if (self->setup &&
       gh_inbox_setup_get_state(self->setup) == GH_INBOX_SETUP_SIGNING &&
       gh_account_controller_get_signer_availability(self->config.accounts) ==

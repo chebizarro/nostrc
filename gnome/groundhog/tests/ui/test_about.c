@@ -138,7 +138,7 @@ test_gui_dialog(void)
   g_assert_true(g_str_has_prefix(adw_about_dialog_get_website(about), "https://"));
   g_assert_cmpstr(adw_about_dialog_get_issue_url(about), ==, "groundhog:report-issue");
   g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "burrow"));
-  g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Your private key stays in Nostr Signer"));
+  g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Your private key stays in Grotto"));
   g_assert_nonnull(strstr(adw_about_dialog_get_comments(about), "Nostr"));
   assert_no_email(adw_about_dialog_get_comments(about));
   assert_no_email(adw_about_dialog_get_website(about));

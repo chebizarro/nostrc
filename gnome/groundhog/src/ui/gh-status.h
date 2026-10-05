@@ -5,7 +5,7 @@
 
 G_BEGIN_DECLS
 
-/* Nostr Signer reachability as the banner needs it. An activatable signer is
+/* Grotto reachability as the banner needs it. An activatable signer is
  * AVAILABLE: every signer call may auto-start it over D-Bus, so it is not a
  * problem state and there is nothing for a "Start Signer" button to do. */
 typedef enum {

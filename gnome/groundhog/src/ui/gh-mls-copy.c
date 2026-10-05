@@ -75,19 +75,19 @@ gh_mls_identity_copy(GhMlsIdentityState state)
     copy.description = _("They work only for the active account while it’s connected.");
     break;
   case GH_MLS_IDENTITY_WAITING:
-    copy.title = _("Waiting for approval in Nostr Signer…");
+    copy.title = _("Waiting for approval in Grotto…");
     copy.description = _("Approve the request so this device can take part in encrypted groups "
                          "as you. It is asked once each time Groundhog starts.");
     copy.busy = TRUE;
     break;
   case GH_MLS_IDENTITY_DECLINED:
-    copy.title = _("Declined in Nostr Signer");
-    copy.description = _("Encrypted groups on this device need your approval in Nostr Signer.");
+    copy.title = _("Declined in Grotto");
+    copy.description = _("Encrypted groups on this device need your approval in Grotto.");
     copy.can_retry = TRUE;
     break;
   case GH_MLS_IDENTITY_FAILED:
   default:
-    copy.title = _("Nostr Signer couldn’t approve this device");
+    copy.title = _("Grotto couldn’t approve this device");
     copy.description = _("It failed or returned something Groundhog didn’t ask for.");
     copy.can_retry = TRUE;
     break;
@@ -122,7 +122,7 @@ gh_mls_error_copy(const GError *error)
       return g_strdup(_("Encrypted groups work only for the active account while it’s "
                         "online."));
     case GH_MLS_SERVICE_ERROR_NOT_ENROLLED:
-      return g_strdup(_("Approve this device in Nostr Signer first."));
+      return g_strdup(_("Approve this device in Grotto first."));
     case GH_MLS_SERVICE_ERROR_NEEDS_UPDATE:
       return g_strdup(_("Someone uses an app that can’t prove their account, and you only join "
                         "groups where every member’s app proves their account. Nothing was "

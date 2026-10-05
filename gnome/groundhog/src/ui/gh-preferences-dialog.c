@@ -826,8 +826,8 @@ sync_key_package(GhPreferencesDialog *self)
                  "able to invite you. Groundhog tries again.");
     break;
   case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_WAITING:
-    subtitle = _("Waiting for Nostr Signer to prove your account. Approve the request in "
-                 "Nostr Signer so people can invite you to encrypted groups.");
+    subtitle = _("Waiting for Grotto to prove your account. Approve the request in "
+                 "Grotto so people can invite you to encrypted groups.");
     break;
   case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED:
     subtitle = _("You declined the account proof. Without it, people can't invite you to "
@@ -835,7 +835,7 @@ sync_key_package(GhPreferencesDialog *self)
     break;
   case GH_PREFERENCES_KEY_PACKAGE_IDENTITY_FAILED:
     subtitle = _("The account proof couldn't be completed. People can't invite you to "
-                 "encrypted groups until it succeeds. Try again to ask Nostr Signer.");
+                 "encrypted groups until it succeeds. Try again to ask Grotto.");
     break;
   case GH_PREFERENCES_KEY_PACKAGE_UNKNOWN:
   default:

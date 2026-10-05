@@ -1740,7 +1740,7 @@ test_locked_messages(void)
   gh_relay_scope_event(req->scope, INBOX_A, wrap);
   gh_test_spin_until(widget_visible, row);
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==,
-                  "Waiting for Nostr Signer to unlock 1 message");
+                  "Waiting for Grotto to unlock 1 message");
   guint before = g_list_model_get_n_items(G_LIST_MODEL(bob));
 
   signer.deny = FALSE;

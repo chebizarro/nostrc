@@ -1330,7 +1330,7 @@ test_status_copy(void)
                   "Waiting for approval");
   g_assert_cmpstr(gh_message_status_get_self_copy_note(), ==, "Not saved to your other devices");
   g_assert_cmpstr(gh_message_status_describe_approval(), ==,
-                  "Waiting for your approval in Nostr Signer.");
+                  "Waiting for your approval in Grotto.");
 }
 
 /* ---- the outbox over the store ------------------------------------------- */
@@ -2069,10 +2069,10 @@ test_self_copy_former_inbox(void)
   fixture_down(&f);
 }
 
-/* nostrc-qp24.68, charter §4.4 R6: while Nostr Signer asks the user to
+/* nostrc-qp24.68, charter §4.4 R6: while Grotto asks the user to
  * approve signing in to the own inbox for the self-copy, the item says
  * "Waiting for approval" as long as nobody has the message, and the
- * self-copy's relay reads "Waiting for your approval in Nostr Signer." in
+ * self-copy's relay reads "Waiting for your approval in Grotto." in
  * the details. Bob's relay accepting it meanwhile is reported as "Sent" at
  * once: the approval never hides that the message went out. */
 static void
@@ -2096,7 +2096,7 @@ test_self_copy_waiting_for_approval(void)
   g_assert_cmpint(gh_outbox_item_get_status(item), ==, GH_MESSAGE_STATUS_WAITING_FOR_SIGNER);
   g_assert_cmpstr(gh_outbox_item_get_label(item), ==, "Waiting for approval");
   g_assert_cmpstr(gh_outbox_item_get_detail(item), ==,
-                  "Approve signing in to your message relay in Nostr Signer.");
+                  "Approve signing in to your message relay in Grotto.");
   g_assert_cmpstr(target_description(item, hex_alice, ALICE_INBOX), ==,
                   gh_message_status_describe_approval());
   g_assert_cmpstr(target_description(item, hex_bob, BOB_A), ==, "Not answered yet.");
@@ -2382,7 +2382,7 @@ test_signer_refusal_and_retry(void)
   g_assert_cmpuint(f.mock.calls, ==, 1);
   g_assert_cmpuint(f.transport.opens->len, ==, 0);
   g_assert_cmpint(gh_outbox_item_get_state(item), ==, GH_STORE_OUTBOX_NEEDS_ATTENTION);
-  g_assert_nonnull(strstr(gh_outbox_item_get_detail(item), "Nostr Signer"));
+  g_assert_nonnull(strstr(gh_outbox_item_get_detail(item), "Grotto"));
   f.mock.deny = FALSE;
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_outbox_retry(f.outbox, gh_outbox_item_get_outbox_id(item), &error));
@@ -2719,7 +2719,7 @@ test_ob4_wire(void)
  * EVENTs only from signed-in connections, a 3 s publish deadline and a user
  * who takes longer than that to approve the self-copy's sign-in. The
  * self-copy's relay waits for the approval ("Waiting for your approval in
- * Nostr Signer."), then the self-copy is signed in as Alice and stored. */
+ * Grotto."), then the self-copy is signed in as Alice and stored. */
 static void
 test_wire_approval_outlives_deadline(void)
 {

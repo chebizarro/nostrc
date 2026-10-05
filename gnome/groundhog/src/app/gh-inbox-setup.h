@@ -140,7 +140,7 @@ gboolean gh_inbox_probe_is_complete(GhInboxProbe *probe);
 
 typedef enum {
   GH_INBOX_SETUP_IDLE,       /* not started: nothing signed or contacted */
-  GH_INBOX_SETUP_SIGNING,    /* waiting for Nostr Signer: still nothing contacted */
+  GH_INBOX_SETUP_SIGNING,    /* waiting for Grotto: still nothing contacted */
   GH_INBOX_SETUP_PUBLISHING, /* publishing, and checking the message relays */
   GH_INBOX_SETUP_DONE,       /* finished; at least one relay accepted the list */
   GH_INBOX_SETUP_FAILED      /* finished without any relay accepting it; see get_error */
@@ -189,7 +189,7 @@ typedef enum {
   GH_INBOX_SETUP_RELAY_LIST_NONE,       /* not requested */
   GH_INBOX_SETUP_RELAY_LIST_WAITING,    /* requested; started after the message list */
   GH_INBOX_SETUP_RELAY_LIST_CHECKING,   /* asking every target for an existing list */
-  GH_INBOX_SETUP_RELAY_LIST_SIGNING,    /* waiting for Nostr Signer */
+  GH_INBOX_SETUP_RELAY_LIST_SIGNING,    /* waiting for Grotto */
   GH_INBOX_SETUP_RELAY_LIST_PUBLISHING,
   GH_INBOX_SETUP_RELAY_LIST_DONE,       /* at least one relay accepted it */
   GH_INBOX_SETUP_RELAY_LIST_FAILED,     /* declined, unconfirmed, or no relay accepted it */
@@ -249,7 +249,7 @@ gboolean gh_inbox_setup_relay_list_needed(GhInboxSetup *self);
  * confirm page, PD-13) and gh_inbox_setup_relay_list_needed(), the relay
  * list of gh-relay-list-setup.h naming the chosen message relays as the
  * account's write relays, to the same relays: started once the message list
- * is out, checked on every target first, then a second Nostr Signer request
+ * is out, checked on every target first, then a second Grotto request
  * (declining it does not stop the message list). The setup finishes when
  * both are done; it is DONE when the message list was kept. */
 gboolean gh_inbox_setup_start_full(GhInboxSetup *self, const gchar *const *inbox_relays,

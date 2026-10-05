@@ -45,7 +45,7 @@ G_BEGIN_DECLS
  *    connection, never the account (§4.4 R1, R7). The self-copy and a note
  *    to self get SELF_WRAP, the account on challenge, on the account's own
  *    inbox relays only (a stored target that left the own 10050 list is
- *    treated like a recipient's); W13 review 7a. While Nostr Signer asks the
+ *    treated like a recipient's); W13 review 7a. While Grotto asks the
  *    user to approve that sign-in (§4.4 R6), the relay's publish deadline
  *    does not run, the status is WAITING_FOR_SIGNER as long as no recipient
  *    has the message, and that relay's detail says it waits for approval.

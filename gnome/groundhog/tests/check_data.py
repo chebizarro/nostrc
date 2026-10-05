@@ -61,6 +61,19 @@ for size in ("512x512", "256x256"):
     assert f"icons/{size}/apps/{app_id}.png" in files
     assert (data / "icons" / size / "apps" / f"{app_id}.png").stat().st_size > 0
 assert f"icons/{app_id}.svg" not in files
+# Installed hicolor sizes (W30 G1): each is a square PNG of exactly its size.
+import struct
+for size in (48, 64, 128, 256, 512):
+    png = (data / "icons" / f"{size}x{size}" / "apps" / f"{app_id}.png").read_bytes()
+    assert png[:8] == b"\x89PNG\r\n\x1a\n", size
+    assert struct.unpack(">II", png[16:24]) == (size, size), size
+# The launcher and the software centre must not describe an earlier preview.
+assert "not yet available" not in entry["Comment"]
+assert "InstantMessaging" in entry["Categories"].split(";")
+assert meta.find("developer").attrib["id"] == "org.nostr"
+assert meta.findtext("developer/name")
+assert {u.attrib["type"] for u in meta.iter("url")} >= {"homepage", "bugtracker", "vcs-browser"}
+assert len(meta.findtext("summary")) <= 45 and not meta.findtext("summary").endswith(".")
 # All UI is Blueprint: every .blp has its committed compiled .ui fallback, no
 # .ui lacks a .blp source, and each is bundled.
 blueprints = {path.stem for path in (data / "ui").glob("*.blp")}

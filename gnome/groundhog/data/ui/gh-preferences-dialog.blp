@@ -561,15 +561,15 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         model: StringList {
           strings [
             _("Automatic"),
-            _("Nostr Signer"),
-            _("Nostr Signer (NIP-55L)"),
+            _("Grotto"),
+            _("Grotto (NIP-55L)"),
             _("Remote Signer (NIP-46)"),
           ]
         };
       }
 
       Label {
-        label: _("Your private key stays in Nostr Signer. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.");
+        label: _("Your private key stays in Grotto. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.");
         wrap: true;
         xalign: 0;
         margin-top: 12;
@@ -636,7 +636,7 @@ Adw.AlertDialog clear_attachments_dialog {
 // Confirmation for prefs.delete-all: the account store's forget (ST-8).
 Adw.AlertDialog delete_all_dialog {
   heading: _("Delete All Messages on This Device?");
-  body: _("Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Nostr Signer, and Gnostr isn't affected.\n\nCopies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.");
+  body: _("Every message, draft and conversation of this account is deleted from this device, and Groundhog signs out of the account here. Your key stays in Grotto, and Gnostr isn't affected.\n\nCopies stay on relays and on other people's devices. Private messages can be downloaded again from your relays with your key; encrypted group history can't.");
   default-response: "cancel";
   close-response: "cancel";
 

@@ -1798,20 +1798,20 @@ test_states(Fixture *f, gconstpointer data)
   gh_conversation_view_set_recipient_without_inbox(f->view, NULL);
   g_assert_false(adw_banner_get_revealed(banner));
 
-  /* 12: messages waiting for Nostr Signer, with a focusable Unlock. */
+  /* 12: messages waiting for Grotto, with a focusable Unlock. */
   GtkWidget *locked = view_child(f->view, "locked_row");
   GtkWidget *unlock = view_child(f->view, "unlock_button");
   g_assert_false(shown(locked));
   gh_conversation_view_set_locked_messages(f->view, 12);
   g_assert_true(shown(locked));
   g_assert_cmpstr(text_of(view_child(f->view, "locked_label")), ==,
-                  "Waiting for Nostr Signer to unlock 12 messages");
+                  "Waiting for Grotto to unlock 12 messages");
   g_assert_true(gtk_widget_get_focusable(unlock));
   click(unlock);
   g_assert_cmpuint(f->unlocks, ==, 1);
   gh_conversation_view_set_locked_messages(f->view, 1);
   g_assert_cmpstr(text_of(view_child(f->view, "locked_label")), ==,
-                  "Waiting for Nostr Signer to unlock 1 message");
+                  "Waiting for Grotto to unlock 1 message");
   gh_conversation_view_set_locked_messages(f->view, 0);
   g_assert_false(shown(locked));
 

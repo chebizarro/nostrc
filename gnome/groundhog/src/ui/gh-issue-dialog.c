@@ -135,7 +135,7 @@ consent_response(AdwAlertDialog *alert, const gchar *response, GhIssueDialog *se
     gtk_label_set_text(self->status, _("Could not build the issue."));
     return;
   }
-  gtk_label_set_text(self->status, _("Waiting for Nostr Signer…"));
+  gtk_label_set_text(self->status, _("Waiting for Grotto…"));
   gh_account_controller_sign_with_cancellable_async(self->accounts, json, self->cancel,
                                                      signed_issue, g_object_ref(self));
 }

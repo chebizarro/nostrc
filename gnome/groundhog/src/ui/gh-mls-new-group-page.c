@@ -198,7 +198,7 @@ sync_create(GhMlsNewGroupPage *self)
   if (!self->context.service)
     reason = _("Encrypted groups aren’t running for this account.");
   else if (!identity.ready)
-    reason = _("Approve this device in Nostr Signer first.");
+    reason = _("Approve this device in Grotto first.");
   else if (!name)
     reason = _("Give the group a name.");
   else if (gh_mls_invitee_picker_get_n_selected(self->picker) == 0)

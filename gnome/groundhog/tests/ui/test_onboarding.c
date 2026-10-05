@@ -516,7 +516,7 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
   gh_test_spin_until(signer_probed, f->accounts);
   AdwActionRow *status = child(f, "signer_status");
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(status)), ==,
-                  "Nostr Signer is running");
+                  "Grotto is running");
   act(f, "onboarding.test-signer");
   gh_test_spin_until(signer_answered, f);
   g_assert_true(g_str_has_prefix(gtk_label_get_text(child(f, "signer_result")), "It works"));

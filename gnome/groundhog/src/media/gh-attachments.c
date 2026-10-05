@@ -151,7 +151,7 @@ gh_attachments_describe_error(const GError *error, GhAttachmentsDirection direct
     text = where ? g_strdup_printf(_("%s refused the upload, even from your account."), where)
                  : g_strdup(_("The server refused the upload, even from your account."));
   } else if (g_error_matches(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER)) {
-    text = g_strdup(_("Nostr Signer didn't sign the upload, so nothing was sent."));
+    text = g_strdup(_("Grotto didn't sign the upload, so nothing was sent."));
   } else if (g_error_matches(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_BAD_ANSWER)) {
     text = g_strdup(_("The server answered with a different file, so nothing was sent."));
   } else if (g_error_matches(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_REFUSED)) {

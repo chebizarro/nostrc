@@ -185,7 +185,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="use-underline">true</property>
                 <property name="valign">3</property>
                 <property name="action-name">conversation.unlock-messages</property>
-                <property name="tooltip-text" translatable="yes">Ask Nostr Signer to unlock these messages</property>
+                <property name="tooltip-text" translatable="yes">Ask Grotto to unlock these messages</property>
               </object>
             </child>
           </object>
