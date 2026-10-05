@@ -1,0 +1,52 @@
+#!/usr/bin/make -f
+# Desktop apps from the nostrc monorepo: Groundhog and its signer, Grotto.
+#
+# This recipe is separate from the top-level debian/ (the headless login
+# stack, built with NOSTR_WITH_GLIB=OFF): the desktop apps need the GLib
+# flavour of the in-tree libraries, which they link statically, so the two
+# cannot share one configure pass. Build with scripts/build-desktop-deb.sh.
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+BUILDDIR = obj-desktop
+
+%:
+	dh $@ --buildsystem=cmake+ninja --builddirectory=$(BUILDDIR)
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+		-DBUILD_GROUNDHOG=ON \
+		-DBUILD_APPS=ON \
+		-DBUILD_GNOSTR_APP=OFF \
+		-DBUILD_NATIVE_HOST=OFF \
+		-DBUILD_SIGNER_TESTS=OFF \
+		-DGROTTO_WITH_PKCS11=OFF \
+		-DGROTTO_WITH_HW_WALLET=OFF \
+		-DBUILD_RELAYD=OFF \
+		-DBUILD_LIBHANAMI=OFF \
+		-DSIGNET_ENABLE=OFF \
+		-DBUILD_TESTING=OFF \
+		-DBUILD_TESTING_FRAMEWORK=OFF
+
+# Only the two apps: the rest of the monorepo is not part of these packages.
+override_dh_auto_build:
+	dh_auto_build -- groundhog groundhog-schema gnome/groundhog/all apps/grotto/all
+
+override_dh_auto_install:
+	DESTDIR=$(CURDIR)/debian/groundhog cmake --install $(BUILDDIR)/gnome/groundhog
+	DESTDIR=$(CURDIR)/debian/grotto cmake --install $(BUILDDIR)/apps/grotto
+	# CMake fills in the activation files; an unconfigured @VAR@ must never ship.
+	! grep -rq '@[A-Z_]*@' debian/groundhog/usr/share/dbus-1 debian/grotto/usr/share/dbus-1
+
+# The JSON backend in /usr/lib/<triplet>/<app>/ is private to each app: no
+# shlibs entry, no ldconfig trigger.
+override_dh_makeshlibs:
+	dh_makeshlibs -Xlibnostr-json
+
+# The daemon starts on demand over D-Bus; nothing is enabled for the user.
+override_dh_installsystemduser:
+	dh_installsystemduser --no-enable
+
+# The test suites need a session bus and a display; CI runs them separately.
+override_dh_auto_test:

@@ -396,6 +396,10 @@ install(TARGETS ${APP_SIGNER_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(NOT WIN32)
   install(TARGETS grotto-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+if(NOT WIN32)
+  include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
+  nostrc_install_private_json(grotto ${APP_SIGNER_BIN} grotto-daemon)
+endif()
 
 # GSettings schema
 install(FILES data/org.nostr.Grotto.gschema.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)

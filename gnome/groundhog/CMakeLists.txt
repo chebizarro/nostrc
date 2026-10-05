@@ -666,6 +666,8 @@ if (BUILD_TESTING)
 endif()
 
 install(TARGETS groundhog RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
+nostrc_install_private_json(groundhog groundhog)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.service
@@ -3071,7 +3073,9 @@ endforeach()
 # NIP-34 reports share gnostr's libnip34 builder; no new protocol implementation.
 if (TARGET groundhog-inbox-setup)
   if (NOT TARGET nip34)
-    add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34)
+    # EXCLUDE_FROM_ALL: Groundhog links nip34 statically; its headers and
+    # archive are not part of an app install.
+    add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
   endif()
   add_library(groundhog-issue STATIC src/ui/gh-issue-dialog.c)
   target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)

@@ -58,7 +58,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Groundhog is a calm, private place to talk. Here is what we promise:</property>
+                                <property name="label" translatable="yes">Groundhog keeps your conversations in a burrow of their own. Here is what we promise:</property>
                                 <property name="wrap">true</property>
                                 <property name="justify">2</property>
                               </object>

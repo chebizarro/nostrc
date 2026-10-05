@@ -1,0 +1,72 @@
+Source: groundhog
+Section: net
+Priority: optional
+Maintainer: GNostr Project <gnostr@example.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.20),
+               ninja-build,
+               pkg-config,
+               python3,
+               libglib2.0-dev,
+               libgtk-4-dev (>= 4.14),
+               libadwaita-1-dev (>= 1.5),
+               libjson-glib-dev,
+               libsoup-3.0-dev,
+               libsecret-1-dev,
+               libsqlcipher-dev,
+               libxml2-dev,
+               libgstreamer1.0-dev,
+               libgstreamer-plugins-base1.0-dev,
+               libssl-dev,
+               libsecp256k1-dev,
+               libsodium-dev,
+               libjansson-dev,
+               libwebsockets-dev,
+               libnsync-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/chebizarro/nostrc
+Vcs-Browser: https://github.com/chebizarro/nostrc
+Vcs-Git: https://github.com/chebizarro/nostrc.git
+Rules-Requires-Root: no
+
+Package: groundhog
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         grotto (= ${binary:Version}),
+         dbus-user-session,
+         gstreamer1.0-plugins-base,
+         gstreamer1.0-plugins-good
+Recommends: gnome-keyring | org.freedesktop.secrets,
+            gstreamer1.0-plugins-bad,
+            gstreamer1.0-libav
+Suggests: tor
+Description: Private messaging on Nostr for GNOME
+ Groundhog is a GTK4 and libadwaita messenger for Nostr: private messages
+ (NIP-17) with one person or a small group, relay groups (NIP-29) and
+ end-to-end encrypted Marmot groups that interoperate with White Noise.
+ .
+ Messages are kept only on this device, in an encrypted database. Your
+ private key never enters Groundhog: it stays in Grotto, which asks you
+ before anything is signed or unlocked. There are no read receipts, typing
+ indicators or online status, and nothing loads from the web unless you ask.
+ .
+ This is an alpha release.
+
+Package: grotto
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         dbus-user-session
+Recommends: gnome-keyring | org.freedesktop.secrets
+Provides: grotto-daemon
+Description: Keeps your Nostr keys and signs for your apps (preview)
+ Grotto holds your Nostr identities in the system keyring and signs,
+ encrypts and decrypts on behalf of Nostr apps over the session bus
+ (NIP-55L, org.nostr.Signer). Each app is identified, and you approve
+ what it may do; private keys never leave Grotto.
+ .
+ This package contains the Grotto app (approvals, identities, settings) and
+ its background service, which starts on demand when an app asks.
+ .
+ Grotto is a preview: its interface is still being reworked.

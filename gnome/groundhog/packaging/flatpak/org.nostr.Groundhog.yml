@@ -1,0 +1,164 @@
+# Flatpak manifest for Groundhog (W30, nostrc-wmwl).
+#
+# Build and install for the current user, from the repository root:
+#
+#   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+#   flatpak-builder --user --install --install-deps-from=flathub --force-clean \
+#       build-flatpak gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml
+#   flatpak run org.nostr.Groundhog
+#
+# The signer is not in this sandbox. Groundhog reaches whichever signer owns
+# org.nostr.Signer on the session bus (Grotto, installed from a native
+# package); the signer identifies this app by its Flatpak id and asks the
+# person before anything is signed or unlocked.
+app-id: org.nostr.Groundhog
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+command: groundhog
+
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Relays, Blossom servers, and a local Tor SOCKS port when Tor is chosen.
+  - --share=network
+  # Voice messages: microphone and playback.
+  - --socket=pulseaudio
+  # The database key lives in the keyring.
+  - --talk-name=org.freedesktop.secrets
+  # NIP-55L signer (Grotto). Talk only: Groundhog never owns the name.
+  - --talk-name=org.nostr.Signer
+  # No filesystem access: attachments and saved files go through the portal.
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /lib/*.a
+  - /lib/*.la
+  - /share/man
+  - /share/doc
+  - /share/aclocal
+  - /bin/sqlcipher
+  - /bin/lws-*
+  - /share/libwebsockets-test-server
+
+modules:
+  - name: libsecp256k1
+    buildsystem: autotools
+    config-opts:
+      - --enable-module-recovery
+      - --enable-module-extrakeys
+      - --enable-module-schnorrsig
+      - --enable-module-ecdh
+      - --disable-benchmark
+      - --disable-tests
+      - --disable-exhaustive-tests
+      - --disable-static
+    sources:
+      - type: git
+        url: https://github.com/bitcoin-core/secp256k1.git
+        tag: v0.5.1
+        commit: 642c885b6102725e25623738529895a95addc4f4
+
+  - name: libsodium
+    buildsystem: autotools
+    config-opts:
+      - --disable-static
+    sources:
+      - type: git
+        url: https://github.com/jedisct1/libsodium.git
+        tag: 1.0.20-RELEASE
+        commit: 9511c982fb1d046470a8b42aa36556cdb7da15de
+
+  - name: nsync
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DBUILD_SHARED_LIBS=ON
+      - -DNSYNC_ENABLE_TESTS=OFF
+    sources:
+      - type: git
+        url: https://github.com/google/nsync.git
+        tag: 1.29.2
+        commit: 7cf7a68ca123f7563e05b1657a7e73b43c885971
+
+  - name: jansson
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DJANSSON_BUILD_SHARED_LIBS=ON
+      - -DJANSSON_BUILD_DOCS=OFF
+      - -DJANSSON_WITHOUT_TESTS=ON
+      - -DJANSSON_EXAMPLES=OFF
+    sources:
+      - type: git
+        url: https://github.com/akheron/jansson.git
+        tag: v2.14
+        commit: 684e18c927e89615c2d501737e90018f4930d6c5
+
+  - name: libwebsockets
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=Release
+      - -DLWS_WITH_SSL=ON
+      - -DLWS_WITH_SHARED=ON
+      - -DLWS_WITH_STATIC=OFF
+      - -DLWS_WITHOUT_TESTAPPS=ON
+      - -DLWS_WITH_GLIB=ON
+      - -DLWS_WITH_LIBUV=OFF
+      - -DLWS_WITH_LIBEVENT=OFF
+    sources:
+      - type: git
+        url: https://github.com/warmcat/libwebsockets.git
+        tag: v4.3.3
+        commit: 4415e84c095857629863804e941b9e1c2e9347ef
+
+  # Encrypted SQLite for the message store.
+  - name: sqlcipher
+    buildsystem: autotools
+    config-opts:
+      - --enable-tempstore=yes
+      - --disable-tcl
+      - --disable-static
+    build-options:
+      cflags: -DSQLITE_HAS_CODEC -DSQLCIPHER_CRYPTO_OPENSSL -DSQLITE_ENABLE_FTS5
+      ldflags: -lcrypto
+    sources:
+      - type: git
+        url: https://github.com/sqlcipher/sqlcipher.git
+        tag: v4.6.1
+        commit: c5bd336ece77922433aaf6d6fe8cf203b0c299d5
+
+  # Groundhog and the in-tree libraries it links statically. BUILD_TESTING
+  # must stay OFF: a testing build carries a test-only D-Bus interface and
+  # refuses to install.
+  - name: groundhog
+    buildsystem: cmake-ninja
+    builddir: true
+    config-opts:
+      - -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - -DBUILD_GROUNDHOG=ON
+      - -DBUILD_TESTING=OFF
+      - -DBUILD_TESTING_FRAMEWORK=OFF
+      - -DBUILD_APPS=OFF
+      - -DBUILD_RELAYD=OFF
+      - -DBUILD_LIBHANAMI=OFF
+      - -DSIGNET_ENABLE=OFF
+    make-args:
+      - groundhog
+      - groundhog-schema
+    no-make-install: true
+    post-install:
+      - cmake --install gnome/groundhog
+    sources:
+      - type: dir
+        path: ../../../..
+        skip:
+          - .git
+          - .beads
+          - build
+          - build-flatpak
+          - .flatpak-builder
