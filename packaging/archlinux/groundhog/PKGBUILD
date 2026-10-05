@@ -1,0 +1,83 @@
+# Maintainer: GNostr Project <gnostr@example.com>
+#
+# Groundhog and its signer, Grotto, from the nostrc monorepo.
+# The source is the release archive written by
+# scripts/make-desktop-source-archive.sh (it includes the nostrdb submodule,
+# which GitHub's tag archives leave out). To build from a checkout, write the
+# archive next to this file first:
+#
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha1 packaging/archlinux/groundhog
+#   (cd packaging/archlinux/groundhog && makepkg -s)
+
+pkgbase=groundhog
+pkgname=('groundhog' 'grotto')
+_version=0.12.0-alpha1
+pkgver=${_version//-/}
+pkgrel=1
+arch=('x86_64' 'aarch64')
+url="https://github.com/chebizarro/nostrc"
+license=('MIT')
+makedepends=(
+  'cmake' 'ninja' 'pkgconf' 'python'
+  'glib2' 'glib2-devel' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
+  'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs'
+  'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets'
+  'curl' 'qrencode'
+)
+source=("groundhog-${_version}.tar.gz::https://github.com/chebizarro/nostrc/releases/download/groundhog-v${_version}/groundhog-${_version}.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  # BUILD_TESTING must stay OFF: a testing build carries a test-only D-Bus
+  # interface and refuses to install. nsync is not in the official
+  # repositories; the build uses the copy in third_party/.
+  cmake -S "groundhog-${_version}" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DBUILD_GROUNDHOG=ON \
+    -DBUILD_APPS=ON \
+    -DBUILD_GNOSTR_APP=OFF \
+    -DBUILD_NATIVE_HOST=OFF \
+    -DBUILD_SIGNER_TESTS=OFF \
+    -DGROTTO_WITH_PKCS11=OFF \
+    -DGROTTO_WITH_HW_WALLET=OFF \
+    -DBUILD_RELAYD=OFF \
+    -DBUILD_LIBHANAMI=OFF \
+    -DSIGNET_ENABLE=OFF \
+    -DBUILD_TESTING=OFF \
+    -DBUILD_TESTING_FRAMEWORK=OFF
+  cmake --build build --target gnome/groundhog/all apps/grotto/all
+}
+
+package_groundhog() {
+  pkgdesc="Private messaging on Nostr for GNOME (alpha)"
+  depends=(
+    'grotto' 'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
+    'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
+    'gst-plugins-good' 'openssl' 'libsecp256k1' 'libsodium' 'jansson'
+    'libwebsockets' 'curl' 'hicolor-icon-theme'
+  )
+  optdepends=(
+    'gnome-keyring: keeps the database key (any Secret Service provider works)'
+    'gst-plugins-bad: voice messages recorded by other apps (AAC)'
+    'gst-libav: voice messages recorded by other apps (AAC)'
+    'tor: connect to relays through Tor'
+  )
+  DESTDIR="$pkgdir" cmake --install build/gnome/groundhog
+  install -Dm644 "groundhog-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "groundhog-${_version}/gnome/groundhog/data/icons/COPYING" \
+    "$pkgdir/usr/share/licenses/$pkgname/COPYING.icons"
+}
+
+package_grotto() {
+  pkgdesc="Keeps your Nostr keys and signs for your apps (preview)"
+  depends=(
+    'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsecret' 'openssl'
+    'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
+    'gdk-pixbuf2' 'gstreamer' 'hicolor-icon-theme'
+  )
+  optdepends=('gnome-keyring: keeps your keys (any Secret Service provider works)')
+  DESTDIR="$pkgdir" cmake --install build/apps/grotto
+  install -Dm644 "groundhog-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
