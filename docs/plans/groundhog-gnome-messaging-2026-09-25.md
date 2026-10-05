@@ -283,3 +283,19 @@ Biz with a copyable `nostr:` identity link. Each slice independently reviewed (d
   serial `perf` stage in the Linux gate with a calibrated budget (≈1.5× passes, ≥3× fails); relayd D-Bus stop race fixed.
 - Earlier in the day: real-network attachment delivery evidence over the project relay and White Noise's media servers
   (bz4g closed), first-use server choice and 0x800b policy pinning (5nln), KeyPackage republication on relay change (qaqh).
+
+### W29 (2026-10-04/05) — alpha polish
+
+Owner test-drive feedback, landed as integrator-verified on the owner's instruction
+(`docs/reviews/w29-integrator-landing-2026-10-05.md` records review coverage):
+Preferences gains real, consent-gated web content loading and HIG relay rows (A);
+the main window gets sidebar margins, untruncated conversation titles, a live
+metadata search contract and a single Conversation Info control (B); reactions
+and emoji messages send again — libnostr escaped UTF-8 continuation bytes under
+macOS/BSD locales — and Create Poll only shows where polls can be made (C); About
+opens a NIP-17 DM from the developer's nostr: link, files NIP-34 issues with a
+consent preview, and has on-theme copy (D). The four remaining GTestDBus signer
+tests moved to nostrc-test-bus so the macOS gate runs again after a reboot.
+Not landed: `signer/keychain-guard` (nostrc-2hmd) — build options that keep smoke
+and test runs out of the developer's login Keychain, and a read-only keychain
+configuration check in pre-push.
