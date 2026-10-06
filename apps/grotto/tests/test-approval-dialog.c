@@ -111,6 +111,15 @@ gboolean gn_client_session_has_permission(GnClientSession *self,
   return FALSE;
 }
 
+gboolean gn_client_session_allows_kind(GnClientSession *self, guint16 kind) {
+  (void)self; (void)kind;
+  return FALSE;
+}
+
+void gn_client_session_add_allowed_kind(GnClientSession *self, guint16 kind) {
+  (void)self; (void)kind;
+}
+
 void gn_keyboard_nav_setup_dialog(AdwDialog *dialog, GtkWidget *first_focus,
                                   GtkWidget *default_button) {
   (void)dialog; (void)first_focus; (void)default_button;

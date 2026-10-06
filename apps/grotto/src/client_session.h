@@ -131,6 +131,33 @@ gboolean gn_client_session_has_permission(GnClientSession *self,
                                           GnClientSessionPermission perm);
 
 /**
+ * gn_client_session_allows_kind:
+ * @self: A #GnClientSession
+ * @kind: Nostr event kind
+ *
+ * Checks whether a remembered approval covers this event kind.
+ * Sessions with no recorded kind list (legacy sessions, or sessions
+ * created by the bunker connect flow) are unrestricted and allow all
+ * kinds; once kinds are recorded, only those kinds auto-approve.
+ *
+ * Returns: %TRUE if the session covers @kind
+ */
+gboolean gn_client_session_allows_kind(GnClientSession *self,
+                                       guint16 kind);
+
+/**
+ * gn_client_session_add_allowed_kind:
+ * @self: A #GnClientSession
+ * @kind: Nostr event kind the user approved
+ *
+ * Records an approved event kind. The first call on an unrestricted
+ * session converts it to kind-scoped (nostrc-0vmy: a remembered approval
+ * covers only the kinds the user actually approved, not every kind).
+ */
+void gn_client_session_add_allowed_kind(GnClientSession *self,
+                                        guint16 kind);
+
+/**
  * gn_client_session_get_created_at:
  * @self: A #GnClientSession
  *

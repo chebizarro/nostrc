@@ -254,8 +254,14 @@ static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
     );
 
     if (session) {
-      g_debug("approval-dialog: Created client session for %s -> %s (ttl=%ld)",
-              self->client_pubkey, selected, (long)ttl_seconds);
+      /* nostrc-0vmy: scope the remembered grant to the event kind the
+       * user actually approved — a kind-1 note approval must not silently
+       * pre-authorize kind-4 DM signing. */
+      gn_client_session_add_allowed_kind(session,
+                                         (guint16)MAX(self->current_event_kind, 0));
+      g_debug("approval-dialog: Created client session for %s -> %s (ttl=%ld, kind=%d)",
+              self->client_pubkey, selected, (long)ttl_seconds,
+              self->current_event_kind);
     }
   }
 
@@ -548,10 +554,22 @@ void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self,
                                           guint64 timestamp) {
   g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
 
-  time_t t = (timestamp > 0) ? (time_t)timestamp : time(NULL);
-  struct tm *tm_info = localtime(&t);
+  /* nostrc-3dry: the timestamp comes from the requester. A crafted value
+   * (e.g. G_MAXUINT64) becomes a negative or out-of-range time_t and
+   * localtime() may return NULL — crashing the approval gate itself. */
+  time_t t;
+  if (timestamp == 0 || timestamp > (guint64)4102444800 /* 2100-01-01 */) {
+    t = time(NULL);
+  } else {
+    t = (time_t)timestamp;
+  }
+
   char buffer[64];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", tm_info);
+  struct tm *tm_info = localtime(&t);
+  if (!tm_info ||
+      strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", tm_info) == 0) {
+    g_strlcpy(buffer, "(unknown time)", sizeof(buffer));
+  }
 
   gtk_label_set_text(self->label_timestamp, buffer);
 }
@@ -949,7 +967,8 @@ gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
       GnClientSession *session = gn_client_session_manager_get_session(
         csm, client_pubkey, identity_npub);
 
-      if (session && gn_client_session_has_permission(session, GN_PERM_SIGN_EVENT)) {
+      if (session && gn_client_session_has_permission(session, GN_PERM_SIGN_EVENT) &&
+          gn_client_session_allows_kind(session, (guint16)MAX(event_kind, 0))) {
         /* Auto-approve: update activity and call callback immediately */
         gn_client_session_manager_touch_session(csm, client_pubkey, identity_npub);
 

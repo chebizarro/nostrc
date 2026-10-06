@@ -44,6 +44,7 @@ struct _GnClientSession {
   /* Session state */
   GnClientSessionState state;
   guint permissions;          /* Bitmask of GnClientSessionPermission */
+  GArray *allowed_kinds;      /* guint16 event kinds; NULL = unrestricted */
 
   /* Timestamps */
   gint64 created_at;          /* When session was created */
@@ -130,6 +131,7 @@ gn_client_session_finalize(GObject *object)
   g_free(self->client_pubkey);
   g_free(self->app_name);
   g_free(self->identity);
+  g_clear_pointer(&self->allowed_kinds, g_array_unref);
 
   G_OBJECT_CLASS(gn_client_session_parent_class)->finalize(object);
 }
@@ -263,6 +265,38 @@ gn_client_session_has_permission(GnClientSession *self,
 {
   g_return_val_if_fail(GN_IS_CLIENT_SESSION(self), FALSE);
   return (self->permissions & perm) == perm;
+}
+
+gboolean
+gn_client_session_allows_kind(GnClientSession *self, guint16 kind)
+{
+  g_return_val_if_fail(GN_IS_CLIENT_SESSION(self), FALSE);
+  /* nostrc-0vmy: sessions without a recorded kind list predate kind
+   * scoping (or come from the bunker connect flow) and keep their
+   * unrestricted behavior. */
+  if (!self->allowed_kinds)
+    return TRUE;
+  for (guint i = 0; i < self->allowed_kinds->len; i++) {
+    if (g_array_index(self->allowed_kinds, guint16, i) == kind)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+void
+gn_client_session_add_allowed_kind(GnClientSession *self, guint16 kind)
+{
+  g_return_if_fail(GN_IS_CLIENT_SESSION(self));
+  if (!self->allowed_kinds) {
+    /* First kind recorded on a previously unrestricted session converts
+     * it to kind-scoped, containing exactly the approved kinds. */
+    self->allowed_kinds = g_array_new(FALSE, FALSE, sizeof(guint16));
+  }
+  for (guint i = 0; i < self->allowed_kinds->len; i++) {
+    if (g_array_index(self->allowed_kinds, guint16, i) == kind)
+      return;  /* already allowed */
+  }
+  g_array_append_val(self->allowed_kinds, kind);
 }
 
 gint64
@@ -1042,6 +1076,16 @@ serialize_sessions_to_json(GnClientSessionManager *self)
     json_builder_set_member_name(builder, "timeout_seconds");
     json_builder_add_int_value(builder, session->timeout_seconds);
 
+    if (session->allowed_kinds) {
+      json_builder_set_member_name(builder, "kinds");
+      json_builder_begin_array(builder);
+      for (guint k = 0; k < session->allowed_kinds->len; k++) {
+        json_builder_add_int_value(builder,
+                                   g_array_index(session->allowed_kinds, guint16, k));
+      }
+      json_builder_end_array(builder);
+    }
+
     json_builder_end_object(builder);
   }
 
@@ -1133,6 +1177,23 @@ deserialize_sessions_from_json(GnClientSessionManager *self, const gchar *json_s
     session->timeout_seconds = timeout_seconds;
     session->persistent = TRUE;
     session->state = GN_CLIENT_SESSION_ACTIVE;
+
+    /* Kind scope is optional in the persisted format: absent means the
+     * session predates kind scoping and stays unrestricted. */
+    if (json_object_has_member(sess_obj, "kinds")) {
+      JsonArray *kinds = json_object_get_array_member(sess_obj, "kinds");
+      if (kinds) {
+        guint nk = json_array_get_length(kinds);
+        session->allowed_kinds = g_array_new(FALSE, FALSE, sizeof(guint16));
+        for (guint k = 0; k < nk; k++) {
+          gint64 kv = json_array_get_int_element(kinds, k);
+          if (kv >= 0 && kv <= 65535) {
+            guint16 ku = (guint16)kv;
+            g_array_append_val(session->allowed_kinds, ku);
+          }
+        }
+      }
+    }
 
     gchar *key = make_session_key(client_pubkey, identity);
     g_hash_table_replace(self->sessions, key, session);

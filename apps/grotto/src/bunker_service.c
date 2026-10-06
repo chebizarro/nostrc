@@ -191,12 +191,20 @@ on_bunker_sign_request(GNostrNip46Bunker *bunker G_GNUC_UNUSED,
     if (gn_client_session_manager_has_active_session(sess_mgr,
                                                       bs->current_signing_client,
                                                       bs->identity_npub)) {
-      /* Active session exists - auto-approve and touch session */
-      gn_client_session_manager_touch_session(sess_mgr,
-                                               bs->current_signing_client,
-                                               bs->identity_npub);
-      auto_approve = TRUE;
-      g_debug("bunker: auto-approved via active session for %s", bs->current_signing_client);
+      /* nostrc-0vmy: sessions created from a "Remember" approval are
+       * scoped to the kinds the user approved; only auto-approve a
+       * matching kind. */
+      GnClientSession *sess = gn_client_session_manager_get_session(sess_mgr,
+                                                                   bs->current_signing_client,
+                                                                   bs->identity_npub);
+      if (sess && gn_client_session_allows_kind(sess, kind > 0 ? (guint16)kind : 0)) {
+        /* Active session exists - auto-approve and touch session */
+        gn_client_session_manager_touch_session(sess_mgr,
+                                                 bs->current_signing_client,
+                                                 bs->identity_npub);
+        auto_approve = TRUE;
+        g_debug("bunker: auto-approved via active session for %s", bs->current_signing_client);
+      }
     }
   }
 
