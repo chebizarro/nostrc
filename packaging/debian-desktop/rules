@@ -44,6 +44,12 @@ override_dh_auto_install:
 override_dh_makeshlibs:
 	dh_makeshlibs -Xlibnostr-json
 
+# No automatic -dbgsym packages: groundhog and grotto each ship a private
+# copy of the same libnostr-json.so.1, and two dbgsym packages carrying one
+# build-id cannot be installed together.
+override_dh_strip:
+	dh_strip --no-automatic-dbgsym
+
 # The daemon starts on demand over D-Bus; nothing is enabled for the user.
 override_dh_installsystemduser:
 	dh_installsystemduser --no-enable

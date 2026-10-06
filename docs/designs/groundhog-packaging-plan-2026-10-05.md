@@ -168,6 +168,11 @@ differ.
   and the app started as a D-Bus service does not listen for requests. This
   is independent of packaging and is the main obstacle to a first run that
   just works.
+- **One deb per release.** A deb built on Ubuntu 24.04 does not install on
+  26.04 or Debian 13: secp256k1's library package is `libsecp256k1-1`,
+  `-6` and `-2` respectively. The release builds a deb for each (version
+  suffix `~ubuntu24.04`, `~ubuntu26.04`, `~debian13`); an apt repository
+  will need a suite per release.
 - **Package metadata contact.** Debian, RPM and AUR recipes carry the
   maintainer the owner chose: Biz <chebizarro@protonmail.com>.
 
