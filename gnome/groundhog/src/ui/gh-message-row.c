@@ -38,6 +38,7 @@ struct _GhMessageRow {
   GtkBox *poll_slot;
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
   GhReactionBar *reaction_bar;
+  GtkButton *react_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
   GtkButton *preview_button;
@@ -467,6 +468,14 @@ update_all(GhMessageRow *self)
   gtk_widget_set_halign(GTK_WIDGET(self->bubble), align);
   gtk_widget_set_halign(GTK_WIDGET(self->preview_box), align);
   gtk_widget_set_halign(GTK_WIDGET(self->meta_box), align);
+  /* Reactions sit under the bubble on its side; the react button is the
+   * meta row's innermost item (towards the middle of the view). */
+  gtk_widget_set_halign(GTK_WIDGET(self->reaction_bar), align);
+  if (outgoing)
+    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->react_button), NULL);
+  else
+    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->react_button),
+                                gtk_widget_get_last_child(GTK_WIDGET(self->meta_box)));
 
   g_clear_pointer(&self->preview_uri, g_free);
 
@@ -954,6 +963,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, image_button);

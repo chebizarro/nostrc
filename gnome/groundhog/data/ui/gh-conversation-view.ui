@@ -106,6 +106,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="child">
                   <object class="GtkBox">
                     <property name="spacing">6</property>
+                    <property name="halign">3</property>
                     <child>
                       <object class="GtkImage">
                         <property name="icon-name">go-bottom-symbolic</property>

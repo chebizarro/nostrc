@@ -49,12 +49,14 @@
   background: none;
 }
 
+/* Space goes between messages (a little) and between runs (more), not
+ * around the list: bubbles in a run no longer touch. */
 .groundhog-message-row {
-  margin: 1px 12px;
+  margin: 2px 10px;
 }
 
 .groundhog-message-row.run-start {
-  margin-top: 8px;
+  margin-top: 14px;
 }
 
 .groundhog-message-sender {
@@ -129,6 +131,43 @@
   margin: 1px 8px 0 8px;
 }
 
+/* The react button sits in the meta row and only shows itself when the
+ * message is hovered or it has keyboard focus. */
+.groundhog-react-button {
+  min-height: 0;
+  min-width: 0;
+  padding: 1px 4px;
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+
+.groundhog-message-row:hover .groundhog-react-button,
+.groundhog-react-button:focus-visible,
+.groundhog-react-button:active {
+  opacity: 1;
+}
+
+/* Reaction chips: compact pills under the bubble, on its side. */
+.groundhog-reaction-chip,
+.groundhog-reaction-add {
+  min-height: 0;
+  min-width: 0;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: alpha(currentColor, 0.08);
+  font-size: 0.9em;
+}
+
+.groundhog-reaction-chip:hover,
+.groundhog-reaction-add:hover {
+  background: alpha(currentColor, 0.14);
+}
+
+.groundhog-reaction-chip.groundhog-reaction-own {
+  background: alpha(@accent_bg_color, 0.22);
+  border: 1px solid alpha(@accent_bg_color, 0.5);
+}
+
 .groundhog-delivery-button {
   min-height: 0;
   min-width: 0;
@@ -157,9 +196,12 @@
   padding: 8px 12px;
 }
 
+/* A round pill: as wide as its icon (plus the unread count when shown),
+ * never GTK's default button width with the chevron pushed left. */
 .groundhog-jump-button {
   border-radius: 999px;
-  padding: 6px 12px;
+  min-width: 0;
+  padding: 8px 10px;
 }
 
 .groundhog-loading-older {

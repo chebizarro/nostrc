@@ -251,6 +251,20 @@ template $GhMessageRow: Widget {
       valign: center;
     }
 
+    // Shown on hover or keyboard focus (style.css): the quick way to react.
+    // The context menu and the bar's "+" remain for touch.
+    Button react_button {
+      icon-name: "face-smile-symbolic";
+      valign: center;
+      action-name: "conversation.add-reaction";
+      tooltip-text: _("React");
+
+      styles [
+        "flat",
+        "groundhog-react-button",
+      ]
+    }
+
     Button retry_button {
       visible: false;
       label: _("_Try Again");
