@@ -1021,13 +1021,19 @@ GnOsSecureDeleteSupport gn_os_secure_delete_available(void) {
   return support;
 }
 
-/* Internal: Execute OS secure delete command */
+/* Internal: Execute OS secure delete command.
+ *
+ * nostrc-p9pb: never assemble a shell command line — the previous
+ * g_spawn_command_line_sync() version let a single quote in the path break
+ * out of the quoting. Pass the path as one argv element instead. */
 static GnDeleteResult execute_os_secure_delete(const char *filepath,
                                                  GnOsSecureDeleteSupport tool,
                                                  int passes) {
-  gchar *cmd = NULL;
   GError *error = NULL;
   gint exit_status = 0;
+  g_autofree gchar *passes_str = g_strdup_printf("%d", passes);
+  const gchar *argv[8];
+  gint argc = 0;
 
   switch (tool) {
 #ifdef __linux__
@@ -1037,13 +1043,23 @@ static GnDeleteResult execute_os_secure_delete(const char *filepath,
        * -z: add final zero pass
        * -u: deallocate and remove file
        */
-      cmd = g_strdup_printf("shred -n %d -z -u '%s'", passes, filepath);
+      argv[argc++] = "shred";
+      argv[argc++] = "-n";
+      argv[argc++] = passes_str;
+      argv[argc++] = "-z";
+      argv[argc++] = "-u";
+      argv[argc++] = filepath;
       break;
     }
 
     case GN_OS_DELETE_WIPE: {
       /* wipe -f -q -Q PASSES FILE */
-      cmd = g_strdup_printf("wipe -f -q -Q %d '%s'", passes, filepath);
+      argv[argc++] = "wipe";
+      argv[argc++] = "-f";
+      argv[argc++] = "-q";
+      argv[argc++] = "-Q";
+      argv[argc++] = passes_str;
+      argv[argc++] = filepath;
       break;
     }
 #endif
@@ -1051,13 +1067,17 @@ static GnDeleteResult execute_os_secure_delete(const char *filepath,
 #ifdef __APPLE__
     case GN_OS_DELETE_SRM: {
       /* srm -sz FILE (simple mode with zero) */
-      cmd = g_strdup_printf("srm -sz '%s'", filepath);
+      argv[argc++] = "srm";
+      argv[argc++] = "-sz";
+      argv[argc++] = filepath;
       break;
     }
 
     case GN_OS_DELETE_RM_P: {
       /* rm -P FILE (3-pass overwrite before unlink) */
-      cmd = g_strdup_printf("rm -P '%s'", filepath);
+      argv[argc++] = "rm";
+      argv[argc++] = "-P";
+      argv[argc++] = filepath;
       break;
     }
 #endif
@@ -1065,16 +1085,18 @@ static GnDeleteResult execute_os_secure_delete(const char *filepath,
     default:
       return GN_DELETE_ERR_INVALID;
   }
+  argv[argc] = NULL;
 
-  if (cmd == NULL) {
-    return GN_DELETE_ERR_INVALID;
+  {
+    /* Log line only — this string is never passed to a shell. */
+    g_autofree gchar *display = g_strjoinv(" ", (gchar **)argv);
+    LOG_DEBUG("Executing OS secure delete: %s", display);
   }
 
-  LOG_DEBUG("Executing OS secure delete: %s", cmd);
-
-  gboolean ok = g_spawn_command_line_sync(cmd, NULL, NULL, &exit_status, &error);
-
-  g_free(cmd);
+  gboolean ok = g_spawn_sync(NULL, (gchar **)argv, NULL,
+                             G_SPAWN_SEARCH_PATH,
+                             NULL, NULL, NULL, NULL,
+                             &exit_status, &error);
 
   if (!ok) {
     LOG_ERROR("OS secure delete failed: %s", error ? error->message : "unknown");
