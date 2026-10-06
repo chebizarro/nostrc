@@ -150,7 +150,13 @@ setup_instance(int argc, char **argv)
     if (!current || !current[0])
       current = defaults[i];
     char buf[PATH_MAX];
-    snprintf(buf, sizeof(buf), "%s/.groundhog-instances/%s", current, name);
+    int wrote = snprintf(buf, sizeof(buf), "%s/.groundhog-instances/%s", current, name);
+    /* Fail closed: a truncated path could collapse two instances into one
+     * directory, breaking key/store isolation. */
+    if (wrote < 0 || (size_t)wrote >= sizeof(buf)) {
+      fprintf(stderr, "Groundhog: XDG path too long for instance '%s'\n", name);
+      exit(1);
+    }
     setenv(xdg_vars[i], buf, 1);
   }
 

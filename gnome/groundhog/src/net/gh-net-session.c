@@ -87,7 +87,9 @@ init_salt(void)
   if (!g_once_init_enter(&once))
     return;
   if (getentropy(salt, sizeof salt) != 0) {
-    /* No kernel randomness: never a fixed salt. */
+    /* No kernel randomness: never a fixed salt, but never silently weak
+     * either — MT19937 is not a CSPRNG, so say the isolation is degraded. */
+    g_critical("Groundhog: getentropy failed; Tor stream isolation is degraded");
     for (gsize i = 0; i < sizeof salt; i += sizeof(guint32)) {
       guint32 value = g_random_int();
       memcpy(salt + i, &value, sizeof value);

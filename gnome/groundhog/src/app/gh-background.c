@@ -343,10 +343,12 @@ static void
 subscribe_response(GhBackground *self, const gchar *path)
 {
   unsubscribe_response(self);
-  /* The match rule goes out on this connection before the request does. */
+  /* The match rule goes out on this connection before the request does.
+   * self stays alive for the subscription even if the callback is ever
+   * dispatched outside the disposing thread (SAST hardening). */
   self->response_subscription = g_dbus_connection_signal_subscribe(self->connection,
     PORTAL_BUS, PORTAL_REQUEST, "Response", path, NULL, G_DBUS_SIGNAL_FLAGS_NONE,
-    on_portal_response, self, NULL);
+    on_portal_response, g_object_ref(self), g_object_unref);
 }
 
 static void

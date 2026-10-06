@@ -371,6 +371,10 @@ grow_array(void *array, size_t *cap, size_t len, size_t elem_size)
   if (len < *cap)
     return array;
   size_t new_cap = *cap ? *cap * 2 : 8;
+  /* Doubling or the byte count may wrap; treat that as OOM, never an
+   * undersized buffer (SAST hardening, nostrc review). */
+  if (new_cap < *cap || elem_size == 0 || new_cap > SIZE_MAX / elem_size)
+    return NULL;
   void *bigger = realloc(array, new_cap * elem_size);
   if (bigger)
     *cap = new_cap;
