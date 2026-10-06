@@ -18,6 +18,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 mkdir -p "$work/$name" "$out"
+out=$(cd "$out" && pwd)  # the archive is written from inside $work
 if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git -C "$root" ls-files -z --recurse-submodules | (cd "$root" && tar --null -T - -cf -) | tar -xf - -C "$work/$name"
 else
