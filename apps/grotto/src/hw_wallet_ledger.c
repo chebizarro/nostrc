@@ -184,10 +184,13 @@ ledger_unwrap_response(const guint8 *input, gsize input_len, guint8 *output,
   return offset;
 }
 
-/* Exchange APDU with device */
+/* Exchange APDU with device.
+ * response_max is the capacity of the caller's response buffer; a device
+ * reply longer than that is rejected instead of overflowing it (nostrc-ssw8). */
 static gboolean
 ledger_exchange(hid_device *handle, const guint8 *apdu, gsize apdu_len,
-                guint8 *response, gsize *response_len, guint16 *sw, GError **error)
+                guint8 *response, gsize response_max, gsize *response_len,
+                guint16 *sw, GError **error)
 {
   guint16 channel_id = 0x0101;
 
@@ -224,6 +227,15 @@ ledger_exchange(hid_device *handle, const guint8 *apdu, gsize apdu_len,
       return FALSE;
     }
 
+    /* nostrc-4ikb: a malicious device can keep sending packets until the
+     * buffer is full; reject the packet that would not fit instead of
+     * overflowing recv_buffer. */
+    if ((gsize)ret > sizeof(recv_buffer) - recv_len) {
+      g_set_error(error, GN_HW_WALLET_ERROR, GN_HW_WALLET_ERROR_COMMUNICATION,
+                  "Device response exceeds receive buffer");
+      return FALSE;
+    }
+
     memcpy(recv_buffer + recv_len, packet, ret);
     recv_len += ret;
 
@@ -249,6 +261,16 @@ ledger_exchange(hid_device *handle, const guint8 *apdu, gsize apdu_len,
 
   /* Extract status word from end of response */
   *sw = (unwrapped[unwrapped_len - 2] << 8) | unwrapped[unwrapped_len - 1];
+
+  /* nostrc-ssw8: the device-controlled length was only bounded against the
+   * 512-byte unwrapped buffer, not the caller's (smaller) response buffer. */
+  if (unwrapped_len - 2 > response_max) {
+    g_set_error(error, GN_HW_WALLET_ERROR, GN_HW_WALLET_ERROR_COMMUNICATION,
+                "Device response larger than the caller buffer (%zu > %zu)",
+                unwrapped_len - 2, response_max);
+    return FALSE;
+  }
+
   *response_len = unwrapped_len - 2;
   if (*response_len > 0)
     memcpy(response, unwrapped, *response_len);
@@ -403,7 +425,8 @@ ledger_open_device(GnHwWalletProvider *provider, const gchar *device_id, GError 
   gsize response_len;
   guint16 sw;
 
-  if (ledger_exchange(handle, apdu, apdu_len, response, &response_len, &sw, NULL)) {
+  if (ledger_exchange(handle, apdu, apdu_len, response, sizeof(response),
+                      &response_len, &sw, NULL)) {
     if (sw == LEDGER_SW_OK && response_len > 0) {
       dev->app_name = g_strndup((gchar *)response, response_len);
       if (g_str_has_prefix(dev->app_name, "Nostr") ||
@@ -491,7 +514,8 @@ ledger_get_public_key(GnHwWalletProvider *provider, const gchar *device_id,
   gsize response_len;
   guint16 sw;
 
-  gboolean ok = ledger_exchange(dev->handle, apdu, apdu_len, response, &response_len, &sw, error);
+  gboolean ok = ledger_exchange(dev->handle, apdu, apdu_len, response,
+                                sizeof(response), &response_len, &sw, error);
   g_mutex_unlock(&self->lock);
 
   if (!ok)
@@ -606,7 +630,8 @@ ledger_sign_hash(GnHwWalletProvider *provider, const gchar *device_id,
   gsize response_len;
   guint16 sw;
 
-  gboolean ok = ledger_exchange(dev->handle, apdu, apdu_len, response, &response_len, &sw, error);
+  gboolean ok = ledger_exchange(dev->handle, apdu, apdu_len, response,
+                                sizeof(response), &response_len, &sw, error);
   g_mutex_unlock(&self->lock);
 
   if (!ok)
