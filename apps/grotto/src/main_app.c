@@ -7,6 +7,7 @@
 #include "accounts_store.h"
 #include "settings_manager.h"
 #include "startup-timing.h"
+#include "gn-status-notifier.h"
 #include "secure-mem.h"
 #include "i18n.h"
 #include "ui/signer-window.h"
@@ -789,9 +790,24 @@ static gboolean deferred_init_cb(gpointer user_data) {
 /* Runs whether the app was launched by the person or started by the bus for
  * a request (--gapplication-service, which never activates): the signer
  * subscription must exist in both cases. */
+/* W32 (owner decision): an app indicator where a StatusNotifierWatcher runs
+ * (Ubuntu's AppIndicator extension, KDE); nothing on stock GNOME. */
+static void indicator_activate(GnStatusNotifier *indicator, GApplication *app) {
+  (void)indicator;
+  g_application_activate(app);
+}
+static void indicator_quit(GnStatusNotifier *indicator, GApplication *app) {
+  (void)indicator;
+  g_application_quit(app);
+}
+
 static void on_startup(GtkApplication *app, gpointer user_data) {
-  (void)app; (void)user_data;
+  (void)user_data;
   g_idle_add(deferred_init_cb, NULL);
+  GnStatusNotifier *indicator = gn_status_notifier_new(G_APPLICATION(app), "org.nostr.Grotto", "Grotto");
+  g_signal_connect(indicator, "activate", G_CALLBACK(indicator_activate), app);
+  g_signal_connect(indicator, "quit", G_CALLBACK(indicator_quit), app);
+  g_object_set_data_full(G_OBJECT(app), "grotto-indicator", indicator, g_object_unref);
 }
 
 static void on_activate(GtkApplication *app, gpointer user_data) {

@@ -10,6 +10,7 @@
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
 #include "gh-background.h"
+#include "gn-status-notifier.h"
 #endif
 #include "gh-window.h"
 #ifdef GH_TEST_FONTCONFIG_CLEANUP
@@ -313,12 +314,16 @@ smoke_check(gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
+static void indicator_attach(GApplication *app);
+
 static void
 app_startup(GApplication *app, gpointer user_data)
 {
   g_autoptr(GError) error = NULL;
   (void)user_data;
   gh_window_setup_application(GTK_APPLICATION(app));
+  if (!smoke_mode)
+    indicator_attach(app);
   app_services = gh_app_services_new(GTK_APPLICATION(app), &error);
   if (!app_services) {
     g_printerr("%s\n", error->message);
@@ -362,6 +367,35 @@ on_terminate(gpointer data)
 /* Not called in service mode (`--gapplication-service`, the autostart
  * command): the process then runs windowless until something activates it,
  * held by the background service while run-in-background is on. */
+/* W32 (owner decision): an app indicator on desktops that show one (Ubuntu's
+ * AppIndicator extension, KDE); on stock GNOME nothing registers. Open
+ * activates the app; Quit quits it. */
+static void
+indicator_activate(GnStatusNotifier *indicator, GApplication *app)
+{
+  (void)indicator;
+  g_application_activate(app);
+}
+
+static void
+indicator_quit(GnStatusNotifier *indicator, GApplication *app)
+{
+  (void)indicator;
+  g_application_quit(app);
+}
+
+static void
+indicator_attach(GApplication *app)
+{
+  if (g_object_get_data(G_OBJECT(app), "groundhog-indicator"))
+    return;
+  const gchar *app_id = g_application_get_application_id(app);
+  GnStatusNotifier *indicator = gn_status_notifier_new(app, app_id ? app_id : GROUNDHOG_APP_ID, "Groundhog");
+  g_signal_connect(indicator, "activate", G_CALLBACK(indicator_activate), app);
+  g_signal_connect(indicator, "quit", G_CALLBACK(indicator_quit), app);
+  g_object_set_data_full(G_OBJECT(app), "groundhog-indicator", indicator, g_object_unref);
+}
+
 static void
 activate(GApplication *app, gpointer user_data)
 {

@@ -392,6 +392,10 @@ else()
 endif()
 
 # Data install (schemas, dbus, desktop)
+# W32: an app indicator where a StatusNotifierWatcher runs (Ubuntu, KDE).
+target_sources(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common/gn-status-notifier.c)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common)
+
 install(TARGETS ${APP_SIGNER_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(NOT WIN32)
   install(TARGETS grotto-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

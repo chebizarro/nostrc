@@ -665,6 +665,10 @@ if (BUILD_TESTING)
   install(CODE "message(FATAL_ERROR \"Groundhog testing build has a test-only D-Bus control interface; reconfigure with BUILD_TESTING=OFF before installing.\")")
 endif()
 
+# W32: an app indicator where a StatusNotifierWatcher runs (Ubuntu, KDE).
+target_sources(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-status-notifier.c)
+target_include_directories(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+
 install(TARGETS groundhog RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
 nostrc_install_private_json(groundhog groundhog)
@@ -693,6 +697,15 @@ if (BUILD_TESTING)
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
   # nostrc-v59q: the bus probe test launches groundhog against a stalled
   # Unix socket and verifies it does not hang.
+  # W32: the app indicator against a fake StatusNotifierWatcher on the test bus.
+  add_executable(test-groundhog-status-notifier tests/app/test_status_notifier.c
+                 ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-status-notifier.c)
+  target_include_directories(test-groundhog-status-notifier PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+  target_link_libraries(test-groundhog-status-notifier PRIVATE nostrc-test-bus PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-status-notifier PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-status-notifier COMMAND test-groundhog-status-notifier)
+  set_tests_properties(groundhog-status-notifier PROPERTIES TIMEOUT 60)
+
   add_executable(test-groundhog-bus-probe tests/app/test_bus_probe.c)
   target_link_libraries(test-groundhog-bus-probe PRIVATE nostrc-test-bus PkgConfig::GROUNDHOG_DEPS)
   target_compile_options(test-groundhog-bus-probe PRIVATE -Wall -Wextra -Werror)
