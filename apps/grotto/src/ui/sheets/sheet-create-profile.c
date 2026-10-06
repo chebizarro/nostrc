@@ -23,6 +23,11 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <string.h>
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 struct _SheetCreateProfile {
   AdwDialog parent_instance;
@@ -330,7 +335,7 @@ static void on_create(GtkButton *btn, gpointer user_data) {
                          g_variant_new("(ssssb)", display_name, ctx->passphrase, recovery_hint ? recovery_hint : "", "", use_hardware_key),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         10000,
+                         GN_KEY_CALL_TIMEOUT_MS,
                          NULL,
                          create_profile_dbus_done,
                          ctx);

@@ -10,6 +10,11 @@
 
 /* Hardware keystore widget */
 #include "hardware_keystore_widget.h"
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 typedef struct {
   AccountsStore *as;
@@ -102,7 +107,7 @@ static void request_daemon_clear_key(const gchar *id) {
   }
   g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearKey",
                          g_variant_new("(s)", id), G_VARIANT_TYPE("(b)"),
-                         G_DBUS_CALL_FLAGS_NONE, 5000, NULL, remove_clear_key_done,
+                         G_DBUS_CALL_FLAGS_NONE, GN_KEY_CALL_TIMEOUT_MS, NULL, remove_clear_key_done,
                          g_strdup(id));
   g_object_unref(bus);
 }
@@ -493,7 +498,7 @@ static void on_import_ok_clicked(GtkButton *btn, gpointer user_data){
   }
   g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "StoreKey",
                          g_variant_new("(ss)", secret, identity ? identity : ""), G_VARIANT_TYPE("(bs)"),
-                         G_DBUS_CALL_FLAGS_NONE, 5000, NULL, import_call_done, ctx);
+                         G_DBUS_CALL_FLAGS_NONE, GN_KEY_CALL_TIMEOUT_MS, NULL, import_call_done, ctx);
   g_object_unref(bus);
 }
 
@@ -658,7 +663,7 @@ static void on_clear_ok_clicked(GtkButton *btn, gpointer user_data){
   }
   g_dbus_connection_call(bus, SIGNER_NAME, SIGNER_PATH, "org.nostr.Signer", "ClearKey",
                          g_variant_new("(s)", identity), G_VARIANT_TYPE("(b)"),
-                         G_DBUS_CALL_FLAGS_NONE, 5000, NULL, clear_call_done, ctx);
+                         G_DBUS_CALL_FLAGS_NONE, GN_KEY_CALL_TIMEOUT_MS, NULL, clear_call_done, ctx);
   g_object_unref(bus);
 }
 

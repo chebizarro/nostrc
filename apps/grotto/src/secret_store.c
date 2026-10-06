@@ -209,7 +209,7 @@ static SecretStoreResult daemon_store_key(const gchar *key, const gchar *label, 
   if (!bus) return result_from_dbus_error("StoreKey (no session bus)", err);
   g_autoptr(GVariant) ret = g_dbus_connection_call_sync(bus, SIGNER_BUS_NAME, SIGNER_OBJ_PATH,
       SIGNER_BUS_NAME, "StoreKey", g_variant_new("(ss)", key, label ? label : ""),
-      G_VARIANT_TYPE("(bs)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, &err);
+      G_VARIANT_TYPE("(bs)"), G_DBUS_CALL_FLAGS_NONE, 10 * 60 * 1000 /* a keyring prompt */, NULL, &err);
   if (!ret) {
     SecretStoreResult r = result_from_dbus_error("StoreKey", err);
     g_clear_error(&err);
@@ -244,7 +244,7 @@ SecretStoreResult secret_store_remove(const gchar *selector) {
   }
   g_autoptr(GVariant) ret = g_dbus_connection_call_sync(bus, SIGNER_BUS_NAME, SIGNER_OBJ_PATH,
       SIGNER_BUS_NAME, "ClearKey", g_variant_new("(s)", selector),
-      G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, &err);
+      G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 10 * 60 * 1000, NULL, &err);
   if (!ret) {
     SecretStoreResult r = result_from_dbus_error("ClearKey", err);
     g_clear_error(&err);

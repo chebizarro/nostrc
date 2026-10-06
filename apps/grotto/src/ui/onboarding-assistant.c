@@ -14,6 +14,11 @@
 #include <gio/gio.h>
 #include <string.h>
 #include <math.h>
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 /* GSettings keys */
 #define SIGNER_GSETTINGS_ID "org.nostr.Grotto"
@@ -585,7 +590,7 @@ static gboolean store_generated_key(OnboardingAssistant *self) {
                          g_variant_new("(ss)", self->generated_nsec, display_name),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         10000,
+                         GN_KEY_CALL_TIMEOUT_MS,
                          NULL,
                          store_generated_key_async_done,
                          self);
@@ -810,7 +815,7 @@ static gboolean perform_profile_import(OnboardingAssistant *self) {
                          g_variant_new("(ss)", ctx->data, ctx->passphrase ? ctx->passphrase : ""),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         30000,
+                         GN_KEY_CALL_TIMEOUT_MS,
                          NULL,
                          on_import_profile_done,
                          ctx);

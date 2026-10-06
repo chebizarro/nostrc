@@ -9,6 +9,11 @@
 #include <adwaita.h>
 #include <gio/gio.h>
 #include <string.h>
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 /* Clipboard clear timeout in seconds after importing sensitive data */
 #define CLIPBOARD_CLEAR_TIMEOUT_SECONDS 30
@@ -228,7 +233,7 @@ static void on_ok(GtkButton *b, gpointer user_data){
                          g_variant_new("(ss)", secret, identity),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         5000,
+                         GN_KEY_CALL_TIMEOUT_MS,
                          NULL,
                          import_call_done,
                          ctx);

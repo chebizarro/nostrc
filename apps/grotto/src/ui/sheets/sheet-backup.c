@@ -22,6 +22,11 @@
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <string.h>
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 /* Clipboard clear timeout in seconds */
 #define CLIPBOARD_CLEAR_TIMEOUT_SECONDS 60
@@ -773,7 +778,7 @@ static void on_import(GtkButton *btn, gpointer user_data) {
                          g_variant_new("(ss)", self->verified_nsec, ""),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         10000,  /* 10 second timeout for scrypt */
+                         GN_KEY_CALL_TIMEOUT_MS,  /* 10 second timeout for scrypt */
                          NULL,
                          on_import_dbus_done,
                          self);

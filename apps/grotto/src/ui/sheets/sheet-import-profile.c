@@ -20,6 +20,11 @@
 #include <adwaita.h>
 #include <gio/gio.h>
 #include <string.h>
+/* A key store/create may wait on a keyring prompt (unlock, or the first
+ * keyring being created); it must not time out under the person (W32). */
+#ifndef GN_KEY_CALL_TIMEOUT_MS
+#define GN_KEY_CALL_TIMEOUT_MS (10 * 60 * 1000)
+#endif
 
 struct _SheetImportProfile {
   AdwDialog parent_instance;
@@ -539,7 +544,7 @@ static void on_import(GtkButton *btn, gpointer user_data) {
                          g_variant_new("(ss)", data, ""),
                          G_VARIANT_TYPE("(bs)"),
                          G_DBUS_CALL_FLAGS_NONE,
-                         30000,
+                         GN_KEY_CALL_TIMEOUT_MS,
                          NULL,
                          import_dbus_done,
                          ctx);
