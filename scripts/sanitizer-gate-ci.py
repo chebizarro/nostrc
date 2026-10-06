@@ -67,6 +67,7 @@ SANITIZER_BUILD_PATHS = (
     "libhanami/hanami.pc.in",
     "tools/CMakeLists.txt",
     "gnome/groundhog/",
+    "gnome/common/",                  # gn-status-notifier, compiled into groundhog (W32)
     "gnome/seahorse/",                # gnostr-secret, linked by groundhog-identity
     "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml",  # Groundhog's test schemas
     "libnostr/",
