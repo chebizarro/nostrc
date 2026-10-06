@@ -1,7 +1,7 @@
 Source: groundhog
 Section: net
 Priority: optional
-Maintainer: GNostr Project <gnostr@example.com>
+Maintainer: Biz <chebizarro@protonmail.com>
 Build-Depends: debhelper-compat (= 13),
                cmake (>= 3.20),
                ninja-build,

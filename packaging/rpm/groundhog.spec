@@ -164,6 +164,6 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
-* Mon Oct 05 2026 GNostr Project <gnostr@example.com> - 0.12.0-0.1.alpha1
+* Mon Oct 05 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.1.alpha1
 - First alpha: private messages (NIP-17), relay groups (NIP-29) and Marmot
   encrypted groups, with Grotto as the signer.

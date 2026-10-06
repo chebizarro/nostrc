@@ -168,9 +168,8 @@ differ.
   and the app started as a D-Bus service does not listen for requests. This
   is independent of packaging and is the main obstacle to a first run that
   just works.
-- **Package metadata needs a contact address.** Debian, RPM and AUR recipes
-  require a maintainer name and email; the recipes carry the tree's existing
-  placeholder until the owner picks one.
+- **Package metadata contact.** Debian, RPM and AUR recipes carry the
+  maintainer the owner chose: Biz <chebizarro@protonmail.com>.
 
 ## Risks
 
