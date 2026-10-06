@@ -1925,6 +1925,7 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #if GROUNDHOG_HAVE_OUTBOX
   GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
   if (directory) {
+    gh_account_ui_set_name_source(window, directory_display_name, G_OBJECT(directory));
     gh_conversation_view_set_picture_source(GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window))),
                                              directory_picture_uri, G_OBJECT(directory));
     new_message.inboxes = GH_INBOX_RESOLVER(directory);

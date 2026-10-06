@@ -69,6 +69,7 @@ gh_app_outbox_new(const GhAppOutboxConfig *config)
     GhContactDirectoryConfig directory = {
       .accounts = config->accounts,
       .settings = config->settings,
+      .own_profile = TRUE, /* the account's name titles the sidebar */
     };
     self->directory = gh_contact_directory_new(&directory);
     self->inboxes = GH_INBOX_RESOLVER(g_object_ref(self->directory));

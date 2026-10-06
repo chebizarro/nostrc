@@ -23,6 +23,12 @@ G_BEGIN_DECLS
  * Everything is released with window. */
 void gh_account_ui_attach(GhWindow *window, GhAccountController *controller,
                           GSettings *settings);
+/* A source of display names for the sidebar title (the contact directory):
+ * the active account's cached kind-0 name is the title when known, else the
+ * key's label, else its shortened npub. name(data, pubkey_hex) returns a
+ * borrowed name or NULL; source's "profile-changed" (s) signal refreshes. */
+typedef const gchar *(*GhAccountNameFunc)(gpointer data, const gchar *pubkey);
+void gh_account_ui_set_name_source(GhWindow *window, GhAccountNameFunc name, GObject *source);
 /* The account-state announcements made so far (tests). */
 guint gh_account_ui_get_announcements(GhWindow *window);
 

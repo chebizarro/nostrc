@@ -276,6 +276,8 @@ on_changed(GhInboxResolver *resolver, const gchar *pubkey, gpointer data)
   g_ptr_array_add(data, g_strdup(pubkey));
 }
 
+static gboolean own_profile_config; /* the next new_directory() looks the account up too */
+
 static void
 new_directory(Fixture *f)
 {
@@ -286,6 +288,7 @@ new_directory(Fixture *f)
     .transport = &rec_transport,
     .auth_transport = &rec_auth,
     .transport_data = &f->rec,
+    .own_profile = own_profile_config,
   };
   f->dir = gh_contact_directory_new(&config);
   g_signal_connect(f->dir, "changed", G_CALLBACK(on_changed), f->changed);
@@ -533,6 +536,41 @@ test_nt11_cache(void)
   g_assert_cmpuint(f.rec.reqs->len, ==, 4);
   g_assert_cmpuint(f.mock.calls, ==, 0);
   resolved_clear(&r);
+  fixture_down(&f);
+}
+
+/* ---- the account's own profile (owner report: npub as sidebar title) ---------------- */
+
+/* With own_profile, the account is one more stale entry for the scheduled
+ * run: never looked up on its own, asked for with the first batch, and its
+ * kind-0 name is then its display name. Without the flag it is unknown. */
+static void
+test_own_profile(void)
+{
+  Fixture f;
+  own_profile_config = TRUE;
+  fixture_up(&f, FALSE);
+  own_profile_config = FALSE;
+  room_with(&f, &people[0], TRUE, T0 - 1000);
+  bind_store(&f);
+  advance(&f, 60);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 0); /* nothing on its own */
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, hex_alice));
+
+  advance_to_next(&f); /* the first run: the contact and the account together */
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2);
+  Req *req = req_at(&f, 0);
+  g_assert_cmpuint(req->authors->len, ==, 2);
+  g_assert_true(req_asks(req, people[0].pk));
+  g_assert_true(req_asks(req, hex_alice));
+  g_assert_true(req->profiles);
+  Person alice = { .sk = (gchar *)gh_test_secret[1], .pk = hex_alice };
+  g_autofree gchar *mine = profile(&alice, T0 - 100, "{\"name\":\"alice\",\"display_name\":\"Alice A.\"}");
+  answer(req_at(&f, 0), mine, NULL);
+  answer(req_at(&f, 1), NULL);
+  drain();
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, hex_alice), ==, "Alice A.");
+  g_assert_true(g_ptr_array_find_with_equal_func(f.profiles, hex_alice, g_str_equal, NULL));
   fixture_down(&f);
 }
 
@@ -950,6 +988,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/contact-directory/forged-and-stale", test_forged_and_stale);
   g_test_add_func("/groundhog/contact-directory/restore", test_restore);
   g_test_add_func("/groundhog/contact-directory/account-switch", test_account_switch_and_sources);
+  g_test_add_func("/groundhog/contact-directory/own-profile", test_own_profile);
   int result = g_test_run();
   gh_test_bus_down(&shared_bus);
   for (guint i = 0; i < N_PEOPLE; i++) {

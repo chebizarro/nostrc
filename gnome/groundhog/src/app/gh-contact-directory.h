@@ -75,6 +75,10 @@ typedef struct {
   const GhRelayTransport *transport;          /* NULL: gnostr relays (with NIP-42) */
   const GhRelayAuthTransport *auth_transport; /* custom transport only; NULL: no AUTH */
   gpointer transport_data;
+  /* The account's own kind 0 too (its name titles the sidebar): the
+   * account is treated as an accepted contact for the scheduled refresh,
+   * never for a send-time or accept-time lookup. Default off. */
+  gboolean own_profile;
 } GhContactDirectoryConfig;
 
 #define GH_TYPE_CONTACT_DIRECTORY (gh_contact_directory_get_type())

@@ -37,6 +37,8 @@ typedef struct {
   GtkWidget *focus_targets[G_N_ELEMENTS(account_pages)];
   GMenu *identities_menu;
   GSimpleAction *select;
+  GhAccountNameFunc name;  /* nullable: the account's own kind-0 name */
+  GObject *names;          /* weak: the source behind name */
   /* The previously shown account page ("" for the conversation pages), so
    * update() only moves keyboard focus and announces a status change on an
    * actual state transition, not on every redundant "changed" or
@@ -230,8 +232,16 @@ update(GhAccountUi *ui)
     g_menu_item_set_action_and_target_value(item, "account.select",
                                             g_variant_new_string(info->npub));
     g_menu_append_item(ui->identities_menu, item);
-    if (g_strcmp0(info->npub, active) == 0)
+    if (g_strcmp0(info->npub, active) == 0) {
       subtitle = g_steal_pointer(&label);
+      /* The profile name, when the directory has cached it. */
+      g_autofree gchar *pubkey = gh_identity_pubkey_hex(info->npub);
+      const gchar *name = ui->name && ui->names && pubkey ? ui->name(ui->names, pubkey) : NULL;
+      if (name && *name) {
+        g_free(subtitle);
+        subtitle = g_strdup(name);
+      }
+    }
   }
   g_simple_action_set_state(ui->select, g_variant_new_string(current));
   /* The active account names the sidebar, without a subtitle: the app's
@@ -338,4 +348,35 @@ gh_account_ui_get_announcements(GhWindow *window)
   g_return_val_if_fail(GH_IS_WINDOW(window), 0);
   GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
   return ui ? ui->announcements : 0;
+}
+
+static void
+on_profile_changed(GObject *directory, const gchar *pubkey, gpointer data)
+{
+  (void)directory; (void)pubkey;
+  update(data);
+}
+
+static void
+names_gone(gpointer data, GObject *where_the_object_was)
+{
+  (void)where_the_object_was;
+  GhAccountUi *ui = data;
+  ui->names = NULL;
+}
+
+void
+gh_account_ui_set_name_source(GhWindow *window, GhAccountNameFunc name, GObject *source)
+{
+  GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
+  g_return_if_fail(ui != NULL);
+  if (ui->names)
+    g_object_weak_unref(ui->names, names_gone, ui);
+  ui->name = name;
+  ui->names = source;
+  if (ui->names) {
+    g_object_weak_ref(ui->names, names_gone, ui);
+    g_signal_connect_object(ui->names, "profile-changed", G_CALLBACK(on_profile_changed), ui, 0);
+  }
+  update(ui);
 }

@@ -87,6 +87,7 @@ struct _GhContactDirectory {
   gboolean custom_transport;
   gboolean custom_auth;
   guint deadline_s;
+  gboolean own_profile;        /* config: the account's own kind 0 too */
   GhConversationStore *model;
   GhStore *store;                /* borrowed while bound */
   guint64 generation;            /* 0: no active account */
@@ -1136,6 +1137,17 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
         if (hex64(peers[p]))
           contact_ensure(self, peers[p])->accepted = TRUE;
     }
+    /* The account itself: its kind 0 names the sidebar (owner report: the
+     * npub there). Looked up like a contact's, on the same schedule and
+     * from the discovery relays; the account is no secret to relays it
+     * already reads its messages from. */
+    if (self->own_profile && self->account && hex64(self->account)) {
+      Contact *me = contact_ensure(self, self->account);
+      me->accepted = TRUE;
+      /* Never an "accepted" transition (no one-off lookup): the scheduled
+       * run picks it up with the other stale entries. */
+      g_hash_table_add(before, me->pubkey);
+    }
   }
   g_autoptr(GPtrArray) shown = g_ptr_array_new_with_free_func(g_free);
   gboolean join_run = FALSE;
@@ -1435,6 +1447,7 @@ gh_contact_directory_new(const GhContactDirectoryConfig *config)
   self->accounts = g_object_ref(config->accounts);
   self->settings = g_object_ref(config->settings);
   self->clock = config->clock ? gh_clock_ref(config->clock) : gh_clock_new_system();
+  self->own_profile = config->own_profile;
   if (config->transport) {
     self->transport = *config->transport;
     self->transport_data = config->transport_data;
