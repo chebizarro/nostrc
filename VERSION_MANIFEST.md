@@ -23,7 +23,7 @@ files already declare a version.
 | NIP-46 client/provider | `nips/nip46/` | Unversioned | Unreleased | — | None; authoritative version ownership must be established before release |
 | nip19 (NIP-19 codec) | `nips/nip19/` | 0.1.0 | Unreleased | — | `nips/nip19/CMakeLists.txt` (`declare_component_version`; SONAME `libnip19.so.0`) |
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
-| nip55l (Linux signer) | `nips/nip55l/` | 0.6.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
+| nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
 | signet | `signet/` | 0.1.1 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
@@ -34,6 +34,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| W31 approval UI on demand (nostrc-sh5h) | nip55l, grotto | 0.7.0, — | nip55l minor bump: additive D-Bus method `ListPendingRequests` and new behaviour (a request needing approval starts the approval UI over the bus instead of failing at once; it fails as before only if the UI cannot be started). Grotto subscribes at startup and holds while prompting; no version of its own. |
+| W30 packaging groundwork and recipes (nostrc-xxv6) | groundhog, grotto | 0.12.0, — | No further bump: store data, copy ("Grotto"), icon sizes, private libnostr-json install, and new recipes (debian-desktop, Flatpak GNOME 51, Arch, RPM, Nix, groundhog-release workflow) folded into unreleased 0.12.0; first alpha tag `groundhog-v0.12.0-alpha1`. |
 | W29 main-window polish and local metadata-search contract (nostrc-lol6) | groundhog | 0.12.0 | No further bump: UI bug fixes and internal, uninstalled shell helper changes folded into unreleased 0.12.0; no public API, wire or storage change. |
 | W29 Web Content consent-gated link previews, linked images and profile pictures; HIG published-relay input layout (nostrc-8pfk) | groundhog | 0.12.0 | No further bump: new opt-in UI functionality is part of the already-declared, unreleased 0.12.0 MINOR. No public API or wire/storage-format change. |
 | W29 About dialog and issue filing (nostrc-lz9e) | groundhog | 0.12.0 | No further bump: fold compatible NIP-21 activation and consent-gated public NIP-34 reports into unreleased 0.12.0 per wave policy. Copy and internal tests accompany the shipped feature. Reuses libnip34 without changing it; no libnip34 or gnostr bump. |
