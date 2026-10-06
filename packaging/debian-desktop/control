@@ -22,7 +22,9 @@ Build-Depends: debhelper-compat (= 13),
                libsodium-dev,
                libjansson-dev,
                libwebsockets-dev,
-               libnsync-dev
+               libnsync-dev,
+               libcurl4-openssl-dev,
+               libqrencode-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc

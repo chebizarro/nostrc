@@ -40,6 +40,7 @@ if "$tar" --version 2>/dev/null | grep -q 'GNU tar'; then
     gzip -n > "$out/$name.tar.gz")
 else
   echo "make-desktop-source-archive: no GNU tar; archive will not be reproducible" >&2
-  (cd "$work" && tar -cf - "$name" | gzip -n > "$out/$name.tar.gz")
+  # macOS: no AppleDouble ._* entries (they break CMake's source globs).
+  (cd "$work" && COPYFILE_DISABLE=1 tar --exclude='._*' -cf - "$name" | gzip -n > "$out/$name.tar.gz")
 fi
 (cd "$out" && sha256sum "$name.tar.gz" 2>/dev/null || shasum -a 256 "$name.tar.gz")
