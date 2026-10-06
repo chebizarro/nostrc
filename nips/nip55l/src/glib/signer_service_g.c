@@ -1364,6 +1364,12 @@ static gboolean handle_list_identities(NostrSigner *object, GDBusMethodInvocatio
 
 static guint name_owner_sub = 0;
 
+/* Requests awaiting the person's answer (for a daemon deciding whether it
+ * may exit). */
+guint signer_pending_count(void){
+  return pending ? g_hash_table_size(pending) : 0;
+}
+
 guint signer_export(GDBusConnection *conn, const char *object_path) {
   if (signer_skel) return 1;
   signer_skel = nostr_signer_skeleton_new();

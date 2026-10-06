@@ -7,6 +7,7 @@
 #include "nip55l_dbus_names.h"
 #include "ipc.h"
 #include "bunker_service.h"
+#include <glib/gstdio.h>
 #include "settings_manager.h"
 #include "accounts_store.h"
 
@@ -14,6 +15,7 @@
 // Prototypes provided by nips/nip55l/src/glib/signer_service_g.c
 extern guint signer_export(GDBusConnection *conn, const char *object_path);
 extern void  signer_unexport(GDBusConnection *conn, guint reg_id);
+extern guint signer_pending_count(void);
 
 // IPC abstraction (POSIX UDS / TCP / Windows named pipe) from ipc.h
 
@@ -253,6 +255,41 @@ static void print_usage(const char *prog_name) {
   g_print("\n");
 }
 
+#ifdef __linux__
+static dev_t self_exe_dev;
+static ino_t self_exe_ino;
+static gchar *self_exe_path;
+
+static gboolean
+retire_if_replaced(gpointer data)
+{
+  (void)data;
+  GStatBuf st;
+  gboolean replaced = g_stat(self_exe_path, &st) != 0 ||
+                      st.st_dev != self_exe_dev || st.st_ino != self_exe_ino;
+  if (!replaced) return G_SOURCE_CONTINUE;
+  if (signer_pending_count() > 0) return G_SOURCE_CONTINUE;
+  g_message("grotto-daemon: %s was replaced on disk; exiting so the new one serves the next request",
+            self_exe_path);
+  if (loop) g_main_loop_quit(loop);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+retire_watch_start(void)
+{
+  g_autofree gchar *exe = g_file_read_link("/proc/self/exe", NULL);
+  GStatBuf st;
+  if (!exe || g_str_has_suffix(exe, " (deleted)") || g_stat(exe, &st) != 0) return;
+  self_exe_path = g_steal_pointer(&exe);
+  self_exe_dev = st.st_dev;
+  self_exe_ino = st.st_ino;
+  g_timeout_add_seconds(30, retire_if_replaced, NULL);
+}
+#else
+static void retire_watch_start(void) {}
+#endif
+
 int main(int argc, char **argv) {
   /* W31: carry the pre-rename directories over before anything reads them. */
   grotto_legacy_dirs_migrate();
@@ -318,6 +355,13 @@ int main(int argc, char **argv) {
                                   on_name_lost,
                                   NULL,
                                   NULL);
+
+  /* A package upgrade replaces this executable but cannot restart a user's
+   * bus-activated service: the old daemon would keep answering (an owner
+   * saw a fixed bug persist until logout). Retire once the file on disk is
+   * no longer the one running and nothing awaits approval; the next call
+   * activates the new binary. */
+  retire_watch_start();
 
   g_message("entering main loop");
   g_main_loop_run(loop);
