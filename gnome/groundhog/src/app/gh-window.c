@@ -179,10 +179,12 @@ on_root_page(GhWindow *self)
 
 /* libadwaita 1.5.0 (Ubuntu 24.04): AdwNavigationSplitView schedules an idle
  * (changing_page_done_cb) when its shown page changes and never removes it,
- * so a split view finalized before the idle runs is written to after it was
+ * so a split view freed before the idle runs is written to after it was
  * freed (nostrc-7ho9: the crash after the search-clear-and-focus GUI test).
- * The instance is kept alive past that idle: it may be disposed by then,
- * which the callback tolerates, but not freed. */
+ * The window tears down as it always did; the split view, unparented by
+ * then, is disposed right after, synchronously, and only its memory is
+ * released from an idle of lower priority than libadwaita's (the callback
+ * writes one flag on the instance). */
 static gboolean
 release_split_view(gpointer data)
 {
@@ -194,13 +196,21 @@ static void
 gh_window_dispose(GObject *object)
 {
   GhWindow *self = GH_WINDOW(object);
-  if (self->split)
-    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE + 10, release_split_view,
-                    g_object_ref(self->split), NULL);
+  AdwNavigationSplitView *split = self->split ? g_object_ref(self->split) : NULL;
+  if (split)
+    g_signal_handlers_disconnect_by_data(split, self);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_WINDOW);
   gh_window_set_new_message_handler(self, NULL, NULL, NULL);
   g_clear_object(&self->status);
   G_OBJECT_CLASS(gh_window_parent_class)->dispose(object);
+  if (split) {
+    /* Still a child when something else holds the root stack (tests do). */
+    GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(split));
+    if (GTK_IS_STACK(parent))
+      gtk_stack_remove(GTK_STACK(parent), GTK_WIDGET(split));
+    g_object_run_dispose(G_OBJECT(split));
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE + 10, release_split_view, split, NULL);
+  }
 }
 
 static void
