@@ -39,6 +39,9 @@ struct _SheetQrScanner {
   gchar *scanned_data;
   GnQrContentType scanned_type;
 
+  /* Cancels the file chooser when the dialog is closed (nostrc-xfic) */
+  GCancellable *file_cancellable;
+
   /* Accepted types */
   GnQrContentType *accepted_types;
   gsize n_accepted_types;
@@ -85,6 +88,10 @@ static gboolean is_type_accepted(SheetQrScanner *self, GnQrContentType type) {
 static void handle_scan_result(SheetQrScanner *self, GnQrScanResult *result) {
   if (!result || !result->data) return;
 
+  /* The template children are cleared when the dialog is disposed; an
+   * async completion that arrives after close must not touch them. */
+  if (!self->status_label) return;
+
   /* Check if type is accepted */
   if (!is_type_accepted(self, result->type)) {
     /* For nostr: URI, check if it contains nsec */
@@ -104,24 +111,31 @@ static void handle_scan_result(SheetQrScanner *self, GnQrScanResult *result) {
   show_result(self, result->data, result->type);
 }
 
-/* Clipboard scan callback */
+/* Clipboard scan callback.
+ * user_data is a strong ref taken by on_paste_clicked (nostrc-xfic): the
+ * sheet can be closed while the clipboard read is in flight. */
 static void clipboard_scan_done(GnQrScanResult *result,
                                  GError *error,
                                  gpointer user_data) {
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
 
   if (error) {
-    gtk_label_set_text(GTK_LABEL(self->status_label), error->message);
+    if (self->status_label)
+      gtk_label_set_text(GTK_LABEL(self->status_label), error->message);
+    g_object_unref(self);
     return;
   }
 
   if (!result) {
-    gtk_label_set_text(GTK_LABEL(self->status_label),
-                       "No QR code found in clipboard image");
+    if (self->status_label)
+      gtk_label_set_text(GTK_LABEL(self->status_label),
+                         "No QR code found in clipboard image");
+    g_object_unref(self);
     return;
   }
 
   handle_scan_result(self, result);
+  g_object_unref(self);
 }
 
 /* Camera QR detected callback */
@@ -174,9 +188,10 @@ static void on_paste_clicked(GtkButton *btn, gpointer user_data) {
   GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
   GdkClipboard *clipboard = gdk_display_get_clipboard(display);
 
-  gn_qr_scan_clipboard_async(clipboard, clipboard_scan_done, self);
+  gn_qr_scan_clipboard_async(clipboard, clipboard_scan_done, g_object_ref(self));
 }
 
+/* user_data is a strong ref taken by on_file_clicked (nostrc-xfic) */
 static void on_file_response(GObject *source, GAsyncResult *result, gpointer user_data) {
   SheetQrScanner *self = SHEET_QR_SCANNER(user_data);
   GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
@@ -185,20 +200,26 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
   g_autoptr(GFile) file = gtk_file_dialog_open_finish(dialog, result, &error);
 
   if (error) {
-    if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED)) {
+    if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+        self->status_label) {
       gtk_label_set_text(GTK_LABEL(self->status_label), error->message);
     }
     g_error_free(error);
+    g_object_unref(self);
     return;
   }
 
-  if (!file) return;
+  if (!file || !self->status_label) {
+    g_object_unref(self);
+    return;
+  }
 
   /* Load the image */
   gchar *path = g_file_get_path(file);
 
   if (!path) {
     gtk_label_set_text(GTK_LABEL(self->status_label), "Could not get file path");
+    g_object_unref(self);
     return;
   }
 
@@ -209,6 +230,7 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
     gtk_label_set_text(GTK_LABEL(self->status_label),
                        error ? error->message : "Failed to load image");
     if (error) g_error_free(error);
+    g_object_unref(self);
     return;
   }
 
@@ -220,11 +242,13 @@ static void on_file_response(GObject *source, GAsyncResult *result, gpointer use
     gtk_label_set_text(GTK_LABEL(self->status_label),
                        error ? error->message : "No QR code found in image");
     if (error) g_error_free(error);
+    g_object_unref(self);
     return;
   }
 
   handle_scan_result(self, scan_result);
   gn_qr_scan_result_free(scan_result);
+  g_object_unref(self);
 }
 
 static void on_file_clicked(GtkButton *btn, gpointer user_data) {
@@ -254,9 +278,9 @@ static void on_file_clicked(GtkButton *btn, gpointer user_data) {
 
   gtk_file_dialog_open(dialog,
                        GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self))),
-                       NULL,
+                       self->file_cancellable,
                        on_file_response,
-                       self);
+                       g_object_ref(self));
   g_object_unref(dialog);
 }
 
@@ -350,6 +374,13 @@ static void show_scanner(SheetQrScanner *self) {
 static void sheet_qr_scanner_dispose(GObject *object) {
   SheetQrScanner *self = SHEET_QR_SCANNER(object);
 
+  /* Cancel any in-flight file chooser; its callback holds a ref on this
+   * dialog and runs anyway, but with the template children cleared. */
+  if (self->file_cancellable) {
+    g_cancellable_cancel(self->file_cancellable);
+    g_clear_object(&self->file_cancellable);
+  }
+
   /* Stop camera */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {
     gn_qr_scanner_stop(GN_QR_SCANNER(self->scanner_widget));
@@ -394,6 +425,7 @@ static void sheet_qr_scanner_init(SheetQrScanner *self) {
   self->n_accepted_types = 0;
   self->on_success = NULL;
   self->on_success_ud = NULL;
+  self->file_cancellable = g_cancellable_new();
 
   /* Create scanner widget and add to scanner page */
   self->scanner_widget = GTK_WIDGET(gn_qr_scanner_new());
