@@ -1413,7 +1413,10 @@ static json_t *navigate_path(json_t *root, const char *path) {
     char *path_copy = strdup(path);
     if (!path_copy) return NULL;
 
-    char *token = strtok(path_copy, ".");
+    /* strtok_r: the plain strtok shared tokenization state across threads
+     * (nostrc-val0v). */
+    char *saveptr = NULL;
+    char *token = strtok_r(path_copy, ".", &saveptr);
     while (token && current) {
         if (json_is_object(current)) {
             current = json_object_get(current, token);
@@ -1429,7 +1432,7 @@ static json_t *navigate_path(json_t *root, const char *path) {
         } else {
             current = NULL;
         }
-        token = strtok(NULL, ".");
+        token = strtok_r(NULL, ".", &saveptr);
     }
 
     free(path_copy);
