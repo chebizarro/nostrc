@@ -111,10 +111,11 @@ person_update(GhConversationInfoPerson *self, gboolean verified)
 }
 
 static GhConversationInfoPerson *
-person_new(const gchar *pubkey, const gchar *name, const gchar *nip05)
+person_new(const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPaintable *picture)
 {
   GhConversationInfoPerson *self = g_object_new(GH_TYPE_CONVERSATION_INFO_PERSON, NULL);
   self->pubkey = g_strdup(pubkey);
+  adw_avatar_set_custom_image(self->avatar, picture);
   self->npub = npub_of(pubkey, FALSE);
   self->name = name && *name ? g_strdup(name) : NULL;
   self->nip05 = nip05 && *nip05 ? g_strdup(nip05) : NULL;
@@ -642,7 +643,7 @@ fill(GhConversationInfoDialog *self, const GhConversationInfoServices *services)
     GhConversationInfoProfile profile = { 0 };
     if (services->profile)
       services->profile(peers[i], &profile, services->profile_data);
-    GhConversationInfoPerson *person = person_new(peers[i], profile.name, profile.nip05);
+    GhConversationInfoPerson *person = person_new(peers[i], profile.name, profile.nip05, profile.picture);
     g_signal_connect_object(person, "activated", G_CALLBACK(on_person_activated), self, 0);
     adw_preferences_group_add(self->people_group, GTK_WIDGET(person));
     g_ptr_array_add(self->people, person);

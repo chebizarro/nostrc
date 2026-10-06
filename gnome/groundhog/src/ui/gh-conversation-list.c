@@ -367,6 +367,16 @@ gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend
     gh_picture_cache_set_consent(list->pictures, backend, data);
 }
 
+GdkTexture *
+gh_conversation_list_get_picture(GhWindow *window, const gchar *pubkey)
+{
+  GhConversationList *list = list_of(window);
+  if (!list || !list->pictures || !pubkey || !gh_picture_cache_is_allowed(list->pictures, pubkey))
+    return NULL;
+  g_autofree gchar *uri = gh_conversation_view_dup_picture_uri_for(list->view, pubkey);
+  return gh_picture_cache_get(list->pictures, pubkey, uri);
+}
+
 void
 gh_conversation_list_set_history_source(GhWindow *window, GhConversationListLoadOlder load_older,
                                         gpointer user_data, GDestroyNotify destroy)

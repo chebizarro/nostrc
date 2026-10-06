@@ -55,6 +55,7 @@ struct _GhNotifier;
 typedef struct {
   const gchar *name;  /* display name, or NULL */
   const gchar *nip05; /* claimed NIP-05 address (never verified), or NULL */
+  GdkPaintable *picture; /* the loaded, consented profile picture, or NULL (borrowed) */
 } GhConversationInfoProfile;
 
 typedef void (*GhConversationInfoProfileFunc)(const gchar *pubkey,

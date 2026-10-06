@@ -1049,6 +1049,12 @@ conversation_info_profile(const gchar *pubkey, GhConversationInfoProfile *profil
     return;
   profile->name = gh_contact_directory_get_display_name(directory, pubkey);
   profile->nip05 = gh_contact_directory_get_nip05(directory, pubkey);
+  /* The consented picture, if the window's cache has it (W32). */
+  GtkWindow *window = gtk_application_get_active_window(self->app);
+  if (GH_IS_WINDOW(window)) {
+    GdkTexture *picture = gh_conversation_list_get_picture(GH_WINDOW(window), pubkey);
+    profile->picture = picture ? GDK_PAINTABLE(picture) : NULL;
+  }
 }
 
 static gboolean

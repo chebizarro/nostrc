@@ -50,6 +50,8 @@ typedef gboolean (*GhConversationListLoadOlder)(GhConversation *conversation, GE
  * encrypted store, through the app; NULL when no account is open). */
 void gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend,
                                               gpointer data);
+/* The loaded, consented profile picture of pubkey, or NULL (borrowed). */
+GdkTexture *gh_conversation_list_get_picture(GhWindow *window, const gchar *pubkey);
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
