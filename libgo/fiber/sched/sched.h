@@ -7,12 +7,34 @@
 #include "../stack/stack.h"
 #include "../include/libgo/fiber.h" /* for gof_sched_stats */
 
-typedef enum { GOF_RUNNABLE=0, GOF_BLOCKED=1, GOF_FINISHED=2 } gof_state;
+/* Fiber lifecycle states.
+ *
+ * RUNNABLE  - on a run queue or executing on a worker.
+ * PARKING   - the fiber has announced it is about to park (state store done)
+ *             but its worker has not yet committed the park after the
+ *             context switch. A waker must CAS PARKING -> WOKEN and leave
+ *             the requeue to the owning worker's commit step.
+ * BLOCKED   - parked; the worker committed the park after ctx_swap. A waker
+ *             must CAS BLOCKED -> RUNNABLE and enqueue the fiber itself.
+ * WOKEN     - a waker claimed the wake while the fiber was PARKING; the
+ *             owning worker's commit observes WOKEN and requeues it.
+ * FINISHED  - entry returned; the worker frees the fiber.
+ *
+ * wake_pending covers the remaining window: a waker that finds the fiber
+ * RUNNABLE (wait already published, park not yet announced) sets
+ * wake_pending; the parker checks it before announcing PARKING, again after
+ * announcing, and the worker's commit checks it once more after committing
+ * to BLOCKED. One of those three checks always observes the pending wake,
+ * so no handoff can be lost and a fiber is never enqueued while its worker
+ * is still executing it (nostrc-q9lp0). */
+typedef enum { GOF_RUNNABLE=0, GOF_BLOCKED=1, GOF_FINISHED=2,
+               GOF_PARKING=3, GOF_WOKEN=4 } gof_state;
 
 typedef struct gof_fiber {
   uint64_t    id;
   const char *name;
   _Atomic gof_state state;
+  _Atomic int  wake_pending; /* see state comment above */
   gof_context ctx;
   gof_stack   stack;
   void      (*entry)(void*);

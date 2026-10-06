@@ -388,7 +388,11 @@ int go_select(GoSelectCase *cases, size_t num_cases) {
                 /* Already signaled — don't park, just continue */
                 NUNLOCK(&waiter->mutex);
             }
+            /* Clear under the same mutex the signaler uses to read the
+             * handle (nostrc-val0v); an unlocked clear raced the read. */
+            NLOCK(&waiter->mutex);
             waiter->fiber_handle = NULL;
+            NUNLOCK(&waiter->mutex);
         } else {
             /* OS thread path: use nsync_cv_wait */
             NLOCK(&waiter->mutex);
@@ -535,7 +539,11 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases,
                 /* Already signaled — don't park */
                 NUNLOCK(&waiter->mutex);
             }
+            /* Clear under the same mutex the signaler uses to read the
+             * handle (nostrc-val0v); an unlocked clear raced the read. */
+            NLOCK(&waiter->mutex);
             waiter->fiber_handle = NULL;
+            NUNLOCK(&waiter->mutex);
         } else {
             /* OS thread path: use nsync_cv_wait_with_deadline */
             NLOCK(&waiter->mutex);

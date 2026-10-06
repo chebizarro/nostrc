@@ -117,28 +117,39 @@ int gof_chan_send(gof_chan_t* cc, void* value) {
   if (tr == 1) return 0; /* success */
   if (tr < 0) return -1; /* closed */
   /* must block */
-  for(;;) {
-    pthread_mutex_lock(&c->mu);
-    if (c->closed) { pthread_mutex_unlock(&c->mu); return -1; }
-    /* If receiver available, handoff now */
-    if (handoff_to_waiter(c, value)) { pthread_mutex_unlock(&c->mu); return 0; }
-    /* If buffer has space, use it */
-    if (c->cap > 0 && !is_full(c)) { buf_put(c, value); pthread_mutex_unlock(&c->mu); return 0; }
-    /* enqueue self as sender */
-    int done = 0;
-    waiter *w = (waiter*)calloc(1, sizeof(*w));
-    if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_send\n"); abort(); }
-    w->f = gof_sched_current();
-    w->is_sender = 1;
-    w->value = value;
-    w->done = &done;
-    qpush(&c->sendq, w);
-    pthread_mutex_unlock(&c->mu);
+  pthread_mutex_lock(&c->mu);
+  if (c->closed) { pthread_mutex_unlock(&c->mu); return -1; }
+  /* If receiver available, handoff now */
+  if (handoff_to_waiter(c, value)) { pthread_mutex_unlock(&c->mu); return 0; }
+  /* If buffer has space, use it */
+  if (c->cap > 0 && !is_full(c)) { buf_put(c, value); pthread_mutex_unlock(&c->mu); return 0; }
+  /* enqueue self as sender */
+  int done = 0;
+  waiter *w = (waiter*)calloc(1, sizeof(*w));
+  if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_send\n"); abort(); }
+  w->f = gof_sched_current();
+  w->is_sender = 1;
+  w->value = value;
+  w->done = &done;
+  qpush(&c->sendq, w);
+  pthread_mutex_unlock(&c->mu);
+  /* Park until the handoff completes or the channel closes. The loop (not
+   * an if) is required: gof_sched_block_current may return without our
+   * waiter being touched when it consumes a stale pending wake
+   * (nostrc-q9lp0); our waiter stays queued and we park again. */
+  for (;;) {
     gof_sched_block_current();
-    /* Check if woken by a successful handoff or by channel close.
-     * handoff_from_waiter sets done=1 before waking us; close does not. */
-    if (done) return 0;
-    return -1;
+    if (done) return 0; /* handoff_to_waiter set done before waking us */
+    pthread_mutex_lock(&c->mu);
+    if (done) { pthread_mutex_unlock(&c->mu); return 0; }
+    if (c->closed) {
+      /* close() detached and freed every queued waiter, including ours:
+       * do not touch w. */
+      pthread_mutex_unlock(&c->mu);
+      return -1;
+    }
+    pthread_mutex_unlock(&c->mu);
+    /* Spurious wake: our waiter is still queued; park again. */
   }
 }
 
@@ -150,27 +161,34 @@ int gof_chan_recv(gof_chan_t* cc, void** out_value) {
   if (tr == 1) return 0;
   if (tr < 0) return -1;
   /* must block */
-  for(;;) {
-    pthread_mutex_lock(&c->mu);
-    /* If buffer has data, take it */
-    if (!is_empty(c)) { if (out_value) *out_value = buf_get(c); pthread_mutex_unlock(&c->mu); return 0; }
-    /* If a sender is waiting, handoff */
-    if (handoff_from_waiter(c, out_value)) { pthread_mutex_unlock(&c->mu); return 0; }
-    if (c->closed) { pthread_mutex_unlock(&c->mu); return -1; }
-    /* enqueue self as receiver */
-    int done = 0;
-    waiter *w = (waiter*)calloc(1, sizeof(*w));
-    if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_recv\n"); abort(); }
-    w->f = gof_sched_current();
-    w->is_sender = 0;
-    w->slot = out_value;
-    w->done = &done;
-    qpush(&c->recvq, w);
-    pthread_mutex_unlock(&c->mu);
+  pthread_mutex_lock(&c->mu);
+  /* If buffer has data, take it */
+  if (!is_empty(c)) { if (out_value) *out_value = buf_get(c); pthread_mutex_unlock(&c->mu); return 0; }
+  /* If a sender is waiting, handoff */
+  if (handoff_from_waiter(c, out_value)) { pthread_mutex_unlock(&c->mu); return 0; }
+  if (c->closed) { pthread_mutex_unlock(&c->mu); return -1; }
+  /* enqueue self as receiver */
+  int done = 0;
+  waiter *w = (waiter*)calloc(1, sizeof(*w));
+  if (!w) { fprintf(stderr, "[gof] FATAL: malloc failed in gof_chan_recv\n"); abort(); }
+  w->f = gof_sched_current();
+  w->is_sender = 0;
+  w->slot = out_value;
+  w->done = &done;
+  qpush(&c->recvq, w);
+  pthread_mutex_unlock(&c->mu);
+  /* Park until a handoff or close; re-park on spurious wakes (see
+   * gof_chan_send, nostrc-q9lp0). */
+  for (;;) {
     gof_sched_block_current();
-    /* Check if woken by a successful handoff or by channel close.
-     * handoff_to_waiter sets done=1 before waking us; close does not. */
     if (done) return 0;
-    return -1;
+    pthread_mutex_lock(&c->mu);
+    if (done) { pthread_mutex_unlock(&c->mu); return 0; }
+    if (c->closed) {
+      /* close() detached and freed our waiter; do not touch w. */
+      pthread_mutex_unlock(&c->mu);
+      return -1;
+    }
+    pthread_mutex_unlock(&c->mu);
   }
 }

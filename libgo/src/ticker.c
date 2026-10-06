@@ -25,13 +25,23 @@ void *ticker_thread_func(void *arg) {
 }
 
 Ticker *create_ticker(size_t interval_ms) {
+    /* nostrc-val0v: every step is checked and unwound. The old code ignored
+     * malloc/channel/pthread_create failures, returning a ticker whose
+     * thread never started; stop_ticker then joined an indeterminate
+     * pthread_t. */
     Ticker *ticker = (Ticker *)malloc(sizeof(Ticker));
+    if (!ticker) return NULL;
     ticker->interval_ms = interval_ms;
     ticker->c = go_channel_create(1); // Channel with capacity 1 for ticks
+    if (!ticker->c) { free(ticker); return NULL; }
     atomic_store_explicit(&ticker->stop, false, memory_order_relaxed);
     nsync_mu_init(&ticker->mutex); // retained for struct compatibility
 
-    pthread_create(&ticker->thread, NULL, ticker_thread_func, ticker);
+    if (pthread_create(&ticker->thread, NULL, ticker_thread_func, ticker) != 0) {
+        go_channel_free(ticker->c);
+        free(ticker);
+        return NULL;
+    }
     return ticker;
 }
 

@@ -108,6 +108,8 @@ void gof_dump_stacks(int fd) {
       case GOF_RUNNABLE: state_str = "runnable"; break;
       case GOF_BLOCKED:  state_str = "blocked";  break;
       case GOF_FINISHED: state_str = "finished"; break;
+      case GOF_PARKING:  state_str = "parking";  break;
+      case GOF_WOKEN:    state_str = "woken";    break;
     }
 
     char line[512];

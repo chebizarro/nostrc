@@ -63,6 +63,7 @@ static struct {
   gof_node   *inj_tail;
   pthread_mutex_t mu;
   pthread_cond_t  cv;
+  int             cv_monotonic; /* S.cv uses CLOCK_MONOTONIC abstime */
   /* One or more poller threads */
   pthread_t *poller_threads;
   int        npollers;
@@ -350,6 +351,48 @@ static void heap_ensure_cap(void) {
   sleepheap.cap = newcap;
 }
 
+/* ── Unified wake claim (nostrc-q9lp0) ────────────────────────────────
+ * Every waker (channel handoff, channel close, timer, netpoll readiness)
+ * claims the wake through this function so the park protocol in
+ * gof_sched_block_current()/gof_sched_park_until() cannot lose a wakeup
+ * and a fiber is never enqueued while its worker is still executing it.
+ *
+ * Returns:
+ *   2 - claimed from GOF_BLOCKED; the CALLER must enqueue the fiber.
+ *   1 - claimed without enqueue: either the fiber was still GOF_RUNNABLE
+ *       (wait published, park not announced) and a pending wake was left
+ *       for the parker to consume, or it was GOF_PARKING and the owning
+ *       worker's post-swap commit will observe GOF_WOKEN and requeue it.
+ *   0 - not claimed (already woken by someone else, or finished). */
+static int fiber_wake_claim(gof_fiber *f) {
+  for (;;) {
+    gof_state s = atomic_load_explicit(&f->state, memory_order_seq_cst);
+    if (s == GOF_BLOCKED) {
+      if (atomic_compare_exchange_weak_explicit(&f->state, &s, GOF_RUNNABLE,
+                                                memory_order_seq_cst,
+                                                memory_order_seq_cst))
+        return 2;
+      continue;
+    }
+    if (s == GOF_PARKING) {
+      if (atomic_compare_exchange_weak_explicit(&f->state, &s, GOF_WOKEN,
+                                                memory_order_seq_cst,
+                                                memory_order_seq_cst))
+        return 1;
+      continue;
+    }
+    if (s == GOF_RUNNABLE) {
+      /* The fiber published its wait but has not announced the park yet.
+       * Leave a pending wake; the parker checks this flag before and after
+       * the PARKING store, and its worker's commit checks it after the
+       * BLOCKED transition, so the wake cannot slip through. */
+      atomic_store_explicit(&f->wake_pending, 1, memory_order_seq_cst);
+      return 1;
+    }
+    return 0; /* GOF_WOKEN (already claimed) or GOF_FINISHED */
+  }
+}
+
 static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
   pthread_mutex_lock(&sleepheap.mu);
   heap_ensure_cap();
@@ -368,17 +411,18 @@ static void sleepers_wake_ready(uint64_t now_ns) {
     sleepheap.entries[0] = sleepheap.entries[--sleepheap.len];
     if (sleepheap.len > 0) heap_sift_down(0);
     if (f) {
-      /* Atomically claim the wakeup — only one path (timer or IO) wins */
-      gof_state expected = GOF_BLOCKED;
-      if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
-                                                  memory_order_acq_rel, memory_order_acquire)) {
+      /* Claim the wake through the same protocol as every other waker so a
+       * fiber that has announced PARKING but not yet committed is requeued
+       * by its own worker, never enqueued while still executing
+       * (nostrc-q9lp0). */
+      pthread_mutex_unlock(&sleepheap.mu);
+      int claim = fiber_wake_claim(f);
+      if (claim == 2) {
         LOGF("[gof] wake fiber %llu\n", (unsigned long long)f->id);
         atomic_fetch_add_explicit(&gof_unparks, 1, memory_order_relaxed);
-        /* Must release heap lock before touching run queue (lock ordering) */
-        pthread_mutex_unlock(&sleepheap.mu);
         rq_push(f);
-        pthread_mutex_lock(&sleepheap.mu);
       }
+      pthread_mutex_lock(&sleepheap.mu);
     }
   }
   pthread_mutex_unlock(&sleepheap.mu);
@@ -409,9 +453,23 @@ void gof_sched_init(size_t default_stack_bytes) {
   pthread_mutex_init(&sleepheap.mu, NULL);
   /* Initialize netpoll backend early */
   (void)gof_netpoll_init();
-  /* Init synchronization primitives */
+  /* Init synchronization primitives. The idle-loop deadline is computed
+   * from CLOCK_MONOTONIC (gof_now_ns), so the condvar must wait against the
+   * same clock; converting a monotonic remaining duration to a REALTIME
+   * abstime is skewed by wall-clock adjustments (nostrc-val0v B7). */
   pthread_mutex_init(&S.mu, NULL);
-  pthread_cond_init(&S.cv, NULL);
+  {
+    pthread_condattr_t cvattr;
+    pthread_condattr_init(&cvattr);
+#if defined(CLOCK_MONOTONIC) && !defined(__APPLE__)
+    /* macOS has no pthread_condattr_setclock; there we keep the REALTIME
+     * condvar and the idle loop falls back to a duration conversion. */
+    if (pthread_condattr_setclock(&cvattr, CLOCK_MONOTONIC) == 0)
+      S.cv_monotonic = 1;
+#endif
+    pthread_cond_init(&S.cv, &cvattr);
+    pthread_condattr_destroy(&cvattr);
+  }
   pthread_key_create(&S.worker_key, NULL);
   pthread_key_create(&S.poller_key, NULL);
   atomic_store(&S.steals_attempted, 0);
@@ -630,12 +688,22 @@ static void* worker_main(void *arg) {
           /* sleeper due; break to outer to handle wake */
           break;
         }
-        /* Timed wait until next deadline or until signaled */
-        uint64_t ns = next_deadline - now;
-        struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
-        uint64_t cur_ns = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
-        uint64_t abs_ns = cur_ns + ns;
-        struct timespec abstime; abstime.tv_sec = abs_ns / 1000000000ull; abstime.tv_nsec = abs_ns % 1000000000ull;
+        /* Timed wait until next deadline or until signaled. next_deadline
+         * is monotonic (gof_now_ns); pass it directly when the condvar uses
+         * the monotonic clock, otherwise fall back to a duration conversion
+         * onto CLOCK_REALTIME. */
+        struct timespec abstime;
+        if (S.cv_monotonic) {
+          abstime.tv_sec = (time_t)(next_deadline / 1000000000ull);
+          abstime.tv_nsec = (long)(next_deadline % 1000000000ull);
+        } else {
+          uint64_t ns = next_deadline - now;
+          struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts);
+          uint64_t cur_ns = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+          uint64_t abs_ns = cur_ns + ns;
+          abstime.tv_sec = (time_t)(abs_ns / 1000000000ull);
+          abstime.tv_nsec = (long)(abs_ns % 1000000000ull);
+        }
         pthread_cond_timedwait(&S.cv, &S.mu, &abstime);
         /* loop and re-check predicate */
       }
@@ -657,7 +725,41 @@ static void* worker_main(void *arg) {
     W->running = 0;
     pthread_mutex_unlock(&W->rq_mu);
     gof_state fstate = atomic_load_explicit(&f->state, memory_order_acquire);
-    if (fstate == GOF_RUNNABLE) {
+    if (fstate == GOF_PARKING) {
+      /* Commit the park (nostrc-q9lp0): only now, after the context switch,
+       * is the fiber truly off this worker, so only now may it become
+       * visible to wakers as BLOCKED (wakers that claimed PARKING -> WOKEN
+       * left the requeue to us; enqueuing a fiber we might still be
+       * executing would corrupt its context). */
+      gof_state expected = GOF_PARKING;
+      if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_BLOCKED,
+                                                  memory_order_seq_cst,
+                                                  memory_order_seq_cst)) {
+        /* Parked. Last window: a waker saw GOF_RUNNABLE after the fiber's
+         * own final wake_pending check but before this commit, and left a
+         * pending wake instead of claiming. Consume it and requeue; race
+         * against a waker claiming BLOCKED -> RUNNABLE by claiming it
+         * ourselves first. */
+        if (atomic_exchange_explicit(&f->wake_pending, 0, memory_order_seq_cst)) {
+          expected = GOF_BLOCKED;
+          if (atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
+                                                      memory_order_seq_cst,
+                                                      memory_order_seq_cst)) {
+            sleepers_cancel(f);
+            rq_push(f);
+          }
+          /* CAS failed: a waker already moved it to RUNNABLE and enqueued. */
+        }
+        LOGF("[gof] fiber %llu blocked\n", (unsigned long long)f->id);
+      } else {
+        /* GOF_WOKEN: a waker claimed the wake while we were switching out.
+         * Wakers do not enqueue WOKEN fibers; we own the requeue. */
+        atomic_store_explicit(&f->state, GOF_RUNNABLE, memory_order_seq_cst);
+        sleepers_cancel(f);
+        LOGF("[gof] fiber %llu woken during park; requeue\n", (unsigned long long)f->id);
+        rq_push(f);
+      }
+    } else if (fstate == GOF_RUNNABLE) {
       LOGF("[gof] fiber %llu yielded; requeue\n", (unsigned long long)f->id);
       rq_push(f);
     } else if (fstate == GOF_FINISHED) {
@@ -667,7 +769,8 @@ static void* worker_main(void *arg) {
       free(f);
       atomic_fetch_sub(&S.live_fibers, 1);
     } else {
-      /* BLOCKED: parked elsewhere */
+      /* GOF_BLOCKED/GOF_WOKEN should not be observable here (block/park
+       * leave the fiber in PARKING); treat as parked. */
       LOGF("[gof] fiber %llu blocked\n", (unsigned long long)f->id);
     }
     W->current = NULL;
@@ -681,15 +784,22 @@ void gof_sched_run(void) {
     S.nworkers = 1;
     S.workers = (gof_worker*)calloc(1, sizeof(gof_worker));
   }
-  /* Launch worker threads 1..n-1 */
+  /* Launch worker threads 1..n-1 (checked: a failed create must not leave
+   * an indeterminate tid for the join below — nostrc-val0v) */
+  int created = 1; /* worker 0 runs on this thread */
   for (int i = 1; i < S.nworkers; ++i) {
-    pthread_create(&S.workers[i].tid, NULL, worker_main, &S.workers[i]);
+    if (pthread_create(&S.workers[i].tid, NULL, worker_main, &S.workers[i]) != 0) {
+      fprintf(stderr, "[gof] WARNING: failed to start worker %d; continuing with %d\n",
+              i, created);
+      break;
+    }
+    created++;
   }
   /* Run worker 0 on this thread */
   (void)pthread_setspecific(S.worker_key, &S.workers[0]);
   (void)worker_main(&S.workers[0]);
   /* Join remaining workers to prevent use-after-free on scheduler state */
-  for (int i = 1; i < S.nworkers; ++i) {
+  for (int i = 1; i < created; ++i) {
     pthread_join(S.workers[i].tid, NULL);
   }
 }
@@ -713,7 +823,18 @@ void gof_sched_block_current(void) {
   gof_worker *W = cur_worker();
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return;
-  atomic_store_explicit(&self->state, GOF_BLOCKED, memory_order_release);
+  /* Prepare/commit park protocol (nostrc-q9lp0). The caller published its
+   * wait (channel waiter node, IO registration, ...) before calling us, so
+   * a waker may already be on its way. A waker that finds us RUNNABLE sets
+   * wake_pending instead of enqueueing; check it before and after the
+   * PARKING store. The worker's post-swap commit checks it once more. */
+  if (atomic_exchange_explicit(&self->wake_pending, 0, memory_order_seq_cst))
+    return; /* woken before we parked; caller re-checks its wait */
+  atomic_store_explicit(&self->state, GOF_PARKING, memory_order_seq_cst);
+  if (atomic_exchange_explicit(&self->wake_pending, 0, memory_order_seq_cst)) {
+    atomic_store_explicit(&self->state, GOF_RUNNABLE, memory_order_seq_cst);
+    return; /* woken between wait-publication and PARKING; never left CPU */
+  }
   /* Switch to scheduler without enqueuing */
   LOGF("[gof] fiber %llu block\n", (unsigned long long)self->id);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
@@ -721,14 +842,14 @@ void gof_sched_block_current(void) {
 
 void gof_sched_make_runnable(gof_fiber *f) {
   if (!f) return;
-  /* Atomically claim the wakeup — prevents double-enqueue from timer+IO race */
-  gof_state expected = GOF_BLOCKED;
-  if (!atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
-                                               memory_order_acq_rel, memory_order_acquire)) {
-    return; /* someone else already woke this fiber */
-  }
+  /* Claim the wake through the shared protocol (nostrc-q9lp0); only a
+   * BLOCKED->RUNNABLE claim enqueues here. PARKING/RUNNABLE claims are
+   * requeued by the owning worker's commit / consumed by the parker. */
+  int claim = fiber_wake_claim(f);
+  if (claim == 0) return; /* someone else already woke this fiber */
   gof_worker *W = cur_worker();
   sleepers_cancel(f);
+  if (claim == 1) return;
   if (W) { rq_push_to(W, f); return; }
   /* External thread (e.g., poller): prefer to enqueue to affinity worker if any */
   if (S.affinity_enable && f && f->w_affinity >= 0 && f->w_affinity < S.nworkers) {
@@ -753,15 +874,14 @@ void gof_sched_make_runnable(gof_fiber *f) {
 /* Partition-aware runnable enqueue: try to keep ready fiber within same poller partition. */
 void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
   if (!f) return;
-  /* Atomically claim the wakeup — prevents double-enqueue from timer+IO race */
-  gof_state expected = GOF_BLOCKED;
-  if (!atomic_compare_exchange_strong_explicit(&f->state, &expected, GOF_RUNNABLE,
-                                               memory_order_acq_rel, memory_order_acquire)) {
-    return; /* someone else already woke this fiber */
-  }
+  /* Claim the wake through the shared protocol (nostrc-q9lp0), exactly as
+   * gof_sched_make_runnable(). */
+  int claim = fiber_wake_claim(f);
+  if (claim == 0) return; /* someone else already woke this fiber */
   /* If called accidentally from a worker, use fast path */
   gof_worker *W = cur_worker();
   sleepers_cancel(f);
+  if (claim == 1) return;
   if (W) { rq_push_to(W, f); return; }
   int use_partition = (S.poll_partition_enable && S.npollers > 0 && poller_index >= 0);
   if (!use_partition) {
@@ -795,9 +915,19 @@ void gof_sched_park_until(uint64_t deadline_ns) {
   gof_worker *W = cur_worker();
   gof_fiber *self = W ? W->current : NULL;
   if (!self) return;
-  atomic_store_explicit(&self->state, GOF_BLOCKED, memory_order_release);
-  atomic_fetch_add_explicit(&gof_parks, 1, memory_order_relaxed);
+  /* Same prepare/commit protocol as gof_sched_block_current()
+   * (nostrc-q9lp0), with the sleeper registered before the PARKING store so
+   * the timer waker participates in the claim protocol too. */
+  if (atomic_exchange_explicit(&self->wake_pending, 0, memory_order_seq_cst))
+    return; /* woken before we parked; caller re-checks its wait */
   sleepers_add(self, deadline_ns);
+  atomic_store_explicit(&self->state, GOF_PARKING, memory_order_seq_cst);
+  if (atomic_exchange_explicit(&self->wake_pending, 0, memory_order_seq_cst)) {
+    atomic_store_explicit(&self->state, GOF_RUNNABLE, memory_order_seq_cst);
+    sleepers_cancel(self);
+    return; /* woken between registration and PARKING; never left CPU */
+  }
+  atomic_fetch_add_explicit(&gof_parks, 1, memory_order_relaxed);
   LOGF("[gof] fiber %llu park until %llu\n", (unsigned long long)self->id, (unsigned long long)deadline_ns);
   gof_ctx_swap(&self->ctx, &W->sched_ctx);
 }
