@@ -213,17 +213,10 @@ void gn_secure_shred_string(char *str);
  */
 void gn_secure_shred_gstring(GString *gstr);
 
-/**
- * gn_secure_shred_bytes:
- * @bytes: GBytes to shred and unref (can be NULL)
- *
- * Securely zeros GBytes data before unreferencing.
- *
- * Note: This only works if the GBytes has a single reference.
- * If there are multiple references, only the internal copy is zeroed.
- * After this call, the GBytes pointer should not be used.
- */
-void gn_secure_shred_bytes(GBytes *bytes);
+/* Note: there is intentionally no gn_secure_shred_bytes(). Writing through
+ * g_bytes_get_data() casts away const and is undefined behavior when the
+ * bytes are read-only or shared (nostrc-n3xa). Zero secret material in its
+ * caller-owned buffer before wrapping it in a GBytes. */
 
 /* ============================================================
  * Convenience Macros

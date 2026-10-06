@@ -14,6 +14,10 @@
 
 #include "secure-delete.h"
 
+#if defined(_WIN32) || defined(__MINGW32__)
+#define _CRT_RAND_S  /* expose rand_s() for fill_random() (nostrc-by7d) */
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -180,7 +184,7 @@ void gn_secure_shred_buffer(void *buf, size_t len) {
   memory_barrier();
 #endif
 
-  LOG_DEBUG("Shredded %zu bytes at %p", len, buf);
+  LOG_DEBUG("Shredded %zu bytes", len);
 }
 
 void gn_secure_shred_string(char *str) {
@@ -211,77 +215,70 @@ void gn_secure_shred_gstring(GString *gstr) {
   LOG_DEBUG("Shredded GString");
 }
 
-void gn_secure_shred_bytes(GBytes *bytes) {
-  if (bytes == NULL) {
-    return;
-  }
-
-  /* Get the data pointer - note this may be read-only! */
-  gsize size;
-  gconstpointer data = g_bytes_get_data(bytes, &size);
-
-  if (data != NULL && size > 0) {
-    /* Warning: This casts away const, which is technically UB
-     * if the memory is truly read-only. However, GBytes created
-     * from malloc'd memory should be writable.
-     */
-    gn_secure_shred_buffer((void *)data, size);
-  }
-
-  LOG_DEBUG("Shredded GBytes of size %zu", size);
-}
+  /* Warning removed: gn_secure_shred_bytes() no longer exists — writing
+   * through g_bytes_get_data() casts away const and is UB when the bytes
+   * are read-only or shared (nostrc-n3xa). Zero key material in its
+   * caller-owned buffer before wrapping it in a GBytes. */
 
 /* ============================================================
  * Random Data Generation
  * ============================================================ */
 
-/* Fill buffer with cryptographically random data */
-static void fill_random(void *buf, size_t len) {
+/* Fill buffer with cryptographically random data.
+ *
+ * nostrc-by7d: no non-CSPRNG fallback — the old code degraded silently to
+ * g_random_int() for secure-delete overwrite passes. Returns FALSE when no
+ * CSPRNG is available so callers fail the operation instead of wiping with
+ * predictable bytes. */
+static gboolean fill_random(void *buf, size_t len) {
 #ifdef GNOSTR_HAVE_SODIUM
   randombytes_buf(buf, len);
+  return TRUE;
+#elif defined(_WIN32) || defined(__MINGW32__)
+  /* rand_s() is backed by the Windows CSPRNG (RtlGenRandom) */
+  size_t done = 0;
+  while (done < len) {
+    unsigned int v;
+    if (rand_s(&v) != 0) return FALSE;
+    size_t chunk = (len - done < sizeof v) ? len - done : sizeof v;
+    memcpy((char *)buf + done, &v, chunk);
+    done += chunk;
+  }
+  return TRUE;
 #else
-  /* Fallback to /dev/urandom or GLib's random */
-  static gboolean urandom_works = TRUE;
-
-  if (urandom_works) {
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd >= 0) {
-      ssize_t r = read(fd, buf, len);
+  /* /dev/urandom with a full-read loop (Linux, macOS, other POSIX) */
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd < 0) return FALSE;
+  size_t done = 0;
+  while (done < len) {
+    ssize_t r = read(fd, (char *)buf + done, len - done);
+    if (r < 0) {
+      if (errno == EINTR) continue;
       close(fd);
-      if (r == (ssize_t)len) {
-        return;
-      }
+      return FALSE;
     }
-    urandom_works = FALSE;
+    if (r == 0) { close(fd); return FALSE; }
+    done += (size_t)r;
   }
-
-  /* Fallback to GLib random (not cryptographically secure!) */
-  guint32 *p = (guint32 *)buf;
-  size_t words = len / sizeof(guint32);
-  size_t remainder = len % sizeof(guint32);
-
-  for (size_t i = 0; i < words; i++) {
-    p[i] = g_random_int();
-  }
-
-  if (remainder > 0) {
-    guint32 r = g_random_int();
-    memcpy((char *)buf + (words * sizeof(guint32)), &r, remainder);
-  }
+  close(fd);
+  return TRUE;
 #endif
 }
 
 /* Generate a random filename for renaming */
 static char *generate_random_name(void) {
   static const char chars[] = "abcdefghijklmnopqrstuvwxyz0123456789";
-  char *name = g_malloc(RANDOM_NAME_LENGTH + 1);
+  guint8 rnd[RANDOM_NAME_LENGTH];
+  /* nostrc-by7d: fail closed — a predictable rename target defeats the
+   * rename-before-delete step, and g_random is not a CSPRNG. */
+  if (!fill_random(rnd, sizeof rnd)) return NULL;
 
+  char *name = g_malloc(RANDOM_NAME_LENGTH + 1);
   for (int i = 0; i < RANDOM_NAME_LENGTH; i++) {
-    guint32 idx = g_random_int_range(0, sizeof(chars) - 1);
-    name[i] = chars[idx];
+    name[i] = chars[rnd[i] % (sizeof(chars) - 1)];
   }
   name[RANDOM_NAME_LENGTH] = '\0';
-
+  gn_secure_shred_buffer(rnd, sizeof rnd);
   return name;
 }
 
@@ -420,11 +417,15 @@ GnDeleteResult gn_try_trim(const char *filepath) {
     LOG_INFO("TRIM successful for %s", filepath);
     return GN_DELETE_OK;
   }
-#endif
-
-  close(fd);
-  LOG_DEBUG("TRIM: macOS F_PUNCHHOLE not available or failed");
+  /* nostrc-2r0g: fd is already closed here; returning avoids the second
+   * close() below, which could close a recycled descriptor. */
+  LOG_DEBUG("TRIM: macOS F_PUNCHHOLE failed");
   return GN_DELETE_ERR_TRIM_FAILED;
+#else
+  close(fd);
+  LOG_DEBUG("TRIM: macOS F_PUNCHHOLE not available");
+  return GN_DELETE_ERR_TRIM_FAILED;
+#endif
 
 #else
   (void)filepath;
@@ -452,7 +453,10 @@ static GnDeleteResult overwrite_file_pass(int fd, off_t file_size,
       memset(buffer, 0xFF, buffer_size);
       break;
     default: /* Random */
-      fill_random(buffer, buffer_size);
+      if (!fill_random(buffer, buffer_size)) {
+        g_free(buffer);
+        return GN_DELETE_ERR_IO;
+      }
       break;
   }
 
@@ -470,7 +474,11 @@ static GnDeleteResult overwrite_file_pass(int fd, off_t file_size,
 
     /* Regenerate random data for each chunk in random pass */
     if (pass_type >= 2) {
-      fill_random(buffer, to_write);
+      if (!fill_random(buffer, to_write)) {
+        gn_secure_shred_buffer(buffer, buffer_size);
+        g_free(buffer);
+        return GN_DELETE_ERR_IO;
+      }
     }
 
     ssize_t written = write(fd, buffer, to_write);
@@ -536,8 +544,15 @@ GnDeleteResult gn_secure_delete_file_opts(const char *filepath,
     return GN_DELETE_ERR_NOT_FILE;
   }
 
-  /* Open file for writing */
-  int fd = open(filepath, O_RDWR);
+  /* Open file for writing. nostrc-rncw: O_NOFOLLOW (when not asked to
+   * follow symlinks) plus an fstat() identity check, so a path swapped for
+   * a symlink between lstat() and open() cannot redirect the overwrite
+   * passes onto a different file. */
+  int open_flags = O_RDWR;
+#ifdef O_NOFOLLOW
+  if (!opts->follow_symlinks) open_flags |= O_NOFOLLOW;
+#endif
+  int fd = open(filepath, open_flags);
   if (fd < 0) {
     if (errno == EACCES) {
       return GN_DELETE_ERR_PERMISSION;
@@ -545,7 +560,23 @@ GnDeleteResult gn_secure_delete_file_opts(const char *filepath,
     return GN_DELETE_ERR_IO;
   }
 
-  off_t file_size = st.st_size;
+  struct stat fst;
+  if (fstat(fd, &fst) != 0) {
+    close(fd);
+    return GN_DELETE_ERR_IO;
+  }
+  if (!S_ISREG(fst.st_mode)) {
+    close(fd);
+    LOG_ERROR("Not a regular file: %s", filepath);
+    return GN_DELETE_ERR_NOT_FILE;
+  }
+  if (fst.st_dev != st.st_dev || fst.st_ino != st.st_ino) {
+    close(fd);
+    LOG_ERROR("File was replaced while opening: %s", filepath);
+    return GN_DELETE_ERR_BUSY;
+  }
+
+  off_t file_size = fst.st_size;
   GnDeleteResult result = GN_DELETE_OK;
 
   /* Perform overwrite passes */
@@ -606,18 +637,24 @@ GnDeleteResult gn_secure_delete_file_opts(const char *filepath,
   if (opts->rename_before_delete) {
     gchar *dir = g_path_get_dirname(filepath);
     gchar *random_name = generate_random_name();
-    final_path = g_build_filename(dir, random_name, NULL);
+    if (random_name) {
+      final_path = g_build_filename(dir, random_name, NULL);
 
-    if (rename(filepath, final_path) == 0) {
-      LOG_DEBUG("Renamed %s to %s before deletion", filepath, final_path);
+      if (rename(filepath, final_path) == 0) {
+        LOG_DEBUG("Renamed %s to %s before deletion", filepath, final_path);
+      } else {
+        LOG_DEBUG("Rename failed (non-fatal), deleting with original name");
+        g_free(final_path);
+        final_path = g_strdup(filepath);
+      }
+      g_free(random_name);
     } else {
-      LOG_DEBUG("Rename failed (non-fatal), deleting with original name");
-      g_free(final_path);
+      /* No CSPRNG: skip the rename rather than use a predictable name */
+      LOG_DEBUG("No CSPRNG for rename (non-fatal), deleting with original name");
       final_path = g_strdup(filepath);
     }
 
     g_free(dir);
-    g_free(random_name);
   } else {
     final_path = g_strdup(filepath);
   }
@@ -821,11 +858,32 @@ void gn_clipboard_clear_now(gpointer clipboard) {
 }
 
 /* ============================================================
+ * Identity-name validation
+ * ============================================================ */
+
+/* nostrc-4k13: identity selectors reach filesystem paths and glob
+ * patterns; accept only well-formed npubs or 64-hex pubkeys so no '/',
+ * '.', or glob metacharacter can reach the delete logic. */
+static gboolean gn_identity_name_valid(const char *npub) {
+  if (!npub) return FALSE;
+  gsize n = strlen(npub);
+  if (n == 64) {
+    for (gsize i = 0; i < n; i++)
+      if (!g_ascii_isxdigit(npub[i])) return FALSE;
+    return TRUE;
+  }
+  if (n < 12 || n > 90 || !g_str_has_prefix(npub, "npub1")) return FALSE;
+  for (gsize i = 5; i < n; i++)
+    if (!g_ascii_isalnum(npub[i])) return FALSE;
+  return TRUE;
+}
+
+/* ============================================================
  * Identity File Deletion
  * ============================================================ */
 
 GnDeleteResult gn_secure_delete_identity_files(const char *npub) {
-  if (npub == NULL || *npub == '\0') {
+  if (!gn_identity_name_valid(npub)) {
     return GN_DELETE_ERR_INVALID;
   }
 
@@ -1287,7 +1345,7 @@ guint gn_secure_delete_pattern(const char *dirpath,
  * ============================================================ */
 
 GnDeleteResult gn_secure_delete_key_files(const char *npub) {
-  if (npub == NULL || *npub == '\0') {
+  if (!gn_identity_name_valid(npub)) {
     return GN_DELETE_ERR_INVALID;
   }
 
@@ -1447,12 +1505,25 @@ GnDeleteResult gn_secure_delete_session_data(void) {
 
 /* Check if a file contains sensitive patterns */
 static gboolean file_contains_sensitive_data(const char *filepath) {
-  gchar *contents = NULL;
-  gsize length = 0;
+  /* nostrc-sdtu: scan at most 16 MiB so a huge log file cannot exhaust
+   * memory; a truncated scan may miss a later marker but keeps the app
+   * responsive (this only triages log deletion). */
+  int fd = open(filepath, O_RDONLY);
+  if (fd < 0) return FALSE;
 
-  if (!g_file_get_contents(filepath, &contents, &length, NULL)) {
-    return FALSE;
+  const gsize cap = 16u << 20;
+  gchar *contents = g_malloc(cap);
+  gsize length = 0;
+  while (length < cap) {
+    ssize_t r = read(fd, contents + length, cap - length);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (r == 0) break;
+    length += (gsize)r;
   }
+  close(fd);
 
   gboolean sensitive = FALSE;
 
@@ -1468,7 +1539,7 @@ static gboolean file_contains_sensitive_data(const char *filepath) {
   };
 
   for (const char **p = patterns; *p != NULL; p++) {
-    if (g_strstr_len(contents, length, *p) != NULL) {
+    if (g_strstr_len(contents, (gssize)length, *p) != NULL) {
       sensitive = TRUE;
       break;
     }
