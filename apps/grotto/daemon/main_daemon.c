@@ -1,5 +1,8 @@
 #include <gio/gio.h>
 #include <signal.h>
+#ifdef G_OS_UNIX
+#include <glib-unix.h>
+#endif
 #include <sys/resource.h>
 #include <stdlib.h>
 #include <string.h>
@@ -209,9 +212,14 @@ static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointe
   }
 }
 
-static void handle_sig(int sig) {
+/* nostrc-4n1v: shutdown work must not run inside a POSIX signal handler —
+ * g_mutex_lock() deadlocks if the signal interrupts on_name_lost() (which
+ * holds g_shutdown_mutex), and g_message()/gnostr_ipc_server_stop() allocate
+ * memory and join threads, none of which is async-signal-safe. The body is
+ * shared; only the delivery mechanism differs per platform. */
+static void do_shutdown(int sig) {
   const char *sig_name = (sig == SIGINT) ? "SIGINT" : (sig == SIGTERM) ? "SIGTERM" : "SIGNAL";
-  
+
   g_mutex_lock(&g_shutdown_mutex);
   if (g_shutdown_requested) {
     g_mutex_unlock(&g_shutdown_mutex);
@@ -220,20 +228,35 @@ static void handle_sig(int sig) {
   }
   g_shutdown_requested = TRUE;
   g_mutex_unlock(&g_shutdown_mutex);
-  
+
   g_message("grotto: received %s, initiating graceful shutdown", sig_name);
-  
+
   // Stop IPC early to unblock accept loop
   if (ipc_srv) {
     g_message("grotto: stopping IPC server");
     gnostr_ipc_server_stop(ipc_srv);
     ipc_srv = NULL;
   }
-  
+
   if (loop) {
     g_main_loop_quit(loop);
   }
 }
+
+#ifdef G_OS_UNIX
+/* g_unix_signal_add() defers the handler to the main context, where the
+ * whole shutdown body is legal. */
+static gboolean on_shutdown_signal(gpointer user_data) {
+  do_shutdown(GPOINTER_TO_INT(user_data));
+  return G_SOURCE_REMOVE;
+}
+#else
+/* Windows: the CRT invokes signal handlers on their own thread where the
+ * calls above are permitted; keep the legacy direct path there. */
+static void handle_sig(int sig) {
+  do_shutdown(sig);
+}
+#endif
 
 static void print_usage(const char *prog_name) {
   g_print("Usage: %s [OPTIONS]\n", prog_name);
@@ -336,8 +359,13 @@ int main(int argc, char **argv) {
   }
 
   // Set up signal handlers for graceful shutdown
+#ifdef G_OS_UNIX
+  g_unix_signal_add(SIGINT, on_shutdown_signal, GINT_TO_POINTER(SIGINT));
+  g_unix_signal_add(SIGTERM, on_shutdown_signal, GINT_TO_POINTER(SIGTERM));
+#else
   signal(SIGINT, handle_sig);
   signal(SIGTERM, handle_sig);
+#endif
   signal(SIGPIPE, SIG_IGN);  // Ignore broken pipe
 
   g_message("registering D-Bus name on %s bus",
