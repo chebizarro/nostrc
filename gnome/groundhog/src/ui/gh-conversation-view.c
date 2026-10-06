@@ -100,9 +100,12 @@ item_time(GhTimelineItem *self)
 static GhTimelineItem *
 timeline_item_init_time(GhTimelineItem *self, GDateTime *now)
 {
+  (void)now;
   g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(item_time(self));
   self->day = when ? day_key(when) : 0;
-  self->day_label = when ? gh_conversation_view_format_day(when, now) : g_strdup("");
+  /* The label is formatted when first read (a separator needs it; most
+   * items never do): 36 us each added up on a long conversation (W32). */
+  self->day_label = NULL;
   self->run_start = TRUE;
   self->run_end = TRUE;
   return self;
@@ -159,6 +162,8 @@ item_set_flag(GhTimelineItem *self, gboolean *flag, gboolean value, guint prop)
 static void
 item_refresh_day(GhTimelineItem *self, GDateTime *now)
 {
+  if (!self->day_label)
+    return; /* never read: formatted with the current day when it is */
   g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(item_time(self));
   g_autofree gchar *label = when ? gh_conversation_view_format_day(when, now) : g_strdup("");
   if (g_strcmp0(label, self->day_label) == 0)
@@ -200,6 +205,11 @@ const gchar *
 gh_timeline_item_get_day_label(GhTimelineItem *self)
 {
   g_return_val_if_fail(GH_IS_TIMELINE_ITEM(self), NULL);
+  if (!self->day_label) {
+    g_autoptr(GDateTime) now = g_date_time_new_now_local();
+    g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(item_time(self));
+    self->day_label = when ? gh_conversation_view_format_day(when, now) : g_strdup("");
+  }
   return self->day_label;
 }
 
@@ -251,7 +261,7 @@ gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSp
     g_value_set_boolean(value, self->show_sender);
     break;
   case ITEM_PROP_DAY_LABEL:
-    g_value_set_string(value, self->day_label);
+    g_value_set_string(value, gh_timeline_item_get_day_label(self));
     break;
   case ITEM_PROP_IS_MESSAGE:
     g_value_set_boolean(value, self->message != NULL);

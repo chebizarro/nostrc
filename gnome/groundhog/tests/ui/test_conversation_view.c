@@ -1435,6 +1435,70 @@ test_web_allow_covers_sender(Fixture *f, gconstpointer data)
   blossom_fixture_free(server);
 }
 
+/* Timing probe (not an assertion): how long opening a room with many
+ * messages takes, from set_conversation to rows bound and idle. Run with
+ * GROUNDHOG_TEST_TIMING=1; prints the numbers. */
+static void
+test_open_timing(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  if (!g_getenv("GROUNDHOG_TEST_TIMING")) { g_test_skip("GROUNDHOG_TEST_TIMING unset"); return; }
+  {
+    g_autoptr(GDateTime) now = g_date_time_new_now_local();
+    gint64 t0 = g_get_monotonic_time();
+    for (guint i = 0; i < 1000; i++) {
+      g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(noon_today() - (gint64)i * 3600);
+      g_autofree gchar *label = gh_conversation_view_format_day(when, now);
+    }
+    gint64 t1 = g_get_monotonic_time();
+    g_autofree gchar *content = g_strdup("x");
+    gint64 t2 = g_get_monotonic_time();
+    for (guint i = 0; i < 1000; i++) {
+      g_autoptr(GhMessage) m = g_list_model_get_item(G_LIST_MODEL(f->store), 0);
+      (void)m;
+    }
+    gint64 t3 = g_get_monotonic_time();
+    g_print("1000 format_day: %.1f ms; 1000 store get_item(0): %.1f ms\n", (t1 - t0) / 1000.0, (t3 - t2) / 1000.0);
+  }
+  const guint sizes[] = { 50, 200, 1000 };
+  for (guint k = 0; k < G_N_ELEMENTS(sizes); k++) {
+    GhMessage *first = NULL;
+    for (guint i = 0; i < sizes[k]; i++) {
+      g_autofree gchar *text = g_strdup_printf("message %u of a long chain, with some words to wrap", i);
+      GhMessage *m = add_dm(f->store, (i % 2) ? 2 : 1, (i % 2) ? 1 : 2, noon_today() - (gint64)(sizes[k] - i) * 60, text);
+      if (!first) first = m;
+    }
+    GhConversation *conversation = room_of(f->store, first);
+    gh_conversation_accept(conversation);
+    gint64 t0 = g_get_monotonic_time();
+    gh_conversation_view_set_conversation(f->view, conversation);
+    gint64 t1 = g_get_monotonic_time();
+    gtk_window_set_default_size(f->window, 700, 700);
+    gtk_window_present(f->window);
+    spin_until(is_mapped, f);
+    spin_until(rows_bound, f);
+    drain_idle();
+    gint64 t2 = g_get_monotonic_time();
+    g_print("open %u messages (model %u): set_conversation %.1f ms, bound+idle %.1f ms\n",
+            sizes[k], g_list_model_get_n_items(G_LIST_MODEL(conversation)),
+            (t1 - t0) / 1000.0, (t2 - t1) / 1000.0);
+    gh_conversation_view_set_conversation(f->view, NULL);
+    /* GROUNDHOG_TEST_TIMING=loop: keep reopening the largest room for a sampler. */
+    if (k == G_N_ELEMENTS(sizes) - 1 && g_strcmp0(g_getenv("GROUNDHOG_TEST_TIMING"), "loop") == 0) {
+      gint64 end = g_get_monotonic_time() + 8 * G_USEC_PER_SEC;
+      guint opens = 0;
+      while (g_get_monotonic_time() < end) {
+        gh_conversation_view_set_conversation(f->view, conversation);
+        spin_until(rows_bound, f);
+        drain_idle();
+        gh_conversation_view_set_conversation(f->view, NULL);
+        opens++;
+      }
+      g_print("reopened %u times in 8 s\n", opens);
+    }
+  }
+}
+
 /* ---- expiry ---------------------------------------------------------------------------- */
 
 static gboolean
@@ -2231,6 +2295,7 @@ main(int argc, char **argv)
     g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
+  ADD("open-timing", test_open_timing);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);
   g_test_add_func("/groundhog/conversation-view/screenshots", test_screenshots);
