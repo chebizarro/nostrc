@@ -158,6 +158,24 @@ static gboolean ipc_csprng(guint8 *buf, gsize len) {
 }
 #endif /* GNOSTR_ENABLE_TCP_IPC || G_OS_WIN32 */
 
+#if defined(GNOSTR_ENABLE_TCP_IPC) || defined(G_OS_WIN32)
+/* Fixed-time equality for the shared auth token (nostrc-0dkc): the old
+ * code claimed "constant-time" but used g_strcmp0(), which exits at the
+ * first differing byte. */
+static gboolean ipc_token_equal(const char *presented, const char *expected) {
+  if (!presented || !expected) return FALSE;
+  size_t a = strlen(presented), b = strlen(expected);
+  size_t n = a > b ? a : b;
+  volatile unsigned char diff = (unsigned char)(a != b);
+  for (size_t i = 0; i < n; i++) {
+    unsigned char x = i < a ? (unsigned char)presented[i] : 0;
+    unsigned char y = i < b ? (unsigned char)expected[i] : 0;
+    diff |= (unsigned char)(x ^ y);
+  }
+  return diff == 0;
+}
+#endif /* GNOSTR_ENABLE_TCP_IPC || G_OS_WIN32 */
+
 static gchar *default_endpoint(void) {
 #ifdef G_OS_UNIX
   const char *runtime = g_get_user_runtime_dir();
@@ -323,7 +341,11 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
         hex[i * 2 + 1] = H[rnd[i] & 0xF];
       }
       GError *write_err = NULL;
-      if (!g_file_set_contents(srv->token_path, hex, 64, &write_err)) {
+      /* nostrc-uj0f: create with mode 0600 from the start; the previous
+       * write-then-chmod left a window with looser permissions. */
+      if (!g_file_set_contents_full(srv->token_path, hex, 64,
+                                    G_FILE_SET_CONTENTS_CONSISTENT,
+                                    0600, &write_err)) {
         g_propagate_prefixed_error(error, write_err,
                                     "Failed to write token file %s: ", srv->token_path);
         g_free(hex);
@@ -333,8 +355,6 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
         return NULL;
       }
       srv->token = hex;
-      /* chmod to 0600 best-effort */
-      (void)g_chmod(srv->token_path, 0600);
     }
 
     /* Create socket */
@@ -463,7 +483,10 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
         hex[i * 2 + 1] = H[rnd[i] & 0xF];
       }
       g_autoptr(GError) write_err = NULL;
-      if (!g_file_set_contents(srv->npipe_token_path, hex, 64, &write_err)) {
+      /* nostrc-uj0f: create with mode 0600 from the start. */
+      if (!g_file_set_contents_full(srv->npipe_token_path, hex, 64,
+                                    G_FILE_SET_CONTENTS_CONSISTENT,
+                                    0600, &write_err)) {
         g_propagate_prefixed_error(error, g_steal_pointer(&write_err),
                                     "Failed to write token file %s: ", srv->npipe_token_path);
         g_free(hex);
@@ -622,10 +645,6 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
     }
     if (pr == 0) continue; /* timeout — recheck stop_flag */
 
-    /* Check connection limit AFTER poll returns (don't busy-wait) */
-    if (g_atomic_int_get(&s->active_connections) >= (gint)s->max_connections)
-      continue; /* loop back to poll — waits instead of spinning */
-
     int cfd = accept(s->tcp_fd, NULL, NULL);
     if (cfd < 0) {
       if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
@@ -636,12 +655,23 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
       }
       break;
     }
-    
+
+    /* nostrc-ad2f: at capacity, reject the client immediately. Looping
+     * back to poll() with a pending connection spins at 100% CPU because
+     * poll() returns at once while the backlog is non-empty. */
+    if (g_atomic_int_get(&s->active_connections) >= (gint)s->max_connections) {
+      const char *busy = "{\"error\":\"busy\"}\n";
+      (void)write(cfd, busy, strlen(busy));
+      close(cfd);
+      continue;
+    }
+
     g_atomic_int_inc(&s->active_connections);
     ipc_stats_connection_opened(s);
-    // Set socket timeout for authentication
+    // Set socket timeout for authentication; keep it short so
+    // unauthenticated clients cannot squat connection slots (nostrc-ad2f).
     struct timeval tv;
-    tv.tv_sec = 5;  // 5 second timeout
+    tv.tv_sec = 2;
     tv.tv_usec = 0;
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
@@ -664,10 +694,7 @@ static gpointer tcp_ipc_accept_thread(gpointer data) {
       char *nl = strchr(buf, '\n');
       if (nl) *nl = '\0';
       const char *tok = buf + 5;
-      // Constant-time comparison to prevent timing attacks
-      if (tok && s->token && strlen(tok) == strlen(s->token)) {
-        authed = (g_strcmp0(tok, s->token) == 0);
-      }
+      authed = ipc_token_equal(tok, s->token);
     }
     
     if (!authed) {
@@ -812,25 +839,50 @@ static int npipe_write_frame(HANDLE pipe, const char *json, size_t len) {
   return 0;
 }
 
+/* Escape a string for inclusion as a JSON string value body (without the
+ * surrounding quotes). Control characters become \u00XX; '"' and '\\' are
+ * backslash-escaped. nostrc-w7d1: request ids and decrypted NIP-44
+ * plaintext are caller/device-influenced and must never be spliced into a
+ * frame raw. */
+static gchar *npipe_json_escape(const char *s) {
+  GString *out = g_string_new(NULL);
+  for (const guchar *p = (const guchar *)(s ? s : ""); *p; p++) {
+    switch (*p) {
+      case '"':  g_string_append(out, "\\\""); break;
+      case '\\': g_string_append(out, "\\\\"); break;
+      case '\b': g_string_append(out, "\\b"); break;
+      case '\t': g_string_append(out, "\\t"); break;
+      case '\n': g_string_append(out, "\\n"); break;
+      case '\f': g_string_append(out, "\\f"); break;
+      case '\r': g_string_append(out, "\\r"); break;
+      default:
+        if (*p < 0x20) g_string_append_printf(out, "\\u%04x", (guint)*p);
+        else g_string_append_c(out, (gchar)*p);
+    }
+  }
+  return g_string_free(out, FALSE);
+}
+
 /* Build a minimal error response JSON */
 static char *npipe_build_error_json(const char *id, int code, const char *msg) {
-  const char *id_field = id ? id : "";
-  size_t need = strlen(id_field) + strlen(msg) + 96;
-  char *buf = (char*)g_malloc(need);
-  if (!buf) return NULL;
-  g_snprintf(buf, need, "{\"id\":\"%s\",\"result\":null,\"error\":{\"code\":%d,\"message\":\"%s\"}}",
-             id_field, code, msg);
-  return buf;
+  g_autofree gchar *eid = npipe_json_escape(id);
+  g_autofree gchar *emsg = npipe_json_escape(msg);
+  return g_strdup_printf("{\"id\":\"%s\",\"result\":null,\"error\":{\"code\":%d,\"message\":\"%s\"}}",
+                         eid, code, emsg);
 }
 
 /* Build a minimal success response with raw JSON result */
 static char *npipe_build_ok_json_raw(const char *id, const char *raw_json) {
-  const char *id_field = id ? id : "";
-  size_t need = strlen(id_field) + strlen(raw_json) + 64;
-  char *buf = (char*)g_malloc(need);
-  if (!buf) return NULL;
-  g_snprintf(buf, need, "{\"id\":\"%s\",\"result\":%s,\"error\":null}", id_field, raw_json);
-  return buf;
+  g_autofree gchar *eid = npipe_json_escape(id);
+  return g_strdup_printf("{\"id\":\"%s\",\"result\":%s,\"error\":null}", eid, raw_json);
+}
+
+/* Build a JSON string literal from an arbitrary (not necessarily valid
+ * UTF-8) payload: invalid bytes become U+FFFD, then JSON-escaped. */
+static char *npipe_build_json_string(const char *s) {
+  g_autofree gchar *valid = g_utf8_make_valid(s ? s : "", -1);
+  g_autofree gchar *escaped = npipe_json_escape(valid);
+  return g_strdup_printf("\"%s\"", escaped);
 }
 
 /* Connection handler thread for Windows named pipe.
@@ -875,10 +927,8 @@ static gpointer npipe_conn_handler_thread(gpointer data) {
       else rc = nostr_nip5f_builtin_get_public_key(&pub);
 
       if (rc == 0 && pub) {
-        size_t L = strlen(pub) + 3;
-        char *jres = (char*)g_malloc(L);
+        char *jres = npipe_build_json_string(pub);
         if (jres) {
-          g_snprintf(jres, L, "\"%s\"", pub);
           char *ok = npipe_build_ok_json_raw(id, jres);
           if (ok) {
             npipe_write_frame(pipe, ok, strlen(ok));
@@ -948,10 +998,8 @@ static gpointer npipe_conn_handler_thread(gpointer data) {
         else rc = nostr_nip5f_builtin_nip44_encrypt(peer, pt, &b64);
 
         if (rc == 0 && b64) {
-          size_t L = strlen(b64) + 3;
-          char *jres = (char*)g_malloc(L);
+          char *jres = npipe_build_json_string(b64);
           if (jres) {
-            g_snprintf(jres, L, "\"%s\"", b64);
             char *ok = npipe_build_ok_json_raw(id, jres);
             if (ok) {
               npipe_write_frame(pipe, ok, strlen(ok));
@@ -989,10 +1037,10 @@ static gpointer npipe_conn_handler_thread(gpointer data) {
         else rc = nostr_nip5f_builtin_nip44_decrypt(peer, ct, &plaintext);
 
         if (rc == 0 && plaintext) {
-          size_t L = strlen(plaintext) + 3;
-          char *jres = (char*)g_malloc(L);
+          /* Decrypted NIP-44 plaintext is arbitrary bytes: validate UTF-8
+           * and JSON-escape before framing (nostrc-w7d1). */
+          char *jres = npipe_build_json_string(plaintext);
           if (jres) {
-            g_snprintf(jres, L, "\"%s\"", plaintext);
             char *ok = npipe_build_ok_json_raw(id, jres);
             if (ok) {
               npipe_write_frame(pipe, ok, strlen(ok));
@@ -1037,7 +1085,13 @@ static gpointer npipe_conn_handler_thread(gpointer data) {
       (void)nostr_json_get_string_at(req, "params", "uri", &uri);
 
       if (uri) {
-        g_message("npipe: received URI activation: %s", uri);
+        /* nostrc-a8ql: the URI is client-controlled; scrub control
+         * characters so a crafted URI cannot forge log lines or emit
+         * terminal escape sequences. */
+        g_autofree gchar *shown = g_strndup(uri, 200);
+        for (gchar *p = shown; *p; p++)
+          if ((guchar)*p < 0x20 || (guchar)*p == 0x7f) *p = '?';
+        g_message("npipe: received URI activation: %s", shown);
         /* In a real implementation, this would signal the main window
          * to handle the nostr: URI. For now, acknowledge receipt. */
         char *ok = npipe_build_ok_json_raw(id, "true");
@@ -1181,10 +1235,7 @@ static gpointer npipe_ipc_accept_thread(gpointer data) {
           char *nl = strchr(buf, '\n');
           if (nl) *nl = '\0';
           const char *tok = buf + 5;
-          if (tok && strlen(tok) == strlen(s->npipe_token) &&
-              g_strcmp0(tok, s->npipe_token) == 0) {
-            authed = TRUE;
-          }
+          authed = ipc_token_equal(tok, s->npipe_token);
         }
       }
 
