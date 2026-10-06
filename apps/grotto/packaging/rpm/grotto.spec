@@ -149,7 +149,6 @@ install -d %{buildroot}%{_bindir}
 install -d %{buildroot}%{_datadir}/applications
 install -d %{buildroot}%{_datadir}/dbus-1/services
 install -d %{buildroot}%{_datadir}/glib-2.0/schemas
-install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
 install -d %{buildroot}%{_userunitdir}
 install -d %{buildroot}%{_datadir}/metainfo
 
@@ -187,8 +186,10 @@ install -m 0644 apps/grotto/data/org.nostr.Signer.appdata.xml \
     %{buildroot}%{_datadir}/metainfo/%{app_id}.metainfo.xml
 
 # Install icon
-install -m 0644 apps/grotto/data/icons/hicolor/scalable/apps/%{app_id}.svg \
-    %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/
+for sz in 16 24 32 48 64 128 256 512; do
+  install -D -m 0644 apps/grotto/data/icons/hicolor/${sz}x${sz}/apps/%{app_id}.png \
+      %{buildroot}%{_datadir}/icons/hicolor/${sz}x${sz}/apps/%{app_id}.png
+done
 
 %check
 # Validate desktop file
@@ -235,7 +236,7 @@ fi
 %{_datadir}/applications/grotto.desktop
 %{_datadir}/dbus-1/services/%{app_id}.service
 %{_datadir}/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
-%{_datadir}/icons/hicolor/scalable/apps/%{app_id}.svg
+%{_datadir}/icons/hicolor/*/apps/%{app_id}.png
 %{_datadir}/metainfo/%{app_id}.metainfo.xml
 
 %files daemon

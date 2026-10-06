@@ -159,7 +159,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_datadir}/dbus-1/services/org.nostr.Grotto.service
 %{_datadir}/dbus-1/services/org.nostr.Signer.service
 %{_datadir}/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
-%{_datadir}/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
+%{_datadir}/icons/hicolor/*/apps/org.nostr.Grotto.png
 %{_metainfodir}/org.nostr.Grotto.metainfo.xml
 %{_userunitdir}/grotto-daemon.service
 

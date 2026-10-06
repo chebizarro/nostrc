@@ -451,8 +451,9 @@ install(FILES data/org.nostr.Grotto.desktop DESTINATION ${CMAKE_INSTALL_DATAROOT
 # AppStream metainfo
 install(FILES data/org.nostr.Grotto.metainfo.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
 
-# Icons (hicolor theme). Place files under data/icons/hicolor/<size>/apps/
-# Expected names: org.nostr.Grotto.png for raster, org.nostr.Grotto.svg for scalable
+# Icons (hicolor theme): data/icons/hicolor/<size>/apps/org.nostr.Grotto.png,
+# rendered from assets/grotto.xcf (squared on a transparent canvas, Lanczos).
+# No scalable icon: the artwork is a painting.
 set(ICON_BASENAME "${APP_SIGNER_FLATPAK_ID}")
 set(ICON_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor)
 set(ICON_INSTALL_ROOT ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor)
@@ -461,9 +462,6 @@ foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
           DESTINATION ${ICON_INSTALL_ROOT}/${sz}x${sz}/apps
           OPTIONAL)
 endforeach()
-install(FILES ${ICON_ROOT}/scalable/apps/${ICON_BASENAME}.svg
-        DESTINATION ${ICON_INSTALL_ROOT}/scalable/apps
-        OPTIONAL)
 
 # Update icon cache on install if available (optional)
 find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
