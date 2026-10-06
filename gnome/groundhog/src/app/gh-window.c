@@ -177,10 +177,26 @@ on_root_page(GhWindow *self)
   gh_sidebar_page_set_key_capture_widget(self->sidebar, shows_main ? GTK_WIDGET(self) : NULL);
 }
 
+/* libadwaita 1.5.0 (Ubuntu 24.04): AdwNavigationSplitView schedules an idle
+ * (changing_page_done_cb) when its shown page changes and never removes it,
+ * so a split view finalized before the idle runs is written to after it was
+ * freed (nostrc-7ho9: the crash after the search-clear-and-focus GUI test).
+ * The instance is kept alive past that idle: it may be disposed by then,
+ * which the callback tolerates, but not freed. */
+static gboolean
+release_split_view(gpointer data)
+{
+  g_object_unref(data);
+  return G_SOURCE_REMOVE;
+}
+
 static void
 gh_window_dispose(GObject *object)
 {
   GhWindow *self = GH_WINDOW(object);
+  if (self->split)
+    g_idle_add_full(G_PRIORITY_DEFAULT_IDLE + 10, release_split_view,
+                    g_object_ref(self->split), NULL);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_WINDOW);
   gh_window_set_new_message_handler(self, NULL, NULL, NULL);
   g_clear_object(&self->status);
