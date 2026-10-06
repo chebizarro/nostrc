@@ -294,6 +294,14 @@ trezor_exchange(hid_device *handle, guint16 send_type, const guint8 *send_data,
                 "Device timeout");
     return FALSE;
   }
+  /* nostrc-58rf: a short read leaves the header partially uninitialized.
+   * Trezor speaks in full 64-byte reports; anything shorter is a broken
+   * (or hostile) device, not a packet to parse. */
+  if (ret != TREZOR_HID_PACKET_SIZE) {
+    g_set_error(error, GN_HW_WALLET_ERROR, GN_HW_WALLET_ERROR_COMMUNICATION,
+                "Short packet from device (%d bytes)", ret);
+    return FALSE;
+  }
 
   /* Parse response header */
   if (recv_packet[0] != '#' || recv_packet[1] != '#') {
@@ -326,6 +334,13 @@ trezor_exchange(hid_device *handle, guint16 send_type, const guint8 *send_data,
     if (ret <= 0) {
       g_set_error(error, GN_HW_WALLET_ERROR, GN_HW_WALLET_ERROR_COMMUNICATION,
                   "Failed to read continuation packet");
+      return FALSE;
+    }
+    /* nostrc-58rf: require full packets here too — copy_len below must
+     * never copy bytes the device did not actually send. */
+    if (ret != TREZOR_HID_PACKET_SIZE) {
+      g_set_error(error, GN_HW_WALLET_ERROR, GN_HW_WALLET_ERROR_COMMUNICATION,
+                  "Short continuation packet from device (%d bytes)", ret);
       return FALSE;
     }
 
@@ -372,11 +387,12 @@ trezor_encode_path(const gchar *path, guint8 *output)
     if (*p == '/')
       p++;
 
-    guint32 val = 0;
+    guint64 val = 0;  /* nostrc-a202: 64-bit accumulator, reject on overflow */
     gboolean hardened = FALSE;
 
     while (*p >= '0' && *p <= '9') {
-      val = val * 10 + (*p - '0');
+      val = val * 10 + (guint64)(*p - '0');
+      if (val > 0x7FFFFFFFu) return 0;  /* hardened bit needs the top bit */
       p++;
     }
 
@@ -388,7 +404,7 @@ trezor_encode_path(const gchar *path, guint8 *output)
     if (hardened)
       val |= 0x80000000;
 
-    components[count++] = val;
+    components[count++] = (guint32)val;
   }
 
   /* Simple protobuf-like encoding (field 1, repeated uint32) */

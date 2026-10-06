@@ -294,11 +294,12 @@ ledger_parse_path(const gchar *path, guint8 *output, gsize *output_len)
     if (*p == '/')
       p++;
 
-    guint32 val = 0;
+    guint64 val = 0;  /* nostrc-a202: 64-bit accumulator, reject on overflow */
     gboolean hardened = FALSE;
 
     while (*p >= '0' && *p <= '9') {
-      val = val * 10 + (*p - '0');
+      val = val * 10 + (guint64)(*p - '0');
+      if (val > 0x7FFFFFFFu) return FALSE;  /* hardened bit needs the top bit */
       p++;
     }
 
@@ -310,7 +311,7 @@ ledger_parse_path(const gchar *path, guint8 *output, gsize *output_len)
     if (hardened)
       val |= 0x80000000;
 
-    components[count++] = val;
+    components[count++] = (guint32)val;
   }
 
   /* Serialize path */
