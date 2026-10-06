@@ -29,14 +29,26 @@ struct _SheetImportKey {
   /* Success callback wiring */
   SheetImportKeySuccessCb on_success;
   gpointer on_success_ud;
+  /* The QR scanner sheet can outlive this dialog; weak, cleared on
+   * dispose (nostrc-wcxr). */
+  SheetQrScanner *scanner;
+  /* Cancels the clipboard prefill read when the dialog is closed */
+  GCancellable *cancellable;
 };
 
 G_DEFINE_TYPE(SheetImportKey, sheet_import_key, ADW_TYPE_DIALOG)
 
 typedef struct {
-  SheetImportKey *self;
-  GtkWindow *parent;
+  SheetImportKey *self;   /* strong ref for the D-Bus call (nostrc-afg5) */
+  GtkWindow *parent;      /* strong ref */
 } ImportCtx;
+
+static void import_ctx_free(ImportCtx *ctx) {
+  if (!ctx) return;
+  g_clear_object(&ctx->self);
+  g_clear_object(&ctx->parent);
+  g_free(ctx);
+}
 
 /* Helper used in validation and clipboard prefill */
 static gboolean is_hex64(const char *s){
@@ -49,14 +61,18 @@ static gboolean is_hex64(const char *s){
 }
 
 static void clipboard_text_got(GObject *src, GAsyncResult *res, gpointer user_data){
-  SheetImportKey *self = user_data; if (!self || !self->entry_secret) return;
+  SheetImportKey *self = user_data;  /* strong ref taken at init (nostrc-afg5) */
   g_autoptr(GError) err = NULL;
   char *text = gdk_clipboard_read_text_finish(GDK_CLIPBOARD(src), res, &err);
-  if (err || !text) return;
+  if (err || !text) {
+    g_object_unref(self);
+    return;
+  }
   g_strstrip(text);
-  if (g_str_has_prefix(text, "nsec1") || g_str_has_prefix(text, "ncrypt") || is_hex64(text)){
+  if (self->entry_secret &&
+      (g_str_has_prefix(text, "nsec1") || g_str_has_prefix(text, "ncrypt") || is_hex64(text))){
     gtk_editable_set_text(GTK_EDITABLE(self->entry_secret), text);
-    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), TRUE);
+    if (self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_ok), TRUE);
 
     /* Schedule clipboard clear for security - don't leave secret keys on clipboard */
     gn_clipboard_clear_after(GDK_CLIPBOARD(src), CLIPBOARD_CLEAR_TIMEOUT_SECONDS);
@@ -64,6 +80,7 @@ static void clipboard_text_got(GObject *src, GAsyncResult *res, gpointer user_da
   /* Securely shred the text buffer before freeing */
   gn_secure_shred_string(text);
   g_free(text);
+  g_object_unref(self);
 }
 
 static void on_secret_changed(GtkEditable *e, gpointer user_data){
@@ -126,7 +143,9 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
         GdkDisplay *dpy = gtk_widget_get_display(w);
         if (dpy){ GdkClipboard *cb = gdk_display_get_clipboard(dpy); if (cb) gdk_clipboard_set_text(cb, npub); }
       }
-      /* Notify parent to update AccountsStore and refresh UI */
+      /* Notify parent to update AccountsStore and refresh UI.
+       * entry_label is a template child: NULL after the dialog was
+       * disposed during the in-flight call (nostrc-afg5). */
       if (ctx && ctx->self && ctx->self->on_success) {
         const char *label = NULL;
         if (ctx->self->entry_label) label = gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_label));
@@ -134,21 +153,23 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
       }
     } else {
       /* Log more diagnostics client-side */
-      const char *entered = gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_secret));
+      const char *entered = ctx->self->entry_secret
+          ? gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_secret)) : NULL;
       const char *kind = entered && g_str_has_prefix(entered, "nsec1") ? "nsec" : (entered && g_str_has_prefix(entered, "ncrypt") ? "ncrypt" : "hex/other");
       g_message("StoreKey returned ok=false. input_kind=%s len=%zu", kind, entered ? strlen(entered) : 0ul);
-      const char *hint = "\n\nHints:\n• Verify the key is a valid nsec..., 64-hex, or ncrypt...\n• Only the installed Grotto may store keys; one run from a build directory needs the daemon started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1";
+      const char *hint = "\n\nHints:\n\u2022 Verify the key is a valid nsec..., 64-hex, or ncrypt...\n\u2022 Only the installed Grotto may store keys; one run from a build directory needs the daemon started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1";
       g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Import failed.%s", hint);
       gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
       /* Keep dialog open for correction */
       /* Re-enable buttons */
       if (ctx->self->btn_ok) gtk_widget_set_sensitive(GTK_WIDGET(ctx->self->btn_ok), TRUE);
       if (ctx->self->btn_cancel) gtk_widget_set_sensitive(GTK_WIDGET(ctx->self->btn_cancel), TRUE);
+      import_ctx_free(ctx);
       return;
     }
   }
   if (ctx && ctx->self) adw_dialog_close(ADW_DIALOG(ctx->self));
-  g_free(ctx);
+  import_ctx_free(ctx);
 }
 
 static void on_cancel(GtkButton *b, gpointer user_data){ (void)b; SheetImportKey *self = user_data; if (self) adw_dialog_close(ADW_DIALOG(self)); }
@@ -185,6 +206,15 @@ static void on_scan_qr(GtkButton *b, gpointer user_data) {
   /* Create and show QR scanner dialog */
   SheetQrScanner *scanner = sheet_qr_scanner_new();
   sheet_qr_scanner_set_on_success(scanner, on_qr_scan_success, self);
+
+  /* nostrc-wcxr: the scanner can outlive this sheet. Track it weakly and
+   * clear its callback from our dispose so it never calls into freed
+   * state. */
+  if (self->scanner) {
+    sheet_qr_scanner_set_on_success(self->scanner, NULL, NULL);
+    g_clear_weak_pointer(&self->scanner);
+  }
+  g_set_weak_pointer(&self->scanner, scanner);
 
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
   GtkWidget *parent = root ? GTK_WIDGET(root) : GTK_WIDGET(self);
@@ -223,8 +253,9 @@ static void on_ok(GtkButton *b, gpointer user_data){
     return;
   }
   ImportCtx *ctx = g_new0(ImportCtx, 1);
-  ctx->self = self;
+  ctx->self = g_object_ref(self);
   ctx->parent = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(self)));
+  if (ctx->parent) g_object_ref(ctx->parent);
   g_dbus_connection_call(bus,
                          "org.nostr.Signer",
                          "/org/nostr/signer",
@@ -250,7 +281,25 @@ static void on_ok(GtkButton *b, gpointer user_data){
   if (self->btn_cancel) gtk_widget_set_sensitive(GTK_WIDGET(self->btn_cancel), FALSE);
 }
 
+static void sheet_import_key_dispose(GObject *object){
+  SheetImportKey *self = SHEET_IMPORT_KEY(object);
+
+  /* nostrc-wcxr: detach the outliving QR scanner's callback */
+  if (self->scanner) {
+    sheet_qr_scanner_set_on_success(self->scanner, NULL, NULL);
+    g_clear_weak_pointer(&self->scanner);
+  }
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+
+  G_OBJECT_CLASS(sheet_import_key_parent_class)->dispose(object);
+}
+
 static void sheet_import_key_class_init(SheetImportKeyClass *klass){
+  GObjectClass *oc = G_OBJECT_CLASS(klass);
+  oc->dispose = sheet_import_key_dispose;
   GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-import-key.ui");
   gtk_widget_class_bind_template_child(wc, SheetImportKey, btn_cancel);
@@ -263,6 +312,7 @@ static void sheet_import_key_class_init(SheetImportKeyClass *klass){
 
 static void sheet_import_key_init(SheetImportKey *self){
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->cancellable = g_cancellable_new();
   if (self->btn_cancel) g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   if (self->btn_ok) g_signal_connect(self->btn_ok, "clicked", G_CALLBACK(on_ok), self);
   if (self->btn_scan_qr) g_signal_connect(self->btn_scan_qr, "clicked", G_CALLBACK(on_scan_qr), self);
@@ -280,11 +330,12 @@ static void sheet_import_key_init(SheetImportKey *self){
                                             GTK_WIDGET(self->btn_ok));
   }
 
-  /* Prefill from clipboard if it looks like a key */
+  /* Prefill from clipboard if it looks like a key (self reffed until the
+   * read completes; the cancellable fires on dispose — nostrc-afg5) */
   GtkWidget *w = GTK_WIDGET(self);
   GdkDisplay *dpy = gtk_widget_get_display(w);
   if (dpy){ GdkClipboard *cb = gdk_display_get_clipboard(dpy);
-    if (cb) gdk_clipboard_read_text_async(cb, NULL, clipboard_text_got, self);
+    if (cb) gdk_clipboard_read_text_async(cb, self->cancellable, clipboard_text_got, g_object_ref(self));
   }
 }
 
