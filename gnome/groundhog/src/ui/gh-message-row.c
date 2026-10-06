@@ -333,6 +333,12 @@ update_web_images(GhMessageRow *self)
     !gh_message_get_withdrawn(self->message);
   g_autofree gchar *picture = available
     ? gh_conversation_view_dup_picture_uri(self->view, self->message) : NULL;
+  /* The preference (or an earlier allow for this sender) loads without a
+   * click; the buttons below stay for what is not loaded. */
+  if (available) {
+    if (self->preview_uri) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_IMAGE);
+    if (picture) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_PICTURE);
+  }
   gtk_widget_set_visible(GTK_WIDGET(self->image_button), available && self->preview_uri);
   gtk_widget_set_visible(GTK_WIDGET(self->picture_button), picture != NULL);
   gboolean failed = FALSE;
@@ -345,6 +351,9 @@ update_web_images(GhMessageRow *self)
     gtk_picture_set_paintable(image, texture ? GDK_PAINTABLE(texture) : NULL);
     gtk_widget_set_visible(GTK_WIDGET(image), texture != NULL);
     gtk_widget_set_sensitive(GTK_WIDGET(button), state == GH_LINK_PREVIEW_NONE || state == GH_LINK_PREVIEW_FAILED);
+    /* Loaded (or loading): the picture speaks for itself, no button left. */
+    if (state == GH_LINK_PREVIEW_LOADED || state == GH_LINK_PREVIEW_LOADING)
+      gtk_widget_set_visible(GTK_WIDGET(button), FALSE);
     failed |= state == GH_LINK_PREVIEW_FAILED;
     if (self->message) {
       g_autofree gchar *id = g_strconcat(i == GH_WEB_IMAGE ? "image:" : "picture:",

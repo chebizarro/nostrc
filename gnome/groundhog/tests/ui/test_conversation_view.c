@@ -1244,7 +1244,9 @@ static GBytes *web_local_finish(gpointer data, GAsyncResult *result, GError **er
 { return gh_net_http_get_finish(data, result, error); }
 static gchar *web_picture_uri(const gchar *pubkey, gpointer data)
 {
-  g_assert_cmpstr(pubkey, ==, hex[2]);
+  /* Only the peer (key 2) has a picture; the account's own messages none. */
+  if (g_strcmp0(pubkey, hex[2]) != 0)
+    return NULL;
   return g_strdup(g_object_get_data(data, "picture"));
 }
 typedef struct { Fixture *f; GhMessage *message; GhWebKind kind; } WebWait;
@@ -1376,6 +1378,60 @@ test_web_consent(Fixture *f, gconstpointer data)
   gh_conversation_view_set_conversation(f->view, NULL);
   gh_conversation_view_enable_web_content(f->view, NULL, NULL);
   g_settings_reset(f->settings, key);
+  blossom_fixture_free(server);
+}
+
+/* An allow for one message's profile picture (owner report: it loaded for
+ * that message only) loads the same picture under the sender's other
+ * messages, with one fetch; a message by someone else keeps its button. */
+static void
+test_web_allow_covers_sender(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_settings_set_boolean(f->settings, "load-profile-pictures", FALSE);
+  g_settings_set_string(f->settings, "network-mode", "none");
+  BlossomFixture *server = blossom_fixture_new();
+  guint8 pixel[] = { 0, 255, 0, 255 };
+  g_autoptr(GBytes) pixels = g_bytes_new(pixel, sizeof pixel);
+  g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, pixels, 4));
+  g_autoptr(GBytes) body = gdk_texture_save_to_png_bytes(texture);
+  g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
+  blossom_fixture_put_blob(server, hash, body);
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s", blossom_fixture_port(server), hash);
+  GhMessage *first = add_dm(f->store, 2, 1, noon_today() - 60, "first");
+  GhMessage *second = add_dm(f->store, 2, 1, noon_today() - 30, "second");
+  GhMessage *mine = add_dm(f->store, 1, 2, noon_today(), "mine");
+  GhConversation *conversation = room_of(f->store, first);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 700, 700);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(f->settings);
+  static const GhHttpTransport transport = { web_local_get, web_local_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, http);
+  g_autoptr(GObject) source = g_object_new(test_picture_source_get_type(), NULL);
+  g_object_set_data_full(source, "picture", g_strdup(uri), g_free);
+  gh_conversation_view_set_picture_source(f->view, web_picture_uri, source);
+  drain_idle();
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
+  GtkWidget *button = row_child(row_for(f->view, first), "picture_button");
+  g_assert_true(shown(button));
+  g_assert_true(shown(row_child(row_for(f->view, second), "picture_button")));
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  click(button);
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  WebWait loaded = { f, first, GH_WEB_PICTURE };
+  spin_until(web_loaded, &loaded);
+  WebWait other = { f, second, GH_WEB_PICTURE };
+  spin_until(web_loaded, &other);
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 1); /* shared, not refetched */
+  g_assert_false(shown(row_child(row_for(f->view, first), "picture_button")));
+  g_assert_false(shown(row_child(row_for(f->view, second), "picture_button")));
+  WebWait own = { f, mine, GH_WEB_PICTURE };
+  g_assert_false(web_loaded(&own)); /* another sender: nothing loaded for it */
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  g_settings_reset(f->settings, "load-profile-pictures");
   blossom_fixture_free(server);
 }
 
@@ -2174,6 +2230,7 @@ main(int argc, char **argv)
     g_autofree gchar *path = g_strdup_printf("/groundhog/conversation-view/web-consent/%s", gh_web_content_setting(kind));
     g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
   }
+  ADD("web-allow-covers-sender", test_web_allow_covers_sender);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);
   g_test_add_func("/groundhog/conversation-view/screenshots", test_screenshots);

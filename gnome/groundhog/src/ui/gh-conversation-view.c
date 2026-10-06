@@ -1694,6 +1694,68 @@ gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *messag
   return preview ? preview->texture : NULL;
 }
 
+/* A texture already loaded for uri (and kind) in this conversation: the
+ * same profile picture appears under every message of its sender. */
+static GdkTexture *
+loaded_texture_for(GhConversationView *self, GhWebKind kind, const gchar *uri)
+{
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->previews);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Preview *other = value;
+    if (other->kind == kind && other->state == GH_LINK_PREVIEW_LOADED && other->texture &&
+        g_strcmp0(other->uri, uri) == 0)
+      return other->texture;
+  }
+  return NULL;
+}
+
+/* Shows the message's picture or linked image without asking when the same
+ * URL was already loaded in this conversation (the bytes are here; no one
+ * is contacted again), and fetches it without asking when its sender was
+ * allowed for that kind here with "don't ask again" (owner report: an
+ * allow applied to one message only). The preference alone never grants
+ * consent (charter P9, tested); it only keeps an allow from asking again.
+ * Otherwise nothing happens: the row keeps its button, which asks. */
+void
+gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhWebKind kind)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (!message || !self->web || !self->conversation || kind == GH_WEB_PREVIEW ||
+      gh_message_get_withdrawn(message) || gh_conversation_get_is_request(self->conversation))
+    return;
+  g_autofree gchar *id = g_strconcat(kind == GH_WEB_IMAGE ? "image:" : "picture:",
+                                    gh_message_get_rumor_id(message), NULL);
+  Preview *preview = preview_for(self, id);
+  if (preview && preview->state != GH_LINK_PREVIEW_NONE)
+    return;
+  g_autofree gchar *uri = kind == GH_WEB_PICTURE
+    ? gh_conversation_view_dup_picture_uri(self, message)
+    : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
+  if (!uri)
+    return;
+  g_autofree gchar *sender_key = g_strdup_printf("%u:%s", kind, gh_message_get_sender(message));
+  gboolean loaded_already = loaded_texture_for(self, kind, uri) != NULL;
+  if (!loaded_already && !g_hash_table_contains(self->allowed_senders, sender_key))
+    return;
+  if (!preview) {
+    preview = g_new0(Preview, 1);
+    preview->uri = g_steal_pointer(&uri);
+    preview->sender = g_strdup(gh_message_get_sender(message));
+    preview->kind = kind;
+    g_hash_table_insert(self->previews, g_strdup(id), preview);
+  }
+  GdkTexture *loaded = loaded_texture_for(self, kind, preview->uri);
+  if (loaded) {
+    g_set_object(&preview->texture, loaded);
+    set_preview_state(self, id, GH_LINK_PREVIEW_LOADED);
+    g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+    return;
+  }
+  fetch_preview(self, id);
+}
+
 static void
 web_setting_changed(GSettings *settings, const gchar *key, GhConversationView *self)
 {

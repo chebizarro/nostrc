@@ -200,6 +200,9 @@ typedef enum {
 } GhLinkPreviewState;
 GdkTexture *gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *message,
                                                  GhWebKind kind, GhLinkPreviewState *state);
+/* Loads message's picture / linked image without a click when the kind's
+ * preference is on or its sender was allowed here; else does nothing. */
+void gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhWebKind kind);
 
 
 /* The preview state of @message; title and description (nullable, borrowed)
