@@ -1230,24 +1230,25 @@ static bool relay_attempt_reconnect(NostrRelay *r) {
     return true;
 }
 
-// Cached environment variables to avoid repeated getenv() calls
+// Cached environment variables to avoid repeated getenv() calls.
+// nostrc-val0v: initialized via pthread_once — every relay's message_loop
+// calls this concurrently, and the plain check-then-set statics were a race.
 static int metrics_sample_rate = 0;
 static int debug_incoming_cached = -1;
 static int debug_eose_cached = -1;
+static pthread_once_t g_cached_env_once = PTHREAD_ONCE_INIT;
+
+static void init_cached_env_once(void) {
+    const char *rate = getenv("NOSTR_METRICS_SAMPLE_RATE");
+    metrics_sample_rate = rate ? atoi(rate) : 100;
+    if (metrics_sample_rate <= 0) metrics_sample_rate = 100;
+    const char *dbg = getenv("NOSTR_DEBUG_INCOMING");
+    debug_incoming_cached = (dbg && *dbg && strcmp(dbg, "0") != 0) ? 1 : 0;
+    debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
+}
 
 static void init_cached_env(void) {
-    if (metrics_sample_rate == 0) {
-        const char *rate = getenv("NOSTR_METRICS_SAMPLE_RATE");
-        metrics_sample_rate = rate ? atoi(rate) : 100;
-        if (metrics_sample_rate <= 0) metrics_sample_rate = 100;
-    }
-    if (debug_incoming_cached == -1) {
-        const char *dbg = getenv("NOSTR_DEBUG_INCOMING");
-        debug_incoming_cached = (dbg && *dbg && strcmp(dbg, "0") != 0) ? 1 : 0;
-    }
-    if (debug_eose_cached == -1) {
-        debug_eose_cached = getenv("NOSTR_DEBUG_EOSE") ? 1 : 0;
-    }
+    (void)pthread_once(&g_cached_env_once, init_cached_env_once);
 }
 
 /* fp-ieg8: hand reconnect ownership back to the pool. Must run on every exit
@@ -2185,14 +2186,37 @@ static uint64_t get_monotonic_time_ms(void) {
     return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000;
 }
 
-/* Simple pseudo-random for jitter (doesn't need crypto quality) */
+/* Simple pseudo-random for jitter (doesn't need crypto quality).
+ * nostrc-val0v: the seed/state is atomic — every relay's message_loop calls
+ * this concurrently, and the plain static read-modify-write was a data race. */
 static double random_double(void) {
-    static unsigned int seed = 0;
-    if (seed == 0) {
-        seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
+    static _Atomic unsigned int seed = 0;
+    unsigned int s = atomic_load_explicit(&seed, memory_order_relaxed);
+    for (;;) {
+        if (s == 0) {
+            unsigned int fresh = (unsigned int)time(NULL) ^ (unsigned int)getpid();
+            if (fresh == 0) fresh = 1;
+            unsigned int expected = 0;
+            if (atomic_compare_exchange_weak_explicit(&seed, &expected, fresh,
+                                                      memory_order_relaxed,
+                                                      memory_order_relaxed)) {
+                s = fresh;
+                break;
+            }
+            s = expected;
+            continue;
+        }
+        unsigned int next = s * 1103515245u + 12345u;
+        unsigned int expected = s;
+        if (atomic_compare_exchange_weak_explicit(&seed, &expected, next,
+                                                  memory_order_relaxed,
+                                                  memory_order_relaxed)) {
+            s = next;
+            break;
+        }
+        s = expected;
     }
-    seed = seed * 1103515245 + 12345;
-    return (double)(seed % 10000) / 10000.0;
+    return (double)(s % 10000) / 10000.0;
 }
 
 /* Calculate backoff with jitter: backoff * (1 - jitter/2 + random * jitter) */

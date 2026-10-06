@@ -672,6 +672,61 @@ static int g_lws_running = 0;
 static pthread_mutex_t g_lws_mutex = PTHREAD_MUTEX_INITIALIZER;
 static NostrConnectionPrivate *g_close_requests = NULL; /* guarded by g_lws_mutex */
 
+/* ── priv graveyard (nostrc-3pcgj) ─────────────────────────────────────
+ * priv_try_ref() has a read-then-ref window: a thread reads conn->priv and
+ * can be preempted before its atomic_fetch_add on refs. If the last
+ * reference drops in that window and priv were freed immediately, the
+ * stranded thread would run atomics on freed heap. Deferring the free by
+ * PRIV_GRAVEYARD_DELAY_NS guarantees the stray try_ref instead observes
+ * closing==1 on still-valid memory and backs out safely. */
+#define PRIV_GRAVEYARD_DELAY_NS (2000000000ULL)  /* 2 seconds */
+
+typedef struct DeferredPriv {
+    NostrConnectionPrivate *priv;
+    uint64_t                death_ns;
+    struct DeferredPriv    *next;
+} DeferredPriv;
+
+static pthread_mutex_t g_priv_graveyard_mu = PTHREAD_MUTEX_INITIALIZER;
+static DeferredPriv   *g_priv_graveyard_head = NULL;
+
+static uint64_t priv_graveyard_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static void priv_graveyard_add(NostrConnectionPrivate *priv) {
+    DeferredPriv *node = (DeferredPriv *)malloc(sizeof(DeferredPriv));
+    if (!node) return; /* OOM: leak priv rather than reintroduce the UAF */
+    node->priv = priv;
+    node->death_ns = priv_graveyard_now_ns();
+    pthread_mutex_lock(&g_priv_graveyard_mu);
+    node->next = g_priv_graveyard_head;
+    g_priv_graveyard_head = node;
+    pthread_mutex_unlock(&g_priv_graveyard_mu);
+}
+
+/* Reap privs dead for longer than the delay. Called from the service loop
+ * and from nostr_connection_new() (amortized). */
+static void priv_graveyard_reap(void) {
+    uint64_t cutoff = priv_graveyard_now_ns() - PRIV_GRAVEYARD_DELAY_NS;
+    pthread_mutex_lock(&g_priv_graveyard_mu);
+    DeferredPriv **pp = &g_priv_graveyard_head;
+    while (*pp) {
+        DeferredPriv *node = *pp;
+        if (node->death_ns <= cutoff) {
+            *pp = node->next;
+            free(node->priv->rx_reassembly_buf);
+            free(node->priv);
+            free(node);
+        } else {
+            pp = &node->next;
+        }
+    }
+    pthread_mutex_unlock(&g_priv_graveyard_mu);
+}
+
 /* nostrc-priv-refcount: Refcounted lifetime management for NostrConnectionPrivate.
  *
  * The problem: LWS callbacks capture `conn` from lws_get_opaque_user_data(wsi)
@@ -718,9 +773,14 @@ static void priv_unref(NostrConnectionPrivate *priv) {
     if (old_refs == 1) {
         /* We were the last ref. Check if closing is set. */
         if (atomic_load_explicit(&priv->closing, memory_order_acquire)) {
-            /* Safe to free - no more refs and closing is set */
-            free(priv->rx_reassembly_buf);
-            free(priv);
+            /* Safe to free - no more refs and closing is set. Defer the
+             * actual free through the priv graveyard (below): a thread may
+             * have read conn->priv and been preempted before priv_try_ref's
+             * fetch_add; freeing now would let it run atomics on freed
+             * memory. The graveyard delay guarantees that stray try_ref
+             * observes closing==1 on still-valid memory and backs out
+             * (nostrc-3pcgj). */
+            priv_graveyard_add(priv);
         }
         /* If closing is not set, someone else will free when they set closing */
     }
@@ -929,6 +989,7 @@ static void *lws_service_loop(void *arg) {
          * This ensures connections are freed even while other connections are active,
          * as long as they've been dead for at least CONN_GRAVEYARD_DELAY_NS. */
         deferred_cleanup_process();
+        priv_graveyard_reap(); /* nostrc-3pcgj: same treatment for priv structs */
         pthread_mutex_unlock(&g_lws_mutex);
 
         if (!running || !ctx) {
@@ -1061,6 +1122,10 @@ static void parse_ws_url(const char *url, int *use_ssl, char *host, size_t host_
 NostrConnection *nostr_connection_new(const char *url) {
     // Ensure global initialization runs (pulls in init.o and enables metrics auto-init)
     nostr_global_init();
+
+    /* Amortized priv-graveyard reaping even when the service loop is idle
+     * (nostrc-3pcgj). */
+    priv_graveyard_reap();
 
     lws_set_log_level(LLL_USER | LLL_ERR | LLL_HEADER | LLL_CLIENT , NULL);
 
@@ -1355,9 +1420,12 @@ void nostr_connection_close(NostrConnection *conn) {
         if (g_lws_context) lws_cancel_service(g_lws_context);
         pthread_mutex_unlock(&g_lws_mutex);
     } else {
-        /* No priv (shouldn't happen in practice) — safe to free conn
-         * immediately since no LWS service thread involvement. */
-        free(conn);
+        /* conn->priv == NULL: the LWS service thread already detached this
+         * connection and handed conn to the deferred-cleanup graveyard,
+         * which owns its free (CONN_GRAVEYARD_DELAY_NS). Freeing here would
+         * double-free once that delay elapses (nostrc-3pcgj). A connection
+         * that never had a priv cannot reach this branch: every published
+         * connection gets one in nostr_connection_new(). */
     }
 }
 

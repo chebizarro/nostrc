@@ -243,6 +243,19 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     return sub;
 }
 
+/* nostrc-val0v: claim the cancel function exactly once, under sub_mutex.
+ * destroy/wait/unsubscribe/the async-cleanup worker all used to read, invoke
+ * and clear sub->priv->cancel unsynchronized — the first claimant now
+ * performs the cancel and later ones get NULL (go_context cancel itself is
+ * idempotent, but the field access was a data race). */
+static CancelFunc subscription_claim_cancel(NostrSubscription *sub) {
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    CancelFunc cancel = sub->priv->cancel;
+    sub->priv->cancel = NULL;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+    return cancel;
+}
+
 /* Internal: actual deallocation when refcount drops to 0 (nostrc-nr96) */
 static void subscription_destroy(NostrSubscription *sub) {
     if (getenv("NOSTR_DEBUG_SHUTDOWN")) {
@@ -255,9 +268,9 @@ static void subscription_destroy(NostrSubscription *sub) {
      * go_channel_receive(done) — that channel only unblocks when the
      * context is canceled.  Without this, go_wait_group_wait below hangs
      * forever if nobody else canceled the context first. */
-    if (sub->priv->cancel) {
-        sub->priv->cancel(sub->context);
-        sub->priv->cancel = NULL;
+    {
+        CancelFunc cancel = subscription_claim_cancel(sub);
+        if (cancel) cancel(sub->context);
     }
 
     /* Control channels are owned by destroy.  The events channel is closed by
@@ -661,9 +674,11 @@ void nostr_subscription_unsubscribe(NostrSubscription *sub) {
         return;
     }
 
-    // Cancel the subscription's context (idempotent)
-    if (sub->priv->cancel) {
-        sub->priv->cancel(sub->context);
+    // Cancel the subscription's context (idempotent; first claimant wins,
+    // nostrc-val0v)
+    {
+        CancelFunc cancel = subscription_claim_cancel(sub);
+        if (cancel) cancel(sub->context);
     }
     nostr_metric_counter_add("sub_unsubscribe", 1);
 
@@ -755,9 +770,9 @@ void nostr_subscription_wait(NostrSubscription *sub) {
         return;
     }
 
-    if (sub->priv->cancel) {
-        sub->priv->cancel(sub->context);
-        sub->priv->cancel = NULL;
+    {
+        CancelFunc cancel = subscription_claim_cancel(sub);
+        if (cancel) cancel(sub->context);
     }
 
     go_wait_group_wait(&sub->priv->wg);
@@ -1243,9 +1258,11 @@ static void *async_cleanup_worker(void *arg) {
     gettimeofday(&start_tv, NULL);
     uint64_t start_us = (uint64_t)start_tv.tv_sec * 1000000 + (uint64_t)start_tv.tv_usec;
     
-    /* Step 1: Cancel context (non-blocking) */
-    if (sub->priv->cancel) {
-        sub->priv->cancel(sub->context);
+    /* Step 1: Cancel context (non-blocking; first claimant wins,
+     * nostrc-val0v) */
+    {
+        CancelFunc cancel = subscription_claim_cancel(sub);
+        if (cancel) cancel(sub->context);
     }
     
     /* Step 2: Wait for the lifecycle worker to exit.

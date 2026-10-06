@@ -5,6 +5,7 @@
 #include "nostr-event.h"
 #include "nostr-filter.h"
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stddef.h>
 
@@ -21,7 +22,10 @@ typedef struct _NostrJsonInterface {
 
 } NostrJsonInterface;
 
-extern NostrJsonInterface *json_interface;
+/* nostrc-val0v: declared _Atomic so concurrent backend swaps
+ * (nostr_set_json_interface) and readers on worker threads are
+ * data-race-free. ABI-identical (pointer-sized). */
+extern NostrJsonInterface * _Atomic json_interface;
 void nostr_set_json_interface(NostrJsonInterface *iface);
 void nostr_json_init(void);
 void nostr_json_cleanup(void);

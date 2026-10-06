@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include "nostr-relay.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -46,7 +47,10 @@ typedef struct _NostrSimplePool {
     /* Optional batch middleware: if set, pool may invoke this with a batch for efficiency. */
     void (*batch_middleware)(NostrIncomingEvent *items, size_t count);
     bool (*signature_checker)(NostrEvent);
-    bool running;
+    /* Worker run flag. _Atomic bool has the same size/alignment as bool, so
+     * the struct layout is unchanged; atomic access closes the data race
+     * between the worker loop and start()/stop()/free() (nostrc-9bygk). */
+    _Atomic bool running;
     pthread_t thread;
     /* Subscriptions and runtime state */
     struct NostrSubscription **subs;
@@ -93,7 +97,7 @@ typedef struct _NostrSimplePool {
      * reintroduce exactly the stall this exists to remove. */
     pthread_t redial_thread;
     bool redial_thread_running;     /* worker was spawned and needs joining */
-    volatile int redial_stop;       /* set by _free() to retire the worker */
+    _Atomic int redial_stop;        /* set by _free() to retire the worker (same size as int: layout unchanged) */
     bool redial_enabled;            /* cleared by explicit disconnect requests */
     struct GoChannel *redial_wake;  /* nudge: there is something to dial now */
 

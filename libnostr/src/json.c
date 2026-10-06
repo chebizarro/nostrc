@@ -9,11 +9,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-NostrJsonInterface *json_interface = NULL;
-static int g_json_force_fallback = -1; /* -1 = uninitialized, 0/1 set */
+NostrJsonInterface * _Atomic json_interface = NULL;
+/* nostrc-val0v: the lazy -1 -> getenv -> set initialization raced with itself
+ * and with nostr_json_force_fallback() from worker threads. Atomic access
+ * keeps it defined; concurrent initializers compute the same value. */
+static _Atomic int g_json_force_fallback = -1; /* -1 = uninitialized, 0/1 set */
 
 void nostr_set_json_interface(NostrJsonInterface *iface) {
-    json_interface = iface;
+    atomic_store_explicit(&json_interface, iface, memory_order_release);
 }
 
 void nostr_json_init(void) {
@@ -29,15 +32,17 @@ void nostr_json_cleanup(void) {
 }
 
 void nostr_json_force_fallback(bool enable) {
-    g_json_force_fallback = enable ? 1 : 0;
+    atomic_store_explicit(&g_json_force_fallback, enable ? 1 : 0, memory_order_release);
 }
 
 static inline int json_force_fallback(void) {
-    if (g_json_force_fallback == -1) {
+    int v = atomic_load_explicit(&g_json_force_fallback, memory_order_acquire);
+    if (v == -1) {
         const char *e = getenv("NOSTR_JSON_FORCE_FALLBACK");
-        g_json_force_fallback = (e && (*e == '1' || *e == 't' || *e == 'T' || *e == 'y' || *e == 'Y')) ? 1 : 0;
+        v = (e && (*e == '1' || *e == 't' || *e == 'T' || *e == 'y' || *e == 'Y')) ? 1 : 0;
+        atomic_store_explicit(&g_json_force_fallback, v, memory_order_release);
     }
-    return g_json_force_fallback;
+    return v;
 }
 
 char *nostr_event_serialize(const NostrEvent *event) {

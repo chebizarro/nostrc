@@ -47,7 +47,7 @@ typedef struct SubscriptionRegistry {
     size_t count;
     pthread_mutex_t mutex;
     GoChannel *cleanup_queue;  // Queue of entries to cleanup
-    bool shutdown_requested;
+    _Atomic bool shutdown_requested; /* nostrc-val0v: polled by the cleanup worker, set by pool free */
 } SubscriptionRegistry;
 
 static SubscriptionRegistry *subscription_registry_new(void) {
@@ -450,6 +450,7 @@ void nostr_simple_pool_set_auto_unsub_on_eose(NostrSimplePool *pool, bool enable
 }
 
 // Function to free a SimplePool
+static int pool_worker_claim_join(NostrSimplePool *pool, pthread_t *out_t);
 void nostr_simple_pool_free(NostrSimplePool *pool) {
     if (!pool) return;
 
@@ -470,7 +471,7 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
      * Cost of this join: at most ONE in-flight connect (the worker re-checks
      * redial_stop between relays), which is the same bound the rest of the
      * shutdown path already accepts. */
-    pool->redial_stop = 1;
+    atomic_store_explicit(&pool->redial_stop, 1, memory_order_release);
     pool_redial_wake(pool);
     if (pool->redial_thread_running) {
         pthread_join(pool->redial_thread, NULL);
@@ -500,10 +501,16 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
         fprintf(stderr, "[pool] cleanup worker shutdown complete\n");
     }
 
-    /* Ensure stopped */
-    if (pool->running) {
-        pool->running = false;
-        pthread_join(pool->thread, NULL);
+    /* Ensure stopped (nostrc-9bygk: claim the handle under pool_mutex; a
+     * concurrent start() publishes pool->thread before setting running, so
+     * this never joins an uninitialized pthread_t). */
+    {
+        pthread_t worker;
+        if (pool_worker_claim_join(pool, &worker)) {
+            if (pool->wake_ch)
+                (void)go_channel_try_send(pool->wake_ch, (void *)(uintptr_t)1);
+            pthread_join(worker, NULL);
+        }
     }
 
     /* Phase 2: Cancel all registered subscriptions */
@@ -803,7 +810,7 @@ static void *pool_redial_thread(void *arg) {
     NostrSimplePool *pool = (NostrSimplePool *)arg;
     if (!pool) return NULL;
 
-    while (!pool->redial_stop) {
+    while (!atomic_load_explicit(&pool->redial_stop, memory_order_acquire)) {
         NostrRelay **due = NULL;
         size_t n_due = 0;
         uint64_t wait_ms = POOL_REDIAL_IDLE_MS;
@@ -836,7 +843,7 @@ static void *pool_redial_thread(void *arg) {
         for (size_t i = 0; i < n_due; i++) {
             /* Re-check between relays: a pool being freed then waits out at most
              * ONE in-flight connect rather than one per configured relay. */
-            if (pool->redial_stop) break;
+            if (atomic_load_explicit(&pool->redial_stop, memory_order_acquire)) break;
 
             NostrRelay *r = due[i];
             const char *url = nostr_relay_get_url_const(r);
@@ -866,7 +873,7 @@ static void *pool_redial_thread(void *arg) {
         for (size_t i = 0; i < n_due; i++) nostr_relay_unref(due[i]);
         free(due);
 
-        if (pool->redial_stop) break;
+        if (atomic_load_explicit(&pool->redial_stop, memory_order_acquire)) break;
 
         /* Block rather than spin. Woken by ensure_relay_async (new relay to
          * dial) or by _free() retiring the worker. */
@@ -1162,7 +1169,7 @@ void *simple_pool_thread_func(void *arg) {
      * A 200ms timeout ensures we rescan for new/removed subscriptions
      * even if nothing signals the wake channel (safety net). */
 
-    while (pool->running) {
+    while (atomic_load_explicit(&pool->running, memory_order_acquire)) {
         /* 1. Snapshot subscriptions under lock */
         pthread_mutex_lock(&pool->pool_mutex);
         size_t local_count = pool->subs_count;
@@ -1220,7 +1227,7 @@ void *simple_pool_thread_func(void *arg) {
         }
 
         /* 4. Check if we should exit */
-        if (!pool->running) {
+        if (!atomic_load_explicit(&pool->running, memory_order_acquire)) {
             free(cases);
             free(recv_bufs);
             free(local_subs);
@@ -1304,11 +1311,20 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
      * overwrite pool->thread, orphaning the previous worker -- never joined,
      * still draining subscriptions. Callers had to serialize start() themselves
      * (signet claims the transition under its own mutex for exactly this
-     * reason); a second call is now a no-op instead of a leak. */
+     * reason); a second call is now a no-op instead of a leak.
+     *
+     * nostrc-9bygk: the thread is created WHILE holding pool_mutex and
+     * running is set in the same critical section, so a concurrent
+     * stop()/free() can never observe running==true before pool->thread is
+     * a valid handle and join an uninitialized pthread_t. */
     pthread_mutex_lock(&pool->pool_mutex);
-    bool already_running = pool->running;
-    if (!already_running) {
-        pool->running = true;
+    if (pool->running) {
+        pthread_mutex_unlock(&pool->pool_mutex);
+        return;
+    }
+    int rc = pthread_create(&pool->thread, NULL, simple_pool_thread_func, (void *)pool);
+    if (rc == 0) {
+        atomic_store_explicit(&pool->running, true, memory_order_release);
         /* Re-arm background redial: an explicit disconnect_all()/disconnecting
          * stop() suspended it so it would not immediately dial back what the
          * caller just dropped. */
@@ -1316,12 +1332,7 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
     }
     pthread_mutex_unlock(&pool->pool_mutex);
 
-    if (already_running) return;
-
-    if (pthread_create(&pool->thread, NULL, simple_pool_thread_func, (void *)pool) != 0) {
-        pthread_mutex_lock(&pool->pool_mutex);
-        pool->running = false;
-        pthread_mutex_unlock(&pool->pool_mutex);
+    if (rc != 0) {
         fprintf(stderr, "[pool] ERROR: failed to start pool worker thread\n");
         return;
     }
@@ -1330,23 +1341,38 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
     pool_redial_wake(pool);
 }
 
+/* nostrc-9bygk: claim the pool worker for joining. Returns 1 with @out_t
+ * set to a valid, not-yet-joined thread handle; 0 when no worker runs.
+ * The handle is copied under pool_mutex (start() publishes it there), so
+ * the join can never target an uninitialized or reused pthread_t. A second
+ * concurrent claim sees running==false and returns 0, so the worker is
+ * joined exactly once. */
+static int pool_worker_claim_join(NostrSimplePool *pool, pthread_t *out_t) {
+    pthread_mutex_lock(&pool->pool_mutex);
+    if (!atomic_load_explicit(&pool->running, memory_order_acquire)) {
+        pthread_mutex_unlock(&pool->pool_mutex);
+        return 0;
+    }
+    atomic_store_explicit(&pool->running, false, memory_order_release);
+    *out_t = pool->thread;
+    pthread_mutex_unlock(&pool->pool_mutex);
+    return 1;
+}
+
 // Function to stop the SimplePool
 void nostr_simple_pool_stop(NostrSimplePool *pool) {
     if (!pool) return;
 
     /* Mirror of start()'s idempotence: joining pool->thread when no worker was
      * ever created means joining an uninitialized pthread_t. */
-    pthread_mutex_lock(&pool->pool_mutex);
-    bool was_running = pool->running;
-    pool->running = false;
-    pthread_mutex_unlock(&pool->pool_mutex);
-    if (!was_running) return;
+    pthread_t worker;
+    if (!pool_worker_claim_join(pool, &worker)) return;
 
     /* Wake the worker so it sees running=false immediately */
     if (pool->wake_ch) {
         go_channel_try_send(pool->wake_ch, (void *)(uintptr_t)1);
     }
-    pthread_join(pool->thread, NULL);
+    pthread_join(worker, NULL);
     // On stop: unsubscribe/close/free any active subs and clear list
     pthread_mutex_lock(&pool->pool_mutex);
     if (pool->subs) {

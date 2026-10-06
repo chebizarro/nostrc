@@ -34,7 +34,6 @@ static bool METRICS_ENABLED = true;
 static bool ASYNC_VERIFY = true;
 
 // Cached environment variables to avoid repeated getenv() calls
-static bool env_cached = false;
 static bool debug_incoming = false;
 static bool debug_eose = false;
 static bool debug_shutdown = false;
@@ -70,10 +69,10 @@ static void free_websocket_message(WebSocketMessage *msg) {
     free(msg);
 }
 
-// Initialize performance parameters from environment
-static void init_perf_params(void) {
-    if (env_cached) return;
-    
+// Initialize performance parameters from environment.
+// nostrc-val0v: pthread_once — the plain env_cached check-then-set raced
+// when more than one relay used the optimized loop.
+static void init_perf_params_once(void) {
     const char *val;
     if ((val = getenv("NOSTR_WORKER_POOL_SIZE"))) {
         int n = atoi(val);
@@ -113,11 +112,14 @@ static void init_perf_params(void) {
     debug_eose = getenv("NOSTR_DEBUG_EOSE") != NULL;
     debug_shutdown = getenv("NOSTR_DEBUG_SHUTDOWN") != NULL;
     
-    env_cached = true;
-    
     fprintf(stderr, "[PERF] Initialized: workers=%d verify=%d batch=%d control=%d events=%d\n",
             WORKER_POOL_SIZE, VERIFY_POOL_SIZE, BATCH_SIZE, 
             CONTROL_CHAN_SIZE, EVENT_CHAN_SIZE);
+}
+
+static pthread_once_t g_perf_params_once = PTHREAD_ONCE_INIT;
+static void init_perf_params(void) {
+    (void)pthread_once(&g_perf_params_once, init_perf_params_once);
 }
 
 // Identify control messages by parsing the first JSON array element only.
