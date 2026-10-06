@@ -11,6 +11,7 @@
 #include <string.h>
 #include "../src/social-recovery.h"
 #include "../src/secure-mem.h"
+#include "../src/backup-recovery.h"
 
 /* Test fixture */
 typedef struct {
@@ -394,10 +395,36 @@ static void test_validate_threshold(SSSFixture *fix, gconstpointer user_data) {
  * Main
  * ============================================================ */
 
+/* The npub of an nsec, as Create Profile and the backup sheets derive it
+ * (owner report: "Failed to extract key from nsec" on every new profile;
+ * GNostrNip19 exposes no key material for an nsec). */
+static void
+test_backup_get_npub_from_nsec(void)
+{
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *npub = NULL;
+  g_assert_true(gn_backup_get_npub("nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5",
+                                   &npub, &error));
+  g_assert_no_error(error);
+  g_assert_true(g_str_has_prefix(npub, "npub1"));
+  /* NIP-19's vector: that nsec is this secret key. The hex path does not
+   * decode bech32, so the two agreeing proves the nsec decode. */
+  g_autofree gchar *npub_hex = NULL;
+  g_assert_true(gn_backup_get_npub("67dea2ed018072d675f5415ecfaed7d2597555e202d85b3d65ea4e58d2d92ffa",
+                                   &npub_hex, &error));
+  g_assert_no_error(error);
+  g_assert_cmpstr(npub, ==, npub_hex);
+  /* Garbage is refused, not crashed on. */
+  g_autofree gchar *none = NULL;
+  g_assert_false(gn_backup_get_npub("nsec1notakey", &none, &error));
+  g_assert_nonnull(error);
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
 
   /* SSS core tests */
+  g_test_add_func("/social-recovery/backup/npub-from-nsec", test_backup_get_npub_from_nsec);
   g_test_add("/social-recovery/sss/split-basic", SSSFixture, NULL,
              fixture_setup, test_sss_split_basic, fixture_teardown);
   g_test_add("/social-recovery/sss/split-thresholds", SSSFixture, NULL,

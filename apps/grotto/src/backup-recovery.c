@@ -10,6 +10,7 @@
 #include <json-glib/json-glib.h>
 #include <nostr-gobject-1.0/nostr_nip49.h>
 #include <nostr-gobject-1.0/nostr_nip19.h>
+#include "nostr/nip19/nip19.h"
 #include <nostr-gobject-1.0/nostr_bip39.h>
 #include <nostr-gobject-1.0/nostr_keys.h>
 
@@ -42,32 +43,18 @@ static gchar *parse_private_key_hex(const gchar *input, GError **error) {
   }
 
   if (g_str_has_prefix(input, "nsec1")) {
-    /* Decode bech32 nsec via GNostrNip19 */
-    GError *decode_error = NULL;
-    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(input, &decode_error);
-    if (!nip19) {
+    /* libnostr decodes the secret itself; GNostrNip19 exposes no key
+     * material for an nsec (its pubkey accessor is NULL by design). */
+    uint8_t sk[32];
+    if (nostr_nip19_decode_nsec(input, sk) != 0) {
       g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                  "Invalid nsec format: %s",
-                  decode_error ? decode_error->message : "decode failed");
-      g_clear_error(&decode_error);
+                  "Invalid nsec format");
       return NULL;
     }
-
-    if (gnostr_nip19_get_entity_type(nip19) != GNOSTR_BECH32_NSEC) {
-      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                  "Expected nsec but got different bech32 type");
-      return NULL;
-    }
-
-    /* GNostrNip19 stores the decoded key as hex in the pubkey field for nsec */
-    const gchar *hex = gnostr_nip19_get_pubkey(nip19);
-    gchar *result = hex ? g_strdup(hex) : NULL;
-
-    if (!result) {
-      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_KEY,
-                  "Failed to extract key from nsec");
-      return NULL;
-    }
+    gchar *result = g_malloc0(65);
+    for (int i = 0; i < 32; i++)
+      g_snprintf(result + 2 * i, 3, "%02x", sk[i]);
+    gnostr_secure_clear(sk, sizeof sk);
     return result;
   } else if (is_hex_64(input)) {
     return g_strdup(input);
