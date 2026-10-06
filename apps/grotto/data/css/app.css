@@ -20,11 +20,10 @@
 
 /* ===== Keyboard Navigation & Focus Indicators ===== */
 
-/* Enhanced focus indicators for keyboard navigation */
-*:focus-visible {
-  outline: 2px solid @accent_color;
-  outline-offset: 2px;
-}
+/* No universal `*:focus-visible` rule: GTK propagates state flags to a
+ * widget's descendants, so it drew a ring on every internal child of a
+ * focused entry (seen as "layout outlines flashing" on click). Adwaita
+ * draws the focus ring; the rules below only tune specific widgets. */
 
 /* Focus ring for buttons */
 button:focus-visible {
