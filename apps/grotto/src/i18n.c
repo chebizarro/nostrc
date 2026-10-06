@@ -30,6 +30,12 @@ static const LanguageInfo supported_languages[] = {
 
 static gchar *current_language = NULL;
 
+/* nostrc-z5d2: g_setenv/setlocale are not thread-safe against concurrent
+ * getenv/gettext in GTask or D-Bus worker threads. They are only allowed
+ * while gn_i18n_init() runs (single-threaded); after that, a language
+ * change saves the preference and takes effect after a restart. */
+static gboolean env_mutation_safe = TRUE;
+
 void
 gn_i18n_init(void)
 {
@@ -68,6 +74,9 @@ gn_i18n_init(void)
   /* Apply RTL text direction if needed */
   gn_i18n_apply_text_direction();
 
+  /* From here on, worker threads may exist: freeze the environment */
+  env_mutation_safe = FALSE;
+
   g_debug("i18n: initialized with locale directory: %s", localedir);
 }
 
@@ -98,14 +107,18 @@ gn_i18n_set_language(const gchar *lang)
   current_language = lang ? g_strdup(lang) : NULL;
 
   if (lang) {
-    /* Set environment variables for gettext */
-    g_setenv("LANGUAGE", lang, TRUE);
-    g_setenv("LC_ALL", lang, TRUE);
-    g_setenv("LC_MESSAGES", lang, TRUE);
-    g_setenv("LANG", lang, TRUE);
+    if (env_mutation_safe) {
+      /* Set environment variables for gettext */
+      g_setenv("LANGUAGE", lang, TRUE);
+      g_setenv("LC_ALL", lang, TRUE);
+      g_setenv("LC_MESSAGES", lang, TRUE);
+      g_setenv("LANG", lang, TRUE);
 
-    /* Re-bind text domain to pick up new language */
-    setlocale(LC_ALL, "");
+      /* Re-bind text domain to pick up new language */
+      setlocale(LC_ALL, "");
+    } else {
+      g_message("i18n: language change to '%s' takes effect after a restart", lang);
+    }
 
     /* Save preference */
     SettingsManager *sm = settings_manager_get_default();
@@ -119,8 +132,10 @@ gn_i18n_set_language(const gchar *lang)
     g_debug("i18n: language set to %s", lang);
   } else {
     /* Reset to system default */
-    g_unsetenv("LANGUAGE");
-    setlocale(LC_ALL, "");
+    if (env_mutation_safe) {
+      g_unsetenv("LANGUAGE");
+      setlocale(LC_ALL, "");
+    }
 
     SettingsManager *sm = settings_manager_get_default();
     if (sm) {

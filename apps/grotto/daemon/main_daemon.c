@@ -266,7 +266,8 @@ static void print_usage(const char *prog_name) {
   g_print("Options:\n");
   g_print("  -h, --help              Show this help message\n");
   g_print("  -v, --version           Show version information\n");
-  g_print("  --system                Use system bus instead of session bus\n");
+  g_print("  --system                Use system bus instead of session bus (requires\n");
+  g_print("                          NOSTR_SIGNER_ALLOW_SYSTEM_BUS=1; see source notes)\n");
   g_print("  --bunker                Also serve NIP-46 remote signing (bunker mode) using the\n");
   g_print("                          grotto settings bunker-relays, bunker-allowed-pubkeys,\n");
   g_print("                          bunker-allowed-methods and bunker-auto-approve-kinds\n");
@@ -327,6 +328,18 @@ int main(int argc, char **argv) {
     } else if (g_strcmp0(argv[i], "-v") == 0 || g_strcmp0(argv[i], "--version") == 0) {
       show_version = TRUE;
     } else if (g_strcmp0(argv[i], "--system") == 0) {
+      /* nostrc-nfhf: owning org.nostr.Signer on the system bus exposes
+       * signing to every local user, and no D-Bus policy ships with the
+       * daemon — require an explicit opt-in. */
+      const gchar *allow = g_getenv("NOSTR_SIGNER_ALLOW_SYSTEM_BUS");
+      if (!allow || g_strcmp0(allow, "1") != 0) {
+        g_printerr("%s: refusing --system: the signer protocol is not policy-\n"
+                   "controlled on the system bus (any local user could request\n"
+                   "signatures). Set NOSTR_SIGNER_ALLOW_SYSTEM_BUS=1 only if you\n"
+                   "installed your own D-Bus policy for org.nostr.Signer.\n",
+                   argv[0]);
+        return 1;
+      }
       bus_type = G_BUS_TYPE_SYSTEM;
     } else if (g_strcmp0(argv[i], "--bunker") == 0) {
       g_bunker_requested = TRUE;
