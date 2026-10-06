@@ -10,6 +10,7 @@
  */
 #include "delegation.h"
 #include "secret_store.h"
+#include "key_provider_secp256k1.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
 #include <json-glib/json-glib.h>
 #include <string.h>
@@ -271,6 +272,47 @@ GnDelegationResult gn_delegation_create(const gchar *delegator_npub,
 
 /* ======== Validation ======== */
 
+#ifdef HAVE_SECP256K1
+/* Verify the NIP-26 signature: schnorr(sig, sha256(sha256(delegatee_hex ||
+ * conditions)), delegator_pubkey) — the same digest construction
+ * sign_delegation() uses. */
+static gboolean delegation_signature_valid(const GnDelegation *d) {
+  if (!d || !d->signature || !d->delegatee_pubkey_hex || !d->conditions ||
+      !d->delegator_npub)
+    return FALSE;
+
+  /* Resolve the delegator pubkey hex */
+  const gchar *delegator_hex = d->delegator_npub;
+  g_autofree gchar *decoded = NULL;
+  if (g_str_has_prefix(d->delegator_npub, "npub1")) {
+    g_autoptr(GNostrNip19) nip19 = gnostr_nip19_decode(d->delegator_npub, NULL);
+    if (!nip19) return FALSE;
+    const gchar *pk = gnostr_nip19_get_pubkey(nip19);
+    if (!pk) return FALSE;
+    decoded = g_strdup(pk);
+    delegator_hex = decoded;
+  }
+
+  /* Rebuild the signed digest, mirroring sign_delegation() */
+  gsize msg_len = strlen(d->delegatee_pubkey_hex) + strlen(d->conditions);
+  guint8 *msg = g_malloc(msg_len);
+  memcpy(msg, d->delegatee_pubkey_hex, strlen(d->delegatee_pubkey_hex));
+  memcpy(msg + strlen(d->delegatee_pubkey_hex), d->conditions,
+         strlen(d->conditions));
+
+  guint8 hash1[32];
+  gboolean ok = compute_sha256(msg, msg_len, hash1);
+  g_free(msg);
+  if (!ok) return FALSE;
+
+  guint8 hash2[32];
+  if (!compute_sha256(hash1, 32, hash2)) return FALSE;
+  g_autofree gchar *hash_hex = bytes_to_hex(hash2, 32);
+
+  return gn_secp256k1_verify_hex(delegator_hex, hash_hex, d->signature, NULL);
+}
+#endif /* HAVE_SECP256K1 */
+
 gboolean gn_delegation_is_valid(const GnDelegation *delegation,
                                  guint16 event_kind,
                                  gint64 timestamp) {
@@ -278,6 +320,13 @@ gboolean gn_delegation_is_valid(const GnDelegation *delegation,
 
   /* Check if revoked */
   if (delegation->revoked) return FALSE;
+
+#ifdef HAVE_SECP256K1
+  /* nostrc-ejhx: revocation/time/kind checks alone accept forged
+   * delegations from a tampered storage file; the NIP-26 signature must
+   * verify against the delegator key. */
+  if (!delegation_signature_valid(delegation)) return FALSE;
+#endif
 
   /* Use current time if not specified */
   if (timestamp == 0) {
@@ -346,33 +395,57 @@ gchar *gn_delegation_build_tag(const GnDelegation *delegation) {
 
   if (!delegator_hex) return NULL;
 
-  /* Build JSON array: ["delegation", delegator_pubkey, conditions, sig] */
-  gchar *tag = g_strdup_printf(
-    "[\"delegation\",\"%s\",\"%s\",\"%s\"]",
-    delegator_hex,
-    delegation->conditions ? delegation->conditions : "",
-    delegation->signature);
+  /* Build JSON array: ["delegation", delegator_pubkey, conditions, sig].
+   * nostrc-ejhx: JsonBuilder, not printf — fields loaded from the on-disk
+   * storage file are not trusted and must not be spliced into JSON raw. */
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_array(b);
+  json_builder_add_string_value(b, "delegation");
+  json_builder_add_string_value(b, delegator_hex);
+  json_builder_add_string_value(b, delegation->conditions ? delegation->conditions : "");
+  json_builder_add_string_value(b, delegation->signature);
+  json_builder_end_array(b);
+
+  g_autoptr(JsonNode) root = json_builder_get_root(b);
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, root);
 
   g_free(delegator_hex);
-  return tag;
+  return json_generator_to_data(gen, NULL);
 }
 
 /* ======== Storage ======== */
 
 gchar *gn_delegation_get_storage_path(const gchar *delegator_npub) {
-  /* Use fingerprint (first 16 chars of npub) for filename */
-  gchar fingerprint[17];
-  if (strlen(delegator_npub) >= 16) {
-    memcpy(fingerprint, delegator_npub + 5, 16);  /* Skip "npub1" */
-  } else {
-    g_strlcpy(fingerprint, delegator_npub, sizeof(fingerprint));
+  /* nostrc-oa9t: the old code checked strlen >= 16 but copied 16 bytes
+   * from offset 5 (needs >= 21 — an over-read for shorter strings), and
+   * never validated the prefix, so a "npub" containing '/' escaped the
+   * delegations directory. Validate strictly; anything unexpected gets a
+   * digest-derived name instead of reaching the filesystem raw. */
+  gchar *fingerprint = NULL;
+  gboolean well_formed = delegator_npub &&
+                         g_str_has_prefix(delegator_npub, "npub1") &&
+                         strlen(delegator_npub) >= 21;
+  if (well_formed) {
+    fingerprint = g_strndup(delegator_npub + 5, 16);
+    for (gsize i = 0; i < 16; i++) {
+      if (!g_ascii_isalnum(fingerprint[i])) {
+        g_clear_pointer(&fingerprint, g_free);
+        break;
+      }
+    }
   }
-  fingerprint[16] = '\0';
+  if (!fingerprint) {
+    g_autofree gchar *digest = g_compute_checksum_for_string(
+        G_CHECKSUM_SHA256, delegator_npub ? delegator_npub : "", -1);
+    fingerprint = g_strndup(digest, 16);
+  }
 
   gchar *dir = g_build_filename(g_get_user_data_dir(), "grotto", "delegations", NULL);
   g_autofree gchar *json_filename = g_strdup_printf("%s.json", fingerprint);
   gchar *path = g_build_filename(dir, json_filename, NULL);
   g_free(dir);
+  g_free(fingerprint);
 
   return path;
 }
@@ -521,9 +594,11 @@ GnDelegationResult gn_delegation_save(const gchar *delegator_npub,
   for (guint i = 0; i < all->len; i++) {
     GnDelegation *d = g_ptr_array_index(all, i);
     if (g_strcmp0(d->id, delegation->id) == 0) {
-      /* Replace */
+      /* nostrc-h8g57: copy before freeing — a caller passing an element
+       * of this same array would otherwise be read after free. */
+      GnDelegation *replacement = gn_delegation_copy(delegation);
       gn_delegation_free(d);
-      g_ptr_array_index(all, i) = gn_delegation_copy(delegation);
+      g_ptr_array_index(all, i) = replacement;
       found = TRUE;
       break;
     }
