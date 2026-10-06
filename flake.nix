@@ -12,7 +12,9 @@
         pkgs = import nixpkgs { inherit system; };
         # The desktop apps (W30, nostrc-csrz). Both link the in-tree
         # libraries statically and install only their own files; BUILD_TESTING
-        # must stay OFF (a testing build refuses to install).
+        # must stay OFF (a testing build refuses to install). From a git
+        # checkout build with `nix build '.?submodules=1#groundhog'`: the
+        # nostrdb and nsync submodules are part of the source.
         desktopVersion = "0.12.0-alpha1";
         desktopCmakeFlags = [
           "-DCMAKE_BUILD_TYPE=RelWithDebInfo"

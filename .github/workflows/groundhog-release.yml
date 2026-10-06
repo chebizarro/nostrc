@@ -57,7 +57,9 @@ jobs:
           apt-get install -y -qq devscripts equivs git ca-certificates xvfb dbus >/dev/null
           tar -xzf src/groundhog-*.tar.gz
           cd groundhog-*/
-          cp -r packaging/debian-desktop debian
+          # The archive carries the headless stack's debian/; the desktop
+          # recipe replaces it (scripts/build-desktop-deb.sh does the same).
+          rm -rf debian && cp -r packaging/debian-desktop debian
           mk-build-deps -i -r -t 'apt-get -y -qq' debian/control
           dpkg-buildpackage -b -us -uc
           mkdir -p ../dist && cp ../*.deb ../dist/
@@ -174,8 +176,9 @@ jobs:
         with:
           submodules: recursive
       - uses: cachix/install-nix-action@v31
-      - run: nix build .#groundhog .#grotto --print-out-paths -L
-      - run: nix run .#groundhog -- --version
+      # A git checkout is a flake without its submodules unless asked.
+      - run: nix build '.?submodules=1#groundhog' '.?submodules=1#grotto' --print-out-paths -L
+      - run: nix run '.?submodules=1#groundhog' -- --version
 
   release:
     name: Publish pre-release
