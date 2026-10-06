@@ -664,7 +664,7 @@ Requests exceeding the rate limit receive `org.nostr.Signer.Error.RateLimited`.
 
 ### Permission Model
 
-- **Key mutations disabled by default**: `StoreKey` and `ClearKey` require `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`
+- **Key mutations are for the signer's own UI** (nip55l 0.7.0): `StoreKey`, `ClearKey` and `CreateProfile` are allowed to the trusted approval UI (identified as for `ApproveRequest`); any other caller needs the daemon started with `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`
 - **User approval required**: every gated method (see *Access control*) without a grant triggers interactive approval
 - **Grants**: decisions are remembered per (verified principal, resolved npub, kind), optionally with a TTL, in `~/.config/gnostr/signer-grants.ini`
 - **Approval UI only**: `ApproveRequest` is refused for any caller other than the installed gnostr-signer
@@ -1095,7 +1095,7 @@ answers `org.freedesktop.DBus.Introspectable.Introspect`.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NOSTR_SIGNER_ENDPOINT` | Opt-in NIP-5F endpoint (`unix:/path`, `tcp:host:port`), gated like D-Bus | Unset: D-Bus only |
-| `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS` | Enable `StoreKey`/`ClearKey` (`1` to enable) | Disabled |
+| `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS` | Let any caller use `StoreKey`/`ClearKey`/`CreateProfile` (`1`); without it, only the trusted approval UI may | Unset |
 | `NOSTR_SIGNER_MAX_CONNECTIONS` | Max concurrent TCP connections | 100 |
 | `NOSTR_DEBUG` | Enable debug logging | Disabled |
 | `NOSTR_SIGNER_SECKEY_HEX` | Fallback private key (64-char hex) | None |

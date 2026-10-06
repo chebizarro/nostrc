@@ -132,7 +132,7 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
       const char *entered = gtk_editable_get_text(GTK_EDITABLE(ctx->self->entry_secret));
       const char *kind = entered && g_str_has_prefix(entered, "nsec1") ? "nsec" : (entered && g_str_has_prefix(entered, "ncrypt") ? "ncrypt" : "hex/other");
       g_message("StoreKey returned ok=false. input_kind=%s len=%zu", kind, entered ? strlen(entered) : 0ul);
-      const char *hint = "\n\nHints:\n• Ensure the daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1\n• Verify the key is a valid nsec..., 64-hex, or ncrypt...";
+      const char *hint = "\n\nHints:\n• Verify the key is a valid nsec..., 64-hex, or ncrypt...\n• Only the installed Grotto may store keys; one run from a build directory needs the daemon started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1";
       g_autoptr(GtkAlertDialog) ad = gtk_alert_dialog_new("Import failed.%s", hint);
       gtk_alert_dialog_show(ad, ctx && ctx->parent ? ctx->parent : GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(ctx->self))));
       /* Keep dialog open for correction */

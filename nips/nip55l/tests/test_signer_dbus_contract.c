@@ -321,6 +321,8 @@ static const Trust TRUST_UI = { TRUE, FALSE, TRUE };
 /* No UI on the bus, but this executable is a trusted approver and (when
  * approval_ui_service_dir is set) activatable as org.nostr.Grotto. */
 static const Trust TRUST_UI_ON_DEMAND = { TRUE, FALSE, FALSE };
+/* An ordinary client: no trust at all. */
+static const Trust TRUST_NONE = { FALSE, FALSE, FALSE };
 static const char *approval_ui_service_dir;
 
 /* pre_daemon runs on the private bus before the daemon is spawned (phase 3
@@ -2032,9 +2034,9 @@ static void test_get_relays_paths(Ctx *ctx, gboolean expect_ok) {
 }
 
 static void test_store_key_denied_without_flag(Ctx *ctx) {
-  /* This runs on a fixture built without allow_mutations: the daemon must
-   * refuse StoreKey and ClearKey with PermissionDenied, regardless of the
-   * key material shape. */
+  /* This runs on a fixture built without allow_mutations and without this
+   * process as the approval UI: the daemon must refuse StoreKey with
+   * PermissionDenied, regardless of the key material shape. */
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "StoreKey",
                        g_variant_new("(ss)", ctx->sk_hex, ""),
@@ -2046,7 +2048,7 @@ static void test_store_key_denied_without_flag(Ctx *ctx) {
   g_clear_error(&err);
 }
 
-/* CreateProfile must be denied without NOSTR_SIGNER_ALLOW_KEY_MUTATIONS. */
+/* CreateProfile must be denied to a caller that is not the approval UI. */
 static void test_create_profile_denied_without_flag(Ctx *ctx) {
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "CreateProfile",
@@ -2614,10 +2616,19 @@ int main(int argc, char **argv) {
     test_nip44_derive_conversation_key(&ctx);
     test_selector_not_key_material(&ctx);
     test_get_relays_paths(&ctx, /*expect_ok=*/FALSE);
+    ctx_teardown(&ctx);
+    g_print("PASS phase 1 (no mutations, no relays.conf)\n");
+  }
+
+  /* Key mutations from an ordinary client (not the approval UI, no escape
+   * hatch): refused. */
+  {
+    Ctx ctx;
+    ctx_setup_full(&ctx, /*allow_mutations=*/FALSE, /*write_relays=*/FALSE, NULL, &TRUST_NONE, NULL, NULL);
     test_store_key_denied_without_flag(&ctx);
     test_create_profile_denied_without_flag(&ctx);
     ctx_teardown(&ctx);
-    g_print("PASS phase 1 (no mutations, no relays.conf)\n");
+    g_print("PASS key mutations refused to an ordinary client\n");
   }
 
   /* Gating (nip55l 0.4.0): no grants for this process except a web-origin
@@ -2732,11 +2743,16 @@ int main(int argc, char **argv) {
     if (ran) g_print("PASS bridge (origin grants, origin prompt + remember, non-origin app_id)\n");
   }
 
-  /* Mutations allowed, relays written. Exercises GetRelays
-   * and (best-effort) StoreKey/ClearKey. */
+  /* Mutations by the approval UI (this process, attested on Linux: no
+   * escape hatch needed; macOS cannot attest, so the hatch stays), relays
+   * written. Exercises GetRelays and (best-effort) StoreKey/ClearKey. */
   {
     Ctx ctx;
+#ifdef __APPLE__
     ctx_setup(&ctx, /*allow_mutations=*/TRUE, /*write_relays=*/TRUE);
+#else
+    ctx_setup(&ctx, /*allow_mutations=*/FALSE, /*write_relays=*/TRUE);
+#endif
     test_get_relays_paths(&ctx, /*expect_ok=*/TRUE);
     g_usleep(600 * 1000); /* phase 1's StoreKey probe used this sender's mutation slot */
     gboolean created = try_create_profile_and_list(&ctx);

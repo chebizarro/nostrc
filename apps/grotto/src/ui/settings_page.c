@@ -415,7 +415,7 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
   if (!parent && ctx && ctx->ui && ctx->ui->page) parent = GTK_WINDOW(gtk_widget_get_root(ctx->ui->page));
   if (e){
     const gchar *msg = e->message ? e->message : "unknown error";
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1", msg);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Import failed: %s\nOnly the installed Grotto may store keys; a Grotto run from a build directory needs the daemon started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1.", msg);
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad); g_clear_error(&e);
   } else if (ret){
@@ -620,7 +620,7 @@ static void clear_call_done(GObject *src, GAsyncResult *res, gpointer user_data)
   GError *e=NULL; GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(src), res, &e);
   GtkWindow *parent = GTK_WINDOW(gtk_widget_get_root(ctx->ui->page));
   if (e){
-    GtkAlertDialog *ad = gtk_alert_dialog_new("Clear failed: %s\nEnsure daemon was started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1", e->message);
+    GtkAlertDialog *ad = gtk_alert_dialog_new("Clear failed: %s\nOnly the installed Grotto may remove keys; a Grotto run from a build directory needs the daemon started with NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1.", e->message);
     gtk_alert_dialog_show(ad, parent);
     g_object_unref(ad); g_clear_error(&e);
   } else if (ret){

@@ -722,7 +722,7 @@ static void on_import_dbus_done(GObject *source, GAsyncResult *result, gpointer 
     show_error(self, "Import Failed",
                "The daemon rejected the key import.\n\n"
                "Hints:\n"
-               "- Ensure daemon has NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1\n"
+               "- Only the installed Grotto may store keys (a build-directory Grotto needs NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 on the daemon)\n"
                "- Check if key already exists");
     g_variant_unref(ret);
     return;

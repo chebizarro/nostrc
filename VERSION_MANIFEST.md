@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| W31 key mutations for the signer's own UI (owner report: import failed on the installed package) | nip55l, grotto | 0.7.0, — | Folded into the unreleased 0.7.0 bump: StoreKey, ClearKey and CreateProfile are allowed to the trusted approval UI (identified as for ApproveRequest, attested callers only); NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 remains the escape hatch for any caller. |
 | W31 approval UI on demand (nostrc-sh5h) | nip55l, grotto | 0.7.0, — | nip55l minor bump: additive D-Bus method `ListPendingRequests` and new behaviour (a request needing approval starts the approval UI over the bus instead of failing at once; it fails as before only if the UI cannot be started). Grotto subscribes at startup and holds while prompting; no version of its own. |
 | W30 packaging groundwork and recipes (nostrc-xxv6) | groundhog, grotto | 0.12.0, — | No further bump: store data, copy ("Grotto"), icon sizes, private libnostr-json install, and new recipes (debian-desktop, Flatpak GNOME 51, Arch, RPM, Nix, groundhog-release workflow) folded into unreleased 0.12.0; first alpha tag `groundhog-v0.12.0-alpha1`. |
 | W29 main-window polish and local metadata-search contract (nostrc-lol6) | groundhog | 0.12.0 | No further bump: UI bug fixes and internal, uninstalled shell helper changes folded into unreleased 0.12.0; no public API, wire or storage change. |

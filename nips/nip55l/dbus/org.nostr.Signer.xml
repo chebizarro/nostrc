@@ -194,6 +194,12 @@
       <arg type="s" direction="in" name="app_id" />
       <arg type="s" direction="out" name="relaysJson" />
     </method>
+    <!-- StoreKey / ClearKey / CreateProfile (nip55l 0.7.0): the signer's own
+         UI may store, remove and create keys. It is identified as for
+         ApproveRequest (executable path and inode, or Flatpak id); a caller
+         the bus cannot attest is refused. Anyone else gets
+         Error.PermissionDenied unless the daemon runs with
+         NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 (tests, scripts). -->
     <method name="StoreKey">
       <arg type="s" direction="in" name="key" />
       <arg type="s" direction="in" name="identity" />

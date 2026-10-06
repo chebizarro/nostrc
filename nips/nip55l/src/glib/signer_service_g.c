@@ -181,10 +181,19 @@ static gchar *next_request_id(void){
   return g_strdup_printf("req-%" G_GUINT64_FORMAT, ++counter);
 }
 
-/* Key mutations stay behind the explicit escape hatch. */
-static gboolean signer_mutations_allowed(void){
+/* Key mutations (StoreKey, ClearKey, CreateProfile) are for the signer's
+ * own UI, which is identified like an approver: by executable path and
+ * inode, or Flatpak id, never on a platform that cannot attest the caller.
+ * NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 is the escape hatch for tests and
+ * scripts: with it, any caller may. */
+static gboolean signer_mutations_allowed(GDBusMethodInvocation *invocation){
   const char *env = g_getenv("NOSTR_SIGNER_ALLOW_KEY_MUTATIONS");
-  return (env && g_strcmp0(env, "1")==0);
+  if (env && g_strcmp0(env, "1")==0) return TRUE;
+  g_autoptr(SignerCaller) c = signer_caller_identify_fresh(
+      g_dbus_method_invocation_get_connection(invocation),
+      g_dbus_method_invocation_get_sender(invocation));
+  if (!c || c->unattested) return FALSE;
+  return signer_caller_is_approver(c);
 }
 
 /* Per-sender minimum interval; entries leave when the sender disconnects. */
@@ -1125,7 +1134,7 @@ static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *inv
 {
   (void)object;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION, "key mutations disabled"); return TRUE; }
+  if (!signer_mutations_allowed(invocation)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION, "key mutations are for the signer's own UI (or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1)"); return TRUE; }
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "rate limited"); return TRUE; }
   int rc = nostr_nip55l_store_key(key, identity);
   if (rc == 0) {
@@ -1207,7 +1216,7 @@ static gboolean handle_clear_key(NostrSigner *object, GDBusMethodInvocation *inv
 {
   (void)object;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!signer_mutations_allowed()) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "key mutations disabled"); return TRUE; }
+  if (!signer_mutations_allowed(invocation)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "key mutations are for the signer's own UI (or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1)"); return TRUE; }
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return TRUE; }
   int rc = nostr_nip55l_clear_key(identity);
   nostr_signer_complete_clear_key(object, invocation, rc==0);
@@ -1252,7 +1261,7 @@ static void start_keyring_migration(void) {
 
 /* ---------------------------------------------------------------------------
  * CreateProfile (nostrc-jvbl): generate a new random keypair, store it, return npub.
- * Requires NOSTR_SIGNER_ALLOW_KEY_MUTATIONS.
+ * Approval UI only, or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1.
  * Signature: (ssssb) -> (bs)
  *   in:  display_name, passphrase, recovery_hint, label, use_hardware_key
  *   out: ok, npub
@@ -1265,9 +1274,9 @@ static gboolean handle_create_profile(NostrSigner *object, GDBusMethodInvocation
 {
   (void)passphrase; (void)recovery_hint; (void)label; (void)use_hardware_key;
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
-  if (!signer_mutations_allowed()) {
+  if (!signer_mutations_allowed(invocation)) {
     g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_PERMISSION,
-      "Key mutations disabled (set NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1 to enable)");
+      "key mutations are for the signer's own UI (or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1)");
     return TRUE;
   }
   if (!rate_limit_ok(sender)) {
