@@ -31,6 +31,7 @@ struct _GnSecureEntry {
   GtkLevelBar *level_strength;
   GtkLabel *lbl_strength;
   GtkLabel *lbl_caps_warning;
+  GtkWidget *box_caps_warning; /* icon + label: shown and hidden as one */
   GtkLabel *lbl_length_indicator;
   GtkLabel *lbl_requirements;
 
@@ -425,15 +426,15 @@ gn_secure_entry_update_strength(GnSecureEntry *self)
   if (self->level_strength && self->show_strength_indicator) {
     gdouble value = (gdouble)self->cached_strength;
     gtk_level_bar_set_value(self->level_strength, value);
-    gtk_widget_set_visible(GTK_WIDGET(self->level_strength),
-                           self->buffer_len > 0);
+    gtk_widget_set_opacity(GTK_WIDGET(self->level_strength),
+                           self->buffer_len > 0 ? 1.0 : 0.0);
   }
 
   if (self->lbl_strength && self->show_strength_indicator) {
     const gchar *label = get_strength_label(self->cached_strength);
     gtk_label_set_text(self->lbl_strength, label);
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_strength),
-                           self->buffer_len > 0);
+    gtk_widget_set_opacity(GTK_WIDGET(self->lbl_strength),
+                           self->buffer_len > 0 ? 1.0 : 0.0);
 
     /* Update CSS class - use modern GTK4 API */
     GtkWidget *strength_widget = GTK_WIDGET(self->lbl_strength);
@@ -458,10 +459,9 @@ static void
 gn_secure_entry_update_indicators(GnSecureEntry *self)
 {
   /* Caps lock warning */
-  if (self->lbl_caps_warning && self->show_caps_warning) {
-    gboolean was_visible = gtk_widget_get_visible(GTK_WIDGET(self->lbl_caps_warning));
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_caps_warning),
-                           self->caps_lock_on);
+  if (self->box_caps_warning && self->show_caps_warning) {
+    gboolean was_visible = gtk_widget_get_visible(self->box_caps_warning);
+    gtk_widget_set_visible(self->box_caps_warning, self->caps_lock_on);
 
     /* Announce caps lock state change to screen readers via live region */
     if (self->caps_lock_on && !was_visible && self->entry_password) {
@@ -486,10 +486,13 @@ gn_secure_entry_update_indicators(GnSecureEntry *self)
       gtk_widget_remove_css_class(length_widget, "error");
       gtk_widget_remove_css_class(length_widget, "success");
       gtk_widget_add_css_class(length_widget, meets_min ? "success" : "error");
-      gtk_widget_set_visible(GTK_WIDGET(self->lbl_length_indicator), TRUE);
+      gtk_widget_set_opacity(length_widget, 1.0);
     } else {
-      gtk_widget_set_visible(GTK_WIDGET(self->lbl_length_indicator), FALSE);
+      /* Keeps its row (a space keeps the height) so the page does not move. */
+      gtk_label_set_text(self->lbl_length_indicator, " ");
+      gtk_widget_set_opacity(GTK_WIDGET(self->lbl_length_indicator), 0.0);
     }
+    gtk_widget_set_visible(GTK_WIDGET(self->lbl_length_indicator), TRUE);
   }
 
   /* Requirements text */
@@ -745,6 +748,7 @@ gn_secure_entry_class_init(GnSecureEntryClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, level_strength);
   gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, lbl_strength);
   gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, lbl_caps_warning);
+  gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, box_caps_warning);
   gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, lbl_length_indicator);
   gtk_widget_class_bind_template_child(widget_class, GnSecureEntry, lbl_requirements);
 
@@ -816,10 +820,10 @@ gn_secure_entry_init(GnSecureEntry *self)
     gtk_widget_set_visible(GTK_WIDGET(self->level_strength), FALSE);
   if (self->lbl_strength)
     gtk_widget_set_visible(GTK_WIDGET(self->lbl_strength), FALSE);
-  if (self->lbl_caps_warning)
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_caps_warning), FALSE);
+  if (self->box_caps_warning)
+    gtk_widget_set_visible(self->box_caps_warning, FALSE);
   if (self->lbl_length_indicator)
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_length_indicator), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->lbl_length_indicator), self->min_length > 0);
   if (self->lbl_requirements)
     gtk_widget_set_visible(GTK_WIDGET(self->lbl_requirements), FALSE);
 }
@@ -1038,10 +1042,17 @@ gn_secure_entry_set_show_strength_indicator(GnSecureEntry *self, gboolean show)
 
   self->show_strength_indicator = show;
 
-  if (self->level_strength)
-    gtk_widget_set_visible(GTK_WIDGET(self->level_strength), show && self->buffer_len > 0);
-  if (self->lbl_strength)
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_strength), show && self->buffer_len > 0);
+  /* The meter's row keeps its place from the start and fades in with the
+   * first character: a row appearing on the first keystroke moved the
+   * whole page (owner report, Create Your Profile). */
+  if (self->level_strength) {
+    gtk_widget_set_visible(GTK_WIDGET(self->level_strength), show);
+    gtk_widget_set_opacity(GTK_WIDGET(self->level_strength), self->buffer_len > 0 ? 1.0 : 0.0);
+  }
+  if (self->lbl_strength) {
+    gtk_widget_set_visible(GTK_WIDGET(self->lbl_strength), show);
+    gtk_widget_set_opacity(GTK_WIDGET(self->lbl_strength), self->buffer_len > 0 ? 1.0 : 0.0);
+  }
 
   g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_SHOW_STRENGTH_INDICATOR]);
 }

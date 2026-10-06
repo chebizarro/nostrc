@@ -100,9 +100,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
-              <object class="GtkBox">
+              <object class="GtkBox" id="box_caps_warning">
                 <property name="orientation">0</property>
                 <property name="spacing">4</property>
+                <property name="visible">false</property>
                 <child>
                   <object class="GtkImage">
                     <property name="icon-name">dialog-warning-symbolic</property>
@@ -116,7 +117,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <object class="GtkLabel" id="lbl_caps_warning">
                     <property name="label" translatable="yes">Caps Lock is on</property>
                     <property name="xalign">0</property>
-                    <property name="visible">false</property>
                     <accessibility>
                       <property name="label" translatable="yes">Warning: Caps Lock is enabled</property>
                     </accessibility>

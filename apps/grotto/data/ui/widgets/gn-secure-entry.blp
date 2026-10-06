@@ -95,9 +95,10 @@ template $GnSecureEntry: Widget {
         ]
       }
 
-      Box {
+      Box box_caps_warning {
         orientation: horizontal;
         spacing: 4;
+        visible: false;
 
         Image {
           icon-name: "dialog-warning-symbolic";
@@ -111,7 +112,6 @@ template $GnSecureEntry: Widget {
         Label lbl_caps_warning {
           label: _("Caps Lock is on");
           xalign: 0;
-          visible: false;
 
           accessibility {
             label: _("Warning: Caps Lock is enabled");
