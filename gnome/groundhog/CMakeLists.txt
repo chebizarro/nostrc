@@ -3030,7 +3030,8 @@ endif()
 # W29 consent-gated web content: shared HTTP policy, built-in image decoder.
 if (TARGET groundhog-conversation-ui AND TARGET groundhog-net)
   pkg_check_modules(GROUNDHOG_WEB_XML REQUIRED IMPORTED_TARGET libxml-2.0)
-  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-web-content.c src/media/gh-metadata-strip.c)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-web-content.c src/ui/gh-picture-cache.c
+                 src/media/gh-metadata-strip.c)
   target_include_directories(groundhog-conversation-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/media)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-net PkgConfig::GROUNDHOG_WEB_XML)
 endif()

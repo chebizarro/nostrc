@@ -23,5 +23,17 @@ gboolean gh_store_contacts_get_verified(GhStore *store, const gchar *pubkey,
 gboolean gh_store_contacts_set_verified(GhStore *store, const gchar *pubkey,
                                         gint64 verified_at, GError **error);
 
+/* Profile pictures (W32). When the account allowed pubkey's profile
+ * picture to be loaded (unix seconds), or 0. A consent, kept until revoked:
+ * the picture may be fetched and shown wherever that contact appears. */
+gboolean gh_store_contacts_get_picture_allowed(GhStore *store, const gchar *pubkey,
+                                               gint64 *out_allowed_at, GError **error);
+gboolean gh_store_contacts_set_picture_allowed(GhStore *store, const gchar *pubkey,
+                                               gint64 allowed_at, GError **error);
+/* Every contact with a picture consent (64-hex, lowercase). Transfer full. */
+GStrv gh_store_contacts_list_picture_allowed(GhStore *store, GError **error);
+/* Revokes every picture consent (the preference turned off). */
+gboolean gh_store_contacts_clear_picture_allowed(GhStore *store, GError **error);
+
 G_END_DECLS
 #endif

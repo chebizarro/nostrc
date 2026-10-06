@@ -1,5 +1,6 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
+#include "gh-picture-cache.h"
 #include "gh-conversation-view.h"
 #include "gh-privacy-summary.h"
 #include "gh-requests-view.h"
@@ -17,6 +18,7 @@ typedef struct {
   GhSidebarPage *sidebar;
   GhContentPage *content;
   GhConversationView *view; /* a reference: a queued load may outlive the window's dispose */
+  GhPictureCache *pictures;  /* shared profile pictures (W32) */
   GhRequestsView *requests_view; /* the content page's "requests" page (G18) */
   GhConversationStore *store;
   GtkFilter *accepted;        /* not a message request */
@@ -49,6 +51,7 @@ list_free(gpointer data)
   if (list->member_count_destroy)
     list->member_count_destroy(list->member_count_data);
   g_clear_object(&list->view);
+  g_clear_object(&list->pictures);
   g_clear_object(&list->store);
   g_clear_object(&list->accepted);
   g_clear_object(&list->requests);
@@ -95,13 +98,21 @@ setup_row(GtkSignalListItemFactory *factory, GtkListItem *item, GhSidebarPage *s
   g_object_bind_property(row, "summary", item, "accessible-label", G_BINDING_SYNC_CREATE);
 }
 
+static gchar *
+row_picture_uri(const gchar *pubkey, gpointer data)
+{
+  return gh_conversation_view_dup_picture_uri_for(GH_CONVERSATION_VIEW(data), pubkey);
+}
+
 static void
 bind_row(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data)
 {
   (void)factory;
-  (void)data;
-  gh_conversation_row_set_conversation(GH_CONVERSATION_ROW(gtk_list_item_get_child(item)),
-                                       GH_CONVERSATION(gtk_list_item_get_item(item)));
+  GhConversationList *list = data;
+  GhConversationRow *row = GH_CONVERSATION_ROW(gtk_list_item_get_child(item));
+  gh_conversation_row_set_picture_cache(row, list->pictures ? G_OBJECT(list->pictures) : NULL,
+                                        row_picture_uri, list->view);
+  gh_conversation_row_set_conversation(row, GH_CONVERSATION(gtk_list_item_get_item(item)));
 }
 
 static void
@@ -349,6 +360,14 @@ on_load_older(GhConversationView *view, GhConversation *conversation, gpointer d
 }
 
 void
+gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend, gpointer data)
+{
+  GhConversationList *list = list_of(window);
+  if (list && list->pictures)
+    gh_picture_cache_set_consent(list->pictures, backend, data);
+}
+
+void
 gh_conversation_list_set_history_source(GhWindow *window, GhConversationListLoadOlder load_older,
                                         gpointer user_data, GDestroyNotify destroy)
 {
@@ -441,6 +460,14 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   list->view = g_object_ref_sink(GH_CONVERSATION_VIEW(gh_conversation_view_new()));
   gh_conversation_view_set_settings(list->view, settings);
   gh_conversation_view_enable_web_content(list->view, NULL, NULL);
+  /* Profile pictures: consent per contact, one download per URL, shown in
+   * the message rows and the sidebar alike (W32). Its own GhWebContent
+   * shares the HTTP policy; nothing is fetched without consent. */
+  {
+    g_autoptr(GhWebContent) web = gh_web_content_new(settings, NULL, NULL);
+    list->pictures = gh_picture_cache_new(web);
+    gh_conversation_view_set_picture_cache(list->view, G_OBJECT(list->pictures));
+  }
   gh_content_page_set_view(list->content, GTK_WIDGET(list->view));
   list->requests_view = GH_REQUESTS_VIEW(gh_requests_view_new());
   gtk_stack_add_named(gh_content_page_get_stack(list->content), GTK_WIDGET(list->requests_view),
@@ -468,7 +495,7 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
 
   GtkListItemFactory *rows = gtk_signal_list_item_factory_new();
   g_signal_connect(rows, "setup", G_CALLBACK(setup_row), list->sidebar);
-  g_signal_connect(rows, "bind", G_CALLBACK(bind_row), NULL);
+  g_signal_connect(rows, "bind", G_CALLBACK(bind_row), list);
   g_signal_connect(rows, "unbind", G_CALLBACK(unbind_row), NULL);
   gtk_list_view_set_factory(gh_sidebar_page_get_list(list->sidebar), rows);
   g_object_unref(rows);

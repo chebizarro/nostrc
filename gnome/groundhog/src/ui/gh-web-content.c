@@ -42,14 +42,28 @@ parse_result(GBytes *bytes, GhWebKind kind, GError **error)
 {
   g_autoptr(GhWebResult) result = g_new0(GhWebResult, 1);
   if (kind != GH_WEB_PREVIEW) {
+    /* JPEG and PNG are measured before decoding; any other format GTK's
+     * loaders know (WebP, GIF, AVIF - what most Nostr image hosts serve
+     * profile pictures as; owner report: pictures did not load) is decoded
+     * from the size-capped download and measured after. */
     guint width = 0, height = 0;
-    if (!gh_media_probe_dimensions(bytes, NULL, &width, &height, error)) return NULL;
-    if (!width || !height || width > 4096 || height > 4096) {
-      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Image dimensions exceed the limit");
+    GhMediaFormat format = GH_MEDIA_FORMAT_OTHER;
+    g_autoptr(GError) probe_error = NULL;
+    if (gh_media_probe_dimensions(bytes, &format, &width, &height, &probe_error)) {
+      if (!width || !height || width > 4096 || height > 4096) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Image dimensions exceed the limit");
+        return NULL;
+      }
+    } else if (!g_error_matches(probe_error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED)) {
+      g_propagate_error(error, g_steal_pointer(&probe_error));
       return NULL;
     }
     result->texture = gdk_texture_new_from_bytes(bytes, error);
     if (!result->texture) return NULL;
+    if (gdk_texture_get_width(result->texture) > 4096 || gdk_texture_get_height(result->texture) > 4096) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Image dimensions exceed the limit");
+      return NULL;
+    }
     return g_steal_pointer(&result);
   }
   gsize size = 0;
@@ -119,7 +133,7 @@ gh_web_content_load_async(GhWebContent *self, const gchar *uri, GhWebKind kind,
     self->transport.get_async(self->data, uri, limit, cancel, loaded, task);
   else
     gh_net_http_get_public_async(self->http, uri,
-      kind == GH_WEB_PREVIEW ? "text/html" : "image/png,image/jpeg", limit, cancel, loaded, task);
+      kind == GH_WEB_PREVIEW ? "text/html" : "image/*", limit, cancel, loaded, task);
 }
 
 GhWebResult *

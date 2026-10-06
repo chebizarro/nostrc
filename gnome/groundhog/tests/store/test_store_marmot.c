@@ -2207,7 +2207,7 @@ make_v1_store(const TestAccount *account)
   /* Later migrations are undone too: v3 (G19) added contacts.verified_at;
    * v4 (W18) the arrival order, read, timer and inbox columns and two
    * triggers; v5 (W25) the MLS source epoch, attachment identities and
-   * group pictures. */
+   * group pictures; v9 (W32) the picture consent column. */
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
   sql_exec(store, "DROP INDEX conversations_by_backend_key");
@@ -2216,6 +2216,7 @@ make_v1_store(const TestAccount *account)
   sql_exec(store, "DROP TABLE message_media");
   sql_exec(store, "ALTER TABLE messages DROP COLUMN mls_epoch");
   sql_exec(store, "ALTER TABLE contacts DROP COLUMN verified_at");
+  sql_exec(store, "ALTER TABLE contacts DROP COLUMN picture_allowed_at"); /* v9 (W32) */
   static const gchar *const v4_undo[] = {
     "DROP TRIGGER messages_admit_seq",
     "DROP TRIGGER messages_keep_read_marker",
@@ -2266,7 +2267,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 8);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 9);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
@@ -2300,6 +2301,7 @@ test_migration_v6_scrubs_messages(void)
   sql_exec(store, rows);
   sqlite3_free(rows);
   /* Back to schema 5. */
+  sql_exec(store, "ALTER TABLE contacts DROP COLUMN picture_allowed_at"); /* v9 (W32) */
   sql_exec(store, "DROP INDEX mls_messages_by_epoch");
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
@@ -2388,9 +2390,10 @@ test_migration_v7_to_v8(void)
   test_account_init(&account, ACCOUNT_A);
   make_committed_v7_store(&account);
   GhStore *store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
-  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 8);
-  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 8);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, GH_STORE_SCHEMA_VERSION);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 9"), ==, 1);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pending_reactions"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reaction_tombstones"), ==, 0);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM pragma_table_info('pending_reactions') "
@@ -2403,9 +2406,9 @@ test_migration_v7_to_v8(void)
   gint64 schema_version = sql_int(store, "PRAGMA schema_version");
   gh_store_close(store);
   store = store_open_flags(&account, NULL, GH_STORE_OPEN_NONE);
-  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, 8);
+  g_assert_cmpint(sql_int(store, "PRAGMA user_version"), ==, GH_STORE_SCHEMA_VERSION);
   g_assert_cmpint(sql_int(store, "PRAGMA schema_version"), ==, schema_version);
-  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, 8);
+  g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations"), ==, GH_STORE_SCHEMA_VERSION);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM schema_migrations WHERE version = 8"), ==, 1);
   g_assert_cmpint(sql_int(store, "SELECT count(*) FROM reactions WHERE "
                                  "reaction_msg_id = 'old-reaction' AND emoji = '+' AND "

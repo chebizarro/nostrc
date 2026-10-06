@@ -22,6 +22,12 @@ void gh_conversation_row_set_conversation(GhConversationRow *self,
                                           GhConversation *conversation);
 GhConversation *gh_conversation_row_get_conversation(GhConversationRow *self);
 void gh_conversation_row_set_show_preview(GhConversationRow *self, gboolean show_preview);
+/* The avatar shows the peer's profile picture when a GhPictureCache (the
+ * shared, consent-gated cache) has it: uri(pubkey, data) gives the picture
+ * URL. For a direct conversation only. NULL cache: initials as before. */
+typedef gchar *(*GhConversationRowPictureUri)(const gchar *pubkey, gpointer data);
+void gh_conversation_row_set_picture_cache(GhConversationRow *self, GObject *cache,
+                                           GhConversationRowPictureUri uri, gpointer data);
 const gchar *gh_conversation_row_get_summary(GhConversationRow *self);
 /* Opens the row's context menu (charter §7.4; nostrc-qp24.74): Mute… (not
  * for a message request), Conversation Info and Delete…, which run the

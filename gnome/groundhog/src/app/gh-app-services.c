@@ -14,6 +14,10 @@
 #endif
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
+#include "gh-picture-cache.h"
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+#include "gh-store-contacts.h"
+#endif
 #include "gh-dm-inbox.h"
 #include "gh-inbox-status.h"
 #endif
@@ -834,6 +838,8 @@ attachments_sign_async(gpointer data, const gchar *unsigned_event_json,
 static GhMlsService *mls_ui_service(gpointer data);
 #endif
 
+static void picture_consent_sync(GhStore *store);
+
 static void
 attachments_sync(GhAppServices *self)
 {
@@ -842,6 +848,7 @@ attachments_sync(GhAppServices *self)
                        state == GH_ACCOUNT_STORE_CORRUPT
                      ? gh_account_store_get_store(self->account_store)
                      : NULL;
+  picture_consent_sync(store);
   if (store == gh_attachments_get_store(self->attachments))
     return;
   gh_attachments_set_store(self->attachments, store);
@@ -851,10 +858,44 @@ attachments_sync(GhAppServices *self)
 
 /* Right after a close, before any other store can open (the downloads
  * borrowed it). */
+/* Profile-picture consent lives in the open store's contacts table (W32,
+ * schema v9); the cache in each window reads and writes it through this. */
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+static GStrv
+picture_consent_list(gpointer data, GError **error)
+{ return gh_store_contacts_list_picture_allowed(data, error); }
+static gboolean
+picture_consent_set(gpointer data, const gchar *pubkey, gint64 allowed_at, GError **error)
+{ return gh_store_contacts_set_picture_allowed(data, pubkey, allowed_at, error); }
+static gboolean
+picture_consent_clear(gpointer data, GError **error)
+{ return gh_store_contacts_clear_picture_allowed(data, error); }
+static const GhPictureConsentBackend picture_consent_backend = {
+  picture_consent_list, picture_consent_set, picture_consent_clear
+};
+#endif
+
+static void
+picture_consent_sync(GhStore *store)
+{
+  for (GList *w = gtk_application_get_windows(GTK_APPLICATION(g_application_get_default()));
+       w; w = w->next) {
+    if (!GH_IS_WINDOW(w->data)) continue;
+#if GROUNDHOG_HAVE_CONVERSATION_INFO
+    gh_conversation_list_set_picture_consent(GH_WINDOW(w->data),
+                                             store ? &picture_consent_backend : NULL, store);
+#else
+    (void)store;
+    gh_conversation_list_set_picture_consent(GH_WINDOW(w->data), NULL, NULL);
+#endif
+  }
+}
+
 static void
 attachments_store_closed(GhAppServices *self)
 {
   gh_attachments_set_store(self->attachments, NULL);
+  picture_consent_sync(NULL);
 }
 
 static gboolean
@@ -1894,6 +1935,12 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_INBOX
   gh_conversation_list_attach(window, self->conversations, self->settings);
+  {
+    GhAccountStoreState state = gh_account_store_get_state(self->account_store);
+    GhStore *open = state == GH_ACCOUNT_STORE_OPEN || state == GH_ACCOUNT_STORE_EPHEMERAL
+                      ? gh_account_store_get_store(self->account_store) : NULL;
+    picture_consent_sync(open);
+  }
   gh_inbox_status_attach(gh_window_get_status(window), self->inbox, self->relays);
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR

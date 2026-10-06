@@ -5,6 +5,7 @@
 #include "gh-conversation-row.h"
 #include "gh-reaction.h"
 #include "gh-reaction-store.h"
+#include "gh-picture-cache.h"
 
 #include <glib/gi18n.h>
 
@@ -607,6 +608,8 @@ typedef struct {
   GdkTexture *texture;
 } Preview;
 
+static gboolean picture_via_cache(GhConversationView *self, const gchar *id, Preview *preview);
+
 static void
 preview_free(Preview *preview)
 {
@@ -679,6 +682,7 @@ struct _GhConversationView {
   GhPictureUriFunc picture_uri;
   GObject *picture_source;
   GHashTable *allowed_senders; /* kind + sender, for the open conversation only */
+  GhPictureCache *pictures;    /* nullable: per-contact consent and textures, app-wide */
   guint64 web_generation;
   GHashTable *previews;    /* rumor id -> Preview */
   GCancellable *cancellable;
@@ -1592,6 +1596,13 @@ on_preview_response(GhConversationView *self, const gchar *response)
     g_hash_table_add(self->allowed_senders,
                      g_strdup_printf("%u:%s", preview->kind, preview->sender));
   }
+  /* A profile picture: the allow is for that person, everywhere, and kept
+   * (owner decision, W32); the shared cache fetches once per URL. */
+  if (preview->kind == GH_WEB_PICTURE && self->pictures) {
+    gh_picture_cache_allow(self->pictures, preview->sender);
+    if (picture_via_cache(self, rumor_id, preview))
+      return;
+  }
   fetch_preview(self, rumor_id);
 }
 
@@ -1683,6 +1694,78 @@ gh_conversation_view_dup_picture_uri(GhConversationView *self, GhMessage *messag
   return uri;
 }
 
+gchar *
+gh_conversation_view_dup_picture_uri_for(GhConversationView *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  if (!self->picture_uri || !pubkey) return NULL;
+  gchar *uri = self->picture_uri(pubkey, self->picture_source);
+  if (uri && !gh_link_policy_can_preview(uri)) g_clear_pointer(&uri, g_free);
+  return uri;
+}
+
+/* A picture arrived in (or left) the shared cache: every picture preview of
+ * that sender takes it, and the rows redraw. */
+static void
+on_cache_picture_changed(GhPictureCache *cache, const gchar *pubkey, GhConversationView *self)
+{
+  GHashTableIter iter;
+  gpointer key, value;
+  gboolean changed = FALSE;
+  g_hash_table_iter_init(&iter, self->previews);
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
+    Preview *preview = value;
+    if (preview->kind != GH_WEB_PICTURE || g_strcmp0(preview->sender, pubkey) != 0) continue;
+    GdkTexture *texture = gh_picture_cache_get(cache, pubkey, preview->uri);
+    if (texture) {
+      g_set_object(&preview->texture, texture);
+      preview->state = GH_LINK_PREVIEW_LOADED;
+    } else if (gh_picture_cache_has_failed(cache, preview->uri)) {
+      preview->state = GH_LINK_PREVIEW_FAILED;
+    } else if (!gh_picture_cache_is_allowed(cache, pubkey)) {
+      g_clear_object(&preview->texture);
+      preview->state = GH_LINK_PREVIEW_NONE;
+    }
+    changed = TRUE;
+  }
+  if (changed)
+    g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+void
+gh_conversation_view_set_picture_cache(GhConversationView *self, GObject *cache)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->pictures)
+    g_signal_handlers_disconnect_by_data(self->pictures, self);
+  GhPictureCache *pictures = cache ? GH_PICTURE_CACHE(cache) : NULL;
+  g_set_object(&self->pictures, pictures);
+  if (self->pictures)
+    g_signal_connect_object(self->pictures, "picture-changed",
+                            G_CALLBACK(on_cache_picture_changed), self, 0);
+}
+
+/* A picture through the shared cache: the texture now, or a fetch with
+ * "picture-changed" to follow. TRUE when the cache handles this preview. */
+static gboolean
+picture_via_cache(GhConversationView *self, const gchar *id, Preview *preview)
+{
+  if (!self->pictures || preview->kind != GH_WEB_PICTURE ||
+      !gh_picture_cache_is_allowed(self->pictures, preview->sender))
+    return FALSE;
+  GdkTexture *texture = gh_picture_cache_get(self->pictures, preview->sender, preview->uri);
+  if (texture) {
+    g_set_object(&preview->texture, texture);
+    set_preview_state(self, id, GH_LINK_PREVIEW_LOADED);
+  } else if (gh_picture_cache_has_failed(self->pictures, preview->uri)) {
+    set_preview_state(self, id, GH_LINK_PREVIEW_FAILED);
+  } else {
+    set_preview_state(self, id, GH_LINK_PREVIEW_LOADING);
+  }
+  g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+  return TRUE;
+}
+
 GdkTexture *
 gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *message,
                                       GhWebKind kind, GhLinkPreviewState *state)
@@ -1737,7 +1820,9 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     return;
   g_autofree gchar *sender_key = g_strdup_printf("%u:%s", kind, gh_message_get_sender(message));
   gboolean loaded_already = loaded_texture_for(self, kind, uri) != NULL;
-  if (!loaded_already && !g_hash_table_contains(self->allowed_senders, sender_key))
+  gboolean by_cache = kind == GH_WEB_PICTURE && self->pictures &&
+                      gh_picture_cache_is_allowed(self->pictures, gh_message_get_sender(message));
+  if (!loaded_already && !by_cache && !g_hash_table_contains(self->allowed_senders, sender_key))
     return;
   if (!preview) {
     preview = g_new0(Preview, 1);
@@ -1746,6 +1831,8 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     preview->kind = kind;
     g_hash_table_insert(self->previews, g_strdup(id), preview);
   }
+  if (by_cache && picture_via_cache(self, id, preview))
+    return;
   GdkTexture *loaded = loaded_texture_for(self, kind, preview->uri);
   if (loaded) {
     g_set_object(&preview->texture, loaded);
@@ -1765,6 +1852,8 @@ web_setting_changed(GSettings *settings, const gchar *key, GhConversationView *s
     if (!g_settings_get_boolean(self->settings, key)) {
       cancel_previews(self);
       close_dialog(ADW_DIALOG(self->preview_dialog));
+      if (i == GH_WEB_PICTURE && self->pictures)
+        gh_picture_cache_revoke_all(self->pictures);
       g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
     }
     return;
@@ -2164,6 +2253,7 @@ static void
 gh_conversation_view_dispose(GObject *object)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(object);
+  gh_conversation_view_set_picture_cache(self, NULL);
   if (self->message_list)
     gh_conversation_view_set_conversation(self, NULL);
   if (self->cancellable)

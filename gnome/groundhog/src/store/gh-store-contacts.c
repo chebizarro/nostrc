@@ -94,3 +94,86 @@ gh_store_contacts_set_verified(GhStore *store, const gchar *pubkey, gint64 verif
     return TRUE;
   return gh_store_set_sqlite_error(store, rc, "Marking a contact verified", error);
 }
+
+gboolean
+gh_store_contacts_get_picture_allowed(GhStore *store, const gchar *pubkey, gint64 *out_allowed_at,
+                                      GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_allowed_at != NULL, FALSE);
+  *out_allowed_at = 0;
+  if (!is_hex64(pubkey))
+    return invalid(error, "the key must be 64 lowercase hex");
+  sqlite3_stmt *stmt = prepare(store, "SELECT picture_allowed_at FROM contacts WHERE pubkey = ?1",
+                               error);
+  if (!stmt)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, pubkey, -1, SQLITE_STATIC);
+  int rc = sqlite3_step(stmt);
+  if (rc == SQLITE_ROW)
+    *out_allowed_at = MAX(sqlite3_column_int64(stmt, 0), 0);
+  sqlite3_finalize(stmt);
+  if (rc == SQLITE_ROW || rc == SQLITE_DONE)
+    return TRUE;
+  return gh_store_set_sqlite_error(store, rc, "Reading a contact", error);
+}
+
+gboolean
+gh_store_contacts_set_picture_allowed(GhStore *store, const gchar *pubkey, gint64 allowed_at,
+                                      GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (!is_hex64(pubkey))
+    return invalid(error, "the key must be 64 lowercase hex");
+  if (allowed_at < 0)
+    return invalid(error, "the time must not be negative");
+  if (gh_store_is_read_only(store)) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_CORRUPT, "The store is read-only");
+    return FALSE;
+  }
+  sqlite3_stmt *stmt = prepare(store, allowed_at > 0
+    ? "INSERT INTO contacts (pubkey, picture_allowed_at) VALUES (?1, ?2) "
+      "ON CONFLICT (pubkey) DO UPDATE SET picture_allowed_at = excluded.picture_allowed_at"
+    : "UPDATE contacts SET picture_allowed_at = 0 WHERE pubkey = ?1", error);
+  if (!stmt)
+    return FALSE;
+  sqlite3_bind_text(stmt, 1, pubkey, -1, SQLITE_STATIC);
+  if (allowed_at > 0)
+    sqlite3_bind_int64(stmt, 2, allowed_at);
+  int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (rc == SQLITE_DONE)
+    return TRUE;
+  return gh_store_set_sqlite_error(store, rc, "Writing a contact", error);
+}
+
+GStrv
+gh_store_contacts_list_picture_allowed(GhStore *store, GError **error)
+{
+  g_return_val_if_fail(store != NULL, NULL);
+  sqlite3_stmt *stmt = prepare(store, "SELECT pubkey FROM contacts WHERE picture_allowed_at > 0",
+                               error);
+  if (!stmt)
+    return NULL;
+  g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
+  int rc;
+  while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    g_strv_builder_add(builder, (const gchar *)sqlite3_column_text(stmt, 0));
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    gh_store_set_sqlite_error(store, rc, "Listing contacts", error);
+    return NULL;
+  }
+  return g_strv_builder_end(builder);
+}
+
+gboolean
+gh_store_contacts_clear_picture_allowed(GhStore *store, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  if (gh_store_is_read_only(store)) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_CORRUPT, "The store is read-only");
+    return FALSE;
+  }
+  return gh_store_exec(store, "UPDATE contacts SET picture_allowed_at = 0", error);
+}

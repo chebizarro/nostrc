@@ -405,6 +405,12 @@ static const gchar schema_v8[] =
   "  UNIQUE(reaction_msg_id, room_id, sender_pubkey));"
   "CREATE INDEX reaction_tombstones_age ON reaction_tombstones(received_at);";
 
+/* Schema v9 (W32, owner decision): when the account allowed a contact's
+ * profile picture to be loaded (unix seconds; 0 = not allowed). Local only,
+ * P8; gh-store-contacts.c is the only writer. */
+static const gchar schema_v9[] =
+  "ALTER TABLE contacts ADD COLUMN picture_allowed_at INTEGER NOT NULL DEFAULT 0;";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -414,6 +420,7 @@ static const GhStoreMigration migrations[] = {
   { 6, "No plaintext in libmarmot's message rows; messages by epoch (W25)", schema_v6 },
   { 7, "NIP-25 reactions on messages (W26 slice B, nostrc-191r)", schema_v7 },
   { 8, "Bounded pending reactions and deletion tombstones (W28, nostrc-r41l)", schema_v8 },
+  { 9, "Profile-picture consent per contact (W32)", schema_v9 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

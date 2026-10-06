@@ -46,6 +46,10 @@ typedef gboolean (*GhConversationListLoadOlder)(GhConversation *conversation, GE
  * read, unread messages still unloaded stay unread. NULL removes it (the
  * view then says earlier messages can't be shown). user_data is released
  * with destroy when replaced or with window. */
+/* Where the profile-picture cache keeps per-contact consent (the account's
+ * encrypted store, through the app; NULL when no account is open). */
+void gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend,
+                                              gpointer data);
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);

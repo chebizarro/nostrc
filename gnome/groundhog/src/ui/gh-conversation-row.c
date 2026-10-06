@@ -1,6 +1,7 @@
 #include "gh-conversation-row.h"
 
 #include "gh-privacy-summary.h"
+#include "gh-picture-cache.h"
 
 #include <glib/gi18n.h>
 
@@ -16,6 +17,9 @@ struct _GhConversationRow {
   GtkLabel *unread_badge;
   GtkPopover *context_popover;
   GhConversation *conversation;
+  GhPictureCache *pictures;                 /* nullable, ref'd */
+  GhConversationRowPictureUri picture_uri;  /* with pictures */
+  gpointer picture_data;
   gchar *summary;
   gboolean show_preview;
 };
@@ -313,6 +317,17 @@ update(GhConversationRow *self)
   }
 
   adw_avatar_set_text(self->avatar, title);
+  /* The peer's picture, when the shared cache has it with consent. */
+  GdkTexture *picture = NULL;
+  if (self->pictures && self->picture_uri && is_direct && backend != GH_PRIVACY_BACKEND_NIP29) {
+    const gchar *const *peers = gh_conversation_get_peers(self->conversation);
+    const gchar *peer = peers && peers[0] && !peers[1] ? peers[0] : NULL;
+    if (peer && gh_picture_cache_is_allowed(self->pictures, peer)) {
+      g_autofree gchar *uri = self->picture_uri(peer, self->picture_data);
+      picture = gh_picture_cache_get(self->pictures, peer, uri);
+    }
+  }
+  adw_avatar_set_custom_image(self->avatar, picture ? GDK_PAINTABLE(picture) : NULL);
   gtk_label_set_text(self->title_label, title);
   gtk_widget_set_visible(GTK_WIDGET(self->pinned_icon), pinned);
   gtk_label_set_text(self->time_label, time);
@@ -404,6 +419,30 @@ gh_conversation_row_get_summary(GhConversationRow *self)
   return self->summary;
 }
 
+static void
+on_picture_changed(GhPictureCache *cache, const gchar *pubkey, GhConversationRow *self)
+{
+  (void)cache; (void)pubkey;
+  if (self->conversation) update(self);
+}
+
+void
+gh_conversation_row_set_picture_cache(GhConversationRow *self, GObject *cache,
+                                      GhConversationRowPictureUri uri, gpointer data)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_ROW(self));
+  if (self->pictures)
+    g_signal_handlers_disconnect_by_data(self->pictures, self);
+  GhPictureCache *pictures = cache ? GH_PICTURE_CACHE(cache) : NULL;
+  g_set_object(&self->pictures, pictures);
+  self->picture_uri = uri;
+  self->picture_data = data;
+  if (self->pictures)
+    g_signal_connect_object(self->pictures, "picture-changed", G_CALLBACK(on_picture_changed),
+                            self, 0);
+  if (self->conversation) update(self);
+}
+
 GtkWidget *
 gh_conversation_row_new(void)
 {
@@ -453,6 +492,9 @@ gh_conversation_row_dispose(GObject *object)
   if (self->conversation)
     g_signal_handlers_disconnect_by_data(self->conversation, self);
   g_clear_object(&self->conversation);
+  if (self->pictures)
+    g_signal_handlers_disconnect_by_data(self->pictures, self);
+  g_clear_object(&self->pictures);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONVERSATION_ROW);
   /* A plain GtkWidget owns its template's unnamed children too. */
   GtkWidget *child;

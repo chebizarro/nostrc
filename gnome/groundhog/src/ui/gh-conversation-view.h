@@ -168,6 +168,13 @@ GhDeliveryReport *gh_conversation_view_dup_delivery_report(GhConversationView *s
 void gh_conversation_view_enable_web_content(GhConversationView *self,
                                              const GhHttpTransport *transport, gpointer data);
 typedef gchar *(*GhPictureUriFunc)(const gchar *pubkey, gpointer data);
+/* The shared profile-picture cache (consent per contact, one download per
+ * URL): with it, an allow for a picture is kept for that contact and the
+ * picture shows wherever the contact appears. NULL: per-conversation only. */
+void gh_conversation_view_set_picture_cache(GhConversationView *self, GObject *cache);
+/* The picture URL for a contact as the picture source gives it (checked by
+ * the link policy), or NULL. Transfer full. */
+gchar *gh_conversation_view_dup_picture_uri_for(GhConversationView *self, const gchar *pubkey);
 void gh_conversation_view_set_picture_source(GhConversationView *self, GhPictureUriFunc func,
                                               GObject *source);
 gboolean gh_conversation_view_has_web_content(GhConversationView *self);
