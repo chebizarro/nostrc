@@ -879,9 +879,11 @@ static void update_passphrase_strength(OnboardingAssistant *self) {
         gtk_widget_remove_css_class(match_widget, "success");
         gtk_widget_add_css_class(match_widget, "error");
       }
-      gtk_widget_set_visible(match_widget, TRUE);
+      gtk_widget_set_opacity(match_widget, 1.0);
     } else {
-      gtk_widget_set_visible(GTK_WIDGET(self->passphrase_match_label), FALSE);
+      /* Keeps its row so the page does not move when the verdict appears. */
+      gtk_label_set_text(self->passphrase_match_label, " ");
+      gtk_widget_set_opacity(GTK_WIDGET(self->passphrase_match_label), 0.0);
     }
 
     if (confirm) gn_secure_entry_free_text(confirm);
@@ -1427,8 +1429,10 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
     gtk_widget_set_visible(GTK_WIDGET(self->box_status), FALSE);
 
   /* Hide passphrase match label initially */
-  if (self->passphrase_match_label)
-    gtk_widget_set_visible(GTK_WIDGET(self->passphrase_match_label), FALSE);
+  if (self->passphrase_match_label) {
+    gtk_label_set_text(self->passphrase_match_label, " ");
+    gtk_widget_set_opacity(GTK_WIDGET(self->passphrase_match_label), 0.0);
+  }
 
   /* Initial state */
   update_navigation_buttons(self);
