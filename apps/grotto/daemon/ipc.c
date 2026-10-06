@@ -32,6 +32,7 @@ static IpcStats g_ipc_stats = {0};
 #include <windows.h>
 #include <sddl.h>
 #include <stddef.h>
+#include <bcrypt.h>
 #include "nostr/nip5f/nip5f.h"
 #include "json.h"
 
@@ -64,6 +65,9 @@ static int npipe_write_frame(HANDLE pipe, const char *json, size_t len);
 #include <errno.h>
 #include <pthread.h>
 #include <stddef.h>
+#ifdef __linux__
+#include <sys/random.h>
+#endif
 #include "nostr/nip5f/nip5f.h"
 #include "nip55l_nip5f.h"
 #include "json.h"
@@ -105,6 +109,54 @@ struct GnostrIpcServer {
 #ifdef GNOSTR_ENABLE_TCP_IPC
 static gpointer tcp_ipc_accept_thread(gpointer data);
 #endif
+
+#if defined(GNOSTR_ENABLE_TCP_IPC) || defined(G_OS_WIN32)
+/* Fill buf with cryptographically secure random bytes; FALSE if no CSPRNG.
+ *
+ * nostrc-dpxp: the IPC auth token was previously drawn from
+ * g_random_int_range() seeded with a 32-bit monotonic timestamp — a
+ * brute-forceable seed (daemon start time is observable) that also clobbered
+ * the global GRand for every other consumer in the process. Callers must
+ * fail closed: no CSPRNG, no token. */
+static gboolean ipc_csprng(guint8 *buf, gsize len) {
+#if defined(G_OS_WIN32)
+  NTSTATUS status = BCryptGenRandom(NULL, buf, (ULONG)len,
+                                    BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+  return BCRYPT_SUCCESS(status);
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+  arc4random_buf(buf, len);
+  return TRUE;
+#elif defined(__linux__)
+  gsize done = 0;
+  while (done < len) {
+    ssize_t n = getrandom(buf + done, len - done, 0);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return FALSE;
+    }
+    done += (gsize)n;
+  }
+  return TRUE;
+#else
+  /* Last resort: /dev/urandom with a full-read loop */
+  int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) return FALSE;
+  gsize done = 0;
+  while (done < len) {
+    ssize_t n = read(fd, buf + done, len - done);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      close(fd);
+      return FALSE;
+    }
+    if (n == 0) { close(fd); return FALSE; }
+    done += (gsize)n;
+  }
+  close(fd);
+  return TRUE;
+#endif
+}
+#endif /* GNOSTR_ENABLE_TCP_IPC || G_OS_WIN32 */
 
 static gchar *default_endpoint(void) {
 #ifdef G_OS_UNIX
@@ -256,9 +308,14 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
     g_autoptr(GError) token_read_err = NULL;
     if (!g_file_get_contents(srv->token_path, &srv->token, NULL, &token_read_err)) {
       guint8 rnd[32];
-      g_random_set_seed((guint32)g_get_monotonic_time());
-      for (gsize i = 0; i < sizeof(rnd); ++i)
-        rnd[i] = (guint8)g_random_int_range(0, 256);
+      if (!ipc_csprng(rnd, sizeof(rnd))) {
+        g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_FAILED,
+                            "Failed to generate IPC auth token: no CSPRNG available");
+        g_clear_pointer(&srv->token_path, g_free);
+        ipc_stats_cleanup(srv);
+        g_free(srv);
+        return NULL;
+      }
       gchar *hex = g_malloc0(65);
       static const char *H = "0123456789abcdef";
       for (int i = 0; i < 32; i++) {
@@ -390,9 +447,14 @@ GnostrIpcServer* gnostr_ipc_server_start(const char *endpoint, GError **error) {
     g_autoptr(GError) npipe_err = NULL;
     if (!g_file_get_contents(srv->npipe_token_path, &srv->npipe_token, NULL, &npipe_err)) {
       guint8 rnd[32];
-      g_random_set_seed((guint32)g_get_monotonic_time());
-      for (gsize i = 0; i < sizeof(rnd); ++i) {
-        rnd[i] = (guint8)g_random_int_range(0, 256);
+      if (!ipc_csprng(rnd, sizeof(rnd))) {
+        g_set_error_literal(error, GN_IPC_ERROR, GN_IPC_ERROR_FAILED,
+                            "Failed to generate IPC auth token: no CSPRNG available");
+        g_free(normalized_name);
+        g_free(srv->npipe_token_path);
+        ipc_stats_cleanup(srv);
+        g_free(srv);
+        return NULL;
       }
       gchar *hex = g_malloc0(65);
       static const char *H = "0123456789abcdef";
