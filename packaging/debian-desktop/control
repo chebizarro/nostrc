@@ -41,7 +41,8 @@ Depends: ${shlibs:Depends},
          gstreamer1.0-plugins-good
 Recommends: gnome-keyring | org.freedesktop.secrets,
             gstreamer1.0-plugins-bad,
-            gstreamer1.0-libav
+            gstreamer1.0-libav,
+            webp-pixbuf-loader
 Suggests: tor
 Description: Private messaging on Nostr for GNOME
  Groundhog is a GTK4 and libadwaita messenger for Nostr: private messages

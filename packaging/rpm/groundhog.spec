@@ -62,6 +62,7 @@ Requires:       gstreamer1-plugins-base
 Requires:       gstreamer1-plugins-good
 Recommends:     gnome-keyring
 Recommends:     gstreamer1-plugins-bad-free
+Recommends:     webp-pixbuf-loader
 Suggests:       tor
 
 %description

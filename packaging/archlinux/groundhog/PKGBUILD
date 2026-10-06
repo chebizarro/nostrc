@@ -63,6 +63,7 @@ package_groundhog() {
     'gst-plugins-bad: voice messages recorded by other apps (AAC)'
     'gst-libav: voice messages recorded by other apps (AAC)'
     'tor: connect to relays through Tor'
+    'webp-pixbuf-loader: profile pictures and images in WebP'
   )
   DESTDIR="$pkgdir" cmake --install build/gnome/groundhog
   install -Dm644 "groundhog-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
