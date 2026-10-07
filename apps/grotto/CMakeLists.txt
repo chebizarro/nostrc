@@ -479,10 +479,15 @@ endif()
 # ==============================================================================
 # NIP-07 Native Messaging Host
 # ==============================================================================
-# Native messaging host for browser extension support (Chrome/Firefox)
+# Native messaging host for browser extension support (Chrome/Firefox).
+# The host bridges to the signer over the D-Bus session bus, which only
+# exists on Unix; on Windows the signer IPC is named pipes (npipe), so the
+# host is skipped there (nostrc-8o95q).
 option(BUILD_NATIVE_HOST "Build NIP-07 native messaging host" ON)
-if (BUILD_NATIVE_HOST)
+if (BUILD_NATIVE_HOST AND NOT WIN32)
   add_subdirectory(native-host)
+elseif (BUILD_NATIVE_HOST AND WIN32)
+  message(STATUS "NIP-07 native messaging host is Unix-only (D-Bus session bus); skipping on Windows")
 endif()
 
 # ==============================================================================

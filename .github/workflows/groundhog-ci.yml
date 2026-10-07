@@ -96,6 +96,7 @@ jobs:
             test-groundhog-message-reply \
             test-groundhog-mls-poll \
             test-groundhog-bus-probe test-groundhog-two-instance \
+            test-groundhog-gdk-frame-tolerance test-groundhog-status-notifier \
             groundhog-test-harness test-groundhog-two-instance-acceptance \
             test-groundhog-voice test-groundhog-voice-ui test-groundhog-mdk011-interop
 
@@ -153,6 +154,7 @@ jobs:
               'groundhog-icons', 'groundhog-message-reply',
               'groundhog-mls-poll',
               'groundhog-bus-probe', 'groundhog-two-instance',
+              'groundhog-gdk-frame-tolerance', 'groundhog-status-notifier',
               'groundhog-two-instance-acceptance',
               'groundhog-voice',
               'groundhog-voice-ui',

@@ -16,6 +16,14 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   include(CTest)
 endif()
 
+# The host bridges to the signer over the D-Bus session bus, which only
+# exists on Unix; on Windows the signer IPC is named pipes (npipe). Fail
+# with a clear message instead of a pkg-config error: MinGW's glib has no
+# gio-unix-2.0 (nostrc-8o95q).
+if (WIN32)
+  message(FATAL_ERROR "nostr-signer-webext-host is Unix-only (D-Bus session bus); on Windows use the npipe signer IPC")
+endif()
+
 include(GNUInstallDirs)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(NMH_DEPS REQUIRED IMPORTED_TARGET
