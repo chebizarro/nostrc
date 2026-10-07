@@ -1,3 +1,19 @@
+groundhog (0.12.0~alpha2-1) unstable; urgency=medium
+
+  * Grotto security hardening: CSPRNG IPC auth token, daemon IPC
+    authentication and named-pipe framing, secure delete without a shell,
+    bounded hardware-wallet (Ledger/HID) reads, delegation and approval
+    checks, signal-safe shutdown, locale handling after start-up.
+  * Groundhog hardening from a static review (store array growth, portal
+    lifetime, instance paths, entropy fallback).
+  * Fixes from the alpha 1 test drive: key import and profile creation in
+    the installed Grotto, the daemon replacing itself after an upgrade,
+    profile pictures by contact everywhere (WebP too), reactions on the
+    bubble's side, sidebar named after the profile, app indicator on
+    Ubuntu and KDE, one deb per Debian/Ubuntu release.
+
+ -- Biz <chebizarro@protonmail.com>  Wed, 07 Oct 2026 12:00:00 +0000
+
 groundhog (0.12.0~alpha1-1) unstable; urgency=medium
 
   * First alpha: private messages (NIP-17), relay groups (NIP-29) and

@@ -6,12 +6,12 @@
 # which GitHub's tag archives leave out). To build from a checkout, write the
 # archive next to this file first:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha1 packaging/archlinux/groundhog
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha2 packaging/archlinux/groundhog
 #   (cd packaging/archlinux/groundhog && makepkg -s)
 
 pkgbase=groundhog
 pkgname=('groundhog' 'grotto')
-_version=0.12.0-alpha1
+_version=0.12.0-alpha2
 pkgver=${_version//-/}
 pkgrel=1
 arch=('x86_64' 'aarch64')

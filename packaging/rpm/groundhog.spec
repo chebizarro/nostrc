@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha1 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha2 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha1
+%global upstream_version 0.12.0-alpha2
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.1.alpha1%{?dist}
+Release:        0.2.alpha2%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -165,6 +165,19 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Wed Oct 07 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.2.alpha2
+- Grotto security hardening: CSPRNG IPC auth token, daemon IPC
+  authentication and named-pipe framing, secure delete without a shell,
+  bounded hardware-wallet (Ledger/HID) reads, delegation and approval
+  checks, signal-safe shutdown, locale handling after start-up.
+- Groundhog hardening from a static review (store array growth, portal
+  lifetime, instance paths, entropy fallback).
+- Fixes from the alpha 1 test drive: key import and profile creation in
+  the installed Grotto, the daemon replacing itself after an upgrade,
+  profile pictures by contact everywhere (WebP too), reactions on the
+  bubble's side, sidebar named after the profile, app indicator on
+  Ubuntu and KDE, one deb per Debian/Ubuntu release.
+
 * Mon Oct 05 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.1.alpha1
 - First alpha: private messages (NIP-17), relay groups (NIP-29) and Marmot
   encrypted groups, with Grotto as the signer.
