@@ -77,7 +77,8 @@ typedef struct {
   gpointer transport_data;
   /* The account's own kind 0 too (its name titles the sidebar): the
    * account is treated as an accepted contact for the scheduled refresh,
-   * never for a send-time or accept-time lookup. Default off. */
+   * and looked up on its own 5-60 s after the store opens while its name
+   * is not cached. Default off. */
   gboolean own_profile;
 } GhContactDirectoryConfig;
 

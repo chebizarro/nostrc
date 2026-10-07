@@ -31,12 +31,19 @@ typedef struct {
   gboolean any_success;   /* G21 send: any 2xx is success, and HTTP errors are
                            * told apart (gh_net_http_send_async) */
   gboolean own_session;   /* session is the request's alone (Tor, or public only) */
+  /* GETs only (W33): redirects still allowed, and what a hop repeats. */
+  guint redirects_left;
+  gchar *uri;
+  gchar *accept;
+  gboolean public_only;
 } Request;
 
 static void
 request_free(gpointer data)
 {
   Request *request = data;
+  g_free(request->uri);
+  g_free(request->accept);
   GhNetHttp *owner = request->owner;
   if (owner->requests)
     g_ptr_array_remove_fast(owner->requests, request);
@@ -526,6 +533,25 @@ status_error(SoupMessage *message, guint status)
                               status);
 }
 
+static void request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
+                               const gchar *accept, gsize max_bytes, gboolean public_only,
+                               guint redirects, GCancellable *cancellable,
+                               GAsyncReadyCallback callback, gpointer user_data);
+
+/* The next hop answered: its bytes (or error) are the original request's. */
+static void
+on_redirected(GObject *source, GAsyncResult *result, gpointer data)
+{
+  g_autoptr(GTask) task = data;
+  GError *error = NULL;
+  GBytes *bytes = g_task_propagate_pointer(G_TASK(result), &error);
+  (void)source;
+  if (bytes)
+    g_task_return_pointer(task, bytes, (GDestroyNotify)g_bytes_unref);
+  else
+    g_task_return_error(task, error);
+}
+
 static void
 on_sent(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -542,9 +568,29 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
   report(request, TRUE);
   guint status = soup_message_get_status(request->message);
   if (SOUP_STATUS_IS_REDIRECTION(status)) {
-    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
-                            "The server redirected the request (HTTP %u), which is not followed",
-                            status);
+    /* A public GET (web content) follows a few redirects (owner report W33:
+     * Primal's Blossom answers every picture with a 302 to its storage
+     * host). NIP-05 and sends never do (redirects_left 0). Each hop is a
+     * new request under the same policy: https only, .onion only through
+     * Tor, and a public address when the first had to be. Uploads and other
+     * sends never follow. */
+    const gchar *location = soup_message_headers_get_one(
+      soup_message_get_response_headers(request->message), "Location");
+    g_autoptr(GUri) next = NULL;
+    if (location && request->redirects_left > 0 && !request->any_success && request->uri) {
+      g_autoptr(GUri) base = g_uri_parse(request->uri, G_URI_FLAGS_ENCODED, NULL);
+      next = base ? g_uri_parse_relative(base, location, G_URI_FLAGS_ENCODED, NULL) : NULL;
+    }
+    if (!next) {
+      g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED,
+                              "The server redirected the request (HTTP %u), which is not followed",
+                              status);
+      return;
+    }
+    g_autofree gchar *next_uri = g_uri_to_string(next);
+    request_start_hops(request->owner, NULL, next_uri, request->accept, request->max_bytes,
+                       request->public_only, request->redirects_left - 1, request->caller,
+                       on_redirected, g_object_ref(task));
     return;
   }
   if (request->any_success) {
@@ -583,10 +629,24 @@ gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
 
 /* One request: a GET (gh_net_http_get_accept_async) or, for G21, any
  * gh_net_http_send_async() one (send set). */
+#define GET_MAX_REDIRECTS 3
+
 static void
 request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
               const gchar *accept, gsize max_bytes, gboolean public_only,
               GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+{
+  /* Redirects are never followed here: NIP-05 forbids it, and sends do not.
+   * Only gh_net_http_get_public_async (web content) follows them. */
+  request_start_hops(self, send, uri, accept, max_bytes, public_only, 0, cancellable,
+                     callback, user_data);
+}
+
+static void
+request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
+                   const gchar *accept, gsize max_bytes, gboolean public_only,
+                   guint redirects, GCancellable *cancellable,
+                   GAsyncReadyCallback callback, gpointer user_data)
 {
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_net_http_get_async);
@@ -618,6 +678,10 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
                                                                    : SOUP_METHOD_GET, parsed);
   request->any_success = send != NULL;
   request->own_session = own_session;
+  request->redirects_left = redirects;
+  request->uri = g_strdup(uri);
+  request->accept = g_strdup(accept);
+  request->public_only = public_only;
   request->cancellable = g_cancellable_new();
   g_task_set_task_data(task, request, request_free);
   g_ptr_array_add(self->requests, request);
@@ -663,7 +727,8 @@ gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   g_return_if_fail(GH_IS_NET_HTTP(self));
   g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
   g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
-  request_start(self, NULL, uri, accept, max_bytes, TRUE, cancellable, callback, user_data);
+  request_start_hops(self, NULL, uri, accept, max_bytes, TRUE, GET_MAX_REDIRECTS, cancellable,
+                     callback, user_data);
 }
 
 static gboolean

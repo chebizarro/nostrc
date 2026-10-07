@@ -1227,6 +1227,15 @@ gh_contact_directory_set_store(GhContactDirectory *self, GhStore *store, GError 
     restore(self);
     /* S1: nothing is refreshed right away. */
     schedule_run_within(self, RUN_MIN_S, RUN_MAX_S);
+    /* The account's own name titles the sidebar (W33: it still showed the
+     * npub, waiting 2-30 min for the first run): looked up on its own soon
+     * after the store opens, when not cached yet. */
+    if (self->own_profile && self->account && hex64(self->account)) {
+      Contact *me = contact_ensure(self, self->account);
+      me->accepted = TRUE;
+      if (!me->name)
+        schedule_soon(self, me);
+    }
     collect_shown(self, shown);
   }
   GHashTableIter iter;

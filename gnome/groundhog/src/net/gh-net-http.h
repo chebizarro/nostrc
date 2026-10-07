@@ -76,7 +76,11 @@ GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **e
  * connection. In Tor mode the proxy resolves the name and connects, and Tor
  * exits refuse private addresses. In System mode through a desktop proxy the
  * proxy does both too, and is trusted with the user's own network. Finished
- * with gh_net_http_get_finish(). */
+ * with gh_net_http_get_finish(). Up to three redirects are followed (W33:
+ * Blossom servers such as Primal's answer with a 302 to their storage
+ * host), each hop checked again exactly like the first: https only, .onion
+ * only through Tor, a public address. The other GETs never follow one
+ * (NIP-05 forbids it). */
 void gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
                                   gsize max_bytes, GCancellable *cancellable,
                                   GAsyncReadyCallback callback, gpointer user_data);

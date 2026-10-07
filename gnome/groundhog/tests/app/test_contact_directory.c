@@ -541,9 +541,9 @@ test_nt11_cache(void)
 
 /* ---- the account's own profile (owner report: npub as sidebar title) ---------------- */
 
-/* With own_profile, the account is one more stale entry for the scheduled
- * run: never looked up on its own, asked for with the first batch, and its
- * kind-0 name is then its display name. Without the flag it is unknown. */
+/* With own_profile, the account's kind 0 is asked for on its own within
+ * [5, 60] s of the store opening (W33: the sidebar showed the npub until the
+ * first scheduled run), and its name is then its display name. */
 static void
 test_own_profile(void)
 {
@@ -553,16 +553,14 @@ test_own_profile(void)
   own_profile_config = FALSE;
   room_with(&f, &people[0], TRUE, T0 - 1000);
   bind_store(&f);
-  advance(&f, 60);
-  g_assert_cmpuint(f.rec.reqs->len, ==, 0); /* nothing on its own */
   g_assert_null(gh_contact_directory_get_display_name(f.dir, hex_alice));
-
-  advance_to_next(&f); /* the first run: the contact and the account together */
-  g_assert_cmpuint(f.rec.reqs->len, ==, 2);
+  for (guint s = 0; s < 60 && f.rec.reqs->len == 0; s++)
+    advance(&f, 1);
+  g_assert_cmpuint(f.rec.reqs->len, ==, 2); /* one REQ per discovery relay */
   Req *req = req_at(&f, 0);
-  g_assert_cmpuint(req->authors->len, ==, 2);
-  g_assert_true(req_asks(req, people[0].pk));
+  g_assert_cmpuint(req->authors->len, ==, 1);
   g_assert_true(req_asks(req, hex_alice));
+  g_assert_false(req_asks(req, people[0].pk)); /* contacts wait for the run */
   g_assert_true(req->profiles);
   Person alice = { .sk = (gchar *)gh_test_secret[1], .pk = hex_alice };
   g_autofree gchar *mine = profile(&alice, T0 - 100, "{\"name\":\"alice\",\"display_name\":\"Alice A.\"}");

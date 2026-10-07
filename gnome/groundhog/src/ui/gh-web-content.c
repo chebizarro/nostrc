@@ -128,7 +128,9 @@ gh_web_content_load_async(GhWebContent *self, const gchar *uri, GhWebKind kind,
 {
   GTask *task = g_task_new(self, cancel, callback, data);
   g_task_set_task_data(task, GUINT_TO_POINTER(kind), NULL);
-  gsize limit = kind == GH_WEB_PREVIEW ? 256 * 1024 : 2 * 1024 * 1024;
+  /* Pictures up to 6 MiB (W33: several common profile pictures are 2.5-3
+   * MiB); still decoded only within the 4096 px bound. */
+  gsize limit = kind == GH_WEB_PREVIEW ? 256 * 1024 : 6 * 1024 * 1024;
   if (self->transport.get_async)
     self->transport.get_async(self->data, uri, limit, cancel, loaded, task);
   else
