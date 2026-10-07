@@ -404,6 +404,12 @@ static void sleepers_add(gof_fiber *f, uint64_t deadline_ns) {
   sleepheap.entries[idx].f = f;
   heap_sift_up(idx);
   pthread_mutex_unlock(&sleepheap.mu);
+  /* nostrc-e08s7: a worker that entered the untimed idle wait before this
+   * sleeper existed would otherwise never learn about the new deadline and
+   * sleep past it (or forever, when no other work arrives). */
+  pthread_mutex_lock(&S.mu);
+  pthread_cond_signal(&S.cv);
+  pthread_mutex_unlock(&S.mu);
 }
 
 static void sleepers_wake_ready(uint64_t now_ns) {

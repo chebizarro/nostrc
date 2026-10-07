@@ -61,7 +61,8 @@ void gof_hook_block_current(void);
  * the deadline, OR automatically by the scheduler's sleeper mechanism
  * when deadline_ns (nanoseconds since epoch) expires.
  *
- * @param deadline_ns Absolute deadline in nanoseconds (clock_gettime CLOCK_REALTIME).
+ * @param deadline_ns Absolute deadline in nanoseconds on CLOCK_MONOTONIC
+ *                    (the scheduler's sleeper-heap domain; nostrc-e9ou3).
  *                    Use 0 to block indefinitely (same as gof_hook_block_current).
  *
  * No-op if not called from a fiber context.

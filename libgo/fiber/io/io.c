@@ -64,6 +64,11 @@ typedef struct gof_fdwait {     /* fd entry with separate read/write queues */
 static gof_fdwait *fd_buckets[FDWAIT_BUCKETS];
 static _Atomic int ready_cb_installed = 0;
 static pthread_mutex_t io_mu = PTHREAD_MUTEX_INITIALIZER;
+/* Number of registered IO waiter nodes, maintained under io_mu and read
+ * lock-free by gof_io_have_waiters(). The scheduler's idle loop calls that
+ * while holding S.mu, so it must not take io_mu: on_ready holds io_mu while
+ * waking, and the wake takes S.mu (nostrc-bme1g review — ABBA deadlock). */
+static _Atomic int g_io_waiter_count = 0;
 
 static unsigned fd_hash(int fd){ return ((unsigned)fd) & (FDWAIT_BUCKETS-1); }
 
@@ -84,10 +89,13 @@ static void waiter_push(gof_waiter **head, gof_waiter **tail, gof_fiber *f){
   w->next = NULL;
   if (*tail) { (*tail)->next = w; *tail = w; }
   else { *head = *tail = w; }
+  atomic_fetch_add_explicit(&g_io_waiter_count, 1, memory_order_relaxed);
 }
 
 static gof_fiber* waiter_pop(gof_waiter **head, gof_waiter **tail){
-  gof_waiter *w = *head; if (!w) return NULL; *head = w->next; if (!*head) *tail = NULL; gof_fiber *f = w->f; free(w); return f;
+  gof_waiter *w = *head; if (!w) return NULL; *head = w->next; if (!*head) *tail = NULL; gof_fiber *f = w->f; free(w);
+  atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed);
+  return f;
 }
 
 /* Remove fiber's existing waiter entry using its tracked wait_fd (O(1) bucket lookup). */
@@ -97,11 +105,11 @@ static void io_waiter_remove_fiber_locked(gof_fiber *f) {
   if (!e) { f->wait_fd = -1; f->wait_events = 0; return; }
   if (f->wait_events & GOF_POLL_READ) {
     gof_waiter *prev = NULL, *cur = e->rd_head;
-    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->rd_head = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->rd_head = cur->next; if (cur == e->rd_tail) e->rd_tail = prev; free(cur); atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed); break; } prev = cur; cur = cur->next; }
   }
   if (f->wait_events & GOF_POLL_WRITE) {
     gof_waiter *prev = NULL, *cur = e->wr_head;
-    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); break; } prev = cur; cur = cur->next; }
+    while (cur) { if (cur->f == f) { if (prev) prev->next = cur->next; else e->wr_head = cur->next; if (cur == e->wr_tail) e->wr_tail = prev; free(cur); atomic_fetch_sub_explicit(&g_io_waiter_count, 1, memory_order_relaxed); break; } prev = cur; cur = cur->next; }
   }
   f->wait_fd = -1;
   f->wait_events = 0;
@@ -127,16 +135,10 @@ static void io_waiter_remove_by_fiber(gof_fiber *f) {
 }
 
 int gof_io_have_waiters(void) {
-  int res = 0;
-  pthread_mutex_lock(&io_mu);
-  for (unsigned i = 0; i < FDWAIT_BUCKETS; ++i) {
-    for (gof_fdwait *e = fd_buckets[i]; e; e = e->next) {
-      if (e->rd_head || e->wr_head) { res = 1; goto out; }
-    }
-  }
-out:
-  pthread_mutex_unlock(&io_mu);
-  return res;
+  /* Lock-free (nostrc-bme1g review): the scheduler idle loop calls this
+   * while holding S.mu, and on_ready holds io_mu while waking (which takes
+   * S.mu) — taking io_mu here would close an ABBA deadlock. */
+  return atomic_load_explicit(&g_io_waiter_count, memory_order_acquire) > 0;
 }
 
 static void on_ready(int fd, int events) {

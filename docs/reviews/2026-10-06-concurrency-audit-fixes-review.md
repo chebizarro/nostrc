@@ -281,3 +281,71 @@ So any `f` that `wake_ready` reads while holding `sleepheap.mu` points to a fibe
 - **nostrc-e08s7** (P1, bug): `gof_run` never returns with `GOF_NWORKERS>1`. Pre-existing.
 - **nostrc-bme1g** (P3, bug): `gof_chan_close` wakes waiters after dropping `c->mu`, so a late claim can reach a finished fiber. This is the M1 residual.
 - **nostrc-e9ou3** (P2, already filed by the author): `mpmc_wait_busy` clock domain.
+
+---
+
+# Follow-up review: `9c469355` (nostrc-e08s7, nostrc-e9ou3, nostrc-bme1g)
+
+**Date:** 2026-10-06
+
+## Verdict: **REQUEST CHANGES**. The nostrc-bme1g change introduces a deadlock that I reproduced on unmodified HEAD.
+
+| Issue | Status |
+| --- | --- |
+| nostrc-e08s7: multi-worker shutdown hang | **RESOLVED** |
+| nostrc-e9ou3: busy-wait clock domain | **NOT RESOLVED**: `channel.c` is fixed, but `select.c` has the same bug and the hook's documented contract contradicts the fix |
+| nostrc-bme1g: late claim after finish | **NOT RESOLVED**: the `gof_chan_close` part is correct, but the `on_ready` part adds an `io_mu` ↔ `S.mu` lock-order inversion, which is a **NEW DEADLOCK** |
+
+## 1. nostrc-e08s7: RESOLVED
+
+`sched.c:761-769`: when `atomic_fetch_sub(&S.live_fibers,1) == 1`, the code locks `S.mu` and broadcasts `S.cv`. Waiters hold `S.mu` between evaluating the predicate (sched.c:664-686) and calling `pthread_cond_wait`. The broadcaster takes `S.mu` *after* its decrement, so no waiter can read the old `have_live` and then miss the broadcast. The idle-exit predicate is `!gof_io_have_waiters() && !have_live`. I checked whether any other input can make it true without a wakeup:
+
+- **`io_have_waiters` going false:** registrations are removed only by the owning fiber (`io.c:191,197`) or popped by `on_ready`, which then wakes that fiber. In both cases a live fiber still exists, so `live_fibers` reaches 0 *after* the waiters are gone, and the broadcast covers it. ✔
+- **Sleepers:** while the heap is non-empty (cancelled NULL entries count too), workers do a *timed* wait, then recheck. ✔
+- **Inject queue and background stop:** they already signal (`sched.c:882-885`) or broadcast (`gof_sched_wake_all` via `gof_request_stop`). ✔
+
+Not a defect, but worth noting: in background mode with `GOF_NWORKERS>1`, every worker now exits when `live_fibers` reaches 0, as a single worker always did. Before this fix, workers 2..N happened to stay parked and could serve fibers spawned later. The default is 1 worker (`sched.c:486`), so the default behavior is unchanged. Callers of `gof_start_background` (`apps/gnostr/src/main_app.c`, `gnome/nostr-homed/src/fs/nostrfs.c`) that set `GOF_NWORKERS>1` should keep a fiber alive, as they already must with one worker.
+
+**Tests:** all 4 `*W4` tests pass. There is no `GoFiberIoTestW4`. I'd add one, but it would not have caught the deadlock below; a single-waiter IO test is what exposes it (see §3).
+
+## 2. nostrc-e9ou3: NOT RESOLVED
+
+`channel.c:606-622` now computes a CLOCK_MONOTONIC deadline for the fiber path and keeps CLOCK_REALTIME for `CV_WAIT_DEADLINE_OS`. That part is correct for the implementation (`gof_sched_park_until` → sleeper heap → `gof_now_ns()` monotonic). However:
+
+- **`libgo/src/select.c:531-537`, `go_select_timeout` fiber path:** it builds `_abs_deadline_ns` from `CLOCK_REALTIME` and passes it to `gof_hook_block_current_until`. On the monotonic heap, a wall-clock-epoch value (~1.79e18 ns) is decades in the future, so **`go_select_timeout` never times out when called from a fiber**; it returns only on a channel event. Callers with short windows, such as `relay_optimized.c:427` (5 ms) or the `timeout_ms` select in `test_reconnect_same_second.c:260`, would block indefinitely if they ran on a fiber. This bug predates the commit, but it is exactly the class of bug nostrc-e9ou3 covers.
+- **Contract mismatch:** `libgo/include/fiber_hooks.h:61-63` documents `deadline_ns` as "nanoseconds since epoch … CLOCK_REALTIME". After this commit, `channel.c` passes MONOTONIC to a hook documented as REALTIME, while `select.c` follows the documented contract and is still broken.
+
+**Fix:** pick one domain. The least invasive option is to keep the documented REALTIME contract and convert inside `gof_hook_block_current_until` (`libgo/fiber/sched/fiber_hooks_impl.c:20-26`): compute `remaining = deadline - realtime_now` (clamped at 0) and pass `gof_now_ns() + remaining` to `park_until`. Then revert the `channel.c` fiber path to REALTIME so both callers are consistent. The other option is to change the header to MONOTONIC and fix `select.c:532`.
+
+## 3. nostrc-bme1g: NOT RESOLVED, NEW DEADLOCK
+
+**`gof_chan_close` (`chan.c:74-89`): correct.** Waking under `c->mu` matches what `handoff_to_waiter`/`handoff_from_waiter` already do (they call `gof_sched_make_runnable` under `c->mu`). No scheduler code acquires a fiber-channel `c->mu`, so `c->mu → {sleepheap.mu, rq_mu, S.mu}` has no cycle. ✔
+
+**`on_ready` (`io.c:142-167`): introduces an ABBA deadlock.** The commit comment says "nothing takes io_mu while holding scheduler locks". That is false:
+
+- **Worker idle loop:** `worker_main` takes `S.mu` at `sched.c:664` and, when there is no inject work, no queued runnables, and no sleeper entries, calls `gof_io_have_waiters()` at `sched.c:686`. That function takes `io_mu` (`io.c:131`). **Order: `S.mu → io_mu`.**
+- **Poller thread:** `on_ready` now holds `io_mu` across the claim. On claim==2, the poller thread is not a worker (`cur_worker()==NULL`), so the external enqueue paths lock `S.mu`: `sched.c:873`, `882`, and `921` (the partition path in `make_runnable_from_poller`). **Order: `io_mu → S.mu`.**
+
+**Reproduced on unmodified HEAD**, using a harness kept out of the tree: one fiber does `gof_read` on a pipe (2 ms park slices), and an OS thread writes one byte every 1.5–2.5 ms.
+
+| Build | 1 worker | 4 workers |
+| --- | --- | --- |
+| HEAD 9c469355 (`_build` lib) | **1/10 deadlocked** | **3/10 deadlocked** |
+| Parent 15a6152f | 0/10 | 0/10 |
+
+A sampled deadlocked process shows exactly the cycle:
+```
+main/worker_main  sched.c:686 → gof_io_have_waiters io.c:131 → pthread_mutex_lock(io_mu)   [holds S.mu]
+poller_main       sched.c:964 → gof_netpoll_wait → on_ready io.c:161
+                  → gof_sched_make_runnable_from_poller → pthread_mutex_lock(S.mu)       [holds io_mu]
+```
+
+**How it happens:** the poller claims the BLOCKED reader. Its 2 ms slice entry is popped by the worker's `sleepers_wake_ready` (`sleepheap.len` → 0) before the poller reaches `S.mu`. The worker then finds nothing to run and enters the `!have_sleepers` arm while the poller still holds `io_mu`. Every other worker and every external enqueue then blocks on `S.mu`, so the whole scheduler stops.
+
+**Fix (either):**
+- **(a)** Have `gof_io_have_waiters()` read an `_Atomic` registration counter, maintained in `io_waiter_add` and `io_waiter_remove_fiber_locked`/`on_ready` under `io_mu`, without taking `io_mu`. That removes the `S.mu → io_mu` edge. This is the preferred option because it keeps the UAF fix.
+- **(b)** In `worker_main`, call `gof_io_have_waiters()` before taking `S.mu`, or drop and retake `S.mu` around it and re-validate the predicate.
+
+Please add the single-reader pipe stress test (or an equivalent `GoFiberIoTest` variant) as a regression test.
+
+**Lock order, as it should hold after the fix:** `c->mu → sleepheap.mu`; `c->mu → rq_mu`; `c->mu → S.mu`; `io_mu → sleepheap.mu/rq_mu/S.mu`; `S.mu → sleepheap.mu`. With (a) there is no `S.mu → io_mu` edge. `sleepers_wake_ready` releases `sleepheap.mu` before `rq_push`, and `rq_steal_one` releases the victim's `rq_mu` before `rq_push_to`, so no other edges point back into `c->mu` or `io_mu`.

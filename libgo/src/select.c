@@ -527,9 +527,11 @@ GoSelectResult go_select_timeout(GoSelectCase *cases, size_t num_cases,
             NLOCK(&waiter->mutex);
             waiter->fiber_handle = _sel_fiber_t;
             if (!atomic_load_explicit(&waiter->signaled, memory_order_acquire)) {
-                /* Not signaled yet — compute deadline and park */
+                /* Not signaled yet — compute deadline and park. The hook's
+                 * sleeper heap runs on CLOCK_MONOTONIC, so the deadline must
+                 * be monotonic too (nostrc-e9ou3). */
                 struct timespec _ts_now;
-                clock_gettime(CLOCK_REALTIME, &_ts_now);
+                clock_gettime(CLOCK_MONOTONIC, &_ts_now);
                 uint64_t _abs_deadline_ns = (uint64_t)_ts_now.tv_sec * 1000000000ull
                                           + (uint64_t)_ts_now.tv_nsec
                                           + remaining_us * 1000ull;
