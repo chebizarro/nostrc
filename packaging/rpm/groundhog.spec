@@ -87,9 +87,11 @@ Provides:       bundled(nsync) = 1.29.2
 
 %description -n grotto
 Grotto holds your Nostr identities in the system keyring and signs,
-encrypts and decrypts on behalf of Nostr apps over the session bus
-(NIP-55L, org.nostr.Signer). Each app is identified, and you approve what
-it may do; private keys never leave Grotto.
+encrypts and decrypts for every Nostr app that speaks NIP-55L (local apps
+over the session bus, org.nostr.Signer) or NIP-46 (Nostr Connect, remote
+apps over relays). One Grotto serves them all, Groundhog included. Each
+app is identified, and you approve what it may do; private keys never
+leave Grotto.
 
 This package contains the Grotto app (approvals, identities, settings) and
 its background service, which starts on demand when an app asks.

@@ -48,6 +48,11 @@ files, `gnostr_signer` 448/46, `GnostrSigner` 228/41, `org.gnostr.Signer`
 4. **R4 — UX pass** (separate wave): onboarding, the startup layout error
    (AdwPasswordEntryRow in a GtkBox), approval dialog, hardware keystore's
    Keychain calls on macOS (nostrc-2hmd), `--instance` parity with Groundhog.
+   **`--instance`, owner decision (2026-10-07): none for Grotto.** One
+   Grotto serves every Groundhog instance and every NIP-55L/NIP-46 app; the
+   daemon owns `org.nostr.Signer`, one per session, and each app or instance
+   names its identity. Documented in `apps/grotto/README.md`,
+   `gnome/groundhog/README.md` and the package descriptions.
 
 ## Risks
 

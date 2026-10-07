@@ -101,6 +101,10 @@ static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_d
   adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.1.0");
   adw_about_dialog_set_website(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc");
   adw_about_dialog_set_issue_url(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc/issues");
+  adw_about_dialog_set_comments(ADW_ABOUT_DIALOG(about),
+    "Keeps your Nostr keys and signs for all your Nostr apps: local apps over "
+    "NIP-55L and remote apps over NIP-46 (Nostr Connect). One Grotto serves "
+    "them all; your private keys never leave it.");
   const char *devs[] = { "GNostr Team", NULL };
   adw_about_dialog_set_developers(ADW_ABOUT_DIALOG(about), devs);
   adw_dialog_present(about, parent ? GTK_WIDGET(parent) : NULL);

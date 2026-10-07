@@ -35,6 +35,7 @@ GROUNDHOG_INSTANCE=dev2 groundhog
 | Encrypted store | `$XDG_DATA_HOME/groundhog/accounts/…` | under the instance's `XDG_DATA_HOME` |
 | D-Bus name | `org.nostr.Groundhog` | `org.nostr.Groundhog.NAME` |
 | Background autostart | Supported | Disabled: a desktop autostart entry cannot safely restart a named profile |
+| Signer | Grotto (`org.nostr.Signer`) | the same Grotto: one signer serves every instance and every NIP-55L/NIP-46 app; each instance signs with the identity it selected. Grotto has no `--instance`. |
 
 Instance names are 1–32 characters, ASCII alphanumeric or underscore,
 starting with a letter. Invalid or missing names fail closed; Groundhog

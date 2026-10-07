@@ -2,7 +2,7 @@
 Type=Application
 Name=Grotto
 GenericName=Nostr Signer
-Comment=Secure Nostr identity management and signing service
+Comment=Keeps your Nostr keys and signs for all your Nostr apps (NIP-55L, NIP-46)
 Exec=grotto %U
 Icon=org.nostr.Grotto
 Terminal=false

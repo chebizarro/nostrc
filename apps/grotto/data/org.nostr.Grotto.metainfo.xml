@@ -4,7 +4,7 @@
   <id>org.nostr.Grotto</id>
 
   <name>Grotto</name>
-  <summary>Secure Nostr identity management and signing service</summary>
+  <summary>Keeps your Nostr keys and signs for all your Nostr apps</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
@@ -15,9 +15,14 @@
 
   <description>
     <p>
-      Grotto is a secure application for managing Nostr identities and
-      signing events. It keeps your private keys safe while allowing Nostr
-      clients to request signatures through a secure D-Bus interface.
+      Grotto keeps your Nostr identities and signs, encrypts and decrypts for
+      the apps you allow; your private keys never leave it. It is the signer
+      for every Nostr app that speaks NIP-55L, on this computer over the
+      session bus, or NIP-46 (Nostr Connect), remotely over relays.
+    </p>
+    <p>
+      One Grotto serves all of them, Groundhog included: each app names the
+      identity it uses, and you approve what it may do.
     </p>
     <p>Features include:</p>
     <ul>
@@ -30,16 +35,17 @@
       <li>Audit logging of signing operations</li>
     </ul>
     <p>
-      Grotto implements NIP-55 (Android Signer Application) for local
-      signing and NIP-46 (Nostr Connect) for remote signing capabilities.
+      Grotto implements NIP-55L (the Linux desktop signer interface,
+      org.nostr.Signer on the session bus) for local apps and NIP-46 (Nostr
+      Connect) for remote ones.
     </p>
   </description>
 
   <launchable type="desktop-id">org.nostr.Grotto.desktop</launchable>
 
-  <url type="homepage">https://github.com/gnostr-org/grotto</url>
-  <url type="bugtracker">https://github.com/gnostr-org/grotto/issues</url>
-  <url type="vcs-browser">https://github.com/gnostr-org/grotto</url>
+  <url type="homepage">https://github.com/chebizarro/nostrc</url>
+  <url type="bugtracker">https://github.com/chebizarro/nostrc/issues</url>
+  <url type="vcs-browser">https://github.com/chebizarro/nostrc</url>
 
   <branding>
     <color type="primary" scheme_preference="light">#8e30eb</color>

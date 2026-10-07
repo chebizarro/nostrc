@@ -1,6 +1,24 @@
 # Grotto
 
-A secure, cross-platform application for managing Nostr identities and signing events. The application provides a user-friendly interface for managing accounts, permissions, and signing requests from Nostr clients.
+Grotto keeps your Nostr identities and signs, encrypts and decrypts for the
+apps you allow. Private keys never leave it.
+
+## One signer for all your Nostr apps
+
+Grotto is the signer for **every** Nostr app that speaks one of:
+
+- **NIP-55L** — local apps on this computer, over the session bus
+  (`org.nostr.Signer`, see `docs/dbus-interface.md`). Groundhog, gnostr and
+  the browser bridge use this.
+- **NIP-46 (Nostr Connect)** — remote apps over relays, with Grotto as the
+  bunker (Settings › Listen for new connections, or `grotto-daemon --bunker`).
+
+One Grotto serves all of them at once. Each app names the identity it uses
+and Grotto asks you, per app, what it may do. That includes several
+Groundhog instances (`groundhog --instance NAME`): they share the one Grotto,
+each signing with its own identity. Grotto itself has no `--instance`
+option: the daemon owns `org.nostr.Signer`, the name every app speaks, and
+there is one per session (owner decision, W31 R4).
 
 ## Features
 

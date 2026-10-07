@@ -72,7 +72,7 @@ package_groundhog() {
 }
 
 package_grotto() {
-  pkgdesc="Keeps your Nostr keys and signs for your apps (preview)"
+  pkgdesc="Keeps your Nostr keys and signs for all your Nostr apps: NIP-55L and NIP-46 (preview)"
   depends=(
     'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsecret' 'openssl'
     'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
