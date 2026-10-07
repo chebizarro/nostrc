@@ -70,7 +70,16 @@ jobs:
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-curl
             mingw-w64-x86_64-libsoup3
-            mingw-w64-x86_64-nsis
+
+      # mingw-w64-x86_64-nsis 3.13-1 is broken upstream: plugin resolution
+      # finds nothing ("Plugin directories:" empty for every call,
+      # msys2/MINGW-packages#32208). Use the official NSIS binary until the
+      # MSYS2 package is fixed (nostrc-8o95q).
+      - name: Install NSIS (official binary; MSYS2 package is broken)
+        run: |
+          curl -fSL -o /tmp/nsis.zip https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10.zip
+          unzip -q /tmp/nsis.zip -d /tmp/nsis-bin
+          echo "MAKENSIS=/tmp/nsis-bin/nsis-3.10/makensis.exe" >> "$GITHUB_ENV"
 
       - name: Get version
         id: version
@@ -181,18 +190,15 @@ jobs:
       - name: Create NSIS installer
         run: |
           cd apps/grotto/packaging/windows
-          # MSYS2's mingw-w64-x86_64-nsis ships plugins under
-          # share/nsis/Plugins/unicode, which makensis (NSIS 3) does not
-          # search on its own. !addplugindir looks in the arch-suffixed
-          # SUBDIRECTORY of the dir it is given, so pass the Plugins parent
-          # (nostrc-8o95q).
-          NSIS_PLUGINS=$(cygpath -m "${MINGW_PREFIX}/share/nsis/Plugins")
-          makensis \
+          # The official NSIS binary (see above) resolves its own plugins;
+          # NSIS_PLUGINS is only a fallback for environments whose plugin
+          # layout differs (nostrc-8o95q).
+          "${MAKENSIS}" \
             -DVERSION=${{ steps.version.outputs.version }} \
             -DARCH=x64 \
             -DBUILD_DIR=../../../../build \
             -DDEPS_DIR=../../../../build/deps \
-            -DNSIS_PLUGINS="${NSIS_PLUGINS}" \
+            -DNSIS_PLUGINS="${MAKENSIS%/*}/Plugins/x86-unicode" \
             grotto.nsi
 
       - name: Upload installer artifact
