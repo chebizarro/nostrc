@@ -3,12 +3,15 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 static int epfd = -1;
-static gof_netpoll_ready_cb ready_cb = NULL;
+/* Written on the installing thread, read on the poller thread; plain
+ * access raced under TSan (nostrc-ci). */
+static _Atomic gof_netpoll_ready_cb ready_cb = NULL;
 
 void gof_netpoll_set_ready_callback(gof_netpoll_ready_cb cb) {
-  ready_cb = cb;
+  atomic_store_explicit(&ready_cb, cb, memory_order_release);
 }
 
 int gof_netpoll_init(void) {
@@ -40,11 +43,12 @@ int gof_netpoll_wait(int timeout_ms) {
 
   struct epoll_event evs[64];
   int n = epoll_wait(epfd, evs, 64, timeout_ms);
-  for (int i = 0; i < n && ready_cb; ++i) {
+  gof_netpoll_ready_cb cb = atomic_load_explicit(&ready_cb, memory_order_acquire);
+  for (int i = 0; i < n && cb; ++i) {
     int events = 0;
     if (evs[i].events & EPOLLIN)  events |= GOF_POLL_READ;
     if (evs[i].events & EPOLLOUT) events |= GOF_POLL_WRITE;
-    if (events) ready_cb(evs[i].data.fd, events);
+    if (events) cb(evs[i].data.fd, events);
   }
   return n;
 }

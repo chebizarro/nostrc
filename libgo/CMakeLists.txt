@@ -679,6 +679,7 @@ set_tests_properties(GoFiberStarvationTestW4 PROPERTIES TIMEOUT 20)
 # Late TSAN-specific timeout adjustment for fiber tests (after tests are defined)
 if (GO_ENABLE_TSAN)
   set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 10)
+  set_tests_properties(GoFiberIoTimeoutTestW4 PROPERTIES TIMEOUT 10)
 endif()
 
 # Scale heavy tests under sanitizers via compile-time definitions (no in-source detection)

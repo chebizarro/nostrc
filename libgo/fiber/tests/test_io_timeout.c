@@ -9,7 +9,11 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 
-static int run(void) {
+static int g_result = -1;
+static int g_saved_errno = 0;
+
+static void run_fiber(void *arg) {
+  (void)arg;
   int lsock = socket(AF_INET, SOCK_STREAM, 0);
   assert(lsock >= 0);
 
@@ -31,23 +35,17 @@ static int run(void) {
   rc = getsockname(lsock, (struct sockaddr*)&addr, &alen);
   assert(rc == 0);
 
-  /* No client connects. Accept with a short timeout and expect ETIMEDOUT. */
-  int timeout_ms = 50;
-  int c = gof_accept(lsock, NULL, NULL, timeout_ms);
-  int saved = errno;
+  /* No client connects. Accept with a short timeout and expect ETIMEDOUT.
+   * Capture the fiber's errno for diagnostics (main's is unrelated). */
+  int c = gof_accept(lsock, NULL, NULL, 50);
+  g_saved_errno = errno;
   close(lsock);
   if (c != -1) {
     close(c);
-    return 1;
+    g_result = 1;
+    return;
   }
-  return saved == ETIMEDOUT ? 0 : 2;
-}
-
-static int g_result = -1;
-
-static void run_fiber(void *arg) {
-  (void)arg;
-  g_result = run();
+  g_result = (g_saved_errno == ETIMEDOUT) ? 0 : 2;
 }
 
 int main(void) {
@@ -58,6 +56,6 @@ int main(void) {
     printf("gof_test_io_timeout: OK\n");
     return 0;
   }
-  printf("gof_test_io_timeout: FAIL rc=%d errno=%d\n", g_result, errno);
+  printf("gof_test_io_timeout: FAIL rc=%d fiber_errno=%d\n", g_result, g_saved_errno);
   return 1;
 }

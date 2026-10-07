@@ -4,12 +4,15 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 static int kq = -1;
-static gof_netpoll_ready_cb ready_cb = NULL;
+/* Written on the thread that installs it (first IO wait) and read on the
+ * poller thread; plain access raced under TSan (nostrc-ci). */
+static _Atomic gof_netpoll_ready_cb ready_cb = NULL;
 
 void gof_netpoll_set_ready_callback(gof_netpoll_ready_cb cb) {
-  ready_cb = cb;
+  atomic_store_explicit(&ready_cb, cb, memory_order_release);
 }
 
 int gof_netpoll_init(void) {
@@ -47,11 +50,12 @@ int gof_netpoll_wait(int timeout_ms) {
   }
 
   int n = kevent(kq, NULL, 0, kevs, 64, tsp);
-  for (int i = 0; i < n && ready_cb; ++i) {
+  gof_netpoll_ready_cb cb = atomic_load_explicit(&ready_cb, memory_order_acquire);
+  for (int i = 0; i < n && cb; ++i) {
     int events = 0;
     if (kevs[i].filter == EVFILT_READ)  events |= GOF_POLL_READ;
     if (kevs[i].filter == EVFILT_WRITE) events |= GOF_POLL_WRITE;
-    if (events) ready_cb((int)kevs[i].ident, events);
+    if (events) cb((int)kevs[i].ident, events);
   }
   return n;
 }
