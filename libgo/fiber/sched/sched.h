@@ -50,7 +50,15 @@ void gof_sched_enqueue(gof_fiber *f);
 void gof_sched_run(void);
 void gof_sched_yield(void);
 
-/* New helpers for cooperative blocking primitives */
+/* New helpers for cooperative blocking primitives.
+ *
+ * Park contract (nostrc-q9lp0): a caller must register its wait (channel
+ * waiter node, IO registration, select registration, ...) and then call
+ * gof_sched_block_current()/gof_sched_park_until() immediately after,
+ * without yielding in between. Wakers treat GOF_RUNNABLE as "the wait is
+ * published but the park is not yet announced" and claim the fiber WOKEN;
+ * a yield in between would make the fiber genuinely runnable while that
+ * claim is in flight, which the protocol is not designed for. */
 gof_fiber* gof_sched_current(void);
 void       gof_sched_block_current(void);
 void       gof_sched_make_runnable(gof_fiber *f);

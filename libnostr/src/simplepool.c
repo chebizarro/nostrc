@@ -1326,6 +1326,7 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
      * worker's first loop check must already see true (nostrc-q9lp0 review),
      * and a concurrent claim in stop()/free() blocks on pool_mutex until the
      * handle is valid. On create failure, roll back. */
+    bool old_redial_enabled = pool->redial_enabled;
     atomic_store_explicit(&pool->running, true, memory_order_release);
     /* Re-arm background redial: an explicit disconnect_all()/disconnecting
      * stop() suspended it so it would not immediately dial back what the
@@ -1334,6 +1335,7 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
     int rc = pthread_create(&pool->thread, NULL, simple_pool_thread_func, (void *)pool);
     if (rc != 0) {
         atomic_store_explicit(&pool->running, false, memory_order_release);
+        pool->redial_enabled = old_redial_enabled;
     }
     pthread_mutex_unlock(&pool->pool_mutex);
 
