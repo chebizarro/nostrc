@@ -119,10 +119,6 @@ Section "Core Application" SEC_CORE
   ; Compile GSettings schema
   nsExec::ExecToLog '"$INSTDIR\bin\glib-compile-schemas.exe" "$INSTDIR\share\glib-2.0\schemas"'
 
-  ; Icons
-  SetOutPath "$INSTDIR\share\icons\hicolor\scalable\apps"
-  File "..\..\data\icons\hicolor\scalable\apps\org.nostr.Grotto.svg"
-
   ; Create application data directory
   CreateDirectory "$LOCALAPPDATA\grotto"
 
