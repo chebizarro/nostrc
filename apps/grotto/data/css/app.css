@@ -264,51 +264,22 @@ image.accent {
   margin-bottom: 8px;
 }
 
+/* The request header: the theme's accent, light, in light and dark alike
+ * (was a fixed dark red that read as an error; nostrc-wic1). */
 .status-banner.pending {
-  background-color: alpha(#8b2635, 0.15);
+  background-color: alpha(@accent_bg_color, 0.12);
 }
 
 .pending-title {
-  color: #8b2635;
   font-weight: bold;
 }
 
 .pending-icon {
-  color: #8b2635;
+  color: @accent_color;
 }
 
-/* Approve button - green */
-button.approve-btn {
-  background-color: #2e7d32;
-  color: white;
-}
-
-button.approve-btn:hover {
-  background-color: #388e3c;
-}
-
-button.approve-btn:active {
-  background-color: #1b5e20;
-}
-
-button.approve-btn:disabled {
-  background-color: alpha(#2e7d32, 0.5);
-  color: alpha(white, 0.5);
-}
-
-/* Deny button - red */
-button.deny-btn {
-  background-color: #c62828;
-  color: white;
-}
-
-button.deny-btn:hover {
-  background-color: #d32f2f;
-}
-
-button.deny-btn:active {
-  background-color: #b71c1c;
-}
+/* Approve is the suggested action and Deny a plain button (styles set in
+ * the template); denying is not destructive, so it is not red. */
 
 /* Details expander styling */
 .details-expander {

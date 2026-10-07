@@ -188,6 +188,36 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="GtkBox">
                 <property name="orientation">0</property>
+                <property name="spacing">8</property>
+                <accessibility>
+                  <property name="label">Remember preference options</property>
+                  <property name="description">Options to remember this decision for future requests</property>
+                </accessibility>
+                <child>
+                  <object class="GtkCheckButton" id="chk_remember">
+                    <property name="label" translatable="yes">Remember this decision</property>
+                    <accessibility>
+                      <property name="label">Remember this decision</property>
+                      <property name="description">Check to remember your approval or denial for future similar requests</property>
+                    </accessibility>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkDropDown" id="ttl_dropdown">
+                    <property name="sensitive">false</property>
+                    <property name="halign">2</property>
+                    <property name="hexpand">true</property>
+                    <accessibility>
+                      <property name="label">Duration to remember</property>
+                      <property name="description">Select how long to remember this decision</property>
+                    </accessibility>
+                  </object>
+                </child>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox">
+                <property name="orientation">0</property>
                 <property name="spacing">12</property>
                 <property name="homogeneous">true</property>
                 <property name="margin-top">8</property>
@@ -208,7 +238,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </accessibility>
                     <style>
                       <class name="pill"/>
-                      <class name="approve-btn"/>
+                      <class name="suggested-action"/>
                     </style>
                   </object>
                 </child>
@@ -224,7 +254,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </accessibility>
                     <style>
                       <class name="pill"/>
-                      <class name="deny-btn"/>
                     </style>
                   </object>
                 </child>
@@ -321,36 +350,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <accessibility>
                               <property name="label">Select signing identity</property>
                               <property name="description">Choose which account to use for this signature</property>
-                            </accessibility>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkBox">
-                        <property name="orientation">0</property>
-                        <property name="spacing">8</property>
-                        <accessibility>
-                          <property name="label">Remember preference options</property>
-                          <property name="description">Options to remember this decision for future requests</property>
-                        </accessibility>
-                        <child>
-                          <object class="GtkCheckButton" id="chk_remember">
-                            <property name="label" translatable="yes">Remember this decision</property>
-                            <accessibility>
-                              <property name="label">Remember this decision</property>
-                              <property name="description">Check to remember your approval or denial for future similar requests</property>
-                            </accessibility>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkDropDown" id="ttl_dropdown">
-                            <property name="sensitive">false</property>
-                            <property name="halign">2</property>
-                            <property name="hexpand">true</property>
-                            <accessibility>
-                              <property name="label">Duration to remember</property>
-                              <property name="description">Select how long to remember this decision</property>
                             </accessibility>
                           </object>
                         </child>

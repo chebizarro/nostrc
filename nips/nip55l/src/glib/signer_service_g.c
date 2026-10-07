@@ -7,6 +7,8 @@
 #include "nostr/nip55l/signer_ops.h"
 #include "nostr/nip19/nip19.h"
 #include <keys.h>
+#include <nostr-event.h>
+#include <nostr-json.h>
 #include <nostr-utils.h>
 #include <secure_buf.h>
 #include "signer_dbus.h"
@@ -425,23 +427,58 @@ static void return_string(const Reply *invocation, char *out, gboolean wipe){
 
 /* ---- performing an allowed call ----------------------------------------- */
 
+/* What a person is asked to sign, in words: the kind by name and the
+ * content's start. Parsed as an event (a hand scan stopped at the first
+ * escaped quote, and cut at 96 bytes with no sign that it was cut;
+ * nostrc-wic1). Display only. */
+#define PREVIEW_MAX_CHARS 280
+static const char *event_kind_name(int kind){
+  switch (kind) {
+    case 0:     return "Profile";
+    case 1:     return "Note";
+    case 3:     return "Follow list";
+    case 4:     return "Encrypted message (NIP-04)";
+    case 5:     return "Deletion request";
+    case 6:     return "Repost";
+    case 7:     return "Reaction";
+    case 13:    return "Sealed message";
+    case 14:    return "Chat message";
+    case 16:    return "Repost";
+    case 1059:  return "Gift-wrapped message";
+    case 1984:  return "Report";
+    case 9734:  return "Zap request";
+    case 10002: return "Relay list";
+    case 10050: return "Inbox relay list";
+    case 22242: return "Relay sign-in";
+    case 24133: return "Remote signer message";
+    case 27235: return "HTTP sign-in";
+    case 30023: return "Article";
+    default:    return NULL;
+  }
+}
+
 static gchar *build_event_preview(const char *event_json){
   if (!event_json) return g_strdup("");
-  const char *p = strstr(event_json, "\"content\"");
-  if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p = strchr(p, ':'); if (!p) return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p++;
-  while (*p==' '){ p++; }
-  if (*p!='\"') return g_strndup(event_json, MIN((gsize)64, strlen(event_json)));
-  p++;
-  const char *start = p; const char *end = start;
-  while (*end && *end!='\"') end++;
-  gsize len = (gsize)(end-start);
-  if (len > 96) len = 96;
-  gchar *frag = g_strndup(start, len);
-  for (gsize i=0;i<len;i++){ if (frag[i]=='\n' || frag[i]=='\r') frag[i]=' '; }
-  if (!g_utf8_validate(frag, -1, NULL)) { gchar *v = g_utf8_make_valid(frag, -1); g_free(frag); frag = v; }
-  return frag;
+  NostrEvent *ev = nostr_event_new();
+  if (!ev || nostr_event_deserialize(ev, event_json) != 0) {
+    if (ev) nostr_event_free(ev);
+    return g_strdup("an event that could not be read");
+  }
+  int kind = nostr_event_get_kind(ev);
+  const char *name = event_kind_name(kind);
+  g_autofree gchar *label = name ? g_strdup_printf("%s (kind %d)", name, kind)
+                                 : g_strdup_printf("Kind %d", kind);
+  const char *content = nostr_event_get_content(ev);
+  GString *out = g_string_new(label);
+  if (content && *content) {
+    g_autofree gchar *valid = g_utf8_make_valid(content, -1);
+    glong n = g_utf8_strlen(valid, -1);
+    g_autofree gchar *head = g_utf8_substring(valid, 0, MIN(n, PREVIEW_MAX_CHARS));
+    for (gchar *c = head; *c; c++) if (*c == '\n' || *c == '\r' || *c == '\t') *c = ' ';
+    g_string_append_printf(out, ": %s%s", head, n > PREVIEW_MAX_CHARS ? "\u2026" : "");
+  }
+  nostr_event_free(ev);
+  return g_string_free(out, FALSE);
 }
 
 static gchar *build_preview(SignerOp op, const char *a, const char *b){

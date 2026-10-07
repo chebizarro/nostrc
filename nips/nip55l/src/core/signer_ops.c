@@ -94,6 +94,25 @@ static char *bin_to_hex(const uint8_t *buf, size_t len){
   out[len*2]='\0'; return out;
 }
 
+#ifdef NIP55L_HAVE_LIBSECRET
+#include <gio/gio.h>
+/* Grotto's chosen identity (GSettings org.nostr.Grotto default-identity),
+ * or NULL when unset or the schema is not installed. */
+static gchar *grotto_default_identity(void){
+  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
+  GSettingsSchema *schema = src ? g_settings_schema_source_lookup(src, "org.nostr.Grotto", TRUE) : NULL;
+  if (!schema) return NULL;
+  gboolean has = g_settings_schema_has_key(schema, "default-identity");
+  g_settings_schema_unref(schema);
+  if (!has) return NULL;
+  GSettings *settings = g_settings_new("org.nostr.Grotto");
+  gchar *npub = g_settings_get_string(settings, "default-identity");
+  g_object_unref(settings);
+  if (npub && !*npub) g_clear_pointer(&npub, g_free);
+  return npub;
+}
+#endif
+
 /* Forward declaration */
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex);
 
@@ -154,26 +173,45 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       secure_wipe(sk, sizeof sk);
       return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
     }
-    /* Try libsecret fallback by linked owner (current uid) */
+    /* The keyring: the identity linked to this login user, else the one
+     * Grotto has chosen (its default-identity setting), else the only one
+     * stored. A key created in Grotto's setup is not linked to the user,
+     * and after a restart (logout, upgrade) the daemon answered "no key
+     * configured" for it (nostrc-wic1). More than one unlinked identity and
+     * no choice stays not found: the daemon never guesses between keys.
+     * Searches load the secrets: without SECRET_SEARCH_LOAD_SECRETS,
+     * secret_item_get_secret() is NULL and even the linked key was "not
+     * found" once the in-memory copy from StoreKey was gone. */
 #ifdef NIP55L_HAVE_LIBSECRET
     {
       SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
       if (service) {
+        SecretItem *item = NULL;
         GError *gerr = NULL;
-        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
         gchar uid_buf[32];
         g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
         g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
         GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
-                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr);
+                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr);
         g_hash_table_unref(attrs);
-        if (gerr) { g_error_free(gerr); gerr = NULL; }
-        SecretItem *item = NULL;
-        if (items) {
-          /* Accept the first match for this uid */
-          item = SECRET_ITEM(g_object_ref(items->data));
+        g_clear_error(&gerr);
+        if (items)
+          item = SECRET_ITEM(g_object_ref(items->data)); /* the first for this uid */
+        g_list_free_full(items, g_object_unref);
+        if (!item) {
+          g_autofree gchar *chosen = grotto_default_identity();
+          GHashTable *all = g_hash_table_new(g_str_hash, g_str_equal);
+          if (chosen && *chosen)
+            g_hash_table_insert(all, (gpointer)"npub", chosen);
+          items = secret_service_search_sync(service, &gnostr_secret_schema, all,
+                                             SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr);
+          g_hash_table_unref(all);
+          g_clear_error(&gerr);
+          if (items && (chosen && *chosen ? TRUE : g_list_length(items) == 1))
+            item = SECRET_ITEM(g_object_ref(items->data));
+          g_list_free_full(items, g_object_unref);
         }
-        if (items) g_list_free_full(items, g_object_unref);
         if (item) {
           SecretValue *sv = secret_item_get_secret(item);
           const gchar *sec = sv ? secret_value_get_text(sv) : NULL;
@@ -193,7 +231,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
           g_object_unref(service);
           return rc_l;
         }
-        if (service) g_object_unref(service);
+        g_object_unref(service);
       }
     }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
@@ -277,7 +315,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
         GError *gerr2 = NULL;
         GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
-                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &gerr2);
+                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr2);
         g_hash_table_unref(attrs);
         if (gerr2) { g_error_free(gerr2); gerr2 = NULL; }
         SecretItem *item = NULL;

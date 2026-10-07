@@ -121,6 +121,20 @@ struct _OnboardingAssistant {
 
 G_DEFINE_TYPE(OnboardingAssistant, onboarding_assistant, ADW_TYPE_WINDOW)
 
+/* The new identity becomes Grotto's active account (accounts.ini and the
+ * default-identity setting the daemon falls back to), as Add Account does;
+ * onboarding stored the key but left it unlisted and inactive, so a
+ * restarted daemon answered "no key configured" (nostrc-wic1). */
+extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
+
+static const char *
+profile_label(OnboardingAssistant *self)
+{
+  const char *name = self->entry_profile_name
+    ? gtk_editable_get_text(GTK_EDITABLE(self->entry_profile_name)) : NULL;
+  return name && *name ? name : NULL;
+}
+
 /* Forward declarations */
 static void update_navigation_buttons(OnboardingAssistant *self);
 static void go_to_step(OnboardingAssistant *self, OnboardingStep step);
@@ -446,6 +460,7 @@ static void on_create_profile_done(GObject *src, GAsyncResult *res, gpointer use
       g_free(self->created_npub);
       self->created_npub = g_strdup(npub_in);
       g_debug("Profile created successfully: %s", npub_in);
+      gnostr_settings_apply_import_success(npub_in, profile_label(self));
 
       /* Clear secure entries on success */
       if (self->secure_passphrase)
@@ -631,6 +646,8 @@ static void store_generated_key_async_done(GObject *src, GAsyncResult *res, gpoi
 
     if (ok) {
       g_debug("Key stored successfully");
+      if (npub_in && *npub_in)
+        gnostr_settings_apply_import_success(npub_in, profile_label(self));
 
       /* Clear the sensitive data now that it's stored */
       clear_seed_phrase_data(self);
@@ -705,6 +722,7 @@ static void on_import_profile_done(GObject *src, GAsyncResult *res, gpointer use
       g_free(self->created_npub);
       self->created_npub = g_strdup(npub_in);
       g_debug("Profile imported successfully: %s", npub_in);
+      gnostr_settings_apply_import_success(npub_in, NULL);
 
       /* Clear secure entry on success */
       if (self->secure_import_passphrase)

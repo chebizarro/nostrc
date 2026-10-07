@@ -2492,6 +2492,40 @@ static void run_phase3(void) {
   g_usleep(600 * 1000);
   CHECK(try_store_and_clear_key(&ctx));
 
+  /* A restarted daemon finds the stored key in the keyring (nostrc-wic1):
+   * without the environment key and without the in-memory copy StoreKey
+   * keeps, the active identity is read from the keyring. Its searches did
+   * not load secrets, so this answered NoKeyConfigured after every
+   * restart (logout, upgrade). */
+  {
+    g_usleep(600 * 1000);
+    TestKey kept;
+    test_key_new(&kept);
+    GError *err = NULL;
+    GVariant *ret = call(ctx.bus, "StoreKey", g_variant_new("(ss)", kept.sk_hex, ""), "(bs)", &err);
+    if (!ret) { g_printerr("StoreKey(kept): %s\n", err ? err->message : "?"); exit(1); }
+    g_variant_unref(ret);
+    g_subprocess_force_exit(ctx.daemon);
+    (void)g_subprocess_wait(ctx.daemon, NULL, NULL);
+    g_clear_object(&ctx.daemon);
+    g_autofree gchar *env_key = g_strdup(g_getenv("NOSTR_SIGNER_SECKEY_HEX"));
+    g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+    ctx.daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                  (g_getenv("NIP55L_TEST_DAEMON_LOG") ? 0 : G_SUBPROCESS_FLAGS_STDERR_SILENCE),
+                                  &err, NIP55L_DAEMON_PATH, NULL);
+    if (env_key) g_setenv("NOSTR_SIGNER_SECKEY_HEX", env_key, TRUE);
+    CHECK(ctx.daemon != NULL);
+    wait_for_name(ctx.bus, 20);
+    GVariant *pk = call(ctx.bus, "GetPublicKey", NULL, "(s)", &err);
+    if (!pk) g_printerr("GetPublicKey after restart: %s\n", err ? err->message : "?");
+    CHECK(pk != NULL);
+    const char *npub = NULL;
+    g_variant_get(pk, "(&s)", &npub);
+    CHECK(g_str_has_prefix(npub, "npub1"));
+    g_variant_unref(pk);
+    test_key_free(&kept);
+  }
+
   /* Marker: a later pass is a no-op, even with a new legacy item present. */
   {
     TestKey late;

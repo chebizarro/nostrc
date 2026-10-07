@@ -184,6 +184,37 @@ template $GnostrApprovalDialog: Adw.Dialog {
       }
 
       /* Action Buttons */
+      /* Remember Decision: before the choice, not hidden under Details (nostrc-wic1) */
+      Box {
+        orientation: horizontal;
+        spacing: 8;
+
+        accessibility {
+          label: "Remember preference options";
+          description: "Options to remember this decision for future requests";
+        }
+
+        CheckButton chk_remember {
+          label: _("Remember this decision");
+
+          accessibility {
+            label: "Remember this decision";
+            description: "Check to remember your approval or denial for future similar requests";
+          }
+        }
+
+        DropDown ttl_dropdown {
+          sensitive: false;
+          halign: end;
+          hexpand: true;
+
+          accessibility {
+            label: "Duration to remember";
+            description: "Select how long to remember this decision";
+          }
+        }
+      }
+
       Box {
         orientation: horizontal;
         spacing: 12;
@@ -209,7 +240,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
 
           styles [
             "pill",
-            "approve-btn",
+            "suggested-action",
           ]
         }
 
@@ -226,7 +257,6 @@ template $GnostrApprovalDialog: Adw.Dialog {
 
           styles [
             "pill",
-            "deny-btn",
           ]
         }
       }
@@ -331,36 +361,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
             }
           }
 
-          /* Remember Decision */
-          Box {
-            orientation: horizontal;
-            spacing: 8;
 
-            accessibility {
-              label: "Remember preference options";
-              description: "Options to remember this decision for future requests";
-            }
-
-            CheckButton chk_remember {
-              label: _("Remember this decision");
-
-              accessibility {
-                label: "Remember this decision";
-                description: "Check to remember your approval or denial for future similar requests";
-              }
-            }
-
-            DropDown ttl_dropdown {
-              sensitive: false;
-              halign: end;
-              hexpand: true;
-
-              accessibility {
-                label: "Duration to remember";
-                description: "Select how long to remember this decision";
-              }
-            }
-          }
         }
       }
     }
