@@ -100,9 +100,12 @@ target_link_libraries(nostr_json PRIVATE nostrc::nsync ${LWS_LIBRARIES})
 # at load time (the one nostr_json_init() must configure anyway). ELF only:
 # GNU ld pulls the archive members a DSO needs into the executable, Apple's
 # ld64 does not, so macOS keeps the embedded copy (two-level namespaces, no
-# ASan ODR check there).
+# ASan ODR check there). Windows joins the embedded copy too (nostrc-8o95q):
+# a DLL may not have undefined references, so the INTERFACE trick cannot
+# work there (libnostr-json.dll references nostr_set_json_interface,
+# nostr_tag_get, string_array_* and int_array_*).
 get_target_property(_nj_nostr_type nostr TYPE)
-if(_nj_nostr_type STREQUAL "STATIC_LIBRARY" AND NOT APPLE)
+if(_nj_nostr_type STREQUAL "STATIC_LIBRARY" AND NOT APPLE AND NOT WIN32)
   target_link_libraries(nostr_json INTERFACE libnostr)
   # Compile against libnostr's headers without linking it (CMake >= 3.27
   # spells this $<COMPILE_ONLY:>; the tree supports 3.22).
