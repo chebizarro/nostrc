@@ -181,11 +181,16 @@ jobs:
       - name: Create NSIS installer
         run: |
           cd apps/grotto/packaging/windows
+          # MSYS2's mingw-w64-x86_64-nsis ships plugins under
+          # share/nsis/Plugins/unicode, which makensis (NSIS 3) does not
+          # search on its own; point the script at it (nostrc-8o95q).
+          NSIS_PLUGINS=$(cygpath -m "${MINGW_PREFIX}/share/nsis/Plugins/unicode")
           makensis \
             -DVERSION=${{ steps.version.outputs.version }} \
             -DARCH=x64 \
             -DBUILD_DIR=../../../../build \
             -DDEPS_DIR=../../../../build/deps \
+            -DNSIS_PLUGINS="${NSIS_PLUGINS}" \
             grotto.nsi
 
       - name: Upload installer artifact

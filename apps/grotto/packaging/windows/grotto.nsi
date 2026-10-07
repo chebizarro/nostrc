@@ -18,6 +18,14 @@
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "FileFunc.nsh"
+
+; Optional extra plugin directory. The MSYS2 mingw-w64 NSIS package ships its
+; plugins under share/nsis/Plugins/unicode, which makensis does not find on
+; its own (NSIS 3 expects Plugins/x86-unicode), so CI passes it via
+; -DNSIS_PLUGINS=... (nostrc-8o95q).
+!ifdef NSIS_PLUGINS
+!addplugindir "${NSIS_PLUGINS}"
+!endif
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
 !include "WinVer.nsh"
