@@ -1414,7 +1414,8 @@ test_web_allow_covers_sender(Fixture *f, gconstpointer data)
   g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
   GtkWidget *button = row_child(row_for(f->view, first), "picture_button");
   g_assert_true(shown(button));
-  g_assert_true(shown(row_child(row_for(f->view, second), "picture_button")));
+  /* The button is once per run (W33): the second message of the run has none. */
+  g_assert_false(shown(row_child(row_for(f->view, second), "picture_button")));
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   click(button);
   spin_until(dialog_presented, dialog);

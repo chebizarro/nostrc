@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-display-name.h"
 #include "gh-attachment-card.h"
 #include "gh-reaction-bar.h"
 #include "gh-reaction-picker.h"
@@ -12,6 +13,7 @@
 #include "gh-voice-meta.h"
 #endif
 
+#include <adwaita.h>
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
@@ -46,6 +48,8 @@ struct _GhMessageRow {
   GtkButton *picture_button;
   GtkPicture *remote_image;
   GtkPicture *profile_picture;
+  GtkWidget *bubble_line;
+  AdwAvatar *avatar;
   GtkBox *web_box;
   GtkLabel *web_error;
   GtkLabel *preview_title;
@@ -85,22 +89,16 @@ static GParamSpec *props[N_PROPS];
 
 G_DEFINE_FINAL_TYPE(GhMessageRow, gh_message_row, GTK_TYPE_WIDGET)
 
+static void update_avatar(GhMessageRow *self);
+static void update_web_images(GhMessageRow *self);
+
 /* ---- text -------------------------------------------------------------------- */
 
 gchar *
 gh_message_row_display_name(const gchar *pubkey_hex)
 {
   g_return_val_if_fail(pubkey_hex != NULL, NULL);
-  guint8 bytes[32];
-  char *npub = NULL;
-  if (strlen(pubkey_hex) != 64 || !nostr_hex2bin(bytes, pubkey_hex, sizeof bytes) ||
-      nostr_nip19_encode_npub(bytes, &npub) != 0 || !npub)
-    return g_strdup(pubkey_hex);
-  gsize length = strlen(npub);
-  gchar *out = length > 16 ? g_strdup_printf("%.10s…%s", npub, npub + length - 4)
-                           : g_strdup(npub);
-  free(npub);
-  return out;
+  return gh_display_name_for(pubkey_hex); /* W33: the kind-0 name when cached */
 }
 
 gchar *
@@ -276,11 +274,38 @@ update_width(GhMessageRow *self)
   gtk_label_set_max_width_chars(self->preview_text, chars);
 }
 
+/* The avatar: the sender's name (initials) and loaded picture, at the end
+ * of a run; transparent on the other rows so bubbles stay in line. */
+static void
+update_avatar(GhMessageRow *self)
+{
+  if (!self->message) {
+    adw_avatar_set_text(self->avatar, NULL);
+    adw_avatar_set_custom_image(self->avatar, NULL);
+    return;
+  }
+  const gchar *sender = gh_message_get_sender(self->message);
+  g_autofree gchar *name = sender ? gh_display_name_for(sender) : NULL;
+  adw_avatar_set_text(self->avatar, name);
+  GdkTexture *texture = NULL;
+  if (self->view && sender) {
+    GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+    texture = gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_PICTURE,
+                                                   &state);
+  }
+  adw_avatar_set_custom_image(self->avatar, texture ? GDK_PAINTABLE(texture) : NULL);
+  gtk_widget_set_opacity(GTK_WIDGET(self->avatar), self->run_end ? 1.0 : 0.0);
+}
+
 static void
 update_runs(GhMessageRow *self)
 {
   set_class(GTK_WIDGET(self), "run-start", self->run_start);
   set_class(GTK_WIDGET(self), "run-end", self->run_end);
+  if (self->message)
+    update_web_images(self); /* the picture button is once per run */
+  else
+    update_avatar(self);
   gboolean outgoing = self->message && gh_message_is_self(self->message);
   gtk_widget_set_visible(GTK_WIDGET(self->sender_label),
                          self->message && self->show_sender && !outgoing);
@@ -340,7 +365,10 @@ update_web_images(GhMessageRow *self)
     if (picture) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_PICTURE);
   }
   gtk_widget_set_visible(GTK_WIDGET(self->image_button), available && self->preview_uri);
-  gtk_widget_set_visible(GTK_WIDGET(self->picture_button), picture != NULL);
+  /* Once per run, and never for your own picture (it loads without asking). */
+  gtk_widget_set_visible(GTK_WIDGET(self->picture_button),
+                         picture != NULL && self->run_start && self->message &&
+                         !gh_message_is_self(self->message));
   gboolean failed = FALSE;
   for (guint i = GH_WEB_IMAGE; i <= GH_WEB_PICTURE; i++) {
     GtkPicture *image = i == GH_WEB_IMAGE ? self->remote_image : self->profile_picture;
@@ -348,8 +376,12 @@ update_web_images(GhMessageRow *self)
     GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
     GdkTexture *texture = available
       ? gh_conversation_view_get_web_texture(self->view, self->message, i, &state) : NULL;
-    gtk_picture_set_paintable(image, texture ? GDK_PAINTABLE(texture) : NULL);
-    gtk_widget_set_visible(GTK_WIDGET(image), texture != NULL);
+    if (i == GH_WEB_PICTURE) {
+      gtk_widget_set_visible(GTK_WIDGET(image), FALSE); /* shown by the avatar */
+    } else {
+      gtk_picture_set_paintable(image, texture ? GDK_PAINTABLE(texture) : NULL);
+      gtk_widget_set_visible(GTK_WIDGET(image), texture != NULL);
+    }
     gtk_widget_set_sensitive(GTK_WIDGET(button), state == GH_LINK_PREVIEW_NONE || state == GH_LINK_PREVIEW_FAILED);
     /* Loaded (or loading): the picture speaks for itself, no button left. */
     if (state == GH_LINK_PREVIEW_LOADED || state == GH_LINK_PREVIEW_LOADING)
@@ -362,6 +394,7 @@ update_web_images(GhMessageRow *self)
     }
   }
   gtk_widget_set_visible(GTK_WIDGET(self->web_error), failed);
+  update_avatar(self);
 }
 
 static void
@@ -474,7 +507,24 @@ update_all(GhMessageRow *self)
   set_class(GTK_WIDGET(self->bubble), "outgoing", message && outgoing);
   set_class(GTK_WIDGET(self->bubble), "incoming", message && !outgoing);
   GtkAlign align = outgoing ? GTK_ALIGN_END : GTK_ALIGN_START;
+  gtk_widget_set_halign(GTK_WIDGET(self->bubble_line), align);
   gtk_widget_set_halign(GTK_WIDGET(self->bubble), align);
+  /* Everything under the bubble starts where the bubble does, past the
+   * avatar (32px and 6px of spacing). */
+  const gint inset = 38;
+  GtkWidget *under[] = { GTK_WIDGET(self->meta_box), GTK_WIDGET(self->preview_box),
+                         GTK_WIDGET(self->web_box), GTK_WIDGET(self->reaction_bar),
+                         GTK_WIDGET(self->sender_label), GTK_WIDGET(self->reply_button) };
+  for (guint u = 0; u < G_N_ELEMENTS(under); u++) {
+    gtk_widget_set_margin_start(under[u], outgoing ? 0 : inset);
+    gtk_widget_set_margin_end(under[u], outgoing ? inset : 0);
+  }
+  if (outgoing)
+    gtk_box_reorder_child_after(GTK_BOX(self->bubble_line), GTK_WIDGET(self->avatar),
+                                GTK_WIDGET(self->bubble));
+  else
+    gtk_box_reorder_child_after(GTK_BOX(self->bubble_line), GTK_WIDGET(self->avatar), NULL);
+  update_avatar(self);
   gtk_widget_set_halign(GTK_WIDGET(self->preview_box), align);
   gtk_widget_set_halign(GTK_WIDGET(self->meta_box), align);
   /* Reactions sit under the bubble on its side; the react button is the
@@ -649,13 +699,19 @@ on_emoji_picked(GhReactionPicker *picker, const gchar *emoji, GhMessageRow *self
 }
 
 static void
-show_picker(GhMessageRow *self, gdouble x, gdouble y)
+ensure_picker(GhMessageRow *self)
 {
   if (!self->picker) {
     self->picker = GH_REACTION_PICKER(gh_reaction_picker_new());
     gtk_widget_set_parent(GTK_WIDGET(self->picker), GTK_WIDGET(self->bubble));
     g_signal_connect(self->picker, "emoji-picked", G_CALLBACK(on_emoji_picked), self);
   }
+}
+
+static void
+show_picker(GhMessageRow *self, gdouble x, gdouble y)
+{
+  ensure_picker(self);
   if (x >= 0 && y >= 0) {
     GdkRectangle rect = { (int)x, (int)y, 1, 1 };
     gtk_popover_set_pointing_to(GTK_POPOVER(self->picker), &rect);
@@ -698,6 +754,15 @@ on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
   if (self->message) update_preview(self);
 }
 
+/* A name arrived (W33): the sender line, avatar and summary follow. */
+static void
+on_display_name_changed(GhMessageRow *self, const gchar *pubkey)
+{
+  if (!self->message || g_strcmp0(gh_message_get_sender(self->message), pubkey) != 0)
+    return;
+  update_all(self);
+}
+
 static void
 gh_message_row_root(GtkWidget *widget)
 {
@@ -709,6 +774,8 @@ gh_message_row_root(GtkWidget *widget)
   self->view = GH_CONVERSATION_VIEW(view);
   self->compact_binding = g_object_bind_property(view, "compact", self, "compact",
                                                  G_BINDING_SYNC_CREATE);
+  g_signal_connect_object(gh_display_name_get_notifier(), "changed",
+                          G_CALLBACK(on_display_name_changed), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(view, "preview-changed", G_CALLBACK(on_preview_changed), self,
                           G_CONNECT_SWAPPED);
   update_preview(self);
@@ -923,7 +990,20 @@ action_add_reaction(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  show_picker(GH_MESSAGE_ROW(widget), -1, -1);
+  GhMessageRow *self = GH_MESSAGE_ROW(widget);
+  /* From the react button: the picker points at it, not at the whole
+   * message (W33, owner). */
+  graphene_rect_t bounds;
+  if (gtk_widget_get_mapped(GTK_WIDGET(self->react_button)) &&
+      gtk_widget_compute_bounds(GTK_WIDGET(self->react_button), GTK_WIDGET(self->bubble), &bounds)) {
+    ensure_picker(self);
+    GdkRectangle rect = { (int)bounds.origin.x, (int)bounds.origin.y,
+                          MAX(1, (int)bounds.size.width), MAX(1, (int)bounds.size.height) };
+    gtk_popover_set_pointing_to(GTK_POPOVER(self->picker), &rect);
+    gtk_popover_popup(GTK_POPOVER(self->picker));
+    return;
+  }
+  show_picker(self, -1, -1);
 }
 
 static void
@@ -979,6 +1059,8 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, picture_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, remote_image);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, profile_picture);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_error);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_title);

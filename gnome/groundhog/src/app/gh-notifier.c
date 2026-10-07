@@ -1,4 +1,5 @@
 #include "gh-notifier.h"
+#include "gh-display-name.h"
 
 #include <glib/gi18n.h>
 #include <nostr-utils.h>
@@ -459,7 +460,7 @@ preview_of(Room *room)
     gh_conversation_get_backend(room->conversation) != GH_CONVERSATION_BACKEND_NIP17 ||
     (peers && peers[0] && peers[1]);
   g_autofree gchar *author = group
-                               ? npub_of(gh_message_get_sender(message), TRUE) : NULL;
+                               ? gh_display_name_for(gh_message_get_sender(message)) : NULL;
   g_autofree gchar *body = author ? g_strdup_printf(_("%s: %s"), author, text)
                                   : g_steal_pointer(&text);
   return truncate_graphemes(body, GH_NOTIFIER_PREVIEW_MAX);

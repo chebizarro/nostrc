@@ -59,57 +59,69 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
-      <object class="GtkBox" id="bubble">
-        <property name="orientation">1</property>
+      <object class="GtkBox" id="bubble_line">
         <property name="spacing">6</property>
-        <style>
-          <class name="message-bubble"/>
-        </style>
         <child>
-          <object class="GtkLabel" id="body_label">
-            <property name="use-markup">true</property>
-            <property name="selectable">true</property>
-            <property name="wrap">true</property>
-            <property name="wrap-mode">2</property>
-            <property name="xalign">0</property>
-            <property name="max-width-chars">60</property>
+          <object class="AdwAvatar" id="avatar">
+            <property name="size">32</property>
+            <property name="valign">2</property>
+            <property name="show-initials">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="bubble">
+            <property name="orientation">1</property>
+            <property name="spacing">6</property>
             <style>
-              <class name="groundhog-message-body"/>
+              <class name="message-bubble"/>
             </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="poll_slot">
-            <property name="visible">false</property>
-            <property name="orientation">1</property>
-            <property name="spacing">6</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="voice_slot">
-            <property name="visible">false</property>
-            <property name="orientation">1</property>
-            <property name="spacing">6</property>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="attachment_slot">
-            <property name="visible">false</property>
-            <property name="orientation">1</property>
-            <property name="spacing">6</property>
             <child>
-              <object class="GhAttachmentCard" id="attachment_card"></object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="attachment_note">
-                <property name="visible">false</property>
-                <property name="xalign">0</property>
+              <object class="GtkLabel" id="body_label">
+                <property name="use-markup">true</property>
+                <property name="selectable">true</property>
                 <property name="wrap">true</property>
                 <property name="wrap-mode">2</property>
+                <property name="xalign">0</property>
+                <property name="max-width-chars">60</property>
                 <style>
-                  <class name="dim-label"/>
-                  <class name="caption"/>
+                  <class name="groundhog-message-body"/>
                 </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="poll_slot">
+                <property name="visible">false</property>
+                <property name="orientation">1</property>
+                <property name="spacing">6</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="voice_slot">
+                <property name="visible">false</property>
+                <property name="orientation">1</property>
+                <property name="spacing">6</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkBox" id="attachment_slot">
+                <property name="visible">false</property>
+                <property name="orientation">1</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GhAttachmentCard" id="attachment_card"></object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="attachment_note">
+                    <property name="visible">false</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <style>
+                      <class name="dim-label"/>
+                      <class name="caption"/>
+                    </style>
+                  </object>
+                </child>
               </object>
             </child>
           </object>

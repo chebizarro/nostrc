@@ -14,6 +14,7 @@
 #endif
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
+#include "gh-display-name.h"
 #include "gh-picture-cache.h"
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
 #include "gh-store-contacts.h"
@@ -1677,6 +1678,19 @@ directory_display_name(gpointer data, const gchar *pubkey)
   return gh_contact_directory_get_display_name(GH_CONTACT_DIRECTORY(data), pubkey);
 }
 
+static void
+relay_display_name_changed(GObject *directory, const gchar *pubkey, gpointer data)
+{
+  (void)directory; (void)data;
+  gh_display_name_changed(pubkey);
+}
+
+static const gchar *
+display_name_resolver(const gchar *pubkey, gpointer data)
+{
+  return gh_contact_directory_get_display_name(GH_CONTACT_DIRECTORY(data), pubkey);
+}
+
 static const gchar *
 directory_claimed_nip05(gpointer data, const gchar *pubkey)
 {
@@ -1979,6 +1993,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
   GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
   if (directory) {
     gh_account_ui_set_name_source(window, directory_display_name, G_OBJECT(directory));
+    /* W33: names everywhere a person is shown. */
+    gh_display_name_set_resolver(display_name_resolver, directory);
+    g_signal_connect(directory, "profile-changed", G_CALLBACK(relay_display_name_changed), NULL);
     gh_conversation_view_set_picture_source(GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window))),
                                              directory_picture_uri, G_OBJECT(directory));
     new_message.inboxes = GH_INBOX_RESOLVER(directory);

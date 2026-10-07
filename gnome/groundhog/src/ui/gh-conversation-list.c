@@ -1,4 +1,5 @@
 #include "gh-conversation-list.h"
+#include "gh-display-name.h"
 #include "gh-conversation-row.h"
 #include "gh-picture-cache.h"
 #include "gh-conversation-view.h"
@@ -202,6 +203,11 @@ search_key(GObject *item, gpointer data)
     g_autofree gchar *npub = npub_of(*p, FALSE);
     g_string_append_c(key, '\n');
     g_string_append(key, npub);
+    const gchar *name = gh_display_name_lookup(*p); /* W33: search finds names too */
+    if (name) {
+      g_string_append_c(key, '\n');
+      g_string_append(key, name);
+    }
   }
   return g_string_free(g_steal_pointer(&key), FALSE);
 }

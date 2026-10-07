@@ -347,7 +347,8 @@ if (TARGET nostr AND TARGET nip19)
   pkg_check_modules(GROUNDHOG_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.72)
   add_library(groundhog-conversations STATIC
     src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c
-    src/app/gh-message-status.c src/app/gh-reaction.c src/app/gh-reaction-store.c)
+    src/app/gh-message-status.c src/app/gh-reaction.c src/app/gh-reaction-store.c
+    src/app/gh-display-name.c)
   target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
   target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO)

@@ -37,9 +37,11 @@
 /* The message list sits on the window background so incoming (card)
  * bubbles stand out in light and dark; rows neither hover nor select, but
  * keep the keyboard focus ring. */
+/* The list's own margin is the sidebar's (12px, as around Message Requests;
+ * W33, owner); rows add only the space between messages. */
 .groundhog-message-list {
   background: none;
-  padding-bottom: 6px;
+  padding: 12px;
 }
 
 .groundhog-message-list > row,
@@ -52,7 +54,7 @@
 /* Space goes between messages (a little) and between runs (more), not
  * around the list: bubbles in a run no longer touch. */
 .groundhog-message-row {
-  margin: 2px 10px;
+  margin: 2px 0;
 }
 
 .groundhog-message-row.run-start {

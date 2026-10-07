@@ -1,4 +1,5 @@
 #include "gh-blocked-conversations.h"
+#include "gh-display-name.h"
 #include "gh-conversation-actions.h"
 
 #include <nostr-utils.h>
@@ -36,7 +37,8 @@ gh_blocked_conversations_list(GhStoreConversations *conversations, const gchar *
     for (guint p = 0; participants[p]; p++) {
       if (g_ascii_strcasecmp(participants[p], account_pubkey) == 0)
         continue;
-      g_autofree gchar *npub = npub_of(participants[p]);
+      const gchar *name = gh_display_name_lookup(participants[p]); /* W33 */
+      g_autofree gchar *npub = name ? g_strdup(name) : npub_of(participants[p]);
       g_strv_builder_add(npubs, npub);
     }
     GhBlockedConversation *conversation = g_new0(GhBlockedConversation, 1);

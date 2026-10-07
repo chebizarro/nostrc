@@ -55,15 +55,6 @@ chip_clicked(GtkButton *button, gpointer data)
 }
 
 static void
-add_clicked(GtkButton *button, gpointer data)
-{
-  (void)button;
-  GhReactionBar *self = GH_REACTION_BAR(data);
-  /* Activate the "conversation.add-reaction" action, if wired by the view. */
-  gtk_widget_activate_action(GTK_WIDGET(self), "conversation.add-reaction", NULL);
-}
-
-static void
 rebuild(GhReactionBar *self)
 {
   self->rebuilding = TRUE;
@@ -90,14 +81,8 @@ rebuild(GhReactionBar *self)
     }
   }
 
-  /* "+" add-reaction button. */
-  GtkWidget *add = gtk_button_new_from_icon_name("list-add-symbolic");
-  gtk_widget_add_css_class(add, "flat");
-  gtk_widget_add_css_class(add, "groundhog-reaction-add");
-  gtk_accessible_update_property(GTK_ACCESSIBLE(add),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, _("Add reaction"), -1);
-  g_signal_connect(add, "clicked", G_CALLBACK(add_clicked), self);
-  gtk_flow_box_append(self->flow, add);
+  /* No "+" here (W33, owner): the message's react button is the one way to
+   * add a reaction; a chip toggles your own. */
 
   self->rebuilding = FALSE;
 }

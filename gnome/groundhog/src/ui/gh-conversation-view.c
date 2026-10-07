@@ -1830,6 +1830,10 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     return;
   g_autofree gchar *sender_key = g_strdup_printf("%u:%s", kind, gh_message_get_sender(message));
   gboolean loaded_already = loaded_texture_for(self, kind, uri) != NULL;
+  /* Your own picture needs no asking (W33, owner): it is allowed once. */
+  if (kind == GH_WEB_PICTURE && self->pictures && gh_message_is_self(message) &&
+      !gh_picture_cache_is_allowed(self->pictures, gh_message_get_sender(message)))
+    gh_picture_cache_allow(self->pictures, gh_message_get_sender(message));
   gboolean by_cache = kind == GH_WEB_PICTURE && self->pictures &&
                       gh_picture_cache_is_allowed(self->pictures, gh_message_get_sender(message));
   if (!loaded_already && !by_cache && !g_hash_table_contains(self->allowed_senders, sender_key))

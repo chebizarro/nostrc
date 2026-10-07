@@ -1,4 +1,5 @@
 #include "gh-conversation-private.h"
+#include "gh-display-name.h"
 
 #include <glib/gi18n.h>
 
@@ -137,20 +138,11 @@ gh_conversation_list_model_init(GListModelInterface *iface)
   iface->get_item = list_get_item;
 }
 
-/* "npub1abcde…wxyz" for a lowercase hex pubkey. */
+/* A person by name when the kind 0 is cached (W33), else "npub1abcde…wxyz". */
 static gchar *
 abbreviated_npub(const gchar *pubkey_hex)
 {
-  guint8 bytes[32];
-  gchar *npub = NULL;
-  if (!nostr_hex2bin(bytes, pubkey_hex, sizeof bytes) ||
-      nostr_nip19_encode_npub(bytes, &npub) != 0 || !npub)
-    return g_strdup(pubkey_hex);
-  gsize length = strlen(npub);
-  gchar *out = length > 16 ? g_strdup_printf("%.10s…%s", npub, npub + length - 4)
-                           : g_strdup(npub);
-  free(npub);
-  return out;
+  return gh_display_name_for(pubkey_hex);
 }
 
 static gchar *

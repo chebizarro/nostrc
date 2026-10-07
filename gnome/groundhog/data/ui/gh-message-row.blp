@@ -1,4 +1,5 @@
 using Gtk 4.0;
+using Adw 1;
 
 // One message of a conversation (charter §7.4, §7.6), bound by
 // gh-message-row.c: the sender's name (first message of a run in a
@@ -59,69 +60,81 @@ template $GhMessageRow: Widget {
     }
   }
 
-  Box bubble {
-    orientation: vertical;
+  // W33: the sender's round avatar beside the bubble, on its side, shown at
+  // the end of a run (space kept on the other rows so bubbles line up).
+  Box bubble_line {
     spacing: 6;
 
-    styles [
-      "message-bubble",
-    ]
+    Adw.Avatar avatar {
+      size: 32;
+      valign: end;
+      show-initials: true;
+    }
 
-    Label body_label {
-      use-markup: true;
-      selectable: true;
-      wrap: true;
-      wrap-mode: word_char;
-      xalign: 0;
-      max-width-chars: 60;
+    Box bubble {
+      orientation: vertical;
+      spacing: 6;
 
       styles [
-        "groundhog-message-body",
+        "message-bubble",
       ]
-    }
 
-    // A NIP-88 poll (kind 1068): the card shows the question, option
-    // buttons with tallies, vote count, remaining time, closed state.
-    // The card widget is a GhPollCard, set by gh-message-row.c when the
-    // message is a poll and a GhMlsPoll is available.
-    Box poll_slot {
-      visible: false;
-      orientation: vertical;
-      spacing: 6;
-    }
-
-    // W27 voice messages (nostrc-h4mk): when a file message carries an
-    // audio MIME type, this slot shows a GhVoiceBubble instead of the
-    // attachment card. The voice bubble is added by gh-message-row.c when
-    // it detects an audio attachment; it stays here across recycling.
-    Box voice_slot {
-      visible: false;
-      orientation: vertical;
-      spacing: 6;
-    }
-
-    // A kind-15 file message's card (charter G22), in place of the body:
-    // nothing is fetched until its Download button. An encrypted group
-    // message (W25) shows its caption above and one card per file; the
-    // further cards are added after this one by gh-message-row.c, and the
-    // note says when a file reference couldn't be read.
-    Box attachment_slot {
-      visible: false;
-      orientation: vertical;
-      spacing: 6;
-
-      $GhAttachmentCard attachment_card {}
-
-      Label attachment_note {
-        visible: false;
-        xalign: 0;
+      Label body_label {
+        use-markup: true;
+        selectable: true;
         wrap: true;
         wrap-mode: word_char;
+        xalign: 0;
+        max-width-chars: 60;
 
         styles [
-          "dim-label",
-          "caption",
+          "groundhog-message-body",
         ]
+      }
+
+      // A NIP-88 poll (kind 1068): the card shows the question, option
+      // buttons with tallies, vote count, remaining time, closed state.
+      // The card widget is a GhPollCard, set by gh-message-row.c when the
+      // message is a poll and a GhMlsPoll is available.
+      Box poll_slot {
+        visible: false;
+        orientation: vertical;
+        spacing: 6;
+      }
+
+      // W27 voice messages (nostrc-h4mk): when a file message carries an
+      // audio MIME type, this slot shows a GhVoiceBubble instead of the
+      // attachment card. The voice bubble is added by gh-message-row.c when
+      // it detects an audio attachment; it stays here across recycling.
+      Box voice_slot {
+        visible: false;
+        orientation: vertical;
+        spacing: 6;
+      }
+
+      // A kind-15 file message's card (charter G22), in place of the body:
+      // nothing is fetched until its Download button. An encrypted group
+      // message (W25) shows its caption above and one card per file; the
+      // further cards are added after this one by gh-message-row.c, and the
+      // note says when a file reference couldn't be read.
+      Box attachment_slot {
+        visible: false;
+        orientation: vertical;
+        spacing: 6;
+
+        $GhAttachmentCard attachment_card {}
+
+        Label attachment_note {
+          visible: false;
+          xalign: 0;
+          wrap: true;
+          wrap-mode: word_char;
+
+          styles [
+            "dim-label",
+            "caption",
+          ]
+        }
       }
     }
   }
@@ -140,6 +153,8 @@ template $GhMessageRow: Widget {
       action-name: "conversation.show-preview";
       styles ["flat"]
     }
+    // Kept for the template binding; the avatar beside the bubble shows the
+    // picture (W33).
     Picture profile_picture {
       visible: false;
       can-shrink: true;

@@ -43,72 +43,6 @@ template $GhComposer: Widget {
         Box edit_row {
           spacing: 6;
 
-          // NIP-88 poll creation (W26): shown while in an encrypted group
-          // ("can-create-poll"); opens the Create Poll dialog.
-          Button poll_button {
-            visible: false;
-            valign: end;
-            icon-name: "view-list-bullet-symbolic";
-            tooltip-text: _("Create Poll");
-            action-name: "composer.create-poll";
-            focus-on-click: false;
-
-            accessibility {
-              label: _("Create Poll");
-              description: _("Create a poll in this encrypted group.");
-            }
-
-            styles [
-              "flat",
-              "circular",
-            ]
-          }
-
-          // Attachments (charter G22): shown while the owner can send a
-          // file here ("can-attach"); it opens the file chooser. Dropping a
-          // file or pasting an image does the same.
-          Button attach_button {
-            visible: false;
-            valign: end;
-            icon-name: "mail-attachment-symbolic";
-            tooltip-text: _("Attach File");
-            action-name: "composer.attach";
-            focus-on-click: false;
-
-            accessibility {
-              label: _("Attach File");
-              description: _("Choose a file to send encrypted. You can also drop a file here or paste an image.");
-            }
-
-            styles [
-              "flat",
-              "circular",
-            ]
-          }
-
-
-          // Voice recording (W27 voice, nostrc-o1kl): shown while the
-          // owner can record a voice message here ("can-record-voice");
-          // emits "record-voice-requested" for the owner's recorder.
-          Button voice_button {
-            visible: false;
-            valign: end;
-            icon-name: "microphone-sensitivity-high-symbolic";
-            tooltip-text: _("Record Voice Message");
-            action-name: "composer.record-voice";
-            focus-on-click: false;
-
-            accessibility {
-              label: _("Record Voice Message");
-              description: _("Record a voice message to send encrypted.");
-            }
-
-            styles [
-              "flat",
-              "circular",
-            ]
-          }
-
           // The conversation's disappearing-messages timer (charter §3.7,
           // G07), shown before sending while it is on; the text and the
           // accessible label are set from C. It opens Conversation Info
@@ -201,6 +135,75 @@ template $GhComposer: Widget {
             }
 
             popover: EmojiChooser emoji_chooser {};
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
+          // Attach, voice and poll sit with emoji and Send on the right of
+          // the entry, all actions on one side (W33, owner; the HIG keeps a
+          // composer's actions together).
+          // NIP-88 poll creation (W26): shown while in an encrypted group
+          // ("can-create-poll"); opens the Create Poll dialog.
+          Button poll_button {
+            visible: false;
+            valign: end;
+            icon-name: "view-list-bullet-symbolic";
+            tooltip-text: _("Create Poll");
+            action-name: "composer.create-poll";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Create Poll");
+              description: _("Create a poll in this encrypted group.");
+            }
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
+          // Attachments (charter G22): shown while the owner can send a
+          // file here ("can-attach"); it opens the file chooser. Dropping a
+          // file or pasting an image does the same.
+          Button attach_button {
+            visible: false;
+            valign: end;
+            icon-name: "mail-attachment-symbolic";
+            tooltip-text: _("Attach File");
+            action-name: "composer.attach";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Attach File");
+              description: _("Choose a file to send encrypted. You can also drop a file here or paste an image.");
+            }
+
+            styles [
+              "flat",
+              "circular",
+            ]
+          }
+
+
+          // Voice recording (W27 voice, nostrc-o1kl): shown while the
+          // owner can record a voice message here ("can-record-voice");
+          // emits "record-voice-requested" for the owner's recorder.
+          Button voice_button {
+            visible: false;
+            valign: end;
+            icon-name: "microphone-sensitivity-high-symbolic";
+            tooltip-text: _("Record Voice Message");
+            action-name: "composer.record-voice";
+            focus-on-click: false;
+
+            accessibility {
+              label: _("Record Voice Message");
+              description: _("Record a voice message to send encrypted.");
+            }
 
             styles [
               "flat",
