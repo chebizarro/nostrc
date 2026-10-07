@@ -65,7 +65,7 @@ struct _OnboardingAssistant {
   GtkWidget *page_ready;
 
   /* Create profile widgets */
-  AdwEntryRow *entry_profile_name;
+  GtkEntry *entry_profile_name;
   GtkBox *box_passphrase_container;
   GtkBox *box_confirm_container;
   GnSecureEntry *secure_passphrase;
@@ -1059,14 +1059,10 @@ static void update_navigation_buttons(OnboardingAssistant *self) {
   gtk_widget_set_visible(GTK_WIDGET(self->btn_back),
                          self->current_step > STEP_WELCOME);
 
-  /* Next button text changes on last step */
-  if (self->current_step == STEP_READY) {
-    gtk_button_set_label(self->btn_next, "Get Started");
-    gtk_widget_add_css_class(GTK_WIDGET(self->btn_next), "suggested-action");
-  } else {
-    gtk_button_set_label(self->btn_next, "Next");
-    gtk_widget_remove_css_class(GTK_WIDGET(self->btn_next), "suggested-action");
-  }
+  /* The way forward is always the suggested action (it was grey on every
+   * step but the last, nostrc-wic1). */
+  gtk_button_set_label(self->btn_next, self->current_step == STEP_READY ? "Get Started" : "Next");
+  gtk_widget_add_css_class(GTK_WIDGET(self->btn_next), "suggested-action");
 
   /* Enable/disable next based on validation */
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next),
@@ -1155,43 +1151,36 @@ static void on_btn_next_clicked(GtkButton *btn, gpointer user_data) {
 }
 
 /* Callback for skip confirmation dialog */
-static void on_skip_dialog_response(GObject *src, GAsyncResult *res, gpointer data) {
+static void on_skip_dialog_response(AdwAlertDialog *dialog, const char *response, gpointer data) {
+  (void)dialog;
   OnboardingAssistant *self = ONBOARDING_ASSISTANT(data);
-  GError *err = NULL;
-  int response = gtk_alert_dialog_choose_finish(GTK_ALERT_DIALOG(src), res, &err);
-  if (err) {
-    g_clear_error(&err);
+  if (g_strcmp0(response, "skip") != 0)
     return;
+  onboarding_assistant_mark_completed();
+  if (self->on_finished) {
+    self->on_finished(FALSE, self->on_finished_data);
   }
-
-  if (response == 0) {
-    /* User chose to skip */
-    onboarding_assistant_mark_completed();
-    if (self->on_finished) {
-      self->on_finished(FALSE, self->on_finished_data);
-    }
-    gtk_window_close(GTK_WINDOW(self));
-  }
+  gtk_window_close(GTK_WINDOW(self));
 }
 
 static void on_btn_skip_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
   OnboardingAssistant *self = ONBOARDING_ASSISTANT(user_data);
 
-  /* Show warning dialog before skipping */
-  GtkAlertDialog *dlg = gtk_alert_dialog_new(
-    "Skip Onboarding?\n\n"
-    "You can always access onboarding later from Settings.\n"
-    "However, we recommend completing it to understand "
-    "how grotto protects your keys.");
-  gtk_alert_dialog_set_buttons(dlg, (const char * const[]){
-    "Skip Anyway", "Continue Setup", NULL
-  });
-  gtk_alert_dialog_set_default_button(dlg, 1);
-  gtk_alert_dialog_set_cancel_button(dlg, 1);
-
-  gtk_alert_dialog_choose(dlg, GTK_WINDOW(self), NULL, on_skip_dialog_response, self);
-  g_object_unref(dlg);
+  /* An Adwaita dialog, in Grotto's words (was a plain GtkAlertDialog). */
+  AdwDialog *dlg = adw_alert_dialog_new("Skip Setup?",
+    "You can run this assistant again from Settings. Without an identity, "
+    "Grotto has nothing to sign with until you create or import one.");
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dlg),
+                                 "continue", "_Continue Setup",
+                                 "skip", "_Skip",
+                                 NULL);
+  adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dlg), "continue",
+                                           ADW_RESPONSE_SUGGESTED);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dlg), "continue");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dlg), "continue");
+  g_signal_connect(dlg, "response", G_CALLBACK(on_skip_dialog_response), self);
+  adw_dialog_present(dlg, GTK_WIDGET(self));
 }
 
 static void on_path_toggled(GtkCheckButton *btn, gpointer user_data) {
@@ -1340,6 +1329,19 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
   g_type_ensure(GN_TYPE_SECURE_ENTRY);
 
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* Each page fills the carousel and centres its content inside: pages
+   * centred at their natural width showed the next page beside them in a
+   * narrow window (nostrc-wic1). */
+  for (guint i = 0; i < adw_carousel_get_n_pages(self->carousel); i++) {
+    GtkWidget *page = adw_carousel_get_nth_page(self->carousel, i);
+    gtk_widget_set_hexpand(page, TRUE);
+    gtk_widget_set_halign(page, GTK_ALIGN_FILL);
+    gtk_widget_set_overflow(page, GTK_OVERFLOW_HIDDEN);
+    for (GtkWidget *child = gtk_widget_get_first_child(page); child;
+         child = gtk_widget_get_next_sibling(child))
+      if (gtk_widget_get_halign(child) == GTK_ALIGN_FILL)
+        gtk_widget_set_halign(child, GTK_ALIGN_CENTER);
+  }
 
   self->chosen_path = PATH_NONE;
   self->current_step = STEP_WELCOME;
@@ -1355,7 +1357,8 @@ static void onboarding_assistant_init(OnboardingAssistant *self) {
     self->secure_passphrase = GN_SECURE_ENTRY(gn_secure_entry_new());
     gn_secure_entry_set_placeholder_text(self->secure_passphrase, "Enter passphrase");
     gn_secure_entry_set_min_length(self->secure_passphrase, 8);
-    gn_secure_entry_set_show_strength_indicator(self->secure_passphrase, TRUE);
+    /* The page has its own strength meter and hint below this entry. */
+    gn_secure_entry_set_show_strength_indicator(self->secure_passphrase, FALSE);
     gn_secure_entry_set_show_caps_warning(self->secure_passphrase, TRUE);
     gn_secure_entry_set_timeout(self->secure_passphrase, 120);
     gtk_box_append(self->box_passphrase_container, GTK_WIDGET(self->secure_passphrase));

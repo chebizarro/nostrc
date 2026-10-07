@@ -231,32 +231,23 @@ get_strength_css_class(GnPasswordStrength strength)
   }
 }
 
-/* Clipboard blocking */
+/* Clipboard. The secret never leaves the entry: copy and cut are refused
+ * even while the text is shown. Paste is allowed (password managers fill
+ * passphrases by pasting). In GTK 4 these are signals of the entry's inner
+ * GtkText, not of GtkEntry (connecting them on the entry failed with a
+ * critical each at startup, nostrc-wic1). */
 static void
-on_entry_copy_clipboard(GtkEntry *entry, gpointer user_data)
+on_text_copy_clipboard(GtkText *text, gpointer user_data)
 {
-  (void)entry;
   (void)user_data;
-  /* Block copy - do nothing */
-  g_signal_stop_emission_by_name(entry, "copy-clipboard");
+  g_signal_stop_emission_by_name(text, "copy-clipboard");
 }
 
 static void
-on_entry_cut_clipboard(GtkEntry *entry, gpointer user_data)
+on_text_cut_clipboard(GtkText *text, gpointer user_data)
 {
-  (void)entry;
   (void)user_data;
-  /* Block cut - do nothing */
-  g_signal_stop_emission_by_name(entry, "cut-clipboard");
-}
-
-static void
-on_entry_paste_clipboard(GtkEntry *entry, gpointer user_data)
-{
-  (void)entry;
-  (void)user_data;
-  /* Block paste - do nothing */
-  g_signal_stop_emission_by_name(entry, "paste-clipboard");
+  g_signal_stop_emission_by_name(text, "cut-clipboard");
 }
 
 /* Entry text changed handler */
@@ -782,13 +773,12 @@ gn_secure_entry_init(GnSecureEntry *self)
     gtk_entry_set_visibility(self->entry_password, FALSE);
     gtk_entry_set_input_purpose(self->entry_password, GTK_INPUT_PURPOSE_PASSWORD);
 
-    /* Block clipboard operations */
-    g_signal_connect(self->entry_password, "copy-clipboard",
-                     G_CALLBACK(on_entry_copy_clipboard), self);
-    g_signal_connect(self->entry_password, "cut-clipboard",
-                     G_CALLBACK(on_entry_cut_clipboard), self);
-    g_signal_connect(self->entry_password, "paste-clipboard",
-                     G_CALLBACK(on_entry_paste_clipboard), self);
+    /* Refuse copy and cut on the entry's inner text (see above). */
+    GtkEditable *text = gtk_editable_get_delegate(GTK_EDITABLE(self->entry_password));
+    if (GTK_IS_TEXT(text)) {
+      g_signal_connect(text, "copy-clipboard", G_CALLBACK(on_text_copy_clipboard), self);
+      g_signal_connect(text, "cut-clipboard", G_CALLBACK(on_text_cut_clipboard), self);
+    }
 
     /* Connect to text changes */
     g_signal_connect(self->entry_password, "changed",

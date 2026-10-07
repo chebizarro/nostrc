@@ -83,15 +83,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="spacing">12</property>
                     <property name="hexpand">true</property>
                     <child>
-                      <object class="AdwPasswordEntryRow" id="entry_password">
-                        <property name="title" translatable="yes">Password</property>
-                        <accessibility>
-                          <property name="label">Password entry</property>
-                          <property name="description">Enter your unlock password here</property>
-                        </accessibility>
+                      <object class="GtkListBox" id="password_list">
+                        <property name="selection-mode">0</property>
                         <style>
                           <class name="boxed-list"/>
                         </style>
+                        <child>
+                          <object class="AdwPasswordEntryRow" id="entry_password">
+                            <property name="title" translatable="yes">Password</property>
+                            <accessibility>
+                              <property name="label">Password entry</property>
+                              <property name="description">Enter your unlock password here</property>
+                            </accessibility>
+                          </object>
+                        </child>
                       </object>
                     </child>
                     <child>

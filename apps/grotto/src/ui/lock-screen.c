@@ -135,7 +135,8 @@ gn_lock_screen_init(GnLockScreen *self)
   if (!gn_session_manager_has_password(sm)) {
     /* No password required - show different UI */
     gtk_label_set_text(self->lbl_subtitle, "Click to unlock");
-    gtk_widget_set_visible(GTK_WIDGET(self->entry_password), FALSE);
+    /* The row's list, or an empty boxed list would show (nostrc-wic1). */
+    gtk_widget_set_visible(gtk_widget_get_parent(GTK_WIDGET(self->entry_password)), FALSE);
     gtk_button_set_label(self->btn_unlock, "Unlock");
   }
 
@@ -166,9 +167,15 @@ gn_lock_screen_init(GnLockScreen *self)
                                  GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Time remaining until you can try again",
                                  -1);
 
-  /* Insert rate limit box before error label */
-  gtk_box_insert_child_after(GTK_BOX(self), GTK_WIDGET(self->box_rate_limit),
-                              GTK_WIDGET(self->entry_password));
+  /* The rate-limit box goes right after the password list, in the list's
+   * own box (it was inserted into the lock screen with a sibling from
+   * another box: a critical at startup, nostrc-wic1). */
+  GtkWidget *password_list = gtk_widget_get_parent(GTK_WIDGET(self->entry_password));
+  GtkWidget *form = password_list ? gtk_widget_get_parent(password_list) : NULL;
+  if (GTK_IS_BOX(form))
+    gtk_box_insert_child_after(GTK_BOX(form), GTK_WIDGET(self->box_rate_limit), password_list);
+  else
+    gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->box_rate_limit));
 
   /* Connect to rate limiter signals (nostrc-1g1) */
   GnRateLimiter *limiter = gn_rate_limiter_get_default();

@@ -447,6 +447,15 @@ gn_session_manager_init(GnSessionManager *self)
 
   /* Try to load existing password from secret store */
   load_password_from_store(self);
+
+  /* Without a lock password there is nothing to unlock with: the session
+   * starts open and never locks (the lock screen asked for a click and
+   * protected nothing; nostrc-wic1). Setting a password enables locking. */
+  if (!self->password_configured) {
+    self->state = GN_SESSION_STATE_AUTHENTICATED;
+    self->session_started = g_get_monotonic_time() / G_USEC_PER_SEC;
+    self->last_activity = self->session_started;
+  }
 }
 
 /* Timer callback - check if session should lock */
@@ -691,6 +700,11 @@ gn_session_manager_lock(GnSessionManager *self, GnLockReason reason)
 
   if (self->state == GN_SESSION_STATE_LOCKED)
     return;
+  /* No lock password: nothing to lock with (see init). */
+  if (!self->password_configured) {
+    g_debug("session-manager: no lock password; not locking (reason=%d)", reason);
+    return;
+  }
 
   g_debug("session-manager: Locking session (reason=%d)", reason);
 
@@ -812,6 +826,9 @@ gn_session_manager_set_password(GnSessionManager *self,
   }
   self->password_hash = new_hash;
   self->password_configured = TRUE;
+  /* Locking starts to mean something now: the idle timer runs. */
+  if (self->state == GN_SESSION_STATE_AUTHENTICATED)
+    gn_session_manager_start_timer(self);
 
   g_debug("session-manager: Password set successfully");
   return TRUE;
@@ -869,6 +886,12 @@ gn_session_manager_clear_password(GnSessionManager *self,
     self->password_hash = NULL;
   }
   self->password_configured = FALSE;
+  /* Nothing to lock with any more: open, and no idle lock. */
+  gn_session_manager_stop_timer(self);
+  if (self->state != GN_SESSION_STATE_AUTHENTICATED) {
+    self->state = GN_SESSION_STATE_AUTHENTICATED;
+    g_object_notify_by_pspec(G_OBJECT(self), properties[PROP_STATE]);
+  }
 
   g_debug("session-manager: Password cleared");
   return TRUE;

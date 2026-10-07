@@ -81,17 +81,22 @@ template $GnLockScreen: Box {
           spacing: 12;
           hexpand: true;
 
-          Adw.PasswordEntryRow entry_password {
-            title: _("Password");
-
-            accessibility {
-              label: "Password entry";
-              description: "Enter your unlock password here";
-            }
+          // A password row belongs in a list (libadwaita warns otherwise).
+          ListBox password_list {
+            selection-mode: none;
 
             styles [
               "boxed-list",
             ]
+
+            Adw.PasswordEntryRow entry_password {
+              title: _("Password");
+
+              accessibility {
+                label: "Password entry";
+                description: "Enter your unlock password here";
+              }
+            }
           }
 
           Label lbl_error {
