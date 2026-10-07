@@ -428,3 +428,97 @@ The OS-thread paths in `select.c` and `channel.c` correctly stay on CLOCK_REALTI
 
 ### Note on the new test
 `test_io_deadlock.c` is a sound regression test for the ABBA deadlock, and it relies on the CTest timeout to catch a hang. Until nostrc-y1y8n is fixed, the W4 variant will intermittently time out for the unrelated targeted-wake reason. Fix y1y8n in this series, which I recommend because the fix is small, or temporarily mark `GoFiberIoDeadlockTestW4` with `GOF_AFFINITY=0 GOF_POLL_PARTITION=0` and a comment pointing to nostrc-y1y8n.
+
+---
+
+# Round 4: `8c046ee7` (nostrc-y1y8n: targeted wakes, takeable-work idle predicate)
+
+**Date:** 2026-10-06
+
+## Verdict: **REQUEST CHANGES** (one narrow defect; everything else is correct)
+
+| Item | Status |
+| --- | --- |
+| (b) broadcast vs signal sites | **RESOLVED** |
+| (c) rebalance wake | **RESOLVED** |
+| doc nit `fiber_hooks.h` | **RESOLVED** |
+| (a) the idle predicate matches the steal attempt | **NOT RESOLVED**: two mismatches; with non-default tuning, idle workers spin |
+| nostrc-y1y8n hang (stranded fiber, spinning non-target) | **RESOLVED** for the default config |
+
+### (b) Signal vs broadcast: RESOLVED
+Every `rq_push_to` in `sched.c` is in one of these groups:
+
+| Push target | Sites | Wake |
+| --- | --- | --- |
+| Targeted at another worker | `gof_sched_enqueue` affinity (600→604); `make_runnable` affinity (894→897); `make_runnable_from_poller` partition (943→946); rebalance `rq_steal_one(max_i, min_i)` (172→177) | **broadcast** ✔ |
+| The caller's own queue | `gof_sched_enqueue`/`make_runnable*` `if (W)` (596, 890, 924); `drain_inject_queue` (636); `sleepers_wake_ready` claim==2 `rq_push` (439); worker commit/yield requeues (777, 804); the stealer's own queue (`rq_steal_one` → `to`, 298) | none needed: the pushing worker is awake ✔ |
+| Shared inject queue | 614, 908 | **signal** ✔ (any worker can drain it) |
+| New sleeper | `sleepers_add` (416) | **signal** ✔ (any worker can pop the heap, and wake_ready pushes to its *own* queue) |
+
+**No targeted push was missed.**
+
+**Race check on the idle side:** an idle worker reads its own `rq_len` (relaxed) while holding `S.mu`. The pusher increments `rq_len` under `rq_mu` *before* it locks `S.mu` to broadcast. So the waiter either sees the increment (its critical section comes after the pusher's) or is already in `cond_wait` when the broadcast arrives. No lost wake. ✔
+
+### (c) Rebalance wake: RESOLVED
+`maybe_rebalance` (`sched.c:172-178`) broadcasts only after a successful migration, while holding no other lock. `rq_steal_one` releases the victim's `rq_mu` before `rq_push_to`. A sleeping `min_i` wakes and its own-queue predicate is true. ✔
+
+### (a) Idle predicate vs the steal attempt: NOT RESOLVED
+The predicate is at `sched.c:691-701`. The attempt it is supposed to mirror is `rq_steal_one` (`sched.c:264-303`), which takes a victim only if `live_fibers >= steal_min_live` (268), the `trylock` succeeds, `!from->running` (277), and the victim queue length is `>= steal_min_victim`. Two mismatches:
+
+1. **It compares a flag with a count.** `have_live` is `(live_fibers > 0)`, i.e. 0 or 1 (`sched.c:686`). The condition `have_live >= S.steal_min_live` (694) compares that with a count that defaults to 4. With the default settings the steal clause is **never true** (dead code). With `GOF_STEAL_MIN_LIVE` ≤ 1 it is **always true** whenever any fiber is live.
+2. **It ignores whether the victim is running.** `rq_steal_one` refuses to steal from a worker that is executing a fiber (277), but the predicate doesn't check that. When the clause is true, an idle worker breaks out of the wait, the steal attempt fails against a busy victim that has a backlog, the worker loops, the predicate is still true, and it **spins**. This is the same spin y1y8n was meant to remove, now reachable through the steal settings.
+
+**Measured on HEAD** (`GOF_NWORKERS=4`; one CPU-bound fiber runs for 1.5 s after queuing 8 fibers on its own queue; a 10 ms napper fiber keeps waking idle workers):
+
+| Config | steals_attempted | user CPU |
+| --- | --- | --- |
+| `GOF_WORKSTEAL=0` | 0 | 1.49 s |
+| `GOF_WORKSTEAL=1` (min_live 4) | ~400 | 1.49 s |
+| `GOF_WORKSTEAL=1 GOF_STEAL_MIN_LIVE=1` | **32,396,325** | **3.49 s** |
+| `GOF_WORKSTEAL=1 GOF_STEAL_MIN_LIVE=0` | **33,108,801** | **3.52 s** |
+
+**Liveness is not affected.** A worker never sleeps while *it* has work, because the own-queue check is exact. The only work an idle worker "misses" is a backlog on another worker's queue, and that worker drains its own queue. The defect is the CPU spin under non-default steal settings, plus dead code under the default ones. Note that fixing only mismatch 1 would turn the spin on **by default** whenever `GOF_WORKSTEAL=1`, so both mismatches must be fixed together.
+
+**Fix (small):**
+```c
+int nlive = atomic_load(&S.live_fibers);
+if (!have_runnables && S.enable_steal && nlive >= S.steal_min_live) {
+  for (...) {                                   /* i != W->index */
+    gof_worker *V = &S.workers[i];
+    if (!atomic_load_explicit(&V->running, memory_order_relaxed) &&
+        atomic_load_explicit(&V->rq_len, memory_order_relaxed) >= S.steal_min_victim)
+      have_runnables = 1;
+  }
+}
+```
+Make `gof_worker.running` `_Atomic int`; it is still written under `rq_mu` as now, and `rq_steal_one`'s locked read is unchanged. A backlog on a *running* victim then lets idle workers sleep, and the victim drains it. Stealing stays opportunistic for workers that are already awake. Recorded on nostrc-y1y8n. **If this exact change is applied, I don't need another review round.**
+
+### Test evidence (HEAD 8c046ee7, `_build` rebuilt)
+- **`ctest -R GoFiber`: 14/14 passed**, including `GoFiberChanExtTest[W4]`, `GoFiberIoDeadlockTest[W4]`, and the W4 variants from round 2.
+- **Repeated runs:** `gof_test_chan_ext` W4: **0/20** failures. `gof_test_io_deadlock` W4: **0/20** (it was 2/20 on 4a15c1a0).
+- **Round-3 reproducers:** my affinity/external-wake harness had **0/10 failures at W4 and 0/10 at W8** (10/10 stalls before this commit). My jittered single-reader IO harness had **0/10 at W4**.
+
+---
+
+# Final verdict (closing this review)
+
+**Overall: REQUEST CHANGES**, pending the two-line idle-predicate fix in round 4 §(a). Everything else raised across the four rounds is closed.
+
+| Finding | Final status |
+| --- | --- |
+| C1 WOKEN not handled at the worker commit | RESOLVED (18db72d2) |
+| H1 `wake_pending` two-step lost wake | RESOLVED (18db72d2: pure CAS claim protocol) |
+| H2 late `sleepers_cancel` on claim==1 | RESOLVED (18db72d2) |
+| H3 `sleepers_wake_ready` claim outside the lock (UAF) | RESOLVED (18db72d2) |
+| H4 simplepool worker sees `running==false` and exits | RESOLVED (18db72d2, rollback in caeaffb7) |
+| M1 `chan.c` unlocked `done` read / sleep returning early | RESOLVED (18db72d2) |
+| M2 `json_interface` read several times per call | RESOLVED (18db72d2) |
+| L2 `_Atomic` in C++-includable headers | RESOLVED (18db72d2) |
+| nostrc-e08s7 multi-worker shutdown hang + new-sleeper wake | RESOLVED (9c469355, 4a15c1a0) |
+| nostrc-e9ou3 deadline clock domain (channel.c, select.c, header) | RESOLVED (9c469355, 4a15c1a0, 8c046ee7) |
+| nostrc-bme1g late claim after finish; ABBA `S.mu`↔`io_mu` regression | RESOLVED (9c469355 + 4a15c1a0) |
+| nostrc-y1y8n targeted wake strands a fiber (default config) | RESOLVED (8c046ee7) |
+| **nostrc-y1y8n idle predicate: flag/count confusion and spin against a running victim** | **OPEN**: `sched.c:686,694`; fix specified above |
+| Low residuals: graveyard "guarantees" wording (`connection.c:680,780`); no `S.nworkers` clamp after a worker create failure; json_glib install/uninstall ordering; `select.c` `gettimeofday` budget; `S.mu` taken on every `park_until` | **Tracked** in nostrc-jvhff (P3), non-blocking |
+
+**Process note.** In the default single-worker configuration, every round's ctest run was green. Every multi-worker defect in this series (the shutdown hang, the ABBA deadlock, the stranded targeted wake, and the steal spin) was invisible until a `GOF_NWORKERS>1` reproducer existed. The W4 CTest variants added during this review should stay in the gating suite. A steal-enabled variant (`GOF_WORKSTEAL=1 GOF_STEAL_MIN_LIVE=1`) with a CPU or steal-attempt budget would have caught the last item.

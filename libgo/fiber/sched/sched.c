@@ -43,7 +43,7 @@ typedef struct gof_worker {
   gof_node   *rq_tail;
   pthread_mutex_t rq_mu;   /* protects run queue for stealing */
   atomic_int  rq_len;      /* atomic queue length for lock-free idle checks */
-  int        running;      /* set to 1 while executing a fiber; protected by rq_mu */
+  _Atomic int running;     /* set to 1 while executing a fiber; written under rq_mu, read lock-free */
   int        index;        /* worker index in S.workers */
   int        last_victim;  /* rotating start for victim selection */
 } gof_worker;
@@ -688,13 +688,20 @@ static void* worker_main(void *arg) {
          * stealing is enabled) a victim with enough queued items. Checking
          * ANY worker's queue made a wrongly-signaled worker break out of
          * the wait, find nothing it may take, and spin at 100% CPU forever
-         * while the target worker slept (nostrc-y1y8n). */
+         * while the target worker slept (nostrc-y1y8n). The steal clause
+         * must mirror rq_steal_one()'s own gates: a live-fiber COUNT (not
+         * the 0/1 have_live flag) against steal_min_live, and skip victims
+         * that are currently running a fiber — otherwise the wake/steal
+         * loop spins under non-default steal tuning. */
         int have_runnables =
           (atomic_load_explicit(&W->rq_len, memory_order_relaxed) > 0);
-        if (!have_runnables && S.enable_steal && have_live >= S.steal_min_live) {
+        int nlive = atomic_load(&S.live_fibers);
+        if (!have_runnables && S.enable_steal && nlive >= S.steal_min_live) {
           for (int i = 0; i < S.nworkers && !have_runnables; ++i) {
             if (i == W->index) continue;
-            if (atomic_load_explicit(&S.workers[i].rq_len, memory_order_relaxed) >= S.steal_min_victim)
+            gof_worker *V = &S.workers[i];
+            if (!atomic_load_explicit(&V->running, memory_order_relaxed) &&
+                atomic_load_explicit(&V->rq_len, memory_order_relaxed) >= S.steal_min_victim)
               have_runnables = 1;
           }
         }
