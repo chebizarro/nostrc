@@ -1,3 +1,15 @@
+groundhog (0.12.0~alpha3-1) unstable; urgency=medium
+
+  * NIP-04 (kind 4) direct messages from older clients shown read-only,
+    marked less private; replies stay NIP-17.
+  * Fixes from the alpha 2 test drive: profile pictures behind redirects
+    (Blossom), display names instead of npubs everywhere, own picture
+    without a consent prompt, round avatars beside the bubble, emoji
+    picker anchored to the react button, message list padding, composer
+    attach and voice buttons beside send.
+
+ -- Biz <chebizarro@protonmail.com>  Wed, 07 Oct 2026 22:00:00 +0000
+
 groundhog (0.12.0~alpha2-1) unstable; urgency=medium
 
   * Grotto security hardening: CSPRNG IPC auth token, daemon IPC

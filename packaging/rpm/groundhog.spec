@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha2 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha3 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha2
+%global upstream_version 0.12.0-alpha3
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.2.alpha2%{?dist}
+Release:        0.3.alpha3%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -167,6 +167,15 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Wed Oct 07 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.3.alpha3
+- NIP-04 (kind 4) direct messages from older clients shown read-only,
+  marked less private; replies stay NIP-17.
+- Fixes from the alpha 2 test drive: profile pictures behind redirects
+  (Blossom), display names instead of npubs everywhere, own picture
+  without a consent prompt, round avatars beside the bubble, emoji
+  picker anchored to the react button, message list padding, composer
+  attach and voice buttons beside send.
+
 * Wed Oct 07 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.2.alpha2
 - Grotto security hardening: CSPRNG IPC auth token, daemon IPC
   authentication and named-pipe framing, secure delete without a shell,
