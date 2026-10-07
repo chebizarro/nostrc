@@ -758,7 +758,15 @@ static void* worker_main(void *arg) {
       gof_introspect_unregister(f);
       gof_stack_free(&f->stack);
       free(f);
-      atomic_fetch_sub(&S.live_fibers, 1);
+      if (atomic_fetch_sub(&S.live_fibers, 1) == 1) {
+        /* nostrc-e08s7: that was the last fiber. Idle workers sit in an
+         * untimed pthread_cond_wait until inject work or a sleeper appears;
+         * nothing else wakes them once the last fiber exits, so
+         * gof_sched_run()'s join hung forever with >1 workers. */
+        pthread_mutex_lock(&S.mu);
+        pthread_cond_broadcast(&S.cv);
+        pthread_mutex_unlock(&S.mu);
+      }
     } else {
       /* GOF_BLOCKED should not be observable here (block/park announce
        * PARKING); treat as parked. */

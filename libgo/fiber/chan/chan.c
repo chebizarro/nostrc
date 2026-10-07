@@ -75,13 +75,17 @@ void gof_chan_close(gof_chan_t* cc) {
   if (!c) return;
   pthread_mutex_lock(&c->mu);
   c->closed = 1;
-  /* Pop all waiters under lock, then wake after unlock to avoid holding mutex during wake */
   waiter *rq = c->recvq; c->recvq = NULL;
   waiter *sq = c->sendq; c->sendq = NULL;
-  pthread_mutex_unlock(&c->mu);
+  /* Wake while still holding c->mu (nostrc-bme1g): a parker that resumes
+   * spuriously rechecks under c->mu, so it cannot see closed, return -1,
+   * finish and be freed before our claim touches its fiber. The lock order
+   * c->mu -> scheduler locks is already established by the handoff paths,
+   * which call gof_sched_make_runnable under c->mu. */
   waiter *w;
   while ((w = qpop(&rq))) { gof_sched_make_runnable(w->f); free(w); }
   while ((w = qpop(&sq))) { gof_sched_make_runnable(w->f); free(w); }
+  pthread_mutex_unlock(&c->mu);
 }
 
 int gof_chan_try_send(gof_chan_t* cc, void* value) {

@@ -120,21 +120,6 @@ static void io_waiter_add(int fd, int events, gof_fiber *f) {
   pthread_mutex_unlock(&io_mu);
 }
 
-static gof_fiber* io_waiter_take_one(int fd, int events) {
-  pthread_mutex_lock(&io_mu);
-  gof_fdwait *e = fdwait_get(fd, 0);
-  gof_fiber *res = NULL;
-  if (e) {
-    if ((events & GOF_POLL_READ) && e->rd_head) {
-      res = waiter_pop(&e->rd_head, &e->rd_tail);
-    } else if ((events & GOF_POLL_WRITE) && e->wr_head) {
-      res = waiter_pop(&e->wr_head, &e->wr_tail);
-    }
-  }
-  pthread_mutex_unlock(&io_mu);
-  return res;
-}
-
 static void io_waiter_remove_by_fiber(gof_fiber *f) {
   pthread_mutex_lock(&io_mu);
   io_waiter_remove_fiber_locked(f);
@@ -155,8 +140,21 @@ out:
 }
 
 static void on_ready(int fd, int events) {
-  /* Called from netpoll backend when fd is ready; wake one matching fiber. */
-  gof_fiber *f = io_waiter_take_one(fd, events);
+  /* Pop the waiter AND wake it under io_mu (nostrc-bme1g): a fiber resumed
+   * spuriously in between could otherwise remove its own registration,
+   * finish, and be freed before this wake touched it. Lock order
+   * io_mu -> scheduler locks; nothing takes io_mu while holding scheduler
+   * locks. */
+  pthread_mutex_lock(&io_mu);
+  gof_fdwait *e = fdwait_get(fd, 0);
+  gof_fiber *f = NULL;
+  if (e) {
+    if ((events & GOF_POLL_READ) && e->rd_head) {
+      f = waiter_pop(&e->rd_head, &e->rd_tail);
+    } else if ((events & GOF_POLL_WRITE) && e->wr_head) {
+      f = waiter_pop(&e->wr_head, &e->wr_tail);
+    }
+  }
   if (f) {
     int pidx = gof_sched_current_poller_index();
     if (pidx >= 0) {
@@ -165,6 +163,7 @@ static void on_ready(int fd, int events) {
       gof_sched_make_runnable(f);
     }
   }
+  pthread_mutex_unlock(&io_mu);
 }
 
 static void ensure_ready_callback(void) {

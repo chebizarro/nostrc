@@ -594,14 +594,20 @@ static inline MpmcResult mpmc_pop(GoChannel *chan, void **data, size_t *occ_befo
  * chan->mutex -- with a short deadline as insurance when that signal is
  * conditional (REFINED_SIGNALING=OFF, nostrc-v624).  A fiber parks instead
  * of blocking its worker thread.  This replaced an unbounded sched_yield
- * spin that burned a core and never parked (nostrc-75rv review F3). */
+ * spin that burned a core and never parked (nostrc-75rv review F3).
+ *
+ * Clock domains (nostrc-e9ou3): the fiber park path expects a MONOTONIC
+ * deadline (the sleeper heap runs on gof_now_ns/CLOCK_MONOTONIC), while the
+ * OS-thread path needs an absolute CLOCK_REALTIME timespec for
+ * nsync_cv_wait_with_deadline. Compute each in its own domain; the old code
+ * computed one REALTIME deadline and fed it to both. */
 static void mpmc_wait_busy(GoChannel *chan, nsync_cv *cv, GoFiberWaiter **fiber_waiters) {
-    struct timespec now;
-    clock_gettime(CLOCK_REALTIME, &now);
-    uint64_t deadline_ns = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec +
-                           MPMC_BUSY_WAIT_NS;
     gof_fiber_handle fiber = gof_hook_current();
     if (fiber) {
+        struct timespec mono;
+        clock_gettime(CLOCK_MONOTONIC, &mono);
+        uint64_t deadline_ns = (uint64_t)mono.tv_sec * 1000000000ull + (uint64_t)mono.tv_nsec +
+                               MPMC_BUSY_WAIT_NS;
         GoFiberWaiter fw = { .fiber = fiber, .next = NULL };
         fiber_waiter_enqueue(fiber_waiters, &fw);
         NUNLOCK(&chan->mutex);
@@ -609,6 +615,10 @@ static void mpmc_wait_busy(GoChannel *chan, nsync_cv *cv, GoFiberWaiter **fiber_
         NLOCK(&chan->mutex);
         fiber_waiter_remove(fiber_waiters, &fw);
     } else {
+        struct timespec now;
+        clock_gettime(CLOCK_REALTIME, &now);
+        uint64_t deadline_ns = (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec +
+                               MPMC_BUSY_WAIT_NS;
         struct timespec deadline = { .tv_sec = (time_t)(deadline_ns / 1000000000ull),
                                      .tv_nsec = (long)(deadline_ns % 1000000000ull) };
         (void)CV_WAIT_DEADLINE_OS(cv, &chan->mutex, deadline, NULL);

@@ -634,6 +634,17 @@ add_test(NAME GoFiberIoTest COMMAND gof_test_io)
 add_test(NAME GoFiberIoTimeoutTest COMMAND gof_test_io_timeout)
 add_test(NAME GoFiberStarvationTest COMMAND gof_test_starvation)
 
+# Multi-worker variants (nostrc-e08s7): the single-worker defaults never
+# exercise cross-worker wake/park paths — including the shutdown hang where
+# idle workers were never signaled when the last fiber finished.
+add_test(NAME GoFiberBasicTestW4 COMMAND gof_test_basic)
+add_test(NAME GoFiberChanTestW4 COMMAND gof_test_chan)
+add_test(NAME GoFiberIoTimeoutTestW4 COMMAND gof_test_io_timeout)
+add_test(NAME GoFiberStarvationTestW4 COMMAND gof_test_starvation)
+set_tests_properties(GoFiberBasicTestW4 GoFiberChanTestW4
+                     GoFiberIoTimeoutTestW4 GoFiberStarvationTestW4
+                     PROPERTIES ENVIRONMENT "GOF_NWORKERS=4")
+
 # Set short timeouts for fiber tests to catch hangs
 set_tests_properties(GoFiberBasicTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoFiberContextTest PROPERTIES TIMEOUT 10)
@@ -641,6 +652,10 @@ set_tests_properties(GoFiberChanTest PROPERTIES TIMEOUT 15)
 set_tests_properties(GoFiberIoTest PROPERTIES TIMEOUT 10)
 set_tests_properties(GoFiberIoTimeoutTest PROPERTIES TIMEOUT 2)
 set_tests_properties(GoFiberStarvationTest PROPERTIES TIMEOUT 20)
+set_tests_properties(GoFiberBasicTestW4 PROPERTIES TIMEOUT 10)
+set_tests_properties(GoFiberChanTestW4 PROPERTIES TIMEOUT 15)
+set_tests_properties(GoFiberIoTimeoutTestW4 PROPERTIES TIMEOUT 2)
+set_tests_properties(GoFiberStarvationTestW4 PROPERTIES TIMEOUT 20)
 
 # Late TSAN-specific timeout adjustment for fiber tests (after tests are defined)
 if (GO_ENABLE_TSAN)
