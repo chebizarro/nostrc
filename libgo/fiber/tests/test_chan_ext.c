@@ -1,6 +1,7 @@
 /* nostrc-y1y8n scratch check: fiber receiving on an unbuffered gof_chan,
  * fed by an OS thread, GOF_NWORKERS=4. Stalled 10/10 before the broadcast
  * fix. */
+#define _POSIX_C_SOURCE 200809L /* nanosleep (glibc strict -std=c11) */
 #include "../include/libgo/fiber_chan.h"
 #include "../include/libgo/fiber.h"
 #include <assert.h>

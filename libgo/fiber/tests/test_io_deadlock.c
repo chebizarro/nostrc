@@ -6,6 +6,7 @@
  * Before the fix this hung roughly 1/10 runs with one worker and 3/10 with
  * GOF_NWORKERS=4. The CTest timeout is what turns a recurrence red.
  */
+#define _POSIX_C_SOURCE 200809L /* nanosleep (glibc strict -std=c11) */
 #include "../include/libgo/fiber.h"
 #include <assert.h>
 #include <stdatomic.h>
