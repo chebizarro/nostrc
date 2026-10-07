@@ -85,11 +85,15 @@ jobs:
           if [ "${{ matrix.sanitizer }}" = "tsan_mpmc" ]; then
             # Full suite: with MPMC slots the capacity-1 channels work, so the
             # tests the single-lock cell must skip (nostrc-ecz3) run here.
-            ctest --test-dir build --output-on-failure -j2
+            # The *W4 fiber variants migrate fibers across OS threads, which
+            # TSan cannot model (custom ucontext; stale shadow stack write
+            # SEGV, nostrc-ci) — they run under asan_ubsan instead.
+            ctest --test-dir build --output-on-failure -j2 -E "W4$"
           elif [ "${{ matrix.sanitizer }}" = "tsan" ]; then
             # Single-lock ring: capacity-1 channels never accept an element
             # (nostrc-ecz3), so these hang rather than flake.
-            ctest --test-dir build --output-on-failure -j2 -E "GoChannelTest|GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest"
+            # *W4 excluded for the same TSan/fiber-migration reason.
+            ctest --test-dir build --output-on-failure -j2 -E "GoChannelTest|GoTickerTest|GoChannelStressTest|GoSelectTest|GoChannelCloseTest|GoSelectMultiTest|W4$"
           else
             if [ "$RUNNER_OS" = "macOS" ]; then
               # Skip stress test on macOS under asan_ubsan where it intermittently times out
