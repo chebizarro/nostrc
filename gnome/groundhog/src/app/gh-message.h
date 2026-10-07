@@ -50,6 +50,11 @@ gint64 gh_message_get_created_at(GhMessage *self);
 const gchar *gh_message_get_content(GhMessage *self);
 /* The sender is the account (an outgoing message or its self-copy). */
 gboolean gh_message_is_self(GhMessage *self);
+/* W33: a NIP-04 (kind 4) DM, shown read-only and marked less private. It is
+ * stored as a local kind-14 rumor carrying the tag
+ * [GH_MESSAGE_LEGACY_TAG, "nip04", <kind-4 event id>], never published. */
+#define GH_MESSAGE_LEGACY_TAG "groundhog-legacy"
+gboolean gh_message_get_legacy_nip04(GhMessage *self);
 /* The first subject tag's value; NULL without one ("" is a real, empty
  * subject that clears the room's name). */
 const gchar *gh_message_get_subject(GhMessage *self);

@@ -52,6 +52,12 @@ void gh_signer_nip44_decrypt_async(GhSigner *signer, const gchar *ciphertext,
                                     const gchar *peer_pubkey_hex,
                                     GCancellable *cancellable,
                                     GAsyncReadyCallback callback, gpointer user_data);
+/* NIP-04 decryption (W33: older DMs, shown read-only). Finished with
+ * gh_signer_nip44_finish(). Groundhog never encrypts with NIP-04. */
+void gh_signer_nip04_decrypt_async(GhSigner *signer, const gchar *ciphertext,
+                                    const gchar *peer_pubkey_hex,
+                                    GCancellable *cancellable,
+                                    GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_signer_nip44_finish(GAsyncResult *result, GError **error);
 
 G_END_DECLS

@@ -4,11 +4,15 @@
 #include "gh-account-auth.h"
 #include "gh-dm-inbox.h"
 #include "gh-nip17-inbox.h"
+#include "gh-nip04-inbox.h"
+#include "gh-message.h"
 #include "gh-signer.h"
 #include "gh-test-signer.h"
 
 #include "nostr-tag.h"
 #include "nostr/nip59/nip59.h"
+#include "nostr/nip04.h"
+#include "secure_buf.h"
 
 #include <glib/gstdio.h>
 
@@ -40,6 +44,7 @@ typedef struct {
 typedef struct {
   GPtrArray *reqs;      /* Req: every DM inbox REQ ever opened */
   GPtrArray *discovery; /* GhRelayScope: every relay-list discovery REQ */
+  GPtrArray *legacy;    /* Req: every NIP-04 (kind 4) REQ; p NULL = authors */
 } Recorder;
 
 static gchar discovery_handle;
@@ -71,6 +76,20 @@ recorder_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters
     return &discovery_handle;
   }
   g_assert_cmpuint(nostr_filter_kinds_len(filter), ==, 1);
+  if (nostr_filter_kinds_get(filter, 0) == 4) {
+    /* NIP-04: exactly one of #p or authors, naming the account. */
+    gboolean out = nostr_filter_authors_len(filter) == 1;
+    g_assert_cmpuint(nostr_filter_tags_len(filter), ==, out ? 0 : 1);
+    Req *req = g_new0(Req, 1);
+    req->scope = gh_relay_scope_ref(scope);
+    req->url = g_strdup(url);
+    req->p = out ? NULL : g_strdup(nostr_filter_tag_get(filter, 0, 1));
+    req->since = nostr_filter_get_since_i64(filter);
+    req->limit = nostr_filter_get_limit(filter);
+    req->auth = g_ptr_array_new_with_free_func(g_free);
+    g_ptr_array_add(rec->legacy, req);
+    return req;
+  }
   g_assert_cmpint(nostr_filter_kinds_get(filter, 0), ==, 1059);
   g_assert_cmpuint(nostr_filter_authors_len(filter), ==, 0);
   g_assert_cmpuint(nostr_filter_ids_len(filter), ==, 0);
@@ -238,6 +257,7 @@ fixture_up(Fixture *f)
   gh_test_bus_up(&f->bus);
   gh_test_signer_up(&f->bus, &f->signer);
   f->rec.reqs = g_ptr_array_new_with_free_func(req_free);
+  f->rec.legacy = g_ptr_array_new_with_free_func(req_free);
   f->rec.discovery = g_ptr_array_new_with_free_func((GDestroyNotify)gh_relay_scope_unref);
   f->settings = g_settings_new("org.nostr.Groundhog");
   const gchar *sources[] = { DISCOVERY, NULL };
@@ -280,6 +300,7 @@ fixture_down(Fixture *f)
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   gh_test_signer_down(&f->bus, &f->signer);
   g_ptr_array_unref(f->rec.reqs);
+  g_ptr_array_unref(f->rec.legacy);
   g_ptr_array_unref(f->rec.discovery);
   g_object_unref(f->settings);
   gh_test_bus_down(&f->bus);
@@ -1793,6 +1814,119 @@ test_unusable_seen_set(void)
   fixture_down(&f);
 }
 
+/* ---- NIP-04 (read-only legacy DMs) ------------------------------------------- */
+
+static gchar *
+nip04_decrypt(const gchar *ciphertext, const gchar *peer, const gchar *secret)
+{
+  char *plain = NULL;
+  if (nostr_nip04_decrypt(ciphertext, peer, secret, &plain, NULL) != 0)
+    return NULL;
+  gchar *copy = g_strdup(plain);
+  free(plain);
+  return copy;
+}
+
+/* A signed kind 4 from author to peer; its id in *id. */
+static gchar *
+craft_nip04(guint author, guint to, gint64 created_at, const gchar *text, gchar **id)
+{
+  /* The original CBC "?iv=" format other clients still send. */
+  char *ciphertext = NULL;
+  nostr_secure_buf sk = secure_alloc(32);
+  g_assert_true(nostr_hex2bin(sk.ptr, gh_test_secret[author], 32));
+  g_assert_cmpint(nostr_nip04_encrypt_legacy_secure(text, hex[to], &sk, &ciphertext, NULL), ==, 0);
+  secure_free(&sk);
+  g_assert_nonnull(strstr(ciphertext, "?iv="));
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 4);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, ciphertext);
+  free(ciphertext);
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("p", hex[to], NULL));
+  nostr_event_set_tags(event, tags);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[author]), ==, 0);
+  char *raw = nostr_event_get_id(event);
+  *id = g_strdup(raw);
+  free(raw);
+  char *json = nostr_event_serialize_compact(event);
+  gchar *copy = g_strdup(json);
+  free(json);
+  nostr_event_free(event);
+  return copy;
+}
+
+static Req *
+legacy_req(Fixture *f, gboolean outgoing)
+{
+  for (guint i = 0; i < f->rec.legacy->len; i++) {
+    Req *req = g_ptr_array_index(f->rec.legacy, i);
+    if (!req->closed && g_str_equal(req->url, HOME) && (req->p == NULL) == outgoing)
+      return req;
+  }
+  return NULL;
+}
+
+static gboolean
+legacy_open(gpointer data)
+{
+  Fixture *f = data;
+  return legacy_req(f, FALSE) && legacy_req(f, TRUE);
+}
+
+typedef struct {
+  GhNip04Inbox *inbox;
+  guint admitted;
+} AdmitWait;
+
+static gboolean
+admitted_reached(gpointer data)
+{
+  AdmitWait *w = data;
+  return gh_nip04_inbox_get_admitted(w->inbox) >= w->admitted;
+}
+
+/* Kind 4 from either side, on the account's NIP-65 relays, enters the 1:1
+ * room marked legacy; a repeat costs no signer call; nothing is sent. */
+static void
+test_nip04_read_only(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  f.signer.nip04_decrypt = nip04_decrypt;
+  go_live(&f);
+  GhNip04Inbox *legacy = gh_nip04_inbox_new(f.accounts, f.relays, f.store, f.inbox,
+                                            &recorder_transport, &f.rec);
+  publish_list(&f, 2, 10002, HOME, NULL);
+  gh_test_spin_until(legacy_open, &f);
+  Req *in = legacy_req(&f, FALSE);
+  g_assert_cmpstr(in->p, ==, hex[2]);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_assert_cmpint(in->since, <=, now - GH_NIP04_INBOX_BACKFILL + 60);
+  g_assert_cmpint(in->since, >=, now - GH_NIP04_INBOX_BACKFILL - 60);
+
+  g_autofree gchar *in_id = NULL, *out_id = NULL;
+  g_autofree gchar *in_json = craft_nip04(1, 2, now - 120, "old client hello", &in_id);
+  g_autofree gchar *out_json = craft_nip04(2, 1, now - 60, "my old reply", &out_id);
+  gh_relay_scope_event(in->scope, HOME, in_json);
+  gh_relay_scope_event(legacy_req(&f, TRUE)->scope, HOME, out_json);
+  AdmitWait wait = { legacy, 2 };
+  gh_test_spin_until(admitted_reached, &wait);
+
+  for (guint i = 0; i < 2; i++) {
+    const gchar *id = i ? out_id : in_id;
+    g_assert_true(gh_conversation_store_has_wrap(f.store, id));
+  }
+  guint calls = f.signer.calls;
+  gh_relay_scope_event(in->scope, HOME, in_json);
+  g_main_context_iteration(NULL, FALSE);
+  g_assert_cmpuint(gh_nip04_inbox_get_admitted(legacy), ==, 2);
+  g_assert_cmpuint(f.signer.calls, ==, calls);
+  gh_test_release(legacy);
+  fixture_down(&f);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1821,6 +1955,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/dm-inbox/backfill-tied-second", test_backfill_tied_second);
   g_test_add_func("/groundhog/dm-inbox/rejected-not-reprompted", test_rejected_not_reprompted);
   g_test_add_func("/groundhog/dm-inbox/auth-own-inbox", test_auth_own_inbox);
+  g_test_add_func("/groundhog/dm-inbox/nip04-read-only", test_nip04_read_only);
   g_test_add_func("/groundhog/dm-inbox/auth-one-prompt-per-relay",
                   test_auth_one_prompt_per_relay);
   int status = g_test_run();

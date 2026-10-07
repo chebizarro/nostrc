@@ -12,7 +12,7 @@
  * result instead of reporting a local transport timeout at 30 seconds. */
 #define SIGNER_CALL_TIMEOUT_MS (330 * 1000)
 
-typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT } Operation;
+typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT, OP_NIP04_DECRYPT } Operation;
 typedef struct _Pending Pending;
 struct _GhSigner {
   gint refs;
@@ -128,6 +128,22 @@ hex64(const gchar *s)
 {
   if (!s || strlen(s) != 64) return FALSE;
   for (const gchar *p = s; *p; p++) if (!g_ascii_isxdigit(*p)) return FALSE;
+  return TRUE;
+}
+
+/* NIP-04: "<base64>?iv=<base64>", bounded like a NIP-44 payload. */
+static gboolean
+valid_nip04_ciphertext(const gchar *text)
+{
+  if (!text || strlen(text) > MAX_RESULT)
+    return FALSE;
+  const gchar *iv = strstr(text, "?iv=");
+  if (!iv || iv == text || !iv[4])
+    return FALSE;
+  for (const gchar *c = text; *c; c++)
+    if (c < iv || c >= iv + 4)
+      if (!g_ascii_isalnum(*c) && *c != '+' && *c != '/' && *c != '=')
+        return FALSE;
   return TRUE;
 }
 
@@ -324,7 +340,8 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
                          -1, NULL, NULL, NULL);
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
                          p->op == OP_SIGN ? "SignEvent" :
-                         p->op == OP_ENCRYPT ? "NIP44Encrypt" : "NIP44Decrypt",
+                         p->op == OP_ENCRYPT ? "NIP44Encrypt" :
+                         p->op == OP_NIP04_DECRYPT ? "NIP04Decrypt" : "NIP44Decrypt",
                          p->op == OP_SIGN ? g_variant_new("(sss)", p->input, signer->npub, "") :
                            g_variant_new("(sss)", p->input, p->peer, signer->npub),
                          G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
@@ -380,6 +397,8 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
     g_task_set_source_tag(task, gh_signer_sign_async);
   else if (op == OP_ENCRYPT)
     g_task_set_source_tag(task, gh_signer_nip44_encrypt_async);
+  else if (op == OP_NIP04_DECRYPT)
+    g_task_set_source_tag(task, gh_signer_nip04_decrypt_async);
   else
     g_task_set_source_tag(task, gh_signer_nip44_decrypt_async);
   if (!input || strlen(input) > MAX_RESULT || !g_utf8_validate(input, -1, NULL) ||
@@ -402,6 +421,11 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
       g_object_unref(task);
       return;
     }
+  } else if (op == OP_NIP04_DECRYPT && !valid_nip04_ciphertext(input)) {
+    g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
+                            "Invalid NIP-04 ciphertext");
+    g_object_unref(task);
+    return;
   } else if (op == OP_DECRYPT && !valid_ciphertext(input)) {
     g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
                             "Invalid NIP-44 ciphertext");
@@ -462,12 +486,23 @@ gh_signer_nip44_decrypt_async(GhSigner *signer, const gchar *ciphertext,
   start_call(signer, OP_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback, user_data);
 }
 
+void
+gh_signer_nip04_decrypt_async(GhSigner *signer, const gchar *ciphertext,
+                              const gchar *peer_pubkey_hex, GCancellable *cancellable,
+                              GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(signer != NULL);
+  start_call(signer, OP_NIP04_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback,
+             user_data);
+}
+
 gchar *
 gh_signer_nip44_finish(GAsyncResult *result, GError **error)
 {
   g_return_val_if_fail(G_IS_TASK(result), NULL);
   gpointer tag = g_task_get_source_tag(G_TASK(result));
   g_return_val_if_fail(tag == gh_signer_nip44_encrypt_async ||
-                       tag == gh_signer_nip44_decrypt_async, NULL);
+                       tag == gh_signer_nip44_decrypt_async ||
+                       tag == gh_signer_nip04_decrypt_async, NULL);
   return g_task_propagate_pointer(G_TASK(result), error);
 }

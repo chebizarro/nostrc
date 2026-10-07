@@ -38,6 +38,7 @@ struct _GhMessage {
   gboolean withdrawn;   /* nostrc-xrza: withdrawn by the group's convergence */
   /* nostrc-zjkv: NIP-29/MLS reply target (the first e-reply or q tag). */
   gchar *reply_to_id;
+  gboolean legacy_nip04; /* W33: a NIP-04 (kind 4) DM, kept as a local rumor */
 };
 
 enum {
@@ -97,6 +98,12 @@ read_tags(GhMessage *self, const NostrEvent *rumor, GError **error)
     if (g_strcmp0(name, "subject") == 0) {
       if (!self->subject)
         self->subject = g_strdup(value ? value : "");
+      continue;
+    }
+    /* Local only (W33): a NIP-04 message stored as a kind-14 rumor. Never
+     * published: Groundhog writes it on the rumors it makes from kind 4. */
+    if (g_strcmp0(name, GH_MESSAGE_LEGACY_TAG) == 0) {
+      self->legacy_nip04 = g_strcmp0(value, "nip04") == 0;
       continue;
     }
     if (g_strcmp0(name, "expiration") == 0) {
@@ -930,4 +937,11 @@ gh_message_init(GhMessage *self)
   self->kind = 14;
   self->relays = g_ptr_array_new_with_free_func(g_free);
   g_ptr_array_add(self->relays, NULL);
+}
+
+gboolean
+gh_message_get_legacy_nip04(GhMessage *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE(self), FALSE);
+  return self->legacy_nip04;
 }

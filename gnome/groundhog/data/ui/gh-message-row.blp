@@ -252,6 +252,33 @@ template $GhMessageRow: Widget {
       ]
     }
 
+    // W33: an older NIP-04 message, shown read-only, with the caveat.
+    Box legacy_box {
+      visible: false;
+      spacing: 4;
+      valign: center;
+      tooltip-text: _("Sent with the older NIP-04 format: anyone can see who wrote to whom and when, and its encryption is weaker. Your replies are sent privately (NIP-17).");
+
+      Image {
+        icon-name: "dialog-warning-symbolic";
+        pixel-size: 12;
+        accessible-role: presentation;
+      }
+
+      Label {
+        label: _("Less private (NIP-04)");
+
+        styles [
+          "caption",
+        ]
+      }
+
+      styles [
+        "warning",
+        "groundhog-legacy-nip04",
+      ]
+    }
+
     Label time_label {
       valign: center;
 

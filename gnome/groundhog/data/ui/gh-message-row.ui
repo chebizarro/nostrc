@@ -262,6 +262,33 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
+          <object class="GtkBox" id="legacy_box">
+            <property name="visible">false</property>
+            <property name="spacing">4</property>
+            <property name="valign">3</property>
+            <property name="tooltip-text" translatable="yes">Sent with the older NIP-04 format: anyone can see who wrote to whom and when, and its encryption is weaker. Your replies are sent privately (NIP-17).</property>
+            <child>
+              <object class="GtkImage">
+                <property name="icon-name">dialog-warning-symbolic</property>
+                <property name="pixel-size">12</property>
+                <property name="accessible-role">43</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel">
+                <property name="label" translatable="yes">Less private (NIP-04)</property>
+                <style>
+                  <class name="caption"/>
+                </style>
+              </object>
+            </child>
+            <style>
+              <class name="warning"/>
+              <class name="groundhog-legacy-nip04"/>
+            </style>
+          </object>
+        </child>
+        <child>
           <object class="GtkLabel" id="time_label">
             <property name="valign">3</property>
             <style>

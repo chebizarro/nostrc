@@ -49,6 +49,7 @@ struct _GhMessageRow {
   GtkPicture *remote_image;
   GtkPicture *profile_picture;
   GtkWidget *bubble_line;
+  GtkWidget *legacy_box;
   AdwAvatar *avatar;
   GtkBox *web_box;
   GtkLabel *web_error;
@@ -325,7 +326,9 @@ update_meta(GhMessageRow *self)
                                                        : GH_MESSAGE_STATUS_NONE;
   gboolean expiring = gh_message_get_expires_at(message) > 0;
   gboolean noteworthy = status != GH_MESSAGE_STATUS_NONE && status != GH_MESSAGE_STATUS_SENT;
-  gtk_widget_set_visible(GTK_WIDGET(self->meta_box), self->run_end || expiring || noteworthy);
+  gboolean legacy = message && gh_message_get_legacy_nip04(message);
+  gtk_widget_set_visible(self->legacy_box, legacy);
+  gtk_widget_set_visible(GTK_WIDGET(self->meta_box), self->run_end || expiring || noteworthy || legacy);
   /* W17: a room message that reached only some people can be tried again
    * for the others (the same stored wraps; those who have it are skipped). */
   gboolean partial = status == GH_MESSAGE_STATUS_PARTIALLY_SENT;
@@ -1060,6 +1063,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, remote_image);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, profile_picture);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, legacy_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_error);

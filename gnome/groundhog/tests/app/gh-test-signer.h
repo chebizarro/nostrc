@@ -195,6 +195,9 @@ typedef struct {
   gboolean hold;
   gboolean hold_key_packages; /* park kind 30443 signatures, not enrollment/auth */
   gboolean deny;      /* answer every call with ApprovalDenied */
+  /* NIP04Decrypt(ciphertext, peer hex, account secret hex) -> plaintext or
+   * NULL; unset, NIP04Decrypt fails (keeps nip04 out of other tests' links). */
+  gchar *(*nip04_decrypt)(const gchar *ciphertext, const gchar *peer, const gchar *secret);
 } GhTestSigner;
 
 static G_GNUC_UNUSED const gchar *
@@ -228,6 +231,15 @@ gh_test_signer_answer(GhTestSigner *mock, GDBusMethodInvocation *invocation)
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", json));
     free(json);
     nostr_event_free(event);
+    return;
+  }
+  if (g_str_equal(method, "NIP04Decrypt")) {
+    g_autofree gchar *text = mock->nip04_decrypt ? mock->nip04_decrypt(input, peer, secret) : NULL;
+    if (!text)
+      g_dbus_method_invocation_return_dbus_error(invocation,
+        "org.nostr.Signer.Error.Failed", "test decrypt failure");
+    else
+      g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", text));
     return;
   }
   guint8 sk[32], pk[32];
@@ -313,6 +325,8 @@ gh_test_signer_up(GhTestBus *fixture, GhTestSigner *mock)
     "<method name='NIP44Encrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
     "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
     "<method name='NIP44Decrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
+    "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
+    "<method name='NIP04Decrypt'><arg type='s' direction='in'/><arg type='s' direction='in'/>"
     "<arg type='s' direction='in'/><arg type='s' direction='out'/></method>"
     "</interface></node>", &error);
   g_assert_no_error(error);

@@ -15,6 +15,7 @@
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
 #include "gh-display-name.h"
+#include "gh-nip04-inbox.h"
 #include "gh-picture-cache.h"
 #if GROUNDHOG_HAVE_CONVERSATION_INFO
 #include "gh-store-contacts.h"
@@ -120,6 +121,7 @@
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
 struct _GhAppServices {
+  GhNip04Inbox *nip04;  /* W33: older NIP-04 DMs, read-only */
   GtkApplication *app; /* borrowed: owns the process's services */
   GSettings *settings;
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
@@ -387,6 +389,9 @@ inbox_init(GhAppServices *self, GError **error)
   /* Welcomes arrive in the inbox; the MLS service takes them (qp24.13). */
   gh_app_outbox_set_inbox(self->outbox, G_OBJECT(self->inbox));
 #endif
+  /* W33: older NIP-04 DMs, read-only, while the NIP-17 inbox runs. */
+  self->nip04 = gh_nip04_inbox_new(self->accounts, self->relays, self->conversations,
+                                   self->inbox, NULL, NULL);
   return TRUE;
 }
 
@@ -395,6 +400,9 @@ inbox_init(GhAppServices *self, GError **error)
 static void
 inbox_teardown(GhAppServices *self)
 {
+  if (self->nip04)
+    g_object_run_dispose(G_OBJECT(self->nip04));
+  g_clear_object(&self->nip04);
 #if GROUNDHOG_HAVE_OUTBOX
   gh_app_outbox_set_inbox(self->outbox, NULL);
 #endif

@@ -96,6 +96,14 @@ void gh_account_controller_nip44_decrypt_with_cancellable_async(GhAccountControl
                                                 GCancellable *cancellable,
                                                 GAsyncReadyCallback callback,
                                                 gpointer user_data);
+/* W33: an older NIP-04 DM, decrypted read-only; finished with
+ * gh_account_controller_nip44_finish(). */
+void gh_account_controller_nip04_decrypt_async(GhAccountController *self,
+                                                const gchar *ciphertext,
+                                                const gchar *peer_pubkey_hex,
+                                                GCancellable *cancellable,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
 gchar *gh_account_controller_nip44_finish(GAsyncResult *result, GError **error);
 
 /* Why the account cannot send (a read-only state) or receive (offline),

@@ -443,7 +443,8 @@ endif()
 # signer unwraps, store admission. It carries the unwrap (gh-nip17-inbox.c);
 # the executable links it through groundhog-conversation-ui (G11 block below).
 if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
-  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c)
+  add_library(groundhog-dm-inbox STATIC src/app/gh-dm-inbox.c src/app/gh-nip17-inbox.c
+    src/app/gh-nip04-inbox.c)
   target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-auth-policy groundhog-account-relays
                         groundhog-conversations)
   target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
@@ -580,7 +581,9 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   if (TARGET groundhog-dm-inbox AND TARGET nostr_nip59_core)
     add_executable(test-groundhog-dm-inbox tests/app/test_dm_inbox.c)
     target_link_libraries(test-groundhog-dm-inbox PRIVATE groundhog-dm-inbox
-                          nostr_nip17_core nostr_nip59_core nostrc-test-bus)
+                          nostr_nip17_core nostr_nip59_core nostrc-test-bus nip04)
+    target_include_directories(test-groundhog-dm-inbox PRIVATE
+                               ${CMAKE_SOURCE_DIR}/nips/nip04/include)
     target_compile_options(test-groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-groundhog-dm-inbox groundhog-test-schemas)
     add_test(NAME groundhog-dm-inbox COMMAND test-groundhog-dm-inbox)
