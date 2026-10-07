@@ -183,8 +183,10 @@ jobs:
           cd apps/grotto/packaging/windows
           # MSYS2's mingw-w64-x86_64-nsis ships plugins under
           # share/nsis/Plugins/unicode, which makensis (NSIS 3) does not
-          # search on its own; point the script at it (nostrc-8o95q).
-          NSIS_PLUGINS=$(cygpath -m "${MINGW_PREFIX}/share/nsis/Plugins/unicode")
+          # search on its own. !addplugindir looks in the arch-suffixed
+          # SUBDIRECTORY of the dir it is given, so pass the Plugins parent
+          # (nostrc-8o95q).
+          NSIS_PLUGINS=$(cygpath -m "${MINGW_PREFIX}/share/nsis/Plugins")
           makensis \
             -DVERSION=${{ steps.version.outputs.version }} \
             -DARCH=x64 \
