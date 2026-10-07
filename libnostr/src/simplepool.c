@@ -1322,13 +1322,18 @@ void nostr_simple_pool_start(NostrSimplePool *pool) {
         pthread_mutex_unlock(&pool->pool_mutex);
         return;
     }
+    /* Set running BEFORE creating the thread (both under pool_mutex): the
+     * worker's first loop check must already see true (nostrc-q9lp0 review),
+     * and a concurrent claim in stop()/free() blocks on pool_mutex until the
+     * handle is valid. On create failure, roll back. */
+    atomic_store_explicit(&pool->running, true, memory_order_release);
+    /* Re-arm background redial: an explicit disconnect_all()/disconnecting
+     * stop() suspended it so it would not immediately dial back what the
+     * caller just dropped. */
+    pool->redial_enabled = true;
     int rc = pthread_create(&pool->thread, NULL, simple_pool_thread_func, (void *)pool);
-    if (rc == 0) {
-        atomic_store_explicit(&pool->running, true, memory_order_release);
-        /* Re-arm background redial: an explicit disconnect_all()/disconnecting
-         * stop() suspended it so it would not immediately dial back what the
-         * caller just dropped. */
-        pool->redial_enabled = true;
+    if (rc != 0) {
+        atomic_store_explicit(&pool->running, false, memory_order_release);
     }
     pthread_mutex_unlock(&pool->pool_mutex);
 

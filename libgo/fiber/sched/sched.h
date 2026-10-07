@@ -10,21 +10,23 @@
 /* Fiber lifecycle states.
  *
  * RUNNABLE  - on a run queue or executing on a worker.
- * PARKING   - the fiber has announced it is about to park (state store done)
- *             but its worker has not yet committed the park after the
- *             context switch. A waker must CAS PARKING -> WOKEN and leave
- *             the requeue to the owning worker's commit step.
+ * PARKING   - the fiber announced it is about to park (CAS RUNNABLE->PARKING
+ *             done) but its worker has not yet committed the park after the
+ *             context switch.
  * BLOCKED   - parked; the worker committed the park after ctx_swap. A waker
  *             must CAS BLOCKED -> RUNNABLE and enqueue the fiber itself.
- * WOKEN     - a waker claimed the wake while the fiber was PARKING; the
- *             owning worker's commit observes WOKEN and requeues it.
+ * WOKEN     - a waker claimed the wake (from RUNNABLE or PARKING) without
+ *             enqueueing: the parker observes WOKEN when its announce CAS
+ *             fails and never leaves the CPU, or the owning worker's commit
+ *             observes WOKEN and requeues the fiber.
  * FINISHED  - entry returned; the worker frees the fiber.
  *
- * wake_pending covers the remaining window: a waker that finds the fiber
- * RUNNABLE (wait already published, park not yet announced) sets
- * wake_pending; the parker checks it before announcing PARKING, again after
- * announcing, and the worker's commit checks it once more after committing
- * to BLOCKED. One of those three checks always observes the pending wake,
+ * Every waker (channel handoff/close, timer heap, netpoll readiness, select)
+ * claims exactly one transition via fiber_wake_claim():
+ *   RUNNABLE -> WOKEN   (wait published, park not announced; parker's
+ *                        announce CAS then fails and it stays on-CPU)
+ *   PARKING  -> WOKEN   (park announced, commit pending; worker requeues)
+ *   BLOCKED  -> RUNNABLE (waker enqueues the fiber itself)
  * so no handoff can be lost and a fiber is never enqueued while its worker
  * is still executing it (nostrc-q9lp0). */
 typedef enum { GOF_RUNNABLE=0, GOF_BLOCKED=1, GOF_FINISHED=2,
@@ -34,7 +36,6 @@ typedef struct gof_fiber {
   uint64_t    id;
   const char *name;
   _Atomic gof_state state;
-  _Atomic int  wake_pending; /* see state comment above */
   gof_context ctx;
   gof_stack   stack;
   void      (*entry)(void*);

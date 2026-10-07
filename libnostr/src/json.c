@@ -20,14 +20,19 @@ void nostr_set_json_interface(NostrJsonInterface *iface) {
 }
 
 void nostr_json_init(void) {
-    if (json_interface && json_interface->init) {
-        json_interface->init();
+    /* Snapshot once per call: the pointer may be swapped concurrently
+     * (nostrc-val0v review), so multi-load expressions like
+     * "json_interface && json_interface->init" can still dereference NULL. */
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->init) {
+        ji->init();
     }
 }
 
 void nostr_json_cleanup(void) {
-    if (json_interface && json_interface->cleanup) {
-        json_interface->cleanup();
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->cleanup) {
+        ji->cleanup();
     }
 }
 
@@ -52,8 +57,9 @@ char *nostr_event_serialize(const NostrEvent *event) {
         if (s) return s;
     }
     // Fallback to configured backend, if any
-    if (json_interface && json_interface->serialize_event) {
-        return json_interface->serialize_event(event);
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->serialize_event) {
+        return ji->serialize_event(event);
     }
     return NULL;
 }
@@ -103,9 +109,10 @@ int nostr_event_deserialize(NostrEvent *event, const char *json_str) {
         }
     }
     // Fallback to configured backend
-    if (json_interface && json_interface->deserialize_event) {
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->deserialize_event) {
         nostr_metric_counter_add("json_event_backend_used", 1);
-        int rc = json_interface->deserialize_event(event, json_str);
+        int rc = ji->deserialize_event(event, json_str);
         if (rc != 0 && compact_evt_err_code != NOSTR_JSON_OK) {
             nostr_rl_log(NLOG_WARN, "json", "event parse failed: compact: %s (offset %d)",
                          nostr_json_error_string(compact_evt_err_code), compact_evt_err_offset);
@@ -126,8 +133,9 @@ char *nostr_envelope_serialize(const NostrEnvelope *envelope) {
         if (s) return s;
     }
     // Fallback to configured backend, if any
-    if (json_interface && json_interface->serialize_envelope) {
-        return json_interface->serialize_envelope(envelope);
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->serialize_envelope) {
+        return ji->serialize_envelope(envelope);
     }
     return NULL;
 }
@@ -153,9 +161,10 @@ int nostr_envelope_deserialize(NostrEnvelope *envelope, const char *json) {
         compact_err_offset = env_err.offset;
     }
     // Fallback to configured backend
-    if (json_interface && json_interface->deserialize_envelope) {
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->deserialize_envelope) {
         nostr_metric_counter_add("json_envelope_backend_used", 1);
-        int rc = json_interface->deserialize_envelope(envelope, json);
+        int rc = ji->deserialize_envelope(envelope, json);
         if (rc != 0 && compact_err_code != NOSTR_JSON_OK) {
             /* Both compact and backend failed - log at WARN */
             nostr_rl_log(NLOG_WARN, "json", "envelope parse failed: compact: %s (offset %d)",
@@ -178,8 +187,9 @@ char *nostr_filter_serialize(const NostrFilter *filter) {
         if (s) return s;
     }
     // Fallback to configured backend, if any
-    if (json_interface && json_interface->serialize_filter) {
-        return json_interface->serialize_filter(filter);
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->serialize_filter) {
+        return ji->serialize_filter(filter);
     }
     return NULL;
 }
@@ -205,9 +215,10 @@ int nostr_filter_deserialize(NostrFilter *filter, const char *json) {
         compact_filt_err_offset = filt_err.offset;
     }
     // Fallback to configured backend
-    if (json_interface && json_interface->deserialize_filter) {
+    NostrJsonInterface *ji = atomic_load_explicit(&json_interface, memory_order_acquire);
+    if (ji && ji->deserialize_filter) {
         nostr_metric_counter_add("json_filter_backend_used", 1);
-        int rc = json_interface->deserialize_filter(filter, json);
+        int rc = ji->deserialize_filter(filter, json);
         if (rc != 0 && compact_filt_err_code != NOSTR_JSON_OK) {
             nostr_rl_log(NLOG_WARN, "json", "filter parse failed: compact: %s (offset %d)",
                          nostr_json_error_string(compact_filt_err_code), compact_filt_err_offset);

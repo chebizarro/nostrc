@@ -5,7 +5,18 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#ifndef __cplusplus
 #include <stdatomic.h>
+#endif
+
+#ifdef __cplusplus
+/* _Atomic is unavailable in C++ before C++23; C++ consumers see the plain
+ * type with identical size and alignment, so the ABI is unchanged
+ * (nostrc-val0v review). */
+#define NOSTR_POOL_ATOMIC(T) T
+#else
+#define NOSTR_POOL_ATOMIC(T) _Atomic T
+#endif
 #include "nostr-relay.h"
 #include "nostr-event.h"
 #include "nostr-filter.h"
@@ -47,10 +58,10 @@ typedef struct _NostrSimplePool {
     /* Optional batch middleware: if set, pool may invoke this with a batch for efficiency. */
     void (*batch_middleware)(NostrIncomingEvent *items, size_t count);
     bool (*signature_checker)(NostrEvent);
-    /* Worker run flag. _Atomic bool has the same size/alignment as bool, so
-     * the struct layout is unchanged; atomic access closes the data race
+    /* Worker run flag. _Atomic (in C) has the same size/alignment as bool,
+     * so the struct layout is unchanged; atomic access closes the data race
      * between the worker loop and start()/stop()/free() (nostrc-9bygk). */
-    _Atomic bool running;
+    NOSTR_POOL_ATOMIC(bool) running;
     pthread_t thread;
     /* Subscriptions and runtime state */
     struct NostrSubscription **subs;
@@ -97,7 +108,7 @@ typedef struct _NostrSimplePool {
      * reintroduce exactly the stall this exists to remove. */
     pthread_t redial_thread;
     bool redial_thread_running;     /* worker was spawned and needs joining */
-    _Atomic int redial_stop;        /* set by _free() to retire the worker (same size as int: layout unchanged) */
+    NOSTR_POOL_ATOMIC(int) redial_stop; /* set by _free() to retire the worker (same size as int: layout unchanged) */
     bool redial_enabled;            /* cleared by explicit disconnect requests */
     struct GoChannel *redial_wake;  /* nudge: there is something to dial now */
 

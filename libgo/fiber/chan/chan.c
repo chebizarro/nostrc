@@ -135,11 +135,12 @@ int gof_chan_send(gof_chan_t* cc, void* value) {
   pthread_mutex_unlock(&c->mu);
   /* Park until the handoff completes or the channel closes. The loop (not
    * an if) is required: gof_sched_block_current may return without our
-   * waiter being touched when it consumes a stale pending wake
-   * (nostrc-q9lp0); our waiter stays queued and we park again. */
+   * waiter being touched when its announce CAS loses to a stale WOKEN
+   * claim (nostrc-q9lp0); our waiter stays queued and we park again.
+   * done is checked under c->mu only: the waker writes it under the same
+   * mutex before claiming the wake. */
   for (;;) {
     gof_sched_block_current();
-    if (done) return 0; /* handoff_to_waiter set done before waking us */
     pthread_mutex_lock(&c->mu);
     if (done) { pthread_mutex_unlock(&c->mu); return 0; }
     if (c->closed) {
@@ -178,10 +179,9 @@ int gof_chan_recv(gof_chan_t* cc, void** out_value) {
   qpush(&c->recvq, w);
   pthread_mutex_unlock(&c->mu);
   /* Park until a handoff or close; re-park on spurious wakes (see
-   * gof_chan_send, nostrc-q9lp0). */
+   * gof_chan_send, nostrc-q9lp0). done checked under c->mu only. */
   for (;;) {
     gof_sched_block_current();
-    if (done) return 0;
     pthread_mutex_lock(&c->mu);
     if (done) { pthread_mutex_unlock(&c->mu); return 0; }
     if (c->closed) {
