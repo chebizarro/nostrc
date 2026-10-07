@@ -349,3 +349,82 @@ poller_main       sched.c:964 → gof_netpoll_wait → on_ready io.c:161
 Please add the single-reader pipe stress test (or an equivalent `GoFiberIoTest` variant) as a regression test.
 
 **Lock order, as it should hold after the fix:** `c->mu → sleepheap.mu`; `c->mu → rq_mu`; `c->mu → S.mu`; `io_mu → sleepheap.mu/rq_mu/S.mu`; `S.mu → sleepheap.mu`. With (a) there is no `S.mu → io_mu` edge. `sleepers_wake_ready` releases `sleepheap.mu` before `rq_push`, and `rq_steal_one` releases the victim's `rq_mu` before `rq_push_to`, so no other edges point back into `c->mu` or `io_mu`.
+
+---
+
+# Round 3: `4a15c1a0` (io waiter count lock-free, sleeper-add signal, select monotonic)
+
+**Date:** 2026-10-06
+
+## Verdict: **REQUEST CHANGES**
+
+The three code changes are correct, and the ABBA deadlock is gone. However, your question 2 ("is there any remaining path where the idle predicate changes without a signal?") has a yes answer. That remaining path is a pre-existing multi-worker livelock, and it makes this commit's new gating test, `GoFiberIoDeadlockTestW4`, **intermittently red**. Filed as **nostrc-y1y8n** (P1).
+
+| Item | Status |
+| --- | --- |
+| 1. ABBA deadlock (`S.mu` ↔ `io_mu`) | **RESOLVED** |
+| 2. `sleepers_add` signal, and whether the idle wait/exit signals are now complete | **The fix is correct (RESOLVED). Completeness: NO**, because targeted enqueues wake the wrong worker (pre-existing, nostrc-y1y8n) |
+| 3. nostrc-e9ou3 monotonic contract | **RESOLVED** (one doc nit) |
+
+### 1. ABBA deadlock: RESOLVED
+- `gof_io_have_waiters()` (`io.c:137-142`) now just reads `g_io_waiter_count` and takes no lock. That function was the only `io_*` call made from sched.c (`sched.c:692`), so the `S.mu → io_mu` edge is gone. `on_ready` keeps `io_mu → {sleepheap.mu, rq_mu, S.mu}`, which is now acyclic.
+- **Counter bookkeeping is consistent:**
+  - +1 per node in `waiter_push` (`io.c:92`). A READ|WRITE registration pushes two nodes and counts 2.
+  - −1 in `waiter_pop` (`io.c:96-98`).
+  - −1 per node actually found in `io_waiter_remove_fiber_locked` (`io.c:108`, `112`). After `on_ready` pops a node, the later `io_waiter_remove_by_fiber` doesn't find it and doesn't decrement twice. ✔
+- **Ordering:** relaxed increments under `io_mu` with an acquire read are sufficient. The count only matters when `live_fibers==0`, and a fiber never finishes while it is still registered. ✔
+- **Evidence:** my jittered single-reader harness against HEAD had 0/10 failures with 1 worker and 0/10 with 4 (it was 1/10 and 3/10 on 9c469355). No hung sample shows a mutex wait anymore.
+
+### 2. `sleepers_add` signal: the fix is correct, but the signal set is incomplete
+- **The `sleepers_add` signal itself** (`sched.c:407-412`) is correct. `sleepheap.mu` is released before `S.mu` is taken. Callers of `park_until` hold no locks: `io.c` releases `io_mu` in `io_waiter_add`, `select.c` releases `waiter->mutex` before the hook, `channel.c` releases `chan->mutex` (`NUNLOCK`) before the hook, and `timer_bridge` holds none.
+- **Why the signal can't be missed:** a worker that read `have_sleepers==0` holds `S.mu` until it is inside `cond_wait`, so the signal cannot slip in between. The signal also covers a second case: a new sleeper that is *earlier* than the deadline a worker is already timed-waiting on.
+- **Why `signal` instead of `broadcast` is enough here:** any woken worker recomputes the minimum deadline, so it doesn't matter which waiter wakes.
+- *Low (performance):* every `park_until`, including each 2 ms `gof_read` slice, now takes the global `S.mu`.
+
+**Remaining path: targeted enqueues wake an arbitrary waiter.** This is **pre-existing** and filed as **nostrc-y1y8n**.
+- Three paths push a fiber onto a *specific* worker's queue and then call `pthread_cond_signal`, which wakes one arbitrary idle worker:
+  - `gof_sched_enqueue` (`sched.c:595-597`)
+  - the `gof_sched_make_runnable` affinity path (`sched.c:878-880`)
+  - the `gof_sched_make_runnable_from_poller` partition path (`sched.c:926-928`)
+- These are on by default: `GOF_AFFINITY` and `GOF_POLL_PARTITION` default to 1, while `GOF_WORKSTEAL` defaults to 0.
+- When the signal reaches a non-target worker B, B's idle predicate breaks on *any* non-empty queue (`sched.c:683-685`), but B cannot pop the target's queue. Stealing is off, and even when it is on, `rq_steal_one` needs at least 2 queued nodes. So B spins at ~100% CPU and never waits again, the target worker stays in `pthread_cond_wait` (`sched.c:694`), and the fiber never runs. `maybe_rebalance` (`sched.c:172`, opt-in) also migrates fibers with no signal at all.
+
+**Evidence:**
+- **Repro harness** (`GOF_NWORKERS=4`; one fiber `gof_chan_recv` on an unbuffered `gof_chan`; an OS thread `gof_chan_try_send`):
+
+  | Runtime | Result |
+  | --- | --- |
+  | HEAD | **10/10 stall** |
+  | 15a6152f | 10/10 stall |
+  | pre-audit 90253a1d | 10/10 stall |
+  | HEAD, 1 worker | 0/10 |
+
+  A sample shows one worker spinning in `worker_main` (`sched.c:649-685`) at 101% CPU, three in `pthread_cond_wait` at `sched.c:694`, and progress stuck at 0.
+- **The new regression test hits it through the poller partition path.** `ctest -R GoFiber` failed with `GoFiberIoDeadlockTestW4 ... ***Timeout 15.02 sec`, and a 20-run loop of `gof_test_io_deadlock` at `GOF_NWORKERS=4` failed 2/20. A sampled hang has the same signature: one worker spinning at 99.7% CPU, the rest in `cond_wait`, the poller idle in `kevent`, and **no mutex waits**. It is not the ABBA deadlock.
+
+**Fix (in nostrc-y1y8n):**
+- Wake the *target*: `pthread_cond_broadcast` at `sched.c:597/880/928` and after a successful `rq_steal_one` in `maybe_rebalance`, or use per-worker condvars.
+- Have the idle predicate count only the worker's own queue, the inject queue, and stealable queues (when stealing is enabled), so non-targets wait instead of spinning. That also fixes a related pre-existing problem: idle workers spin whenever a busy worker has a backlog and stealing is off.
+
+All the other inputs to the idle predicate now have a wakeup: inject (`sched.c:607/891`), stop (`gof_sched_wake_all`, `sched.c:988`), last-fiber exit (`sched.c:773`), and new sleepers (`sched.c:411`). The IO-waiter count needs no wake (see §1).
+
+### 3. nostrc-e9ou3: RESOLVED
+These are all the deadline callers in the tree (`grep` of `gof_hook_block_current_until`, `gof_park_current_until`, and `gof_sched_park_until`, excluding tests):
+
+| Caller | Clock |
+| --- | --- |
+| `select.c:529-539` (now CLOCK_MONOTONIC) | monotonic ✔ |
+| `channel.c:606-614` | monotonic ✔ |
+| `io.c:190,198` (`now_ns()`, CLOCK_MONOTONIC, `io.c:34-38`) | monotonic ✔ |
+| `timer_bridge.c:21` | monotonic ✔ |
+| `park.c:6` (`gof_park_current_until`) | no in-tree callers |
+| stub `fiber_hooks_stub.c:34` | no-op |
+
+The OS-thread paths in `select.c` and `channel.c` correctly stay on CLOCK_REALTIME for nsync.
+
+**There is no remaining REALTIME caller.**
+- *Nit:* `libgo/include/fiber_hooks.h:62` still says "deadline_ns (nanoseconds since epoch) expires", which contradicts the new `@param` at 64-65.
+- *Low, pre-existing:* `go_select_timeout` measures its timeout budget with `gettimeofday` (`select.c:427-431`, `455-456`), so a wall-clock step changes the effective timeout. If the deadline passes between the two `now_us()` reads, `deadline_us - now_us()` (`select.c:501`) underflows, but the unsigned arithmetic wraps to a deadline a few µs in the past, so the call times out immediately. Moving `now_us` to CLOCK_MONOTONIC would close both issues.
+
+### Note on the new test
+`test_io_deadlock.c` is a sound regression test for the ABBA deadlock, and it relies on the CTest timeout to catch a hang. Until nostrc-y1y8n is fixed, the W4 variant will intermittently time out for the unrelated targeted-wake reason. Fix y1y8n in this series, which I recommend because the fix is small, or temporarily mark `GoFiberIoDeadlockTestW4` with `GOF_AFFINITY=0 GOF_POLL_PARTITION=0` and a comment pointing to nostrc-y1y8n.

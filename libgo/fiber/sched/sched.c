@@ -171,6 +171,11 @@ static void maybe_rebalance(void) {
   /* Migrate a single task using the same safe stealing primitive */
   if (rq_steal_one(&S.workers[max_i], &S.workers[min_i])) {
     atomic_fetch_add(&S.rebalances_migrated, 1);
+    /* nostrc-y1y8n: the move targets min_i's queue; wake idle workers so the
+     * target (or a stealer) actually notices it. */
+    pthread_mutex_lock(&S.mu);
+    pthread_cond_broadcast(&S.cv);
+    pthread_mutex_unlock(&S.mu);
   }
 }
 
@@ -594,7 +599,9 @@ void gof_sched_enqueue(gof_fiber *f) {
     gof_worker *WA = &S.workers[f->w_affinity];
     rq_push_to(WA, f);
     pthread_mutex_lock(&S.mu);
-    pthread_cond_signal(&S.cv);
+    /* nostrc-y1y8n: targeted push, so broadcast — signal may wake a worker
+     * that cannot drain WA's queue, leaving the target asleep. */
+    pthread_cond_broadcast(&S.cv);
     pthread_mutex_unlock(&S.mu);
     return;
   }
@@ -677,10 +684,19 @@ static void* worker_main(void *arg) {
         uint64_t next_deadline = have_sleepers ? sleepheap.entries[0].deadline_ns : 0;
         pthread_mutex_unlock(&sleepheap.mu);
         int have_live = (atomic_load(&S.live_fibers) > 0);
-        /* Check if any worker currently has runnable items queued (lock-free) */
-        int have_runnables = 0;
-        for (int i = 0; i < S.nworkers && !have_runnables; ++i) {
-          have_runnables = (atomic_load_explicit(&S.workers[i].rq_len, memory_order_relaxed) > 0);
+        /* Work THIS worker can actually take: its own queue, or (when
+         * stealing is enabled) a victim with enough queued items. Checking
+         * ANY worker's queue made a wrongly-signaled worker break out of
+         * the wait, find nothing it may take, and spin at 100% CPU forever
+         * while the target worker slept (nostrc-y1y8n). */
+        int have_runnables =
+          (atomic_load_explicit(&W->rq_len, memory_order_relaxed) > 0);
+        if (!have_runnables && S.enable_steal && have_live >= S.steal_min_live) {
+          for (int i = 0; i < S.nworkers && !have_runnables; ++i) {
+            if (i == W->index) continue;
+            if (atomic_load_explicit(&S.workers[i].rq_len, memory_order_relaxed) >= S.steal_min_victim)
+              have_runnables = 1;
+          }
         }
         if (have_inject || have_runnables) {
           break; /* will drain after unlocking */
@@ -877,7 +893,8 @@ void gof_sched_make_runnable(gof_fiber *f) {
     gof_worker *WA = &S.workers[f->w_affinity];
     rq_push_to(WA, f);
     pthread_mutex_lock(&S.mu);
-    pthread_cond_signal(&S.cv);
+    /* Targeted push: broadcast, not signal (nostrc-y1y8n). */
+    pthread_cond_broadcast(&S.cv);
     pthread_mutex_unlock(&S.mu);
     return;
   }
@@ -925,7 +942,8 @@ void gof_sched_make_runnable_from_poller(gof_fiber *f, int poller_index) {
     gof_worker *WT = &S.workers[target];
     rq_push_to(WT, f);
     pthread_mutex_lock(&S.mu);
-    pthread_cond_signal(&S.cv);
+    /* Targeted push: broadcast, not signal (nostrc-y1y8n). */
+    pthread_cond_broadcast(&S.cv);
     pthread_mutex_unlock(&S.mu);
     return;
   }

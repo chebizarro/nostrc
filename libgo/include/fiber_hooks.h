@@ -59,7 +59,7 @@ void gof_hook_block_current(void);
  * Like gof_hook_block_current() but with an absolute timeout.
  * The fiber will be woken by gof_hook_make_runnable() if called before
  * the deadline, OR automatically by the scheduler's sleeper mechanism
- * when deadline_ns (nanoseconds since epoch) expires.
+ * when deadline_ns expires.
  *
  * @param deadline_ns Absolute deadline in nanoseconds on CLOCK_MONOTONIC
  *                    (the scheduler's sleeper-heap domain; nostrc-e9ou3).
