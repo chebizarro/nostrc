@@ -46,6 +46,19 @@ static uint64_t deadline_from_ms(int timeout_ms) {
   return now_ns() + (uint64_t)timeout_ms * 1000000ull;
 }
 
+/* errno is per-OS-thread TLS, and its accessor (__errno_location on glibc,
+ * __error on macOS) is declared __attribute__((const)): the compiler may
+ * cache the address across a call. A fiber that parks inside
+ * wait_event_with_deadline() can resume on a DIFFERENT OS thread, so an
+ * errno read or write after the park must not reuse a cached address —
+ * GoFiberIoTimeoutTestW4 saw errno==0 after a timeout because the
+ * ETIMEDOUT assignment landed in the previous thread's cell while the
+ * caller read the new thread's (nostrc-ci). Value-capture immediately
+ * after each syscall, and go through noinline helpers so every errno
+ * access is evaluated on the thread that executes it. */
+__attribute__((noinline)) static int fiber_get_errno(void) { return errno; }
+__attribute__((noinline)) static void fiber_set_errno(int e) { errno = e; }
+
 /* ---------------- IO waiter registry (per-fd queues) ---------------- */
 typedef struct gof_waiter { /* single waiter node */
   gof_fiber *f;                 /* waiting fiber */
@@ -246,7 +259,7 @@ int gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_m
   (void)set_nonblock(fd);
   int r = connect(fd, sa, slen);
   if (r == 0) return 0;
-  if (errno == EINPROGRESS) {
+  if (fiber_get_errno() == EINPROGRESS) {
     uint64_t dl = deadline_from_ms(timeout_ms);
     for(;;) {
       (void)wait_event_with_deadline(fd, GOF_POLL_WRITE, dl);
@@ -254,10 +267,10 @@ int gof_connect(int fd, const struct sockaddr *sa, socklen_t slen, int timeout_m
       int err = 0; socklen_t elen = sizeof(err);
       if (getsockopt(fd, SOL_SOCKET, SO_ERROR, (void*)&err, &elen) == 0) {
         if (err == 0) return 0;
-        errno = err; return -1;
+        fiber_set_errno(err); return -1;
       }
       /* If deadline set and passed, timeout */
-      if (dl != 0 && now_ns() >= dl) { errno = ETIMEDOUT; return -1; }
+      if (dl != 0 && now_ns() >= dl) { fiber_set_errno(ETIMEDOUT); return -1; }
       /* Otherwise retry until completion */
     }
   }
@@ -274,11 +287,15 @@ int gof_accept(int fd, struct sockaddr *sa, socklen_t *slen, int timeout_ms) {
   for(;;) {
     int c = accept(fd, sa, slen);
     if (c >= 0) return c;
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    /* Value capture: the syscall ran on this thread, so the errno value is
+     * correct; a later park may migrate the fiber to another thread. */
+    int accept_errno = fiber_get_errno();
+    if (accept_errno == EAGAIN || accept_errno == EWOULDBLOCK) {
       (void)wait_event_with_deadline(fd, GOF_POLL_READ, dl);
-      if (dl != 0 && now_ns() >= dl) { errno = ETIMEDOUT; return -1; }
+      if (dl != 0 && now_ns() >= dl) { fiber_set_errno(ETIMEDOUT); return -1; }
       continue;
     }
+    fiber_set_errno(accept_errno);
     return -1;
   }
 #endif
