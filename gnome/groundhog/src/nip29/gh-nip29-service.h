@@ -257,6 +257,15 @@ GhNip29Op *gh_nip29_service_leave(GhNip29Service *self, GhNip29Room *room,
  * REQUESTING: the relay decides whether a non-member may write. */
 GhNip29Op *gh_nip29_service_send(GhNip29Service *self, GhNip29Room *room,
                                  const gchar *text, GError **error);
+/* NIP-88 definitions/responses carried in kind-9 group-chat envelopes. */
+GhNip29Op *gh_nip29_service_create_poll(GhNip29Service *self, GhNip29Room *room,
+                                        const gchar *question, const gchar *const *options,
+                                        guint n_options, gboolean multiple, gint64 ends_at,
+                                        GError **error);
+GhNip29Op *gh_nip29_service_cast_poll_vote(GhNip29Service *self, GhNip29Room *room,
+                                           const gchar *poll_event_id,
+                                           const gchar *const *option_ids, guint n_options,
+                                           GError **error);
 
 /* W26 slice B (nostrc-191r): sends a kind-7 NIP-25 reaction targeting
  * @target_event_id (the reacted-to message's id) by @target_pubkey (its

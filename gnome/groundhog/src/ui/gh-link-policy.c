@@ -1,5 +1,7 @@
 #include "gh-link-policy.h"
+#include "gh-display-name.h"
 
+#include <nostr/nip19/nip19.h>
 #include <string.h>
 
 /* NIP-19 entities a nostr: URI may name (NIP-21). nsec is deliberately not
@@ -330,6 +332,39 @@ gh_link_policy_to_markup(const gchar *text)
     append_escaped(out, text + position, link->start - position);
     g_autofree gchar *uri = g_markup_escape_text(link->uri, -1);
     g_string_append_printf(out, "<a href=\"%s\">%s</a>", uri, uri);
+    position = link->end;
+  }
+  append_escaped(out, text + position, strlen(text + position));
+  return g_string_free(out, FALSE);
+}
+
+gchar *
+gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_pubkey)
+{
+  if (!text || !g_utf8_validate(text, -1, NULL))
+    return gh_link_policy_to_markup(text);
+  g_autoptr(GPtrArray) links = gh_link_policy_find_links(text);
+  GString *out = g_string_sized_new(strlen(text) + 16);
+  gsize position = 0;
+  for (guint i = 0; i < links->len; i++) {
+    GhLink *link = g_ptr_array_index(links, i);
+    append_escaped(out, text + position, link->start - position);
+    g_autofree gchar *uri = g_markup_escape_text(link->uri, -1);
+    guint8 key[32];
+    if (link->kind == GH_LINK_KIND_NOSTR &&
+        g_str_has_prefix(link->uri, "nostr:npub1") &&
+        nostr_nip19_decode_npub(link->uri + strlen("nostr:"), key) == 0) {
+      gchar hex[65];
+      for (guint j = 0; j < sizeof key; j++)
+        g_snprintf(hex + 2 * j, sizeof hex - 2 * j, "%02x", key[j]);
+      g_autofree gchar *name = gh_display_name_for(hex);
+      g_autofree gchar *escaped = g_markup_escape_text(name, -1);
+      gboolean own = g_strcmp0(hex, account_pubkey) == 0;
+      g_string_append_printf(out, own ? "<a href=\"%s\"><b>@%s</b></a>"
+                                      : "<a href=\"%s\">@%s</a>", uri, escaped);
+    } else {
+      g_string_append_printf(out, "<a href=\"%s\">%s</a>", uri, uri);
+    }
     position = link->end;
   }
   append_escaped(out, text + position, strlen(text + position));

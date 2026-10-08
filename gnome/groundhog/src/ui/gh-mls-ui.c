@@ -5,6 +5,7 @@
 #include "gh-create-poll-dialog.h"
 #include "gh-message-row.h"
 #include "gh-poll-card.h"
+#include "gh-poll-ui.h"
 #include "gh-shell.h"
 
 #include "gh-conversation-list.h"
@@ -41,6 +42,7 @@ typedef struct {
   GhConversationView *view; /* a reference: the list may keep it past the window */
   gulong view_handler;
   gulong poll_requested_handler;
+  gboolean poll_enricher_installed;
 } MlsUi;
 
 /* Forward declarations for poll wiring (W26). */
@@ -125,6 +127,13 @@ static void
 on_shown_members(MlsUi *ui)
 {
   gh_conversation_list_refresh_title(ui->window);
+  GhContentPage *content = gh_window_get_content(ui->window);
+  GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
+  if (composer && ui->shown) {
+    g_auto(GStrv) members = gh_mls_group_dup_members(ui->shown);
+    gh_composer_set_mention_members(composer, gh_mls_group_get_room_id(ui->shown),
+                                     (const gchar *const *) members);
+  }
 }
 
 static void
@@ -184,6 +193,8 @@ set_shown(MlsUi *ui, GhMlsGroup *group)
   gh_send_ui_refresh(ui->window);
   rebuild_polls(ui);
   sync_poll_button(ui);
+  if (group)
+    on_shown_members(ui);
 }
 
 static void
@@ -500,6 +511,8 @@ on_poll_requested(GhComposer *composer, gpointer data)
 static void
 sync_poll_button(MlsUi *ui)
 {
+  if (g_object_get_data(G_OBJECT(ui->window), GH_POLL_UI_DATA))
+    return; /* the transport-neutral poll UI owns this composer button */
   GhContentPage *content = gh_window_get_content(ui->window);
   if (!content) return;
   GhComposer *composer = gh_content_page_get_composer(content);
@@ -591,7 +604,8 @@ mls_ui_free(gpointer data)
     ui->poll_requested_handler = 0;
   }
   if (ui->view) {
-    gh_conversation_view_set_row_enricher(ui->view, NULL, NULL);
+    if (ui->poll_enricher_installed)
+      gh_conversation_view_set_row_enricher(ui->view, NULL, NULL);
     g_clear_signal_handler(&ui->view_handler, ui->view);
     g_clear_object(&ui->view);
   }
@@ -642,9 +656,11 @@ gh_mls_ui_attach(GhWindow *window, const GhMlsUiConfig *config)
   gh_conversation_list_set_member_count_func(window, member_count, ui, NULL);
   gh_send_ui_add_delegate(window, &mls_delegate, ui);
   gh_group_ui_set_new_group_extension(window, gh_mls_ui_extend_new_group, NULL);
-  if (ui->view)
-    gh_conversation_view_set_row_enricher(ui->view, poll_enricher, ui);
-  {
+  if (!g_object_get_data(G_OBJECT(window), GH_POLL_UI_DATA)) {
+    if (ui->view) {
+      gh_conversation_view_set_row_enricher(ui->view, poll_enricher, ui);
+      ui->poll_enricher_installed = TRUE;
+    }
     GhContentPage *content = gh_window_get_content(window);
     GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
     if (composer)

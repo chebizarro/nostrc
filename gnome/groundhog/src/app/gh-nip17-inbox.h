@@ -54,8 +54,8 @@ typedef struct {
    * the unwrap does not drop expired messages, so the caller can still
    * record them as seen without storing them. */
   gint64 expires_at;
-  /* The rumor's kind: 14 or 15, or 444 for a Marmot Welcome (only with
-   * GH_NIP17_UNWRAP_WELCOMES; see there). */
+  /* The rumor's kind: 14/15, NIP-88 poll 1068/response 1018, or 444 for
+   * a Marmot Welcome (only with GH_NIP17_UNWRAP_WELCOMES; see there). */
   gint kind;
 } GhNip17Message;
 

@@ -1938,36 +1938,80 @@ gh_nip29_service_leave(GhNip29Service *self, GhNip29Room *room, const gchar *rea
   return op;
 }
 
+static gboolean
+can_send_chat(GhNip29Service *self, GhNip29Room *room, GError **error)
+{
+  if (!check_room(self, room, error))
+    return FALSE;
+  if (room->join == GH_NIP29_JOIN_MEMBER || room->join == GH_NIP29_JOIN_PENDING ||
+      room->join == GH_NIP29_JOIN_REQUESTING)
+    return TRUE;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                      "Join the group before writing in it");
+  return FALSE;
+}
+
+static GhNip29Op *
+enqueue_chat(GhNip29Service *self, GhNip29Room *room, const gchar *chat,
+             GError **error)
+{
+  GhNip29Op *op = room_enqueue(room, chat, error);
+  if (!op)
+    return NULL;
+  g_autoptr(GError) echo_error = NULL;
+  g_autoptr(GhMessage) echo = gh_message_new_from_nip29_event(
+    self->account, room_relay(room), chat, &echo_error);
+  if (!echo || gh_conversation_store_admit(self->conversations, echo, NULL, &echo_error) ==
+                 GH_CONVERSATION_ADD_FAILED)
+    g_warning("Groundhog could not list a sent group message: %s",
+              echo_error ? echo_error->message : "unknown error");
+  apply_message_status(self, op);
+  return op;
+}
+
 GhNip29Op *
 gh_nip29_service_send(GhNip29Service *self, GhNip29Room *room, const gchar *text,
                       GError **error)
 {
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
-  if (!check_room(self, room, error))
+  if (!can_send_chat(self, room, error))
     return NULL;
-  if (room->join != GH_NIP29_JOIN_MEMBER && room->join != GH_NIP29_JOIN_PENDING &&
-      room->join != GH_NIP29_JOIN_REQUESTING) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
-                        "Join the group before writing in it");
-    return NULL;
-  }
   GhNip29TemplateContext context;
   room_context(room, &context);
   g_autofree gchar *chat = gh_nip29_template_chat(room->key, &context, text, error);
-  GhNip29Op *op = chat ? room_enqueue(room, chat, error) : NULL;
-  if (!op)
+  return chat ? enqueue_chat(self, room, chat, error) : NULL;
+}
+
+GhNip29Op *
+gh_nip29_service_create_poll(GhNip29Service *self, GhNip29Room *room,
+                             const gchar *question, const gchar *const *options,
+                             guint n_options, gboolean multiple, gint64 ends_at,
+                             GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  if (!can_send_chat(self, room, error))
     return NULL;
-  /* Listed at once, with its honest status (T-enqueue stored it). */
-  g_autoptr(GError) echo_error = NULL;
-  g_autoptr(GhMessage) echo = gh_message_new_from_nip29_event(self->account, room_relay(room),
-                                                              chat, &echo_error);
-  if (!echo ||
-      gh_conversation_store_admit(self->conversations, echo, NULL, &echo_error) ==
-        GH_CONVERSATION_ADD_FAILED)
-    g_warning("Groundhog could not list a sent group message: %s",
-              echo_error ? echo_error->message : "unknown error");
-  apply_message_status(self, op);
-  return op;
+  GhNip29TemplateContext context;
+  room_context(room, &context);
+  g_autofree gchar *chat = gh_nip29_template_poll(room->key, &context, question, options,
+                                                   n_options, multiple, ends_at, error);
+  return chat ? enqueue_chat(self, room, chat, error) : NULL;
+}
+
+GhNip29Op *
+gh_nip29_service_cast_poll_vote(GhNip29Service *self, GhNip29Room *room,
+                                const gchar *poll_event_id,
+                                const gchar *const *option_ids, guint n_options,
+                                GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), NULL);
+  if (!can_send_chat(self, room, error))
+    return NULL;
+  GhNip29TemplateContext context;
+  room_context(room, &context);
+  g_autofree gchar *chat = gh_nip29_template_poll_vote(room->key, &context, poll_event_id,
+                                                        option_ids, n_options, error);
+  return chat ? enqueue_chat(self, room, chat, error) : NULL;
 }
 
 GhNip29Op *

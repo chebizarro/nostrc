@@ -1,4 +1,5 @@
 #include "gh-nip29-template.h"
+#include "gh-message.h"
 
 #include <nostr-kinds.h>
 #include <stdlib.h>
@@ -283,7 +284,82 @@ gh_nip29_template_chat(const GhNip29GroupKey *group, const GhNip29TemplateContex
   if (!check_context(group, context, error) || !check_text(text, TRUE, "chat text", error) ||
       !template_begin(&build, group, context, error))
     return NULL;
+  g_auto(GStrv) mentions = gh_message_extract_mentions(text);
+  for (guint i = 0; mentions && mentions[i]; i++)
+    template_add(&build, nostr_tag_new("p", mentions[i], NULL));
   return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE, text, error);
+}
+
+gchar *
+gh_nip29_template_poll(const GhNip29GroupKey *group,
+                       const GhNip29TemplateContext *context,
+                       const gchar *question, const gchar *const *options,
+                       guint n_options, gboolean multiple, gint64 ends_at,
+                       GError **error)
+{
+  TemplateBuild build;
+  if (!check_context(group, context, error) ||
+      !check_text(question, TRUE, "poll question", error) ||
+      strlen(question) > 1024 || n_options < 2 || n_options > 10 || !options) {
+    if (error && !*error)
+      fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "invalid poll question or options");
+    return NULL;
+  }
+  for (guint i = 0; i < n_options; i++)
+    if (!options[i] || !*options[i] || strlen(options[i]) > 256 ||
+        !g_utf8_validate(options[i], -1, NULL)) {
+      fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "invalid poll option");
+      return NULL;
+    }
+  if (ends_at && (ends_at <= context->created_at ||
+                  ends_at - context->created_at > 30 * 24 * 60 * 60)) {
+    fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "invalid poll deadline");
+    return NULL;
+  }
+  if (!template_begin(&build, group, context, error))
+    return NULL;
+  template_add(&build, nostr_tag_new("poll", "1068", NULL));
+  for (guint i = 0; i < n_options; i++) {
+    g_autofree gchar *id = g_strdup_printf("%u", i);
+    template_add(&build, nostr_tag_new("option", id, options[i], NULL));
+  }
+  template_add(&build, nostr_tag_new("polltype", multiple ? "multiplechoice" : "singlechoice", NULL));
+  if (ends_at) {
+    g_autofree gchar *deadline = g_strdup_printf("%" G_GINT64_FORMAT, ends_at);
+    template_add(&build, nostr_tag_new("endsAt", deadline, NULL));
+  }
+  return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE,
+                         question, error);
+}
+
+gchar *
+gh_nip29_template_poll_vote(const GhNip29GroupKey *group,
+                            const GhNip29TemplateContext *context,
+                            const gchar *poll_event_id,
+                            const gchar *const *option_ids, guint n_options,
+                            GError **error)
+{
+  TemplateBuild build;
+  if (!check_context(group, context, error) || !gh_nip29_is_hex64(poll_event_id) ||
+      !option_ids || n_options < 1 || n_options > 10) {
+    if (error && !*error)
+      fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "invalid poll vote");
+    return NULL;
+  }
+  if (!template_begin(&build, group, context, error))
+    return NULL;
+  template_add(&build, nostr_tag_new("poll", "1018", NULL));
+  template_add(&build, nostr_tag_new("e", poll_event_id, NULL));
+  for (guint i = 0; i < n_options; i++) {
+    if (!option_ids[i] || !*option_ids[i]) {
+      fail(error, GH_NIP29_ERROR_INVALID_ARGUMENT, "invalid poll option id");
+      nostr_tags_free(build.tags);
+      g_strfreev(build.previous);
+      return NULL;
+    }
+    template_add(&build, nostr_tag_new("response", option_ids[i], NULL));
+  }
+  return template_finish(&build, context, NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE, "", error);
 }
 
 gchar *

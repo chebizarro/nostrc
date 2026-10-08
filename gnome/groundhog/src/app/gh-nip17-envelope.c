@@ -1,5 +1,6 @@
 #include "gh-nip17-envelope.h"
 #include "gh-identity.h"
+#include "gh-message.h"
 #include "gh-nip17-inbox.h"
 #include "gh-signer.h"
 #include "nostr-event.h"
@@ -376,7 +377,8 @@ sign_done(GObject *source, GAsyncResult *result, gpointer data)
 static gboolean
 dm_kind(gint kind)
 {
-  return kind == 14 || kind == GH_NIP17_FILE_KIND || kind == 7 || kind == 5;
+  return kind == 14 || kind == GH_NIP17_FILE_KIND || kind == 7 || kind == 5 ||
+         kind == GH_MESSAGE_MLS_POLL_KIND || kind == GH_MESSAGE_MLS_POLL_VOTE_KIND;
 }
 
 /* A canonical rumor of kind (14 or 15) with its id, one "p" tag per
@@ -460,6 +462,80 @@ room_recipients(const gchar *sender, const gchar *const *recipients, const gchar
     return NULL;
   }
   return g_strv_builder_end(builder);
+}
+
+gchar *
+gh_nip17_rumor_new_poll_room(const gchar *sender_pubkey_hex,
+                              const gchar *const *recipients,
+                              const gchar *poll_event_json, gint64 created_at,
+                              gint64 expires_at, gchar **out_rumor_id,
+                              GError **error)
+{
+  if (!hex64(sender_pubkey_hex) || !poll_event_json || created_at <= 0 ||
+      (expires_at && expires_at <= created_at)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Invalid poll rumor sender or time");
+    return NULL;
+  }
+  g_autofree gchar *sender = g_ascii_strdown(sender_pubkey_hex, -1);
+  const gchar *reason = NULL;
+  g_auto(GStrv) room = room_recipients(sender, recipients, &reason);
+  if (!room) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, reason);
+    return NULL;
+  }
+  NostrEvent *poll = nostr_event_new();
+  if (!poll || nostr_event_deserialize_unsigned(poll, poll_event_json, NULL) !=
+                 NOSTR_EVENT_VALIDATION_OK ||
+      !dm_kind(nostr_event_get_kind(poll)) ||
+      (nostr_event_get_kind(poll) != GH_MESSAGE_MLS_POLL_KIND &&
+       nostr_event_get_kind(poll) != GH_MESSAGE_MLS_POLL_VOTE_KIND) ||
+      g_strcmp0(nostr_event_get_pubkey(poll), sender) != 0) {
+    if (poll) nostr_event_free(poll);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Not a NIP-88 poll event by this account");
+    return NULL;
+  }
+  NostrEvent *rumor = nostr_event_new();
+  nostr_event_set_kind(rumor, nostr_event_get_kind(poll));
+  nostr_event_set_pubkey(rumor, sender);
+  nostr_event_set_created_at(rumor, created_at);
+  nostr_event_set_content(rumor, nostr_event_get_content(poll));
+  NostrTags *tags = nostr_tags_new(0);
+  for (guint i = 0; room[i]; i++)
+    nostr_tags_append(tags, nostr_tag_new("p", room[i], NULL));
+  NostrTags *poll_tags = (NostrTags *)nostr_event_get_tags(poll);
+  for (gsize i = 0; poll_tags && i < nostr_tags_size(poll_tags); i++) {
+    NostrTag *source = nostr_tags_get(poll_tags, i);
+    const gchar *key = source ? nostr_tag_get_key(source) : NULL;
+    if (!key || g_strcmp0(key, "h") == 0 || g_strcmp0(key, "p") == 0 ||
+        g_strcmp0(key, "expiration") == 0)
+      continue;
+    NostrTag *copy = nostr_tag_new(key, NULL);
+    for (gsize j = 1; j < nostr_tag_size(source); j++)
+      nostr_tag_append(copy, nostr_tag_get(source, j));
+    nostr_tags_append(tags, copy);
+  }
+  if (expires_at)
+    nostr_tags_append(tags, expiration_tag_new(expires_at));
+  nostr_event_set_tags(rumor, tags);
+  gchar id[65] = { 0 };
+  gchar *result = NULL;
+  if (nostr_event_compute_id(rumor, id) == NOSTR_EVENT_VALIDATION_OK) {
+    free(rumor->id);
+    rumor->id = strdup(id);
+    char *json = nostr_event_serialize_compact(rumor);
+    result = g_strdup(json);
+    free(json);
+    if (out_rumor_id && result)
+      *out_rumor_id = g_strdup(id);
+  }
+  nostr_event_free(rumor);
+  nostr_event_free(poll);
+  if (!result)
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not serialize poll rumor");
+  return result;
 }
 
 gchar *

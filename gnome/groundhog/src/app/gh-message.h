@@ -234,5 +234,9 @@ const GhMessageAttachment *gh_message_get_attachment(GhMessage *self, guint inde
 /* imeta tags the parser rejected (attachment-local). */
 guint gh_message_get_rejected_attachments(GhMessage *self);
 
+/* Distinct lowercase pubkeys in valid nostr:npub mentions in content.
+ * Transfer full; malformed lookalikes are ignored. */
+GStrv gh_message_extract_mentions(const gchar *content);
+
 G_END_DECLS
 #endif

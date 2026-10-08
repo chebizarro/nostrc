@@ -196,7 +196,13 @@ GhOutboxItem *gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex,
  * call, and the block lifted by writing apply as there. Errors as there,
  * G_IO_ERROR_INVALID_ARGUMENT also for too many or repeated recipients. */
 GhOutboxItem *gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients,
-                                  const gchar *content, GError **error);
+                                   const gchar *content, GError **error);
+/* T-enqueue an unsigned NIP-88 kind-1068/1018 event as a NIP-17 room rumor.
+ * The outbox adds recipient p-tags and the room's disappearing expiration. */
+GhOutboxItem *gh_outbox_send_poll_event_room(GhOutbox *self,
+                                              const gchar *const *recipients,
+                                              const gchar *poll_event_json,
+                                              GError **error);
 /* G21: gh_outbox_send() for a kind-15 file message: file (gh-nip17-file.h)
  * is already encrypted and uploaded, its URL set (src/media/gh-attachment.h
  * makes it). The rumor's content and the stored message's body are the

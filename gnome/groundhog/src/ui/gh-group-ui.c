@@ -1,5 +1,7 @@
 #include "gh-group-ui.h"
 
+#include "gh-composer.h"
+#include "gh-conversation-view.h"
 #include "gh-group-copy.h"
 #include "gh-group-join-dialog.h"
 #include "gh-new-group-dialog.h"
@@ -39,7 +41,31 @@ ui_of(GhWindow *window)
   return g_object_get_data(G_OBJECT(window), GROUP_UI_DATA);
 }
 
-/* ---- the composer's reason follows the rooms ---------------------------------------- */
+/* ---- the composer's reason and member suggestions follow the rooms ------------------- */
+
+static void
+sync_mention_members(GhWindow *window)
+{
+  GroupUi *ui = ui_of(window);
+  GhContentPage *content = gh_window_get_content(window);
+  GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
+  GhConversationView *view = content ? GH_CONVERSATION_VIEW(gh_content_page_get_view(content))
+                                     : NULL;
+  GhConversation *conversation = view ? gh_conversation_view_get_conversation(view) : NULL;
+  GhNip29Service *service = ui ? current(ui) : NULL;
+  if (!composer || !conversation || !service ||
+      gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP29)
+    return;
+  g_autoptr(GhNip29Room) room = gh_nip29_service_lookup_room(
+    service, gh_conversation_get_room_id(conversation));
+  const GhNip29Group *group = room ? gh_nip29_room_get_group(room) : NULL;
+  g_auto(GStrv) members = NULL;
+  if (group)
+    gh_nip29_group_dup_members(group, &members);
+  gh_composer_set_mention_members(composer, gh_conversation_get_room_id(conversation),
+                                   (const gchar *const *) members);
+}
+
 
 static void
 refresh_composer(GhWindow *window)
@@ -60,6 +86,9 @@ watch_rooms(GroupUi *ui)
                             ui->window, G_CONNECT_SWAPPED);
     g_signal_connect_object(room, "notify::is-restricted", G_CALLBACK(refresh_composer),
                             ui->window, G_CONNECT_SWAPPED);
+    g_signal_handlers_disconnect_by_func(room, sync_mention_members, ui->window);
+    g_signal_connect_object(room, "group-changed", G_CALLBACK(sync_mention_members),
+                            ui->window, G_CONNECT_SWAPPED);
   }
 }
 
@@ -70,6 +99,7 @@ on_rooms_changed(GhWindow *window)
   if (ui) {
     watch_rooms(ui);
     gh_send_ui_refresh(window);
+    sync_mention_members(window);
   }
 }
 
@@ -105,6 +135,7 @@ sync_service(GroupUi *ui)
     }
   }
   gh_send_ui_refresh(ui->window);
+  sync_mention_members(ui->window);
 }
 
 static void
@@ -349,5 +380,10 @@ gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config)
                             window, G_CONNECT_SWAPPED);
   gh_conversation_list_set_history_source(window, load_older, ui, NULL);
   gh_send_ui_set_delegate(window, &group_delegate, ui);
+  GhContentPage *content = gh_window_get_content(window);
+  GtkWidget *view = content ? gh_content_page_get_view(content) : NULL;
+  if (GH_IS_CONVERSATION_VIEW(view))
+    g_signal_connect_object(view, "notify::conversation", G_CALLBACK(sync_mention_members),
+                            window, G_CONNECT_SWAPPED);
   sync_service(ui);
 }

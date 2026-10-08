@@ -63,6 +63,7 @@ typedef struct {
   gchar  *voter_pubkey;
   gchar **option_ids;   /* NULL-terminated */
   gchar  *vote_event_id;  /* inner event id of the vote (for withdrawal) */
+  gint64  created_at;
 } GhMlsPollVoterRecord;
 
 void gh_mls_poll_voter_record_free(GhMlsPollVoterRecord *rec);
@@ -100,7 +101,8 @@ gboolean            gh_mls_poll_has_voted(GhMlsPoll *self);
 
 /* Apply a vote (kind 1018): voter_pubkey voted for option_ids (validated
  * against the poll definition). Returns TRUE if tallies changed.
- * Replaces any earlier vote by the same voter. Notifies "tallies-changed". */
+ * Replaces only an older vote by the same voter (NIP-88). Notifies
+ * "tallies-changed" when the result changes. */
 gboolean gh_mls_poll_apply_vote(GhMlsPoll     *self,
                                 const gchar   *voter_pubkey,
                                 const gchar  **option_ids,
@@ -110,6 +112,9 @@ gboolean gh_mls_poll_apply_vote(GhMlsPoll     *self,
 /* Remove a voter's record by pubkey.  Returns TRUE and emits
  * "tallies-changed" if the voter was present. */
 gboolean gh_mls_poll_remove_voter(GhMlsPoll *self, const gchar *voter_pubkey);
+/* Recompute a projection after history removed votes, retaining the object
+ * bound to an on-screen card. */
+void gh_mls_poll_reset_votes(GhMlsPoll *self);
 
 /* Remove the voter whose vote has this inner event id.  Returns TRUE and
  * emits "tallies-changed" if found.  Used by the withdrawal path, which
@@ -121,8 +126,8 @@ void gh_mls_poll_set_local_account(GhMlsPoll *self, const gchar *account_pubkey)
 
 /* ---- inner-event builders ---------------------------------------------- */
 
-/* Build the inner event JSON for a new kind-1068 poll.
- * Returns the JSON (caller frees) or NULL on validation error. */
+/* Build a NIP-88 inner event. @nostr_group_hex is the Marmot h-tag value;
+ * NULL omits h for a NIP-17 rumor. Returns owned JSON or NULL on error. */
 gchar *gh_mls_poll_build_event(const gchar   *account_pubkey,
                                const gchar   *nostr_group_hex,
                                gint64         created_at,

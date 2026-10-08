@@ -44,6 +44,9 @@ GPtrArray *gh_link_policy_find_links(const gchar *text);
  * <a href="URI">URI</a>. Invalid UTF-8 is shown with replacement
  * characters and no links. */
 gchar *gh_link_policy_to_markup(const gchar *text);
+/* Like the above, but valid nostr:npub mentions show cached display names;
+ * mentions of @account_pubkey are bold. The original URI remains the link. */
+gchar *gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_pubkey);
 
 typedef enum {
   GH_LINK_ACTION_REFUSE,  /* not an address Groundhog opens */

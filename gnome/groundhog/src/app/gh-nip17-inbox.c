@@ -401,11 +401,14 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
    * Accepted when GH_NIP17_UNWRAP_REACTIONS is set; the caller routes it. */
   gboolean is_reaction = (nostr_event_get_kind(rumor) == 7 || nostr_event_get_kind(rumor) == 5) &&
                           (unwrap->flags & GH_NIP17_UNWRAP_REACTIONS);
-  if (nostr_event_get_kind(rumor) != 14 && nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND &&
+  gint kind = nostr_event_get_kind(rumor);
+  /* NIP-88 polls and responses retain their kinds inside the encrypted
+   * NIP-17 rumor. The same seal/recipient checks below apply to them. */
+  if (kind != 14 && kind != GH_NIP17_FILE_KIND && kind != 1068 && kind != 1018 &&
       !is_reaction) {
     nostr_event_free(rumor);
     reject(task, GH_NIP17_INBOX_ERROR_UNSUPPORTED_KIND,
-           "Only kind-14 chat and kind-15 file NIP-17 messages are accepted");
+           "Unsupported NIP-17 rumor kind");
     return;
   }
   /* G21: a kind-15 file message is admitted only with complete, well-formed
@@ -454,7 +457,6 @@ seal_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   rumor->id = strdup(rumor_id);
   char *canonical = rumor->id ? nostr_event_serialize_compact(rumor) : NULL;
   gint64 created_at = nostr_event_get_created_at(rumor);
-  gint kind = nostr_event_get_kind(rumor);
   nostr_event_free(rumor);
   if (!canonical) {
     g_strfreev(recipients);
