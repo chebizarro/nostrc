@@ -242,7 +242,21 @@ gh_picture_cache_set_consent(GhPictureCache *self, const GhPictureConsentBackend
   g_return_if_fail(!backend || (backend->list && backend->set && backend->clear));
   if (self->consent == backend && self->consent_data == data)
     return;
-  /* Another account's pictures and consent never carry over. */
+  /* Another account's pictures and consent never carry over. Notify both
+   * the old and newly allowed pubkeys: views must drop old textures and ask
+   * for the restored account's pictures again after consent is loaded. */
+  g_autoptr(GHashTable) changed = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GHashTableIter iter;
+  gpointer key, value;
+  g_hash_table_iter_init(&iter, self->allowed);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_hash_table_add(changed, g_strdup(key));
+  g_hash_table_iter_init(&iter, self->by_uri);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Entry *entry = value;
+    for (guint i = 0; i < entry->pubkeys->len; i++)
+      g_hash_table_add(changed, g_strdup(g_ptr_array_index(entry->pubkeys, i)));
+  }
   if (self->cancellable) {
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
@@ -251,4 +265,10 @@ gh_picture_cache_set_consent(GhPictureCache *self, const GhPictureConsentBackend
   self->consent = backend;
   self->consent_data = data;
   load_consent(self);
+  g_hash_table_iter_init(&iter, self->allowed);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_hash_table_add(changed, g_strdup(key));
+  g_hash_table_iter_init(&iter, changed);
+  while (g_hash_table_iter_next(&iter, &key, NULL))
+    g_signal_emit(self, signals[SIGNAL_PICTURE_CHANGED], 0, key);
 }

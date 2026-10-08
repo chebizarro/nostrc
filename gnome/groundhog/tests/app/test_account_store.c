@@ -13,6 +13,7 @@
 #include "account-store-outbox.h"
 #include "gh-account-store.h"
 #include "gh-app-outbox.h"
+#include "gh-reaction-store.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
 #include "gh-inbox-resolver.h"
@@ -1444,6 +1445,19 @@ test_pt6_switch_order(void)
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
   publish_inbox_list(&f, 2);
   receive_message(&f, CANARY " to two");
+  g_autofree gchar *room = room_of(1, 2);
+  GhConversation *conversation = gh_conversation_store_lookup(f.model, room);
+  g_assert_nonnull(conversation);
+  g_autoptr(GhMessage) target = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+  g_assert_nonnull(target);
+  g_autofree gchar *target_id = g_strdup(gh_message_get_rumor_id(target));
+  GhReactionStore *reactions = gh_app_outbox_get_reactions(f.sender);
+  g_assert_nonnull(reactions);
+  g_autoptr(GhReaction) first = gh_reaction_new(target_id, "reaction-before-switch",
+                                                 hex[1], "+", 10, room);
+  g_autoptr(GError) reaction_error = NULL;
+  g_assert_true(gh_reaction_store_admit(reactions, first, &reaction_error));
+  g_assert_no_error(reaction_error);
   GObject *outbox = gh_account_store_get_outbox(f.store);
   g_assert_nonnull(outbox);
   gint64 outbox_id = test_outbox_send(outbox, hex[1], "queued before the switch");
@@ -1484,8 +1498,17 @@ test_pt6_switch_order(void)
   g_assert_cmpstr(g_ptr_array_index(f.events, 2), ==, opening2);
   outbox = gh_account_store_get_outbox(f.store);
   g_assert_true(test_outbox_has(outbox, outbox_id));
-  g_autofree gchar *room = room_of(1, 2);
   g_assert_nonnull(gh_conversation_store_lookup(f.model, room));
+  reactions = gh_app_outbox_get_reactions(f.sender);
+  g_assert_nonnull(reactions);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(
+    gh_reaction_store_lookup(reactions, target_id)), ==, 1);
+  g_autoptr(GhReaction) second = gh_reaction_new(target_id, "reaction-after-switch",
+                                                  hex[2], "❤", 11, room);
+  g_assert_true(gh_reaction_store_admit(reactions, second, &reaction_error));
+  g_assert_no_error(reaction_error);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(
+    gh_reaction_store_lookup(reactions, target_id)), ==, 2);
   fixture_down(&f);
 }
 
@@ -1769,6 +1792,37 @@ view_of(GhWindow *window)
   return GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window)));
 }
 
+typedef struct {
+  GhAppOutbox *sender;
+  GhConversationView *view;
+} ReactionViewLink;
+
+static void
+share_reactions_on_store_change(GhAccountStore *store, ReactionViewLink *link)
+{
+  (void)store;
+  gh_conversation_view_set_reaction_store(link->view,
+                                          gh_app_outbox_get_reactions(link->sender));
+}
+
+static void
+assert_view_reactions(GhConversationView *view, const gchar *target_id, guint count)
+{
+  GListModel *timeline = gh_conversation_view_get_timeline(view);
+  g_assert_nonnull(timeline);
+  for (guint i = 0; i < g_list_model_get_n_items(timeline); i++) {
+    g_autoptr(GhTimelineItem) item = g_list_model_get_item(timeline, i);
+    GhMessage *message = gh_timeline_item_get_message(item);
+    if (message && g_strcmp0(gh_message_get_rumor_id(message), target_id) == 0) {
+      GhReactionSummary *summary = gh_timeline_item_get_reaction_summary(item);
+      g_assert_nonnull(summary);
+      g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, count);
+      return;
+    }
+  }
+  g_error("reaction target is absent from the conversation view");
+}
+
 /* key 1's kind-14 rumor n to the account (key 2), admitted as the inbox
  * admits an unwrapped one (T-admit through the store's delegate), under a
  * synthetic wrap id. */
@@ -1802,6 +1856,53 @@ history_room(Fixture *f)
   GhConversation *conversation = gh_conversation_store_lookup(f->model, room);
   g_assert_nonnull(conversation);
   return conversation;
+}
+
+/* The app-services store-change binding, exercised with a real window and
+ * controller A→B→A selection: restored chips and a new reaction use A's
+ * reopened store, not the old model. */
+static void
+test_reactions_switch_view(void)
+{
+  Fixture f = { .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  admit_from_peer(&f, g_get_real_time() / G_USEC_PER_SEC - 60, 701);
+  GhConversation *room = history_room(&f);
+  gh_conversation_accept(room);
+  g_autoptr(GhMessage) target = g_list_model_get_item(G_LIST_MODEL(room), 0);
+  g_autofree gchar *target_id = g_strdup(gh_message_get_rumor_id(target));
+  g_autofree gchar *room_id = g_strdup(gh_conversation_get_room_id(room));
+  g_autoptr(GhReaction) first = gh_reaction_new(target_id, "view-reaction-one",
+                                                 hex[1], "+", 10, room_id);
+  g_assert_true(gh_reaction_store_admit(gh_app_outbox_get_reactions(f.sender), first, NULL));
+
+  GhWindow *window = window_up(&f);
+  GhConversationView *view = view_of(window);
+  ReactionViewLink link = { f.sender, view };
+  g_signal_connect(f.store, "changed", G_CALLBACK(share_reactions_on_store_change), &link);
+  share_reactions_on_store_change(f.store, &link);
+  gh_window_open_item(window, room);
+  drain();
+  assert_view_reactions(view, target_id, 1);
+
+  select_key(&f, 1);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  select_key(&f, 2);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  room = history_room(&f);
+  gh_window_open_item(window, room);
+  drain();
+  assert_view_reactions(view, target_id, 1);
+
+  g_autoptr(GhReaction) second = gh_reaction_new(target_id, "view-reaction-two",
+                                                  hex[2], "❤", 11, room_id);
+  g_assert_true(gh_reaction_store_admit(gh_app_outbox_get_reactions(f.sender), second, NULL));
+  assert_view_reactions(view, target_id, 2);
+  g_signal_handlers_disconnect_by_data(f.store, &link);
+  window_down(window);
+  fixture_down(&f);
 }
 
 typedef struct {
@@ -2170,6 +2271,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/account-store-gui/restart-pages-history",
                     test_restart_pages_history);
     g_test_add_func("/groundhog/account-store-gui/start-fresh-dialog", test_start_fresh_dialog);
+    g_test_add_func("/groundhog/account-store-gui/reactions-switch-view",
+                    test_reactions_switch_view);
     int status = g_test_run();
     gh_test_remove_tree(xdg_root);
     return status;

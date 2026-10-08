@@ -12,6 +12,8 @@
  */
 #include "gh-account-ui.h"
 #include "gh-identity.h"
+#include "gh-nip46-pair-dialog.h"
+#include "../ui/gh-test-dialog.h"
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
 #include <nostr/nip19/nip19.h>
@@ -105,6 +107,33 @@ assert_menu_item(GMenuModel *model, int index, const char *label, const char *ac
     g_assert_false(g_menu_model_get_item_attribute(model, index, G_MENU_ATTRIBUTE_TARGET, "s",
                                                    &item_target));
   }
+}
+
+static GtkWidget *
+find_action(GtkWidget *widget, const char *name)
+{
+  if (GTK_IS_ACTIONABLE(widget) &&
+      g_strcmp0(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), name) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_action(c, name);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static GhNip46PairDialog *
+find_pair_dialog(GtkWidget *widget)
+{
+  if (GH_IS_NIP46_PAIR_DIALOG(widget))
+    return GH_NIP46_PAIR_DIALOG(widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GhNip46PairDialog *found = find_pair_dialog(c);
+    if (found)
+      return found;
+  }
+  return NULL;
 }
 
 static GtkMenuButton *
@@ -374,7 +403,13 @@ test_header_title_fits(void)
       g_assert_nonnull(switcher);
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(switcher)));
       g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
-      gtk_popover_popdown(switcher);
+      GtkWidget *add = find_action(GTK_WIDGET(switcher), "account.add-remote");
+      g_assert_nonnull(add);
+      g_signal_emit_by_name(add, "clicked");
+      GhNip46PairDialog *pair = find_pair_dialog(GTK_WIDGET(window));
+      g_assert_nonnull(pair);
+      spin_until(gh_test_dialog_shown, pair);
+      adw_dialog_close(ADW_DIALOG(pair));
     }
     gtk_window_destroy(GTK_WINDOW(window));
   }
@@ -387,6 +422,60 @@ test_header_title_fits(void)
 }
 
 #if GROUNDHOG_HAVE_INBOX
+static GStrv
+picture_consent_list(gpointer data, GError **error)
+{
+  (void)error;
+  GStrv keys = g_new0(gchar *, 2);
+  keys[0] = g_strdup(data);
+  return keys;
+}
+
+static gboolean
+picture_consent_set(gpointer data, const gchar *pubkey, gint64 at, GError **error)
+{
+  (void)data; (void)pubkey; (void)at; (void)error;
+  return TRUE;
+}
+
+static gboolean
+picture_consent_clear(gpointer data, GError **error)
+{
+  (void)data; (void)error;
+  return TRUE;
+}
+
+static void
+picture_changed(GhPictureCache *cache, const gchar *pubkey, gpointer data)
+{
+  (void)cache;
+  g_ptr_array_add(data, g_strdup(pubkey));
+}
+
+static void
+test_picture_consent_switch_notifies(void)
+{
+  static const GhPictureConsentBackend backend = {
+    picture_consent_list, picture_consent_set, picture_consent_clear
+  };
+  const gchar *a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const gchar *b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  g_autoptr(GhPictureCache) cache = gh_picture_cache_new(NULL);
+  g_autoptr(GPtrArray) changed = g_ptr_array_new_with_free_func(g_free);
+  g_signal_connect(cache, "picture-changed", G_CALLBACK(picture_changed), changed);
+  gh_picture_cache_set_consent(cache, &backend, (gpointer)a);
+  g_assert_true(g_ptr_array_find_with_equal_func(changed, a, g_str_equal, NULL));
+  g_ptr_array_set_size(changed, 0);
+  gh_picture_cache_set_consent(cache, &backend, (gpointer)b);
+  g_assert_true(g_ptr_array_find_with_equal_func(changed, a, g_str_equal, NULL));
+  g_assert_true(g_ptr_array_find_with_equal_func(changed, b, g_str_equal, NULL));
+  g_ptr_array_set_size(changed, 0);
+  gh_picture_cache_set_consent(cache, &backend, (gpointer)a);
+  g_assert_true(gh_picture_cache_is_allowed(cache, a));
+  g_assert_false(gh_picture_cache_is_allowed(cache, b));
+  g_assert_true(g_ptr_array_find_with_equal_func(changed, a, g_str_equal, NULL));
+}
+
 static gchar *
 npub_for_byte(guint8 value)
 {
@@ -470,6 +559,8 @@ main(int argc, char **argv)
 #if GROUNDHOG_HAVE_INBOX
   g_test_add_func("/groundhog/account-ui/all-own-pictures-without-consent",
                   test_all_own_pictures_without_consent);
+  g_test_add_func("/groundhog/account-ui/picture-consent-switch-notifies",
+                  test_picture_consent_switch_notifies);
 #endif
   return g_test_run();
 }
