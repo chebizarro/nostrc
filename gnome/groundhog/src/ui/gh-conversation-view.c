@@ -1290,14 +1290,6 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(self->timeline, "items-changed", G_CALLBACK(on_timeline_changed),
                             self, G_CONNECT_SWAPPED);
-    g_autoptr(GtkNoSelection) selection =
-      gtk_no_selection_new(g_object_ref(G_LIST_MODEL(self->timeline)));
-    gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
-#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
-    if (open_probe_view == self && open_probe.entry_us && open_probe.trace)
-      open_probe.attach_end_us = g_get_monotonic_time();
-#endif
-
     guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
     guint first = n;
     guint listed = gh_conversation_get_listed_unread(conversation, &first);
@@ -1309,6 +1301,26 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     self->open_scroll = unread ? OPEN_FIRST_UNREAD : OPEN_LATEST;
     /* A timer-change row before it shifts it in the timeline. */
     self->open_target = unread ? timeline_index_of(self->timeline, first) : n_visible(self);
+
+    /* GTK initially keeps a 200-item range at position zero. Establish the
+     * opening anchor without building those message rows, then populate only
+     * the range around the requested position. The idle scroll below still
+     * corrects the final adjustment after real row heights are measured. */
+    g_autoptr(GtkListItemFactory) factory =
+      g_object_ref(gtk_list_view_get_factory(self->message_list));
+    gtk_list_view_set_factory(self->message_list, NULL);
+    g_autoptr(GtkNoSelection) selection =
+      gtk_no_selection_new(g_object_ref(G_LIST_MODEL(self->timeline)));
+    gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
+    if (n_visible(self) > 0)
+      gtk_list_view_scroll_to(self->message_list,
+                              unread ? self->open_target : n_visible(self) - 1,
+                              GTK_LIST_SCROLL_NONE, NULL);
+    gtk_list_view_set_factory(self->message_list, factory);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+    if (open_probe_view == self && open_probe.entry_us && open_probe.trace)
+      open_probe.attach_end_us = g_get_monotonic_time();
+#endif
     self->new_below = listed;
     self->sticky = !unread;
     schedule_midnight(self);

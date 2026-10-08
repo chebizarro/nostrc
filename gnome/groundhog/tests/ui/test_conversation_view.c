@@ -1746,6 +1746,8 @@ test_open_timing(Fixture *f, gconstpointer data)
       g_assert_true(gh_sidebar_page_get_selected(sidebar) == a);
       wait_open_settled(view, probe);
       GhConversationOpenProbe first = *probe;
+      if (trace && size == 1000)
+        g_assert_cmpuint(first.bind_count, <, 300);
       print_open_sample(csv, session, size, "first", sample, warmup,
                         gtk_window_is_active(GTK_WINDOW(window)), &first);
       probe = gh_conversation_open_probe_arm(view, FALSE);
@@ -1757,6 +1759,8 @@ test_open_timing(Fixture *f, gconstpointer data)
       g_assert_true(gh_sidebar_page_get_selected(sidebar) == a);
       wait_open_settled(view, probe);
       GhConversationOpenProbe reopen = *probe;
+      if (trace && size == 1000)
+        g_assert_cmpuint(reopen.bind_count, <, 300);
       print_open_sample(csv, session, size, "reopen", sample, warmup,
                         gtk_window_is_active(GTK_WINDOW(window)), &reopen);
       gh_conversation_open_probe_disarm(view);
