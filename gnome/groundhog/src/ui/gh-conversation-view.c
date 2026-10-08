@@ -332,7 +332,8 @@ G_DECLARE_FINAL_TYPE(GhTimeline, gh_timeline, GH, TIMELINE, GObject)
 struct _GhTimeline {
   GObject parent_instance;
   GListModel *source; /* GhMessage in conversation order (the GhConversation) */
-  GPtrArray *items;   /* GhTimelineItem: parallel to source, but for the event */
+  GPtrArray *items;   /* visible GhTimelineItem; kind-1018 responses stay in source */
+  GArray *visible;     /* gboolean for each source message */
   gboolean multi_party;
   GhReactionStore *reactions; /* W26 slice B: look up summaries on creation */
   /* The conversation's timer change (nostrc-qp24.83), an item after every
@@ -441,27 +442,39 @@ timeline_refresh_runs(GhTimeline *self, guint from, guint to)
   }
 }
 
-/* Replaces `removed` items at item index `at` with items for the source's
- * [position, position + added). */
+static guint
+visible_before(GhTimeline *self, guint position)
+{
+  guint count = 0;
+  for (guint i = 0; i < MIN(position, self->visible->len); i++)
+    count += g_array_index(self->visible, gboolean, i);
+  return count;
+}
+
+/* Replace visible items corresponding to a source splice. Poll responses
+ * remain in the source for tally aggregation, but never become list rows. */
 static void
 timeline_splice(GhTimeline *self, guint at, guint position, guint removed, guint added,
                 GDateTime *now)
 {
   g_ptr_array_remove_range(self->items, at, removed);
+  guint inserted = 0;
   for (guint i = 0; i < added; i++) {
+    if (!g_array_index(self->visible, gboolean, position + i))
+      continue;
     g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
     GhTimelineItem *item = timeline_item_new(message, now);
-    /* W26 slice B: bind the live reaction summary when a store is set. */
     if (self->reactions && message) {
       const gchar *rumor_id = gh_message_get_rumor_id(message);
       if (rumor_id)
         timeline_item_set_reaction_summary(item,
           gh_reaction_store_lookup(self->reactions, rumor_id));
     }
-    g_ptr_array_insert(self->items, at + i, item);
+    g_ptr_array_insert(self->items, at + inserted++, item);
   }
-  timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + added + 1);
-  g_list_model_items_changed(G_LIST_MODEL(self), at, removed, added);
+  timeline_refresh_runs(self, at > 0 ? at - 1 : 0, at + inserted + 1);
+  if (removed || inserted)
+    g_list_model_items_changed(G_LIST_MODEL(self), at, removed, inserted);
 }
 
 /* Messages written at or before `at`: the event comes after them. */
@@ -477,7 +490,7 @@ event_place(GhTimeline *self, gint64 at)
     else
       high = mid;
   }
-  return low;
+  return visible_before(self, low);
 }
 
 static GhTimelineItem *
@@ -510,24 +523,26 @@ on_source_changed(GhTimeline *self, guint position, guint removed, guint added,
 {
   (void)source;
   g_autoptr(GDateTime) now = g_date_time_new_now_local();
+  /* The source has already changed, so retain old visibility before updating
+   * the parallel flags. This also handles a response arriving before its poll. */
+  guint at = visible_before(self, position);
+  guint removed_visible = visible_before(self, position + removed) - at;
+  if (removed)
+    g_array_remove_range(self->visible, position, removed);
+  for (guint i = 0; i < added; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
+    gboolean visible = !message || gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND;
+    g_array_insert_vals(self->visible, position + i, &visible, 1);
+  }
   if (!self->event) {
-    timeline_splice(self, position, position, removed, added, now);
+    timeline_splice(self, at, position, removed_visible, added, now);
     return;
   }
-  /* The event stays where it is when the change is all after it, or all
-   * before it; otherwise it moves (out, then back in its new place). */
-  guint before = self->event_index;
-  guint place = event_place(self, self->event->event_at);
-  if (position >= before && place == before) {
-    timeline_splice(self, position + 1, position, removed, added, now);
-  } else if (position + removed <= before && place + removed == before + added) {
-    self->event_index = place;
-    timeline_splice(self, position, position, removed, added, now);
-  } else {
-    GhTimelineItem *event = timeline_take_event(self);
-    timeline_splice(self, position, position, removed, added, now);
-    timeline_put_event(self, event);
-  }
+  /* Timer-change rows are rare; remove and replace one around the splice so
+   * its position is computed in visible, not raw source, coordinates. */
+  GhTimelineItem *event = timeline_take_event(self);
+  timeline_splice(self, at, position, removed_visible, added, now);
+  timeline_put_event(self, event);
 }
 
 /* The conversation's timer changed (or was restored): its row follows. */
@@ -566,7 +581,8 @@ timeline_new(GListModel *source, gboolean multi_party, GhReactionStore *reaction
 static guint
 timeline_index_of(GhTimeline *self, guint position)
 {
-  return position + (self->event && position >= self->event_index ? 1 : 0);
+  guint index = visible_before(self, position);
+  return index + (self->event && index >= self->event_index ? 1 : 0);
 }
 
 static void
@@ -591,6 +607,7 @@ static void
 gh_timeline_finalize(GObject *object)
 {
   g_ptr_array_unref(GH_TIMELINE(object)->items);
+  g_array_unref(GH_TIMELINE(object)->visible);
   G_OBJECT_CLASS(gh_timeline_parent_class)->finalize(object);
 }
 
@@ -605,6 +622,7 @@ static void
 gh_timeline_init(GhTimeline *self)
 {
   self->items = g_ptr_array_new_with_free_func(g_object_unref);
+  self->visible = g_array_new(FALSE, FALSE, sizeof(gboolean));
 }
 
 /* ---- GhConversationView ------------------------------------------------------------- */

@@ -13,7 +13,9 @@ struct _GhPollCard {
   GtkLabel  *question_label;
   GtkBox    *options_box;
   GtkLabel  *status_label;
-  GPtrArray *option_buttons; /* GtkToggleButton* (weak) */
+  GtkButton *vote_button;
+  GPtrArray *option_buttons; /* GtkCheckButton* (weak) */
+  GPtrArray *option_bars;    /* GtkProgressBar* (weak) */
 };
 
 enum {
@@ -69,6 +71,29 @@ format_status(GhMlsPoll *poll)
 }
 
 static void
+sync_vote_button(GhPollCard *self)
+{
+  if (!self->poll) {
+    gtk_widget_set_sensitive(GTK_WIDGET(self->vote_button), FALSE);
+    return;
+  }
+  const gchar *const *local = gh_mls_poll_get_local_selection(self->poll);
+  gboolean different = FALSE;
+  guint selected = 0;
+  for (guint i = 0; i < self->option_buttons->len; i++) {
+    GtkCheckButton *button = g_ptr_array_index(self->option_buttons, i);
+    const gchar *id = gh_mls_poll_get_option(self->poll, i)->id;
+    gboolean active = gtk_check_button_get_active(button);
+    gboolean was_selected = local && g_strv_contains(local, id);
+    selected += active;
+    different |= active != was_selected;
+  }
+  gtk_widget_set_sensitive(GTK_WIDGET(self->vote_button),
+    selected > 0 && different && gh_mls_poll_is_open(self->poll,
+      g_get_real_time() / G_USEC_PER_SEC));
+}
+
+static void
 update_option_states(GhPollCard *self)
 {
   if (!self->poll) return;
@@ -76,49 +101,34 @@ update_option_states(GhPollCard *self)
   guint total_voters = gh_mls_poll_get_total_voters(self->poll);
   const gchar *const *local = gh_mls_poll_get_local_selection(self->poll);
   gboolean has_voted = gh_mls_poll_has_voted(self->poll);
-  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-  gboolean open = gh_mls_poll_is_open(self->poll, now);
+  gboolean open = gh_mls_poll_is_open(self->poll, g_get_real_time() / G_USEC_PER_SEC);
 
   for (guint i = 0; i < n_options && i < self->option_buttons->len; i++) {
-    GtkToggleButton *btn = g_ptr_array_index(self->option_buttons, i);
+    GtkCheckButton *button = g_ptr_array_index(self->option_buttons, i);
+    GtkProgressBar *bar = g_ptr_array_index(self->option_bars, i);
     const GhMlsPollTally *tally = gh_mls_poll_get_option(self->poll, i);
-
-    /* Check if this option is locally selected. */
-    gboolean selected = FALSE;
-    if (local) {
-      for (const gchar *const *s = local; *s; s++) {
-        if (g_strcmp0(*s, tally->id) == 0) { selected = TRUE; break; }
-      }
-    }
-
-    /* Build label: "Label" or "Label · 42%" when someone voted. */
-    g_autofree gchar *label = NULL;
-    if (has_voted || !open) {
-      guint pct = total_voters > 0 ? (tally->votes * 100 / total_voters) : 0;
-      label = g_strdup_printf("%s · %u%%  (%u)", tally->label, pct, tally->votes);
-    } else {
-      label = g_strdup(tally->label);
-    }
-    gtk_button_set_label(GTK_BUTTON(btn), label);
-
-    /* Toggle state (without triggering handler). */
-    g_signal_handlers_block_matched(btn, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
-    gtk_toggle_button_set_active(btn, selected);
-    g_signal_handlers_unblock_matched(btn, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
-
-    /* Disable if poll is closed. */
-    gtk_widget_set_sensitive(GTK_WIDGET(btn), open);
-
-    /* Style: selected options get "suggested-action". */
-    if (selected)
-      gtk_widget_add_css_class(GTK_WIDGET(btn), "suggested-action");
-    else
-      gtk_widget_remove_css_class(GTK_WIDGET(btn), "suggested-action");
+    gboolean selected = local && g_strv_contains(local, tally->id);
+    guint pct = total_voters ? tally->votes * 100 / total_voters : 0;
+    g_autofree gchar *label = has_voted || !open
+      ? g_strdup_printf("%s · %u%% (%u)", tally->label, pct, tally->votes)
+      : g_strdup(tally->label);
+    gtk_check_button_set_label(button, label);
+    gtk_progress_bar_set_fraction(bar, total_voters
+      ? (gdouble)tally->votes / total_voters : 0);
+    gtk_widget_set_visible(GTK_WIDGET(bar), has_voted || !open);
+    g_signal_handlers_block_matched(button, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
+    gtk_check_button_set_active(button, selected);
+    g_signal_handlers_unblock_matched(button, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
+    gtk_widget_set_sensitive(GTK_WIDGET(button), open);
   }
-
-  /* Update status label. */
   g_autofree gchar *status = format_status(self->poll);
-  gtk_label_set_text(self->status_label, status);
+  if (has_voted) {
+    g_autofree gchar *with_vote = g_strdup_printf(_("%s · You voted"), status);
+    gtk_label_set_text(self->status_label, with_vote);
+  } else {
+    gtk_label_set_text(self->status_label, status);
+  }
+  sync_vote_button(self);
 }
 
 static void
@@ -129,57 +139,30 @@ on_tallies_changed(GhMlsPoll *poll, GhPollCard *self)
 }
 
 static void
-on_option_toggled(GtkToggleButton *btn, GhPollCard *self)
+on_option_toggled(GtkCheckButton *button, GhPollCard *self)
 {
-  if (!self->poll) return;
-  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
-  if (!gh_mls_poll_is_open(self->poll, now)) return;
+  (void)button;
+  sync_vote_button(self);
+}
 
-  GhMlsPollType poll_type = gh_mls_poll_get_poll_type(self->poll);
-
-  /* Find which option index was toggled. */
-  guint toggled_idx = UINT_MAX;
-  for (guint i = 0; i < self->option_buttons->len; i++) {
-    if (g_ptr_array_index(self->option_buttons, i) == btn) {
-      toggled_idx = i;
-      break;
-    }
-  }
-  if (toggled_idx == UINT_MAX) return;
-
-  const GhMlsPollTally *tally = gh_mls_poll_get_option(self->poll, toggled_idx);
-  if (!tally) return;
-
-  /* Build the selection array. */
-  g_autoptr(GPtrArray) selected = g_ptr_array_new();
-
-  if (poll_type == GH_MLS_POLL_SINGLE_CHOICE) {
-    /* Single choice: just the toggled option. */
-    if (gtk_toggle_button_get_active(btn))
-      g_ptr_array_add(selected, (gpointer) tally->id);
-  } else {
-    /* Multiple choice: collect all active toggles. */
-    for (guint i = 0; i < self->option_buttons->len; i++) {
-      GtkToggleButton *b = g_ptr_array_index(self->option_buttons, i);
-      if (gtk_toggle_button_get_active(b)) {
-        const GhMlsPollTally *t = gh_mls_poll_get_option(self->poll, i);
-        if (t) g_ptr_array_add(selected, (gpointer) t->id);
-      }
-    }
-  }
-
-  if (selected->len == 0) {
-    /* Deselecting in single choice is invalid; re-check. */
-    g_signal_handlers_block_matched(btn, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
-    gtk_toggle_button_set_active(btn, TRUE);
-    g_signal_handlers_unblock_matched(btn, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, self);
+static void
+on_vote_clicked(GtkButton *button, GhPollCard *self)
+{
+  (void)button;
+  if (!self->poll || !gh_mls_poll_is_open(self->poll, g_get_real_time() / G_USEC_PER_SEC))
     return;
+  g_autoptr(GPtrArray) selected = g_ptr_array_new();
+  for (guint i = 0; i < self->option_buttons->len; i++) {
+    GtkCheckButton *check = g_ptr_array_index(self->option_buttons, i);
+    if (gtk_check_button_get_active(check))
+      g_ptr_array_add(selected, (gpointer)gh_mls_poll_get_option(self->poll, i)->id);
   }
-
-  /* Build NULL-terminated string array. */
+  if (selected->len == 0 ||
+      (gh_mls_poll_get_poll_type(self->poll) == GH_MLS_POLL_SINGLE_CHOICE && selected->len != 1))
+    return;
+  guint n_options = selected->len;
   g_ptr_array_add(selected, NULL);
-  const gchar **ids = (const gchar **) selected->pdata;
-  g_signal_emit(self, signals[SIG_VOTE_CAST], 0, ids, selected->len - 1);
+  g_signal_emit(self, signals[SIG_VOTE_CAST], 0, selected->pdata, n_options);
 }
 
 /* ---- rebuild ------------------------------------------------------------ */
@@ -192,24 +175,38 @@ rebuild_options(GhPollCard *self)
   while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->options_box))))
     gtk_box_remove(self->options_box, child);
   g_ptr_array_set_size(self->option_buttons, 0);
+  g_ptr_array_set_size(self->option_bars, 0);
 
   if (!self->poll) {
     gtk_label_set_text(self->question_label, "");
     gtk_label_set_text(self->status_label, "");
+    gtk_widget_set_sensitive(GTK_WIDGET(self->vote_button), FALSE);
     return;
   }
 
   gtk_label_set_text(self->question_label, gh_mls_poll_get_question(self->poll));
 
   guint n_options = gh_mls_poll_get_n_options(self->poll);
+  GtkCheckButton *radio_group = NULL;
   for (guint i = 0; i < n_options; i++) {
     const GhMlsPollTally *tally = gh_mls_poll_get_option(self->poll, i);
-    GtkWidget *btn = gtk_toggle_button_new_with_label(tally->label);
-    gtk_widget_add_css_class(btn, "flat");
-    gtk_widget_add_css_class(btn, "groundhog-poll-option");
-    g_signal_connect(btn, "toggled", G_CALLBACK(on_option_toggled), self);
-    gtk_box_append(self->options_box, btn);
-    g_ptr_array_add(self->option_buttons, btn);
+    GtkWidget *option = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    GtkCheckButton *check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(tally->label));
+    if (gh_mls_poll_get_poll_type(self->poll) == GH_MLS_POLL_SINGLE_CHOICE) {
+      if (radio_group)
+        gtk_check_button_set_group(check, radio_group);
+      else
+        radio_group = check;
+    }
+    gtk_widget_add_css_class(GTK_WIDGET(check), "groundhog-poll-option");
+    GtkProgressBar *bar = GTK_PROGRESS_BAR(gtk_progress_bar_new());
+    gtk_widget_set_visible(GTK_WIDGET(bar), FALSE);
+    g_signal_connect(check, "toggled", G_CALLBACK(on_option_toggled), self);
+    gtk_box_append(GTK_BOX(option), GTK_WIDGET(check));
+    gtk_box_append(GTK_BOX(option), GTK_WIDGET(bar));
+    gtk_box_append(self->options_box, option);
+    g_ptr_array_add(self->option_buttons, check);
+    g_ptr_array_add(self->option_bars, bar);
   }
 
   update_option_states(self);
@@ -246,6 +243,7 @@ gh_poll_card_finalize(GObject *obj)
 {
   GhPollCard *self = GH_POLL_CARD(obj);
   g_clear_pointer(&self->option_buttons, g_ptr_array_unref);
+  g_clear_pointer(&self->option_bars, g_ptr_array_unref);
   G_OBJECT_CLASS(gh_poll_card_parent_class)->finalize(obj);
 }
 
@@ -306,6 +304,7 @@ static void
 gh_poll_card_init(GhPollCard *self)
 {
   self->option_buttons = g_ptr_array_new();
+  self->option_bars = g_ptr_array_new();
 
   GtkBoxLayout *layout = GTK_BOX_LAYOUT(gtk_widget_get_layout_manager(GTK_WIDGET(self)));
   gtk_orientable_set_orientation(GTK_ORIENTABLE(layout), GTK_ORIENTATION_VERTICAL);
@@ -323,6 +322,12 @@ gh_poll_card_init(GhPollCard *self)
   /* Options container. */
   self->options_box = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 4));
   gtk_widget_set_parent(GTK_WIDGET(self->options_box), GTK_WIDGET(self));
+
+  self->vote_button = GTK_BUTTON(gtk_button_new_with_label(_("Vote")));
+  gtk_widget_add_css_class(GTK_WIDGET(self->vote_button), "suggested-action");
+  gtk_widget_set_sensitive(GTK_WIDGET(self->vote_button), FALSE);
+  g_signal_connect(self->vote_button, "clicked", G_CALLBACK(on_vote_clicked), self);
+  gtk_widget_set_parent(GTK_WIDGET(self->vote_button), GTK_WIDGET(self));
 
   /* Status label. */
   self->status_label = GTK_LABEL(gtk_label_new(NULL));
