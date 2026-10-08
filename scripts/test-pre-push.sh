@@ -151,7 +151,13 @@ case "$1" in
     *) exit 1 ;;
 esac
 MOCK
-chmod +x "$tmp/bin/cmake" "$tmp/bin/ctest" "$tmp/docker-bin/docker"
+cat > "$tmp/docker-bin/pkg-config" <<'MOCK'
+#!/bin/bash
+set -eu
+[ "$1" = --exists ] && [ "$2" = libqrencode ]
+[ "${FAIL_STAGE:-}" != qrencode ]
+MOCK
+chmod +x "$tmp/bin/cmake" "$tmp/bin/ctest" "$tmp/docker-bin/docker" "$tmp/docker-bin/pkg-config"
 
 # A bare "! grep" never fails a set -e script (bash exempts negated
 # commands); this does.
@@ -189,6 +195,15 @@ grep -q 'sanitizer stage runs: the range touches gnome/groundhog/' "$tmp/output"
 # Its tests start only after the host (macOS) build.
 awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$tmp/trace"
 absent 'SKIPPED' "$tmp/output"
+assert_clean
+
+# A Groundhog build fails before configure with an actionable macOS dependency hint.
+if run_hook qrencode > "$tmp/no-qrencode-output" 2>&1; then
+    echo "missing libqrencode unexpectedly passed pre-push" >&2
+    exit 1
+fi
+grep -q "brew install qrencode" "$tmp/no-qrencode-output"
+absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
 # An upstream hook may consume all of stdin; the build gate must still see the ref.
