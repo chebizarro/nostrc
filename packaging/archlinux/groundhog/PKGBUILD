@@ -51,14 +51,15 @@ build() {
 }
 
 package_groundhog() {
-  pkgdesc="Private messaging on Nostr for GNOME (alpha)"
+  pkgdesc="Private Nostr messaging with local Grotto or NIP-46 remote signers (alpha)"
   depends=(
-    'grotto' 'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
+    'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
     'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
     'gst-plugins-good' 'openssl' 'libsecp256k1' 'libsodium' 'jansson'
-    'libwebsockets' 'curl' 'hicolor-icon-theme'
+    'libwebsockets' 'curl' 'qrencode' 'hicolor-icon-theme'
   )
   optdepends=(
+    'grotto: local Grotto-backed accounts (not needed for remote signers)'
     'gnome-keyring: keeps the database key (any Secret Service provider works)'
     'gst-plugins-bad: voice messages recorded by other apps (AAC)'
     'gst-libav: voice messages recorded by other apps (AAC)'

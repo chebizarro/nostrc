@@ -59,6 +59,17 @@ bunker_init(TestBunker *bunker, const gchar *client_secret)
   bunker->client_pubkey = nostr_key_get_public(client_secret);
 }
 
+static void G_GNUC_UNUSED
+bunker_set_signer_secret(TestBunker *bunker, const gchar *secret)
+{
+  g_free(bunker->signer_secret);
+  g_free(bunker->signer_pubkey);
+  g_free(bunker->user_pubkey);
+  bunker->signer_secret = g_strdup(secret);
+  bunker->signer_pubkey = nostr_key_get_public(secret);
+  bunker->user_pubkey = nostr_key_get_public(secret);
+}
+
 static void
 bunker_clear(TestBunker *bunker)
 {
@@ -138,7 +149,7 @@ bunker_last_publish(TestBunker *bunker)
   return g_ptr_array_index(bunker->publishes, bunker->publishes->len - 1);
 }
 
-static void
+static G_GNUC_UNUSED void
 bunker_accept(TestBunker *bunker)
 {
   BunkerHandle *handle = bunker_last_publish(bunker);
@@ -146,9 +157,10 @@ bunker_accept(TestBunker *bunker)
 }
 
 static gchar *
-bunker_request_json(TestBunker *bunker)
+bunker_request_json_at(TestBunker *bunker, guint index)
 {
-  BunkerHandle *handle = bunker_last_publish(bunker);
+  g_assert_cmpuint(index, <, bunker->publishes->len);
+  BunkerHandle *handle = g_ptr_array_index(bunker->publishes, index);
   NostrEvent *event = nostr_event_new();
   g_assert_cmpint(nostr_event_deserialize_signed(event, handle->event_json, NULL), ==,
                   NOSTR_EVENT_VALIDATION_OK);
@@ -162,6 +174,12 @@ bunker_request_json(TestBunker *bunker)
   free(plain);
   nostr_event_free(event);
   return json;
+}
+
+static G_GNUC_UNUSED gchar *
+bunker_request_json(TestBunker *bunker)
+{
+  return bunker_request_json_at(bunker, bunker->publishes->len - 1);
 }
 
 static gchar *

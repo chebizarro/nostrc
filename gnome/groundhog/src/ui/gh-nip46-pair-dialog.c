@@ -324,16 +324,24 @@ stored(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-confirm_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
+confirm_closed(AdwDialog *alert, gpointer data)
 {
   (void)alert;
   GhNip46PairDialog *self = data;
   if (self->closing || self->state != PAIR_CONFIRMING) return;
+  stop_attempt(self);
+  self->state = PAIR_EDITING;
+  gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
+  gtk_label_set_text(self->qr_status, _("Pairing cancelled. Regenerate to try again."));
+}
+
+static void
+confirm_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
+{
+  GhNip46PairDialog *self = data;
+  if (self->closing || self->state != PAIR_CONFIRMING) return;
   if (!g_str_equal(response, "save")) {
-    stop_attempt(self);
-    self->state = PAIR_EDITING;
-    gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
-    gtk_label_set_text(self->qr_status, _("Pairing cancelled. Regenerate to try again."));
+    confirm_closed(ADW_DIALOG(alert), self);
     return;
   }
   g_autofree gchar *secret = gh_nip46_session_dup_client_secret(self->session);
@@ -417,6 +425,9 @@ pair_finished(GObject *source, GAsyncResult *result, gpointer data)
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
   g_signal_connect_object(alert, "response", G_CALLBACK(confirm_response), self, 0);
+  /* Older libadwaita can unmap a dismissed alert without either signal. */
+  g_signal_connect_object(alert, "closed", G_CALLBACK(confirm_closed), self, 0);
+  g_signal_connect_object(alert, "unmap", G_CALLBACK(confirm_closed), self, 0);
   adw_dialog_present(alert, GTK_WIDGET(self));
   g_signal_emit(self, signals[SIGNAL_CONFIRMATION_PRESENTED], 0, alert);
   g_object_unref(self);

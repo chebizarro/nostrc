@@ -9,16 +9,24 @@ Grotto is the signer for **every** Nostr app that speaks one of:
 
 - **NIP-55L** — local apps on this computer, over the session bus
   (`org.nostr.Signer`, see `docs/dbus-interface.md`). Groundhog, gnostr and
-  the browser bridge use this.
+  the browser bridge can use this when configured for Grotto.
 - **NIP-46 (Nostr Connect)** — remote apps over relays, with Grotto as the
   bunker (Settings › Listen for new connections, or `grotto-daemon --bunker`).
 
 One Grotto serves all of them at once. Each app names the identity it uses
 and Grotto asks you, per app, what it may do. That includes several
-Groundhog instances (`groundhog --instance NAME`): they share the one Grotto,
-each signing with its own identity. Grotto itself has no `--instance`
-option: the daemon owns `org.nostr.Signer`, the name every app speaks, and
-there is one per session (owner decision, W31 R4).
+Groundhog instances (`groundhog --instance NAME`) with Grotto-backed accounts:
+they share the one Grotto, each signing with its selected identity. Grotto
+itself has no `--instance` option: the daemon owns `org.nostr.Signer`, the name
+every app speaks, and there is one per session (owner decision, W31 R4).
+
+Groundhog can instead pair a NIP-46 remote signer such as Amber or a bunker,
+so Grotto is not required for remote-signer-only accounts. Such accounts
+require a working encrypted Groundhog store. When that phone or bunker is
+offline, Groundhog can read cached messages, but new decryptions and signing
+wait for the signer. The signer relays learn connection timing, IP address
+unless Tor is used, and the transport-key link. Before downgrading to an alpha
+without remote-signer support, select a Grotto-backed account or read-only mode.
 
 ## Features
 

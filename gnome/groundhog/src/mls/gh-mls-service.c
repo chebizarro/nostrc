@@ -15,6 +15,7 @@
 #include "gh-store-mls-identity.h"
 #include "gh-reaction.h"
 #include "gh-reaction-store.h"
+#include "gh-signer.h"
 
 #include <marmot/marmot-group-components.h>
 
@@ -6806,11 +6807,12 @@ identity_signed(GObject *source, GAsyncResult *result, gpointer data)
   }
   self->identity_busy = FALSE;
   if (!signed_json) {
-    /* Declined (or the signer failed): not asked again until the account's
-     * next generation or gh_mls_service_retry_identity(), so a refusal is
-     * not a prompt per reconnect. */
+    /* A refusal is not asked again until the next generation or an explicit
+     * retry. Temporary unavailability leaves enrollment pending so a remote
+     * signer can connect after the account becomes active. */
     g_message("Groundhog's encrypted groups wait for the signer: %s", error->message);
-    identity_set_state(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)
+    identity_set_state(self, g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) ||
+                               g_error_matches(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE)
                                ? GH_MLS_IDENTITY_NONE : GH_MLS_IDENTITY_DECLINED);
     identity_job_free(job);
     return;
@@ -6837,6 +6839,10 @@ identity_enroll(GhMlsService *self)
 {
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
   if (!running(self) || self->identity_busy || self->identity != GH_MLS_IDENTITY_NONE)
+    return;
+  if (gh_account_controller_get_active_backend(self->accounts) == GH_SIGNER_BACKEND_NIP46 &&
+      (gh_account_controller_get_remote_state(self->accounts) != GH_REMOTE_SIGNER_READY ||
+       !gh_account_controller_is_remote_storage_ready(self->accounts)))
     return;
   if (marmot_has_account_proof(self->marmot, self->account_key)) {
     identity_set_state(self, GH_MLS_IDENTITY_ENROLLED);
@@ -8891,7 +8897,10 @@ static void
 on_accounts_changed(GhAccountController *accounts, gpointer data)
 {
   (void)accounts;
-  update_activity(data);
+  GhMlsService *self = data;
+  update_activity(self);
+  /* Readiness/storage can change without an account generation change. */
+  identity_enroll(self);
 }
 
 static void

@@ -26,6 +26,9 @@
 #include "gh-store-conversations.h"
 #include "gh-store-marmot.h"
 #include "gh-test-signer.h"
+#ifdef GH_TEST_REMOTE_MLS
+#include "gh-test-bunker.h"
+#endif
 #include "wire-relay.h"
 
 #include <nostr-keys.h>
@@ -66,6 +69,10 @@ static gboolean world_legacy_only;
  * member's leave is a Remove request only an admin commits. FALSE (the
  * default) is the app's behaviour; only the Remove-request cases set it. */
 static gboolean world_permissive_groups;
+#ifdef GH_TEST_REMOTE_MLS
+static guint world_remote_key;
+#define WORLD_REMOTE_CLIENT_SECRET "2222222222222222222222222222222222222222222222222222222222222222"
+#endif
 
 static G_GNUC_UNUSED void
 spin_until_at(gboolean (*pred)(gpointer), gpointer data, const gchar *what, int line)
@@ -264,6 +271,12 @@ struct _World {
   WireRelay r;              /* world_split_lists: every account's read-only relay */
   gchar *root;
   App apps[N_APPS];
+#ifdef GH_TEST_REMOTE_MLS
+  TestBunker remote;
+  GhNip46Session *remote_session;
+  guint remote_handled;
+  GArray *remote_signed_kinds;
+#endif
 };
 
 static G_GNUC_UNUSED GPtrArray *
@@ -284,6 +297,13 @@ accounts_active(gpointer data)
 {
   return gh_account_controller_get_state(data) == GH_ACCOUNT_STATE_ACTIVE;
 }
+#ifdef GH_TEST_REMOTE_MLS
+static gboolean
+accounts_listed(gpointer data)
+{
+  return gh_account_controller_get_state(data) != GH_ACCOUNT_STATE_DISCOVERING;
+}
+#endif
 
 static G_GNUC_UNUSED gboolean
 relays_known(gpointer data)
@@ -382,6 +402,11 @@ app_store_up(App *app)
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_store_conversations_attach(app->rooms, app->model, 0, &error));
   g_assert_no_error(error);
+#ifdef GH_TEST_REMOTE_MLS
+  if (app->key == world_remote_key)
+    gh_account_controller_set_remote_storage_ready(app->accounts,
+      gh_account_controller_get_generation(app->accounts), TRUE);
+#endif
   app->inbox = gh_dm_inbox_new_with_storage(app->accounts, app->relays, app->model, NULL, NULL,
                                             NULL);
   g_assert_true(gh_dm_inbox_set_storage(app->inbox,
@@ -409,6 +434,109 @@ app_store_down(App *app)
     gh_store_close(g_steal_pointer(&app->store));
 }
 
+#ifdef GH_TEST_REMOTE_MLS
+static gboolean
+remote_answer_idle(gpointer data)
+{
+  World *w = data;
+  TestBunker *bunker = &w->remote;
+  while (w->remote_handled < bunker->publishes->len) {
+    guint index = w->remote_handled++;
+    BunkerHandle *handle = g_ptr_array_index(bunker->publishes, index);
+    gh_relay_publish_ok(handle->publish, handle->url, handle->event_id, TRUE, "");
+    g_autofree gchar *json = bunker_request_json_at(bunker, index);
+    NostrNip46Request request = { 0 };
+    g_assert_cmpint(nostr_nip46_request_parse(json, &request), ==, 0);
+    char *response = NULL;
+    if (g_str_equal(request.method, "sign_event")) {
+      g_assert_cmpuint(request.n_params, ==, 1);
+      NostrEvent *event = nostr_event_new();
+      g_assert_cmpint(nostr_event_deserialize_compact(event, request.params[0], NULL), ==, 1);
+      g_assert_cmpstr(nostr_event_get_pubkey(event), ==, bunker->user_pubkey);
+      gint kind = nostr_event_get_kind(event);
+      g_array_append_val(w->remote_signed_kinds, kind);
+      g_assert_cmpint(nostr_event_sign(event, bunker->signer_secret), ==, 0);
+      char *signed_json = nostr_event_serialize_compact(event);
+      g_autofree gchar *escaped = g_strescape(signed_json, NULL);
+      g_autofree gchar *result = g_strdup_printf("\"%s\"", escaped);
+      response = nostr_nip46_response_build_ok(request.id, result);
+      free(signed_json);
+      nostr_event_free(event);
+    } else if (g_str_equal(request.method, "nip44_encrypt") ||
+               g_str_equal(request.method, "nip44_decrypt")) {
+      g_assert_cmpuint(request.n_params, ==, 2);
+      guint8 sk[32], pk[32];
+      g_assert_true(nostr_hex2bin(sk, bunker->signer_secret, sizeof sk));
+      g_assert_true(nostr_hex2bin(pk, request.params[0], sizeof pk));
+      char *value = NULL;
+      if (g_str_equal(request.method, "nip44_encrypt")) {
+        g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk,
+          (const guint8 *)request.params[1], strlen(request.params[1]), &value), ==, 0);
+      } else {
+        guint8 *plain = NULL;
+        size_t length = 0;
+        g_assert_cmpint(nostr_nip44_decrypt_v2(sk, pk, request.params[1],
+          &plain, &length), ==, 0);
+        value = g_strndup((const gchar *)plain, length);
+        free(plain);
+      }
+      g_autofree gchar *escaped = g_strescape(value, NULL);
+      g_autofree gchar *result = g_strdup_printf("\"%s\"", escaped);
+      response = nostr_nip46_response_build_ok(request.id, result);
+      free(value);
+    } else {
+      g_error("MLS used an unapproved remote signer method: %s", request.method);
+    }
+    g_assert_nonnull(response);
+    bunker_reply(bunker, response);
+    free(response);
+    nostr_nip46_request_free(&request);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static gpointer
+remote_scope_open(GhRelayScope *scope, const gchar *url,
+                  const NostrFilters *filters, gpointer data, GError **error)
+{
+  World *w = data;
+  return bunker_scope_open(scope, url, filters, &w->remote, error);
+}
+
+static gpointer
+remote_publish_open(GhRelayPublish *publish, const gchar *url,
+                    const gchar *event_json, gpointer data, GError **error)
+{
+  World *w = data;
+  gpointer handle = bunker_publish_open(publish, url, event_json, &w->remote, error);
+  g_idle_add(remote_answer_idle, w);
+  return handle;
+}
+
+static const GhRelayTransport remote_scope_transport = {
+  remote_scope_open, bunker_close
+};
+static const GhRelayPublishTransport remote_publish_transport = {
+  remote_publish_open, bunker_close
+};
+
+static GhNip46Session *
+remote_session_new(const gchar *selected_npub, gpointer data)
+{
+  App *app = data;
+  World *w = app->world;
+  g_assert_cmpstr(selected_npub, ==, npub[app->key]);
+  g_autoptr(GError) error = NULL;
+  GhNip46Session *session = gh_nip46_session_new(WORLD_REMOTE_CLIENT_SECRET,
+    w->remote.signer_pubkey, (const gchar *const[]){ w->e.url, NULL },
+    &remote_scope_transport, NULL, &remote_publish_transport, NULL, w, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(session);
+  w->remote_session = g_object_ref(session);
+  return session;
+}
+#endif
+
 static G_GNUC_UNUSED void
 app_up(World *w, guint key)
 {
@@ -419,10 +547,29 @@ app_up(World *w, guint key)
   g_autoptr(GSettingsBackend) backend = g_memory_settings_backend_new();
   app->settings = g_settings_new_with_backend("org.nostr.Groundhog", backend);
   g_settings_set_string(app->settings, "signer-method", "auto");
+#ifdef GH_TEST_REMOTE_MLS
+  if (key == world_remote_key) {
+    g_settings_set_string(app->settings, "current-npub", "");
+    g_settings_set_string(app->settings, "current-backend", "grotto");
+    g_settings_set_int(app->settings, "backend-migration-version", 1);
+  } else
+#endif
   g_settings_set_string(app->settings, "current-npub", npub[key]);
   const gchar *discovery[] = { w->e.url, NULL };
   if (!world_no_discovery)
     g_settings_set_strv(app->settings, "discovery-relays", discovery);
+#ifdef GH_TEST_REMOTE_MLS
+  if (key == world_remote_key) {
+    app->accounts = gh_account_controller_new_full_with_remote_list(app->settings,
+      test_bus.client, list_one, app, list_one, app);
+    gh_account_controller_set_session_factory_for_test(app->accounts,
+      remote_session_new, app);
+    spin_until(accounts_listed, app->accounts, "remote account listing");
+    g_assert_true(gh_account_controller_select_backend(app->accounts,
+      GH_SIGNER_BACKEND_NIP46, npub[key], NULL));
+    bunker_eose(&w->remote);
+  } else
+#endif
   app->accounts = gh_account_controller_new_full(app->settings, test_bus.client, list_one, app);
   spin_until(accounts_active, app->accounts, "the account becoming active");
   app->clock = world_fake_clock ? gh_clock_new_fake(g_get_real_time()) : gh_clock_new_system();
@@ -469,6 +616,13 @@ world_up(World *w, const guint *keys, guint n_keys)
   w->root = g_dir_make_tmp("groundhog-mls-XXXXXX", NULL);
   g_assert_nonnull(w->root);
   gh_test_signer_up(&test_bus, &w->signer);
+#ifdef GH_TEST_REMOTE_MLS
+  if (world_remote_key) {
+    bunker_init(&w->remote, WORLD_REMOTE_CLIENT_SECRET);
+    bunker_set_signer_secret(&w->remote, gh_test_secret[world_remote_key]);
+    w->remote_signed_kinds = g_array_new(FALSE, FALSE, sizeof(gint));
+  }
+#endif
   WireRelay *relays[] = { &w->e, &w->w, &w->x, &w->g, &w->h, &w->r };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++) {
     relays[i]->serve = TRUE;
@@ -496,6 +650,14 @@ world_down(World *w)
 {
   for (guint key = 1; key < N_APPS; key++)
     app_down(&w->apps[key]);
+#ifdef GH_TEST_REMOTE_MLS
+  if (world_remote_key) {
+    drain();
+    g_clear_object(&w->remote_session);
+    g_array_unref(w->remote_signed_kinds);
+    bunker_clear(&w->remote);
+  }
+#endif
   GhTestSenders check = { &test_bus, &w->signer };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   drain();
@@ -515,6 +677,9 @@ world_down(World *w)
   world_no_discovery = FALSE;
   world_key_package_max_hold = 0;
   world_legacy_only = FALSE;
+#ifdef GH_TEST_REMOTE_MLS
+  world_remote_key = 0;
+#endif
   rm_rf(w->root);
   g_free(w->root);
 }

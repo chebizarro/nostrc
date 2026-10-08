@@ -177,6 +177,13 @@ static const gchar tc_introspection_xml[] =
   "      <arg type='s' name='inbox_url' direction='in'/>"
   "      <arg type='s' name='group_url' direction='in'/>"
   "    </method>"
+  "    <method name='OnboardRemote'>"
+  "      <arg type='s' name='npub' direction='in'/>"
+  "      <arg type='s' name='discovery_url' direction='in'/>"
+  "      <arg type='s' name='write_url' direction='in'/>"
+  "      <arg type='s' name='inbox_url' direction='in'/>"
+  "      <arg type='s' name='group_url' direction='in'/>"
+  "    </method>"
   "    <method name='TryEnableBackground'>"
   "      <arg type='b' name='enabled' direction='out'/>"
   "    </method>"
@@ -276,7 +283,8 @@ tc_handle_try_background(GDBusMethodInvocation *invocation)
 }
 
 static void
-tc_handle_onboard(GDBusMethodInvocation *invocation, GVariant *parameters)
+tc_handle_onboard(GDBusMethodInvocation *invocation, GVariant *parameters,
+                  gboolean remote)
 {
   const gchar *npub, *discovery_url, *write_url, *inbox_url, *group_url;
   g_variant_get(parameters, "(&s&s&s&s&s)", &npub, &discovery_url, &write_url,
@@ -293,11 +301,13 @@ tc_handle_onboard(GDBusMethodInvocation *invocation, GVariant *parameters)
     return;
   }
   const gchar *discovery[] = { discovery_url, NULL };
-  g_settings_set_string(settings, "current-backend", "grotto");
+  g_settings_set_string(settings, "current-backend", remote ? "nip46" : "grotto");
   g_settings_set_strv(settings, "discovery-relays", discovery);
   tc_spin_until(tc_identities_listed, accounts, "signer identity listing", 30);
   g_autoptr(GError) error = NULL;
-  if (!gh_account_controller_select(accounts, npub, &error)) {
+  if (!gh_account_controller_select_backend(accounts,
+        remote ? GH_SIGNER_BACKEND_NIP46 : GH_SIGNER_BACKEND_GROTTO,
+        npub, &error)) {
     g_dbus_method_invocation_return_dbus_error(invocation,
       "org.nostr.Groundhog.TestControl.Error", error->message);
     return;
@@ -671,8 +681,8 @@ tc_method_call(GDBusConnection *connection, const gchar *sender,
   (void)connection; (void)sender; (void)object_path; (void)interface_name;
   (void)user_data;
 
-  if (g_str_equal(method_name, "Onboard"))
-    tc_handle_onboard(invocation, parameters);
+  if (g_str_equal(method_name, "Onboard") || g_str_equal(method_name, "OnboardRemote"))
+    tc_handle_onboard(invocation, parameters, g_str_equal(method_name, "OnboardRemote"));
   else if (g_str_equal(method_name, "TryEnableBackground"))
     tc_handle_try_background(invocation);
   else if (g_str_equal(method_name, "GetActiveNpub")) {

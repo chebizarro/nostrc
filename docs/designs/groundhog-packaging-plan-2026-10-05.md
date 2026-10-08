@@ -3,8 +3,9 @@
 **Owner decision (2026-10-05):** ship the alpha as Flatpak, AppImage, Debian/Ubuntu
 `.deb`, Fedora RPM, Arch and Nix packages ("etc."). The signer is renamed
 **Grotto** (`org.nostr.Grotto`, W31, nostrc-8otj) and gets its own UX pass
-before it is promoted, but Groundhog cannot work without a signer, so every
-Groundhog package has to bring one along. Tracking: nostrc-xxv6.
+before it is promoted. Groundhog needs a signer for account actions, but
+Grotto is needed only for Grotto-backed accounts; NIP-46 remote accounts use
+a phone or bunker instead. Tracking: nostrc-xxv6, nostrc-3g36a.
 
 ## Where we start
 
@@ -53,11 +54,11 @@ unstable/24.11+.
   screenshots (hosted, light and dark), `<content_rating>`, `<branding>`,
   `<launchable>`, release entry for 0.12.0 with a date, developer id
   (`org.nostr`), URLs. Screenshots come from the GUI tests' screenshot hooks.
-- **G3 signer coupling.** Decide per target how Groundhog gets its signer:
-  package dependency (`Depends: grotto`), bundled module (Flatpak, AppImage),
-  or D-Bus activation of a separately installed app. Groundhog's onboarding
-  must say what to install when no signer answers (it already has a "Waiting
-  for Nostr Signer" page; the copy needs the distro-specific hint).
+- **G3 signer coupling.** Grotto is optional for Groundhog packages: users
+  with a Grotto-backed account install it separately, while remote-signer-only
+  accounts do not need it. The Flatpak still talks to a natively installed
+  Grotto for local accounts; no Grotto Flatpak is claimed. Groundhog's
+  onboarding offers both local and remote signers.
 - **G4 release mechanics.** `groundhog-v0.12.0` tag; `release.yml` gains a
   `groundhog` component with one job per target, each uploading an artifact
   and running an install-and-launch smoke test (`groundhog --smoke`, which
@@ -71,14 +72,15 @@ unstable/24.11+.
 - Manifest `gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml`,
   GNOME 47 runtime (48 when it ships libadwaita we need nothing newer from).
   Modules: libsecp256k1, libsodium, sqlcipher, nsync, jansson, libwebsockets,
-  then the monorepo with `-DBUILD_GROUNDHOG=ON -DBUILD_TESTING=OFF`.
+  libqrencode (shared library for the pairing QR), then the monorepo with
+  `-DBUILD_GROUNDHOG=ON -DBUILD_TESTING=OFF`.
 - Permissions: wayland + fallback-x11, ipc, network, pulseaudio (voice),
   `--talk-name=org.freedesktop.secrets`, `--talk-name=org.nostr.Signer`,
   notifications and the file-chooser/background portals. No home access:
   attachments go through the portal.
-- Signer: **separate Flatpak** `org.nostr.Grotto` that owns
-  `org.nostr.Signer`; Groundhog talks to it over the session bus. Bundling the
-  signer inside Groundhog's sandbox would give two apps two key stores.
+- Signer: a **native Grotto** owns `org.nostr.Signer` for Grotto-backed
+  accounts; remote accounts use signer relays and do not need Grotto.
+  Bundling a signer inside Groundhog's sandbox would give two key stores.
 - Distribution: our own Flatpak remote first (GitHub Pages + `flat-manager`
   or a static OSTree repo from CI), Flathub submission once G2 passes and
   Grotto's UX pass is done. Flathub wants a tagged release and no network at
@@ -103,7 +105,9 @@ unstable/24.11+.
   configure pass or the flags flipped with the extra Build-Depends
   (libgtk-4-dev, libadwaita-1-dev, libsoup-3.0-dev, libsecret-1-dev,
   libsqlcipher-dev, libgstreamer1.0-dev, blueprint-compiler, libxml2-dev).
-- `groundhog` Depends on `grotto`, Recommends the GStreamer plugin packages.
+- `groundhog` Suggests `grotto` for local accounts; remote-only users can
+  omit it. Build-Depends on `libqrencode-dev` and Depends on `libqrencode4`
+  for the pairing QR; Recommends the GStreamer plugin packages.
 - Distribution: an apt repository (signed, GitHub Pages or Cloudsmith) for
   Ubuntu 24.04/24.10 and Debian 13; a PPA is optional.
 - Test: `dpkg-buildpackage` in clean Docker images, `lintian`, install +
@@ -155,14 +159,15 @@ differ.
   nsync, jansson and libwebsockets need small flags to configure with its
   CMake and compiler. The older Grotto manifest pinned commits that do not
   match their tags and was never built.
-- **The signer cannot live in a sandbox or a moving mount yet
+- **Grotto cannot live in a sandbox or a moving mount yet
   (nostrc-mevv).** The daemon identifies callers through `/proc` and trusts
   its approval UI by absolute path and inode. Inside a Flatpak it cannot
   resolve host PIDs, and Flatpak will not export a service file for
   `org.nostr.Signer` from an app called `org.nostr.Grotto`; inside an AppImage
   the mount path changes on every run. So for the alpha: **Groundhog's
-  Flatpak talks to a natively installed Grotto**, there is **no Grotto
-  Flatpak**, and the **AppImage waits** for that design.
+  Flatpak talks to a natively installed Grotto for Grotto-backed accounts**;
+  remote-only accounts do not need Grotto. There is **no Grotto Flatpak**,
+  and the **AppImage waits** for that design.
 - **First run needs Grotto open by hand (nostrc-sh5h).** The daemon rejects
   any request that needs approval unless the Grotto app is already running,
   and the app started as a D-Bus service does not listen for requests. This
@@ -175,6 +180,24 @@ differ.
   will need a suite per release.
 - **Package metadata contact.** Debian, RPM and AUR recipes carry the
   maintainer the owner chose: Biz <chebizarro@protonmail.com>.
+
+## NIP-46 packaging and user-facing notes (2026-10-07)
+
+The QR pairing flow requires libqrencode at build and runtime: the Flatpak
+bundles a shared library, Debian/Ubuntu uses `libqrencode-dev`/`libqrencode4`,
+Fedora uses `pkgconfig(libqrencode)`/`qrencode-libs`, Arch uses `qrencode`,
+and the Nix derivation includes `qrencode`. The Linux gate image and both
+Groundhog CI jobs install `libqrencode-dev`.
+
+Package descriptions must distinguish Grotto-backed accounts from remote
+signers. A remote-only user can skip Grotto, including with the Groundhog
+Flatpak. Signer relays see connection timing, IP address unless Tor is used,
+and the client-to-signer transport-key link. A remote account requires a
+working encrypted SQLCipher store; memory-only mode is unavailable. Cached
+messages remain readable when a phone is offline, but new decryptions and
+signing wait for the signer. Before rolling back to an alpha without NIP-46
+support, select a Grotto account or read-only mode; a remote-only selection
+cannot be used by the older binary.
 
 ## Risks
 

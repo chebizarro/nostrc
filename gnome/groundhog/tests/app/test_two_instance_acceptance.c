@@ -16,6 +16,10 @@
 #include "gh-test-signer.h"
 #include "gh-mls-service.h"
 #include "wire-relay.h"
+#ifdef GH_TEST_REMOTE_VARIANT
+#include <nostr/nip46/nip46_msg.h>
+#include <nostr/nip46/nip46_envelope.h>
+#endif
 
 #include <glib-unix.h>
 #include <signal.h>
@@ -29,6 +33,11 @@
 static GhTestBus test_bus;
 static GhTestSigner signer;
 static WireRelay relay_e, relay_w, relay_x, relay_g;
+#ifdef GH_TEST_REMOTE_VARIANT
+static WireRelay relay_bunker;
+static guint bunker_calls;
+static guint bunker_sign_calls;
+#endif
 static gchar *hex[GH_TEST_KEYS];
 static gchar *npub[GH_TEST_KEYS];
 
@@ -59,6 +68,89 @@ install_child_cleanup(void)
   sigaction(SIGINT, &action, NULL);
   sigaction(SIGSEGV, &action, NULL);
 }
+
+#ifdef GH_TEST_REMOTE_VARIANT
+/* The signer relay is separate from discovery, write, inbox and group relays.
+ * It checks both NIP-46 transport keys and the account author on every call. */
+static void
+wire_bunker_on_event(WireRelay *relay, SoupWebsocketConnection *connection,
+                     const gchar *event_id, gpointer data)
+{
+  (void)connection; (void)data;
+  WireStored *stored = NULL;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *candidate = g_ptr_array_index(relay->stored, i);
+    if (g_str_equal(candidate->id, event_id)) { stored = candidate; break; }
+  }
+  g_assert_nonnull(stored);
+  NostrEvent *event = stored->event;
+  if (nostr_event_get_kind(event) != 24133) return;
+  g_assert_cmpstr(nostr_event_get_pubkey(event), ==, hex[3]);
+  g_assert_true(wire_tag_is(nostr_event_get_tags(event), "p", hex[4]));
+
+  guint8 transport_sk[32], client_pk[32], user_sk[32];
+  g_assert_true(nostr_hex2bin(transport_sk, gh_test_secret[4], sizeof transport_sk));
+  g_assert_true(nostr_hex2bin(client_pk, hex[3], sizeof client_pk));
+  g_assert_true(nostr_hex2bin(user_sk, gh_test_secret[1], sizeof user_sk));
+  guint8 *plain = NULL;
+  size_t plain_len = 0;
+  g_assert_cmpint(nostr_nip44_decrypt_v2(transport_sk, client_pk,
+    nostr_event_get_content(event), &plain, &plain_len), ==, 0);
+  g_autofree gchar *request_json = g_strndup((const gchar *)plain, plain_len);
+  free(plain);
+  NostrNip46Request request = { 0 };
+  g_assert_cmpint(nostr_nip46_request_parse(request_json, &request), ==, 0);
+  bunker_calls++;
+  gchar *value = NULL;
+  if (g_str_equal(request.method, "sign_event")) {
+    g_assert_cmpuint(request.n_params, ==, 1);
+    NostrEvent *unsigned_event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(unsigned_event, request.params[0], NULL), ==, 1);
+    g_assert_cmpstr(nostr_event_get_pubkey(unsigned_event), ==, hex[1]);
+    g_assert_cmpint(nostr_event_sign(unsigned_event, gh_test_secret[1]), ==, 0);
+    value = nostr_event_serialize_compact(unsigned_event);
+    nostr_event_free(unsigned_event);
+    bunker_sign_calls++;
+  } else if (g_str_equal(request.method, "nip44_encrypt") ||
+             g_str_equal(request.method, "nip44_decrypt")) {
+    g_assert_cmpuint(request.n_params, ==, 2);
+    guint8 peer_pk[32];
+    g_assert_true(nostr_hex2bin(peer_pk, request.params[0], sizeof peer_pk));
+    if (g_str_equal(request.method, "nip44_encrypt")) {
+      g_assert_cmpint(nostr_nip44_encrypt_v2(user_sk, peer_pk,
+        (const guint8 *)request.params[1], strlen(request.params[1]), &value), ==, 0);
+    } else {
+      guint8 *decrypted = NULL;
+      size_t len = 0;
+      g_assert_cmpint(nostr_nip44_decrypt_v2(user_sk, peer_pk, request.params[1],
+        &decrypted, &len), ==, 0);
+      value = g_strndup((const gchar *)decrypted, len);
+      free(decrypted);
+    }
+  } else {
+    g_error("unpermitted bunker method: %s", request.method);
+  }
+  g_autofree gchar *quoted = g_strescape(value, NULL);
+  g_autofree gchar *result = g_strdup_printf("\"%s\"", quoted);
+  char *response = nostr_nip46_response_build_ok(request.id, result);
+  g_assert_nonnull(response);
+  char *ciphertext = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(transport_sk, client_pk,
+    (const guint8 *)response, strlen(response), &ciphertext), ==, 0);
+  NostrEvent *reply = NULL;
+  g_assert_cmpint(nostr_nip46_build_response_event(hex[4], hex[3], response, &reply), ==, 0);
+  nostr_event_set_content(reply, ciphertext);
+  g_assert_cmpint(nostr_event_sign(reply, gh_test_secret[4]), ==, 0);
+  char *reply_json = nostr_event_serialize_compact(reply);
+  wire_relay_inject(relay, reply_json);
+  free(reply_json);
+  nostr_event_free(reply);
+  free(ciphertext);
+  free(response);
+  if (g_str_equal(request.method, "nip44_decrypt")) g_free(value); else free(value);
+  nostr_nip46_request_free(&request);
+}
+#endif
 
 /* ---- relay list seeding --------------------------------------------------- */
 
@@ -355,7 +447,12 @@ test_acceptance(void)
 
   /* 1. Both onboard through the production account controller. */
   g_test_message("onboarding A (key 1) and B (key 2)");
-  tc_call("org.nostr.Groundhog.testA", "Onboard",
+  tc_call("org.nostr.Groundhog.testA",
+#ifdef GH_TEST_REMOTE_VARIANT
+    "OnboardRemote",
+#else
+    "Onboard",
+#endif
     g_variant_new("(sssss)", npub[1], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
     NULL);
   tc_call("org.nostr.Groundhog.testB", "Onboard",
@@ -364,6 +461,9 @@ test_acceptance(void)
   tc_call("org.nostr.Groundhog.testA", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
   tc_call("org.nostr.Groundhog.testB", "WaitReady", g_variant_new("(s)", relay_g.url), NULL);
   g_test_message("both instances onboarded with KeyPackages published");
+#ifdef GH_TEST_REMOTE_VARIANT
+  g_assert_cmpuint(bunker_sign_calls, >, 0);
+#endif
   g_autoptr(GVariant) background = tc_call("org.nostr.Groundhog.testA",
     "TryEnableBackground", NULL, G_VARIANT_TYPE("(b)"));
   gboolean background_enabled = TRUE;
@@ -518,7 +618,12 @@ test_acceptance(void)
   g_assert_cmpstr(restored_b, ==, npub[2]);
 
   /* Re-onboard uses the same keys and relays and reopens the real store. */
-  tc_call("org.nostr.Groundhog.testA", "Onboard",
+  tc_call("org.nostr.Groundhog.testA",
+#ifdef GH_TEST_REMOTE_VARIANT
+    "OnboardRemote",
+#else
+    "Onboard",
+#endif
     g_variant_new("(sssss)", npub[1], relay_e.url, relay_w.url, relay_x.url, relay_g.url),
     NULL);
   tc_call("org.nostr.Groundhog.testB", "Onboard",
@@ -546,6 +651,9 @@ test_acceptance(void)
   assert_history("org.nostr.Groundhog.testB", room_b2);
   g_test_message("history preserved on both devices after restart");
 
+#ifdef GH_TEST_REMOTE_VARIANT
+  g_assert_cmpuint(bunker_calls, >, bunker_sign_calls);
+#endif
   /* Clean up. */
   quit_harness("org.nostr.Groundhog.testA");
   quit_harness("org.nostr.Groundhog.testB");
@@ -568,16 +676,41 @@ setup(void)
   g_assert_nonnull(root_dir);
   gh_test_bus_up(&test_bus);
 
+#ifdef GH_TEST_REMOTE_VARIANT
+  relay_bunker.serve = TRUE;
+  relay_bunker.record = TRUE;
+  relay_bunker.on_event = wire_bunker_on_event;
+  relay_init(&relay_bunker);
+#endif
+
   /* A real Secret Service, with two signer-visible identities, also owns
    * the per-account encrypted store keys across process restarts. */
   const gchar *secret_script = g_getenv("SECRET_SERVICE_SCRIPT");
   g_assert_nonnull(secret_script);
   g_autofree gchar *secrets_path = g_build_filename(root_dir, "secrets.json", NULL);
+#ifdef GH_TEST_REMOTE_VARIANT
+  g_autofree gchar *credential_json = g_strdup_printf(
+    "{\"version\":1,\"client_secret_hex\":\"%s\",\"remote_signer_pubkey_hex\":\"%s\",\"user_pubkey_hex\":\"%s\",\"transport\":\"nip44-v2\",\"relays\":[\"%s\"]}",
+    gh_test_secret[3], hex[4], hex[1], relay_bunker.url);
+  g_autofree gchar *credential_b64 = g_base64_encode((const guchar *)credential_json, strlen(credential_json));
+#endif
   g_autofree gchar *secrets_json = g_strdup_printf(
+#ifdef GH_TEST_REMOTE_VARIANT
+    "{\"counter\":3,\"items\":{"
+#else
     "{\"counter\":2,\"items\":{"
+#endif
     "\"i1\":{\"label\":\"Test A\",\"attrs\":{\"npub\":\"%s\",\"origin\":\"import\",\"key_id\":\"%s\",\"xdg:schema\":\"org.gnostr.Signer/identity\",\"curve\":\"secp256k1\",\"label\":\"Test A\"},\"secret\":\"\",\"ctype\":\"text/plain\",\"created\":0,\"modified\":0},"
-    "\"i2\":{\"label\":\"Test B\",\"attrs\":{\"npub\":\"%s\",\"origin\":\"import\",\"key_id\":\"%s\",\"xdg:schema\":\"org.gnostr.Signer/identity\",\"curve\":\"secp256k1\",\"label\":\"Test B\"},\"secret\":\"\",\"ctype\":\"text/plain\",\"created\":0,\"modified\":0}}}",
-    npub[1], npub[1], npub[2], npub[2]);
+    "\"i2\":{\"label\":\"Test B\",\"attrs\":{\"npub\":\"%s\",\"origin\":\"import\",\"key_id\":\"%s\",\"xdg:schema\":\"org.gnostr.Signer/identity\",\"curve\":\"secp256k1\",\"label\":\"Test B\"},\"secret\":\"\",\"ctype\":\"text/plain\",\"created\":0,\"modified\":0}"
+#ifdef GH_TEST_REMOTE_VARIANT
+    ",\"i3\":{\"label\":\"Groundhog remote signer\",\"attrs\":{\"account\":\"%s\",\"version\":\"1\",\"xdg:schema\":\"org.nostr.Groundhog.Nip46Credential\"},\"secret\":\"%s\",\"ctype\":\"application/json\",\"created\":0,\"modified\":0}"
+#endif
+    "}}",
+    npub[1], npub[1], npub[2], npub[2]
+#ifdef GH_TEST_REMOTE_VARIANT
+    , hex[1], credential_b64
+#endif
+    );
   g_assert_true(g_file_set_contents(secrets_path, secrets_json, -1, NULL));
   const gchar *secret_argv[] = { "python3", secret_script, secrets_path, NULL };
   nostrc_test_bus_spawn_supervised(test_bus.bus, "secret-service.log", NULL, secret_argv);
@@ -612,6 +745,9 @@ teardown(void)
   WireRelay *relays[] = { &relay_e, &relay_w, &relay_x, &relay_g };
   for (guint i = 0; i < G_N_ELEMENTS(relays); i++)
     relay_clear(relays[i]);
+#ifdef GH_TEST_REMOTE_VARIANT
+  relay_clear(&relay_bunker);
+#endif
 
   gh_test_signer_down(&test_bus, &signer);
   gh_test_bus_down(&test_bus);
@@ -646,7 +782,11 @@ main(int argc, char **argv)
   install_child_cleanup();
 
   setup();
+#ifdef GH_TEST_REMOTE_VARIANT
+  g_test_add_func("/groundhog/two-instance/remote-acceptance", test_acceptance);
+#else
   g_test_add_func("/groundhog/two-instance/acceptance", test_acceptance);
+#endif
   int result = g_test_run();
   teardown();
   return result;

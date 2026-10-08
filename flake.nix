@@ -37,7 +37,9 @@
         desktopBuildInputs = with pkgs; [
           glib gtk4 libadwaita json-glib libsoup_3 libsecret sqlcipher libxml2
           gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
-          openssl secp256k1 libsodium jansson libwebsockets nsync curl qrencode gdk-pixbuf
+          openssl secp256k1 libsodium jansson libwebsockets nsync curl
+          qrencode # Groundhog's NIP-46 pairing QR and Grotto's own QR UI
+          gdk-pixbuf
         ];
       in {
         packages = {
@@ -56,7 +58,7 @@
               runHook postInstall
             '';
             meta = with pkgs.lib; {
-              description = "Private messaging on Nostr for GNOME (alpha)";
+              description = "Private Nostr messaging with local Grotto or NIP-46 remote signers (alpha)";
               homepage = "https://github.com/chebizarro/nostrc";
               license = licenses.mit;
               mainProgram = "groundhog";

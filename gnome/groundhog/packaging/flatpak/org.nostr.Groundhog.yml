@@ -7,10 +7,9 @@
 #       build-flatpak gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml
 #   flatpak run org.nostr.Groundhog
 #
-# The signer is not in this sandbox. Groundhog reaches whichever signer owns
-# org.nostr.Signer on the session bus (Grotto, installed from a native
-# package); the signer identifies this app by its Flatpak id and asks the
-# person before anything is signed or unlocked.
+# Grotto is outside this sandbox and is needed only for Grotto-backed accounts.
+# Remote NIP-46 accounts use the configured signer relays instead. The native
+# Grotto identifies this app by its Flatpak id and asks for local approvals.
 app-id: org.nostr.Groundhog
 runtime: org.gnome.Platform
 runtime-version: '51'
@@ -72,6 +71,20 @@ modules:
         url: https://github.com/jedisct1/libsodium.git
         tag: 1.0.20-RELEASE
         commit: 9511c982fb1d046470a8b42aa36556cdb7da15de
+
+  - name: libqrencode
+    buildsystem: cmake-ninja
+    config-opts:
+      - -DBUILD_SHARED_LIBS=ON
+      - -DWITH_TOOLS=OFF
+      - -DWITH_TESTS=OFF
+      - -DCMAKE_INSTALL_LIBDIR=lib
+      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    sources:
+      - type: git
+        url: https://github.com/fukuchi/libqrencode.git
+        tag: v4.1.1
+        commit: 715e29fd4cd71b6e452ae0f4e36d917b43122ce8
 
   - name: nsync
     buildsystem: cmake-ninja

@@ -152,6 +152,15 @@ deadline(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+static gboolean
+bunker_scopes_closed(TestBunker *bunker)
+{
+  for (guint i = 0; i < bunker->scopes->len; i++)
+    if (!((BunkerHandle *)g_ptr_array_index(bunker->scopes, i))->closed)
+      return FALSE;
+  return TRUE;
+}
+
 static void
 test_confirmation_cancel_discards_attempt(void)
 {
@@ -206,17 +215,23 @@ test_confirmation_cancel_discards_attempt(void)
     g_main_context_iteration(NULL, TRUE);
   g_assert_false(expired);
   g_assert_nonnull(alert);
+  while (!gtk_widget_get_mapped(GTK_WIDGET(alert)) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
   g_source_remove(timer);
   g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
   g_assert_cmpstr(selected, ==, "");
   g_assert_true(adw_dialog_close(ADW_DIALOG(alert)));
+  expired = FALSE;
+  timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!bunker_scopes_closed(&bunker) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  if (!expired) g_source_remove(timer);
   g_object_unref(alert);
-  drain();
+  g_assert_false(expired);
   g_clear_pointer(&selected, g_free);
   selected = g_settings_get_string(settings, "current-npub");
   g_assert_cmpstr(selected, ==, "");
-  for (guint i = 0; i < bunker.scopes->len; i++)
-    g_assert_true(((BunkerHandle *)g_ptr_array_index(bunker.scopes, i))->closed);
   nostr_nip46_uri_connect_free(&parsed);
   adw_dialog_close(ADW_DIALOG(dialog));
   gtk_window_destroy(GTK_WINDOW(window));

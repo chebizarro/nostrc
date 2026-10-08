@@ -22,6 +22,7 @@
 #include "gh-inbox-status.h"
 #include "gh-onboarding-view.h"
 #include "../app/gh-test-signer.h"
+#include "../app/gh-test-bunker.h"
 
 #include <glib/gstdio.h>
 
@@ -157,6 +158,11 @@ typedef struct {
   GhDmInbox *inbox;
   GhWindow *window;
   GhOnboardingView *view;
+  TestBunker remote;
+  GhNip46Session *remote_session;
+  gboolean remote_active;
+  guint remote_handled;
+  guint remote_calls[3];
 } Fixture;
 
 static gboolean
@@ -190,6 +196,149 @@ fixture_services_up(Fixture *f, const gchar *current)
   f->store = gh_conversation_store_new();
   f->inbox = gh_dm_inbox_new(f->accounts, f->relays, f->store, f->state_dir, &scope_transport,
                              NULL, &f->rec);
+}
+
+static void window_up(Fixture *f);
+
+#define REMOTE_CLIENT_SECRET "3333333333333333333333333333333333333333333333333333333333333333"
+#define REMOTE_RELAY "wss://bunker.test.invalid"
+
+static GPtrArray *
+remote_list(gpointer data, GError **error)
+{
+  (void)data; (void)error;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(npub[1]);
+  info->label = g_strdup("Robin remote");
+  g_ptr_array_add(ids, info);
+  return ids;
+}
+
+static gboolean
+remote_answer_idle(gpointer data)
+{
+  Fixture *f = data;
+  while (f->remote_handled < f->remote.publishes->len) {
+    guint index = f->remote_handled++;
+    BunkerHandle *handle = g_ptr_array_index(f->remote.publishes, index);
+    gh_relay_publish_ok(handle->publish, handle->url, handle->event_id, TRUE, "");
+    g_autofree gchar *json = bunker_request_json_at(&f->remote, index);
+    NostrNip46Request request = { 0 };
+    g_assert_cmpint(nostr_nip46_request_parse(json, &request), ==, 0);
+    char *response = NULL;
+    if (g_str_equal(request.method, "sign_event")) {
+      g_assert_cmpuint(request.n_params, ==, 1);
+      NostrEvent *event = nostr_event_new();
+      g_assert_cmpint(nostr_event_deserialize_compact(event, request.params[0], NULL), ==, 1);
+      g_assert_cmpstr(nostr_event_get_pubkey(event), ==, f->remote.user_pubkey);
+      g_assert_cmpint(nostr_event_sign(event, f->remote.signer_secret), ==, 0);
+      char *signed_json = nostr_event_serialize_compact(event);
+      g_autofree gchar *escaped = g_strescape(signed_json, NULL);
+      g_autofree gchar *result = g_strdup_printf("\"%s\"", escaped);
+      response = nostr_nip46_response_build_ok(request.id, result);
+      f->remote_calls[0]++;
+      free(signed_json);
+      nostr_event_free(event);
+    } else if (g_str_equal(request.method, "nip44_encrypt") ||
+               g_str_equal(request.method, "nip44_decrypt")) {
+      g_assert_cmpuint(request.n_params, ==, 2);
+      guint8 sk[32], pk[32];
+      g_assert_true(nostr_hex2bin(sk, f->remote.signer_secret, sizeof sk));
+      g_assert_true(nostr_hex2bin(pk, request.params[0], sizeof pk));
+      char *value = NULL;
+      if (g_str_equal(request.method, "nip44_encrypt")) {
+        g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk,
+          (const guint8 *)request.params[1], strlen(request.params[1]), &value), ==, 0);
+        f->remote_calls[1]++;
+      } else {
+        guint8 *plain = NULL;
+        size_t length = 0;
+        g_assert_cmpint(nostr_nip44_decrypt_v2(sk, pk, request.params[1],
+          &plain, &length), ==, 0);
+        value = g_strndup((const gchar *)plain, length);
+        free(plain);
+        f->remote_calls[2]++;
+      }
+      g_autofree gchar *escaped = g_strescape(value, NULL);
+      g_autofree gchar *result = g_strdup_printf("\"%s\"", escaped);
+      response = nostr_nip46_response_build_ok(request.id, result);
+      free(value);
+    } else {
+      g_error("onboarding requested an unapproved signer method: %s", request.method);
+    }
+    g_assert_nonnull(response);
+    bunker_reply(&f->remote, response);
+    free(response);
+    nostr_nip46_request_free(&request);
+  }
+  return G_SOURCE_REMOVE;
+}
+
+static gpointer
+remote_scope_open(GhRelayScope *scope, const gchar *url,
+                  const NostrFilters *filters, gpointer data, GError **error)
+{
+  Fixture *f = data;
+  return bunker_scope_open(scope, url, filters, &f->remote, error);
+}
+
+static gpointer
+remote_publish_open(GhRelayPublish *publish, const gchar *url,
+                    const gchar *event_json, gpointer data, GError **error)
+{
+  Fixture *f = data;
+  gpointer handle = bunker_publish_open(publish, url, event_json, &f->remote, error);
+  g_idle_add(remote_answer_idle, f);
+  return handle;
+}
+
+static const GhRelayTransport remote_scope_transport = {
+  remote_scope_open, bunker_close
+};
+static const GhRelayPublishTransport remote_publish_transport = {
+  remote_publish_open, bunker_close
+};
+
+static GhNip46Session *
+remote_session_new(const gchar *selected_npub, gpointer data)
+{
+  Fixture *f = data;
+  g_assert_cmpstr(selected_npub, ==, npub[1]);
+  g_autoptr(GError) error = NULL;
+  GhNip46Session *session = gh_nip46_session_new(REMOTE_CLIENT_SECRET,
+    f->remote.signer_pubkey, (const gchar *const[]){ REMOTE_RELAY, NULL },
+    &remote_scope_transport, NULL, &remote_publish_transport, NULL, f, &error);
+  g_assert_no_error(error);
+  f->remote_session = g_object_ref(session);
+  return session;
+}
+
+static void
+fixture_remote_setup(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  fixture_services_up(f, "");
+  gh_test_release(g_steal_pointer(&f->inbox));
+  gh_test_release(g_steal_pointer(&f->relays));
+  gh_test_release(g_steal_pointer(&f->accounts));
+  bunker_init(&f->remote, REMOTE_CLIENT_SECRET);
+  bunker_set_signer_secret(&f->remote, gh_test_secret[1]);
+  f->remote_active = TRUE;
+  g_settings_set_int(f->settings, "backend-migration-version", 1);
+  f->accounts = gh_account_controller_new_full_with_remote_list(f->settings,
+    bus.client, fake_list, NULL, remote_list, f);
+  gh_account_controller_set_session_factory_for_test(f->accounts, remote_session_new, f);
+  gh_test_spin_until(listed, f->accounts);
+  g_assert_true(gh_account_controller_select_backend(f->accounts,
+    GH_SIGNER_BACKEND_NIP46, npub[1], NULL));
+  bunker_eose(&f->remote);
+  gh_account_controller_set_remote_storage_ready(f->accounts,
+    gh_account_controller_get_generation(f->accounts), TRUE);
+  f->relays = gh_account_relays_new(f->accounts, f->settings, &scope_transport, &f->rec);
+  f->inbox = gh_dm_inbox_new(f->accounts, f->relays, f->store, f->state_dir,
+                             &scope_transport, NULL, &f->rec);
+  window_up(f);
 }
 
 static GhInboxSetupConfig
@@ -257,6 +406,10 @@ fixture_teardown(Fixture *f, gconstpointer data)
   g_clear_object(&f->store);
   gh_test_release(g_steal_pointer(&f->relays));
   gh_test_release(g_steal_pointer(&f->accounts));
+  if (f->remote_active) {
+    g_clear_object(&f->remote_session);
+    bunker_clear(&f->remote);
+  }
   GhTestSenders check = { &bus, &f->mock };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   for (guint i = 0; i < f->rec.scopes->len; i++)
@@ -482,6 +635,29 @@ static gboolean
 signer_probed(gpointer data)
 {
   return gh_account_controller_get_signer_availability(data) != GH_SIGNER_AVAILABILITY_UNKNOWN;
+}
+
+static void
+test_remote_signer_permissions(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_assert_cmpint(gh_account_controller_get_active_backend(f->accounts), ==,
+                  GH_SIGNER_BACKEND_NIP46);
+  g_assert_cmpint(gh_account_controller_get_remote_state(f->accounts), ==,
+                  GH_REMOTE_SIGNER_READY);
+  act(f, "onboarding.start");
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "account");
+  g_assert_true(sensitive(f, "account_continue"));
+  act(f, "onboarding.account-continue");
+  g_assert_cmpstr(gh_onboarding_view_get_page(f->view), ==, "signer");
+  act(f, "onboarding.test-signer");
+  gh_test_spin_until(signer_answered, f);
+  g_assert_true(g_str_has_prefix(gtk_label_get_text(child(f, "signer_result")),
+                                  "Permissions verified"));
+  g_assert_cmpuint(f->remote_calls[0], ==, 1);
+  g_assert_cmpuint(f->remote_calls[1], ==, 1);
+  g_assert_cmpuint(f->remote_calls[2], ==, 1);
+  g_assert_cmpuint(f->mock.calls, ==, 0);
 }
 
 static void
@@ -1280,6 +1456,8 @@ main(int argc, char **argv)
   ADD("first-run-offers-relay-list", test_first_run_offers_relay_list, NULL);
   ADD("relay-list-edit-opt-in", test_relay_list_edit_opt_in, npub[1]);
   ADD("screenshots", test_screenshots, NULL);
+  g_test_add("/groundhog/onboarding/remote-signer-permissions", Fixture, NULL,
+             fixture_remote_setup, test_remote_signer_permissions, fixture_teardown);
 #undef ADD
   int status = g_test_run();
   for (guint key = 1; key < GH_TEST_KEYS; key++) {

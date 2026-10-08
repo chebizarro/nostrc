@@ -162,6 +162,9 @@ rsync -rlc --delete --exclude=.git \
   --exclude=/build/ --exclude=/_build/ --exclude="/build-*/" --exclude="/cmake-build-*/" \
   /src/ /work/src/
 echo "==> $GATE: source synced ($(stamp))"
+# QR pairing is mandatory in Groundhog; fail before configure if the image
+# loses its libqrencode development and runtime package.
+pkg-config --exists libqrencode || { echo "==> $GATE: libqrencode is missing" >&2; exit 1; }
 if [ "$MODE" = sanitizers ]; then
   # GH_SAN_TESTS, GH_SAN_TARGETS, GH_SAN_CONFIGURE, GH_SAN_ENV and
   # GH_SAN_SKIP_PATTERN, from the job (scripts/sanitizer-gate-ci.py).
