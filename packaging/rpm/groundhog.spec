@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha3 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha4 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha3
+%global upstream_version 0.12.0-alpha4
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.3.alpha3%{?dist}
+Release:        0.4.alpha4%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -169,6 +169,22 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Thu Oct 08 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.4.alpha4
+- Remote signers (NIP-46): pair Amber by scanning a QR code or paste a
+  bunker:// link (nsec.app and others); per-account choice of Grotto or a
+  remote signer; pairing keys in Secret Service/Keychain; auth_url login
+  pages open in the browser; works over Tor. Remote accounts require the
+  encrypted message store, so each message needs the phone only once.
+- Polls in every conversation type (NIP-17, NIP-29, Marmot) and
+  @-mentions with autocomplete.
+- Fixes from the alpha 3 test drive: tighter conversation list, reactions
+  beside the React button and in Marmot groups, Earlier messages button,
+  NIP-29 history, search, relay editing in Preferences, account name and
+  picture in Preferences, npub QR codes, inline audio, automatic display
+  of encrypted images when enabled.
+- Grotto is needed only for Grotto-backed accounts; libqrencode is a new
+  dependency.
+
 * Wed Oct 07 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.3.alpha3
 - NIP-04 (kind 4) direct messages from older clients shown read-only,
   marked less private; replies stay NIP-17.

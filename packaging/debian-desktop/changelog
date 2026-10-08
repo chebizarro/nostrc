@@ -1,3 +1,22 @@
+groundhog (0.12.0~alpha4-1) unstable; urgency=medium
+
+  * Remote signers (NIP-46): pair Amber by scanning a QR code or paste a
+    bunker:// link (nsec.app and others); per-account choice of Grotto or a
+    remote signer; pairing keys in Secret Service/Keychain; auth_url login
+    pages open in the browser; works over Tor. Remote accounts require the
+    encrypted message store, so each message needs the phone only once.
+  * Polls in every conversation type (NIP-17, NIP-29, Marmot) and
+    @-mentions with autocomplete.
+  * Fixes from the alpha 3 test drive: tighter conversation list, reactions
+    beside the React button and in Marmot groups, Earlier messages button,
+    NIP-29 history, search, relay editing in Preferences, account name and
+    picture in Preferences, npub QR codes, inline audio, automatic display
+    of encrypted images when enabled.
+  * Grotto is needed only for Grotto-backed accounts; libqrencode is a new
+    dependency.
+
+ -- Biz <chebizarro@protonmail.com>  Thu, 08 Oct 2026 12:00:00 +0000
+
 groundhog (0.12.0~alpha3-1) unstable; urgency=medium
 
   * NIP-04 (kind 4) direct messages from older clients shown read-only,
