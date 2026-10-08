@@ -2684,6 +2684,18 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mls)
   target_link_libraries(groundhog-mls-ui PUBLIC groundhog-mls-service groundhog-group-ui)
   target_compile_options(groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    add_executable(test-groundhog-poll-ui tests/ui/test_poll_ui.c src/app/gh-nip17-envelope.c
+      src/app/gh-inbox-resolver.c src/ui/gh-poll-ui.c)
+    target_link_libraries(test-groundhog-poll-ui PRIVATE
+      groundhog-mls-ui groundhog-conversation-ui nostr)
+    target_include_directories(test-groundhog-poll-ui PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
+    target_compile_options(test-groundhog-poll-ui PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-poll-ui groundhog-test-schemas)
+    add_test(NAME groundhog-poll-ui COMMAND test-groundhog-poll-ui)
+    set_tests_properties(groundhog-poll-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     # Beside gh-send-ui.c and gh-group-ui.c, whose hooks it uses.
     target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c src/ui/gh-poll-ui.c)

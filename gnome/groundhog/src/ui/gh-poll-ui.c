@@ -207,10 +207,19 @@ poll_enricher(GhMessageRow *row, GhMessage *message, gpointer data)
     gh_message_row_set_poll_widget(row, NULL);
     return;
   }
-  GhMlsPoll *poll = g_hash_table_lookup(ui->polls, gh_message_get_rumor_id(message));
+  const gchar *id = gh_message_get_rumor_id(message);
+  GhMlsPoll *poll = g_hash_table_lookup(ui->polls, id);
   if (!poll) {
-    rebuild(ui);
-    poll = g_hash_table_lookup(ui->polls, gh_message_get_rumor_id(message));
+    /* A mapped list may bind its first rows before notify::conversation has
+     * switched shown. Project from the row's authenticated message itself;
+     * the subsequent room rebuild reuses this object and adds its votes. */
+    poll = gh_mls_poll_new_from_event(id, gh_message_get_sender(message),
+                                      gh_message_get_created_at(message),
+                                      gh_message_get_rumor_json(message), NULL);
+    if (poll) {
+      gh_mls_poll_set_local_account(poll, gh_message_get_account(message));
+      g_hash_table_insert(ui->polls, g_strdup(id), poll);
+    }
   }
   if (!poll) {
     gh_message_row_set_poll_widget(row, NULL);
