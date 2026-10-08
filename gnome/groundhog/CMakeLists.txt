@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.13.0 LANGUAGES C)
+project(groundhog VERSION 0.12.0 LANGUAGES C)
 
 # W28: accept old preview build invocations while dropping their cached gate.
 # The feature is enabled in normal and packaging builds, regardless of the
