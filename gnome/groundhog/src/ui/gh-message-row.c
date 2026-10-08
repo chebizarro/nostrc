@@ -42,6 +42,7 @@ struct _GhMessageRow {
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
   GtkBox *reaction_controls;
   GhReactionBar *reaction_bar;
+  GhReactionSummary *reaction_summary; /* owned even while the bar is absent */
   GtkButton *react_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
@@ -49,7 +50,6 @@ struct _GhMessageRow {
   GtkButton *image_button;
   GtkButton *picture_button;
   GtkPicture *remote_image;
-  GtkPicture *profile_picture;
   GtkWidget *bubble_line;
   GtkWidget *legacy_box;
   AdwAvatar *avatar;
@@ -210,7 +210,7 @@ compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
     append_sentence(out, count);
   }
   /* nostrc-zjkv: mention reply in accessible text. */
-  if (!undecryptable && gh_message_get_reply_to_id(message))
+  if (!undecryptable && !withdrawn && gh_message_get_reply_to_id(message))
     append_sentence(out, _("In reply to another message"));
   if (gh_message_get_expires_at(message) > 0)
     append_sentence(out, _("Disappearing message"));
@@ -270,11 +270,14 @@ update_width(GhMessageRow *self)
   if (self->voice_bubble)
     gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(self->voice_bubble), self->compact);
 #endif
-  gh_attachment_card_set_compact(self->attachment_card, self->compact);
+  if (self->attachment_card)
+    gh_attachment_card_set_compact(self->attachment_card, self->compact);
   for (guint i = 0; self->extra_cards && i < self->extra_cards->len; i++)
     gh_attachment_card_set_compact(g_ptr_array_index(self->extra_cards, i), self->compact);
-  gtk_label_set_max_width_chars(self->preview_title, chars);
-  gtk_label_set_max_width_chars(self->preview_text, chars);
+  if (self->preview_title)
+    gtk_label_set_max_width_chars(self->preview_title, chars);
+  if (self->preview_text)
+    gtk_label_set_max_width_chars(self->preview_text, chars);
 }
 
 /* The avatar: the sender's name (initials) and loaded picture, at the end
@@ -329,9 +332,28 @@ update_meta(GhMessageRow *self)
   gboolean expiring = gh_message_get_expires_at(message) > 0;
   gboolean noteworthy = status != GH_MESSAGE_STATUS_NONE && status != GH_MESSAGE_STATUS_SENT;
   gboolean legacy = gh_message_get_legacy_nip04(message);
-  GhReactionSummary *summary = gh_reaction_bar_get_summary(self->reaction_bar);
-  gboolean reacted = summary && gh_reaction_summary_get_total_count(summary) > 0;
-  gtk_widget_set_visible(self->legacy_box, legacy);
+  gboolean reacted = self->reaction_summary &&
+    gh_reaction_summary_get_total_count(self->reaction_summary) > 0;
+  if (legacy && !self->legacy_box) {
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    self->legacy_box = box;
+    gtk_widget_set_name(box, "legacy_box");
+    gtk_widget_set_valign(box, GTK_ALIGN_CENTER);
+    gtk_widget_set_tooltip_text(box, _("Sent with the older NIP-04 format: anyone can see who wrote to whom and when, and its encryption is weaker. Your replies are sent privately (NIP-17)."));
+    gtk_widget_add_css_class(box, "warning");
+    gtk_widget_add_css_class(box, "groundhog-legacy-nip04");
+    GtkWidget *icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    gtk_image_set_pixel_size(GTK_IMAGE(icon), 12);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(icon), GTK_ACCESSIBLE_PROPERTY_LABEL, "", -1);
+    gtk_box_append(GTK_BOX(box), icon);
+    GtkWidget *label = gtk_label_new(_("Less private (NIP-04)"));
+    gtk_widget_add_css_class(label, "caption");
+    gtk_box_append(GTK_BOX(box), label);
+    gtk_box_insert_child_after(self->meta_box, box, GTK_WIDGET(self->timer_icon));
+  } else if (!legacy && self->legacy_box) {
+    gtk_box_remove(self->meta_box, self->legacy_box);
+    self->legacy_box = NULL;
+  }
   gtk_widget_set_visible(GTK_WIDGET(self->meta_box),
                          self->run_end || expiring || noteworthy || legacy || reacted);
   /* W17: a room message that reached only some people can be tried again
@@ -346,10 +368,36 @@ update_meta(GhMessageRow *self)
 }
 
 static void
+on_reaction_toggled(GhReactionBar *bar, const gchar *emoji, gboolean add, GhMessageRow *self);
+
+static void
+sync_reaction_bar(GhMessageRow *self)
+{
+  gboolean needed = self->reaction_summary &&
+    gh_reaction_summary_get_total_count(self->reaction_summary) > 0;
+  if (needed && !self->reaction_bar) {
+    self->reaction_bar = GH_REACTION_BAR(gh_reaction_bar_new());
+    gtk_widget_set_name(GTK_WIDGET(self->reaction_bar), "reaction_bar");
+    gtk_box_insert_child_after(self->reaction_controls, GTK_WIDGET(self->reaction_bar), NULL);
+    g_signal_connect(self->reaction_bar, "reaction-toggled",
+                     G_CALLBACK(on_reaction_toggled), self);
+    gh_reaction_bar_set_summary(self->reaction_bar, self->reaction_summary);
+    if (self->message && gh_message_is_self(self->message))
+      gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->reaction_bar),
+                                  GTK_WIDGET(self->react_button));
+  } else if (!needed && self->reaction_bar) {
+    gh_reaction_bar_set_summary(self->reaction_bar, NULL);
+    gtk_box_remove(self->reaction_controls, GTK_WIDGET(self->reaction_bar));
+    self->reaction_bar = NULL;
+  }
+}
+
+static void
 on_reaction_total_changed(GObject *summary, GParamSpec *pspec, GhMessageRow *self)
 {
   (void)summary;
   (void)pspec;
+  sync_reaction_bar(self);
   update_meta(self);
 }
 
@@ -367,6 +415,74 @@ update_expiry(GhMessageRow *self)
 }
 
 static void
+clear_web_controls(GhMessageRow *self)
+{
+  while (gtk_widget_get_first_child(GTK_WIDGET(self->web_box)))
+    gtk_box_remove(self->web_box, gtk_widget_get_first_child(GTK_WIDGET(self->web_box)));
+  self->picture_button = NULL;
+  self->image_button = NULL;
+  self->remote_image = NULL;
+  self->web_error = NULL;
+}
+
+static GtkButton *
+new_web_button(GhMessageRow *self, const char *name, const char *label)
+{
+  GtkWidget *button = gtk_button_new_with_label(label);
+  gtk_widget_set_name(button, name);
+  gtk_widget_set_halign(button, GTK_ALIGN_START);
+  gtk_widget_add_css_class(button, "flat");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(button), "s", "");
+  gtk_actionable_set_action_name(GTK_ACTIONABLE(button), "conversation.show-preview");
+  gtk_box_append(self->web_box, button);
+  return GTK_BUTTON(button);
+}
+
+static void
+clear_preview_controls(GhMessageRow *self)
+{
+  while (gtk_widget_get_first_child(GTK_WIDGET(self->preview_box)))
+    gtk_box_remove(self->preview_box, gtk_widget_get_first_child(GTK_WIDGET(self->preview_box)));
+  self->preview_button = NULL;
+  self->preview_title = NULL;
+  self->preview_text = NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->preview_box), FALSE);
+}
+
+static void
+ensure_preview_controls(GhMessageRow *self)
+{
+  if (self->preview_button)
+    return;
+  self->preview_button = GTK_BUTTON(gtk_button_new_with_label(_("Show Preview")));
+  gtk_widget_set_name(GTK_WIDGET(self->preview_button), "preview_button");
+  gtk_widget_set_halign(GTK_WIDGET(self->preview_button), GTK_ALIGN_START);
+  gtk_widget_add_css_class(GTK_WIDGET(self->preview_button), "flat");
+  gtk_widget_add_css_class(GTK_WIDGET(self->preview_button), "groundhog-preview-button");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", "");
+  gtk_actionable_set_action_name(GTK_ACTIONABLE(self->preview_button), "conversation.show-preview");
+  gtk_box_append(self->preview_box, GTK_WIDGET(self->preview_button));
+  self->preview_title = GTK_LABEL(gtk_label_new(NULL));
+  gtk_widget_set_name(GTK_WIDGET(self->preview_title), "preview_title");
+  gtk_label_set_xalign(self->preview_title, 0);
+  gtk_label_set_wrap(self->preview_title, TRUE);
+  gtk_label_set_wrap_mode(self->preview_title, PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(self->preview_title, self->compact ? BODY_CHARS_COMPACT : BODY_CHARS);
+  gtk_label_set_selectable(self->preview_title, TRUE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->preview_title), "heading");
+  gtk_box_append(self->preview_box, GTK_WIDGET(self->preview_title));
+  self->preview_text = GTK_LABEL(gtk_label_new(NULL));
+  gtk_widget_set_name(GTK_WIDGET(self->preview_text), "preview_text");
+  gtk_label_set_xalign(self->preview_text, 0);
+  gtk_label_set_wrap(self->preview_text, TRUE);
+  gtk_label_set_wrap_mode(self->preview_text, PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_max_width_chars(self->preview_text, self->compact ? BODY_CHARS_COMPACT : BODY_CHARS);
+  gtk_label_set_selectable(self->preview_text, TRUE);
+  gtk_widget_add_css_class(GTK_WIDGET(self->preview_text), "dim-label");
+  gtk_box_append(self->preview_box, GTK_WIDGET(self->preview_text));
+}
+
+static void
 update_web_images(GhMessageRow *self)
 {
   gboolean available = self->message && self->view &&
@@ -380,39 +496,84 @@ update_web_images(GhMessageRow *self)
     if (self->preview_uri) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_IMAGE);
     if (picture) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_PICTURE);
   }
-  gtk_widget_set_visible(GTK_WIDGET(self->image_button), available && self->preview_uri);
-  /* Once per run, and never for your own picture (it loads without asking). */
-  gtk_widget_set_visible(GTK_WIDGET(self->picture_button),
-                         picture != NULL && self->run_start && self->message &&
-                         !gh_message_is_self(self->message));
-  gboolean failed = FALSE;
-  for (guint i = GH_WEB_IMAGE; i <= GH_WEB_PICTURE; i++) {
-    GtkPicture *image = i == GH_WEB_IMAGE ? self->remote_image : self->profile_picture;
-    GtkButton *button = i == GH_WEB_IMAGE ? self->image_button : self->picture_button;
-    GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
-    GdkTexture *texture = available
-      ? gh_conversation_view_get_web_texture(self->view, self->message, i, &state) : NULL;
-    if (i == GH_WEB_PICTURE) {
-      gtk_widget_set_visible(GTK_WIDGET(image), FALSE); /* shown by the avatar */
-    } else {
-      gtk_picture_set_paintable(image, texture ? GDK_PAINTABLE(texture) : NULL);
-      gtk_widget_set_visible(GTK_WIDGET(image), texture != NULL);
-    }
-    gtk_widget_set_sensitive(GTK_WIDGET(button), state == GH_LINK_PREVIEW_NONE || state == GH_LINK_PREVIEW_FAILED);
-    /* Loaded (or loading): the picture speaks for itself, no button left. */
-    if (state == GH_LINK_PREVIEW_LOADED || state == GH_LINK_PREVIEW_LOADING)
-      gtk_widget_set_visible(GTK_WIDGET(button), FALSE);
-    /* The avatar supplies its own initials fallback.  A failed profile
-     * picture must not put an image error under every bubble in the run. */
-    if (i == GH_WEB_IMAGE)
-      failed |= state == GH_LINK_PREVIEW_FAILED;
-    if (self->message) {
-      g_autofree gchar *id = g_strconcat(i == GH_WEB_IMAGE ? "image:" : "picture:",
-                                        gh_message_get_rumor_id(self->message), NULL);
-      gtk_actionable_set_action_target(GTK_ACTIONABLE(button), "s", id);
-    }
+  GhLinkPreviewState image_state = GH_LINK_PREVIEW_NONE;
+  GhLinkPreviewState picture_state = GH_LINK_PREVIEW_NONE;
+  GdkTexture *texture = available
+    ? gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_IMAGE,
+                                           &image_state) : NULL;
+  if (available)
+    gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_PICTURE,
+                                         &picture_state);
+  gboolean has_image = available && self->preview_uri;
+  gboolean has_picture = picture && self->run_start &&
+    !gh_message_is_self(self->message);
+  gboolean ask_image = has_image &&
+    image_state != GH_LINK_PREVIEW_LOADED && image_state != GH_LINK_PREVIEW_LOADING;
+  gboolean ask_picture = has_picture &&
+    picture_state != GH_LINK_PREVIEW_LOADED && picture_state != GH_LINK_PREVIEW_LOADING;
+  gboolean failed = image_state == GH_LINK_PREVIEW_FAILED;
+  if (!has_image && !has_picture && !texture && !failed) {
+    clear_web_controls(self);
+    update_avatar(self);
+    return;
   }
-  gtk_widget_set_visible(GTK_WIDGET(self->web_error), failed);
+  if (ask_picture && !self->picture_button)
+    self->picture_button = new_web_button(self, "picture_button", _("Load Profile Picture"));
+  if (has_picture && self->picture_button) {
+    g_autofree gchar *id = g_strconcat("picture:", gh_message_get_rumor_id(self->message), NULL);
+    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->picture_button), "s", id);
+    gtk_widget_set_visible(GTK_WIDGET(self->picture_button), ask_picture);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->picture_button),
+                             picture_state == GH_LINK_PREVIEW_NONE ||
+                             picture_state == GH_LINK_PREVIEW_FAILED);
+  } else if (!has_picture && self->picture_button) {
+    gtk_box_remove(self->web_box, GTK_WIDGET(self->picture_button));
+    self->picture_button = NULL;
+  }
+  if (ask_image && !self->image_button)
+    self->image_button = new_web_button(self, "image_button", _("Load Linked Image"));
+  if (has_image && self->image_button) {
+    g_autofree gchar *id = g_strconcat("image:", gh_message_get_rumor_id(self->message), NULL);
+    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->image_button), "s", id);
+    gtk_widget_set_visible(GTK_WIDGET(self->image_button), ask_image);
+    gtk_widget_set_sensitive(GTK_WIDGET(self->image_button),
+                             image_state == GH_LINK_PREVIEW_NONE ||
+                             image_state == GH_LINK_PREVIEW_FAILED);
+  } else if (!has_image && self->image_button) {
+    gtk_box_remove(self->web_box, GTK_WIDGET(self->image_button));
+    self->image_button = NULL;
+  }
+  if (texture) {
+    if (!self->remote_image) {
+      self->remote_image = GTK_PICTURE(gtk_picture_new());
+      gtk_widget_set_name(GTK_WIDGET(self->remote_image), "remote_image");
+      gtk_picture_set_can_shrink(self->remote_image, TRUE);
+      gtk_picture_set_content_fit(self->remote_image, GTK_CONTENT_FIT_CONTAIN);
+      gtk_widget_set_size_request(GTK_WIDGET(self->remote_image), -1, 180);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(self->remote_image),
+                                     GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     _("Image linked in this message"), -1);
+      gtk_box_append(self->web_box, GTK_WIDGET(self->remote_image));
+    }
+    gtk_picture_set_paintable(self->remote_image, GDK_PAINTABLE(texture));
+  } else if (self->remote_image) {
+    gtk_box_remove(self->web_box, GTK_WIDGET(self->remote_image));
+    self->remote_image = NULL;
+  }
+  if (failed) {
+    if (!self->web_error) {
+      self->web_error = GTK_LABEL(gtk_label_new(_("The image couldn't be loaded.")));
+      gtk_widget_set_name(GTK_WIDGET(self->web_error), "web_error");
+      gtk_label_set_wrap(self->web_error, TRUE);
+      gtk_label_set_xalign(self->web_error, 0);
+      gtk_widget_add_css_class(GTK_WIDGET(self->web_error), "error");
+      gtk_widget_add_css_class(GTK_WIDGET(self->web_error), "caption");
+      gtk_box_append(self->web_box, GTK_WIDGET(self->web_error));
+    }
+  } else if (self->web_error) {
+    gtk_box_remove(self->web_box, GTK_WIDGET(self->web_error));
+    self->web_error = NULL;
+  }
   update_avatar(self);
 }
 
@@ -423,9 +584,17 @@ update_preview(GhMessageRow *self)
   /* Only with a fetcher (W13b review, non-blocking #1). */
   gboolean offered = self->message && self->preview_uri && self->view &&
                      gh_conversation_view_get_previews_available(self->view);
-  gtk_widget_set_visible(GTK_WIDGET(self->preview_box), offered);
-  if (!offered)
+  if (!offered) {
+    clear_preview_controls(self);
     return;
+  }
+  ensure_preview_controls(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->preview_box), TRUE);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s",
+                                   gh_message_get_rumor_id(self->message));
+  g_autofree gchar *host = gh_link_policy_dup_host(self->preview_uri);
+  g_autofree gchar *tooltip = g_strdup_printf(_("Load a preview from %s"), host);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->preview_button), tooltip);
   const gchar *title = NULL;
   const gchar *description = NULL;
   GhLinkPreviewState state =
@@ -473,14 +642,20 @@ update_status(GhMessageRow *self)
   update_summary(self);
 }
 
-/* The first card is the template's; an encrypted group message's further
- * files get cards made here (at most GH_STORE_MAX_MLS_MEDIA, W25), and
- * imeta tags that weren't valid are said, not shown. */
+/* File cards and rejection notes exist only while needed. */
 static void
 update_cards(GhMessageRow *self, GhMessage *message, guint cards)
 {
-  gh_attachment_card_set_index(self->attachment_card, 0);
-  gh_attachment_card_set_message(self->attachment_card, cards ? message : NULL);
+  if (cards && !self->attachment_card) {
+    self->attachment_card = GH_ATTACHMENT_CARD(gh_attachment_card_new());
+    gtk_widget_set_name(GTK_WIDGET(self->attachment_card), "attachment_card");
+    gh_attachment_card_set_compact(self->attachment_card, self->compact);
+    gtk_box_append(self->attachment_slot, GTK_WIDGET(self->attachment_card));
+  }
+  if (self->attachment_card) {
+    gh_attachment_card_set_index(self->attachment_card, 0);
+    gh_attachment_card_set_message(self->attachment_card, cards ? message : NULL);
+  }
   guint extra = cards > 1 ? cards - 1 : 0;
   if (!self->extra_cards)
     return;   /* disposed */
@@ -504,18 +679,32 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
     gh_attachment_card_set_index(card, i + 1);
     gh_attachment_card_set_message(card, message);
   }
+  if (!cards && self->attachment_card) {
+    gtk_box_remove(self->attachment_slot, GTK_WIDGET(self->attachment_card));
+    self->attachment_card = NULL;
+  }
   guint rejected = message ? gh_message_get_rejected_attachments(message) : 0;
   if (rejected > 0 && !self->undecryptable) {
+    if (!self->attachment_note) {
+      self->attachment_note = GTK_LABEL(gtk_label_new(NULL));
+      gtk_widget_set_name(GTK_WIDGET(self->attachment_note), "attachment_note");
+      gtk_label_set_xalign(self->attachment_note, 0);
+      gtk_label_set_wrap(self->attachment_note, TRUE);
+      gtk_label_set_wrap_mode(self->attachment_note, PANGO_WRAP_WORD_CHAR);
+      gtk_widget_add_css_class(GTK_WIDGET(self->attachment_note), "dim-label");
+      gtk_widget_add_css_class(GTK_WIDGET(self->attachment_note), "caption");
+      gtk_box_append(self->attachment_slot, GTK_WIDGET(self->attachment_note));
+    }
     g_autofree gchar *note =
       g_strdup_printf(g_dngettext(NULL, "%u attached file can't be read: it isn't a valid "
                                         "encrypted file reference.",
                                   "%u attached files can't be read: they aren't valid "
                                   "encrypted file references.", rejected), rejected);
     gtk_label_set_text(self->attachment_note, note);
+  } else if (self->attachment_note) {
+    gtk_box_remove(self->attachment_slot, GTK_WIDGET(self->attachment_note));
+    self->attachment_note = NULL;
   }
-  gtk_widget_set_visible(GTK_WIDGET(self->attachment_note), rejected > 0 &&
-                         !self->undecryptable);
-  gtk_widget_set_visible(GTK_WIDGET(self->attachment_card), cards > 0);
 }
 
 static void
@@ -535,8 +724,10 @@ update_all(GhMessageRow *self)
                          GTK_WIDGET(self->web_box), GTK_WIDGET(self->sender_label),
                          GTK_WIDGET(self->reply_button) };
   for (guint u = 0; u < G_N_ELEMENTS(under); u++) {
-    gtk_widget_set_margin_start(under[u], outgoing ? 0 : inset);
-    gtk_widget_set_margin_end(under[u], outgoing ? inset : 0);
+    if (under[u]) {
+      gtk_widget_set_margin_start(under[u], outgoing ? 0 : inset);
+      gtk_widget_set_margin_end(under[u], outgoing ? inset : 0);
+    }
   }
   if (outgoing)
     gtk_box_reorder_child_after(GTK_BOX(self->bubble_line), GTK_WIDGET(self->avatar),
@@ -555,7 +746,7 @@ update_all(GhMessageRow *self)
       gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), last);
   } else {
     gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->react_button),
-                                GTK_WIDGET(self->reaction_bar));
+                                self->reaction_bar ? GTK_WIDGET(self->reaction_bar) : NULL);
     gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), NULL);
   }
 
@@ -564,10 +755,34 @@ update_all(GhMessageRow *self)
   /* nostrc-zjkv: reply header — show "Replying to npub1…" when the message
    * has a reply-target event id. The button's action target is the reply-to
    * id so conversation.scroll-to-reply can find and scroll to it. */
-  const gchar *reply_to = message ? gh_message_get_reply_to_id(message) : NULL;
+  const gchar *reply_to = message && !self->undecryptable &&
+    !gh_message_get_withdrawn(message) ? gh_message_get_reply_to_id(message) : NULL;
   self->has_reply = reply_to != NULL;
-  gtk_widget_set_visible(GTK_WIDGET(self->reply_button), self->has_reply);
   if (self->has_reply) {
+    if (!self->reply_button) {
+      self->reply_button = GTK_BUTTON(gtk_button_new());
+      gtk_widget_set_name(GTK_WIDGET(self->reply_button), "reply_button");
+      gtk_widget_set_halign(GTK_WIDGET(self->reply_button), GTK_ALIGN_START);
+      gtk_widget_add_css_class(GTK_WIDGET(self->reply_button), "flat");
+      gtk_widget_add_css_class(GTK_WIDGET(self->reply_button), "caption");
+      gtk_widget_add_css_class(GTK_WIDGET(self->reply_button), "dim-label");
+      gtk_widget_add_css_class(GTK_WIDGET(self->reply_button), "groundhog-reply-header");
+      GtkWidget *content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+      GtkWidget *icon = gtk_image_new_from_icon_name("go-up-symbolic");
+      gtk_image_set_pixel_size(GTK_IMAGE(icon), 12);
+      gtk_widget_set_valign(icon, GTK_ALIGN_CENTER);
+      gtk_box_append(GTK_BOX(content), icon);
+      self->reply_label = GTK_LABEL(gtk_label_new(NULL));
+      gtk_widget_set_name(GTK_WIDGET(self->reply_label), "reply_label");
+      gtk_label_set_ellipsize(self->reply_label, PANGO_ELLIPSIZE_END);
+      gtk_label_set_max_width_chars(self->reply_label, 40);
+      gtk_box_append(GTK_BOX(content), GTK_WIDGET(self->reply_label));
+      gtk_button_set_child(self->reply_button, content);
+      gtk_widget_insert_after(GTK_WIDGET(self->reply_button), GTK_WIDGET(self),
+                              GTK_WIDGET(self->sender_label));
+    }
+    gtk_widget_set_margin_start(GTK_WIDGET(self->reply_button), outgoing ? 0 : inset);
+    gtk_widget_set_margin_end(GTK_WIDGET(self->reply_button), outgoing ? inset : 0);
     /* TRANSLATORS: "Replying to" header above a message bubble. The
      * replacement is an abbreviated event id since we don't fetch the
      * reply target's author (charter PT-8). */
@@ -585,8 +800,10 @@ update_all(GhMessageRow *self)
     /* TRANSLATORS: accessible description for the reply header. */
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->reply_button),
                                    GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
-  } else {
-    gtk_actionable_set_action_name(GTK_ACTIONABLE(self->reply_button), NULL);
+  } else if (self->reply_button) {
+    gtk_widget_unparent(GTK_WIDGET(self->reply_button));
+    self->reply_button = NULL;
+    self->reply_label = NULL;
   }
 
   set_class(GTK_WIDGET(self->body_label), "groundhog-undecryptable", self->undecryptable);
@@ -677,12 +894,6 @@ update_all(GhMessageRow *self)
     gtk_widget_set_tooltip_text(GTK_WIDGET(self->time_label), full);
     const gchar *rumor = gh_message_get_rumor_id(message);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", rumor);
-    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", rumor);
-    if (self->preview_uri) {
-      g_autofree gchar *host = gh_link_policy_dup_host(self->preview_uri);
-      g_autofree gchar *tooltip = g_strdup_printf(_("Load a preview from %s"), host);
-      gtk_widget_set_tooltip_text(GTK_WIDGET(self->preview_button), tooltip);
-    }
   }
   gh_delivery_indicator_set_message(self->delivery, message);
   update_runs(self);
@@ -850,8 +1061,15 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
   g_return_if_fail(!message || GH_IS_MESSAGE(message));
   if (self->message == message)
     return;
-  if (self->message)
+  if (self->message) {
     g_signal_handlers_disconnect_by_data(self->message, self);
+    clear_web_controls(self);
+    clear_preview_controls(self);
+  }
+  if (self->reaction_summary)
+    gh_message_row_set_reaction_summary(self, NULL);
+  if (self->poll_card)
+    gh_message_row_set_poll_widget(self, NULL);
   g_set_object(&self->message, message);
   if (message) {
     g_signal_connect_object(message, "notify::status", G_CALLBACK(update_status), self,
@@ -866,8 +1084,34 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
 #endif
   update_all(self);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
-  if (message)
-    gh_conversation_open_probe_bind(self, g_get_monotonic_time() - bind_start_us);
+  if (message) {
+    gint64 bind_elapsed_us = g_get_monotonic_time() - bind_start_us;
+    guint widgets = 0;
+    GQueue queue = G_QUEUE_INIT;
+    g_queue_push_tail(&queue, self);
+    while (!g_queue_is_empty(&queue)) {
+      GtkWidget *widget = g_queue_pop_head(&queue);
+      widgets++;
+      for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+           child = gtk_widget_get_next_sibling(child))
+        g_queue_push_tail(&queue, child);
+    }
+    guint optional = 0;
+    if (self->has_reply) optional |= GH_OPEN_REPLY;
+    if (self->attachment_slot && gtk_widget_get_visible(GTK_WIDGET(self->attachment_slot)))
+      optional |= GH_OPEN_ATTACHMENT;
+    if (gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_KIND)
+      optional |= GH_OPEN_POLL;
+    if (self->preview_uri) optional |= GH_OPEN_LINK;
+#ifdef GROUNDHOG_HAVE_VOICE
+    if (self->voice_bubble && gtk_widget_get_visible(GTK_WIDGET(self->voice_slot)))
+      optional |= GH_OPEN_AUDIO;
+#endif
+    GhReactionSummary *reactions = self->reaction_summary;
+    if (reactions && gh_reaction_summary_get_total_count(reactions))
+      optional |= GH_OPEN_REACTION;
+    gh_conversation_open_probe_bind(self, bind_elapsed_us, widgets, optional);
+  }
 #endif
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_MESSAGE]);
 }
@@ -936,15 +1180,18 @@ void
 gh_message_row_set_reaction_summary(GhMessageRow *self, GhReactionSummary *summary)
 {
   g_return_if_fail(GH_IS_MESSAGE_ROW(self));
-  GhReactionSummary *old = gh_reaction_bar_get_summary(self->reaction_bar);
-  if (old != summary) {
-    if (old)
-      g_signal_handlers_disconnect_by_func(old, G_CALLBACK(on_reaction_total_changed), self);
-    gh_reaction_bar_set_summary(self->reaction_bar, summary);
+  if (self->reaction_summary != summary) {
+    if (self->reaction_summary)
+      g_signal_handlers_disconnect_by_func(self->reaction_summary,
+                                           G_CALLBACK(on_reaction_total_changed), self);
+    g_set_object(&self->reaction_summary, summary);
     if (summary)
       g_signal_connect_object(summary, "notify::total-count",
                               G_CALLBACK(on_reaction_total_changed), self, 0);
+    if (self->reaction_bar)
+      gh_reaction_bar_set_summary(self->reaction_bar, summary);
   }
+  sync_reaction_bar(self);
   update_meta(self);
 }
 
@@ -1017,8 +1264,15 @@ static void
 gh_message_row_dispose(GObject *object)
 {
   GhMessageRow *self = GH_MESSAGE_ROW(object);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  gint64 dispose_start_us = g_get_monotonic_time();
+#endif
   if (self->message)
     g_signal_handlers_disconnect_by_data(self->message, self);
+  if (self->reaction_summary)
+    g_signal_handlers_disconnect_by_func(self->reaction_summary,
+                                         G_CALLBACK(on_reaction_total_changed), self);
+  g_clear_object(&self->reaction_summary);
   g_clear_object(&self->message);
 #ifdef GROUNDHOG_HAVE_VOICE
   /* The voice bubble is the voice_slot's child: it goes with the template. */
@@ -1028,10 +1282,18 @@ gh_message_row_dispose(GObject *object)
     gtk_widget_unparent(GTK_WIDGET(self->picker));
     self->picker = NULL;
   }
+  if (self->reply_button) {
+    gtk_widget_unparent(GTK_WIDGET(self->reply_button));
+    self->reply_button = NULL;
+    self->reply_label = NULL;
+  }
   /* The extra cards are the slot's children: they go with the template. */
   g_clear_pointer(&self->extra_cards, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MESSAGE_ROW);
   G_OBJECT_CLASS(gh_message_row_parent_class)->dispose(object);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  gh_conversation_open_probe_dispose(g_get_monotonic_time() - dispose_start_us);
+#endif
 }
 
 static void
@@ -1105,26 +1367,14 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-message-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reply_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reply_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_controls);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, image_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, picture_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, remote_image);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, profile_picture);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, legacy_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_error);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_title);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_text);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, meta_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, timer_icon);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, time_label);
@@ -1132,8 +1382,6 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, retry_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, voice_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_card);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_note);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, poll_slot);
   gtk_widget_class_set_css_name(widget_class, "groundhog-message");
 }
@@ -1141,18 +1389,16 @@ gh_message_row_class_init(GhMessageRowClass *klass)
 static void
 gh_message_row_init(GhMessageRow *self)
 {
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  gint64 construct_start_us = g_get_monotonic_time();
+#endif
   gtk_widget_init_template(GTK_WIDGET(self));
   self->extra_cards = g_ptr_array_new();
   /* The row's actions take the message's rumor id: a row set up (or rooted
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->preview_button), "s", "");
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->image_button), "s", "");
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->picture_button), "s", "");
   self->run_start = TRUE;
-  g_signal_connect(self->reaction_bar, "reaction-toggled",
-                   G_CALLBACK(on_reaction_toggled), self);
   /* Right-click and long-press on the bubble show the reaction picker. */
   GtkGesture *click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
@@ -1168,6 +1414,9 @@ gh_message_row_init(GhMessageRow *self)
                            self);
   update_width(self);
   update_all(self);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  gh_conversation_open_probe_construct(g_get_monotonic_time() - construct_start_us);
+#endif
 }
 
 void

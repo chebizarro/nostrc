@@ -760,7 +760,8 @@ gh_conversation_open_probe_scroll_pending(GhConversationView *view)
 }
 
 void
-gh_conversation_open_probe_bind(GhMessageRow *row, gint64 elapsed_us)
+gh_conversation_open_probe_bind(GhMessageRow *row, gint64 elapsed_us,
+                                guint widgets, guint optional_flags)
 {
   /* GtkListView may bind synchronously in set_model(), before the row has
    * an ancestor. The opt-in test arms exactly one view at a time. */
@@ -774,6 +775,32 @@ gh_conversation_open_probe_bind(GhMessageRow *row, gint64 elapsed_us)
   open_probe.bind_count++;
   open_probe.bind_wall_us += elapsed_us;
   open_probe.bind_wall_max_us = MAX(open_probe.bind_wall_max_us, elapsed_us);
+  if (!optional_flags && !open_probe.plain_row_widgets)
+    open_probe.plain_row_widgets = widgets;
+  open_probe.optional_replies += !!(optional_flags & GH_OPEN_REPLY);
+  open_probe.optional_attachments += !!(optional_flags & GH_OPEN_ATTACHMENT);
+  open_probe.optional_polls += !!(optional_flags & GH_OPEN_POLL);
+  open_probe.optional_links += !!(optional_flags & GH_OPEN_LINK);
+  open_probe.optional_audio += !!(optional_flags & GH_OPEN_AUDIO);
+  open_probe.optional_reactions += !!(optional_flags & GH_OPEN_REACTION);
+}
+
+void
+gh_conversation_open_probe_construct(gint64 elapsed_us)
+{
+  if (!open_probe_view || !open_probe.entry_us || !open_probe.trace)
+    return;
+  open_probe.row_construct_count++;
+  open_probe.row_construct_wall_us += elapsed_us;
+}
+
+void
+gh_conversation_open_probe_dispose(gint64 elapsed_us)
+{
+  if (!open_probe_view || !open_probe.entry_us || !open_probe.trace)
+    return;
+  open_probe.row_dispose_count++;
+  open_probe.row_dispose_wall_us += elapsed_us;
 }
 #endif
 

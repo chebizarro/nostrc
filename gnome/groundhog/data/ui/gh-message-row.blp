@@ -31,35 +31,7 @@ template $GhMessageRow: Widget {
     ]
   }
 
-  // nostrc-zjkv: reply header — shown when the message replies to or quotes
-  // another event, parsed from the e/q tags. Clicking jumps to the original.
-  Button reply_button {
-    visible: false;
-    halign: start;
-
-    styles [
-      "flat",
-      "caption",
-      "dim-label",
-      "groundhog-reply-header",
-    ]
-
-    Box {
-      spacing: 4;
-
-      Image {
-        icon-name: "go-up-symbolic";
-        pixel-size: 12;
-        valign: center;
-      }
-
-      Label reply_label {
-        ellipsize: end;
-        max-width-chars: 40;
-      }
-    }
-  }
-
+  // Reply headers are inserted here only for replies (nostrc-zjkv).
   // W33: the sender's round avatar beside the bubble, on its side, shown at
   // the end of a run (space kept on the other rows so bubbles line up).
   Box bubble_line {
@@ -122,112 +94,22 @@ template $GhMessageRow: Widget {
         orientation: vertical;
         spacing: 6;
 
-        $GhAttachmentCard attachment_card {}
-
-        Label attachment_note {
-          visible: false;
-          xalign: 0;
-          wrap: true;
-          wrap-mode: word_char;
-
-          styles [
-            "dim-label",
-            "caption",
-          ]
-        }
+        // Attachment cards and rejection note are added only for file messages.
       }
     }
   }
 
+  // Remote-image controls and content are inserted only when needed.
   Box web_box {
     orientation: vertical;
     spacing: 6;
-    Button picture_button {
-      visible: false;
-      label: _("Load Profile Picture");
-      halign: start;
-      action-name: "conversation.show-preview";
-      styles ["flat"]
-    }
-    // Kept for the template binding; the avatar beside the bubble shows the
-    // picture (W33).
-    Picture profile_picture {
-      visible: false;
-      can-shrink: true;
-      content-fit: contain;
-      width-request: 48;
-      height-request: 48;
-      halign: start;
-      accessibility { label: _("Sender's profile picture"); }
-    }
-    Button image_button {
-      visible: false;
-      label: _("Load Linked Image");
-      halign: start;
-      action-name: "conversation.show-preview";
-      styles ["flat"]
-    }
-    Picture remote_image {
-      visible: false;
-      can-shrink: true;
-      content-fit: contain;
-      height-request: 180;
-      accessibility { label: _("Image linked in this message"); }
-    }
-    Label web_error {
-      visible: false;
-      label: _("The image couldn't be loaded.");
-      wrap: true;
-      xalign: 0;
-      styles ["error", "caption"]
-    }
   }
 
   Box preview_box {
     visible: false;
     orientation: vertical;
     spacing: 2;
-
-    styles [
-      "groundhog-link-preview",
-    ]
-
-    Button preview_button {
-      label: _("Show Preview");
-      halign: start;
-      action-name: "conversation.show-preview";
-
-      styles [
-        "flat",
-        "groundhog-preview-button",
-      ]
-    }
-
-    Label preview_title {
-      visible: false;
-      xalign: 0;
-      wrap: true;
-      wrap-mode: word_char;
-      max-width-chars: 60;
-      selectable: true;
-
-      styles [
-        "heading",
-      ]
-    }
-
-    Label preview_text {
-      visible: false;
-      xalign: 0;
-      wrap: true;
-      wrap-mode: word_char;
-      max-width-chars: 60;
-      selectable: true;
-
-      styles [
-        "dim-label",
-      ]
-    }
+    styles ["groundhog-link-preview"]
   }
 
   Box meta_box {
@@ -248,33 +130,7 @@ template $GhMessageRow: Widget {
       ]
     }
 
-    // W33: an older NIP-04 message, shown read-only, with the caveat.
-    Box legacy_box {
-      visible: false;
-      spacing: 4;
-      valign: center;
-      tooltip-text: _("Sent with the older NIP-04 format: anyone can see who wrote to whom and when, and its encryption is weaker. Your replies are sent privately (NIP-17).");
-
-      Image {
-        icon-name: "dialog-warning-symbolic";
-        pixel-size: 12;
-        accessible-role: presentation;
-      }
-
-      Label {
-        label: _("Less private (NIP-04)");
-
-        styles [
-          "caption",
-        ]
-      }
-
-      styles [
-        "warning",
-        "groundhog-legacy-nip04",
-      ]
-    }
-
+    // NIP-04 warning is added only on legacy messages.
     Label time_label {
       valign: center;
 
@@ -309,10 +165,7 @@ template $GhMessageRow: Widget {
       spacing: 4;
       valign: center;
 
-      $GhReactionBar reaction_bar {
-        visible: false;
-      }
-
+      // Reaction chips are added only when a summary has reactions.
       Button react_button {
         icon-name: "face-smile-symbolic";
         valign: center;
