@@ -395,6 +395,119 @@ test_card_selection(gconstpointer data)
   g_object_unref(card);
 }
 
+static void
+assert_live_local_echo(gconstpointer data)
+{
+  GhConversationBackend backend = GPOINTER_TO_INT(data);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  const gchar *labels[] = { "Coffee", "Tea" };
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *poll_event = backend == GH_CONVERSATION_BACKEND_NIP29
+    ? g_strdup_printf(
+        "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+        "\"tags\":[[\"h\",\"coffee\"],[\"poll\",\"1068\"],"
+        "[\"option\",\"0\",\"Coffee\"],[\"option\",\"1\",\"Tea\"],"
+        "[\"polltype\",\"singlechoice\"]],\"content\":\"Live poll?\"}",
+        account, now)
+    : gh_mls_poll_build_event(account,
+        backend == GH_CONVERSATION_BACKEND_MLS ? group_id : NULL,
+        now, "Live poll?", labels, 2, GH_MLS_POLL_SINGLE_CHOICE, 0, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(poll_event);
+
+  g_autofree gchar *poll_rumor = NULL;
+  g_autoptr(GhMessage) poll_message = NULL;
+  const gchar *recipients[] = { peer, NULL };
+  if (backend == GH_CONVERSATION_BACKEND_MLS)
+    poll_message = message_from_event(poll_event);
+  else if (backend == GH_CONVERSATION_BACKEND_NIP29)
+    poll_message = gh_message_new_from_nip29_event(account, "wss://nos.lol",
+                                                    poll_event, &error);
+  else {
+    poll_rumor = gh_nip17_rumor_new_poll_room(account, recipients, poll_event,
+                                               now, 0, NULL, &error);
+    g_assert_no_error(error);
+    poll_message = gh_message_new_from_rumor(account, poll_rumor, &error);
+  }
+  g_assert_no_error(error);
+  g_assert_nonnull(poll_message);
+  g_assert_cmpint(gh_message_get_kind(poll_message), ==, GH_MLS_POLL_KIND);
+
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(
+    gh_message_get_rumor_id(poll_message), account, now,
+    gh_message_get_rumor_json(poll_message), &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(poll);
+  const gchar *choices[] = { gh_mls_poll_get_option(poll, 0)->id };
+  g_autofree gchar *vote_event = backend == GH_CONVERSATION_BACKEND_NIP29
+    ? g_strdup_printf(
+        "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+        "\"tags\":[[\"h\",\"coffee\"],[\"poll\",\"1018\"],"
+        "[\"e\",\"%s\"],[\"response\",\"%s\"]],\"content\":\"\"}",
+        account, now + 1, gh_message_get_rumor_id(poll_message), choices[0])
+    : gh_mls_poll_build_vote_event(account,
+        backend == GH_CONVERSATION_BACKEND_MLS ? group_id : NULL,
+        now + 1, gh_message_get_rumor_id(poll_message), choices, 1, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(vote_event);
+  g_autofree gchar *vote_rumor = NULL;
+  g_autoptr(GhMessage) vote_message = NULL;
+  if (backend == GH_CONVERSATION_BACKEND_MLS)
+    vote_message = message_from_event(vote_event);
+  else if (backend == GH_CONVERSATION_BACKEND_NIP29)
+    vote_message = gh_message_new_from_nip29_event(account, "wss://nos.lol",
+                                                    vote_event, &error);
+  else {
+    vote_rumor = gh_nip17_rumor_new_poll_room(account, recipients, vote_event,
+                                               now + 1, 0, NULL, &error);
+    g_assert_no_error(error);
+    vote_message = gh_message_new_from_rumor(account, vote_rumor, &error);
+  }
+  g_assert_no_error(error);
+  g_assert_nonnull(vote_message);
+  g_assert_cmpint(gh_message_get_kind(vote_message), ==, GH_MLS_POLL_VOTE_KIND);
+
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, account, NULL, NULL, NULL);
+  GhConversation *conversation = backend == GH_CONVERSATION_BACKEND_NIP17
+    ? gh_conversation_store_open_room(store, recipients, &error)
+    : gh_conversation_store_ensure_group(store,
+        gh_message_get_room_id(poll_message), "Live poll room");
+  g_assert_no_error(error);
+  g_assert_nonnull(conversation);
+  g_assert_cmpint(gh_conversation_get_backend(conversation), ==, backend);
+  g_assert_cmpstr(gh_conversation_get_room_id(conversation), ==,
+                  gh_message_get_room_id(poll_message));
+  GhWindow *window = gh_window_new(NULL);
+  gh_conversation_list_attach(window, store, NULL);
+  GhPollUiConfig config = { 0 };
+  gh_poll_ui_attach(window, &config);
+  gtk_window_present(GTK_WINDOW(window));
+  GhConversationView *view = GH_CONVERSATION_VIEW(
+    gh_content_page_get_view(gh_window_get_content(window)));
+  wait_for_window_or_card(GTK_WIDGET(window), FALSE);
+  gh_conversation_view_set_conversation(view, conversation);
+  GListModel *timeline = gh_conversation_view_get_timeline(view);
+  g_assert_cmpuint(g_list_model_get_n_items(timeline), ==, 0);
+  g_assert_null(find_card(GTK_WIDGET(view)));
+
+  /* Each message is the sender's local echo, admitted while this room stays open. */
+  admit(store, poll_message);
+  wait_for_window_or_card(GTK_WIDGET(view), TRUE);
+  GtkWidget *card = find_card(GTK_WIDGET(view));
+  g_assert_cmpuint(g_list_model_get_n_items(timeline), ==, 1);
+  GhMlsPoll *on_screen = gh_poll_card_get_poll(GH_POLL_CARD(card));
+  g_assert_cmpstr(gh_mls_poll_get_question(on_screen), ==, "Live poll?");
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(on_screen), ==, 0);
+
+  admit(store, vote_message);
+  g_assert_true(find_card(GTK_WIDGET(view)) == card);
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(on_screen), ==, 1);
+  g_assert_true(has_vote_status(card));
+  g_assert_cmpuint(g_list_model_get_n_items(timeline), ==, 1);
+  gtk_window_destroy(GTK_WINDOW(window));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -415,6 +528,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/poll/own-poll-and-vote-timeline", test_own_poll_and_vote_timeline);
   g_test_add_func("/groundhog/poll/nip17-own-poll-and-vote", test_private_transport_poll);
   g_test_add_func("/groundhog/poll/nip29-own-poll-and-vote", test_nip29_transport_poll);
+  g_test_add_data_func("/groundhog/poll/mls-live-echo-while-open", GINT_TO_POINTER(GH_CONVERSATION_BACKEND_MLS), assert_live_local_echo);
+  g_test_add_data_func("/groundhog/poll/nip17-live-echo-while-open", GINT_TO_POINTER(GH_CONVERSATION_BACKEND_NIP17), assert_live_local_echo);
+  g_test_add_data_func("/groundhog/poll/nip29-live-echo-while-open", GINT_TO_POINTER(GH_CONVERSATION_BACKEND_NIP29), assert_live_local_echo);
   g_test_add_data_func("/groundhog/poll/single-choice-card", GINT_TO_POINTER(FALSE), test_card_selection);
   g_test_add_data_func("/groundhog/poll/multi-choice-card", GINT_TO_POINTER(TRUE), test_card_selection);
   int result = g_test_run();
