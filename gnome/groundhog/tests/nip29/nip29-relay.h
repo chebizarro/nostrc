@@ -561,7 +561,7 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
     nip29_publish_state(relay, group);
     return;
   }
-  if (kind >= 9 && kind <= 12) {
+  if (kind == 5 || kind == 7 || (kind >= 9 && kind <= 12)) {
     if (!member) {
       nip29_ok(relay, connection, event, FALSE, "restricted: only members can write");
       nostr_event_free(event);

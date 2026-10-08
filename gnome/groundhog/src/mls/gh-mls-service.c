@@ -9370,7 +9370,14 @@ gh_mls_service_cast_vote(GhMlsService *self, GhMlsGroup *group,
 
   /* Apply the vote to the local poll with the inner event id so that
    * convergence withdrawal can find and remove this voter record. */
-  gh_mls_poll_apply_vote(poll, self->account, option_ids, now, inner_id);
+  {
+    /* option_ids is a counted array (callers need not NULL-terminate it);
+     * gh_mls_poll_apply_vote() walks a NULL-terminated vector. */
+    g_autofree const gchar **terminated = g_new0(const gchar *, n_options + 1);
+    for (guint i = 0; i < n_options; i++)
+      terminated[i] = option_ids[i];
+    gh_mls_poll_apply_vote(poll, self->account, terminated, now, inner_id);
+  }
 
   return g_steal_pointer(&message);
 

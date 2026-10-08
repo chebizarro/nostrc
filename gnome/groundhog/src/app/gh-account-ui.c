@@ -271,9 +271,15 @@ build_account_popover(GhAccountUi *ui)
   gtk_box_append(GTK_BOX(box), add);
   gtk_box_append(GTK_BOX(box), remove);
   gtk_box_append(GTK_BOX(box), refresh);
-  g_signal_connect_swapped(add, "clicked", G_CALLBACK(gtk_popover_popdown), ui->account_popover);
-  g_signal_connect_swapped(remove, "clicked", G_CALLBACK(gtk_popover_popdown), ui->account_popover);
-  g_signal_connect_swapped(refresh, "clicked", G_CALLBACK(gtk_popover_popdown), ui->account_popover);
+  /* GtkButton activates its GtkActionable in the clicked default handler.
+   * Closing this popover first unparents it and removes the inherited account
+   * action group, so these actions never run. Close only after activation. */
+  g_signal_connect_data(add, "clicked", G_CALLBACK(gtk_popover_popdown),
+                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
+  g_signal_connect_data(remove, "clicked", G_CALLBACK(gtk_popover_popdown),
+                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
+  g_signal_connect_data(refresh, "clicked", G_CALLBACK(gtk_popover_popdown),
+                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
   gtk_popover_set_child(ui->account_popover, box);
 }
 

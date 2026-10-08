@@ -629,6 +629,18 @@ test_own_profile(void)
   g_autofree gchar *bob_picture = gh_contact_directory_dup_picture_uri(f.dir, hex_bob);
   g_assert_cmpstr(alice_picture, ==, "https://images.example.org/alice.png");
   g_assert_cmpstr(bob_picture, ==, "https://images.example.org/bob.png");
+
+  /* The real selection path revokes the generation. Returning to Alice must
+   * restore her signed kind-0 and picture URI from her encrypted store. */
+  g_assert_true(gh_account_controller_select_backend(f.accounts,
+    GH_SIGNER_BACKEND_NIP46, npub_bob, NULL));
+  g_assert_null(gh_contact_directory_dup_picture_uri(f.dir, hex_alice));
+  g_assert_true(gh_account_controller_select_backend(f.accounts,
+    GH_SIGNER_BACKEND_GROTTO, npub_alice, NULL));
+  bind_store(&f);
+  g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, hex_alice), ==, "Alice A.");
+  g_autofree gchar *restored_picture = gh_contact_directory_dup_picture_uri(f.dir, hex_alice);
+  g_assert_cmpstr(restored_picture, ==, "https://images.example.org/alice.png");
   fixture_down(&f);
 }
 

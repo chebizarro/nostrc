@@ -103,6 +103,9 @@ struct _GhNip29Room {
   gint64 cursor;               /* newest message created_at stored with nothing missing
                                 * before it (bounded by now): the next REQ's since */
   gint64 sync_cursor;          /* newest stored by this REQ's backfill; committed at EOSE */
+  gint64 reaction_cursor;      /* independent kind-5/7 backfill checkpoint */
+  gint64 reaction_sync_cursor;
+  gboolean reaction_sync_failed;
   gboolean sync_failed;        /* an admission of this REQ failed, or its backfill came
                                 * back incomplete: the cursor stays */
   gboolean backfilled;         /* the group's first EOSE ever came */
@@ -425,6 +428,8 @@ room_record(GhNip29Room *room)
   }
   json_builder_set_member_name(builder, "cursor");
   json_builder_add_int_value(builder, room->cursor);
+  json_builder_set_member_name(builder, "reaction_cursor");
+  json_builder_add_int_value(builder, room->reaction_cursor);
   json_builder_set_member_name(builder, "backfilled");
   json_builder_add_boolean_value(builder, room->backfilled);
   json_builder_set_member_name(builder, "joined_at");
@@ -795,6 +800,20 @@ relay_filters(Relay *relay, GPtrArray *rooms)
      * GhRelayScope's until/limit paging, leaving only the newest messages. */
     nostr_filters_add(filters, messages);
     nostr_filter_free(messages);
+
+    if (relay->service->reactions) {
+      /* Reactions and author deletions cannot use the chat cursor: a group
+       * may have old reactions that predate its latest message. */
+      int reaction_kinds[] = { NOSTR_KIND_DELETION, NOSTR_KIND_REACTION };
+      NostrFilter *reactions = nostr_filter_new();
+      nostr_filter_set_kinds(reactions, reaction_kinds, G_N_ELEMENTS(reaction_kinds));
+      nostr_filter_tags_append(reactions, "h", room_group_id(room), NULL);
+      if (room->reaction_cursor > 0)
+        nostr_filter_set_since_i64(reactions,
+          MAX(room->reaction_cursor - GH_NIP29_SERVICE_CURSOR_OVERLAP, 1));
+      nostr_filters_add(filters, reactions);
+      nostr_filter_free(reactions);
+    }
   }
 
   /* Deletions (9005), so deleted events leave the rooms and the timeline:
@@ -890,6 +909,8 @@ relay_resubscribe(Relay *relay)
     /* A new REQ, from the committed cursor: nothing of it is stored yet. */
     room->sync_cursor = 0;
     room->sync_failed = FALSE;
+    room->reaction_sync_cursor = 0;
+    room->reaction_sync_failed = FALSE;
     room_set_read(room, GH_NIP29_READ_SYNCING, NULL);
   }
   gh_relay_scope_start(scope);
@@ -1026,6 +1047,20 @@ room_advance_cursor(GhNip29Room *room, gint64 created_at, gboolean backfill)
 }
 
 static void
+room_advance_reaction_cursor(GhNip29Room *room, gint64 created_at, gboolean backfill)
+{
+  gint64 bounded = MIN(created_at, now_unix(room->service) + GH_NIP29_MAX_FUTURE_SKEW_SECONDS);
+  if (room->reaction_sync_failed)
+    return;
+  if (backfill)
+    room->reaction_sync_cursor = MAX(room->reaction_sync_cursor, bounded);
+  else if (bounded > room->reaction_cursor) {
+    room->reaction_cursor = bounded;
+    room_save(room);
+  }
+}
+
+static void
 room_admit_message(GhNip29Room *room, NostrEvent *event, const gchar *json, gboolean backfill)
 {
   GhNip29Service *self = room->service;
@@ -1092,8 +1127,9 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
     if (room && kind >= NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE &&
         kind <= NOSTR_KIND_SIMPLE_GROUP_REPLY) {
       room_admit_message(room, event, json, backfill);
-    } else if (room && room->service->reactions && kind == 7) {
+    } else if (room && room->service->reactions && kind == NOSTR_KIND_REACTION) {
       /* W26 slice B (nostrc-191r): NIP-25 reaction in a NIP-29 group. */
+      g_autoptr(GError) reaction_error = NULL;
       NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
       const gchar *target_id = NULL;
       if (tags) {
@@ -1115,14 +1151,21 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
             gh_reaction_new(target_id, id, nostr_event_get_pubkey(event),
                             emoji, nostr_event_get_created_at(event), room->room_id);
           if (reaction)
-            gh_reaction_store_admit(room->service->reactions, reaction, NULL);
+            gh_reaction_store_admit(room->service->reactions, reaction, &reaction_error);
         }
       }
-    } else if (room && room->service->reactions && kind == 5) {
+      if (reaction_error) {
+        room->reaction_sync_failed = TRUE;
+        g_message("Groundhog could not store a group reaction: %s", reaction_error->message);
+      } else {
+        room_advance_reaction_cursor(room, nostr_event_get_created_at(event), backfill);
+      }
+    } else if (room && room->service->reactions && kind == NOSTR_KIND_DELETION) {
       /* W26 slice B: NIP-25 deletion in a NIP-29 group.
        * W26 slice B review fix (F3): only the reaction's author may delete
        * it (NIP-09). The event's pubkey is the deletion sender. */
       const gchar *deletion_sender = nostr_event_get_pubkey(event);
+      g_autoptr(GError) deletion_error = NULL;
       NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
       if (tags && deletion_sender) {
         for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
@@ -1130,9 +1173,18 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
           if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag)) {
             const gchar *rid = nostr_tag_get_value(tag);
             gh_reaction_store_delete_event(room->service->reactions, rid,
-                                           deletion_sender, room->room_id, NULL);
+                                           deletion_sender, room->room_id, &deletion_error);
+            if (deletion_error)
+              break;
           }
         }
+      }
+      if (deletion_error) {
+        room->reaction_sync_failed = TRUE;
+        g_message("Groundhog could not store a group reaction deletion: %s",
+                  deletion_error->message);
+      } else {
+        room_advance_reaction_cursor(room, nostr_event_get_created_at(event), backfill);
       }
     } else if (room && (kind == NOSTR_KIND_SIMPLE_GROUP_ADD_USER ||
                         kind == NOSTR_KIND_SIMPLE_GROUP_REMOVE_USER ||
@@ -1195,10 +1247,16 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
        * -- so the next REQ asks for that stretch again. */
       if (update->incomplete) {
         room->sync_failed = TRUE;
+        room->reaction_sync_failed = TRUE;
         g_message("Groundhog could not fetch every older message of a group; its read "
                   "cursor stays where it was");
-      } else if (!room->sync_failed && room->sync_cursor > room->cursor)
-        room->cursor = room->sync_cursor;
+      } else {
+        if (!room->sync_failed && room->sync_cursor > room->cursor)
+          room->cursor = room->sync_cursor;
+        if (self->reactions && !room->reaction_sync_failed)
+          room->reaction_cursor = MAX(room->reaction_cursor,
+            MAX(room->reaction_sync_cursor, now_unix(self)));
+      }
       room_save(room);
       break;
     case GH_RELAY_NOTICE_CLOSED:
@@ -1549,6 +1607,7 @@ room_restore(GhNip29Service *self, const GhStoreNip29Group *stored)
                                                                             "create_meta", NULL));
     room->detail = g_strdup(json_object_get_string_member_with_default(record, "detail", NULL));
     room->cursor = json_object_get_int_member_with_default(record, "cursor", 0);
+    room->reaction_cursor = json_object_get_int_member_with_default(record, "reaction_cursor", 0);
     room->backfilled = json_object_get_boolean_member_with_default(record, "backfilled", FALSE);
     room->joined_at = json_object_get_int_member_with_default(record, "joined_at", 0);
     JsonArray *timeline = json_object_has_member(record, "timeline")
