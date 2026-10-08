@@ -722,12 +722,16 @@ test_sidebar_spacing(Fixture *f, gconstpointer data)
   present(f, 900, 600);
   spin_until(has_rows, f);
   GtkWidget *list = GTK_WIDGET(gh_sidebar_page_get_list(f->sidebar));
-  g_assert_cmpint(gtk_widget_get_margin_start(list), ==, 12);
-  g_assert_cmpint(gtk_widget_get_margin_end(list), ==, 12);
-  g_assert_cmpint(gtk_widget_get_margin_top(list), ==, 12);
-  g_assert_cmpint(gtk_widget_get_margin_bottom(list), ==, 12);
+  /* No frame around the navigation list; rows supply the same 6px edge
+   * spacing as the Message Requests button. */
+  g_assert_cmpint(gtk_widget_get_margin_start(list), ==, 0);
+  g_assert_cmpint(gtk_widget_get_margin_end(list), ==, 0);
+  g_assert_cmpint(gtk_widget_get_margin_top(list), ==, 0);
+  g_assert_cmpint(gtk_widget_get_margin_bottom(list), ==, 0);
   g_assert_true(gtk_list_view_get_show_separators(GTK_LIST_VIEW(list)));
   GtkWidget *row = GTK_WIDGET(row_for(f->sidebar, f->ab));
+  g_assert_cmpint(gtk_widget_get_margin_start(row), ==, 6);
+  g_assert_cmpint(gtk_widget_get_margin_end(row), ==, 6);
   g_assert_cmpint(gtk_widget_get_margin_top(row), ==, 6);
   g_assert_cmpint(gtk_widget_get_margin_bottom(row), ==, 6);
   gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));

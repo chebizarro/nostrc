@@ -28,6 +28,7 @@
 #include "gh-timeline-row.h"
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
+#include "gh-reaction-store.h"
 
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -2252,6 +2253,50 @@ test_screenshots(void)
   g_log_set_always_fatal(fatal);
 }
 
+/* The reaction controls stay on the meta line and follow the bubble edge,
+ * even when a reacted message is not the last one in its run. */
+static void
+test_reaction_meta_layout(void)
+{
+  const guint to[] = { 2, 0 };
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+  for (guint author = 1; author <= 2; author++) {
+    g_autoptr(GhMessage) message = rumor(author, author == 1 ? to : (const guint[]){ 1, 0 },
+                                         now_seconds(), "reacted message", NULL);
+    GhMessageRow *row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
+    gh_message_row_set_message(row, message);
+    gh_message_row_set_run(row, TRUE, FALSE);
+    GtkWidget *meta = row_child(row, "meta_box");
+    GtkWidget *controls = row_child(row, "reaction_controls");
+    GtkWidget *bar = row_child(row, "reaction_bar");
+    GtkWidget *button = row_child(row, "react_button");
+    g_assert_false(gtk_widget_get_visible(meta));
+    g_autofree gchar *reaction_id = g_strdup_printf("reaction-%u", author);
+    g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(message),
+      reaction_id, hex[2], "👍", now_seconds(), gh_message_get_room_id(message));
+    g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
+    gh_message_row_set_reaction_summary(row,
+      gh_reaction_store_lookup(reactions, gh_message_get_rumor_id(message)));
+    g_assert_true(gtk_widget_get_visible(meta));
+    g_assert_true(gtk_widget_get_visible(bar));
+    if (author == 1) {
+      g_assert_true(gtk_widget_get_last_child(meta) == controls);
+      g_assert_true(gtk_widget_get_first_child(controls) == button);
+      g_assert_true(gtk_widget_get_last_child(controls) == bar);
+      g_assert_cmpint(gtk_widget_get_margin_end(meta), ==, 38);
+    } else {
+      g_assert_true(gtk_widget_get_first_child(meta) == controls);
+      g_assert_true(gtk_widget_get_first_child(controls) == bar);
+      g_assert_true(gtk_widget_get_last_child(controls) == button);
+      g_assert_cmpint(gtk_widget_get_margin_start(meta), ==, 38);
+    }
+    g_assert_true(gh_reaction_store_remove(reactions, reaction_id, NULL));
+    g_assert_false(gtk_widget_get_visible(meta));
+    g_object_unref(row);
+  }
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2298,6 +2343,7 @@ main(int argc, char **argv)
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
   ADD("open-timing", test_open_timing);
 #undef ADD
+  g_test_add_func("/groundhog/conversation-view/reaction-meta-layout", test_reaction_meta_layout);
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);
   g_test_add_func("/groundhog/conversation-view/screenshots", test_screenshots);
   int status = g_test_run();

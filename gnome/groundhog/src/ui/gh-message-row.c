@@ -39,6 +39,7 @@ struct _GhMessageRow {
   GPtrArray *extra_cards;   /* an encrypted group message's files 1.. (W25) */
   GtkBox *poll_slot;
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
+  GtkBox *reaction_controls;
   GhReactionBar *reaction_bar;
   GtkButton *react_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
@@ -326,9 +327,12 @@ update_meta(GhMessageRow *self)
                                                        : GH_MESSAGE_STATUS_NONE;
   gboolean expiring = gh_message_get_expires_at(message) > 0;
   gboolean noteworthy = status != GH_MESSAGE_STATUS_NONE && status != GH_MESSAGE_STATUS_SENT;
-  gboolean legacy = message && gh_message_get_legacy_nip04(message);
+  gboolean legacy = gh_message_get_legacy_nip04(message);
+  GhReactionSummary *summary = gh_reaction_bar_get_summary(self->reaction_bar);
+  gboolean reacted = summary && gh_reaction_summary_get_total_count(summary) > 0;
   gtk_widget_set_visible(self->legacy_box, legacy);
-  gtk_widget_set_visible(GTK_WIDGET(self->meta_box), self->run_end || expiring || noteworthy || legacy);
+  gtk_widget_set_visible(GTK_WIDGET(self->meta_box),
+                         self->run_end || expiring || noteworthy || legacy || reacted);
   /* W17: a room message that reached only some people can be tried again
    * for the others (the same stored wraps; those who have it are skipped). */
   gboolean partial = status == GH_MESSAGE_STATUS_PARTIALLY_SENT;
@@ -338,6 +342,14 @@ update_meta(GhMessageRow *self)
                               partial ? _("Send this message again to the people who don't "
                                           "have it yet")
                                       : _("Send this message again"));
+}
+
+static void
+on_reaction_total_changed(GObject *summary, GParamSpec *pspec, GhMessageRow *self)
+{
+  (void)summary;
+  (void)pspec;
+  update_meta(self);
 }
 
 static void
@@ -516,8 +528,8 @@ update_all(GhMessageRow *self)
    * avatar (32px and 6px of spacing). */
   const gint inset = 38;
   GtkWidget *under[] = { GTK_WIDGET(self->meta_box), GTK_WIDGET(self->preview_box),
-                         GTK_WIDGET(self->web_box), GTK_WIDGET(self->reaction_bar),
-                         GTK_WIDGET(self->sender_label), GTK_WIDGET(self->reply_button) };
+                         GTK_WIDGET(self->web_box), GTK_WIDGET(self->sender_label),
+                         GTK_WIDGET(self->reply_button) };
   for (guint u = 0; u < G_N_ELEMENTS(under); u++) {
     gtk_widget_set_margin_start(under[u], outgoing ? 0 : inset);
     gtk_widget_set_margin_end(under[u], outgoing ? inset : 0);
@@ -530,14 +542,18 @@ update_all(GhMessageRow *self)
   update_avatar(self);
   gtk_widget_set_halign(GTK_WIDGET(self->preview_box), align);
   gtk_widget_set_halign(GTK_WIDGET(self->meta_box), align);
-  /* Reactions sit under the bubble on its side; the react button is the
-   * meta row's innermost item (towards the middle of the view). */
-  gtk_widget_set_halign(GTK_WIDGET(self->reaction_bar), align);
-  if (outgoing)
-    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->react_button), NULL);
-  else
-    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->react_button),
-                                gtk_widget_get_last_child(GTK_WIDGET(self->meta_box)));
+  /* The controls stay together on the meta line. Incoming: chips, React,
+   * then status. Outgoing: status, React, chips; chips end at the bubble. */
+  if (outgoing) {
+    gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->react_button), NULL);
+    GtkWidget *last = gtk_widget_get_last_child(GTK_WIDGET(self->meta_box));
+    if (last != GTK_WIDGET(self->reaction_controls))
+      gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), last);
+  } else {
+    gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->react_button),
+                                GTK_WIDGET(self->reaction_bar));
+    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), NULL);
+  }
 
   g_clear_pointer(&self->preview_uri, g_free);
 
@@ -890,7 +906,16 @@ void
 gh_message_row_set_reaction_summary(GhMessageRow *self, GhReactionSummary *summary)
 {
   g_return_if_fail(GH_IS_MESSAGE_ROW(self));
-  gh_reaction_bar_set_summary(self->reaction_bar, summary);
+  GhReactionSummary *old = gh_reaction_bar_get_summary(self->reaction_bar);
+  if (old != summary) {
+    if (old)
+      g_signal_handlers_disconnect_by_func(old, G_CALLBACK(on_reaction_total_changed), self);
+    gh_reaction_bar_set_summary(self->reaction_bar, summary);
+    if (summary)
+      g_signal_connect_object(summary, "notify::total-count",
+                              G_CALLBACK(on_reaction_total_changed), self, 0);
+  }
+  update_meta(self);
 }
 
 static void
@@ -1054,6 +1079,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reply_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_controls);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_bar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
