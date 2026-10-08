@@ -124,7 +124,7 @@ gh_reaction_bar_measure(GtkWidget *widget, GtkOrientation orientation, int for_s
   }
   if (chips > 1)
     line += (int)(chips - 1) * (int)gtk_flow_box_get_column_spacing(self->flow);
-  *natural = MAX(*minimum, MIN(*natural, line));
+  *natural = MAX(*minimum, line);
 }
 
 static void
@@ -183,7 +183,7 @@ gh_reaction_bar_init(GhReactionBar *self)
   gtk_flow_box_set_max_children_per_line(self->flow, 20);
   gtk_flow_box_set_column_spacing(self->flow, 4);
   gtk_flow_box_set_row_spacing(self->flow, 2);
-  gtk_widget_set_halign(GTK_WIDGET(self->flow), GTK_ALIGN_START);
+  gtk_widget_set_halign(GTK_WIDGET(self->flow), GTK_ALIGN_FILL);
   gtk_widget_set_parent(GTK_WIDGET(self->flow), GTK_WIDGET(self));
   gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
 }

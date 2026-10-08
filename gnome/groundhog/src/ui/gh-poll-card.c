@@ -191,8 +191,12 @@ rebuild_options(GhPollCard *self)
   for (guint i = 0; i < n_options; i++) {
     const GhMlsPollTally *tally = gh_mls_poll_get_option(self->poll, i);
     GtkWidget *option = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    GtkCheckButton *check = GTK_CHECK_BUTTON(gtk_check_button_new_with_label(tally->label));
-    if (gh_mls_poll_get_poll_type(self->poll) == GH_MLS_POLL_SINGLE_CHOICE) {
+    gboolean single_choice = gh_mls_poll_get_poll_type(self->poll) == GH_MLS_POLL_SINGLE_CHOICE;
+    GtkCheckButton *check = single_choice
+      ? g_object_new(GTK_TYPE_CHECK_BUTTON, "accessible-role", GTK_ACCESSIBLE_ROLE_RADIO,
+                     "label", tally->label, NULL)
+      : GTK_CHECK_BUTTON(gtk_check_button_new_with_label(tally->label));
+    if (single_choice) {
       if (radio_group)
         gtk_check_button_set_group(check, radio_group);
       else
