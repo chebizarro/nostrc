@@ -1027,7 +1027,10 @@ gh_nip46_session_call_finish(GhNip46Session *self, GAsyncResult *result,
 static gboolean
 pair_timeout(gpointer data)
 {
-  GhNip46Session *self = data;
+  /* Returning the pairing task runs the caller's callback, which may drop
+   * the last reference to this session (the task held one): keep self
+   * alive until gh_nip46_session_cancel() below has run. */
+  g_autoptr(GhNip46Session) self = g_object_ref(data);
   self->pair_timer = 0;
   if (self->pair_task) {
     GTask *task = g_steal_pointer(&self->pair_task);

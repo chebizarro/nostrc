@@ -669,6 +669,38 @@ test_pair_timeout(void)
   bunker_clear(&bunker);
 }
 
+/* The pairing dialog's pattern: the owner keeps no reference of its own, so
+ * when the deadline fires the pairing task holds the last one. pair_timeout
+ * must not touch the session after returning the task (alpha 5 crash). */
+static void
+test_pair_timeout_last_ref(void)
+{
+  TestBunker bunker;
+  bunker_init(&bunker, CLIENT_SECRET);
+  g_autoptr(GError) error = NULL;
+  gchar *uri = NULL;
+  GhNip46Session *session = gh_nip46_session_new_qr(relays,
+    &bunker_scope_transport, NULL, &bunker_publish_transport, NULL,
+    &bunker, &uri, &error);
+  g_assert_no_error(error);
+  g_free(bunker.client_pubkey);
+  bunker.client_pubkey = g_strdup(gh_nip46_session_get_client_pubkey(session));
+  gh_nip46_session_set_test_deadlines(session, 1, 1, 2, 1);
+  Await wait = { 0 };
+  gh_nip46_session_pair_async(session, NULL, pair_done, &wait);
+  GWeakRef weak;
+  g_weak_ref_init(&weak, session);
+  g_object_unref(session); /* the task's reference is now the only one */
+  until(await_done, &wait);
+  g_assert_error(wait.error, GH_NIP46_SESSION_ERROR,
+                 GH_NIP46_SESSION_ERROR_TIMED_OUT);
+  g_assert_null(g_weak_ref_get(&weak));
+  g_weak_ref_clear(&weak);
+  g_clear_error(&wait.error);
+  g_free(uri);
+  bunker_clear(&bunker);
+}
+
 static void
 test_interactive_priority(void)
 {
@@ -720,5 +752,6 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip46/approval-timeout", test_approval_timeout);
   g_test_add_func("/groundhog/nip46/remote-error-classes", test_remote_error_classes);
   g_test_add_func("/groundhog/nip46/pair-timeout", test_pair_timeout);
+  g_test_add_func("/groundhog/nip46/pair-timeout-last-ref", test_pair_timeout_last_ref);
   return g_test_run();
 }
