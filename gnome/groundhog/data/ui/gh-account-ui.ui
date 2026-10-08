@@ -102,6 +102,14 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <attribute name="target"></attribute>
         </item>
         <item>
+          <attribute name="label" translatable="yes">Add Remote Signer…</attribute>
+          <attribute name="action">account.add-remote</attribute>
+        </item>
+        <item>
+          <attribute name="label" translatable="yes">Remove Remote Signer…</attribute>
+          <attribute name="action">account.remove-remote</attribute>
+        </item>
+        <item>
           <attribute name="label" translatable="yes">_Refresh Accounts</attribute>
           <attribute name="action">account.refresh</attribute>
         </item>

@@ -150,6 +150,18 @@ UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggesti
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
+    # WI-5: Amber's four documented signer-control relay defaults are shown
+    # in the editable pairing dialog before any connection. Only the user's
+    # Add Remote Signer action starts a fresh pairing listener; these are not
+    # message, discovery, or account AUTH relays.
+    ("url-literal", "src/ui/gh-nip46-pair-dialog.c", "wss://auth.nostr1.com"):
+        "Amber signer-control default; initial contact follows the user's Add Remote Signer action, and later attempts use the editable relay list",
+    ("url-literal", "src/ui/gh-nip46-pair-dialog.c", "wss://bucket.coracle.social"):
+        "Amber signer-control default; initial contact follows the user's Add Remote Signer action, and later attempts use the editable relay list",
+    ("url-literal", "src/ui/gh-nip46-pair-dialog.c", "wss://nrs.primal.net"):
+        "Amber signer-control default; initial contact follows the user's Add Remote Signer action, and later attempts use the editable relay list",
+    ("url-literal", "src/ui/gh-nip46-pair-dialog.c", "wss://relay.nip46.com"):
+        "Amber signer-control default; initial contact follows the user's Add Remote Signer action, and later attempts use the editable relay list",
     # The About dialog's project links: build-time constants shown as text in
     # AdwAboutDialog, opened in the browser only when the user activates one
     # (a user action, P1); Groundhog itself never fetches them.

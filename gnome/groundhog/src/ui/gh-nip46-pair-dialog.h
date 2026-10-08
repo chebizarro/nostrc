@@ -1,0 +1,38 @@
+#ifndef GH_NIP46_PAIR_DIALOG_H
+#define GH_NIP46_PAIR_DIALOG_H
+
+#include <adwaita.h>
+#include "gh-account-controller.h"
+#include "gh-nip46-session.h"
+
+G_BEGIN_DECLS
+
+#define GH_TYPE_NIP46_PAIR_DIALOG (gh_nip46_pair_dialog_get_type())
+G_DECLARE_FINAL_TYPE(GhNip46PairDialog, gh_nip46_pair_dialog, GH, NIP46_PAIR_DIALOG, AdwDialog)
+
+/* The dialog owns an attempt session and its cancellable. The store may be
+ * NULL to use the platform's default Secret Service or Keychain. Optional
+ * transports are for deterministic UI tests. */
+typedef const gchar *(*GhNip46PairNameFunc)(gpointer source, const gchar *pubkey_hex);
+
+typedef struct {
+  GhAccountController *accounts;
+  GSettings *settings;
+  GhNip46CredentialStore *credentials;
+  GhNip46PairNameFunc display_name; /* nullable cached kind-0 name */
+  GObject *name_source;             /* required when display_name is set */
+  const GhRelayTransport *scope_transport;
+  const GhRelayAuthTransport *scope_auth;
+  const GhRelayPublishTransport *publish_transport;
+  const GhRelayPublishAuthTransport *publish_auth;
+  gpointer transport_data;
+} GhNip46PairConfig;
+
+/* Emits "confirmation-presented" with the AdwAlertDialog after the remote
+ * account key is verified and before any credential is stored. */
+GhNip46PairDialog *gh_nip46_pair_dialog_new(const GhNip46PairConfig *config);
+/* For UI tests: never returns the sensitive URI or the transport secret. */
+gboolean gh_nip46_pair_dialog_qr_is_visible(GhNip46PairDialog *self);
+
+G_END_DECLS
+#endif

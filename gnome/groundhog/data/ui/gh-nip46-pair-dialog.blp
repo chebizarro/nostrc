@@ -1,0 +1,153 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GhNip46PairDialog: Adw.Dialog {
+  title: _("Add Remote Signer");
+  content-width: 460;
+  content-height: 610;
+
+  child: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: ScrolledWindow {
+      hscrollbar-policy: never;
+      child: Adw.Clamp {
+        maximum-size: 540;
+        child: Box {
+          orientation: vertical;
+          spacing: 12;
+          margin-top: 18;
+          margin-bottom: 18;
+          margin-start: 18;
+          margin-end: 18;
+
+          Label {
+            label: _("Use a signer on your phone or a bunker. Your private account key stays with the signer.");
+            wrap: true;
+            xalign: 0;
+          }
+
+          StackSwitcher mode_switcher {
+            stack: mode_stack;
+            halign: center;
+          }
+
+          Stack mode_stack {
+            transition-type: crossfade;
+            StackPage {
+              name: "qr";
+              title: _("Scan with Your Signer");
+              child: Box {
+                orientation: vertical;
+                spacing: 12;
+
+                Label qr_status {
+                  label: _("Connecting to pairing relays…");
+                  wrap: true;
+                }
+
+                Picture qr_picture {
+                  visible: false;
+                  can-shrink: true;
+                  halign: center;
+                  width-request: 280;
+                  height-request: 280;
+                  accessibility {
+                    label: _("Pairing QR code");
+                  }
+                }
+
+                Adw.PreferencesGroup {
+                  Adw.EntryRow uri_row {
+                    title: _("Pairing Link");
+                    editable: false;
+                  }
+                }
+
+                Button copy_button {
+                  label: _("Copy Pairing Link");
+                  halign: center;
+                }
+
+                Label {
+                  label: _("Anyone with this link can try to pair while it is active. The clipboard may retain it after pairing.");
+                  wrap: true;
+                  xalign: 0;
+                  styles ["dim-label", "caption"]
+                }
+
+                Adw.PreferencesGroup {
+                  Adw.ExpanderRow relay_expander {
+                    title: _("Pairing Relays");
+                    subtitle: _("These relays learn when you pair and may see your IP address unless you use Tor. They are separate from your message relays.");
+                    Adw.EntryRow relay_row {
+                      title: _("Relay URLs, separated by commas");
+                    }
+                  }
+                }
+
+                Button regenerate_button {
+                  label: _("Regenerate Pairing Link");
+                  halign: center;
+                }
+              };
+            }
+
+            StackPage {
+              name: "bunker";
+              title: _("Paste a Bunker Link");
+              child: Box {
+                orientation: vertical;
+                spacing: 12;
+
+                Label {
+                  label: _("Paste the bunker:// link supplied by your signer. A link's authorization token can be used only once.");
+                  wrap: true;
+                  xalign: 0;
+                }
+
+                Adw.PreferencesGroup {
+                  Adw.EntryRow bunker_row {
+                    title: _("Bunker Link");
+                  }
+                }
+
+                Button paste_button {
+                  label: _("Paste from Clipboard");
+                  halign: center;
+                }
+
+                Label bunker_details {
+                  visible: false;
+                  selectable: true;
+                  wrap: true;
+                  xalign: 0;
+                }
+
+                Button connect_button {
+                  label: _("Connect");
+                  halign: center;
+                  styles ["pill", "suggested-action"]
+                }
+              };
+            }
+          }
+
+          Label error_label {
+            visible: false;
+            wrap: true;
+            xalign: 0;
+            styles ["error"]
+          }
+
+          Button cancel_button {
+            label: _("Cancel");
+            halign: center;
+            styles ["flat"]
+          }
+        };
+      };
+    };
+  };
+}

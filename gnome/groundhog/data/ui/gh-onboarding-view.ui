@@ -214,6 +214,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                           </object>
                                         </child>
                                         <child>
+                                          <object class="GtkButton" id="account_add_remote">
+                                            <property name="label" translatable="yes">Add Remote Signer…</property>
+                                            <property name="halign">3</property>
+                                            <property name="action-name">onboarding.add-remote-signer</property>
+                                            <style>
+                                              <class name="pill"/>
+                                            </style>
+                                          </object>
+                                        </child>
+                                        <child>
                                           <object class="GtkLabel">
                                             <property name="label" translatable="yes">Choosing an account here doesn't change the account Gnostr uses.</property>
                                             <property name="wrap">true</property>

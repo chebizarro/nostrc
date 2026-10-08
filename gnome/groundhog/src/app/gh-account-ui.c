@@ -1,5 +1,8 @@
 #include "gh-account-ui.h"
 #include "gh-identity.h"
+#include "gh-nip46-pair-dialog.h"
+
+#include <glib/gi18n.h>
 
 #include <string.h>
 
@@ -37,6 +40,8 @@ typedef struct {
   GtkWidget *focus_targets[G_N_ELEMENTS(account_pages)];
   GMenu *identities_menu;
   GSimpleAction *select;
+  GSimpleAction *remove_remote;
+  GhNip46CredentialStore *credentials;
   GhAccountNameFunc name;  /* nullable: the account's own kind-0 name */
   GObject *names;          /* weak: the source behind name */
   /* The previously shown account page ("" for the conversation pages), so
@@ -59,6 +64,8 @@ account_ui_free(gpointer data)
   g_clear_object(&ui->settings);
   g_clear_object(&ui->identities_menu);
   g_clear_object(&ui->select);
+  g_clear_object(&ui->remove_remote);
+  g_clear_object(&ui->credentials);
   g_clear_handle_id(&ui->focus_idle, g_source_remove);
   g_free(ui->last_page);
   g_free(ui);
@@ -67,7 +74,7 @@ account_ui_free(gpointer data)
 static gchar *
 identity_title(const GhIdentityInfo *info)
 {
-  if (info->label && *info->label)
+  if (info->backend != GH_SIGNER_BACKEND_NIP46 && info->label && *info->label)
     return g_strdup(info->label);
   gsize len = strlen(info->npub);
   return len > 16 ? g_strdup_printf("%.10s…%s", info->npub, info->npub + len - 6)
@@ -258,6 +265,8 @@ update(GhAccountUi *ui)
   g_autofree gchar *selected_target = *current && g_strcmp0(current_backend, "nip46") == 0 ?
     g_strdup_printf("nip46:%s", current) : g_strdup(current);
   g_simple_action_set_state(ui->select, g_variant_new_string(selected_target));
+  g_simple_action_set_enabled(ui->remove_remote,
+    *current && g_strcmp0(current_backend, "nip46") == 0);
   /* The active account names the sidebar, without a subtitle: the app's
    * name is the window's own, and a title over a subtitle is cut short in a
    * narrow sidebar header (nostrc-qp24.70). No account: "Groundhog". */
@@ -305,6 +314,79 @@ on_refresh(GSimpleAction *action, GVariant *value, gpointer data)
   gh_account_controller_refresh(ui->controller);
 }
 
+static void
+on_add_remote(GSimpleAction *action, GVariant *value, gpointer data)
+{
+  (void)action; (void)value;
+  GhAccountUi *ui = data;
+  GhNip46PairConfig config = { .accounts = ui->controller,
+    .settings = ui->settings, .credentials = ui->credentials,
+    .display_name = ui->name, .name_source = ui->names };
+  GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
+  adw_dialog_present(ADW_DIALOG(dialog), ui->window);
+}
+
+static void
+remove_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  GhWindow *window = data;
+  GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
+  g_autoptr(GError) error = NULL;
+  gboolean removed = gh_nip46_credential_store_delete_finish(
+    GH_NIP46_CREDENTIAL_STORE(source), result, &error);
+  if (ui) {
+    if (removed) {
+      gh_account_controller_refresh(ui->controller);
+      adw_toast_overlay_add_toast(ui->toasts,
+        adw_toast_new(_("Remote signer removed. Stored messages were kept.")));
+    } else {
+      adw_toast_overlay_add_toast(ui->toasts, adw_toast_new(error ? error->message :
+        _("Could not remove the remote signer.")));
+    }
+  }
+  g_object_unref(window);
+}
+
+static void
+on_remove_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
+{
+  (void)alert;
+  if (!g_str_equal(response, "remove")) return;
+  GhWindow *window = data;
+  GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
+  if (!ui) return;
+  g_autofree gchar *backend = g_settings_get_string(ui->settings, "current-backend");
+  g_autofree gchar *npub = g_settings_get_string(ui->settings, "current-npub");
+  if (!g_str_equal(backend, "nip46") || !*npub) return;
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub);
+  g_autoptr(GError) error = NULL;
+  if (!pubkey || !gh_account_controller_select_backend(ui->controller,
+      GH_SIGNER_BACKEND_GROTTO, "", &error)) {
+    adw_toast_overlay_add_toast(ui->toasts, adw_toast_new(error ? error->message :
+      _("Could not deselect the remote signer.")));
+    return;
+  }
+  gh_nip46_credential_store_delete_async(ui->credentials, pubkey, TRUE, NULL,
+                                          remove_done, g_object_ref(window));
+}
+
+static void
+on_remove_remote(GSimpleAction *action, GVariant *value, gpointer data)
+{
+  (void)action; (void)value;
+  GhAccountUi *ui = data;
+  AdwDialog *dialog = adw_alert_dialog_new(_("Remove Remote Signer?"),
+    _("Groundhog will forget this signer's connection. Your encrypted messages and their storage key will remain. You may also need to revoke Groundhog in the signer app."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "cancel", _("Cancel"),
+                                 "remove", _("Remove Remote Signer"), NULL);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "cancel");
+  adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(dialog), "remove",
+                                           ADW_RESPONSE_DESTRUCTIVE);
+  g_signal_connect_object(dialog, "response", G_CALLBACK(on_remove_response), ui->window, 0);
+  adw_dialog_present(dialog, ui->window);
+}
+
 void
 gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSettings *settings)
 {
@@ -320,6 +402,7 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
   ui->title = gh_sidebar_page_get_window_title(sidebar);
   ui->stack = gh_sidebar_page_get_stack(sidebar);
   ui->toasts = gh_window_get_toasts(window);
+  ui->credentials = gh_nip46_credential_store_new();
   g_object_set_data_full(G_OBJECT(window), "groundhog-account-ui", ui, account_ui_free);
 
   for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++) {
@@ -348,6 +431,12 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
   g_autoptr(GSimpleAction) refresh = g_simple_action_new("refresh", NULL);
   g_signal_connect(refresh, "activate", G_CALLBACK(on_refresh), ui);
   g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(refresh));
+  g_autoptr(GSimpleAction) add_remote = g_simple_action_new("add-remote", NULL);
+  g_signal_connect(add_remote, "activate", G_CALLBACK(on_add_remote), ui);
+  g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(add_remote));
+  ui->remove_remote = g_simple_action_new("remove-remote", NULL);
+  g_signal_connect(ui->remove_remote, "activate", G_CALLBACK(on_remove_remote), ui);
+  g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(ui->remove_remote));
   gtk_widget_insert_action_group(GTK_WIDGET(window), "account", G_ACTION_GROUP(group));
 
   g_signal_connect_object(controller, "changed", G_CALLBACK(on_window_state_source),
