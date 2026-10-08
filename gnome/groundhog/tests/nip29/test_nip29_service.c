@@ -1380,6 +1380,50 @@ test_outbox_resumes_after_restart(void)
   nip29_relay_clear(&relay);
 }
 
+/* A newly joined group must page its first read, not just cursor-based
+ * reconnects. The relay answers newest first and caps each REQ at 25. */
+static void
+test_first_read_history_paged_and_persisted(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "first-read", "History");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  for (guint i = 0; i < 120; i++) {
+    g_autofree gchar *text = g_strdup_printf("first-read %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay),
+                                       "first-read", text));
+  }
+  relay.max_limit = 25;
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "first-read", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_messages(f.model, room_id, 120);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  guint paged = 0;
+  for (guint i = 0; i < relay.req_frames->len; i++)
+    paged += strstr(g_ptr_array_index(relay.req_frames, i), "\"until\":") != NULL;
+  g_assert_cmpuint(paged, >=, 4);
+
+  restart(&f);
+  GhConversation *conversation = gh_conversation_store_lookup(f.model, room_id);
+  g_assert_nonnull(conversation);
+  g_autoptr(GError) error = NULL;
+  while (gh_conversation_get_has_older(conversation)) {
+    guint loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 120);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 /* nostrc-cpwf (nostrc-x055): a relay that caps every REQ's stored answer (at
  * 25 here; strfry at 500) and answers newest first. Back after 120 messages,
  * the room's backfill is paged backwards with until, per filter, while the
@@ -1557,8 +1601,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/restart-restores", test_restart_restores);
   g_test_add_func("/groundhog/nip29-service/outbox-resumes", test_outbox_resumes_after_restart);
   g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
+  g_test_add_func("/groundhog/nip29-service/first-read-history-paged-and-persisted",
+                   test_first_read_history_paged_and_persisted);
   g_test_add_func("/groundhog/nip29-service/backfill-paged-past-relay-cap",
-                  test_backfill_paged_past_relay_cap);
+                   test_backfill_paged_past_relay_cap);
   g_test_add_func("/groundhog/nip29-service/incomplete-backfill-holds-cursor",
                   test_incomplete_backfill_holds_cursor);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);

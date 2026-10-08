@@ -669,6 +669,8 @@ struct _GhConversationView {
   guint pin_idle;
   OpenScroll open_scroll;
   guint open_idle;
+  guint older_scroll_idle;
+  gboolean scroll_to_older;
   guint open_target;     /* the first unread message's position */
   guint new_below;
   gboolean loading_older;
@@ -833,13 +835,21 @@ update_older(GhConversationView *self)
 }
 
 static void
-request_older(GhConversationView *self)
+request_older(GhConversationView *self, gboolean from_button)
 {
   if (!self->conversation || !self->load_older || self->loading_older ||
       !gh_conversation_get_has_older(self->conversation))
     return;
   self->loading_older = TRUE;
   self->older_failed = FALSE;
+  self->scroll_to_older = from_button;
+  if (from_button) {
+    /* A click is a navigation request, not a request to keep the newest row
+     * pinned while the prepended page changes the list's adjustment. */
+    self->pin_pending = FALSE;
+    g_clear_handle_id(&self->pin_idle, g_source_remove);
+    set_sticky(self, FALSE);
+  }
   gtk_widget_set_visible(self->loading_box, TRUE);
   update_older(self);
   self->load_older(self, self->conversation, self->load_older_data);
@@ -855,7 +865,19 @@ maybe_load_older(GhConversationView *self)
   gdouble page = gtk_adjustment_get_page_size(adj);
   if (page <= 0 || gtk_adjustment_get_value(adj) > page / 2)
     return;
-  request_older(self);
+  request_older(self, FALSE);
+}
+
+static gboolean
+scroll_to_loaded_older(gpointer data)
+{
+  GhConversationView *self = data;
+  self->older_scroll_idle = 0;
+  if (self->conversation && n_visible(self) > 0) {
+    gtk_list_view_scroll_to(self->message_list, 0, GTK_LIST_SCROLL_NONE, NULL);
+    gtk_adjustment_set_value(vadjustment(self), 0);
+  }
+  return G_SOURCE_REMOVE;
 }
 
 static gboolean
@@ -1151,7 +1173,9 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   g_clear_handle_id(&self->midnight_source, g_source_remove);
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
+  g_clear_handle_id(&self->older_scroll_idle, g_source_remove);
   self->pin_pending = FALSE;
+  self->scroll_to_older = FALSE;
   cancel_previews(self);
   close_dialog(ADW_DIALOG(self->link_dialog));
   close_dialog(ADW_DIALOG(self->preview_dialog));
@@ -1250,6 +1274,10 @@ gh_conversation_view_finish_loading_older(GhConversationView *self)
   self->loading_older = FALSE;
   gtk_widget_set_visible(self->loading_box, FALSE);
   update_older(self);
+  if (self->scroll_to_older && !self->older_scroll_idle)
+    self->older_scroll_idle = g_idle_add_full(G_PRIORITY_HIGH_IDLE, scroll_to_loaded_older,
+                                              self, NULL);
+  self->scroll_to_older = FALSE;
 }
 
 void
@@ -1259,6 +1287,7 @@ gh_conversation_view_fail_loading_older(GhConversationView *self)
   if (!self->loading_older)
     return;
   self->loading_older = FALSE;
+  self->scroll_to_older = FALSE;
   self->older_failed = TRUE;
   gtk_widget_set_visible(self->loading_box, FALSE);
   update_older(self);
@@ -2080,7 +2109,7 @@ action_load_older(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  request_older(GH_CONVERSATION_VIEW(widget));
+  request_older(GH_CONVERSATION_VIEW(widget), TRUE);
 }
 
 /* ---- widget ------------------------------------------------------------------------------ */
@@ -2275,6 +2304,7 @@ gh_conversation_view_dispose(GObject *object)
   g_clear_object(&self->cancellable);
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
+  g_clear_handle_id(&self->older_scroll_idle, g_source_remove);
   g_clear_handle_id(&self->midnight_source, g_source_remove);
   gh_conversation_view_set_history_loader(self, NULL, NULL, NULL);
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);

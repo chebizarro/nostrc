@@ -1776,6 +1776,53 @@ test_load_older(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->loads, ==, 1);
 }
 
+static gboolean
+at_history_top(gpointer data)
+{
+  GhConversationView *view = data;
+  GtkAdjustment *adj = vadjustment(view);
+  return gtk_adjustment_get_upper(adj) > gtk_adjustment_get_page_size(adj) &&
+         gtk_adjustment_get_value(adj) < 4 && !gh_conversation_view_get_at_latest(view);
+}
+
+static void
+test_earlier_button_scrolls(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  const guint to_a[] = { 1, 0 };
+  g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
+  for (guint i = 0; i < 20; i++) {
+    g_autofree gchar *text = g_strdup_printf("newest %u", i);
+    g_ptr_array_add(newest, rumor(2, to_a, t + i * 60, text, NULL));
+  }
+  for (guint i = 0; i < 10; i++) {
+    g_autofree gchar *text = g_strdup_printf("older %u", i);
+    g_ptr_array_add(older, rumor(2, to_a, t - 3600 + i * 60, text, NULL));
+  }
+  GhMessage *floor = g_ptr_array_index(newest, 0);
+  const gchar *room_id = gh_message_get_room_id(floor);
+  GhConversationState state = {
+    .accepted = TRUE,
+    .has_older = TRUE,
+    .floor_created_at = gh_message_get_created_at(floor),
+    .floor_id = gh_message_get_rumor_id(floor),
+  };
+  GhConversation *conversation = gh_conversation_store_restore(f->store, room_id, newest, &state);
+  show(f, conversation, 480, 300);
+  gh_conversation_view_scroll_to_latest(f->view);
+  spin_until(at_bottom, f->view);
+  gh_conversation_view_set_history_loader(f->view, load_older, f, NULL);
+  click(view_child(f->view, "older_button"));
+  g_assert_cmpuint(f->loads, ==, 1);
+  state.has_older = FALSE;
+  g_assert_true(gh_conversation_store_restore(f->store, room_id, older, &state) == conversation);
+  gh_conversation_view_finish_loading_older(f->view);
+  spin_until(at_history_top, f->view);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 30);
+}
+
 /* ---- earlier messages (W13b review B1) ----------------------------------------------- */
 
 static void
@@ -2332,6 +2379,7 @@ main(int argc, char **argv)
   ADD("scrolling", test_scrolling);
   ADD("opens-at-first-unread", test_opens_at_first_unread);
   ADD("load-older", test_load_older);
+  ADD("earlier-button-scrolls", test_earlier_button_scrolls);
   ADD("earlier-messages", test_earlier_messages);
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);

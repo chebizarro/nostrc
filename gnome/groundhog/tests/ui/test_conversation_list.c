@@ -16,6 +16,7 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include "gh-display-name.h"
 #include "gh-timeline-row.h"
 #include "gh-message-row.h"
 #include "gh-identity.h"
@@ -609,6 +610,46 @@ test_search(Fixture *f, gconstpointer data)
   GhConversation *const all[] = { f->ab, f->ac };
   assert_list(f, all, 2);
   g_assert_cmpstr(gtk_label_get_text(count), ==, "2");
+}
+
+static const gchar *
+search_display_name(const gchar *pubkey, gpointer data)
+{
+  (void)data;
+  return g_strcmp0(pubkey, hex[2]) == 0 ? "Bobby Example" : NULL;
+}
+
+static gboolean
+stored_body_match(const gchar *query, GHashTable **out_rooms, GError **error, gpointer data)
+{
+  Fixture *f = data;
+  (void)error;
+  *out_rooms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (g_ascii_strcasecmp(query, "reply from B") == 0)
+    g_hash_table_add(*out_rooms, g_strdup_printf("%d:%s",
+      gh_conversation_get_backend(f->ab), gh_conversation_get_room_id(f->ab)));
+  return TRUE;
+}
+
+static void
+test_search_stored_bodies(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gh_conversation_list_set_message_search_source(f->window, stored_body_match, f, NULL);
+  gh_display_name_set_resolver(search_display_name, NULL);
+  search(f, "bobby example");
+  GhConversation *const by_name[] = { f->ab };
+  assert_list(f, by_name, 1);
+  search(f, "reply from B");
+  GhConversation *const found[] = { f->ab };
+  assert_list(f, found, 1);
+  search(f, "book CLUB");
+  GhConversation *const by_title[] = { f->ac };
+  assert_list(f, by_title, 1);
+  gh_conversation_list_set_message_search_source(f->window, NULL, NULL, NULL);
+  search(f, "reply from B");
+  assert_list(f, NULL, 0);
+  gh_display_name_set_resolver(NULL, NULL);
 }
 
 /* W29: exercise the editable signal, not the delayed search-changed signal. */
@@ -1358,6 +1399,7 @@ main(int argc, char **argv)
   ADD("requests-are-separate", test_requests_are_separate);
   ADD("request-subject-secondary", test_request_subject_secondary);
   ADD("search", test_search);
+  ADD("search-stored-bodies", test_search_stored_bodies);
   ADD("search-live-scope", test_search_live_scope);
   ADD("search-requests-empty", test_search_requests_empty);
   ADD("search-clear-and-focus", test_search_clear_and_focus);

@@ -2286,6 +2286,51 @@ gh_store_find_conversation(GhStore *store, GhStoreBackend backend,
 }
 
 gboolean
+gh_store_search_message_rooms(GhStore *store, const gchar *query,
+                              GHashTable **out_rooms, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(out_rooms != NULL, FALSE);
+  *out_rooms = NULL;
+  if (!query || !g_utf8_validate(query, -1, NULL)) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "Search text must be UTF-8");
+    return FALSE;
+  }
+  GHashTable *rooms = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!*query) {
+    *out_rooms = rooms;
+    return TRUE;
+  }
+  sqlite3_stmt *stmt = store_prepare(store,
+    "SELECT DISTINCT c.backend, c.backend_key FROM messages m "
+    "JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE m.body IS NOT NULL AND instr(lower(m.body), lower(?1)) > 0 "
+    "AND (m.expires_at IS NULL OR m.expires_at = 0 OR m.expires_at > ?2)", error);
+  if (!stmt)
+    goto fail;
+  BIND(bind_text(stmt, 1, query));
+  BIND(sqlite3_bind_int64(stmt, 2, gh_clock_get_unix(store->clock)));
+  while (TRUE) {
+    gboolean has_row = FALSE;
+    if (!store_step_row(store, stmt, &has_row, "Searching stored messages", error))
+      goto fail;
+    if (!has_row)
+      break;
+    gint backend = sqlite3_column_int(stmt, 0);
+    const gchar *key = (const gchar *)sqlite3_column_text(stmt, 1);
+    g_hash_table_add(rooms, g_strdup_printf("%d:%s", backend, key));
+  }
+  sqlite3_finalize(stmt);
+  *out_rooms = rooms;
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  g_hash_table_unref(rooms);
+  return FALSE;
+}
+
+gboolean
 gh_store_set_draft(GhStore *store, gint64 conversation_id, const gchar *draft,
                    GError **error)
 {

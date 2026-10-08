@@ -357,6 +357,11 @@ gboolean gh_store_ensure_conversation(GhStore *store, GhStoreBackend backend,
 gboolean gh_store_find_conversation(GhStore *store, GhStoreBackend backend,
                                     const gchar *backend_key,
                                     gint64 *out_conversation_id, GError **error);
+/* Search decrypted message bodies in the open encrypted store, including
+ * messages outside the currently listed page. The returned set contains
+ * "<backend>:<backend_key>" keys and belongs to the caller. */
+gboolean gh_store_search_message_rooms(GhStore *store, const gchar *query,
+                                       GHashTable **out_rooms, GError **error);
 /* NULL or "" clears the draft. */
 gboolean gh_store_set_draft(GhStore *store, gint64 conversation_id,
                             const gchar *draft, GError **error);

@@ -791,8 +791,8 @@ relay_filters(Relay *relay, GPtrArray *rooms)
     nostr_filter_tags_append(messages, "h", room_group_id(room), NULL);
     if (room->cursor > 0)
       nostr_filter_set_since_i64(messages, MAX(room->cursor - GH_NIP29_SERVICE_CURSOR_OVERLAP, 1));
-    else
-      nostr_filter_set_limit(messages, GH_NIP29_SERVICE_INITIAL_HISTORY);
+    /* A first read must be paged too. A filter-owned limit exempts it from
+     * GhRelayScope's until/limit paging, leaving only the newest messages. */
     nostr_filters_add(filters, messages);
     nostr_filter_free(messages);
   }

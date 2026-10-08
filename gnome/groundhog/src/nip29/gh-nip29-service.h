@@ -23,8 +23,9 @@ typedef struct _GhReactionStore GhReactionStore;
  * Relays. Per relay URL with subscribed groups, one live GhRelayScope (its
  * own connection) with one REQ for all of that relay's groups: the
  * relay-signed 39000-39003 of each (#d), each group's messages, kinds 9-12
- * (#h; since the group's sync cursor minus 10 minutes, or its newest 200 the
- * first time), and the 9000/9001 moderation events naming the account
+ * (#h; since the group's sync cursor minus 10 minutes, or paged from newest
+ * to oldest on the first read), and the 9000/9001 moderation events naming
+ * the account
  * (#h, #p). EOSE marks the backfill complete (the group's first one marks the
  * joined history read). The sync cursor moves only past messages durably
  * stored (or never storable) with nothing missing before them: a backfill's
@@ -36,12 +37,12 @@ typedef struct _GhReactionStore GhReactionStore;
  * (GhRelayScope backfill paging, nostrc-cpwf; REQ limit
  * GH_NIP29_SERVICE_PAGE_LIMIT, at most GH_NIP29_SERVICE_MAX_PAGES older
  * pages), and the EOSE comes only after that; an EOSE whose paging could not
- * fetch everything moves no cursor. A first read ("its newest 200") is not
- * paged. NIP-42: GhAuthPolicy purpose GROUP, so a relay that
- * demands AUTH (a private group) gets one signed as the account, on
- * challenge only (§4.4 R1, R6). A relay's scope is rebuilt when its groups
- * change; nothing is opened for a group that is not joined or being joined,
- * and no relay but the group's is ever contacted for it. (A join refused
+ * fetch everything moves no cursor. First reads are paged the same way.
+ * NIP-42: GhAuthPolicy purpose GROUP, so a relay that demands AUTH (a private
+ * group) gets one signed as the account, on challenge only (§4.4 R1, R6).
+ * A relay's scope is rebuilt when its groups change. Nothing is opened for a
+ * group that is not joined or being joined, and no relay but the group's is
+ * ever contacted for it. (A join refused
  * before its REQ has answered keeps only that group's 39000-39003 in the
  * REQ until its EOSE: the state that tells DENIED from CLOSED may still be
  * on its way.)
@@ -138,7 +139,7 @@ GType gh_nip29_relay_key_state_get_type(void);
 
 /* At most this many groups are subscribed per relay (one REQ). */
 #define GH_NIP29_SERVICE_MAX_GROUPS_PER_RELAY 16
-/* Messages asked for the first time a group is subscribed. */
+/* Initial cap for deletion events, which are not a message-history cursor. */
 #define GH_NIP29_SERVICE_INITIAL_HISTORY 200
 /* The overlap subtracted from a group's sync cursor. */
 #define GH_NIP29_SERVICE_CURSOR_OVERLAP 600
