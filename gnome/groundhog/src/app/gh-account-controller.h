@@ -35,6 +35,9 @@ typedef enum {
 
 /* Runs in a worker thread and returns GhIdentityInfo items (gh-identity.h). */
 typedef GPtrArray *(*GhAccountListFunc)(gpointer user_data, GError **error);
+typedef struct _GhNip46Session GhNip46Session;
+/* Test-only seam: return an owned fake-transport session for the selected npub. */
+typedef GhNip46Session *(*GhAccountSessionFactory)(const gchar *npub, gpointer user_data);
 
 #define GH_TYPE_ACCOUNT_CONTROLLER (gh_account_controller_get_type())
 G_DECLARE_FINAL_TYPE(GhAccountController, gh_account_controller, GH,
@@ -62,6 +65,10 @@ GhAccountController *gh_account_controller_new_full_with_remote_list(GSettings *
                                            GDBusConnection *bus, GhAccountListFunc grotto_list,
                                            gpointer grotto_data, GhAccountListFunc remote_list,
                                            gpointer remote_data);
+/* Only for fake remote-list tests; set before selecting a remote account. */
+void gh_account_controller_set_session_factory_for_test(GhAccountController *self,
+                                           GhAccountSessionFactory factory,
+                                           gpointer user_data);
 /* Re-lists identities; a result from an older listing is discarded. */
 void gh_account_controller_refresh(GhAccountController *self);
 gboolean gh_account_controller_select(GhAccountController *self,

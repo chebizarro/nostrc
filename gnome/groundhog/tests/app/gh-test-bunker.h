@@ -164,9 +164,9 @@ bunker_request_json(TestBunker *bunker)
   return json;
 }
 
-static void
-bunker_reply_from(TestBunker *bunker, const gchar *signer_secret,
-                  const gchar *p_tag, const gchar *response_json)
+static gchar *
+bunker_response_event_json_from(TestBunker *bunker, const gchar *signer_secret,
+                                const gchar *p_tag, const gchar *response_json)
 {
   char *signer_pubkey = nostr_key_get_public(signer_secret);
   guint8 sk[32], pk[32];
@@ -181,12 +181,21 @@ bunker_reply_from(TestBunker *bunker, const gchar *signer_secret,
   nostr_event_set_content(event, ciphertext);
   g_assert_cmpint(nostr_event_sign(event, signer_secret), ==, 0);
   char *json = nostr_event_serialize_compact(event);
-  BunkerHandle *scope = g_ptr_array_index(bunker->scopes, 0);
-  gh_relay_scope_event(scope->scope, scope->url, json);
-  free(json);
   free(ciphertext);
   nostr_event_free(event);
   free(signer_pubkey);
+  return json;
+}
+
+static void
+bunker_reply_from(TestBunker *bunker, const gchar *signer_secret,
+                  const gchar *p_tag, const gchar *response_json)
+{
+  gchar *json = bunker_response_event_json_from(bunker, signer_secret,
+                                                  p_tag, response_json);
+  BunkerHandle *scope = g_ptr_array_index(bunker->scopes, 0);
+  gh_relay_scope_event(scope->scope, scope->url, json);
+  free(json);
 }
 
 static void

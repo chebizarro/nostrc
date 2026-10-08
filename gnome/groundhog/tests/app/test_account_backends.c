@@ -215,6 +215,120 @@ test_migration(void)
   drain_idle();
 }
 
+typedef struct {
+  GMutex lock;
+  GCond cond;
+  gboolean entered;
+  gboolean released;
+  guint calls;
+} SlowRemote;
+
+static GPtrArray *
+slow_remote_list(gpointer data, GError **error)
+{
+  SlowRemote *source = data;
+  (void)error;
+  g_mutex_lock(&source->lock);
+  guint call = ++source->calls;
+  if (call == 1) {
+    source->entered = TRUE;
+    g_main_context_wakeup(NULL);
+    while (!source->released)
+      g_cond_wait(&source->cond, &source->lock);
+  }
+  g_mutex_unlock(&source->lock);
+  GPtrArray *items = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  if (call == 1) {
+    GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+    info->npub = g_strdup(npub_one);
+    g_ptr_array_add(items, info);
+  }
+  return items;
+}
+
+static gboolean
+slow_remote_entered(gpointer data)
+{
+  SlowRemote *source = data;
+  g_mutex_lock(&source->lock);
+  gboolean entered = source->entered;
+  g_mutex_unlock(&source->lock);
+  return entered;
+}
+
+static gboolean
+listing_callbacks_done(gpointer data)
+{
+  return G_OBJECT(data)->ref_count == 1;
+}
+
+static gboolean
+test_timeout(gpointer data)
+{
+  *(gboolean *)data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+spin_tick(gpointer data)
+{
+  (void)data;
+  return G_SOURCE_CONTINUE;
+}
+
+static void
+spin_until(gboolean (*predicate)(gpointer), gpointer data)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(5, test_timeout, &expired);
+  guint tick = g_timeout_add(10, spin_tick, NULL);
+  while (!predicate(data) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_source_remove(tick);
+  if (!expired) g_source_remove(timer);
+  g_assert_false(expired);
+}
+
+static void
+count_changes(GhAccountController *controller, gpointer data)
+{
+  (void)controller;
+  (*(guint *)data)++;
+}
+
+static void
+test_stale_remote_listing(void)
+{
+  Source local = { FALSE, NULL };
+  SlowRemote remote = { 0 };
+  g_mutex_init(&remote.lock);
+  g_cond_init(&remote.cond);
+  g_autoptr(GSettings) settings = fresh_settings();
+  g_autoptr(GhAccountController) controller =
+    gh_account_controller_new_full_with_remote_list(settings, NULL,
+      list_source, &local, slow_remote_list, &remote);
+  guint changes = 0;
+  g_signal_connect(controller, "changed", G_CALLBACK(count_changes), &changes);
+  spin_until(slow_remote_entered, &remote);
+  gh_account_controller_refresh(controller);
+  wait_listed(controller); /* the newer remote listing is empty */
+  g_assert_cmpint(gh_account_controller_get_state(controller), ==,
+                  GH_ACCOUNT_STATE_NO_IDENTITIES);
+  g_assert_cmpuint(gh_account_controller_get_identities(controller)->len, ==, 0);
+  guint changes_after_newer = changes;
+  g_mutex_lock(&remote.lock);
+  remote.released = TRUE;
+  g_cond_broadcast(&remote.cond);
+  g_mutex_unlock(&remote.lock);
+  spin_until(listing_callbacks_done, controller);
+  g_assert_cmpuint(changes, ==, changes_after_newer);
+  g_assert_cmpint(gh_account_controller_get_state(controller), ==,
+                  GH_ACCOUNT_STATE_NO_IDENTITIES);
+  g_assert_cmpuint(gh_account_controller_get_identities(controller)->len, ==, 0);
+  g_cond_clear(&remote.cond);
+  g_mutex_clear(&remote.lock);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -223,5 +337,6 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/backends/idle-pair", test_idle_pair_reconciliation);
   g_test_add_func("/groundhog/backends/partial-sources", test_partial_sources);
   g_test_add_func("/groundhog/backends/migration", test_migration);
+  g_test_add_func("/groundhog/backends/stale-remote-list", test_stale_remote_listing);
   return g_test_run();
 }

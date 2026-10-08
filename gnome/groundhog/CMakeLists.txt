@@ -331,6 +331,11 @@ if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
     target_compile_options(test-groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-nip46-session COMMAND test-groundhog-nip46-session)
     set_tests_properties(groundhog-nip46-session PROPERTIES TIMEOUT 30)
+    add_executable(test-groundhog-signer-nip46 tests/app/test_signer_nip46.c)
+    target_link_libraries(test-groundhog-signer-nip46 PRIVATE groundhog-identity)
+    target_compile_options(test-groundhog-signer-nip46 PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-signer-nip46 COMMAND test-groundhog-signer-nip46)
+    set_tests_properties(groundhog-signer-nip46 PROPERTIES TIMEOUT 30)
     if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       add_executable(test-groundhog-nip46-wire tests/app/test_nip46_wire.c)
       target_include_directories(test-groundhog-nip46-wire PRIVATE
@@ -596,6 +601,14 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_dependencies(test-groundhog-account-backends groundhog-test-schemas)
   add_test(NAME groundhog-account-backends COMMAND test-groundhog-account-backends)
   set_tests_properties(groundhog-account-backends PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  add_executable(test-groundhog-account-remote-switch
+    tests/app/test_account_remote_switch.c)
+  target_link_libraries(test-groundhog-account-remote-switch PRIVATE groundhog-account)
+  target_compile_options(test-groundhog-account-remote-switch PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account-remote-switch groundhog-test-schemas)
+  add_test(NAME groundhog-account-remote-switch COMMAND test-groundhog-account-remote-switch)
+  set_tests_properties(groundhog-account-remote-switch PROPERTIES TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Account switch/teardown and relay-list admission against a recording

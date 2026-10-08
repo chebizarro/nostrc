@@ -14,6 +14,8 @@ struct _GhAccountController {
   GhNip46CredentialStore *credentials;
   GhAccountListFunc remote_list; /* injectable metadata-only test seam */
   gpointer remote_list_data;
+  GhAccountSessionFactory session_factory; /* fake transport test seam */
+  gpointer session_factory_data;
   GPtrArray *grotto_results;
   GPtrArray *remote_results;
   gboolean source_ok[2];
@@ -134,6 +136,27 @@ remote_offline(GhNip46Session *session, GhAccountController *self)
     set_remote_state(self, GH_REMOTE_SIGNER_OFFLINE);
 }
 
+static void
+activate_remote_session(GhAccountController *self, GhNip46Session *session)
+{
+  self->remote_session = session; /* takes ownership */
+  if (!session) {
+    set_remote_state(self, GH_REMOTE_SIGNER_ERROR);
+    return;
+  }
+  self->signer = gh_signer_new_nip46(session, self->active_npub, NULL);
+  if (!self->signer) {
+    gh_nip46_session_cancel(session);
+    g_clear_object(&self->remote_session);
+    set_remote_state(self, GH_REMOTE_SIGNER_ERROR);
+    return;
+  }
+  g_signal_connect_object(session, "ready", G_CALLBACK(remote_ready), self, 0);
+  g_signal_connect_object(session, "offline", G_CALLBACK(remote_offline), self, 0);
+  set_remote_state(self, GH_REMOTE_SIGNER_CONNECTING);
+  gh_nip46_session_start(session);
+}
+
 typedef struct {
   GhAccountController *self;
   guint64 generation;
@@ -155,27 +178,10 @@ credential_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data
                                               GH_NIP46_CREDENTIAL_ERROR_LOCKED) ?
         GH_REMOTE_SIGNER_LOCKED : GH_REMOTE_SIGNER_ERROR);
     } else {
-      self->remote_session = gh_nip46_session_new(
+      activate_remote_session(self, gh_nip46_session_new(
         gh_nip46_credential_get_client_secret_hex(credential),
         gh_nip46_credential_get_remote_signer_pubkey_hex(credential),
-        gh_nip46_credential_get_relays(credential), NULL, NULL, NULL, NULL, NULL, &error);
-      if (!self->remote_session) {
-        set_remote_state(self, GH_REMOTE_SIGNER_ERROR);
-      } else {
-        self->signer = gh_signer_new_nip46(self->remote_session, self->active_npub, &error);
-        if (!self->signer) {
-          gh_nip46_session_cancel(self->remote_session);
-          g_clear_object(&self->remote_session);
-          set_remote_state(self, GH_REMOTE_SIGNER_ERROR);
-        } else {
-          g_signal_connect_object(self->remote_session, "ready", G_CALLBACK(remote_ready),
-                                  self, 0);
-          g_signal_connect_object(self->remote_session, "offline", G_CALLBACK(remote_offline),
-                                  self, 0);
-          set_remote_state(self, GH_REMOTE_SIGNER_CONNECTING);
-          gh_nip46_session_start(self->remote_session);
-        }
-      }
+        gh_nip46_credential_get_relays(credential), NULL, NULL, NULL, NULL, NULL, &error));
     }
   }
   g_object_unref(self);
@@ -197,6 +203,11 @@ bind_signer(GhAccountController *self)
     return;
   }
   self->remote_state = GH_REMOTE_SIGNER_LOADING_CREDENTIAL;
+  if (self->session_factory) {
+    activate_remote_session(self, self->session_factory(self->active_npub,
+                                                        self->session_factory_data));
+    return;
+  }
   if (!self->credentials) {
     self->remote_state = GH_REMOTE_SIGNER_ERROR;
     return;
@@ -642,6 +653,18 @@ gh_account_controller_new_full_with_remote_list(GSettings *settings,
   g_return_val_if_fail(remote_list != NULL, NULL);
   return new_with_sources(settings, bus, grotto_list, grotto_data, NULL,
                           remote_list, remote_data);
+}
+
+void
+gh_account_controller_set_session_factory_for_test(GhAccountController *self,
+                                                   GhAccountSessionFactory factory,
+                                                   gpointer user_data)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  g_return_if_fail(self->remote_list != NULL && self->credentials == NULL);
+  g_return_if_fail(self->active_npub == NULL);
+  self->session_factory = factory;
+  self->session_factory_data = user_data;
 }
 
 GhAccountController *
