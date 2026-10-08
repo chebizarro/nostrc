@@ -658,7 +658,7 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   # signer on a private bus (crafted peer wraps need the NIP-59/44 cores).
   if (TARGET groundhog-dm-inbox AND TARGET nostr_nip59_core)
     add_executable(test-groundhog-dm-inbox tests/app/test_dm_inbox.c)
-    target_link_libraries(test-groundhog-dm-inbox PRIVATE groundhog-dm-inbox
+    target_link_libraries(test-groundhog-dm-inbox PRIVATE groundhog-conversation-ui
                           nostr_nip17_core nostr_nip59_core nostrc-test-bus nip04)
     target_include_directories(test-groundhog-dm-inbox PRIVATE
                                ${CMAKE_SOURCE_DIR}/nips/nip04/include)

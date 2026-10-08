@@ -10,6 +10,7 @@
  * them. */
 #include "mls-world.h"
 #include "gh-store-mls-identity.h"
+#include "gh-mls-poll.h"
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 #include "mls-forge.h"
 #include "convergence.h"
@@ -1500,6 +1501,58 @@ test_send_republished_after_restart(void)
   world_down(&w);
 }
 
+
+/* Polls and votes use inner kinds 1068 and 1018, not the kind-9 text path.
+ * Restart through the service's real store/model wiring, not a hand-filled
+ * in-memory conversation as the card tests do. */
+static void
+test_poll_restored_after_restart(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *group = create_group(alice, "Poll restore", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(group));
+  g_autofree gchar *group_id = g_strdup(gh_mls_group_get_group_id(group));
+  join(bob, ALICE);
+
+  const gchar *labels[] = { "Coffee", "Tea" };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) poll = gh_mls_service_create_poll(
+    alice->service, group, "What to drink?", labels, G_N_ELEMENTS(labels),
+    GH_MLS_POLL_SINGLE_CHOICE, 0, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(poll);
+  GhMlsPoll *state = gh_mls_service_lookup_poll(
+    alice->service, group_id, gh_message_get_rumor_id(poll));
+  g_assert_nonnull(state);
+  const gchar *choices[] = { gh_mls_poll_get_option(state, 0)->id };
+  g_autoptr(GhMessage) vote = gh_mls_service_cast_vote(
+    alice->service, group, gh_message_get_rumor_id(poll), choices, 1, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(vote);
+
+  app_restart(alice);
+  GhConversation *restored = gh_conversation_store_lookup(alice->model, room);
+  g_assert_nonnull(restored);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(restored)), ==, 2);
+  gboolean found_poll = FALSE, found_vote = FALSE;
+  for (guint i = 0; i < 2; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(restored), i);
+    found_poll |= gh_message_get_kind(message) == GH_MLS_POLL_KIND &&
+                  g_strcmp0(gh_message_get_rumor_id(message),
+                            gh_message_get_rumor_id(poll)) == 0;
+    found_vote |= gh_message_get_kind(message) == GH_MLS_POLL_VOTE_KIND &&
+                  g_strcmp0(gh_message_get_rumor_id(message),
+                            gh_message_get_rumor_id(vote)) == 0;
+  }
+  g_assert_true(found_poll);
+  g_assert_true(found_vote);
+  world_down(&w);
+}
 
 /* M2: the same text sent to two groups within one second (the store clock
  * frozen here) is two messages: the inner events are tagged with their
@@ -4092,6 +4145,8 @@ main(int argc, char **argv)
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",
                   test_send_republished_after_restart);
+  g_test_add_func("/groundhog/mls-service/poll-restored-after-restart",
+                  test_poll_restored_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
   g_test_add_func("/groundhog/mls-service/burst-then-commit-accepted",
                   test_burst_then_commit_accepted);
