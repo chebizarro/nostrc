@@ -904,6 +904,8 @@ test_remote_cache_gate_and_offline_restart(void)
   gh_inbox_status_attach(status, f.inbox, f.relays);
   g_autofree gchar *new_wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 30,
                                           CANARY " offline", NULL);
+  /* A settled inbox may have advanced after restart, before this wrap. */
+  checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
   gh_relay_scope_event(req->scope, INBOX_A, new_wrap);
   guint backlog = 0;
   g_object_get(status, "inbox-backlog", &backlog, NULL);
