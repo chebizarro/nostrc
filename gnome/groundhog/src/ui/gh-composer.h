@@ -164,6 +164,15 @@ void gh_composer_hide_recording(GhComposer *self);
 void gh_composer_set_recording_level(GhComposer *self, gdouble level);
 void gh_composer_set_recording_time(GhComposer *self, gdouble seconds);
 
+/* Pubkeys offered after typing @. The composer copies the list and uses
+ * cached display names; selecting inserts a nostr:npub URI. */
+void gh_composer_set_mention_candidates(GhComposer *self, const gchar *const *pubkeys);
+/* Group services may supply a fuller member list. It is only offered while
+ * @room_id matches the conversation currently bound to the composer. */
+void gh_composer_set_mention_room(GhComposer *self, const gchar *room_id);
+void gh_composer_set_mention_members(GhComposer *self, const gchar *room_id,
+                                     const gchar *const *pubkeys);
+
 /* NIP-88 poll creation (W26 slice C). */
 void gh_composer_set_can_create_poll(GhComposer *self, gboolean can_create_poll);
 gboolean gh_composer_get_can_create_poll(GhComposer *self);

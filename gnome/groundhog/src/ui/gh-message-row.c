@@ -640,6 +640,9 @@ update_all(GhMessageRow *self)
    * row knowing about MLS poll types. */
   if (self->view)
     gh_conversation_view_enrich_row(self->view, self);
+  /* Responses update their poll card; they are not standalone bubbles. */
+  gtk_widget_set_visible(GTK_WIDGET(self),
+                         !message || gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND);
   /* Poll card: visible only when a poll widget has been set on this row. */
   gboolean is_poll = self->poll_card != NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), is_poll);
@@ -658,7 +661,8 @@ update_all(GhMessageRow *self)
     } else if (file) {
       gtk_label_set_text(self->body_label, file);
     } else {
-      g_autofree gchar *markup = gh_link_policy_to_markup(gh_message_get_content(message));
+      g_autofree gchar *markup = gh_link_policy_to_mention_markup(
+        gh_message_get_content(message), gh_message_get_account(message));
       gtk_label_set_markup(self->body_label, markup);
       self->preview_uri = gh_link_policy_dup_preview_uri(gh_message_get_content(message));
     }
@@ -780,9 +784,18 @@ on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
 static void
 on_display_name_changed(GhMessageRow *self, const gchar *pubkey)
 {
-  if (!self->message || g_strcmp0(gh_message_get_sender(self->message), pubkey) != 0)
+  if (!self->message)
     return;
-  update_all(self);
+  if (g_strcmp0(gh_message_get_sender(self->message), pubkey) == 0) {
+    update_all(self);
+    return;
+  }
+  g_auto(GStrv) mentions = gh_message_extract_mentions(gh_message_get_content(self->message));
+  if (mentions && g_strv_contains((const gchar *const *)mentions, pubkey)) {
+    g_autofree gchar *markup = gh_link_policy_to_mention_markup(
+      gh_message_get_content(self->message), gh_message_get_account(self->message));
+    gtk_label_set_markup(self->body_label, markup);
+  }
 }
 
 static void
@@ -794,6 +807,12 @@ gh_message_row_root(GtkWidget *widget)
   if (!view)
     return;
   self->view = GH_CONVERSATION_VIEW(view);
+  /* Rows are bound before GTK roots them. Install the poll card now that the
+   * conversation view (and its enricher) is available. */
+  gh_conversation_view_enrich_row(self->view, self);
+  gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), self->poll_card != NULL);
+  if (self->poll_card)
+    gtk_widget_set_visible(GTK_WIDGET(self->body_label), FALSE);
   self->compact_binding = g_object_bind_property(view, "compact", self, "compact",
                                                  G_BINDING_SYNC_CREATE);
   g_signal_connect_object(gh_display_name_get_notifier(), "changed",

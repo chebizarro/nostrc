@@ -4,8 +4,40 @@
 
 #include <nostr-event.h>
 #include <nostr-tag.h>
+#include <nostr/nip19/nip19.h>
 #include <stdlib.h>
 #include <string.h>
+
+GStrv
+gh_message_extract_mentions(const gchar *content)
+{
+  g_autoptr(GStrvBuilder) names = g_strv_builder_new();
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  if (!content)
+    return g_strv_builder_end(names);
+  const gchar *p = content;
+  while ((p = strstr(p, "nostr:npub1"))) {
+    if (p > content && (g_ascii_isalnum(p[-1]) || p[-1] == ':')) {
+      p++;
+      continue;
+    }
+    const gchar *start = p + strlen("nostr:");
+    const gchar *end = start;
+    while (g_ascii_isalnum(*end))
+      end++;
+    g_autofree gchar *npub = g_strndup(start, end - start);
+    guint8 key[32];
+    if (nostr_nip19_decode_npub(npub, key) == 0) {
+      gchar hex[65];
+      for (guint i = 0; i < sizeof key; i++)
+        g_snprintf(hex + 2 * i, sizeof hex - 2 * i, "%02x", key[i]);
+      if (g_hash_table_add(seen, g_strdup(hex)))
+        g_strv_builder_add(names, hex);
+    }
+    p = end;
+  }
+  return g_strv_builder_end(names);
+}
 
 struct _GhMessage {
   GObject parent_instance;
@@ -171,8 +203,10 @@ gh_message_new_from_rumor(const gchar *account_pubkey, const gchar *rumor_json,
   else if (rumor->sig)
     reason = "a rumor must not be signed";
   else if (nostr_event_get_kind(rumor) != 14 &&
-           nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND)
-    reason = "not kind 14 or 15";
+           nostr_event_get_kind(rumor) != GH_NIP17_FILE_KIND &&
+           nostr_event_get_kind(rumor) != GH_MESSAGE_MLS_POLL_KIND &&
+           nostr_event_get_kind(rumor) != GH_MESSAGE_MLS_POLL_VOTE_KIND)
+    reason = "not a supported private message kind";
   else if (nostr_event_get_created_at(rumor) <= 0)
     reason = "no created_at";
   else if (!lower_hex64(nostr_event_get_pubkey(rumor)))
@@ -646,7 +680,11 @@ gh_message_new_from_nip29_event(const gchar *account_pubkey, const gchar *relay_
   GhMessage *self = g_object_new(GH_TYPE_MESSAGE, NULL);
   self->nip29 = TRUE;
   self->is_signed = is_signed;
-  self->kind = kind;
+  /* NIP-29 relays accept kind-9 group chat messages. A poll's NIP-88
+   * definition/response tags live in that envelope with a poll marker. */
+  const gchar *poll_kind = kind == 9 ? first_tag_value(event, "poll", NULL) : NULL;
+  self->kind = g_strcmp0(poll_kind, "1068") == 0 ? GH_MESSAGE_MLS_POLL_KIND :
+               g_strcmp0(poll_kind, "1018") == 0 ? GH_MESSAGE_MLS_POLL_VOTE_KIND : kind;
   self->account = g_strdup(account_pubkey);
   self->rumor_id = g_strdup(id);
   self->rumor_json = g_strdup(event_json);

@@ -5483,6 +5483,9 @@ inner_event_new(GhMlsService *self, GhMlsGroup *group, const gchar *text,
   nostr_event_set_created_at(event, now_s(self));
   nostr_event_set_content(event, text);
   NostrTags *tags = nostr_tags_new(1, nostr_tag_new("h", group->nostr_hex, NULL));
+  g_auto(GStrv) mentions = gh_message_extract_mentions(text);
+  for (guint i = 0; mentions && mentions[i]; i++)
+    nostr_tags_append(tags, nostr_tag_new("p", mentions[i], NULL));
   /* One ordered imeta per file, as MDK's kind-9 media messages. */
   for (guint i = 0; imeta_tags && i < imeta_tags->len; i++) {
     const gchar *const *fields = g_ptr_array_index(imeta_tags, i);

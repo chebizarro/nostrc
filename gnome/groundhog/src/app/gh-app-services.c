@@ -78,6 +78,7 @@
 #endif
 #if GROUNDHOG_HAVE_MLS_UI
 #include "gh-mls-ui.h"
+#include "gh-poll-ui.h"
 #endif
 
 #if GROUNDHOG_HAVE_ACCOUNTS
@@ -2207,6 +2208,18 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
   };
   gh_send_ui_attach(window, &send);
+#if GROUNDHOG_HAVE_MLS_UI && GROUNDHOG_HAVE_GROUP_UI
+  /* Shared NIP-88 projection and composer for private, relay-group and
+   * Marmot conversations. Attach before the legacy MLS UI so it can leave
+   * the row enricher and poll button to this transport-neutral owner. */
+  GhPollUiConfig polls = {
+    .account_store = self->account_store,
+    .mls_service = mls_ui_service,
+    .nip29_service = group_ui_service,
+    .service_data = self,
+  };
+  gh_poll_ui_attach(window, &polls);
+#endif
   /* W26 slice B (nostrc-191r): reaction chips on message bubbles. Set the
    * current reaction store (may be NULL before the account store opens;
    * reactions_share() re-sets it when it does). */

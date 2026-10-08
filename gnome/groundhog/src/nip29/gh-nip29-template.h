@@ -88,6 +88,18 @@ gchar *gh_nip29_template_chat(const GhNip29GroupKey *group,
                               const gchar *text,
                               GError **error);
 
+/* NIP-88 tags carried inside a NIP-29 kind-9 group-chat envelope. */
+gchar *gh_nip29_template_poll(const GhNip29GroupKey *group,
+                             const GhNip29TemplateContext *context,
+                             const gchar *question, const gchar *const *options,
+                             guint n_options, gboolean multiple, gint64 ends_at,
+                             GError **error);
+gchar *gh_nip29_template_poll_vote(const GhNip29GroupKey *group,
+                                  const GhNip29TemplateContext *context,
+                                  const gchar *poll_event_id,
+                                  const gchar *const *option_ids, guint n_options,
+                                  GError **error);
+
 /* kind:9021 join request; a NULL or empty @invite_code adds no code tag. */
 gchar *gh_nip29_template_join_request(const GhNip29GroupKey *group,
                                       const GhNip29TemplateContext *context,

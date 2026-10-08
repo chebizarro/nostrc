@@ -2,6 +2,7 @@
 #include "gh-auth-policy.h"
 #include "gh-expiry.h"
 #include "gh-identity.h"
+#include "gh-message.h"
 #include "gh-nip17-envelope.h"
 #include "gh-nip17-file.h"
 #include "nostr-event.h"
@@ -1924,9 +1925,13 @@ gh_outbox_send(GhOutbox *self, const gchar *recipient_pubkey_hex, const gchar *c
  * way (gh-nip17-envelope.h). */
 static gchar *
 room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *content,
-               const GhNip17File *file, gint64 created_at, gint64 expires_at,
+               const GhNip17File *file, const gchar *poll_event_json,
+               gint64 created_at, gint64 expires_at,
                gchar **out_rumor_id, GError **error)
 {
+  if (poll_event_json)
+    return gh_nip17_rumor_new_poll_room(self->account, recipients, poll_event_json,
+                                        created_at, expires_at, out_rumor_id, error);
   return file ? gh_nip17_rumor_new_file_room(self->account, recipients, file, created_at,
                                              expires_at, out_rumor_id, error)
               : gh_nip17_rumor_new_room(self->account, recipients, content, created_at,
@@ -1938,7 +1943,8 @@ room_rumor_new(GhOutbox *self, const gchar *const *recipients, const gchar *cont
  * the stored rumor, so they are the same for both. */
 static GhOutboxItem *
 send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *content,
-                  const GhNip17File *file, GError **error)
+                  const GhNip17File *file, const gchar *poll_event_json,
+                  GError **error)
 {
   g_return_val_if_fail(GH_IS_OUTBOX(self), NULL);
   if (!self->generation) {
@@ -1946,13 +1952,31 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
                         "This outbox's account is not the active account");
     return NULL;
   }
+  NostrEvent *poll = NULL;
+  gint poll_kind = 0;
+  g_autofree gchar *poll_content = NULL;
+  if (poll_event_json) {
+    poll = nostr_event_new();
+    if (!poll || nostr_event_deserialize_unsigned(poll, poll_event_json, NULL) !=
+                   NOSTR_EVENT_VALIDATION_OK ||
+        (nostr_event_get_kind(poll) != GH_MESSAGE_MLS_POLL_KIND &&
+         nostr_event_get_kind(poll) != GH_MESSAGE_MLS_POLL_VOTE_KIND)) {
+      if (poll) nostr_event_free(poll);
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                          "Invalid NIP-88 poll event");
+      return NULL;
+    }
+    poll_kind = nostr_event_get_kind(poll);
+    poll_content = g_strdup(nostr_event_get_content(poll));
+    nostr_event_free(poll);
+  }
   /* Validates the recipient keys (1 to 10, distinct) and the text
    * (non-empty UTF-8) or the file: one rumor, whatever the number of
    * recipients. */
   g_autofree gchar *rumor_id = NULL;
   const gint64 created_at = now_unix(self);
-  g_autofree gchar *rumor = room_rumor_new(self, recipients, content, file, created_at, 0,
-                                           &rumor_id, error);
+  g_autofree gchar *rumor = room_rumor_new(self, recipients, content, file, poll_event_json,
+                                           created_at, 0, &rumor_id, error);
   if (!rumor)
     return NULL;
   if (strlen(rumor) > MAX_RUMOR_JSON) {
@@ -1978,8 +2002,8 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
   if (expires_at) {
     g_clear_pointer(&rumor_id, g_free);
     g_free(rumor);
-    rumor = room_rumor_new(self, recipients, content, file, created_at, expires_at, &rumor_id,
-                           error);
+    rumor = room_rumor_new(self, recipients, content, file, poll_event_json,
+                           created_at, expires_at, &rumor_id, error);
     if (rumor && strlen(rumor) > MAX_RUMOR_JSON) {
       g_clear_pointer(&rumor, g_free);
       g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
@@ -1995,9 +2019,9 @@ send_room_message(GhOutbox *self, const gchar *const *recipients, const gchar *c
     .op_id = op_id,
     .backend_msg_id = rumor_id,
     .sender_pubkey = self->account,
-    .kind = file ? GH_NIP17_FILE_KIND : 14,
+    .kind = poll_event_json ? poll_kind : file ? GH_NIP17_FILE_KIND : 14,
     .created_at = created_at,
-    .body = file ? file->url : content, /* a file message's content is its URL */
+    .body = poll_event_json ? poll_content : file ? file->url : content, /* a file message's content is its URL */
     .rumor_json = rumor,
     .expires_at = expires_at,
   };
@@ -2032,7 +2056,14 @@ GhOutboxItem *
 gh_outbox_send_room(GhOutbox *self, const gchar *const *recipients, const gchar *content,
                     GError **error)
 {
-  return send_room_message(self, recipients, content, NULL, error);
+  return send_room_message(self, recipients, content, NULL, NULL, error);
+}
+
+GhOutboxItem *
+gh_outbox_send_poll_event_room(GhOutbox *self, const gchar *const *recipients,
+                                   const gchar *poll_event_json, GError **error)
+{
+  return send_room_message(self, recipients, NULL, NULL, poll_event_json, error);
 }
 
 GhOutboxItem *
@@ -2052,7 +2083,7 @@ gh_outbox_send_file_room(GhOutbox *self, const gchar *const *recipients,
                         "A file message needs a complete encrypted file");
     return NULL;
   }
-  return send_room_message(self, recipients, NULL, file, error);
+  return send_room_message(self, recipients, NULL, file, NULL, error);
 }
 
 /* W26 slice B (nostrc-191r): send a kind-7 NIP-25 reaction through the

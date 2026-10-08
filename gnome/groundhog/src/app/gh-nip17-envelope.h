@@ -107,6 +107,14 @@ gchar *gh_nip17_rumor_new_room(const gchar *sender_pubkey_hex,
                                const gchar *content, gint64 created_at,
                                gint64 expires_at, gchar **out_rumor_id,
                                GError **error);
+/* Wrap the NIP-88 tags/content of an unsigned kind-1068 or kind-1018 event
+ * as a NIP-17 room rumor, adding the room's p tags and expiration. */
+gchar *gh_nip17_rumor_new_poll_room(const gchar *sender_pubkey_hex,
+                                    const gchar *const *recipients,
+                                    const gchar *poll_event_json, gint64 created_at,
+                                    gint64 expires_at, gchar **out_rumor_id,
+                                    GError **error);
+
 /* G21: the rumor of a kind-15 file message (gh-nip17-file.h: encrypted,
  * uploaded, URL set) to a NIP-17 room, built exactly as
  * gh_nip17_rumor_new_room() builds a text's (the same recipient rule, "p"

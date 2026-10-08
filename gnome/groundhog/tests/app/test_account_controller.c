@@ -1504,6 +1504,28 @@ test_nip17_unwrap_roundtrip(void)
   envelope_fixture_down(&fixture);
 }
 
+static void
+test_nip17_unwrap_poll_kinds(void)
+{
+  EnvelopeFixture fixture = { 0 };
+  envelope_fixture_up(&fixture);
+  g_assert_true(gh_account_controller_select(fixture.accounts, npub_two, NULL));
+  const gint kinds[] = { 1068, 1018 };
+  g_autofree gchar *recipient = gh_identity_pubkey_hex(npub_two);
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+    Craft craft = { .sender = 3, .recipient = 2, .rumor_kind = kinds[i] };
+    g_autofree gchar *wrap = craft_wrap(&craft);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhNip17Message) received = unwrap_now(fixture.accounts, wrap, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(received);
+    g_assert_cmpint(received->kind, ==, kinds[i]);
+    g_assert_false(received->self_copy);
+    g_assert_cmpstr(received->recipients[0], ==, recipient);
+  }
+  envelope_fixture_down(&fixture);
+}
+
 typedef struct {
   const gchar *name;
   Craft craft;
@@ -2181,6 +2203,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip17/envelope-cancel-switch", test_nip17_envelope_cancel_and_switch);
   g_test_add_func("/groundhog/nip17/envelope-switch-before-finish", test_nip17_envelope_switch_before_finish);
   g_test_add_func("/groundhog/nip17/unwrap-roundtrip", test_nip17_unwrap_roundtrip);
+  g_test_add_func("/groundhog/nip17/unwrap-poll-kinds", test_nip17_unwrap_poll_kinds);
   g_test_add_func("/groundhog/nip17/unwrap-rejects", test_nip17_unwrap_rejects);
   g_test_add_func("/groundhog/nip17/unwrap-no-account", test_nip17_unwrap_no_account);
   g_test_add_func("/groundhog/nip17/unwrap-signer-denied", test_nip17_unwrap_signer_denied);

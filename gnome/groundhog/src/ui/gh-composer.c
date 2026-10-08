@@ -1,7 +1,10 @@
 #include "gh-composer.h"
 #include "../app/gh-test-async-control.h"
+#include "gh-display-name.h"
 
 #include <glib/gi18n.h>
+#include <nostr/nip19/nip19.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ICON_RESOURCE_PATH "/org/nostr/Groundhog/icons"
@@ -36,6 +39,13 @@ struct _GhComposer {
   GtkButton *stop_recording_button;
 
   GtkTextBuffer *buffer; /* the text view's */
+  GStrv mention_candidates;
+  GStrv mention_members;
+  gchar *mention_room;
+  gchar *mention_members_room;
+  GtkPopover *mention_popover;
+  GtkBox *mention_list;
+  gint mention_start; /* character offset of the active @ */
   gboolean compact;
   gboolean enter_sends;
   guint max_lines;
@@ -187,6 +197,9 @@ draft_timeout(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+static void update_mentions(GhComposer *self);
+static void on_mention_clicked(GtkButton *button, GhComposer *self);
+
 static void
 on_buffer_changed(GhComposer *self)
 {
@@ -194,6 +207,7 @@ on_buffer_changed(GhComposer *self)
     return;
   g_clear_pointer(&self->error, g_free);
   update_state(self);
+  update_mentions(self);
   self->draft_pending = TRUE;
   cancel_draft_timer(self);
   self->draft_timer = g_timeout_add(GH_COMPOSER_DRAFT_DELAY_MS, draft_timeout, self);
@@ -217,10 +231,181 @@ replace_text(GhComposer *self, const gchar *text)
   gtk_text_buffer_get_end_iter(self->buffer, &end);
   gtk_text_buffer_place_cursor(self->buffer, &end);
   self->setting_text = FALSE;
+  if (self->mention_popover)
+    gtk_popover_popdown(self->mention_popover);
   cancel_draft_timer(self);
   self->draft_pending = FALSE;
   g_clear_pointer(&self->error, g_free);
   update_state(self);
+}
+
+/* ---- @ mentions -------------------------------------------------------------------- */
+
+static void
+on_mention_clicked(GtkButton *button, GhComposer *self)
+{
+  const gchar *pubkey = g_object_get_data(G_OBJECT(button), "mention-pubkey");
+  guint8 bytes[32];
+  char *npub = NULL;
+  if (!pubkey || strlen(pubkey) != 64)
+    return;
+  for (guint i = 0; i < sizeof bytes; i++) {
+    gint hi = g_ascii_xdigit_value(pubkey[2 * i]);
+    gint lo = g_ascii_xdigit_value(pubkey[2 * i + 1]);
+    if (hi < 0 || lo < 0)
+      return;
+    bytes[i] = (guint8)((hi << 4) | lo);
+  }
+  if (nostr_nip19_encode_npub(bytes, &npub) != 0 || !npub)
+    return;
+  gtk_popover_popdown(self->mention_popover);
+  GtkTextIter start, cursor;
+  gtk_text_buffer_get_iter_at_offset(self->buffer, &start, self->mention_start);
+  gtk_text_buffer_get_iter_at_mark(self->buffer, &cursor,
+                                   gtk_text_buffer_get_insert(self->buffer));
+  self->setting_text = TRUE;
+  gtk_text_buffer_delete(self->buffer, &start, &cursor);
+  g_autofree gchar *insert = g_strdup_printf("nostr:%s ", npub);
+  free(npub);
+  gtk_text_buffer_insert_at_cursor(self->buffer, insert, -1);
+  self->setting_text = FALSE;
+  on_buffer_changed(self);
+  gtk_widget_grab_focus(GTK_WIDGET(self->text_view));
+}
+
+static void
+update_mentions(GhComposer *self)
+{
+  gboolean have_members = g_strcmp0(self->mention_room, self->mention_members_room) == 0 &&
+                          self->mention_room && self->mention_members && self->mention_members[0];
+  if ((!self->mention_candidates || !self->mention_candidates[0]) && !have_members) {
+    if (self->mention_popover)
+      gtk_popover_popdown(self->mention_popover);
+    return;
+  }
+  if (!editable(self)) {
+    if (self->mention_popover)
+      gtk_popover_popdown(self->mention_popover);
+    return;
+  }
+  GtkTextIter cursor, start;
+  gtk_text_buffer_get_iter_at_mark(self->buffer, &cursor,
+                                   gtk_text_buffer_get_insert(self->buffer));
+  start = cursor;
+  gboolean found = FALSE;
+  while (gtk_text_iter_backward_char(&start)) {
+    gunichar ch = gtk_text_iter_get_char(&start);
+    if (ch == '@') {
+      GtkTextIter before = start;
+      if (gtk_text_iter_backward_char(&before) &&
+          (g_unichar_isalnum(gtk_text_iter_get_char(&before)) ||
+           gtk_text_iter_get_char(&before) == '_'))
+        break;
+      found = TRUE;
+      break;
+    }
+    if (!g_unichar_isalnum(ch) && ch != '_' && ch != '-')
+      break;
+  }
+  if (!found) {
+    if (self->mention_popover)
+      gtk_popover_popdown(self->mention_popover);
+    return;
+  }
+  self->mention_start = gtk_text_iter_get_offset(&start);
+  gtk_text_iter_forward_char(&start);
+  g_autofree gchar *query = gtk_text_buffer_get_text(self->buffer, &start, &cursor, FALSE);
+  if (strlen(query) > 64) {
+    if (self->mention_popover)
+      gtk_popover_popdown(self->mention_popover);
+    return;
+  }
+  if (!self->mention_popover) {
+    self->mention_popover = GTK_POPOVER(gtk_popover_new());
+    gtk_popover_set_position(self->mention_popover, GTK_POS_TOP);
+    gtk_widget_set_parent(GTK_WIDGET(self->mention_popover), GTK_WIDGET(self->text_view));
+    self->mention_list = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 0));
+    gtk_popover_set_child(self->mention_popover, GTK_WIDGET(self->mention_list));
+  }
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->mention_list))))
+    gtk_box_remove(self->mention_list, child);
+  g_autofree gchar *needle = g_utf8_casefold(query, -1);
+  guint shown = 0;
+  g_autoptr(GHashTable) seen = g_hash_table_new(g_str_hash, g_str_equal);
+  for (guint source = 0; source < 2 && shown < 8; source++) {
+    const gchar *const *candidates = source == 0 && have_members
+                                      ? (const gchar *const *)self->mention_members
+                                      : source == 0 ? (const gchar *const *)self->mention_candidates
+                                                    : have_members ? (const gchar *const *)self->mention_candidates
+                                                                   : NULL;
+    for (guint i = 0; candidates && candidates[i] && shown < 8; i++) {
+      const gchar *key = candidates[i];
+    if (g_hash_table_contains(seen, key))
+      continue;
+    g_hash_table_add(seen, (gpointer)key);
+    g_autofree gchar *name = gh_display_name_for(key);
+    g_autofree gchar *folded = g_utf8_casefold(name, -1);
+    if (*needle && !strstr(folded, needle) && !strstr(key, needle))
+      continue;
+    GtkWidget *button = gtk_button_new_with_label(name);
+    gtk_widget_add_css_class(button, "flat");
+    gtk_widget_set_halign(button, GTK_ALIGN_FILL);
+    g_object_set_data_full(G_OBJECT(button), "mention-pubkey", g_strdup(key), g_free);
+    g_signal_connect(button, "clicked", G_CALLBACK(on_mention_clicked), self);
+    gtk_box_append(self->mention_list, button);
+    shown++;
+    }
+  }
+  if (!shown || !gtk_widget_get_root(GTK_WIDGET(self->text_view))) {
+    gtk_popover_popdown(self->mention_popover);
+    return;
+  }
+  GdkRectangle rect;
+  gtk_text_view_get_iter_location(self->text_view, &cursor, &rect);
+  gtk_text_view_buffer_to_window_coords(self->text_view, GTK_TEXT_WINDOW_WIDGET,
+                                         rect.x, rect.y, &rect.x, &rect.y);
+  gtk_popover_set_pointing_to(self->mention_popover, &rect);
+  gtk_popover_popup(self->mention_popover);
+}
+
+static void
+on_mention_mark_set(GtkTextBuffer *buffer, const GtkTextIter *location,
+                    GtkTextMark *mark, GhComposer *self)
+{
+  (void)location;
+  if (!self->setting_text && mark == gtk_text_buffer_get_insert(buffer))
+    update_mentions(self);
+}
+
+void
+gh_composer_set_mention_candidates(GhComposer *self, const gchar *const *pubkeys)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_strfreev(self->mention_candidates);
+  self->mention_candidates = pubkeys ? g_strdupv((gchar **) pubkeys) : NULL;
+  update_mentions(self);
+}
+
+void
+gh_composer_set_mention_room(GhComposer *self, const gchar *room_id)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_free(self->mention_room);
+  self->mention_room = g_strdup(room_id);
+  update_mentions(self);
+}
+
+void
+gh_composer_set_mention_members(GhComposer *self, const gchar *room_id,
+                                     const gchar *const *pubkeys)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_free(self->mention_members_room);
+  self->mention_members_room = g_strdup(room_id);
+  g_strfreev(self->mention_members);
+  self->mention_members = pubkeys ? g_strdupv((gchar **) pubkeys) : NULL;
+  update_mentions(self);
 }
 
 /* ---- the disappearing timer --------------------------------------------------------- */
@@ -325,6 +510,19 @@ on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
                GdkModifierType state, GhComposer *self)
 {
   (void)keycode;
+  if (!self->preedit && self->mention_popover &&
+      gtk_widget_get_visible(GTK_WIDGET(self->mention_popover))) {
+    if (keyval == GDK_KEY_Escape) {
+      gtk_popover_popdown(self->mention_popover);
+      return GDK_EVENT_STOP;
+    }
+    if (is_enter(keyval) || keyval == GDK_KEY_Tab) {
+      GtkWidget *first = gtk_widget_get_first_child(GTK_WIDGET(self->mention_list));
+      if (GTK_IS_BUTTON(first))
+        on_mention_clicked(GTK_BUTTON(first), self);
+      return GDK_EVENT_STOP;
+    }
+  }
   if (!is_enter(keyval))
     return GDK_EVENT_PROPAGATE;
   GdkEvent *event = gtk_event_controller_get_current_event(GTK_EVENT_CONTROLLER(controller));
@@ -687,6 +885,11 @@ gh_composer_dispose(GObject *object)
     g_signal_handlers_disconnect_by_data(self->buffer, self);
   self->buffer = NULL;
   g_clear_object(&self->clipboard);
+  if (self->mention_popover) {
+    gtk_widget_unparent(GTK_WIDGET(self->mention_popover));
+    self->mention_popover = NULL;
+    self->mention_list = NULL;
+  }
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_COMPOSER);
   G_OBJECT_CLASS(gh_composer_parent_class)->dispose(object);
 }
@@ -699,6 +902,10 @@ gh_composer_finalize(GObject *object)
     self->length_destroy(self->length_data);
   g_free(self->reason);
   g_free(self->error);
+  g_strfreev(self->mention_candidates);
+  g_strfreev(self->mention_members);
+  g_free(self->mention_room);
+  g_free(self->mention_members_room);
   G_OBJECT_CLASS(gh_composer_parent_class)->finalize(object);
 }
 
@@ -816,6 +1023,7 @@ gh_composer_init(GhComposer *self)
   self->max_lines = GH_COMPOSER_DEFAULT_MAX_LINES;
   self->buffer = gtk_text_view_get_buffer(self->text_view);
   g_signal_connect_swapped(self->buffer, "changed", G_CALLBACK(on_buffer_changed), self);
+  g_signal_connect(self->buffer, "mark-set", G_CALLBACK(on_mention_mark_set), self);
   g_signal_connect_swapped(self->emoji_chooser, "emoji-picked", G_CALLBACK(on_emoji_picked),
                            self);
   g_signal_connect_swapped(self->text_view, "preedit-changed", G_CALLBACK(on_preedit_changed),

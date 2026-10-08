@@ -47,6 +47,7 @@ typedef struct {
 } GhSendUi;
 
 static void update_reason(GhSendUi *ui);
+static void refresh_mention_candidates(GhSendUi *ui);
 
 /* The delegate that sends to conversation, or NULL (the NIP-17 outbox). */
 static const SendDelegate *
@@ -306,6 +307,8 @@ on_shown_items(GhComposer *composer, guint position, guint removed, guint added,
     g_autoptr(GhMessage) message = g_list_model_get_item(conversation, i);
     watch_message(ui, message);
   }
+  if (added)
+    refresh_mention_candidates(ui);
   update_reason(ui);
 }
 
@@ -419,6 +422,44 @@ load_draft(GhSendUi *ui)
 }
 
 static void
+refresh_mention_candidates(GhSendUi *ui)
+{
+  g_autoptr(GStrvBuilder) keys = g_strv_builder_new();
+  g_autoptr(GHashTable) seen = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  GhConversation *shown = ui->shown;
+  if (shown) {
+    const gchar *const *peers = gh_conversation_get_peers(shown);
+    for (guint i = 0; peers && peers[i]; i++)
+      if (g_hash_table_add(seen, g_strdup(peers[i])))
+        g_strv_builder_add(keys, peers[i]);
+    if (gh_conversation_get_backend(shown) != GH_CONVERSATION_BACKEND_NIP17) {
+      /* Group snapshots can be partial; include authors already present in
+       * the room and cached contacts, without making a network lookup. */
+      GListModel *messages = G_LIST_MODEL(shown);
+      for (guint i = 0; i < g_list_model_get_n_items(messages); i++) {
+        g_autoptr(GhMessage) message = g_list_model_get_item(messages, i);
+        const gchar *sender = gh_message_get_sender(message);
+        if (sender && g_hash_table_add(seen, g_strdup(sender)))
+          g_strv_builder_add(keys, sender);
+      }
+      GListModel *rooms = G_LIST_MODEL(ui->model);
+      for (guint i = 0; i < g_list_model_get_n_items(rooms); i++) {
+        g_autoptr(GhConversation) room = g_list_model_get_item(rooms, i);
+        if (gh_conversation_get_backend(room) != GH_CONVERSATION_BACKEND_NIP17 ||
+            gh_conversation_get_is_request(room))
+          continue;
+        const gchar *const *contacts = gh_conversation_get_peers(room);
+        for (guint j = 0; contacts && contacts[j]; j++)
+          if (g_hash_table_add(seen, g_strdup(contacts[j])))
+            g_strv_builder_add(keys, contacts[j]);
+      }
+    }
+  }
+  g_auto(GStrv) candidates = g_strv_builder_end(keys);
+  gh_composer_set_mention_candidates(ui->composer, (const gchar *const *) candidates);
+}
+
+static void
 on_view_conversation(GhComposer *composer)
 {
   GhSendUi *ui = ui_of(composer);
@@ -430,6 +471,9 @@ on_view_conversation(GhComposer *composer)
   gh_composer_set_error(ui->composer, NULL);
   unwatch_shown(ui);
   g_set_object(&ui->shown, conversation);
+  gh_composer_set_mention_room(ui->composer,
+                               conversation ? gh_conversation_get_room_id(conversation) : NULL);
+  refresh_mention_candidates(ui);
   load_draft(ui);
   watch_shown(ui);
   update_timer(ui);

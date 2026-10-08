@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(groundhog VERSION 0.12.0 LANGUAGES C)
+project(groundhog VERSION 0.13.0 LANGUAGES C)
 
 # W28: accept old preview build invocations while dropping their cached gate.
 # The feature is enabled in normal and packaging builds, regardless of the
@@ -559,7 +559,8 @@ if (TARGET nostr AND TARGET nip19)
     src/nip29/gh-nip29-group.c src/nip29/gh-nip29-template.c)
   target_include_directories(groundhog-nip29 PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${GROUNDHOG_NIP29_SOURCE_DIR}/include)
-  target_link_libraries(groundhog-nip29 PUBLIC nip29 nostr PkgConfig::GROUNDHOG_NIP29_GLIB)
+  target_link_libraries(groundhog-nip29 PUBLIC nip29 nostr PkgConfig::GROUNDHOG_NIP29_GLIB
+                        groundhog-conversations)
   target_compile_options(groundhog-nip29 PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     add_executable(test-groundhog-nip29 tests/nip29/test_nip29_group.c)
@@ -1267,7 +1268,8 @@ endif()
 pkg_check_modules(GROUNDHOG_LINK_POLICY_DEPS REQUIRED IMPORTED_TARGET glib-2.0>=2.66)
 add_library(groundhog-link-policy STATIC src/ui/gh-link-policy.c)
 target_include_directories(groundhog-link-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS)
+target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS
+                      groundhog-conversations)
 target_compile_options(groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
 if (BUILD_TESTING)
   add_executable(test-groundhog-link-policy tests/ui/test_link_policy.c)
@@ -1684,6 +1686,7 @@ endif()
 # waiting for the signer and the disabled reasons; the executable attaches it
 # in gh_app_services_attach_window() whenever it has the outbox.
 target_sources(groundhog-ui PRIVATE src/ui/gh-composer.c)
+target_link_libraries(groundhog-ui PUBLIC nip19 groundhog-conversations)
 if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
     TARGET groundhog-conversation-ui)
   target_sources(groundhog PRIVATE src/app/gh-send-ui.c)
@@ -2679,7 +2682,7 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
   target_compile_options(groundhog-mls-ui PRIVATE -Wall -Wextra -Werror)
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     # Beside gh-send-ui.c and gh-group-ui.c, whose hooks it uses.
-    target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c)
+    target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c src/ui/gh-poll-ui.c)
     target_link_libraries(groundhog PRIVATE groundhog-mls-ui)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_MLS_UI=1)
   endif()

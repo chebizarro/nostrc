@@ -74,6 +74,22 @@ make_vote_json(const gchar *pubkey, gint64 created_at,
   return json;
 }
 
+/* NIP-29 carries poll semantics inside an ordinary kind-9 event. */
+static gchar *
+make_nip29_poll_json(const gchar *inner_json, const gchar *semantic_kind)
+{
+  NostrEvent *ev = nostr_event_new();
+  g_assert_true(nostr_event_deserialize_compact(ev, inner_json, NULL));
+  nostr_event_set_kind(ev, 9);
+  NostrTags *tags = (NostrTags *) nostr_event_get_tags(ev);
+  nostr_tags_append(tags, nostr_tag_new("poll", semantic_kind, NULL));
+  gchar id_buf[65];
+  nostr_event_compute_id(ev, id_buf);
+  gchar *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  return json;
+}
+
 #define ALICE_HEX "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 #define BOB_HEX   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 #define CAROL_HEX "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -858,6 +874,57 @@ test_revote_same_choice_updates_event_id(void)
   g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 0);
 }
 
+static void
+test_newest_vote_wins_and_reset(void)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *json = make_poll_json(ALICE_HEX, now, "Best color?", 2,
+                                           "singlechoice", 0);
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          now, json, NULL);
+  const gchar *zero[] = { "0", NULL };
+  const gchar *one[] = { "1", NULL };
+  gh_mls_poll_set_local_account(poll, BOB_HEX);
+  g_assert_true(gh_mls_poll_apply_vote(poll, BOB_HEX, zero, now + 2,
+                                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"));
+  g_assert_false(gh_mls_poll_apply_vote(poll, BOB_HEX, one, now + 1,
+                                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"));
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 0)->votes, ==, 1);
+  g_assert_cmpuint(gh_mls_poll_get_option(poll, 1)->votes, ==, 0);
+  g_assert_true(gh_mls_poll_has_voted(poll));
+  gh_mls_poll_reset_votes(poll);
+  g_assert_cmpuint(gh_mls_poll_get_total_voters(poll), ==, 0);
+  g_assert_false(gh_mls_poll_has_voted(poll));
+}
+
+static void
+test_nip29_poll_and_vote_envelope(void)
+{
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  g_autofree gchar *poll_json = make_poll_json(ALICE_HEX, now,
+                                                 "Best color?", 2,
+                                                 "singlechoice", 0);
+  g_autofree gchar *group_poll = make_nip29_poll_json(poll_json, "1068");
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMlsPoll) poll = gh_mls_poll_new_from_event(POLL_ID, ALICE_HEX,
+                                                          now, group_poll, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(poll);
+  g_assert_cmpstr(gh_mls_poll_get_question(poll), ==, "Best color?");
+
+  const gchar *ids[] = { "1", NULL };
+  g_autofree gchar *vote_json = make_vote_json(BOB_HEX, now + 1, POLL_ID, ids, 1);
+  g_autofree gchar *group_vote = make_nip29_poll_json(vote_json, "1018");
+  g_autofree gchar *target = NULL;
+  g_auto(GStrv) choices = NULL;
+  g_autofree gchar *event_id = NULL;
+  g_assert_true(gh_mls_poll_parse_vote(group_vote, &target, &choices, &event_id,
+                                       &error));
+  g_assert_no_error(error);
+  g_assert_cmpstr(target, ==, POLL_ID);
+  g_assert_cmpstr(choices[0], ==, "1");
+}
+
 /* ---- main ----------------------------------------------------------------- */
 
 int
@@ -899,6 +966,9 @@ main(int argc, char **argv)
   /* Review finding 6: same-choice re-vote must update the event id. */
   g_test_add_func("/mls/poll/revote-same-choice-updates-event-id",
                   test_revote_same_choice_updates_event_id);
+
+  g_test_add_func("/mls/poll/newest-vote-wins-and-reset", test_newest_vote_wins_and_reset);
+  g_test_add_func("/mls/poll/nip29-envelope", test_nip29_poll_and_vote_envelope);
 
   /* MDK v0.11 wire-format matrix. */
   g_test_add_func("/mls/poll/mdk-poll-to-groundhog", test_mdk_poll_to_groundhog);

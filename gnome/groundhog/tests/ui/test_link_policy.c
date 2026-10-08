@@ -3,8 +3,11 @@
  * what a click on each link may do. Nothing here touches the network.
  */
 #include "gh-link-policy.h"
+#include "gh-display-name.h"
 
+#include <nostr/nip19/nip19.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* The links of text as "uri|uri|…" for compact assertions. */
 static gchar *
@@ -232,6 +235,32 @@ test_preview_eligibility(void)
   g_assert_null(gh_link_policy_dup_host("nostr:npub1qqqqqqqq"));
 }
 
+static const gchar *
+mention_name(const gchar *pubkey, gpointer data)
+{
+  return g_strcmp0(pubkey, data) == 0 ? "Alice & Bob" : NULL;
+}
+
+static void
+test_mention_display_names(void)
+{
+  guint8 key[32];
+  memset(key, 0xaa, sizeof key);
+  char *npub = NULL;
+  g_assert_cmpint(nostr_nip19_encode_npub(key, &npub), ==, 0);
+  g_autofree gchar *uri = g_strconcat("nostr:", npub, NULL);
+  free(npub);
+  const gchar *account =
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  gh_display_name_set_resolver(mention_name, (gpointer) account);
+  g_autofree gchar *named = gh_link_policy_to_mention_markup(uri, NULL);
+  g_autofree gchar *own = gh_link_policy_to_mention_markup(uri, account);
+  g_assert_nonnull(strstr(named, "@Alice &amp; Bob</a>"));
+  g_assert_nonnull(strstr(own, "<b>@Alice &amp; Bob</b>"));
+  g_assert_nonnull(strstr(own, uri));
+  gh_display_name_set_resolver(NULL, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -243,5 +272,6 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/link-policy/confirmation", test_confirmation);
   g_test_add_func("/groundhog/link-policy/nostr-uris", test_nostr_uris);
   g_test_add_func("/groundhog/link-policy/preview-eligibility", test_preview_eligibility);
+  g_test_add_func("/groundhog/link-policy/mention-display-names", test_mention_display_names);
   return g_test_run();
 }

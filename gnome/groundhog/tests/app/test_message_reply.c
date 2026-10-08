@@ -7,6 +7,8 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-tag.h"
+#include "nostr-utils.h"
+#include <nostr/nip19/nip19.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -194,6 +196,38 @@ test_nip29_e_mention_no_reply(void)
   g_assert_null(gh_message_get_reply_to_id(msg));
 }
 
+static void
+test_nip29_poll_semantic_kinds(void)
+{
+  const gchar *markers[] = { "1068", "1018" };
+  const gint expected[] = { GH_MESSAGE_MLS_POLL_KIND, GH_MESSAGE_MLS_POLL_VOTE_KIND };
+  for (guint i = 0; i < G_N_ELEMENTS(markers); i++) {
+    NostrTags *tags = nostr_tags_new(0);
+    nostr_tags_append(tags, nostr_tag_new("poll", markers[i], NULL));
+    g_autofree gchar *json = nip29_json_with_tags(tags);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhMessage) message = gh_message_new_from_nip29_event(
+      ACCOUNT, "wss://relay.example.com", json, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(message);
+    g_assert_cmpint(gh_message_get_kind(message), ==, expected[i]);
+  }
+}
+
+static void
+test_extract_mentions(void)
+{
+  guint8 key[32];
+  g_assert_true(nostr_hex2bin(key, ACCOUNT, sizeof key));
+  char *npub = NULL;
+  g_assert_cmpint(nostr_nip19_encode_npub(key, &npub), ==, 0);
+  g_autofree gchar *content = g_strdup_printf("Hi nostr:%s and nostr:%s", npub, npub);
+  free(npub);
+  g_auto(GStrv) mentions = gh_message_extract_mentions(content);
+  g_assert_cmpuint(g_strv_length(mentions), ==, 1);
+  g_assert_cmpstr(mentions[0], ==, ACCOUNT);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -209,6 +243,9 @@ main(int argc, char **argv)
   g_test_add_func("/message/reply/mls-no-reply", test_mls_no_reply);
   g_test_add_func("/message/reply/mls-e-tag", test_mls_reply_e_tag);
   g_test_add_func("/message/reply/mls-q-over-bare", test_mls_reply_q_over_bare);
+
+  g_test_add_func("/message/poll/nip29-semantic-kinds", test_nip29_poll_semantic_kinds);
+  g_test_add_func("/message/mention/extract", test_extract_mentions);
 
   /* Review finding 8: e-mention must not produce a reply. */
   g_test_add_func("/message/reply/nip29-e-mention-no-reply", test_nip29_e_mention_no_reply);

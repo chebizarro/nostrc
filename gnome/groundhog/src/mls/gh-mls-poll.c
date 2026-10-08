@@ -92,6 +92,27 @@ valid_display_text(const gchar *s, gsize max_bytes)
   return TRUE;
 }
 
+/* NIP-29 carries NIP-88 tags in a kind-9 group-chat envelope: a poll
+ * marker distinguishes definitions and responses. Private transports keep
+ * the original inner kinds. */
+static gboolean
+poll_event_kind(NostrEvent *event, gint semantic_kind)
+{
+  if (nostr_event_get_kind(event) == semantic_kind)
+    return TRUE;
+  if (nostr_event_get_kind(event) != 9)
+    return FALSE;
+  NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
+  const gchar *wanted = semantic_kind == GH_MLS_POLL_KIND ? "1068" : "1018";
+  for (gsize i = 0; tags && i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (tag && g_strcmp0(nostr_tag_get_key(tag), "poll") == 0 &&
+        nostr_tag_size(tag) == 2 && g_strcmp0(nostr_tag_get_value(tag), wanted) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
 /* ---- GhMlsPoll ---------------------------------------------------------- */
 
 struct _GhMlsPoll {
@@ -217,7 +238,7 @@ gh_mls_poll_new_from_event(const gchar *event_id, const gchar *sender,
     return NULL;
   }
 
-  if (nostr_event_get_kind(event) != GH_MLS_POLL_KIND) {
+  if (!poll_event_kind(event, GH_MLS_POLL_KIND)) {
     nostr_event_free(event);
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                         "Not a poll event (kind != 1068)");
@@ -446,7 +467,6 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
                        const gchar *vote_event_id)
 {
   g_return_val_if_fail(GH_IS_MLS_POLL(self), FALSE);
-  (void) vote_created_at;
   if (!valid_hex64(voter_pubkey) || !option_ids || !option_ids[0])
     return FALSE;
 
@@ -469,6 +489,10 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
    * options match, update the vote_event_id so convergence withdrawal
    * finds the latest event (review finding 6). */
   GhMlsPollVoterRecord *existing = g_hash_table_lookup(self->voters, voter_pubkey);
+  /* NIP-88 chooses the newest timestamp. For equal-second votes, preserve
+     * arrival order so a later re-vote still updates the stored event ID. */
+    if (existing && vote_created_at < existing->created_at)
+    return FALSE;
   if (existing && existing->option_ids) {
     gboolean same = g_strv_length(existing->option_ids) == n_selected;
     if (same) {
@@ -479,6 +503,7 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
       /* Tallies unchanged but track the newest event id for withdrawal. */
       g_free(existing->vote_event_id);
       existing->vote_event_id = g_strdup(vote_event_id);
+      existing->created_at = vote_created_at;
       return FALSE;
     }
   }
@@ -487,12 +512,23 @@ gh_mls_poll_apply_vote(GhMlsPoll *self, const gchar *voter_pubkey,
   rec->voter_pubkey = g_strdup(voter_pubkey);
   rec->option_ids = g_strdupv((gchar **) option_ids);
   rec->vote_event_id = g_strdup(vote_event_id);
+  rec->created_at = vote_created_at;
   g_hash_table_replace(self->voters, rec->voter_pubkey, rec);
 
   recompute_tallies(self);
   update_local_selection(self);
   g_signal_emit(self, signals[SIG_TALLIES_CHANGED], 0);
   return TRUE;
+}
+
+void
+gh_mls_poll_reset_votes(GhMlsPoll *self)
+{
+  g_return_if_fail(GH_IS_MLS_POLL(self));
+  g_hash_table_remove_all(self->voters);
+  recompute_tallies(self);
+  update_local_selection(self);
+  g_signal_emit(self, signals[SIG_TALLIES_CHANGED], 0);
 }
 
 gboolean
@@ -537,7 +573,7 @@ gh_mls_poll_build_event(const gchar *account_pubkey, const gchar *nostr_group_he
                         GhMlsPollType poll_type, gint64 ends_at,
                         GError **error)
 {
-  if (!valid_hex64(account_pubkey) || !nostr_group_hex || !*nostr_group_hex) {
+  if (!valid_hex64(account_pubkey) || (nostr_group_hex && !*nostr_group_hex)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                         "Invalid account or group hex");
     return NULL;
@@ -578,7 +614,9 @@ gh_mls_poll_build_event(const gchar *account_pubkey, const gchar *nostr_group_he
   nostr_event_set_created_at(event, created_at);
   nostr_event_set_content(event, question);
 
-  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("h", nostr_group_hex, NULL));
+  NostrTags *tags = nostr_group_hex
+                      ? nostr_tags_new(1, nostr_tag_new("h", nostr_group_hex, NULL))
+                      : nostr_tags_new(0);
   for (guint i = 0; i < n_options; i++) {
     g_autofree gchar *idx = g_strdup_printf("%u", i);
     nostr_tags_append(tags, nostr_tag_new(GH_MLS_POLL_OPTION_TAG, idx,
@@ -614,7 +652,7 @@ gh_mls_poll_build_vote_event(const gchar *account_pubkey, const gchar *nostr_gro
                              const gchar **option_ids, guint n_options,
                              GError **error)
 {
-  if (!valid_hex64(account_pubkey) || !nostr_group_hex || !*nostr_group_hex) {
+  if (!valid_hex64(account_pubkey) || (nostr_group_hex && !*nostr_group_hex)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                         "Invalid account or group hex");
     return NULL;
@@ -647,7 +685,9 @@ gh_mls_poll_build_vote_event(const gchar *account_pubkey, const gchar *nostr_gro
   nostr_event_set_created_at(event, created_at);
   nostr_event_set_content(event, "");
 
-  NostrTags *tags = nostr_tags_new(1, nostr_tag_new("h", nostr_group_hex, NULL));
+  NostrTags *tags = nostr_group_hex
+                      ? nostr_tags_new(1, nostr_tag_new("h", nostr_group_hex, NULL))
+                      : nostr_tags_new(0);
   nostr_tags_append(tags, nostr_tag_new(GH_MLS_POLL_EVENT_REF_TAG, poll_event_id, NULL));
   for (guint i = 0; i < n_options; i++)
     nostr_tags_append(tags, nostr_tag_new(GH_MLS_POLL_RESPONSE_TAG, option_ids[i], NULL));
@@ -691,7 +731,7 @@ gh_mls_poll_parse_vote(const gchar *inner_event_json,
     return FALSE;
   }
 
-  if (nostr_event_get_kind(event) != GH_MLS_POLL_VOTE_KIND) {
+  if (!poll_event_kind(event, GH_MLS_POLL_VOTE_KIND)) {
     nostr_event_free(event);
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Not a vote event");
     return FALSE;
