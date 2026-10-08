@@ -1818,6 +1818,12 @@ listed_and_idle(gpointer data)
          !gh_conversation_view_get_loading_older(wait->view);
 }
 
+static gboolean
+widget_shown(gpointer data)
+{
+  return gtk_widget_get_visible(GTK_WIDGET(data));
+}
+
 #define HISTORY_READ   40 /* read in session 1 */
 #define HISTORY_UNREAD 80 /* then received: more than a page of each */
 #define PAGE           GH_STORE_CONVERSATIONS_PAGE_SIZE
@@ -1885,7 +1891,14 @@ test_restart_pages_history(void)
   GtkWidget *older = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(view),
                                                               GH_TYPE_CONVERSATION_VIEW,
                                                               "older_button"));
-  g_assert_true(gtk_widget_get_visible(older));
+  /* The reader stays where they were, now a page of older messages below
+   * the top: "Earlier Messages" shows only within a page of it
+   * (nostrc-l1kn6.1). */
+  GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(scroller);
+  g_assert_cmpfloat(gtk_adjustment_get_value(adj), >, gtk_adjustment_get_page_size(adj));
+  g_assert_false(gtk_widget_get_visible(older));
+  gtk_adjustment_set_value(adj, gtk_adjustment_get_page_size(adj) / 2);
+  gh_test_spin_until(widget_shown, older);
   AdwButtonContent *content = ADW_BUTTON_CONTENT(
     gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "older_content"));
   g_assert_cmpstr(adw_button_content_get_label(content), ==, "Earlier Messages");

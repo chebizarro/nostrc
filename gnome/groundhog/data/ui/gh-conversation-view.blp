@@ -7,8 +7,8 @@ using Adw 1;
 // separator per local day (gh-day-separator.blp, loaded from C because
 // blueprint-compiler 0.12 has no inline ListHeader template) and rows from
 // gh-message-list-item.blp and gh-message-row.blp, "Earlier Messages" (older
-// history not listed yet; its label is set from C) and "Loading earlier
-// messages…", "Jump to Latest" with the
+// history not listed yet, within a page of the top; its label is set from C)
+// and "Loading earlier messages…", "Jump to Latest" with the
 // number of new messages, "Waiting for Grotto to unlock N
 // messages" (state 12) and, in an encrypted group, "Some messages in this
 // group can't be read yet." (state 13: GhMlsGroup:decrypt-pending; no number
@@ -58,12 +58,15 @@ template $GhConversationView: Adw.BreakpointBin {
         };
       };
 
+      // Both stay clear of the scrollbar at the end edge, however narrow.
       [overlay]
       Box loading_box {
         visible: false;
         halign: center;
         valign: start;
         margin-top: 12;
+        margin-start: 18;
+        margin-end: 18;
         spacing: 8;
 
         styles [
@@ -81,11 +84,14 @@ template $GhConversationView: Adw.BreakpointBin {
       }
 
       [overlay]
+      // Shown only within a page of the top (gh-conversation-view.c).
       Button older_button {
         visible: false;
         halign: center;
         valign: start;
         margin-top: 12;
+        margin-start: 18;
+        margin-end: 18;
         action-name: "conversation.load-older";
 
         styles [

@@ -40,8 +40,7 @@ struct _GhMessageRow {
   GPtrArray *extra_cards;   /* an encrypted group message's files 1.. (W25) */
   GtkBox *poll_slot;
   GtkWidget *poll_card;     /* set externally for kind-1068 poll messages */
-  GtkBox *reaction_controls;
-  GhReactionBar *reaction_bar;
+  GhReactionBar *reaction_bar; /* on the meta line, only while there are reactions */
   GhReactionSummary *reaction_summary; /* owned even while the bar is absent */
   GtkButton *react_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
@@ -58,6 +57,7 @@ struct _GhMessageRow {
   GtkLabel *preview_title;
   GtkLabel *preview_text;
   GtkBox *meta_box;
+  GtkBox *status_box;
   GtkImage *timer_icon;
   GtkLabel *time_label;
   GhDeliveryIndicator *delivery;
@@ -74,6 +74,7 @@ struct _GhMessageRow {
   gboolean compact;
   gboolean undecryptable;
   gboolean has_reply;   /* nostrc-zjkv: the message has a reply_to_id */
+  gint meta_side;       /* the side the meta line is arranged for: 0 incoming, 1 own */
 };
 
 enum {
@@ -349,9 +350,9 @@ update_meta(GhMessageRow *self)
     GtkWidget *label = gtk_label_new(_("Less private (NIP-04)"));
     gtk_widget_add_css_class(label, "caption");
     gtk_box_append(GTK_BOX(box), label);
-    gtk_box_insert_child_after(self->meta_box, box, GTK_WIDGET(self->timer_icon));
+    gtk_box_insert_child_after(self->status_box, box, GTK_WIDGET(self->timer_icon));
   } else if (!legacy && self->legacy_box) {
-    gtk_box_remove(self->meta_box, self->legacy_box);
+    gtk_box_remove(self->status_box, self->legacy_box);
     self->legacy_box = NULL;
   }
   gtk_widget_set_visible(GTK_WIDGET(self->meta_box),
@@ -370,6 +371,34 @@ update_meta(GhMessageRow *self)
 static void
 on_reaction_toggled(GhReactionBar *bar, const gchar *emoji, gboolean add, GhMessageRow *self);
 
+/* The meta line (nostrc-l1kn6.5): one order, mirrored by side, so that the
+ * status is at the bubble's edge, the chips next to it and React outermost:
+ *   incoming  [time][Try Again][chips…][React]
+ *   own       [React][chips…][Try Again][time][receipt]
+ * The status reads the same on both sides (gh-message-row.blp). Rearranged
+ * only when the side or the presence of chips changes. */
+static void
+arrange_meta(GhMessageRow *self, gboolean outgoing, gboolean force)
+{
+  if (!force && self->meta_side == (outgoing ? 1 : 0))
+    return;
+  self->meta_side = outgoing ? 1 : 0;
+  GtkWidget *order[4];
+  guint n = 0;
+  order[n++] = GTK_WIDGET(self->status_box);
+  order[n++] = GTK_WIDGET(self->retry_button);
+  if (self->reaction_bar)
+    order[n++] = GTK_WIDGET(self->reaction_bar);
+  order[n++] = GTK_WIDGET(self->react_button);
+  GtkWidget *previous = NULL;
+  for (guint i = 0; i < n; i++) {
+    GtkWidget *widget = order[outgoing ? n - 1 - i : i];
+    if (gtk_widget_get_prev_sibling(widget) != previous)
+      gtk_box_reorder_child_after(self->meta_box, widget, previous);
+    previous = widget;
+  }
+}
+
 static void
 sync_reaction_bar(GhMessageRow *self)
 {
@@ -378,16 +407,15 @@ sync_reaction_bar(GhMessageRow *self)
   if (needed && !self->reaction_bar) {
     self->reaction_bar = GH_REACTION_BAR(gh_reaction_bar_new());
     gtk_widget_set_name(GTK_WIDGET(self->reaction_bar), "reaction_bar");
-    gtk_box_insert_child_after(self->reaction_controls, GTK_WIDGET(self->reaction_bar), NULL);
+    gtk_widget_set_valign(GTK_WIDGET(self->reaction_bar), GTK_ALIGN_CENTER);
+    gtk_box_append(self->meta_box, GTK_WIDGET(self->reaction_bar));
     g_signal_connect(self->reaction_bar, "reaction-toggled",
                      G_CALLBACK(on_reaction_toggled), self);
     gh_reaction_bar_set_summary(self->reaction_bar, self->reaction_summary);
-    if (self->message && gh_message_is_self(self->message))
-      gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->reaction_bar),
-                                  GTK_WIDGET(self->react_button));
+    arrange_meta(self, self->message && gh_message_is_self(self->message), TRUE);
   } else if (!needed && self->reaction_bar) {
     gh_reaction_bar_set_summary(self->reaction_bar, NULL);
-    gtk_box_remove(self->reaction_controls, GTK_WIDGET(self->reaction_bar));
+    gtk_box_remove(self->meta_box, GTK_WIDGET(self->reaction_bar));
     self->reaction_bar = NULL;
   }
 }
@@ -737,18 +765,7 @@ update_all(GhMessageRow *self)
   update_avatar(self);
   gtk_widget_set_halign(GTK_WIDGET(self->preview_box), align);
   gtk_widget_set_halign(GTK_WIDGET(self->meta_box), align);
-  /* The controls stay together on the meta line. Incoming: chips, React,
-   * then status. Outgoing: status, React, chips; chips end at the bubble. */
-  if (outgoing) {
-    gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->react_button), NULL);
-    GtkWidget *last = gtk_widget_get_last_child(GTK_WIDGET(self->meta_box));
-    if (last != GTK_WIDGET(self->reaction_controls))
-      gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), last);
-  } else {
-    gtk_box_reorder_child_after(self->reaction_controls, GTK_WIDGET(self->react_button),
-                                self->reaction_bar ? GTK_WIDGET(self->reaction_bar) : NULL);
-    gtk_box_reorder_child_after(self->meta_box, GTK_WIDGET(self->reaction_controls), NULL);
-  }
+  arrange_meta(self, outgoing, FALSE);
 
   g_clear_pointer(&self->preview_uri, g_free);
 
@@ -1369,13 +1386,13 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, sender_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reaction_controls);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, meta_box);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, status_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, timer_icon);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, time_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, delivery);
@@ -1393,6 +1410,7 @@ gh_message_row_init(GhMessageRow *self)
   gint64 construct_start_us = g_get_monotonic_time();
 #endif
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->meta_side = 0; /* the template lists the meta line in the incoming order */
   self->extra_cards = g_ptr_array_new();
   /* The row's actions take the message's rumor id: a row set up (or rooted
    * again, e.g. when the window collapses) before a message is bound names
