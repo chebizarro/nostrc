@@ -1,125 +1,137 @@
-#include "gh-signer.h"
+#include "gh-signer-private.h"
 #include "gh-identity.h"
 #include "nostr-event.h"
 
 #include <string.h>
 
-#define SIGNER_BUS "org.nostr.Signer"
-#define SIGNER_PATH "/org/nostr/signer"
-#define SIGNER_INTERFACE "org.nostr.Signer"
 #define MAX_RESULT (1024 * 1024)
-/* The signer can hold an approval for 300 seconds. Leave room for its typed
- * result instead of reporting a local transport timeout at 30 seconds. */
-#define SIGNER_CALL_TIMEOUT_MS (330 * 1000)
 
 typedef enum { OP_SIGN, OP_ENCRYPT, OP_DECRYPT, OP_NIP04_DECRYPT } Operation;
 typedef struct _Pending Pending;
 struct _GhSigner {
   gint refs;
-  GDBusConnection *bus; /* shared session bus, used only to verify the private one */
   gchar *npub;
   gchar *pubkey;
-  GPtrArray *pending; /* non-owning; each Pending keeps signer alive */
   guint generation;
+  gboolean remote;
+  union { GhNip55lSigner *local; GhNip46Signer *remote; } backend;
+  GPtrArray *pending; /* non-owning; each Pending holds a signer reference */
 };
 struct _Pending {
   GhSigner *signer;
   GTask *task;
   GCancellable *cancel;
-  GDBusConnection *bus; /* sender private to this operation */
   GCancellable *caller;
-  GMutex bus_lock; /* caller cancellation may arrive from another thread */
-  gboolean revoked;
   gulong caller_handler;
   guint generation;
   Operation op;
   NostrEvent *request;
-  gchar *input;
-  gchar *peer;
 };
 
 G_DEFINE_QUARK(gh-signer-error-quark, gh_signer_error)
 
 static GhSigner *
-signer_ref(GhSigner *signer)
+signer_ref(GhSigner *self)
 {
-  g_atomic_int_inc(&signer->refs);
-  return signer;
+  g_atomic_int_inc(&self->refs);
+  return self;
 }
 
 static void
-signer_unref(GhSigner *signer)
+signer_unref(GhSigner *self)
 {
-  if (!g_atomic_int_dec_and_test(&signer->refs)) return;
-  g_assert(signer->pending->len == 0);
-  g_ptr_array_unref(signer->pending);
-  g_clear_object(&signer->bus);
-  g_free(signer->npub);
-  g_free(signer->pubkey);
-  g_free(signer);
+  if (!g_atomic_int_dec_and_test(&self->refs)) return;
+  g_assert_cmpuint(self->pending->len, ==, 0);
+  if (self->remote)
+    gh_signer_nip46_free(self->backend.remote);
+  else
+    gh_signer_nip55l_free(self->backend.local);
+  g_ptr_array_unref(self->pending);
+  g_free(self->npub);
+  g_free(self->pubkey);
+  g_free(self);
 }
 
-GhSigner *
-gh_signer_new(GDBusConnection *bus, const gchar *selected_npub, GError **error)
+static GhSigner *
+new_signer(const gchar *npub, GError **error)
 {
-  g_return_val_if_fail(G_IS_DBUS_CONNECTION(bus), NULL);
-  g_autofree gchar *pubkey = gh_identity_pubkey_hex(selected_npub);
+  g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub);
   if (!pubkey) {
     g_set_error_literal(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
                         "A valid selected npub is required");
     return NULL;
   }
-  GhSigner *signer = g_new0(GhSigner, 1);
-  signer->refs = 1;
-  signer->bus = g_object_ref(bus);
-  signer->npub = g_strdup(selected_npub);
-  signer->pubkey = g_steal_pointer(&pubkey);
-  signer->pending = g_ptr_array_new();
-  return signer;
+  GhSigner *self = g_new0(GhSigner, 1);
+  self->refs = 1;
+  self->npub = g_strdup(npub);
+  self->pubkey = g_steal_pointer(&pubkey);
+  self->pending = g_ptr_array_new();
+  return self;
 }
 
-static void
-cancel_pending(Pending *p)
+GhSigner *
+gh_signer_new(GDBusConnection *bus, const gchar *npub, GError **error)
 {
-  /* Cancellation alone abandons only the reply. Closing this operation's
-   * sender also revokes its service-side approval without affecting peers. */
-  g_mutex_lock(&p->bus_lock);
-  p->revoked = TRUE;
-  GDBusConnection *bus = p->bus ? g_object_ref(p->bus) : NULL;
-  g_mutex_unlock(&p->bus_lock);
-  g_cancellable_cancel(p->cancel);
-  if (bus && !g_dbus_connection_is_closed(bus))
-    g_dbus_connection_close(bus, NULL, NULL, NULL);
-  g_clear_object(&bus);
+  g_return_val_if_fail(G_IS_DBUS_CONNECTION(bus), NULL);
+  GhSigner *self = new_signer(npub, error);
+  if (!self) return NULL;
+  self->backend.local = gh_signer_nip55l_new(bus, npub, error);
+  if (!self->backend.local) {
+    signer_unref(self);
+    return NULL;
+  }
+  return self;
+}
+
+GhSigner *
+gh_signer_new_nip46(GhNip46Session *session, const gchar *npub, GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP46_SESSION(session), NULL);
+  GhSigner *self = new_signer(npub, error);
+  if (!self) return NULL;
+  self->remote = TRUE;
+  self->backend.remote = gh_signer_nip46_new(session);
+  return self;
 }
 
 void
-gh_signer_free(GhSigner *signer)
+gh_signer_free(GhSigner *self)
 {
-  if (!signer) return;
-  for (guint i = 0; i < signer->pending->len; i++)
-    cancel_pending(g_ptr_array_index(signer->pending, i));
-  signer_unref(signer);
+  if (!self) return;
+  self->generation++;
+  for (guint i = 0; i < self->pending->len; i++) {
+    Pending *p = g_ptr_array_index(self->pending, i);
+    g_cancellable_cancel(p->cancel);
+  }
+  signer_unref(self);
 }
 
 gboolean
-gh_signer_select(GhSigner *signer, const gchar *npub, GError **error)
+gh_signer_select(GhSigner *self, const gchar *npub, GError **error)
 {
-  g_return_val_if_fail(signer != NULL, FALSE);
+  g_return_val_if_fail(self != NULL, FALSE);
   g_autofree gchar *pubkey = gh_identity_pubkey_hex(npub);
   if (!pubkey) {
     g_set_error_literal(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
                         "A valid selected npub is required");
     return FALSE;
   }
-  signer->generation++;
-  for (guint i = 0; i < signer->pending->len; i++) {
-    cancel_pending(g_ptr_array_index(signer->pending, i));
+  if (self->remote && g_strcmp0(self->npub, npub) != 0) {
+    g_set_error_literal(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
+                        "A remote signer is bound to one account");
+    return FALSE;
   }
-  g_free(signer->npub);
-  g_free(signer->pubkey);
-  signer->npub = g_strdup(npub);
-  signer->pubkey = g_steal_pointer(&pubkey);
+  self->generation++;
+  for (guint i = 0; i < self->pending->len; i++) {
+    Pending *p = g_ptr_array_index(self->pending, i);
+    g_cancellable_cancel(p->cancel);
+  }
+  if (!self->remote && !gh_signer_nip55l_select(self->backend.local, npub, error))
+    return FALSE;
+  g_free(self->npub);
+  g_free(self->pubkey);
+  self->npub = g_strdup(npub);
+  self->pubkey = g_steal_pointer(&pubkey);
   return TRUE;
 }
 
@@ -131,19 +143,15 @@ hex64(const gchar *s)
   return TRUE;
 }
 
-/* NIP-04: "<base64>?iv=<base64>", bounded like a NIP-44 payload. */
 static gboolean
 valid_nip04_ciphertext(const gchar *text)
 {
-  if (!text || strlen(text) > MAX_RESULT)
-    return FALSE;
+  if (!text || strlen(text) > MAX_RESULT) return FALSE;
   const gchar *iv = strstr(text, "?iv=");
-  if (!iv || iv == text || !iv[4])
-    return FALSE;
+  if (!iv || iv == text || !iv[4]) return FALSE;
   for (const gchar *c = text; *c; c++)
     if (c < iv || c >= iv + 4)
-      if (!g_ascii_isalnum(*c) && *c != '+' && *c != '/' && *c != '=')
-        return FALSE;
+      if (!g_ascii_isalnum(*c) && *c != '+' && *c != '/' && *c != '=') return FALSE;
   return TRUE;
 }
 
@@ -178,28 +186,21 @@ static GhSignerError
 signed_event_error(Pending *p, const gchar *json)
 {
   if (!json || strlen(json) > MAX_RESULT) return GH_SIGNER_ERROR_INVALID_RESULT;
-  NostrEvent *signed_event = nostr_event_new();
-  if (!signed_event) return GH_SIGNER_ERROR_INVALID_RESULT;
-  GhSignerError result = GH_SIGNER_ERROR_INVALID_RESULT;
-  if (nostr_event_deserialize_compact(signed_event, json, NULL) == 1 &&
-      nostr_event_validate(signed_event, NULL) == NOSTR_EVENT_VALIDATION_OK) {
-    if (g_strcmp0(signed_event->pubkey, p->request->pubkey) != 0)
-      result = GH_SIGNER_ERROR_KEY_MISMATCH;
-    else if (signed_event->created_at == p->request->created_at &&
-             signed_event->kind == p->request->kind &&
-             g_strcmp0(signed_event->content, p->request->content) == 0 &&
-             tags_match(signed_event->tags, p->request->tags))
-      result = 0;
+  NostrEvent *event = nostr_event_new();
+  if (!event) return GH_SIGNER_ERROR_INVALID_RESULT;
+  GhSignerError code = GH_SIGNER_ERROR_INVALID_RESULT;
+  if (nostr_event_deserialize_compact(event, json, NULL) == 1 &&
+      nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK) {
+    if (g_strcmp0(event->pubkey, p->request->pubkey) != 0)
+      code = GH_SIGNER_ERROR_KEY_MISMATCH;
+    else if (event->created_at == p->request->created_at &&
+             event->kind == p->request->kind &&
+             g_strcmp0(event->content, p->request->content) == 0 &&
+             tags_match(event->tags, p->request->tags))
+      code = 0;
   }
-  nostr_event_free(signed_event);
-  return result;
-}
-
-static void
-cancel_from_caller(GCancellable *caller, gpointer data)
-{
-  (void)caller;
-  cancel_pending(data);
+  nostr_event_free(event);
+  return code;
 }
 
 static void
@@ -208,188 +209,60 @@ pending_free(Pending *p)
   if (p->caller_handler) g_cancellable_disconnect(p->caller, p->caller_handler);
   g_clear_object(&p->caller);
   g_clear_object(&p->cancel);
-  g_clear_object(&p->bus);
-  g_mutex_clear(&p->bus_lock);
   if (p->request) nostr_event_free(p->request);
-  g_free(p->input);
-  g_free(p->peer);
   g_object_unref(p->task);
   signer_unref(p->signer);
   g_free(p);
 }
 
-static GError *
-map_bus_error(GError *error)
+static void
+cancel_from_caller(GCancellable *caller, gpointer data)
 {
-  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                               "Signer operation cancelled");
-  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_TIMED_OUT) ||
-      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMEOUT) ||
-      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NO_REPLY))
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
-                               "Signer operation timed out");
-  g_autofree gchar *remote = g_dbus_error_get_remote_error(error);
-  if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalDenied") == 0)
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED,
-                               "Signer approval denied");
-  if (g_strcmp0(remote, "org.nostr.Signer.Error.ApprovalTimedOut") == 0)
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
-                               "Signer approval timed out");
-  if (g_strcmp0(remote, "org.nostr.Signer.Error.IdentityChanged") == 0)
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_KEY_MISMATCH,
-                               "Signer identity changed during approval");
-  if (g_strcmp0(remote, "org.nostr.Signer.Error.NoApprovalAgent") == 0)
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_NO_APPROVER,
-                               "Signer approval agent is not running");
-  if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
-      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER) ||
-      g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD))
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                               "Required signer service or method is unavailable");
-  return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                             "Signer service failed");
+  (void)caller;
+  Pending *p = data;
+  g_cancellable_cancel(p->cancel);
 }
 
 static void
-call_done(GObject *source, GAsyncResult *result, gpointer data)
+backend_done(GObject *source, GAsyncResult *result, gpointer data)
 {
+  (void)source;
   Pending *p = data;
-  GhSigner *signer = p->signer;
-  g_autoptr(GError) bus_error = NULL;
-  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result,
-                                                              &bus_error);
-  g_ptr_array_remove(signer->pending, p);
-  if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation ||
-      g_dbus_connection_is_closed(p->bus)) {
+  GhSigner *self = p->signer;
+  g_autoptr(GError) error = NULL;
+  gchar *value;
+  if (self->remote)
+    value = gh_signer_nip46_call_finish(self->backend.remote, result, &error);
+  else if (p->op == OP_SIGN)
+    value = gh_signer_nip55l_sign_finish(result, &error);
+  else
+    value = gh_signer_nip55l_nip44_finish(result, &error);
+  g_ptr_array_remove(self->pending, p);
+  if (g_cancellable_is_cancelled(p->cancel) || p->generation != self->generation) {
+    g_free(value);
     g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
                             "Signer operation cancelled");
-  } else if (bus_error) {
-    g_task_return_error(p->task, map_bus_error(bus_error));
-  } else if (!reply || !g_variant_is_of_type(reply, G_VARIANT_TYPE("(s)"))) {
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
-                            "Signer returned an invalid result");
+  } else if (error) {
+    g_free(value);
+    g_task_return_error(p->task, g_steal_pointer(&error));
   } else {
-    const gchar *value;
-    g_variant_get(reply, "(&s)", &value);
-    GhSignerError validation = p->op == OP_SIGN ? signed_event_error(p, value) :
+    GhSignerError code = p->op == OP_SIGN ? signed_event_error(p, value) :
       p->op == OP_ENCRYPT ? (valid_ciphertext(value) ? 0 : GH_SIGNER_ERROR_INVALID_RESULT) :
       (value && strlen(value) <= MAX_RESULT && g_utf8_validate(value, -1, NULL)
         ? 0 : GH_SIGNER_ERROR_INVALID_RESULT);
-    if (validation)
-      g_task_return_new_error(p->task, GH_SIGNER_ERROR, validation,
+    if (code) {
+      g_free(value);
+      g_task_return_new_error(p->task, GH_SIGNER_ERROR, code,
                               "Signer returned an unverified operation result");
-    else
-      g_task_return_pointer(p->task, g_strdup(value), g_free);
+    } else {
+      g_task_return_pointer(p->task, value, g_free);
+    }
   }
-  if (!g_dbus_connection_is_closed(p->bus))
-    g_dbus_connection_close(p->bus, NULL, NULL, NULL);
   pending_free(p);
 }
 
 static void
-connection_done(GObject *source, GAsyncResult *result, gpointer data)
-{
-  (void)source;
-  Pending *p = data;
-  GhSigner *signer = p->signer;
-  g_autoptr(GError) error = NULL;
-  GDBusConnection *bus = g_dbus_connection_new_for_address_finish(result, &error);
-  if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation) {
-    if (bus) {
-      g_dbus_connection_close(bus, NULL, NULL, NULL);
-      g_object_unref(bus);
-    }
-    g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
-    pending_free(p);
-    return;
-  }
-  if (!bus || g_strcmp0(g_dbus_connection_get_guid(bus),
-                        g_dbus_connection_get_guid(signer->bus)) != 0) {
-    if (bus) {
-      g_dbus_connection_close(bus, NULL, NULL, NULL);
-      g_object_unref(bus);
-    }
-    g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                            "Cannot connect to the selected session bus");
-    pending_free(p);
-    return;
-  }
-  g_mutex_lock(&p->bus_lock);
-  if (p->revoked) {
-    g_mutex_unlock(&p->bus_lock);
-    g_dbus_connection_close(bus, NULL, NULL, NULL);
-    g_object_unref(bus);
-    g_ptr_array_remove(signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
-    pending_free(p);
-    return;
-  }
-  p->bus = bus;
-  g_mutex_unlock(&p->bus_lock);
-  /* The opt-in is per bus connection and lost if the service restarts, so it
-   * precedes every gated call; the service handles one connection's calls in
-   * order. No reply is requested, so a pre-0.5.0 service's UnknownMethod
-   * error is never sent; its failures then all arrive as ApprovalDenied. */
-  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
-                         "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
-                         -1, NULL, NULL, NULL);
-  g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
-                         p->op == OP_SIGN ? "SignEvent" :
-                         p->op == OP_ENCRYPT ? "NIP44Encrypt" :
-                         p->op == OP_NIP04_DECRYPT ? "NIP04Decrypt" : "NIP44Decrypt",
-                         p->op == OP_SIGN ? g_variant_new("(sss)", p->input, signer->npub, "") :
-                           g_variant_new("(sss)", p->input, p->peer, signer->npub),
-                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
-                         p->cancel, call_done, p);
-}
-
-static void
-address_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancel)
-{
-  (void)source; (void)task_data;
-  g_autoptr(GError) error = NULL;
-  gchar *address = g_dbus_address_get_for_bus_sync(G_BUS_TYPE_SESSION, cancel, &error);
-  if (address)
-    g_task_return_pointer(task, address, g_free);
-  else
-    g_task_return_error(task, g_steal_pointer(&error));
-}
-
-static void
-address_done(GObject *source, GAsyncResult *result, gpointer data)
-{
-  (void)source;
-  Pending *p = data;
-  g_autoptr(GError) error = NULL;
-  g_autofree gchar *address = g_task_propagate_pointer(G_TASK(result), &error);
-  if (g_cancellable_is_cancelled(p->cancel) ||
-      p->generation != p->signer->generation) {
-    g_ptr_array_remove(p->signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                            "Signer operation cancelled");
-    pending_free(p);
-    return;
-  }
-  if (!address) {
-    g_ptr_array_remove(p->signer->pending, p);
-    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                            "Cannot resolve the selected session bus");
-    pending_free(p);
-    return;
-  }
-  g_dbus_connection_new_for_address(address,
-    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
-    NULL, p->cancel, connection_done, p);
-}
-
-static void
-start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer,
+start_call(GhSigner *self, Operation op, const gchar *input, const gchar *peer,
            GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   GTask *task = g_task_new(NULL, NULL, callback, user_data);
@@ -397,10 +270,10 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
     g_task_set_source_tag(task, gh_signer_sign_async);
   else if (op == OP_ENCRYPT)
     g_task_set_source_tag(task, gh_signer_nip44_encrypt_async);
-  else if (op == OP_NIP04_DECRYPT)
-    g_task_set_source_tag(task, gh_signer_nip04_decrypt_async);
-  else
+  else if (op == OP_DECRYPT)
     g_task_set_source_tag(task, gh_signer_nip44_decrypt_async);
+  else
+    g_task_set_source_tag(task, gh_signer_nip04_decrypt_async);
   if (!input || strlen(input) > MAX_RESULT || !g_utf8_validate(input, -1, NULL) ||
       (op != OP_SIGN && !hex64(peer))) {
     g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
@@ -413,7 +286,7 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
     request = nostr_event_new();
     if (!request || nostr_event_deserialize_compact(request, input, NULL) != 1 ||
         request->created_at <= 0 || request->kind < 0 ||
-        g_strcmp0(request->pubkey, signer->pubkey) != 0 ||
+        g_strcmp0(request->pubkey, self->pubkey) != 0 ||
         request->id || request->sig || !request->content) {
       if (request) nostr_event_free(request);
       g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
@@ -433,31 +306,43 @@ start_call(GhSigner *signer, Operation op, const gchar *input, const gchar *peer
     return;
   }
   Pending *p = g_new0(Pending, 1);
-  p->signer = signer_ref(signer);
+  p->signer = signer_ref(self);
   p->task = task;
   p->cancel = g_cancellable_new();
-  g_mutex_init(&p->bus_lock);
   p->caller = cancellable ? g_object_ref(cancellable) : NULL;
-  p->generation = signer->generation;
+  p->generation = self->generation;
   p->op = op;
   p->request = request;
-  p->input = g_strdup(input);
-  p->peer = g_strdup(peer);
-  g_ptr_array_add(signer->pending, p);
+  g_ptr_array_add(self->pending, p);
   if (p->caller)
     p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
                                                p, NULL);
-  GTask *lookup = g_task_new(NULL, p->cancel, address_done, p);
-  g_task_run_in_thread(lookup, address_worker);
-  g_object_unref(lookup);
+  if (self->remote) {
+    const gchar *method = op == OP_SIGN ? "sign_event" :
+      op == OP_ENCRYPT ? "nip44_encrypt" :
+      op == OP_DECRYPT ? "nip44_decrypt" : "nip04_decrypt";
+    gh_signer_nip46_call_async(self->backend.remote, method, input, peer,
+                               p->cancel, backend_done, p);
+  } else if (op == OP_SIGN) {
+    gh_signer_nip55l_sign_async(self->backend.local, input, p->cancel, backend_done, p);
+  } else if (op == OP_ENCRYPT) {
+    gh_signer_nip55l_nip44_encrypt_async(self->backend.local, input, peer,
+                                         p->cancel, backend_done, p);
+  } else if (op == OP_DECRYPT) {
+    gh_signer_nip55l_nip44_decrypt_async(self->backend.local, input, peer,
+                                         p->cancel, backend_done, p);
+  } else {
+    gh_signer_nip55l_nip04_decrypt_async(self->backend.local, input, peer,
+                                         p->cancel, backend_done, p);
+  }
 }
 
 void
-gh_signer_sign_async(GhSigner *signer, const gchar *unsigned_event,
-                     GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+gh_signer_sign_async(GhSigner *self, const gchar *event, GCancellable *cancel,
+                     GAsyncReadyCallback callback, gpointer data)
 {
-  g_return_if_fail(signer != NULL);
-  start_call(signer, OP_SIGN, unsigned_event, NULL, cancellable, callback, user_data);
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_SIGN, event, NULL, cancel, callback, data);
 }
 
 gchar *
@@ -469,31 +354,25 @@ gh_signer_sign_finish(GAsyncResult *result, GError **error)
 }
 
 void
-gh_signer_nip44_encrypt_async(GhSigner *signer, const gchar *plaintext,
-                              const gchar *peer_pubkey_hex, GCancellable *cancellable,
-                              GAsyncReadyCallback callback, gpointer user_data)
+gh_signer_nip44_encrypt_async(GhSigner *self, const gchar *text, const gchar *peer,
+                               GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
-  g_return_if_fail(signer != NULL);
-  start_call(signer, OP_ENCRYPT, plaintext, peer_pubkey_hex, cancellable, callback, user_data);
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_ENCRYPT, text, peer, cancel, cb, data);
 }
-
 void
-gh_signer_nip44_decrypt_async(GhSigner *signer, const gchar *ciphertext,
-                              const gchar *peer_pubkey_hex, GCancellable *cancellable,
-                              GAsyncReadyCallback callback, gpointer user_data)
+gh_signer_nip44_decrypt_async(GhSigner *self, const gchar *text, const gchar *peer,
+                               GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
-  g_return_if_fail(signer != NULL);
-  start_call(signer, OP_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback, user_data);
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_DECRYPT, text, peer, cancel, cb, data);
 }
-
 void
-gh_signer_nip04_decrypt_async(GhSigner *signer, const gchar *ciphertext,
-                              const gchar *peer_pubkey_hex, GCancellable *cancellable,
-                              GAsyncReadyCallback callback, gpointer user_data)
+gh_signer_nip04_decrypt_async(GhSigner *self, const gchar *text, const gchar *peer,
+                               GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
-  g_return_if_fail(signer != NULL);
-  start_call(signer, OP_NIP04_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback,
-             user_data);
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_NIP04_DECRYPT, text, peer, cancel, cb, data);
 }
 
 gchar *

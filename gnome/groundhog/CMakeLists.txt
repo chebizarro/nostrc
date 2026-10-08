@@ -221,7 +221,8 @@ if (TARGET nostr AND TARGET nip19)
                      ${CMAKE_CURRENT_BINARY_DIR}/gnostr-secret)
   endif()
   add_library(groundhog-identity STATIC
-    src/identity/gh-identity.c src/identity/gh-signer.c)
+    src/identity/gh-identity.c src/identity/gh-signer.c
+    src/identity/gh-signer-nip55l.c src/identity/gh-signer-nip46.c)
   target_include_directories(groundhog-identity PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
   target_link_libraries(groundhog-identity PUBLIC gnostr-secret nip19 nostr)
@@ -319,6 +320,9 @@ if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
   target_link_libraries(groundhog-nip46-session PUBLIC
     groundhog-relay nostr_nip46_core)
   target_compile_options(groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
+    if (TARGET groundhog-identity)
+      target_link_libraries(groundhog-identity PUBLIC groundhog-nip46-session)
+    endif()
   if (BUILD_TESTING)
     add_executable(test-groundhog-nip46-session tests/app/test_nip46_session.c)
     target_include_directories(test-groundhog-nip46-session PRIVATE
