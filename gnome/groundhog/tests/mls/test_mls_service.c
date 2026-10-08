@@ -10,6 +10,8 @@
  * them. */
 #include "mls-world.h"
 #include "gh-store-mls-identity.h"
+#include "gh-store-reactions.h"
+#include "gh-reaction-store.h"
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 #include "mls-forge.h"
 #include "convergence.h"
@@ -3789,6 +3791,124 @@ test_account_switch(void)
   world_down(&w);
 }
 
+typedef struct {
+  GhReactionStore *model;
+  GhStoreReactions *durable;
+} SwitchReactions;
+
+static void
+switch_reactions_open(App *app, SwitchReactions *r)
+{
+  r->model = gh_reaction_store_new();
+  r->durable = gh_store_reactions_new(app->store);
+  g_assert_true(gh_store_reactions_attach(r->durable, r->model, NULL));
+  gh_mls_service_set_reaction_store(app->service, r->model);
+}
+
+static void
+switch_reactions_close(App *app, SwitchReactions *r)
+{
+  gh_mls_service_set_reaction_store(app->service, NULL);
+  gh_store_reactions_close(r->durable);
+  g_clear_object(&r->durable);
+  g_clear_object(&r->model);
+}
+
+typedef struct {
+  GhReactionStore *store;
+  const gchar *target;
+  guint count;
+} ReactionWait;
+
+static gboolean
+reaction_count_reached(gpointer data)
+{
+  ReactionWait *w = data;
+  GhReactionSummary *summary = gh_reaction_store_lookup(w->store, w->target);
+  return summary && gh_reaction_summary_get_total_count(summary) == w->count;
+}
+
+typedef struct {
+  WireRelay *relay;
+  guint count;
+} WrappedWait;
+
+static gboolean
+wrapped_count_reached(gpointer data)
+{
+  WrappedWait *wait = data;
+  g_autoptr(GPtrArray) events = published(wait->relay, 445);
+  return events->len >= wait->count;
+}
+
+static void
+test_reactions_after_account_switch(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Reaction switch", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  g_autofree gchar *room_id = g_strdup(gh_mls_group_get_room_id(ga));
+  SwitchReactions reactions = { 0 };
+  switch_reactions_open(alice, &reactions);
+  g_autoptr(GhReactionStore) bob_reactions = gh_reaction_store_new();
+  gh_mls_service_set_reaction_store(bob->service, bob_reactions);
+  send_text(bob, gb, "react to this");
+  wait_message(alice, room_id, "react to this");
+  GhMessage *target = find_message(alice, room_id, "react to this");
+  g_assert_nonnull(target);
+  g_autofree gchar *target_id = g_strdup(gh_message_get_rumor_id(target));
+  g_autofree gchar *target_sender = g_strdup(gh_message_get_sender(target));
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_send_reaction(bob->service, gb, target_id,
+                                              target_sender, "9", "👍", &error));
+  g_assert_no_error(error);
+  ReactionWait one = { reactions.model, target_id, 1 };
+  spin_until(reaction_count_reached, &one, "Alice's first MLS reaction");
+
+  g_settings_set_string(alice->settings, "current-npub", npub[STRANGER]);
+  gh_account_controller_refresh(alice->accounts);
+  spin_until(read_idle, ga, "Alice's group closed by the switch");
+  switch_reactions_close(alice, &reactions);
+  app_store_down(alice);
+  g_autoptr(GPtrArray) before = published(&w.g, 445);
+  g_assert_true(gh_mls_service_send_reaction(bob->service, gb, target_id,
+                                              target_sender, "9", "🔥", &error));
+  g_assert_no_error(error);
+  WrappedWait missed = { &w.g, before->len + 1 };
+  spin_until(wrapped_count_reached, &missed, "Bob's reaction published while Alice is away");
+  g_settings_set_string(alice->settings, "current-npub", npub[ALICE]);
+  gh_account_controller_refresh(alice->accounts);
+  spin_until(accounts_active, alice->accounts, "Alice active again");
+  app_store_up(alice);
+  switch_reactions_open(alice, &reactions);
+  ga = gh_mls_service_lookup(alice->service, room_id);
+  g_assert_nonnull(ga);
+  wait_live(ga);
+  g_assert_cmpuint(gh_reaction_summary_get_total_count(
+    gh_reaction_store_lookup(reactions.model, target_id)), >=, 1);
+  ReactionWait missed_reaction = { reactions.model, target_id, 2 };
+  spin_until(reaction_count_reached, &missed_reaction,
+             "Alice's decrypted reaction missed during the switch");
+  target = find_message(alice, room_id, "react to this");
+  g_assert_nonnull(target);
+  g_assert_true(gh_mls_service_send_reaction(alice->service, ga, target_id,
+                                              target_sender, "9", "❤️", &error));
+  g_assert_no_error(error);
+  ReactionWait three = { reactions.model, target_id, 3 };
+  g_assert_true(reaction_count_reached(&three));
+  ReactionWait bob_three = { bob_reactions, target_id, 3 };
+  spin_until(reaction_count_reached, &bob_three, "Bob's decrypted new reaction");
+  gh_mls_service_set_reaction_store(bob->service, NULL);
+  switch_reactions_close(alice, &reactions);
+  world_down(&w);
+}
+
 /* ---- Leaving (nostrc-2um6) ------------------------------------------------------------- */
 
 typedef struct {
@@ -4070,6 +4190,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/leave-failed", test_leave_failed);
   g_test_add_func("/groundhog/mls-service/restart-mid-commit", test_restart_mid_commit);
   g_test_add_func("/groundhog/mls-service/account-switch", test_account_switch);
+  g_test_add_func("/groundhog/mls-service/reactions-after-account-switch",
+                  test_reactions_after_account_switch);
   g_test_add_func("/groundhog/mls-service/future-replay-moves-no-cursor",
                   test_future_replay_moves_no_cursor);
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);

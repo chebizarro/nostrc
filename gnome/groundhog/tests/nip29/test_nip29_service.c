@@ -16,10 +16,13 @@
 #include "gh-nip29-service.h"
 #include "gh-nip29-template.h"
 #include "gh-store-nip29.h"
+#include "gh-store-reactions.h"
+#include "gh-reaction-store.h"
 #include "gh-test-signer.h"
 #include "nip29-relay.h"
 #include "../gh-test-port.h"
 
+#include <nostr-kinds.h>
 #include <glib/gstdio.h>
 
 #define STORE_ID "7d0c2a51-3b8e-4f6a-9c1d-2e4f5a6b7c8d"
@@ -140,6 +143,7 @@ typedef struct {
   GhConversationStore *model;
   FakeMonitor *network;
   GhNip29Service *service;
+  GhReactionStore *reaction_store; /* optional test-bound reaction sink */
 } Fixture;
 
 static GPtrArray *
@@ -188,6 +192,7 @@ service_up(Fixture *f)
     .network = G_NETWORK_MONITOR(f->network),
     .publish_deadline = 10,
     .settings = f->settings,
+    .reactions = f->reaction_store,
   };
   g_autoptr(GError) error = NULL;
   f->service = gh_nip29_service_new(&config, &error);
@@ -1273,6 +1278,150 @@ test_restart_restores(void)
   nip29_relay_clear(&relay);
 }
 
+typedef struct {
+  GhReactionStore *model;
+  GhStoreReactions *durable;
+} Nip29Reactions;
+
+static void
+nip29_reactions_open(Fixture *f, Nip29Reactions *r)
+{
+  r->model = gh_reaction_store_new();
+  r->durable = gh_store_reactions_new(f->store);
+  g_assert_true(gh_store_reactions_attach(r->durable, r->model, NULL));
+  f->reaction_store = r->model;
+}
+
+static void
+nip29_reactions_close(Fixture *f, Nip29Reactions *r)
+{
+  f->reaction_store = NULL;
+  gh_store_reactions_close(r->durable);
+  g_clear_object(&r->durable);
+  g_clear_object(&r->model);
+}
+
+static guint
+nip29_reaction_count(Nip29Reactions *r, const gchar *target_id)
+{
+  GhReactionSummary *summary = gh_reaction_store_lookup(r->model, target_id);
+  return summary ? gh_reaction_summary_get_total_count(summary) : 0;
+}
+
+typedef struct {
+  Nip29Reactions *reactions;
+  const gchar *target_id;
+  guint count;
+} Nip29ReactionWait;
+
+static gboolean
+nip29_reaction_reached(gpointer data)
+{
+  Nip29ReactionWait *wait = data;
+  return nip29_reaction_count(wait->reactions, wait->target_id) == wait->count;
+}
+
+static void
+post_peer_reaction(Nip29Relay *relay, const gchar *target_id,
+                   const gchar *emoji, gint64 created_at)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, NOSTR_KIND_REACTION);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, emoji);
+  NostrTags *tags = nostr_tags_new(0);
+  nostr_tags_append(tags, nostr_tag_new("h", "switch-reactions", NULL));
+  nostr_tags_append(tags, nostr_tag_new("e", target_id, NULL));
+  nostr_event_set_tags(event, tags);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[KEY_BOB]), ==, 0);
+  nip29_store(relay, event);
+}
+
+static gboolean
+alice_active(gpointer data)
+{
+  GhAccountController *accounts = data;
+  return gh_account_controller_get_state(accounts) == GH_ACCOUNT_STATE_ACTIVE &&
+         g_strcmp0(gh_account_controller_get_active_npub(accounts), npub_alice) == 0;
+}
+
+static gboolean
+bob_active(gpointer data)
+{
+  GhAccountController *accounts = data;
+  return gh_account_controller_get_state(accounts) == GH_ACCOUNT_STATE_ACTIVE &&
+         g_strcmp0(gh_account_controller_get_active_npub(accounts), npub_bob) == 0;
+}
+
+static void
+test_reactions_after_account_switch(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Reactions reactions = { 0 };
+  service_down(&f);
+  nip29_reactions_open(&f, &reactions);
+  service_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "switch-reactions", "Reactions");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  member_post(&relay, KEY_BOB, "switch-reactions", "react to this");
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "switch-reactions", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_messages(f.model, room_id, 1);
+  GhConversation *conversation = gh_conversation_store_lookup(f.model, room_id);
+  g_assert_nonnull(conversation);
+  g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+  g_assert_nonnull(message);
+  g_autofree gchar *target_id = g_strdup(gh_message_get_rumor_id(message));
+  g_autofree gchar *target_pubkey = g_strdup(gh_message_get_sender(message));
+  post_peer_reaction(&relay, target_id, "👍", nip29_now(&relay));
+  Nip29ReactionWait first_wait = { &reactions, target_id, 1 };
+  gh_test_spin_until(nip29_reaction_reached, &first_wait);
+  /* The reaction checkpoint is independent of the chat cursor. */
+  live_post(&relay, KEY_BOB, "switch-reactions", "newer chat cursor");
+  wait_messages(f.model, room_id, 2);
+  g_autoptr(GError) error = NULL;
+
+  g_settings_set_string(f.settings, "current-npub", npub_bob);
+  gh_account_controller_refresh(f.accounts);
+  gh_test_spin_until(bob_active, f.accounts);
+  g_assert_cmpint(gh_nip29_room_get_read_state(room), ==, GH_NIP29_READ_IDLE);
+  service_down(&f);
+  nip29_reactions_close(&f, &reactions);
+  drain();
+  gh_store_close(f.store);
+  g_clear_object(&f.model);
+  post_peer_reaction(&relay, target_id, "🔥", nip29_now(&relay));
+  g_settings_set_string(f.settings, "current-npub", npub_alice);
+  gh_account_controller_refresh(f.accounts);
+  gh_test_spin_until(alice_active, f.accounts);
+  f.store = store_open(f.data_dir, f.clock);
+  model_up(&f);
+  nip29_reactions_open(&f, &reactions);
+  service_up(&f);
+  g_assert_cmpuint(nip29_reaction_count(&reactions, target_id), ==, 1);
+  g_clear_object(&room);
+  room = gh_nip29_service_lookup(f.service, relay.url, "switch-reactions");
+  g_assert_nonnull(room);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  Nip29ReactionWait missed_wait = { &reactions, target_id, 2 };
+  gh_test_spin_until(nip29_reaction_reached, &missed_wait);
+  GhNip29Op *second = gh_nip29_service_send_reaction(f.service, room, target_id,
+                    target_pubkey, "9", "❤️", reactions.model, &error);
+  g_assert_nonnull(second);
+  g_assert_no_error(error);
+  wait_op(second, GH_NIP29_OP_ACCEPTED);
+  g_assert_cmpuint(nip29_reaction_count(&reactions, target_id), ==, 3);
+  service_down(&f);
+  nip29_reactions_close(&f, &reactions);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 /* The since of the last REQ's group message filter (0: none). */
 static gint64
 last_since(Nip29Relay *relay)
@@ -1599,6 +1748,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/partial-member-list", test_partial_member_list);
   g_test_add_func("/groundhog/nip29-service/auth-and-closed", test_auth_and_closed);
   g_test_add_func("/groundhog/nip29-service/restart-restores", test_restart_restores);
+  g_test_add_func("/groundhog/nip29-service/reactions-after-account-switch",
+                  test_reactions_after_account_switch);
   g_test_add_func("/groundhog/nip29-service/outbox-resumes", test_outbox_resumes_after_restart);
   g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
   g_test_add_func("/groundhog/nip29-service/first-read-history-paged-and-persisted",

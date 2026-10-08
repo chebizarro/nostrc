@@ -1999,7 +1999,7 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
     # SQLCipher stores (test hooks), the real gnostr relay transports and a
     # real account controller with the mock signer on the private test bus.
     add_executable(test-groundhog-nip29-service tests/nip29/test_nip29_service.c
-      ${GROUNDHOG_NIP29_SERVICE_SOURCES})
+      src/store/gh-store-reactions.c ${GROUNDHOG_NIP29_SERVICE_SOURCES})
     target_include_directories(test-groundhog-nip29-service PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
@@ -2078,8 +2078,8 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_executable(test-groundhog-mls-service tests/mls/test_mls_service.c
       tests/privacy/canary-scan.c ${GROUNDHOG_MLS_SERVICE_SOURCES}
       src/store/gh-store-marmot.c src/store/gh-mls-commits.c
-      src/store/gh-store-conversations.c src/app/gh-nip17-envelope.c
-      ${GROUNDHOG_DM_SEND_SOURCES})
+      src/store/gh-store-conversations.c src/store/gh-store-reactions.c
+      src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES})
     # libmarmot's own src/ too: tests/mls/mls-forge.h builds what only a
     # modified client sends (a forged account proof, nostrc-6ukh).
     target_include_directories(test-groundhog-mls-service PRIVATE
