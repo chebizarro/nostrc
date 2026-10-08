@@ -18,6 +18,8 @@
  */
 #include "gh-attachment-card.h"
 #include "gh-conversation-list.h"
+#include "gh-conversation-open-probe-private.h"
+#include "gh-window.h"
 
 #include "nostrc-test-gdk-frame.h"
 #include "gh-conversation-private.h"
@@ -36,6 +38,7 @@
 #include "gh-test-active.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 void groundhog_register_resource(void);
@@ -1482,68 +1485,287 @@ test_failed_picture_has_no_row_error(Fixture *f, gconstpointer data)
   blossom_fixture_free(server);
 }
 
-/* Timing probe (not an assertion): how long opening a room with many
- * messages takes, from set_conversation to rows bound and idle. Run with
- * GROUNDHOG_TEST_TIMING=1; prints the numbers. */
+static GtkAdjustment *vadjustment(GhConversationView *view);
+
+/* Opt-in diagnostic: mapped GhWindow, real sidebar selection, exact-size
+ * A/B rooms. The endpoint is two stable post-paint observations, not a
+ * compositor presentation acknowledgement. No fixture creation is timed. */
+typedef struct {
+  GhConversationView *view;
+  GhConversationOpenProbe *probe;
+  gboolean settled;
+  gboolean expired;
+  gboolean had_stable;
+  gdouble value, upper, page;
+  guint visible;
+  guint64 identities;
+} OpenFrameWait;
+
+static gboolean
+open_frame_stable(OpenFrameWait *wait)
+{
+  GtkWidget *scroller = view_child(wait->view, "scroller");
+  GtkWidget *list = GTK_WIDGET(gh_conversation_view_get_message_list(wait->view));
+  GtkAdjustment *adj = vadjustment(wait->view);
+  if (gh_conversation_open_probe_scroll_pending(wait->view) ||
+      gtk_widget_get_width(scroller) <= 0 || gtk_widget_get_height(scroller) <= 0 ||
+      gtk_adjustment_get_page_size(adj) <= 0) {
+    wait->had_stable = FALSE;
+    return FALSE;
+  }
+  gdouble value = gtk_adjustment_get_value(adj);
+  gdouble upper = gtk_adjustment_get_upper(adj);
+  gdouble page = gtk_adjustment_get_page_size(adj);
+  if (upper - page - value > 4.0) {
+    wait->had_stable = FALSE;
+    return FALSE;
+  }
+  guint visible = 0;
+  guint64 identities = 0;
+  for (GtkWidget *item = gtk_widget_get_first_child(list); item;
+       item = gtk_widget_get_next_sibling(item)) {
+    if (!gtk_widget_get_mapped(item))
+      continue;
+    graphene_rect_t bounds;
+    if (!gtk_widget_compute_bounds(item, scroller, &bounds) ||
+        bounds.origin.y + bounds.size.height <= 0 ||
+        bounds.origin.y >= gtk_widget_get_height(scroller))
+      continue;
+    GtkWidget *child = gtk_widget_get_first_child(item);
+    if (!GH_IS_TIMELINE_ROW(child)) {
+      if (g_strcmp0(gtk_widget_get_css_name(item), "header") == 0)
+        continue;
+      wait->had_stable = FALSE;
+      return FALSE;
+    }
+    GhTimelineItem *timeline_item = gh_timeline_row_get_item(GH_TIMELINE_ROW(child));
+    if (!timeline_item) {
+      wait->had_stable = FALSE;
+      return FALSE;
+    }
+    GhMessage *message = gh_timeline_item_get_message(timeline_item);
+    if (!message)
+      continue;
+    GhMessageRow *row = gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child));
+    if (gh_message_row_get_message(row) != message) {
+      wait->had_stable = FALSE;
+      return FALSE;
+    }
+    visible++;
+    identities = identities * 1315423911u + (guintptr)message;
+  }
+  if (!visible) {
+    wait->had_stable = FALSE;
+    return FALSE;
+  }
+  gboolean stable = wait->had_stable && visible == wait->visible &&
+    identities == wait->identities && ABS(value - wait->value) <= 1.0 &&
+    ABS(upper - wait->upper) <= 1.0 && ABS(page - wait->page) <= 1.0;
+  wait->value = value;
+  wait->upper = upper;
+  wait->page = page;
+  wait->visible = visible;
+  wait->identities = identities;
+  wait->had_stable = TRUE;
+  return stable;
+}
+
+static void
+on_open_frame(GdkFrameClock *clock, OpenFrameWait *wait)
+{
+  (void)clock;
+  if (!wait->probe->entry_us)
+    return;
+  gint64 now = g_get_monotonic_time();
+  if (!wait->probe->first_paint_us)
+    wait->probe->first_paint_us = now;
+  if (!wait->probe->first_allocation_us &&
+      gtk_adjustment_get_page_size(vadjustment(wait->view)) > 0)
+    wait->probe->first_allocation_us = now;
+  if (open_frame_stable(wait)) {
+    wait->probe->settled_us = now;
+    wait->settled = TRUE;
+  } else {
+    gtk_widget_queue_draw(GTK_WIDGET(wait->view));
+  }
+}
+
+static gboolean
+open_frame_timeout(gpointer data)
+{
+  ((OpenFrameWait *)data)->expired = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static void
+wait_open_settled(GhConversationView *view, GhConversationOpenProbe *probe)
+{
+  OpenFrameWait wait = { .view = view, .probe = probe };
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(GTK_WIDGET(view));
+  g_assert_nonnull(clock);
+  gulong handler = g_signal_connect(clock, "after-paint", G_CALLBACK(on_open_frame), &wait);
+  guint timeout = g_timeout_add_seconds(10, open_frame_timeout, &wait);
+  gtk_widget_queue_draw(GTK_WIDGET(view));
+  while (!wait.settled && !wait.expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_signal_handler_disconnect(clock, handler);
+  if (!wait.expired)
+    g_source_remove(timeout);
+  if (wait.expired) {
+    GtkAdjustment *adj = vadjustment(view);
+    g_error("open generation %" G_GUINT64_FORMAT " did not settle: pending=%d "
+            "value=%.2f upper=%.2f page=%.2f visible=%u binds=%u",
+            probe->generation, gh_conversation_open_probe_scroll_pending(view),
+            gtk_adjustment_get_value(adj), gtk_adjustment_get_upper(adj),
+            gtk_adjustment_get_page_size(adj), wait.visible, probe->bind_count);
+  }
+}
+
+static guint
+open_sample_count(const char *name, guint fallback)
+{
+  const char *value = g_getenv(name);
+  if (!value || !*value)
+    return fallback;
+  char *end = NULL;
+  unsigned long result = strtoul(value, &end, 10);
+  g_assert_true(end != value && !*end && result > 0 && result <= 1000);
+  return (guint)result;
+}
+
+static double
+open_ms(gint64 end, gint64 start)
+{
+  return end && start && end >= start ? (end - start) / 1000.0 : -1.0;
+}
+
+static void
+print_open_sample(FILE *csv, const char *session, guint size, const char *phase,
+                  guint sample, gboolean warmup, gboolean active,
+                  const GhConversationOpenProbe *p)
+{
+  g_assert_cmpint(p->settled_us, >, p->entry_us);
+  g_autofree char *line = g_strdup_printf(
+    "%s,%u,%s,%u,%u,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT
+    ",%u,%u,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f,%u,%.3f,%.3f,%u,%u,%u,%u,%u",
+    session, size, phase, sample, warmup, p->entry_us, p->settled_us,
+    active, p->trace, open_ms(p->settled_us, p->entry_us),
+    open_ms(p->cleanup_end_us, p->entry_us),
+    open_ms(p->timeline_end_us, p->timeline_start_us),
+    open_ms(p->attach_end_us, p->timeline_end_us),
+    open_ms(p->return_us, p->entry_us),
+    open_ms(p->first_bind_us, p->entry_us),
+    open_ms(p->last_bind_us, p->entry_us),
+    open_ms(p->first_allocation_us, p->entry_us),
+    open_ms(p->first_paint_us, p->entry_us),
+    open_ms(p->settled_us, p->last_scroll_us),
+    p->bind_count, p->bind_wall_us / 1000.0, p->bind_wall_max_us / 1000.0,
+    p->adjustment_changes, p->older_requests, p->timeline_items,
+    p->open_scroll_count, p->pin_count);
+  g_print("OPEN_CSV,%s\n", line);
+  if (csv) {
+    fprintf(csv, "%s\n", line);
+    fflush(csv);
+  }
+}
+
 static void
 test_open_timing(Fixture *f, gconstpointer data)
 {
+  (void)f;
   (void)data;
-  if (!g_getenv("GROUNDHOG_TEST_TIMING")) { g_test_skip("GROUNDHOG_TEST_TIMING unset"); return; }
-  {
-    g_autoptr(GDateTime) now = g_date_time_new_now_local();
-    gint64 t0 = g_get_monotonic_time();
-    for (guint i = 0; i < 1000; i++) {
-      g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(noon_today() - (gint64)i * 3600);
-      g_autofree gchar *label = gh_conversation_view_format_day(when, now);
-    }
-    gint64 t1 = g_get_monotonic_time();
-    g_autofree gchar *content = g_strdup("x");
-    gint64 t2 = g_get_monotonic_time();
-    for (guint i = 0; i < 1000; i++) {
-      g_autoptr(GhMessage) m = g_list_model_get_item(G_LIST_MODEL(f->store), 0);
-      (void)m;
-    }
-    gint64 t3 = g_get_monotonic_time();
-    g_print("1000 format_day: %.1f ms; 1000 store get_item(0): %.1f ms\n", (t1 - t0) / 1000.0, (t3 - t2) / 1000.0);
+  if (!g_getenv("GROUNDHOG_TEST_TIMING")) {
+    g_test_skip("GROUNDHOG_TEST_TIMING unset");
+    return;
   }
-  const guint sizes[] = { 50, 200, 1000 };
-  for (guint k = 0; k < G_N_ELEMENTS(sizes); k++) {
-    GhMessage *first = NULL;
-    for (guint i = 0; i < sizes[k]; i++) {
-      g_autofree gchar *text = g_strdup_printf("message %u of a long chain, with some words to wrap", i);
-      GhMessage *m = add_dm(f->store, (i % 2) ? 2 : 1, (i % 2) ? 1 : 2, noon_today() - (gint64)(sizes[k] - i) * 60, text);
-      if (!first) first = m;
+  guint pairs = open_sample_count("GROUNDHOG_TEST_PAIRS", 30);
+  guint warmups = open_sample_count("GROUNDHOG_TEST_WARMUPS", 5);
+  gboolean trace = g_strcmp0(g_getenv("GROUNDHOG_TEST_TRACE"), "0") != 0;
+  const char *session = g_getenv("GROUNDHOG_TEST_SESSION");
+  if (!session || !*session)
+    session = "session-1";
+  const char *path = g_getenv("GROUNDHOG_TEST_TIMING_CSV");
+  FILE *csv = path ? fopen(path, "w") : NULL;
+  if (path)
+    g_assert_nonnull(csv);
+  const char *header = "session,size,phase,sample,warmup,start_us,settled_us,window_active,trace,settled_ms,cleanup_ms,timeline_ms,attach_ms,set_return_ms,first_bind_ms,last_bind_ms,first_allocation_ms,first_paint_ms,scroll_to_settle_ms,bind_count,bind_wall_ms,bind_wall_max_ms,adjustment_changes,older_requests,timeline_items,open_scroll_count,pin_count";
+  g_print("OPEN_CSV_HEADER,%s\n", header);
+  if (csv)
+    fprintf(csv, "%s\n", header);
+  const guint orders[][3] = {{50, 200, 1000}, {200, 1000, 50}, {1000, 50, 200}};
+  const char *order_env = g_getenv("GROUNDHOG_TEST_ORDER");
+  g_assert_true(!order_env || g_str_equal(order_env, "0") ||
+                g_str_equal(order_env, "1") || g_str_equal(order_env, "2"));
+  guint order = order_env ? (guint)atoi(order_env) : 0;
+  for (guint k = 0; k < G_N_ELEMENTS(orders[0]); k++) {
+    guint size = orders[order][k];
+    g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+    gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+    GhMessage *a_first = NULL, *b_first = NULL;
+    gint64 base = noon_today() - 200000;
+    for (guint i = 0; i < size; i++) {
+      g_autofree char *a_text = g_strdup_printf("A message %u, ordinary text with a few words to wrap%s", i,
+                                               i % 20 == 0 ? " https://example.com/a" : "");
+      g_autofree char *b_text = g_strdup_printf("B message %u, ordinary text with a few words to wrap %s", i,
+                                               i % 20 == 0 ? nprofile : "");
+      GhMessage *a = add_dm(store, i % 2 ? 2 : 1, i % 2 ? 1 : 2,
+                            base + 10000 + i * 60, a_text);
+      GhMessage *b = add_dm(store, i % 2 ? 3 : 1, i % 2 ? 1 : 3,
+                            base + i * 60, b_text);
+      if (!a_first) a_first = a;
+      if (!b_first) b_first = b;
     }
-    GhConversation *conversation = room_of(f->store, first);
-    gh_conversation_accept(conversation);
-    gint64 t0 = g_get_monotonic_time();
-    gh_conversation_view_set_conversation(f->view, conversation);
-    gint64 t1 = g_get_monotonic_time();
-    gtk_window_set_default_size(f->window, 700, 700);
-    gtk_window_present(f->window);
-    spin_until(is_mapped, f);
-    spin_until(rows_bound, f);
-    drain_idle();
-    gint64 t2 = g_get_monotonic_time();
-    g_print("open %u messages (model %u): set_conversation %.1f ms, bound+idle %.1f ms\n",
-            sizes[k], g_list_model_get_n_items(G_LIST_MODEL(conversation)),
-            (t1 - t0) / 1000.0, (t2 - t1) / 1000.0);
-    gh_conversation_view_set_conversation(f->view, NULL);
-    /* GROUNDHOG_TEST_TIMING=loop: keep reopening the largest room for a sampler. */
-    if (k == G_N_ELEMENTS(sizes) - 1 && g_strcmp0(g_getenv("GROUNDHOG_TEST_TIMING"), "loop") == 0) {
-      gint64 end = g_get_monotonic_time() + 8 * G_USEC_PER_SEC;
-      guint opens = 0;
-      while (g_get_monotonic_time() < end) {
-        gh_conversation_view_set_conversation(f->view, conversation);
-        spin_until(rows_bound, f);
-        drain_idle();
-        gh_conversation_view_set_conversation(f->view, NULL);
-        opens++;
-      }
-      g_print("reopened %u times in 8 s\n", opens);
+    GhConversation *a = room_of(store, a_first);
+    GhConversation *b = room_of(store, b_first);
+    g_assert_true(a != b);
+    gh_conversation_accept(a);
+    gh_conversation_accept(b);
+    gh_conversation_mark_read(a);
+    gh_conversation_mark_read(b);
+    g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a)), ==, size);
+    g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b)), ==, size);
+    for (guint sample = 0; sample < warmups + pairs; sample++) {
+      gboolean warmup = sample < warmups;
+      GhWindow *window = gh_window_new(NULL);
+      GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+      gh_conversation_list_attach(window, store, NULL);
+      GhConversationView *view = GH_CONVERSATION_VIEW(gh_content_page_get_view(gh_window_get_content(window)));
+      g_assert_nonnull(view);
+      GhStatus *status = gh_window_get_status(window);
+      gh_status_set_account_active(status, TRUE);
+      gh_status_set_signer(status, GH_STATUS_SIGNER_AVAILABLE);
+      gh_status_set_inbox(status, GH_STATUS_INBOX_LIVE, NULL);
+      gtk_window_set_default_size(GTK_WINDOW(window), 900, 700);
+      gtk_window_present(GTK_WINDOW(window));
+      while (!gtk_widget_get_mapped(GTK_WIDGET(window)))
+        g_main_context_iteration(NULL, TRUE);
+      gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+      drain_idle();
+      GhConversationOpenProbe *probe = gh_conversation_open_probe_arm(view, trace);
+      g_assert_true(gh_sidebar_page_select_relative(sidebar, 1));
+      g_assert_true(gh_sidebar_page_get_selected(sidebar) == a);
+      wait_open_settled(view, probe);
+      GhConversationOpenProbe first = *probe;
+      print_open_sample(csv, session, size, "first", sample, warmup,
+                        gtk_window_is_active(GTK_WINDOW(window)), &first);
+      probe = gh_conversation_open_probe_arm(view, FALSE);
+      g_assert_true(gh_sidebar_page_select_relative(sidebar, 1));
+      g_assert_true(gh_sidebar_page_get_selected(sidebar) == b);
+      wait_open_settled(view, probe);
+      probe = gh_conversation_open_probe_arm(view, trace);
+      g_assert_true(gh_sidebar_page_select_relative(sidebar, -1));
+      g_assert_true(gh_sidebar_page_get_selected(sidebar) == a);
+      wait_open_settled(view, probe);
+      GhConversationOpenProbe reopen = *probe;
+      print_open_sample(csv, session, size, "reopen", sample, warmup,
+                        gtk_window_is_active(GTK_WINDOW(window)), &reopen);
+      gh_conversation_open_probe_disarm(view);
+      gtk_window_destroy(GTK_WINDOW(window));
+      drain_idle();
     }
   }
+  if (csv)
+    fclose(csv);
 }
 
 /* ---- expiry ---------------------------------------------------------------------------- */

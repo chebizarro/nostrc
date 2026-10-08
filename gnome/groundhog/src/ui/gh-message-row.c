@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-conversation-open-probe-private.h"
 #include "gh-display-name.h"
 #include "gh-attachment-card.h"
 #include "gh-reaction-bar.h"
@@ -860,7 +861,14 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
     g_signal_connect_object(message, "notify::withdrawn", G_CALLBACK(update_all), self,
                             G_CONNECT_SWAPPED);
   }
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  gint64 bind_start_us = message ? g_get_monotonic_time() : 0;
+#endif
   update_all(self);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (message)
+    gh_conversation_open_probe_bind(self, g_get_monotonic_time() - bind_start_us);
+#endif
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_MESSAGE]);
 }
 
