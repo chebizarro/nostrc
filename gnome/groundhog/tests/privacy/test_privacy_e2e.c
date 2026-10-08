@@ -988,20 +988,25 @@ any_frames_mention(WireRelay *relay, const gchar *text)
 }
 
 static void
-check_no_kind0(const ReqShape *shape, gpointer data)
+check_no_foreign_kind0(const ReqShape *shape, gpointer data)
 {
   (void)data;
-  g_assert_false(shape_has_kind(shape, 0));
+  if (!shape_has_kind(shape, 0))
+    return;
+  /* Own identities may fetch kind 0 for the account switcher. A message
+   * sender or an npub in message content still must not trigger a lookup. */
+  g_assert_cmpuint(shape->n_authors, ==, 1);
+  g_assert_true(g_strcmp0(shape->author, hex[ALICE]) == 0 ||
+                g_strcmp0(shape->author, hex[BOB]) == 0);
 }
 
-/* No REQ on relay asked for any profile (kind 0). */
 static void
-assert_no_profile_reqs(WireRelay *relay)
+assert_no_foreign_profile_reqs(WireRelay *relay)
 {
   for (guint i = 0; i < relay->frames->len; i++) {
     WireFrame *frame = g_ptr_array_index(relay->frames, i);
     if (frame->inbound && g_strcmp0(frame_type(frame->text), "REQ") == 0)
-      req_shapes(frame->text, check_no_kind0, NULL);
+      req_shapes(frame->text, check_no_foreign_kind0, NULL);
   }
 }
 
@@ -1815,7 +1820,7 @@ test_pt2_no_remote_fetch(void)
   net_relays(net, wire_relays);
   for (guint i = 0; i < N_WIRE; i++) {
     g_assert_false(client_frames_mention(wire_relays[i], 0, stranger));
-    assert_no_profile_reqs(wire_relays[i]);
+    assert_no_foreign_profile_reqs(wire_relays[i]);
   }
   free(nprofile);
   free(stranger);
@@ -1865,7 +1870,7 @@ test_pt8_request_no_lookup(void)
   net_relays(net, relays);
   for (guint i = 0; i < N_WIRE; i++) {
     g_assert_false(client_frames_mention(relays[i], 0, hex[CAROL]));
-    assert_no_profile_reqs(relays[i]);
+    assert_no_foreign_profile_reqs(relays[i]);
   }
   g_assert_cmpuint(discovery_lookups(&net->e, hex[CAROL]), ==, 0);
   g_assert_cmpuint(discovery_lookups(&net->g, hex[CAROL]), ==, 0);

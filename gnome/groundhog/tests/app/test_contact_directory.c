@@ -236,15 +236,30 @@ typedef struct {
 static GPtrArray *
 fake_list(gpointer data, GError **error)
 {
-  (void)data; (void)error;
+  (void)error;
+  gboolean local_only = GPOINTER_TO_INT(data);
   GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
   const gchar *npubs[] = { npub_alice, npub_bob };
   for (guint i = 0; i < G_N_ELEMENTS(npubs); i++) {
+    if (local_only && i)
+      continue;
     GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
     info->npub = g_strdup(npubs[i]);
     info->label = g_strdup(i ? "Bob" : "Alice");
     g_ptr_array_add(ids, info);
   }
+  return ids;
+}
+
+static GPtrArray *
+fake_remote_list(gpointer data, GError **error)
+{
+  (void)data; (void)error;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(npub_bob);
+  info->label = g_strdup("Bob");
+  g_ptr_array_add(ids, info);
   return ids;
 }
 
@@ -276,7 +291,8 @@ on_changed(GhInboxResolver *resolver, const gchar *pubkey, gpointer data)
   g_ptr_array_add(data, g_strdup(pubkey));
 }
 
-static gboolean own_profile_config; /* the next new_directory() looks the account up too */
+static gboolean own_profile_config; /* the next new_directory() looks own identities up too */
+static gboolean own_profile_remote_config; /* the next fixture lists Bob via NIP-46 */
 
 static void
 new_directory(Fixture *f)
@@ -315,7 +331,10 @@ fixture_up(Fixture *f, gboolean with_store)
   const gchar *sources[] = { DISC_A, DISC_B, NULL };
   g_settings_set_strv(f->settings, "discovery-relays", sources);
   g_settings_set_string(f->settings, "current-npub", npub_alice);
-  f->accounts = gh_account_controller_new_full(f->settings, shared_bus.client, fake_list, NULL);
+  f->accounts = own_profile_remote_config
+    ? gh_account_controller_new_full_with_remote_list(f->settings, shared_bus.client,
+        fake_list, GINT_TO_POINTER(1), fake_remote_list, NULL)
+    : gh_account_controller_new_full(f->settings, shared_bus.client, fake_list, NULL);
   gh_test_spin_until(listed, f->accounts);
   g_assert_cmpint(gh_account_controller_get_state(f->accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
   f->clock = gh_clock_new_fake(T0 * G_USEC_PER_SEC);
@@ -541,34 +560,75 @@ test_nt11_cache(void)
 
 /* ---- the account's own profile (owner report: npub as sidebar title) ---------------- */
 
-/* With own_profile, the account's kind 0 is asked for on its own within
- * [5, 60] s of the store opening (W33: the sidebar showed the npub until the
- * first scheduled run), and its name is then its display name. */
+/* All listed own identities, including an inactive NIP-46 signer, get kind 0
+ * on the own-profile schedule. The cached picture URL can then serve their
+ * account-switcher avatars without accepting them as conversation peers. */
 static void
 test_own_profile(void)
 {
   Fixture f;
   own_profile_config = TRUE;
+  own_profile_remote_config = TRUE;
   fixture_up(&f, FALSE);
   own_profile_config = FALSE;
+  own_profile_remote_config = FALSE;
+  g_autofree gchar *hex_bob = gh_identity_pubkey_hex(npub_bob);
+  GPtrArray *identities = gh_account_controller_get_identities(f.accounts);
+  g_assert_cmpuint(identities->len, ==, 2);
+  gboolean has_remote_bob = FALSE;
+  for (guint i = 0; i < identities->len; i++) {
+    const GhIdentityInfo *info = g_ptr_array_index(identities, i);
+    if (info->backend == GH_SIGNER_BACKEND_NIP46 && g_str_equal(info->npub, npub_bob))
+      has_remote_bob = TRUE;
+  }
+  g_assert_true(has_remote_bob);
   room_with(&f, &people[0], TRUE, T0 - 1000);
   bind_store(&f);
-  g_assert_null(gh_contact_directory_get_display_name(f.dir, hex_alice));
-  for (guint s = 0; s < 60 && f.rec.reqs->len == 0; s++)
-    advance(&f, 1);
-  g_assert_cmpuint(f.rec.reqs->len, ==, 2); /* one REQ per discovery relay */
-  Req *req = req_at(&f, 0);
-  g_assert_cmpuint(req->authors->len, ==, 1);
-  g_assert_true(req_asks(req, hex_alice));
-  g_assert_false(req_asks(req, people[0].pk)); /* contacts wait for the run */
-  g_assert_true(req->profiles);
+  g_assert_true(gh_contact_directory_is_accepted(f.dir, hex_bob));
   Person alice = { .sk = (gchar *)gh_test_secret[1], .pk = hex_alice };
-  g_autofree gchar *mine = profile(&alice, T0 - 100, "{\"name\":\"alice\",\"display_name\":\"Alice A.\"}");
-  answer(req_at(&f, 0), mine, NULL);
-  answer(req_at(&f, 1), NULL);
+  Person bob = { .sk = (gchar *)gh_test_secret[2], .pk = hex_bob };
+  g_autofree gchar *mine = profile(&alice, T0 - 100,
+    "{\"display_name\":\"Alice A.\",\"picture\":\"https://images.example.org/alice.png\"}");
+  g_autofree gchar *remote = profile(&bob, T0 - 100,
+    "{\"picture\":\"https://images.example.org/bob.png\"}");
+  gboolean answered_alice = FALSE, answered_bob = FALSE;
+  guint handled = 0;
+  for (guint s = 0; s < 60 && handled < 4; s++) {
+    advance(&f, 1);
+    /* Answer each pair as it appears: the first identity's fetch deadline
+     * must not expire while waiting for the second identity's jitter. */
+    while (handled + 1 < f.rec.reqs->len) {
+      Req *req = req_at(&f, handled);
+      Req *other_relay = req_at(&f, handled + 1);
+      g_assert_cmpuint(req->authors->len, ==, 1);
+      g_assert_true(req->profiles);
+      g_assert_false(req_asks(req, people[0].pk)); /* contacts wait for the run */
+      if (req_asks(req, hex_alice)) {
+        g_assert_false(answered_alice);
+        answer(req, mine, NULL);
+        answered_alice = TRUE;
+      } else {
+        g_assert_true(req_asks(req, hex_bob));
+        g_assert_false(answered_bob);
+        answer(req, remote, NULL);
+        answered_bob = TRUE;
+      }
+      answer(other_relay, NULL);
+      handled += 2;
+    }
+  }
+  g_assert_cmpuint(handled, ==, 4); /* two identities, two discovery relays */
   drain();
+  g_assert_true(answered_alice);
+  g_assert_true(answered_bob);
   g_assert_cmpstr(gh_contact_directory_get_display_name(f.dir, hex_alice), ==, "Alice A.");
-  g_assert_true(g_ptr_array_find_with_equal_func(f.profiles, hex_alice, g_str_equal, NULL));
+  g_assert_null(gh_contact_directory_get_display_name(f.dir, hex_bob));
+  /* A picture-only kind 0 still notifies the switcher to reload its avatar. */
+  g_assert_true(g_ptr_array_find_with_equal_func(f.profiles, hex_bob, g_str_equal, NULL));
+  g_autofree gchar *alice_picture = gh_contact_directory_dup_picture_uri(f.dir, hex_alice);
+  g_autofree gchar *bob_picture = gh_contact_directory_dup_picture_uri(f.dir, hex_bob);
+  g_assert_cmpstr(alice_picture, ==, "https://images.example.org/alice.png");
+  g_assert_cmpstr(bob_picture, ==, "https://images.example.org/bob.png");
   fixture_down(&f);
 }
 

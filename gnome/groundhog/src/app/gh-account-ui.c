@@ -139,7 +139,7 @@ account_row_new(GhAccountUi *ui, const GhIdentityInfo *info, gboolean active)
   AdwAvatar *avatar = ADW_AVATAR(adw_avatar_new(36, title, TRUE));
 #if GROUNDHOG_HAVE_INBOX
   if (pubkey && ui->picture_cache) {
-    if (active && g_settings_get_boolean(ui->settings, "load-profile-pictures") &&
+    if (g_settings_get_boolean(ui->settings, "load-profile-pictures") &&
         !gh_picture_cache_is_allowed(ui->picture_cache, pubkey))
       gh_picture_cache_allow(ui->picture_cache, pubkey);
     GdkTexture *picture = gh_conversation_list_get_picture(GH_WINDOW(ui->window), pubkey);

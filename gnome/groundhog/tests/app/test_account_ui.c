@@ -12,6 +12,12 @@
  */
 #include "gh-account-ui.h"
 #include "gh-identity.h"
+#if GROUNDHOG_HAVE_INBOX
+#include "gh-conversation-list.h"
+#include <nostr/nip19/nip19.h>
+#include <stdlib.h>
+#include <string.h>
+#endif
 
 #include "nostrc-test-gdk-frame.h"
 
@@ -380,6 +386,64 @@ test_header_title_fits(void)
   spin_until(is_null, &weak);
 }
 
+#if GROUNDHOG_HAVE_INBOX
+static gchar *
+npub_for_byte(guint8 value)
+{
+  guint8 pubkey[32];
+  memset(pubkey, value, sizeof pubkey);
+  char *encoded = NULL;
+  g_assert_cmpint(nostr_nip19_encode_npub(pubkey, &encoded), ==, 0);
+  gchar *npub = g_strdup(encoded);
+  free(encoded);
+  return npub;
+}
+
+static GPtrArray *
+one_identity(gpointer data, GError **error)
+{
+  (void)error;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(data);
+  g_ptr_array_add(ids, info);
+  return ids;
+}
+
+static void
+test_all_own_pictures_without_consent(void)
+{
+  g_autofree gchar *local = npub_for_byte(1);
+  g_autofree gchar *remote = npub_for_byte(2);
+  g_autofree gchar *local_key = gh_identity_pubkey_hex(local);
+  g_autofree gchar *remote_key = gh_identity_pubkey_hex(remote);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "current-npub", local);
+  g_settings_set_string(settings, "current-backend", "grotto");
+  GhAccountController *controller = gh_account_controller_new_full_with_remote_list(
+    settings, NULL, one_identity, local, one_identity, remote);
+  spin_until(is_active_account, controller);
+  GPtrArray *identities = gh_account_controller_get_identities(controller);
+  g_assert_cmpuint(identities->len, ==, 2);
+  g_autoptr(GhConversationStore) conversations = gh_conversation_store_new();
+  gh_conversation_store_set_account(conversations, local_key, NULL, NULL, NULL);
+  for (guint enabled = 0; enabled < 2; enabled++) {
+    g_settings_set_boolean(settings, "load-profile-pictures", enabled);
+    GhWindow *window = gh_window_new(NULL);
+    gh_account_ui_attach(window, controller, settings);
+    gh_conversation_list_attach(window, conversations, settings);
+    /* The app binds the directory after attaching the conversation list. */
+    gh_account_ui_set_name_source(window, NULL, NULL);
+    GhPictureCache *cache = gh_conversation_list_get_picture_cache(window);
+    g_assert_nonnull(cache);
+    g_assert_cmpint(gh_picture_cache_is_allowed(cache, local_key), ==, enabled);
+    g_assert_cmpint(gh_picture_cache_is_allowed(cache, remote_key), ==, enabled);
+    gtk_window_destroy(GTK_WINDOW(window));
+  }
+  g_object_unref(controller);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
@@ -403,5 +467,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-ui/focus-and-announce-only-on-transition",
                   test_focus_and_announce_only_on_transition);
   g_test_add_func("/groundhog/account-ui/header-title-fits", test_header_title_fits);
+#if GROUNDHOG_HAVE_INBOX
+  g_test_add_func("/groundhog/account-ui/all-own-pictures-without-consent",
+                  test_all_own_pictures_without_consent);
+#endif
   return g_test_run();
 }
