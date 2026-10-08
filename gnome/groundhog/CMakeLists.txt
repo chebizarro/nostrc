@@ -859,6 +859,49 @@ else()
 endif()
 # --- end G03 store key ---
 
+# WI-2: remote signer credentials are a separate keyring schema, not store keys.
+pkg_check_modules(GROUNDHOG_NIP46_CREDENTIAL_DEPS QUIET IMPORTED_TARGET
+  glib-2.0>=2.66 gio-2.0 libsecret-1 libsodium json-glib-1.0>=1.6)
+if (TARGET groundhog-identity AND TARGET PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_DEPS)
+  set(NIP46_CREDENTIAL_SOURCES
+    src/identity/gh-nip46-credentials.c
+    src/identity/gh-nip46-credentials-secret-service.c)
+  if(APPLE)
+    list(APPEND NIP46_CREDENTIAL_SOURCES src/identity/gh-nip46-credentials-keychain.c)
+  endif()
+  add_library(groundhog-nip46-credentials STATIC ${NIP46_CREDENTIAL_SOURCES})
+  target_include_directories(groundhog-nip46-credentials PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
+  target_link_libraries(groundhog-nip46-credentials PUBLIC groundhog-identity
+    PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_DEPS)
+  if(APPLE)
+    target_link_libraries(groundhog-nip46-credentials PUBLIC "-framework Security" "-framework CoreFoundation")
+  endif()
+  if (GROUNDHOG_STORE_KEY_DEFAULT_BACKEND STREQUAL "secret-service")
+    target_compile_definitions(groundhog-nip46-credentials PRIVATE
+      GH_NIP46_CREDENTIAL_DEFAULT_SECRET_SERVICE=1)
+  endif()
+  target_compile_options(groundhog-nip46-credentials PRIVATE -Wall -Wextra -Werror)
+  if(BUILD_TESTING)
+    add_executable(test-groundhog-nip46-credentials-keyring
+      tests/store/test_nip46_credentials_keyring.c)
+    target_link_libraries(test-groundhog-nip46-credentials-keyring PRIVATE
+      groundhog-nip46-credentials nostrc-test-bus)
+    target_compile_options(test-groundhog-nip46-credentials-keyring PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-nip46-credentials-keyring COMMAND test-groundhog-nip46-credentials-keyring)
+    set_tests_properties(groundhog-nip46-credentials-keyring PROPERTIES
+      SKIP_RETURN_CODE 77 TIMEOUT 90 ENVIRONMENT "G_DEBUG=fatal-criticals")
+    if(APPLE)
+      add_executable(test-groundhog-nip46-credentials-keychain
+        tests/store/test_nip46_credentials_keychain.c)
+      target_link_libraries(test-groundhog-nip46-credentials-keychain PRIVATE groundhog-nip46-credentials)
+      target_compile_options(test-groundhog-nip46-credentials-keychain PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-nip46-credentials-keychain COMMAND test-groundhog-nip46-credentials-keychain)
+      set_tests_properties(groundhog-nip46-credentials-keychain PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 45 ENVIRONMENT "G_DEBUG=fatal-criticals")
+    endif()
+  endif()
+endif()
+
 # --- G02 store ---
 # Encrypted per-account store (privacy charter §3, decision D1: SQLCipher 4
 # keyed with a raw 256-bit key). Optional at configure time: without SQLCipher

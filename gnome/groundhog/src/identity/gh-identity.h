@@ -5,9 +5,15 @@
 
 G_BEGIN_DECLS
 
+typedef enum {
+  GH_SIGNER_BACKEND_GROTTO = 0,
+  GH_SIGNER_BACKEND_NIP46
+} GhSignerBackend;
+
 typedef struct {
   gchar *npub;
   gchar *label;
+  GhSignerBackend backend;
 } GhIdentityInfo;
 
 void gh_identity_info_free(GhIdentityInfo *info);
