@@ -848,6 +848,49 @@ test_account_signer_invocation(void)
 }
 
 static void
+test_grotto_signer_validation_contract(void)
+{
+  BusFixture fixture = { 0 };
+  MockSigner mock = { 0 };
+  FakeStore store = { 0 };
+  bus_up(&fixture, FALSE);
+  mock_signer_up(&fixture, &mock);
+  g_autoptr(GSettings) settings = fresh_settings(npub_one);
+  GhAccountController *controller = gh_account_controller_new_full(
+    settings, fixture.client, fake_list, &store);
+  spin_until(listed, controller);
+
+  SignerWait invalid = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, "{}", account_signer_done, &invalid);
+  spin_until(signer_done, &invalid);
+  g_assert_error(invalid.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT);
+  g_assert_cmpuint(mock.calls, ==, 0); /* validation before the D-Bus send */
+  g_clear_error(&invalid.error);
+
+  g_autofree gchar *request = unsigned_for(npub_one);
+  mock.bad_sign_call = 1;
+  SignerWait malformed = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, request, account_signer_done, &malformed);
+  spin_until(signer_done, &malformed);
+  g_assert_error(malformed.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT);
+  g_clear_error(&malformed.error);
+
+  mock.wrong_key_call = 2;
+  SignerWait wrong_key = { .sign = TRUE };
+  gh_account_controller_sign_async(controller, request, account_signer_done, &wrong_key);
+  spin_until(signer_done, &wrong_key);
+  g_assert_error(wrong_key.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_KEY_MISMATCH);
+  g_clear_error(&wrong_key.error);
+  g_assert_cmpuint(mock.calls, ==, 2);
+
+  release_controller(controller);
+  MockSenders check = { &fixture, &mock };
+  spin_until(mock_senders_closed, &check);
+  mock_signer_down(&fixture, &mock);
+  bus_down(&fixture);
+}
+
+static void
 test_account_signer_switch_dispose(void)
 {
   BusFixture fixture = { 0 };
@@ -2121,6 +2164,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account/signer-activatable", test_signer_activatable);
   g_test_add_func("/groundhog/account/limits", test_limits);
   g_test_add_func("/groundhog/account/signer-invocation", test_account_signer_invocation);
+  g_test_add_func("/groundhog/account/grotto-validation-contract", test_grotto_signer_validation_contract);
   g_test_add_func("/groundhog/account/signer-switch-dispose", test_account_signer_switch_dispose);
   g_test_add_func("/groundhog/account/signer-fail-closed", test_account_signer_fail_closed);
 #ifdef GROUNDHOG_TEST_NIP17

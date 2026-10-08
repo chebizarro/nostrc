@@ -261,6 +261,9 @@ NIP17_PUBLICATION = re.compile(r"^(?:gh-dm-send|gh-nip17-|gh-inbox-resolver|gh-o
 LOOKUP_SOURCES = re.compile(r"^(?:gh-inbox-lookup|gh-contact-directory)")
 # The only files that hold the account-AUTH mechanism (charter §4.4 R1), by
 # path prefix. Everything else asks GhAuthPolicy (G08).
+# NIP-46 signer-control relays authenticate with the transport client key,
+# never the selected account key. The wire test proves the AUTH event's author.
+NIP46_CLIENT_AUTH_SOURCE = "src/identity/gh-nip46-session.c"
 ACCOUNT_AUTH_FILES = {
     "src/relay/": "the NIP-42 mechanism; the policy chooses the identity per URL",
     "src/app/gh-account-auth.": "GhAccountAuth, the account's generation-bound AUTH signer",
@@ -579,12 +582,12 @@ def check_sources(tree):
                               lambda s: f"{s} in a recipient lookup: its sources are "
                                         "discovery-relays and the contact's own 10002 write "
                                         "relays, never the account's own relays (§4.3, PD-12)")
-        if not rel.startswith(tuple(ACCOUNT_AUTH_FILES)):
+        if rel != NIP46_CLIENT_AUTH_SOURCE and not rel.startswith(tuple(ACCOUNT_AUTH_FILES)):
             found += find_all("account-auth-purpose", rel, code, ACCOUNT_AUTH_RE,
                               lambda s: f"{s}: the account-AUTH mechanism belongs to the "
                                         "relay layer, GhAccountAuth and GhAuthPolicy; ask "
                                         "GhAuthPolicy for a purpose instead (§4.4 R1)")
-        if not rel.startswith(URL_AUTH_FILES):
+        if rel != NIP46_CLIENT_AUTH_SOURCE and not rel.startswith(URL_AUTH_FILES):
             found += find_all("auth-policy", rel, code, URL_AUTH_RE,
                               lambda s: f"{s}: a URL's NIP-42 identity is GhAuthPolicy's "
                                         "decision; call gh_auth_policy_apply_{scope,publish} "
