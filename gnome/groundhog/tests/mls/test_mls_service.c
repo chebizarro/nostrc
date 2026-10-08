@@ -10,12 +10,9 @@
  * them. */
 #include "mls-world.h"
 #include "gh-store-mls-identity.h"
-<<<<<<< HEAD
 #include "gh-mls-poll.h"
-=======
 #include "gh-store-reactions.h"
 #include "gh-reaction-store.h"
->>>>>>> groundhog/a5fix-accounts
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
 #include "mls-forge.h"
 #include "convergence.h"
