@@ -130,7 +130,7 @@
 }
 
 .groundhog-message-meta {
-  margin: 1px 8px 0 8px;
+  margin-top: 1px;
 }
 
 /* The react button sits in the meta row and only shows itself when the

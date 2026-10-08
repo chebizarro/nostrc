@@ -139,10 +139,6 @@ template $GhMessageRow: Widget {
     }
   }
 
-  $GhReactionBar reaction_bar {
-    visible: false;
-  }
-
   Box web_box {
     orientation: vertical;
     spacing: 6;
@@ -293,20 +289,6 @@ template $GhMessageRow: Widget {
       valign: center;
     }
 
-    // Shown on hover or keyboard focus (style.css): the quick way to react.
-    // The context menu and the bar's "+" remain for touch.
-    Button react_button {
-      icon-name: "face-smile-symbolic";
-      valign: center;
-      action-name: "conversation.add-reaction";
-      tooltip-text: _("React");
-
-      styles [
-        "flat",
-        "groundhog-react-button",
-      ]
-    }
-
     Button retry_button {
       visible: false;
       label: _("_Try Again");
@@ -319,6 +301,29 @@ template $GhMessageRow: Widget {
         "flat",
         "groundhog-retry-button",
       ]
+    }
+
+    // Chips and React share one line. On own messages React precedes the
+    // chips so the final chip reaches the bubble's right edge.
+    Box reaction_controls {
+      spacing: 4;
+      valign: center;
+
+      $GhReactionBar reaction_bar {
+        visible: false;
+      }
+
+      Button react_button {
+        icon-name: "face-smile-symbolic";
+        valign: center;
+        action-name: "conversation.add-reaction";
+        tooltip-text: _("React");
+
+        styles [
+          "flat",
+          "groundhog-react-button",
+        ]
+      }
     }
   }
 }

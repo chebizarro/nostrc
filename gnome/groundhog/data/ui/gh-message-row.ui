@@ -129,11 +129,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
-      <object class="GhReactionBar" id="reaction_bar">
-        <property name="visible">false</property>
-      </object>
-    </child>
-    <child>
       <object class="GtkBox" id="web_box">
         <property name="orientation">1</property>
         <property name="spacing">6</property>
@@ -304,18 +299,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="GtkButton" id="react_button">
-            <property name="icon-name">face-smile-symbolic</property>
-            <property name="valign">3</property>
-            <property name="action-name">conversation.add-reaction</property>
-            <property name="tooltip-text" translatable="yes">React</property>
-            <style>
-              <class name="flat"/>
-              <class name="groundhog-react-button"/>
-            </style>
-          </object>
-        </child>
-        <child>
           <object class="GtkButton" id="retry_button">
             <property name="visible">false</property>
             <property name="label" translatable="yes">_Try Again</property>
@@ -327,6 +310,29 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <class name="flat"/>
               <class name="groundhog-retry-button"/>
             </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="reaction_controls">
+            <property name="spacing">4</property>
+            <property name="valign">3</property>
+            <child>
+              <object class="GhReactionBar" id="reaction_bar">
+                <property name="visible">false</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="react_button">
+                <property name="icon-name">face-smile-symbolic</property>
+                <property name="valign">3</property>
+                <property name="action-name">conversation.add-reaction</property>
+                <property name="tooltip-text" translatable="yes">React</property>
+                <style>
+                  <class name="flat"/>
+                  <class name="groundhog-react-button"/>
+                </style>
+              </object>
+            </child>
           </object>
         </child>
       </object>

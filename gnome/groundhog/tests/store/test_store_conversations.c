@@ -1783,12 +1783,13 @@ test_reaction_before_marmot_target(void)
   g_assert_nonnull(target_message);
   const gchar *target = gh_message_get_rumor_id(target_message);
   const gchar *room_id = gh_message_get_room_id(target_message);
-  seed_reaction_room(&f, room_id, GH_STORE_BACKEND_MLS);
+  /* MLS persists the bare group id, not the model's "mls:" room id. */
+  seed_reaction_room(&f, group_id, GH_STORE_BACKEND_MLS);
   g_autoptr(GhReaction) pending = gh_reaction_new(target, "rxn-before-mls", PEER_P,
                                                   "❤️", T0, room_id);
   g_assert_false(gh_reaction_store_admit(r.model, pending, NULL));
   GhStoreMessage message = { .backend = GH_STORE_BACKEND_MLS,
-    .backend_key = room_id, .backend_msg_id = target, .sender_pubkey = PEER_P,
+    .backend_key = group_id, .backend_msg_id = target, .sender_pubkey = PEER_P,
     .kind = 9, .created_at = T0, .direction = GH_STORE_DIRECTION_IN,
     .body = "late Marmot target", .raw_json = inner,
     .request_state = GH_STORE_REQUEST_ACCEPTED };
@@ -1799,6 +1800,16 @@ test_reaction_before_marmot_target(void)
   g_assert_cmpint(gh_conversation_store_admit(f.model, target_message, NULL, &error), ==,
                   GH_CONVERSATION_ADD_NEW);
   g_assert_no_error(error);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 1);
+  g_autoptr(GhReaction) immediate = gh_reaction_new(target, "rxn-after-mls", ACCOUNT_A,
+                                                    "👍", T0 + 1, room_id);
+  g_assert_true(gh_reaction_store_admit(r.model, immediate, NULL));
+  g_assert_cmpuint(reaction_count(&r, target), ==, 2);
+  reaction_harness_close(&f, &r);
+  reaction_harness_open(&f, &r);
+  g_assert_cmpuint(reaction_count(&r, target), ==, 2);
+  g_assert_true(gh_reaction_store_delete_event(r.model, "rxn-after-mls", ACCOUNT_A,
+                                                room_id, NULL));
   g_assert_cmpuint(reaction_count(&r, target), ==, 1);
   reaction_harness_close(&f, &r);
   fixture_clear(&f);

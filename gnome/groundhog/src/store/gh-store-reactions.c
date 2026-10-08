@@ -16,6 +16,13 @@ G_DEFINE_FINAL_TYPE(GhStoreReactions, gh_store_reactions, G_TYPE_OBJECT)
 #define REACTION_ACCOUNT_LIMIT 4096
 #define REACTION_PENDING_SECONDS (7 * 24 * 60 * 60)
 
+/* Reaction room ids use the model's namespace. MLS conversations persist the
+ * bare group id as backend_key, while their model room id is "mls:<group id>".
+ * Keep that distinction in every room/target lookup, including restore and
+ * pending-reaction pruning. Backend 3 is GH_STORE_BACKEND_MLS in the schema. */
+#define CONVERSATION_ROOM_SQL \
+  "(CASE WHEN c.backend = 3 THEN 'mls:' || c.backend_key ELSE c.backend_key END)"
+
 static gboolean
 sql_error(sqlite3 *db, int rc, const gchar *what, GError **error)
 {
@@ -31,7 +38,7 @@ lookup_room(sqlite3 *db, const gchar *room_id, gboolean *known, GError **error)
   *known = FALSE;
   sqlite3_stmt *stmt = NULL;
   if (!sql_error(db, sqlite3_prepare_v2(db,
-      "SELECT 1 FROM conversations WHERE backend_key = ? LIMIT 1", -1, &stmt, NULL),
+      "SELECT 1 FROM conversations c WHERE " CONVERSATION_ROOM_SQL " = ? LIMIT 1", -1, &stmt, NULL),
       "prepare room lookup", error))
     return FALSE;
   sqlite3_bind_text(stmt, 1, room_id, -1, SQLITE_TRANSIENT);
@@ -51,9 +58,9 @@ prune_deferred(sqlite3 *db, GError **error)
     "DELETE FROM reaction_tombstones WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
     G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
     "DELETE FROM pending_reactions WHERE NOT EXISTS (SELECT 1 FROM conversations c "
-    "WHERE c.backend_key = pending_reactions.room_id);"
+    "WHERE " CONVERSATION_ROOM_SQL " = pending_reactions.room_id);"
     "DELETE FROM reaction_tombstones WHERE NOT EXISTS (SELECT 1 FROM conversations c "
-    "WHERE c.backend_key = reaction_tombstones.room_id);"
+    "WHERE " CONVERSATION_ROOM_SQL " = reaction_tombstones.room_id);"
     "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
     "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
     "PARTITION BY room_id, sender_pubkey ORDER BY arrival_seq DESC) AS n "
@@ -190,7 +197,7 @@ delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
   sqlite3_stmt *find_conv = NULL;
   rc = sqlite3_prepare_v2(db,
     "SELECT c.id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
-    "WHERE c.backend_key = ? AND m.backend_msg_id = ?", -1, &find_conv, NULL);
+    "WHERE " CONVERSATION_ROOM_SQL " = ? AND m.backend_msg_id = ?", -1, &find_conv, NULL);
   if (rc != SQLITE_OK) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "prepare: %s", sqlite3_errmsg(db));
     return FALSE;
@@ -433,7 +440,7 @@ gh_store_reactions_reconcile(GhStoreReactions *self, GhReactionStore *model,
   int rc = sqlite3_prepare_v2(db,
     "SELECT p.target_msg_id, p.reaction_msg_id, p.sender_pubkey, p.emoji, "
     "p.created_at, p.room_id FROM pending_reactions p "
-    "JOIN conversations c ON c.backend_key = p.room_id "
+    "JOIN conversations c ON " CONVERSATION_ROOM_SQL " = p.room_id "
     "JOIN messages m ON m.conversation_id = c.id AND m.backend_msg_id = p.target_msg_id "
     "WHERE (?1 IS NULL OR p.room_id = ?1) AND (?2 IS NULL OR p.target_msg_id = ?2) "
     "ORDER BY p.created_at, p.reaction_msg_id", -1, &stmt, NULL);
@@ -494,7 +501,8 @@ gh_store_reactions_attach(GhStoreReactions *self, GhReactionStore *model, GError
     "r.created_at, r.room_id FROM reactions r "
     "JOIN conversations c ON c.id = r.conversation_id "
     "JOIN messages m ON m.conversation_id = c.id AND m.backend_msg_id = r.target_msg_id "
-    "WHERE c.backend_key = r.room_id ORDER BY r.created_at ASC, r.reaction_msg_id ASC",
+    "WHERE " CONVERSATION_ROOM_SQL " = r.room_id "
+    "ORDER BY r.created_at ASC, r.reaction_msg_id ASC",
     -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "prepare: %s", sqlite3_errmsg(db));
