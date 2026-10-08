@@ -1885,6 +1885,8 @@ test_restart_pages_history(void)
   gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(scroller), 0);
   ListedWait two_pages = { room, view, 2 * PAGE };
   gh_test_spin_until(listed_and_idle, &two_pages);
+  /* GTK 4.14 updates the list's scroll anchor on the next layout frame. */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
   g_assert_false(gh_conversation_view_get_older_failed(view));
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
   g_assert_true(gh_conversation_get_has_older(room));
