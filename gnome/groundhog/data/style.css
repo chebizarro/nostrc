@@ -165,6 +165,12 @@
   background: alpha(currentColor, 0.14);
 }
 
+/* Chips are spaced like the rest of the meta line (nostrc-l1kn6.5). */
+groundhog-reaction-bar > flowbox > flowboxchild {
+  padding: 0;
+  background: none;
+}
+
 .groundhog-reaction-chip.groundhog-reaction-own {
   background: alpha(@accent_bg_color, 0.22);
   border: 1px solid alpha(@accent_bg_color, 0.5);

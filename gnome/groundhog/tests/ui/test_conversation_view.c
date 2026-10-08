@@ -27,6 +27,7 @@
 #include "blossom-fixture.h"
 #include "gh-conversation-row.h"
 #include "gh-conversation-view.h"
+#include <math.h>
 #include "gh-timeline-row.h"
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
@@ -2089,30 +2090,69 @@ test_load_older(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->loads, ==, 1);
 }
 
+/* Frames drawn since a count was started: layout has run in between. */
 static gboolean
-at_history_top(gpointer data)
+count_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
 {
-  GhConversationView *view = data;
-  GtkAdjustment *adj = vadjustment(view);
-  return gtk_adjustment_get_upper(adj) > gtk_adjustment_get_page_size(adj) &&
-         gtk_adjustment_get_value(adj) < 4 && !gh_conversation_view_get_at_latest(view);
+  (void)widget;
+  (void)clock;
+  (*(guint *)data)++;
+  return G_SOURCE_CONTINUE;
+}
+
+static gboolean
+ticks_reached(gpointer data)
+{
+  return *(guint *)data >= 6;
 }
 
 static void
-test_earlier_button_scrolls(Fixture *f, gconstpointer data)
+wait_frames(GtkWidget *widget)
+{
+  guint ticks = 0;
+  guint id = gtk_widget_add_tick_callback(widget, count_tick, &ticks, NULL);
+  spin_until(ticks_reached, &ticks);
+  gtk_widget_remove_tick_callback(widget, id);
+}
+
+/* The topmost row of `messages` wholly on screen, and where it is. */
+static GhMessage *
+topmost_on_screen(GhConversationView *view, GPtrArray *messages, gdouble *y)
+{
+  GtkWidget *scroller = view_child(view, "scroller");
+  for (guint i = 0; i < messages->len; i++) {
+    GhMessage *message = g_ptr_array_index(messages, i);
+    GtkWidget *item = item_for(view, message);
+    GhMessageRow *row = item ? item_row(item) : NULL;
+    graphene_rect_t bounds;
+    if (row && gtk_widget_get_mapped(GTK_WIDGET(row)) &&
+        gtk_widget_compute_bounds(GTK_WIDGET(row), scroller, &bounds) &&
+        bounds.origin.y >= 0) {
+      *y = bounds.origin.y;
+      return message;
+    }
+  }
+  return NULL;
+}
+
+/* "Earlier Messages" shows only within a page of the top of what is listed
+ * (nostrc-l1kn6.1), not over the latest messages; clicking it lists the
+ * older page above while the messages on screen stay where they are. */
+static void
+test_earlier_button_near_top(Fixture *f, gconstpointer data)
 {
   (void)data;
   gint64 t = noon_today();
-  const guint to_a[] = { 1, 0 };
+  const guint to_a[] = { 1, 0 }, to_b[] = { 2, 0 };
   g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
   g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
-  for (guint i = 0; i < 20; i++) {
+  for (guint i = 0; i < 30; i++) {
     g_autofree gchar *text = g_strdup_printf("newest %u", i);
-    g_ptr_array_add(newest, rumor(2, to_a, t + i * 60, text, NULL));
+    g_ptr_array_add(newest, rumor(i % 2 ? 1 : 2, i % 2 ? to_b : to_a, t + i * 600, text, NULL));
   }
   for (guint i = 0; i < 10; i++) {
     g_autofree gchar *text = g_strdup_printf("older %u", i);
-    g_ptr_array_add(older, rumor(2, to_a, t - 3600 + i * 60, text, NULL));
+    g_ptr_array_add(older, rumor(2, to_a, t - 36000 + i * 60, text, NULL));
   }
   GhMessage *floor = g_ptr_array_index(newest, 0);
   const gchar *room_id = gh_message_get_room_id(floor);
@@ -2126,14 +2166,63 @@ test_earlier_button_scrolls(Fixture *f, gconstpointer data)
   show(f, conversation, 480, 300);
   gh_conversation_view_scroll_to_latest(f->view);
   spin_until(at_bottom, f->view);
+  wait_frames(GTK_WIDGET(f->view));
   gh_conversation_view_set_history_loader(f->view, load_older, f, NULL);
-  click(view_child(f->view, "older_button"));
+  GtkWidget *button = view_child(f->view, "older_button");
+  GtkAdjustment *adj = vadjustment(f->view);
+  gdouble page = gtk_adjustment_get_page_size(adj);
+  g_assert_cmpfloat(gtk_adjustment_get_upper(adj), >, 3 * page);
+
+  /* At the latest messages: nothing about earlier ones covers them. */
+  g_assert_false(shown(button));
+
+  /* Within a page of the top: offered, not yet asked for. */
+  gtk_adjustment_set_value(adj, page * 3 / 4);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_true(shown(button));
+  g_assert_cmpuint(f->loads, ==, 0);
+  /* Clear of the scrollbar on the end edge, at the top. */
+  g_assert_cmpint(gtk_widget_get_valign(button), ==, GTK_ALIGN_START);
+  g_assert_cmpint(gtk_widget_get_halign(button), ==, GTK_ALIGN_CENTER);
+  g_assert_cmpint(gtk_widget_get_margin_end(button), >=, 18);
+
+  /* Further down again: gone. */
+  gtk_adjustment_set_value(adj, page * 2);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_false(shown(button));
+  gtk_adjustment_set_value(adj, page / 2);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_true(shown(button));
+
+  /* Clicked: the older page is listed above; the reader's place holds. */
+  gdouble before_y = 0;
+  GhMessage *anchor = topmost_on_screen(f->view, newest, &before_y);
+  g_assert_nonnull(anchor);
+  gdouble before_value = gtk_adjustment_get_value(adj);
+  click(button);
   g_assert_cmpuint(f->loads, ==, 1);
+  g_assert_false(shown(button));
+  g_assert_true(shown(view_child(f->view, "loading_box")));
   state.has_older = FALSE;
   g_assert_true(gh_conversation_store_restore(f->store, room_id, older, &state) == conversation);
   gh_conversation_view_finish_loading_older(f->view);
-  spin_until(at_history_top, f->view);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 30);
+  g_assert_false(shown(view_child(f->view, "loading_box")));
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 40);
+  GhMessageRow *row = row_for(f->view, anchor);
+  g_assert_nonnull(row);
+  graphene_rect_t bounds;
+  g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(row), view_child(f->view, "scroller"),
+                                          &bounds));
+  g_assert_cmpfloat(fabs(bounds.origin.y - before_y), <=, 1);
+  g_assert_cmpfloat(gtk_adjustment_get_value(adj), >, before_value);
+  g_assert_false(gh_conversation_view_get_at_latest(f->view));
+  /* Nothing older remains: neither offered nor asked for at the top. */
+  g_assert_false(shown(button));
+  gtk_adjustment_set_value(adj, 0);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_false(shown(button));
+  g_assert_cmpuint(f->loads, ==, 1);
 }
 
 /* ---- earlier messages (W13b review B1) ----------------------------------------------- */
@@ -2613,48 +2702,196 @@ test_screenshots(void)
   g_log_set_always_fatal(fatal);
 }
 
-/* The reaction controls stay on the meta line and follow the bubble edge,
- * even when a reacted message is not the last one in its run. */
+/* The visible children of the meta line, in order. */
+static GPtrArray *
+meta_children(GtkWidget *meta)
+{
+  GPtrArray *children = g_ptr_array_new();
+  for (GtkWidget *child = gtk_widget_get_first_child(meta); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (gtk_widget_get_visible(child))
+      g_ptr_array_add(children, child);
+  return children;
+}
+
+static graphene_rect_t
+bounds_in(GtkWidget *widget, GtkWidget *target)
+{
+  graphene_rect_t bounds;
+  g_assert_true(gtk_widget_compute_bounds(widget, target, &bounds));
+  return bounds;
+}
+
+static gboolean
+row_laid_out(gpointer data)
+{
+  GhMessageRow *row = data;
+  GtkWidget *meta = row_child(row, "meta_box");
+  return gtk_widget_get_mapped(meta) && gtk_widget_get_width(meta) > 0;
+}
+
+static guint
+chip_count(GtkWidget *bar)
+{
+  g_autoptr(GPtrArray) chips = g_ptr_array_new();
+  collect(bar, GTK_TYPE_BUTTON, chips);
+  return chips->len;
+}
+
+/* One meta line for both sides, mirrored (nostrc-l1kn6.5): the status
+ * (time, and on your own messages the receipt) at the bubble's edge, the
+ * reaction chips next to it, React outermost; no gaps, and the same with no,
+ * one or several reactions:
+ *   incoming  [time][chips…][React]
+ *   own       [React][chips…][time][receipt]
+ * The chips are created only once there are reactions, and go again. */
 static void
 test_reaction_meta_layout(void)
 {
-  const guint to[] = { 2, 0 };
-  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
-  gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+  static const gchar *const emojis[] = { "👍", "❤️", "😂" };
+  static const guint reactors[] = { 2, 3, 1 };
+  const guint counts[] = { 0, 1, 3 };
   for (guint author = 1; author <= 2; author++) {
-    g_autoptr(GhMessage) message = rumor(author, author == 1 ? to : (const guint[]){ 1, 0 },
-                                         now_seconds(), "reacted message", NULL);
-    GhMessageRow *row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
-    gh_message_row_set_message(row, message);
-    gh_message_row_set_run(row, TRUE, FALSE);
-    GtkWidget *meta = row_child(row, "meta_box");
-    GtkWidget *controls = row_child(row, "reaction_controls");
-    g_assert_null(row_child(row, "reaction_bar"));
-    GtkWidget *button = row_child(row, "react_button");
-    g_assert_false(gtk_widget_get_visible(meta));
-    g_autofree gchar *reaction_id = g_strdup_printf("reaction-%u", author);
-    g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(message),
-      reaction_id, hex[2], "👍", now_seconds(), gh_message_get_room_id(message));
-    g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
-    gh_message_row_set_reaction_summary(row,
-      gh_reaction_store_lookup(reactions, gh_message_get_rumor_id(message)));
-    GtkWidget *bar = row_child(row, "reaction_bar");
-    g_assert_true(gtk_widget_get_visible(meta));
-    g_assert_true(gtk_widget_get_visible(bar));
-    if (author == 1) {
-      g_assert_true(gtk_widget_get_last_child(meta) == controls);
-      g_assert_true(gtk_widget_get_first_child(controls) == button);
-      g_assert_true(gtk_widget_get_last_child(controls) == bar);
-      g_assert_cmpint(gtk_widget_get_margin_end(meta), ==, 38);
-    } else {
-      g_assert_true(gtk_widget_get_first_child(meta) == controls);
-      g_assert_true(gtk_widget_get_first_child(controls) == bar);
-      g_assert_true(gtk_widget_get_last_child(controls) == button);
-      g_assert_cmpint(gtk_widget_get_margin_start(meta), ==, 38);
+    gboolean own = author == 1;
+    for (guint c = 0; c < G_N_ELEMENTS(counts); c++) {
+      guint n = counts[c];
+      g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+      gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+      g_autoptr(GhMessage) message = rumor(author, own ? (const guint[]){ 2, 0 }
+                                                       : (const guint[]){ 1, 0 },
+                                           now_seconds(), "reacted message", NULL);
+      if (own)
+        gh_message_set_status(message, GH_MESSAGE_STATUS_SENT);
+      GtkWindow *window = GTK_WINDOW(gtk_window_new());
+      gtk_window_set_default_size(window, 640, 300);
+      GhMessageRow *row = GH_MESSAGE_ROW(gh_message_row_new());
+      gtk_window_set_child(window, GTK_WIDGET(row));
+      gh_message_row_set_message(row, message);
+      gh_message_row_set_run(row, TRUE, FALSE);
+      GtkWidget *meta = row_child(row, "meta_box");
+      GtkWidget *status = row_child(row, "status_box");
+      GtkWidget *react = row_child(row, "react_button");
+      GtkWidget *bubble = row_child(row, "bubble");
+      /* Mid-run, plainly sent, unreacted: no meta line at all. */
+      g_assert_false(gtk_widget_get_visible(meta));
+      g_assert_null(row_child(row, "reaction_bar"));
+
+      for (guint i = 0; i < n; i++) {
+        g_autofree gchar *reaction_id = g_strdup_printf("reaction-%u-%u-%u", author, n, i);
+        g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(message),
+          reaction_id, hex[reactors[i]], emojis[i], now_seconds(),
+          gh_message_get_room_id(message));
+        g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
+      }
+      gh_message_row_set_reaction_summary(row,
+        gh_reaction_store_lookup(reactions, gh_message_get_rumor_id(message)));
+      GtkWidget *bar = row_child(row, "reaction_bar");
+      if (n == 0) {
+        g_assert_null(bar);
+        g_assert_false(gtk_widget_get_visible(meta));
+        gh_message_row_set_run(row, TRUE, TRUE); /* the end of a run shows it */
+      } else {
+        g_assert_nonnull(bar);
+        g_assert_true(gtk_widget_get_visible(bar));
+        g_assert_cmpuint(chip_count(bar), ==, n);
+      }
+      g_assert_true(gtk_widget_get_visible(meta));
+      g_assert_true(gtk_widget_get_visible(status));
+      g_assert_true(gtk_widget_get_visible(react));
+      g_assert_false(shown(row_child(row, "retry_button")));
+      g_assert_cmpint(gtk_widget_get_halign(meta), ==, own ? GTK_ALIGN_END : GTK_ALIGN_START);
+
+      /* The order, outward from the bubble's edge. */
+      g_autoptr(GPtrArray) order = meta_children(meta);
+      g_assert_cmpuint(order->len, ==, n ? 3 : 2);
+      GtkWidget *edge = g_ptr_array_index(order, own ? order->len - 1 : 0);
+      GtkWidget *outer = g_ptr_array_index(order, own ? 0 : order->len - 1);
+      g_assert_true(edge == status);
+      g_assert_true(outer == react);
+      if (n)
+        g_assert_true(g_ptr_array_index(order, 1) == bar);
+      /* The status reads the same on both sides: time, then any receipt. */
+      GtkWidget *time = row_child(row, "time_label");
+      GtkWidget *receipt = row_child(row, "delivery");
+      g_assert_true(gtk_widget_get_parent(time) == status);
+      g_assert_cmpint(gtk_widget_get_visible(receipt), ==, own);
+
+      /* Laid out: flush to the bubble's edge, nothing between the parts. */
+      gtk_window_present(window);
+      spin_until(row_laid_out, row);
+      wait_frames(GTK_WIDGET(row));
+      GtkWidget *target = GTK_WIDGET(row);
+      graphene_rect_t bubble_box = bounds_in(bubble, target);
+      graphene_rect_t edge_box = bounds_in(edge, target);
+      if (own)
+        g_assert_cmpfloat(fabs(edge_box.origin.x + edge_box.size.width -
+                               (bubble_box.origin.x + bubble_box.size.width)), <=, 1);
+      else
+        g_assert_cmpfloat(fabs(edge_box.origin.x - bubble_box.origin.x), <=, 1);
+      for (guint i = 1; i < order->len; i++) {
+        graphene_rect_t left = bounds_in(g_ptr_array_index(order, i - 1), target);
+        graphene_rect_t right = bounds_in(g_ptr_array_index(order, i), target);
+        gdouble gap = right.origin.x - (left.origin.x + left.size.width);
+        g_assert_cmpfloat(fabs(gap - 4), <=, 1);
+      }
+      graphene_rect_t time_box = bounds_in(time, target);
+      if (own) {
+        graphene_rect_t receipt_box = bounds_in(receipt, target);
+        g_assert_cmpfloat(time_box.origin.x + time_box.size.width, <=, receipt_box.origin.x);
+        g_assert_cmpfloat(fabs(receipt_box.origin.x + receipt_box.size.width -
+                               (edge_box.origin.x + edge_box.size.width)), <=, 1);
+      } else {
+        g_assert_cmpfloat(fabs(time_box.origin.x - edge_box.origin.x), <=, 1);
+      }
+      /* The chips sit on the meta line, below the bubble. */
+      g_assert_cmpfloat(edge_box.origin.y, >=, bubble_box.origin.y + bubble_box.size.height);
+      /* The chips fill the bar, in one line, spaced like the rest: no
+       * room is kept beside them. */
+      if (bar) {
+        g_autoptr(GPtrArray) chips = g_ptr_array_new();
+        collect(bar, GTK_TYPE_BUTTON, chips);
+        graphene_rect_t bar_box = bounds_in(bar, target);
+        graphene_rect_t first = bounds_in(g_ptr_array_index(chips, 0), target);
+        graphene_rect_t last = bounds_in(g_ptr_array_index(chips, chips->len - 1), target);
+        g_assert_cmpfloat(fabs(first.origin.x - bar_box.origin.x), <=, 1);
+        g_assert_cmpfloat(fabs(last.origin.x + last.size.width -
+                               (bar_box.origin.x + bar_box.size.width)), <=, 1);
+        /* Not stretched to the line's height (the receipt's is taller):
+         * as tall as the tallest chip (your own has a border). */
+        int line_height = 0;
+        for (guint i = 0; i < chips->len; i++) {
+          int chip_height = 0;
+          gtk_widget_measure(g_ptr_array_index(chips, i), GTK_ORIENTATION_VERTICAL, -1, NULL,
+                             &chip_height, NULL, NULL);
+          line_height = MAX(line_height, chip_height);
+        }
+        g_assert_cmpfloat(fabs(bar_box.size.height - line_height), <=, 1);
+        graphene_rect_t status_box = bounds_in(status, target);
+        g_assert_cmpfloat(fabs(first.origin.y + first.size.height / 2 -
+                               (status_box.origin.y + status_box.size.height / 2)), <=, 1);
+        for (guint i = 1; i < chips->len; i++) {
+          graphene_rect_t left = bounds_in(g_ptr_array_index(chips, i - 1), target);
+          graphene_rect_t right = bounds_in(g_ptr_array_index(chips, i), target);
+          g_assert_cmpfloat(fabs(right.origin.y - left.origin.y), <=, 1);
+          g_assert_cmpfloat(fabs(right.origin.x - (left.origin.x + left.size.width) - 4), <=, 1);
+        }
+      }
+      const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+      if (dir) {
+        gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+        g_autofree gchar *name = g_strdup_printf("meta-%s-%u-reactions",
+                                                 own ? "own" : "incoming", n);
+        save_png(GTK_WIDGET(window), NULL, dir, name);
+      }
+
+      /* Reactions gone: the chips go too. */
+      for (guint i = 0; i < n; i++) {
+        g_autofree gchar *reaction_id = g_strdup_printf("reaction-%u-%u-%u", author, n, i);
+        g_assert_true(gh_reaction_store_remove(reactions, reaction_id, NULL));
+      }
+      g_assert_null(row_child(row, "reaction_bar"));
+      gtk_window_destroy(window);
     }
-    g_assert_true(gh_reaction_store_remove(reactions, reaction_id, NULL));
-    g_assert_false(gtk_widget_get_visible(meta));
-    g_object_unref(row);
   }
 }
 
@@ -2865,7 +3102,7 @@ main(int argc, char **argv)
   ADD("scrolling", test_scrolling);
   ADD("opens-at-first-unread", test_opens_at_first_unread);
   ADD("load-older", test_load_older);
-  ADD("earlier-button-scrolls", test_earlier_button_scrolls);
+  ADD("earlier-button-near-top", test_earlier_button_near_top);
   ADD("earlier-messages", test_earlier_messages);
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);

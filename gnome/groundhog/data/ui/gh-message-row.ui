@@ -106,29 +106,35 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <class name="groundhog-message-meta"/>
         </style>
         <child>
-          <object class="GtkImage" id="timer_icon">
-            <property name="visible">false</property>
-            <property name="icon-name">alarm-symbolic</property>
-            <property name="pixel-size">12</property>
+          <object class="GtkBox" id="status_box">
+            <property name="spacing">4</property>
             <property name="valign">3</property>
-            <style>
-              <class name="dim-label"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel" id="time_label">
-            <property name="valign">3</property>
-            <style>
-              <class name="caption"/>
-              <class name="numeric"/>
-              <class name="dim-label"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GhDeliveryIndicator" id="delivery">
-            <property name="valign">center</property>
+            <child>
+              <object class="GtkImage" id="timer_icon">
+                <property name="visible">false</property>
+                <property name="icon-name">alarm-symbolic</property>
+                <property name="pixel-size">12</property>
+                <property name="valign">3</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="time_label">
+                <property name="valign">3</property>
+                <style>
+                  <class name="caption"/>
+                  <class name="numeric"/>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GhDeliveryIndicator" id="delivery">
+                <property name="valign">center</property>
+              </object>
+            </child>
           </object>
         </child>
         <child>
@@ -146,21 +152,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child>
-          <object class="GtkBox" id="reaction_controls">
-            <property name="spacing">4</property>
+          <object class="GtkButton" id="react_button">
+            <property name="icon-name">face-smile-symbolic</property>
             <property name="valign">3</property>
-            <child>
-              <object class="GtkButton" id="react_button">
-                <property name="icon-name">face-smile-symbolic</property>
-                <property name="valign">3</property>
-                <property name="action-name">conversation.add-reaction</property>
-                <property name="tooltip-text" translatable="yes">React</property>
-                <style>
-                  <class name="flat"/>
-                  <class name="groundhog-react-button"/>
-                </style>
-              </object>
-            </child>
+            <property name="action-name">conversation.add-reaction</property>
+            <property name="tooltip-text" translatable="yes">React</property>
+            <style>
+              <class name="flat"/>
+              <class name="groundhog-react-button"/>
+            </style>
           </object>
         </child>
       </object>

@@ -112,6 +112,11 @@ template $GhMessageRow: Widget {
     styles ["groundhog-link-preview"]
   }
 
+  // The meta line, one order mirrored by side (nostrc-l1kn6.5), set by
+  // gh-message-row.c: the status sits at the bubble's edge, then any
+  // reaction chips, then React outermost. Incoming:
+  // [time][Try Again][chips…][React]; own: [React][chips…][Try Again]
+  // [time][receipt], so the receipt ends where the bubble does.
   Box meta_box {
     spacing: 4;
 
@@ -119,30 +124,37 @@ template $GhMessageRow: Widget {
       "groundhog-message-meta",
     ]
 
-    Image timer_icon {
-      visible: false;
-      icon-name: "alarm-symbolic";
-      pixel-size: 12;
+    // When it was written (and when it disappears) and, for your own
+    // messages, whether it arrived. Read in the same order on both sides.
+    Box status_box {
+      spacing: 4;
       valign: center;
 
-      styles [
-        "dim-label",
-      ]
-    }
+      Image timer_icon {
+        visible: false;
+        icon-name: "alarm-symbolic";
+        pixel-size: 12;
+        valign: center;
 
-    // NIP-04 warning is added only on legacy messages.
-    Label time_label {
-      valign: center;
+        styles [
+          "dim-label",
+        ]
+      }
 
-      styles [
-        "caption",
-        "numeric",
-        "dim-label",
-      ]
-    }
+      // NIP-04 warning is added only on legacy messages.
+      Label time_label {
+        valign: center;
 
-    $GhDeliveryIndicator delivery {
-      valign: center;
+        styles [
+          "caption",
+          "numeric",
+          "dim-label",
+        ]
+      }
+
+      $GhDeliveryIndicator delivery {
+        valign: center;
+      }
     }
 
     Button retry_button {
@@ -159,24 +171,17 @@ template $GhMessageRow: Widget {
       ]
     }
 
-    // Chips and React share one line. On own messages React precedes the
-    // chips so the final chip reaches the bubble's right edge.
-    Box reaction_controls {
-      spacing: 4;
+    // Reaction chips are added only when a summary has reactions.
+    Button react_button {
+      icon-name: "face-smile-symbolic";
       valign: center;
+      action-name: "conversation.add-reaction";
+      tooltip-text: _("React");
 
-      // Reaction chips are added only when a summary has reactions.
-      Button react_button {
-        icon-name: "face-smile-symbolic";
-        valign: center;
-        action-name: "conversation.add-reaction";
-        tooltip-text: _("React");
-
-        styles [
-          "flat",
-          "groundhog-react-button",
-        ]
-      }
+      styles [
+        "flat",
+        "groundhog-react-button",
+      ]
     }
   }
 }

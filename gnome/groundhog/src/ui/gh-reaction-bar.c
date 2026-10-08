@@ -95,6 +95,50 @@ on_total_changed(GObject *object, GParamSpec *pspec, gpointer data)
   rebuild(GH_REACTION_BAR(data));
 }
 
+/* ---- layout ----------------------------------------------------------------- */
+
+/* GtkFlowBox asks for room for more chips than it holds, and packs them at
+ * its start: on a meta line that leaves a gap between the chips and what
+ * follows (nostrc-l1kn6.5). The bar's natural width is its chips' own, in
+ * one line; narrower than that, the flow box wraps them as before. */
+static void
+gh_reaction_bar_measure(GtkWidget *widget, GtkOrientation orientation, int for_size,
+                        int *minimum, int *natural, int *minimum_baseline,
+                        int *natural_baseline)
+{
+  GhReactionBar *self = GH_REACTION_BAR(widget);
+  gtk_widget_measure(GTK_WIDGET(self->flow), orientation, for_size, minimum, natural,
+                     minimum_baseline, natural_baseline);
+  if (orientation != GTK_ORIENTATION_HORIZONTAL)
+    return;
+  int line = 0;
+  guint chips = 0;
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->flow)); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (!gtk_widget_should_layout(child))
+      continue;
+    int child_natural = 0;
+    gtk_widget_measure(child, GTK_ORIENTATION_HORIZONTAL, -1, NULL, &child_natural, NULL, NULL);
+    line += child_natural;
+    chips++;
+  }
+  if (chips > 1)
+    line += (int)(chips - 1) * (int)gtk_flow_box_get_column_spacing(self->flow);
+  *natural = MAX(*minimum, MIN(*natural, line));
+}
+
+static void
+gh_reaction_bar_size_allocate(GtkWidget *widget, int width, int height, int baseline)
+{
+  gtk_widget_allocate(GTK_WIDGET(GH_REACTION_BAR(widget)->flow), width, height, baseline, NULL);
+}
+
+static GtkSizeRequestMode
+gh_reaction_bar_get_request_mode(GtkWidget *widget)
+{
+  return gtk_widget_get_request_mode(GTK_WIDGET(GH_REACTION_BAR(widget)->flow));
+}
+
 /* ---- GObject ---------------------------------------------------------------- */
 
 static void
@@ -117,7 +161,9 @@ gh_reaction_bar_class_init(GhReactionBarClass *klass)
   object_class->dispose = gh_reaction_bar_dispose;
 
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  gtk_widget_class_set_layout_manager_type(widget_class, GTK_TYPE_BIN_LAYOUT);
+  widget_class->measure = gh_reaction_bar_measure;
+  widget_class->size_allocate = gh_reaction_bar_size_allocate;
+  widget_class->get_request_mode = gh_reaction_bar_get_request_mode;
   gtk_widget_class_set_css_name(widget_class, "groundhog-reaction-bar");
 
   signals[SIGNAL_REACTION_TOGGLED] =
