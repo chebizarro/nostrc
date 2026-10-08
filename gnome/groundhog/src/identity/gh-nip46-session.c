@@ -874,6 +874,7 @@ gh_nip46_session_start(GhNip46Session *self)
   nostr_filter_tags_append(filter, "p", self->client_pubkey, NULL);
   nostr_filter_set_since_i64(filter, g_get_real_time() / G_USEC_PER_SEC - 60);
   nostr_filters_add(filters, filter);
+  nostr_filter_free(filter); /* contents moved into the vector */
   self->scope = self->scope_transport.open ? gh_relay_scope_new_with_transport(
     self->generation, filters, &self->scope_transport, self->transport_data,
     scope_update, self) : gh_relay_scope_new(self->generation, filters, scope_update, self);

@@ -114,7 +114,7 @@ bunker_publish_open(GhRelayPublish *publish, const gchar *url,
   handle->publish = gh_relay_publish_ref(publish);
   handle->url = g_strdup(url);
   handle->event_json = g_strdup(event_json);
-  handle->event_id = g_strdup(nostr_event_get_id(event));
+  handle->event_id = nostr_event_get_id(event);
   g_ptr_array_add(bunker->publishes, handle);
   nostr_event_free(event);
   return handle;
