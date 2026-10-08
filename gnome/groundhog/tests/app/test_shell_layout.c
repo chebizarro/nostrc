@@ -652,6 +652,21 @@ test_status_banners(void)
                     inbox[i].banner != GH_STATUS_BANNER_BACKFILLING);
   }
 
+  /* A remote backlog changes only this window's progress copy; the default
+   * Grotto backfill title above stays unchanged. */
+  gh_status_set_inbox(status, GH_STATUS_INBOX_BACKFILLING, NULL);
+  g_object_set(status, "inbox-backlog", 3u, NULL);
+  AdwBanner *progress = gh_sidebar_page_get_banner(gh_window_get_sidebar(window));
+  g_assert_cmpstr(adw_banner_get_title(progress), ==,
+                  "Decrypting 3 messages with your signer");
+  g_object_set(status, "inbox-backlog", 2u, NULL);
+  g_assert_cmpstr(adw_banner_get_title(progress), ==,
+                  "Decrypting 2 messages with your signer");
+  gh_status_set_inbox(status, GH_STATUS_INBOX_LIVE, NULL);
+  g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_BACKFILLING);
+  g_object_set(status, "inbox-backlog", 0u, NULL);
+  g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_NONE);
+
   /* A local failure with nothing listed shows the error page, with the
    * receive path's own explanation. */
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "empty");

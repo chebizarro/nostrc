@@ -489,7 +489,9 @@ sync_store_actions(GhAppServices *self)
                               state == GH_ACCOUNT_STORE_KEY_MISSING ||
                               state == GH_ACCOUNT_STORE_ERROR);
   g_simple_action_set_enabled(self->store_actions[ACTION_EPHEMERAL],
-                              state == GH_ACCOUNT_STORE_UNAVAILABLE);
+                              state == GH_ACCOUNT_STORE_UNAVAILABLE &&
+                              gh_account_controller_get_active_backend(self->accounts) !=
+                                GH_SIGNER_BACKEND_NIP46);
   g_simple_action_set_enabled(self->store_actions[ACTION_START_FRESH],
                               state == GH_ACCOUNT_STORE_KEY_MISSING ||
                               state == GH_ACCOUNT_STORE_CORRUPT);

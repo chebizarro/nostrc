@@ -17,13 +17,19 @@
 #include "gh-conversation-view.h"
 #include "gh-inbox-resolver.h"
 #include "gh-nip17-inbox.h"
+#include "gh-nip04-inbox.h"
 #include "gh-status.h"
+#include "gh-signer.h"
+#include "gh-inbox-status.h"
 #include "gh-store-status.h"
 #include "gh-test-signer.h"
+#include "gh-test-bunker.h"
 #include "fake-secret.h"
 
 #include "nostr-tag.h"
 #include "nostr/nip59/nip59.h"
+#include "nostr/nip04.h"
+#include "secure_buf.h"
 
 #include "nostrc-test-gdk-frame.h"
 
@@ -57,11 +63,13 @@ typedef struct {
   gchar *url;
   gint64 since;
   gboolean closed;
+  gboolean legacy_outgoing;
 } Req;
 
 typedef struct {
   GPtrArray *reqs;      /* Req: every DM inbox REQ ever opened */
   GPtrArray *discovery; /* GhRelayScope: every relay-list discovery REQ */
+  GPtrArray *legacy;    /* NIP-04 REQs */
 } Recorder;
 
 static gchar discovery_handle;
@@ -88,13 +96,18 @@ recorder_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters
     g_ptr_array_add(rec->discovery, gh_relay_scope_ref(scope));
     return &discovery_handle;
   }
-  /* Nothing but the DM inbox ever opens a REQ here. */
-  g_assert_cmpint(nostr_filter_kinds_get(filter, 0), ==, 1059);
+  int kind = nostr_filter_kinds_get(filter, 0);
+  g_assert_true(kind == 1059 || kind == 4);
   Req *req = g_new0(Req, 1);
   req->scope = gh_relay_scope_ref(scope);
   req->url = g_strdup(url);
   req->since = nostr_filter_get_since_i64(filter);
-  g_ptr_array_add(rec->reqs, req);
+  if (kind == 4) {
+    req->legacy_outgoing = nostr_filter_authors_len(filter) == 1;
+    g_ptr_array_add(rec->legacy, req);
+  } else {
+    g_ptr_array_add(rec->reqs, req);
+  }
   return req;
 }
 
@@ -220,11 +233,14 @@ typedef struct {
   gchar *state_dir;
   gint64 list_time;
   gboolean with_outbox;
+  gboolean remote;
+  TestBunker bunker;
   /* The stack: what one Groundhog process owns. */
   GhAccountController *accounts;
   GhAccountRelays *relays;
   GhConversationStore *model;
   GhDmInbox *inbox;
+  GhNip04Inbox *nip04;
   GhStoreKey *store_key;
   FakeResolver *resolver;
   GhAppOutbox *sender;
@@ -254,6 +270,32 @@ static gboolean
 listed(gpointer data)
 {
   return gh_account_controller_get_state(data) != GH_ACCOUNT_STATE_DISCOVERING;
+}
+
+static GPtrArray *
+remote_list(gpointer data, GError **error)
+{
+  (void)data;
+  (void)error;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(npub[2]);
+  g_ptr_array_add(ids, info);
+  return ids;
+}
+
+static GhNip46Session *
+remote_session(const gchar *active_npub, gpointer data)
+{
+  Fixture *f = data;
+  g_assert_cmpstr(active_npub, ==, npub[2]);
+  const gchar *const relays[] = { DISCOVERY, NULL };
+  g_autoptr(GError) error = NULL;
+  GhNip46Session *session = gh_nip46_session_new(f->bunker.client_secret,
+    f->bunker.signer_pubkey, relays, &bunker_scope_transport, NULL,
+    &bunker_publish_transport, NULL, &f->bunker, &error);
+  g_assert_no_error(error);
+  return session;
 }
 
 /* Whether any open descriptor of this process refers to path (or its -wal
@@ -324,12 +366,26 @@ make_outbox(GhStore *store, gpointer data, GError **error)
 static void
 stack_up(Fixture *f)
 {
-  f->accounts = gh_account_controller_new_full(f->settings, f->bus.client, fake_list, NULL);
-  gh_test_spin_until(listed, f->accounts);
+  if (f->remote) {
+    g_settings_set_string(f->settings, "current-npub", "");
+    g_settings_set_string(f->settings, "current-backend", "grotto");
+    f->accounts = gh_account_controller_new_full_with_remote_list(
+      f->settings, f->bus.client, fake_list, NULL, remote_list, f);
+    gh_account_controller_set_session_factory_for_test(f->accounts, remote_session, f);
+    gh_test_spin_until(listed, f->accounts);
+    g_assert_true(gh_account_controller_select_backend(f->accounts,
+      GH_SIGNER_BACKEND_NIP46, npub[2], NULL));
+  } else {
+    f->accounts = gh_account_controller_new_full(f->settings, f->bus.client, fake_list, NULL);
+    gh_test_spin_until(listed, f->accounts);
+  }
   f->relays = gh_account_relays_new(f->accounts, f->settings, &recorder_transport, &f->rec);
   f->model = gh_conversation_store_new();
   f->inbox = gh_dm_inbox_new_with_storage(f->accounts, f->relays, f->model,
                                           &recorder_transport, &recorder_auth, &f->rec);
+  if (f->remote)
+    f->nip04 = gh_nip04_inbox_new(f->accounts, f->relays, f->model, f->inbox,
+                                  &recorder_transport, &f->rec);
   f->store_key = gh_store_key_new(GH_STORE_KEY_BACKEND(f->secret));
   f->resolver = g_object_new(FAKE_TYPE_RESOLVER, NULL);
   GhAppOutboxConfig outbox_config = {
@@ -364,6 +420,8 @@ stack_down(Fixture *f)
   g_clear_pointer(&f->sender, gh_app_outbox_free);
   g_clear_object(&f->resolver);
   gh_test_release(g_steal_pointer(&f->store_key));
+  if (f->nip04)
+    gh_test_release(g_steal_pointer(&f->nip04));
   gh_test_release(g_steal_pointer(&f->inbox));
   g_clear_object(&f->model);
   gh_test_release(g_steal_pointer(&f->relays));
@@ -372,6 +430,7 @@ stack_down(Fixture *f)
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   g_ptr_array_set_size(f->rec.reqs, 0);
   g_ptr_array_set_size(f->rec.discovery, 0);
+  g_ptr_array_set_size(f->rec.legacy, 0);
 }
 
 static void
@@ -385,6 +444,7 @@ fixture_up(Fixture *f, guint active_key)
   gh_test_signer_up(&f->bus, &f->signer);
   f->rec.reqs = g_ptr_array_new_with_free_func(req_free);
   f->rec.discovery = g_ptr_array_new_with_free_func((GDestroyNotify)gh_relay_scope_unref);
+  f->rec.legacy = g_ptr_array_new_with_free_func(req_free);
   f->events = g_ptr_array_new_with_free_func(g_free);
   f->settings = g_settings_new("org.nostr.Groundhog");
   f->gnostr = g_settings_new("org.gnostr.Client");
@@ -392,7 +452,19 @@ fixture_up(Fixture *f, guint active_key)
   const gchar *sources[] = { DISCOVERY, NULL };
   g_settings_set_strv(f->settings, "discovery-relays", sources);
   g_settings_set_string(f->settings, "signer-method", "auto");
-  g_settings_set_string(f->settings, "current-npub", active_key ? npub[active_key] : "");
+  g_settings_set_string(f->settings, "current-backend", "grotto");
+  g_settings_set_int(f->settings, "backend-migration-version", 1);
+  if (f->remote) {
+    bunker_init(&f->bunker, gh_test_secret[3]);
+    g_free(f->bunker.signer_secret);
+    g_free(f->bunker.signer_pubkey);
+    g_free(f->bunker.user_pubkey);
+    f->bunker.signer_secret = g_strdup(gh_test_secret[2]);
+    f->bunker.signer_pubkey = g_strdup(hex[2]);
+    f->bunker.user_pubkey = g_strdup(hex[2]);
+  }
+  g_settings_set_string(f->settings, "current-npub", active_key && !f->remote ?
+                        npub[active_key] : "");
   f->secret = fake_secret_new();
   f->root = g_dir_make_tmp("groundhog-account-store-XXXXXX", &error);
   g_assert_no_error(error);
@@ -410,6 +482,7 @@ fixture_down(Fixture *f)
   gh_test_signer_down(&f->bus, &f->signer);
   g_ptr_array_unref(f->rec.reqs);
   g_ptr_array_unref(f->rec.discovery);
+  g_ptr_array_unref(f->rec.legacy);
   g_ptr_array_unref(f->events);
   g_settings_reset(f->gnostr, "current-npub");
   g_object_unref(f->gnostr);
@@ -423,6 +496,8 @@ fixture_down(Fixture *f)
   g_free(f->state_dir);
   g_free(f->other_store_path);
   g_clear_pointer(&f->clock, gh_clock_unref);
+  if (f->remote)
+    bunker_clear(&f->bunker);
 }
 
 static gboolean
@@ -457,6 +532,34 @@ publish_inbox_list(Fixture *f, guint key)
                        DISCOVERY, json);
   free(json);
   gh_test_run_until_idle();
+}
+
+static void
+publish_nip04_relay_list(Fixture *f)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 10002);
+  nostr_event_set_created_at(event, ++f->list_time);
+  nostr_event_set_content(event, "");
+  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("r", INBOX_A, NULL)));
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[2]), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gh_relay_scope_event(g_ptr_array_index(f->rec.discovery, f->rec.discovery->len - 1),
+                       DISCOVERY, json);
+  free(json);
+  gh_test_run_until_idle();
+}
+
+static Req *
+legacy_incoming_req(Fixture *f)
+{
+  for (guint i = 0; i < f->rec.legacy->len; i++) {
+    Req *req = g_ptr_array_index(f->rec.legacy, i);
+    if (!req->closed && !req->legacy_outgoing && g_str_equal(req->url, INBOX_A))
+      return req;
+  }
+  return NULL;
 }
 
 /* A NIP-17 message from key `from` to key `to`, gift-wrapped (NIP-59);
@@ -505,6 +608,29 @@ craft_wrap(guint from, guint to, gint64 created_at, const gchar *content, gchar 
 }
 
 static gchar *
+craft_nip04(gint64 created_at, const gchar *content)
+{
+  char *ciphertext = NULL;
+  nostr_secure_buf sk = secure_alloc(32);
+  g_assert_true(nostr_hex2bin(sk.ptr, gh_test_secret[1], 32));
+  g_assert_cmpint(nostr_nip04_encrypt_legacy_secure(content, hex[2], &sk,
+                                                    &ciphertext, NULL), ==, 0);
+  secure_free(&sk);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 4);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, ciphertext);
+  nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("p", hex[2], NULL)));
+  free(ciphertext);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[1]), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  gchar *copy = g_strdup(json);
+  free(json);
+  nostr_event_free(event);
+  return copy;
+}
+
+static gchar *
 wrap_id_of(const gchar *wrap_json)
 {
   NostrEvent *event = nostr_event_new();
@@ -533,6 +659,24 @@ room_listed(gpointer data)
 {
   RoomWait *wait = data;
   return gh_conversation_store_lookup(wait->model, wait->room) != NULL;
+}
+
+typedef struct {
+  GhConversation *conversation;
+  guint count;
+} MessagesWait;
+
+static gboolean
+messages_reached(gpointer data)
+{
+  MessagesWait *wait = data;
+  return g_list_model_get_n_items(G_LIST_MODEL(wait->conversation)) >= wait->count;
+}
+
+static gboolean
+legacy_incoming_open(gpointer data)
+{
+  return legacy_incoming_req(data) != NULL;
 }
 
 /* key 1 sends the active account (key 2) a message on its inbox relay. */
@@ -647,6 +791,201 @@ test_open_receive_restore(void)
   g_assert_nonnull(conversation);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 1);
   g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 1);
+  fixture_down(&f);
+}
+
+typedef struct {
+  TestBunker *bunker;
+  guint count;
+} BunkerPublishWait;
+
+static gboolean
+bunker_published(gpointer data)
+{
+  BunkerPublishWait *wait = data;
+  return wait->bunker->publishes->len >= wait->count;
+}
+
+static void
+reply_remote_decrypt(Fixture *f, guint count)
+{
+  BunkerPublishWait wait = { &f->bunker, count };
+  gh_test_spin_until(bunker_published, &wait);
+  bunker_accept(&f->bunker);
+  g_autofree gchar *json = bunker_request_json(&f->bunker);
+  NostrNip46Request request = { 0 };
+  g_assert_cmpint(nostr_nip46_request_parse(json, &request), ==, 0);
+  g_assert_true(g_str_equal(request.method, "nip44_decrypt") ||
+                g_str_equal(request.method, "nip04_decrypt"));
+  g_assert_cmpuint(request.n_params, ==, 2);
+  g_autofree gchar *plaintext = NULL;
+  if (g_str_equal(request.method, "nip44_decrypt")) {
+    guint8 sk[32], pk[32], *plain = NULL;
+    size_t length = 0;
+    g_assert_true(nostr_hex2bin(sk, gh_test_secret[2], sizeof sk));
+    g_assert_true(nostr_hex2bin(pk, request.params[0], sizeof pk));
+    g_assert_cmpint(nostr_nip44_decrypt_v2(sk, pk, request.params[1], &plain, &length), ==, 0);
+    plaintext = g_strndup((const gchar *)plain, length);
+    free(plain);
+  } else {
+    char *plain = NULL;
+    g_assert_cmpint(nostr_nip04_decrypt(request.params[1], request.params[0],
+                                        gh_test_secret[2], &plain, NULL), ==, 0);
+    plaintext = g_strdup(plain);
+    free(plain);
+  }
+  g_autofree gchar *escaped = g_strescape(plaintext, NULL);
+  g_autofree gchar *result_json = g_strdup_printf("\"%s\"", escaped);
+  char *response = nostr_nip46_response_build_ok(request.id, result_json);
+  g_assert_nonnull(response);
+  bunker_reply(&f->bunker, response);
+  free(response);
+  nostr_nip46_request_free(&request);
+}
+
+static void
+test_remote_cache_gate_and_offline_restart(void)
+{
+  Fixture f = { .remote = TRUE, .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_true(gh_dm_inbox_has_storage(f.inbox));
+  g_assert_nonnull(gh_account_store_get_outbox(f.store));
+  bunker_eose(&f.bunker);
+  publish_inbox_list(&f, 2);
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  g_autofree gchar *first = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                       CANARY " remote", NULL);
+  gh_relay_scope_event(req->scope, INBOX_A, first);
+  reply_remote_decrypt(&f, 1);
+  reply_remote_decrypt(&f, 2);
+  g_autofree gchar *room = room_of(1, 2);
+  RoomWait listed_room = { f.model, room };
+  gh_test_spin_until(room_listed, &listed_room);
+  gh_relay_scope_eose(req->scope, INBOX_A);
+  gh_test_run_until_idle();
+  gint64 checkpoint = gh_dm_inbox_get_checkpoint(f.inbox);
+  g_assert_cmpint(checkpoint, >, 0);
+  publish_nip04_relay_list(&f);
+  gh_test_spin_until(legacy_incoming_open, &f);
+  g_autofree gchar *legacy = craft_nip04(g_get_real_time() / G_USEC_PER_SEC - 40,
+                                          CANARY " legacy");
+  Req *legacy_req = legacy_incoming_req(&f);
+  gh_relay_scope_event(legacy_req->scope, INBOX_A, legacy);
+  reply_remote_decrypt(&f, 3);
+  GhConversation *first_room = gh_conversation_store_lookup(f.model, room);
+  MessagesWait messages = { first_room, 2 };
+  gh_test_spin_until(messages_reached, &messages);
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 3);
+
+  stack_down(&f);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  GhConversation *restored = gh_conversation_store_lookup(f.model, room);
+  g_assert_nonnull(restored);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(restored)), ==, 2);
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 3);
+  bunker_eose(&f.bunker);
+  publish_inbox_list(&f, 2);
+  publish_nip04_relay_list(&f);
+  gh_test_spin_until(legacy_incoming_open, &f);
+  legacy_req = legacy_incoming_req(&f);
+  gh_relay_scope_event(legacy_req->scope, INBOX_A, legacy);
+  req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  gh_relay_scope_event(req->scope, INBOX_A, first);
+  gh_test_run_until_idle();
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 3);
+  g_autoptr(GhStatus) status = gh_status_new();
+  gh_status_set_account_active(status, TRUE);
+  gh_status_set_store(status, GH_STATUS_STORE_OPEN, NULL);
+  gh_inbox_status_attach(status, f.inbox, f.relays);
+  g_autofree gchar *new_wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 30,
+                                          CANARY " offline", NULL);
+  gh_relay_scope_event(req->scope, INBOX_A, new_wrap);
+  guint backlog = 0;
+  g_object_get(status, "inbox-backlog", &backlog, NULL);
+  g_assert_cmpuint(backlog, ==, 1);
+  g_autofree gchar *title = NULL;
+  g_object_get(status, "banner-title", &title, NULL);
+  g_assert_cmpstr(title, ==, "Decrypting 1 message with your signer");
+  BunkerPublishWait waiting = { &f.bunker, 4 };
+  gh_test_spin_until(bunker_published, &waiting);
+  BunkerHandle *publish = bunker_last_publish(&f.bunker);
+  gh_relay_publish_failed(publish->publish, publish->url, "offline");
+  gh_test_run_until_idle();
+  g_assert_cmpuint(gh_dm_inbox_get_locked(f.inbox), ==, 1);
+  gh_relay_scope_eose(req->scope, INBOX_A);
+  gh_test_run_until_idle();
+  g_assert_cmpint(gh_dm_inbox_get_checkpoint(f.inbox), ==, checkpoint);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(restored)), ==, 2);
+  fixture_down(&f);
+}
+
+static void
+test_remote_failed_restore_keeps_gate_closed(void)
+{
+  Fixture f = { .remote = TRUE, .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  bunker_eose(&f.bunker);
+  publish_inbox_list(&f, 2);
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                      CANARY " damaged", NULL);
+  gh_relay_scope_event(req->scope, INBOX_A, wrap);
+  reply_remote_decrypt(&f, 1);
+  reply_remote_decrypt(&f, 2);
+  g_autofree gchar *room = room_of(1, 2);
+  RoomWait listed_room = { f.model, room };
+  gh_test_spin_until(room_listed, &listed_room);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_exec(gh_account_store_get_store(f.store),
+    "ALTER TABLE conversations RENAME COLUMN read_seq TO broken_read_seq", &error));
+  g_assert_no_error(error);
+  stack_down(&f);
+
+  g_test_expect_message(NULL, G_LOG_LEVEL_WARNING,
+                        "*could not restore every stored conversation*");
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_CORRUPT);
+  g_test_assert_expected_messages();
+  g_assert_nonnull(gh_account_store_get_error(f.store));
+  g_assert_false(gh_dm_inbox_has_storage(f.inbox));
+  g_assert_null(gh_account_store_get_outbox(f.store));
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 2);
+  fixture_down(&f);
+}
+
+static void
+test_remote_memory_only_refused(void)
+{
+  Fixture f = { .remote = TRUE, .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  fake_secret_set_available(f.secret, FALSE);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_UNAVAILABLE);
+  g_assert_false(gh_dm_inbox_has_storage(f.inbox));
+  g_assert_null(gh_account_store_get_outbox(f.store));
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gh_account_store_continue_without_saving(f.store, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_assert_nonnull(g_strstr_len(error->message, -1, "encrypted message storage"));
+  guint8 payload[99] = { 2 };
+  g_autofree gchar *ciphertext = g_base64_encode(payload, sizeof payload);
+  GAsyncResult *done = NULL;
+  gh_account_controller_nip44_decrypt_async(f.accounts, ciphertext, hex[1],
+                                             gh_test_store_result, &done);
+  gh_test_wait(&done);
+  g_clear_error(&error);
+  g_assert_null(gh_account_controller_nip44_finish(done, &error));
+  g_assert_error(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_object_unref(done);
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 0);
   fixture_down(&f);
 }
 
@@ -1820,6 +2159,12 @@ main(int argc, char **argv)
   }
   g_test_add_func("/groundhog/account-store/status-mapping", test_status_mapping);
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
+  g_test_add_func("/groundhog/account-store/remote-cache-gate-offline-restart",
+                  test_remote_cache_gate_and_offline_restart);
+  g_test_add_func("/groundhog/account-store/remote-memory-only-refused",
+                  test_remote_memory_only_refused);
+  g_test_add_func("/groundhog/account-store/remote-failed-restore",
+                  test_remote_failed_restore_keeps_gate_closed);
   g_test_add_func("/groundhog/account-store/pseudonymous-names", test_pseudonymous_names);
   g_test_add_func("/groundhog/account-store/legacy-import", test_legacy_import);
   g_test_add_func("/groundhog/account-store/restart-relists", test_restart_relists);

@@ -1394,6 +1394,17 @@ gh_dm_inbox_get_counters(GhDmInbox *self, GhDmInboxCounters *counters)
 }
 
 guint
+gh_dm_inbox_get_remote_backlog(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), 0);
+  if (!self->accounts || !self->generation ||
+      self->generation != gh_account_controller_get_generation(self->accounts) ||
+      gh_account_controller_get_active_backend(self->accounts) != GH_SIGNER_BACKEND_NIP46)
+    return 0;
+  return self->counters.pending + g_hash_table_size(self->deferred_ids);
+}
+
+guint
 gh_dm_inbox_get_locked(GhDmInbox *self)
 {
   g_return_val_if_fail(GH_IS_DM_INBOX(self), 0);

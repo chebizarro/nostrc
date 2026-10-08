@@ -95,6 +95,25 @@ gh_account_store_state_get_type(void)
 
 static void reconcile(GhAccountStore *self);
 
+static gboolean
+remote_account(GhAccountStore *self)
+{
+  return self->accounts && self->generation &&
+         gh_account_controller_get_active_backend(self->accounts) == GH_SIGNER_BACKEND_NIP46;
+}
+
+static void
+set_remote_storage_ready(GhAccountStore *self, gboolean ready)
+{
+  if (!self->accounts || !self->generation)
+    return;
+  /* The controller emits "changed" for the gate. Do not re-enter reconcile
+   * while this store is between withdrawing a grant and closing its delegate. */
+  g_signal_handlers_block_by_func(self->accounts, reconcile, self);
+  gh_account_controller_set_remote_storage_ready(self->accounts, self->generation, ready);
+  g_signal_handlers_unblock_by_func(self->accounts, reconcile, self);
+}
+
 static void
 op_free(Op *op)
 {
@@ -212,6 +231,7 @@ close_store(GhAccountStore *self, GhStore *store)
 static void
 unbind_store(GhAccountStore *self)
 {
+  set_remote_storage_ready(self, FALSE);
   if (self->inbox)
     gh_dm_inbox_clear_storage(self->inbox);
   if (self->outbox) {
@@ -296,11 +316,24 @@ bind_store(GhAccountStore *self, GhStore *store, gboolean corrupt)
   self->conversations = gh_store_conversations_new(store);
   if (!corrupt && !ephemeral)
     import_legacy(self);
-  if (!gh_store_conversations_attach(self->conversations, self->model, 0, &error)) {
+  gboolean restored = gh_store_conversations_attach(self->conversations, self->model, 0,
+                                                       &error);
+  if (!restored) {
     /* The rooms restored so far stay listed and the delegate stays bound. */
     g_warning("Groundhog could not restore every stored conversation: %s", error->message);
-    g_clear_error(&error);
   }
+  if (remote_account(self)) {
+    if (corrupt || !restored || ephemeral) {
+      set_state(self, corrupt || !restored ? GH_ACCOUNT_STORE_CORRUPT :
+                GH_ACCOUNT_STORE_UNAVAILABLE,
+                corrupt ? "The message storage failed its integrity check and is read-only" :
+                !restored ? error->message :
+                "Remote signer accounts require encrypted message storage");
+      return;
+    }
+    set_remote_storage_ready(self, TRUE);
+  }
+  g_clear_error(&error);
   if (!corrupt && self->create_outbox) {
     self->outbox = self->create_outbox(store, self->outbox_data, &error);
     if (!self->outbox) {
@@ -770,6 +803,11 @@ gboolean
 gh_account_store_continue_without_saving(GhAccountStore *self, GError **error)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_STORE(self), FALSE);
+  if (remote_account(self)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "Remote signer accounts require encrypted message storage");
+    return FALSE;
+  }
   if (!self->accounts || self->op || self->state != GH_ACCOUNT_STORE_UNAVAILABLE) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                         "Messages can be kept in memory only when no keyring is available");
