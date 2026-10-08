@@ -1176,6 +1176,10 @@ test_upgrade_companion_held(void)
   /* nostrc-cyxb: both formats go out; the MDK 0.8 one stays the newest. */
   FormatCountWait legacy = { &w.w, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
   spin_until(format_count_reached, &legacy, "the MDK 0.8 KeyPackage forced alongside adopted");
+  FormatCountWait legacy_h = { &w.h, BOB, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY, 2 };
+  spin_until(format_count_reached, &legacy_h, "the companion KeyPackage on the other relay");
+  FormatCountWait adopted_h = { &w.h, BOB, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED, 1 };
+  spin_until(format_count_reached, &adopted_h, "the adopted KeyPackage on the other relay");
   FormatPublishedWait confirmed = { bob, GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED };
   spin_until(format_confirmed, &confirmed, "Bob's adopted KeyPackage confirmed");
   wait_published(bob);

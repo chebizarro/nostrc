@@ -1410,7 +1410,7 @@ test_reactions_after_account_switch(void)
   wait_read(room, GH_NIP29_READ_LIVE);
   Nip29ReactionWait missed_wait = { &reactions, target_id, 2 };
   gh_test_spin_until(nip29_reaction_reached, &missed_wait);
-  GhNip29Op *second = gh_nip29_service_send_reaction(f.service, room, target_id,
+  g_autoptr(GhNip29Op) second = gh_nip29_service_send_reaction(f.service, room, target_id,
                     target_pubkey, "9", "❤️", reactions.model, &error);
   g_assert_nonnull(second);
   g_assert_no_error(error);

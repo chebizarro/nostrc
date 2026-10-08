@@ -1685,6 +1685,12 @@ stub_download(GhAttachmentTransfer *transfer, gpointer data)
   gh_attachment_transfer_start(transfer);
 }
 
+static gboolean
+stub_download_started(gpointer data)
+{
+  return ((StubGroups *)data)->downloads > 0;
+}
+
 static void
 stub_cancel(GhAttachmentTransfer *transfer, gpointer data)
 {
@@ -1919,6 +1925,7 @@ test_group_auto_download_media(void)
     GhAttachmentCard *card = card_of(&f, message);
     g_assert_cmpuint(stub.downloads, ==, 0);
     g_settings_set_boolean(f.s.settings, "load-remote-images", TRUE);
+    gh_test_spin_until(stub_download_started, &stub);
     g_assert_cmpuint(stub.downloads, ==, 1);
     g_assert_cmpint(gh_attachment_transfer_get_state(stub.transfer), ==,
                     GH_ATTACHMENT_STATE_DOWNLOADING);
