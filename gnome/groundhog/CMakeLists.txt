@@ -312,6 +312,34 @@ if (TARGET nostr_gobject AND TARGET nostr)
   endif()
 endif()
 
+if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
+  add_library(groundhog-nip46-session STATIC src/identity/gh-nip46-session.c)
+  target_include_directories(groundhog-nip46-session PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
+  target_link_libraries(groundhog-nip46-session PUBLIC
+    groundhog-relay nostr_nip46_core)
+  target_compile_options(groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-nip46-session tests/app/test_nip46_session.c)
+    target_include_directories(test-groundhog-nip46-session PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-nip46-session PRIVATE groundhog-nip46-session)
+    target_compile_options(test-groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-nip46-session COMMAND test-groundhog-nip46-session)
+    set_tests_properties(groundhog-nip46-session PROPERTIES TIMEOUT 30)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      add_executable(test-groundhog-nip46-wire tests/app/test_nip46_wire.c)
+      target_include_directories(test-groundhog-nip46-wire PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+      target_link_libraries(test-groundhog-nip46-wire PRIVATE
+        groundhog-nip46-session PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-nip46-wire PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-nip46-wire COMMAND test-groundhog-nip46-wire)
+      set_tests_properties(groundhog-nip46-wire PROPERTIES TIMEOUT 30)
+    endif()
+  endif()
+endif()
+
 # G08: GhAuthPolicy, the single NIP-42 identity decision per (connection
 # purpose, URL) (charter §4.3, §4.4), with GhAccountAuth, the one account
 # signer per generation it hands out (R6). The inbox, the send pipeline, the
@@ -2383,6 +2411,14 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
       target_compile_definitions(${wire} PRIVATE GROUNDHOG_WIRE_TOR=1)
     endif()
   endforeach()
+  if (TARGET test-groundhog-nip46-wire)
+    target_sources(test-groundhog-nip46-wire PRIVATE tests/net/socks5-fixture.c)
+    target_include_directories(test-groundhog-nip46-wire PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+    target_link_libraries(test-groundhog-nip46-wire PRIVATE groundhog-net-relay)
+    target_compile_definitions(test-groundhog-nip46-wire PRIVATE GROUNDHOG_NIP46_TOR_TEST=1)
+    set_tests_properties(groundhog-nip46-wire PROPERTIES TIMEOUT 60)
+  endif()
   if (TEST groundhog-relay-wire)
     set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 60)
   endif()
