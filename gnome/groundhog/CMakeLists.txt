@@ -1306,12 +1306,16 @@ if (TARGET groundhog-conversation-ui)
   # signer, no network (a counting fake stands in for a preview fetcher).
   # Needs a display, so it self-skips (77) like the other GUI tests.
   if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    # Private timing hooks exist only in test builds and are inactive unless
+    # the opt-in UI probe arms them.
+    target_compile_definitions(groundhog-conversation-ui PRIVATE GROUNDHOG_CONVERSATION_OPEN_PROBE=1)
     add_executable(test-groundhog-conversation-view tests/ui/test_conversation_view.c)
+    target_compile_definitions(test-groundhog-conversation-view PRIVATE GROUNDHOG_CONVERSATION_OPEN_PROBE=1)
     target_link_libraries(test-groundhog-conversation-view PRIVATE groundhog-conversation-ui)
     target_compile_options(test-groundhog-conversation-view PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-groundhog-conversation-view groundhog-test-schemas)
     add_test(NAME groundhog-conversation-view COMMAND test-groundhog-conversation-view)
-    set_tests_properties(groundhog-conversation-view PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+    set_tests_properties(groundhog-conversation-view PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
 endif()

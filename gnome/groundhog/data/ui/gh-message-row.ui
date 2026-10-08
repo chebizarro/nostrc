@@ -29,36 +29,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child>
-      <object class="GtkButton" id="reply_button">
-        <property name="visible">false</property>
-        <property name="halign">1</property>
-        <style>
-          <class name="flat"/>
-          <class name="caption"/>
-          <class name="dim-label"/>
-          <class name="groundhog-reply-header"/>
-        </style>
-        <child>
-          <object class="GtkBox">
-            <property name="spacing">4</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">go-up-symbolic</property>
-                <property name="pixel-size">12</property>
-                <property name="valign">3</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel" id="reply_label">
-                <property name="ellipsize">3</property>
-                <property name="max-width-chars">40</property>
-              </object>
-            </child>
-          </object>
-        </child>
-      </object>
-    </child>
-    <child>
       <object class="GtkBox" id="bubble_line">
         <property name="spacing">6</property>
         <child>
@@ -107,21 +77,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 <property name="visible">false</property>
                 <property name="orientation">1</property>
                 <property name="spacing">6</property>
-                <child>
-                  <object class="GhAttachmentCard" id="attachment_card"></object>
-                </child>
-                <child>
-                  <object class="GtkLabel" id="attachment_note">
-                    <property name="visible">false</property>
-                    <property name="xalign">0</property>
-                    <property name="wrap">true</property>
-                    <property name="wrap-mode">2</property>
-                    <style>
-                      <class name="dim-label"/>
-                      <class name="caption"/>
-                    </style>
-                  </object>
-                </child>
               </object>
             </child>
           </object>
@@ -132,64 +87,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="GtkBox" id="web_box">
         <property name="orientation">1</property>
         <property name="spacing">6</property>
-        <child>
-          <object class="GtkButton" id="picture_button">
-            <property name="visible">false</property>
-            <property name="label" translatable="yes">Load Profile Picture</property>
-            <property name="halign">1</property>
-            <property name="action-name">conversation.show-preview</property>
-            <style>
-              <class name="flat"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkPicture" id="profile_picture">
-            <property name="visible">false</property>
-            <property name="can-shrink">true</property>
-            <property name="content-fit">1</property>
-            <property name="width-request">48</property>
-            <property name="height-request">48</property>
-            <property name="halign">1</property>
-            <accessibility>
-              <property name="label" translatable="yes">Sender's profile picture</property>
-            </accessibility>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="image_button">
-            <property name="visible">false</property>
-            <property name="label" translatable="yes">Load Linked Image</property>
-            <property name="halign">1</property>
-            <property name="action-name">conversation.show-preview</property>
-            <style>
-              <class name="flat"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkPicture" id="remote_image">
-            <property name="visible">false</property>
-            <property name="can-shrink">true</property>
-            <property name="content-fit">1</property>
-            <property name="height-request">180</property>
-            <accessibility>
-              <property name="label" translatable="yes">Image linked in this message</property>
-            </accessibility>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel" id="web_error">
-            <property name="visible">false</property>
-            <property name="label" translatable="yes">The image couldn't be loaded.</property>
-            <property name="wrap">true</property>
-            <property name="xalign">0</property>
-            <style>
-              <class name="error"/>
-              <class name="caption"/>
-            </style>
-          </object>
-        </child>
       </object>
     </child>
     <child>
@@ -200,43 +97,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <style>
           <class name="groundhog-link-preview"/>
         </style>
-        <child>
-          <object class="GtkButton" id="preview_button">
-            <property name="label" translatable="yes">Show Preview</property>
-            <property name="halign">1</property>
-            <property name="action-name">conversation.show-preview</property>
-            <style>
-              <class name="flat"/>
-              <class name="groundhog-preview-button"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel" id="preview_title">
-            <property name="visible">false</property>
-            <property name="xalign">0</property>
-            <property name="wrap">true</property>
-            <property name="wrap-mode">2</property>
-            <property name="max-width-chars">60</property>
-            <property name="selectable">true</property>
-            <style>
-              <class name="heading"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkLabel" id="preview_text">
-            <property name="visible">false</property>
-            <property name="xalign">0</property>
-            <property name="wrap">true</property>
-            <property name="wrap-mode">2</property>
-            <property name="max-width-chars">60</property>
-            <property name="selectable">true</property>
-            <style>
-              <class name="dim-label"/>
-            </style>
-          </object>
-        </child>
       </object>
     </child>
     <child>
@@ -253,33 +113,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="valign">3</property>
             <style>
               <class name="dim-label"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkBox" id="legacy_box">
-            <property name="visible">false</property>
-            <property name="spacing">4</property>
-            <property name="valign">3</property>
-            <property name="tooltip-text" translatable="yes">Sent with the older NIP-04 format: anyone can see who wrote to whom and when, and its encryption is weaker. Your replies are sent privately (NIP-17).</property>
-            <child>
-              <object class="GtkImage">
-                <property name="icon-name">dialog-warning-symbolic</property>
-                <property name="pixel-size">12</property>
-                <property name="accessible-role">43</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Less private (NIP-04)</property>
-                <style>
-                  <class name="caption"/>
-                </style>
-              </object>
-            </child>
-            <style>
-              <class name="warning"/>
-              <class name="groundhog-legacy-nip04"/>
             </style>
           </object>
         </child>
@@ -316,11 +149,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="GtkBox" id="reaction_controls">
             <property name="spacing">4</property>
             <property name="valign">3</property>
-            <child>
-              <object class="GhReactionBar" id="reaction_bar">
-                <property name="visible">false</property>
-              </object>
-            </child>
             <child>
               <object class="GtkButton" id="react_button">
                 <property name="icon-name">face-smile-symbolic</property>

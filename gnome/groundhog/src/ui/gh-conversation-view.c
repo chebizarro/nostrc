@@ -6,6 +6,7 @@
 #include "gh-reaction.h"
 #include "gh-reaction-store.h"
 #include "gh-picture-cache.h"
+#include "gh-conversation-open-probe-private.h"
 
 #include <glib/gi18n.h>
 
@@ -728,6 +729,81 @@ enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_
        SIGNAL_PREVIEW_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+static GhConversationView *open_probe_view;
+static GhConversationOpenProbe open_probe;
+static guint64 open_probe_generation;
+
+GhConversationOpenProbe *
+gh_conversation_open_probe_arm(GhConversationView *view, gboolean trace)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(view), NULL);
+  open_probe_view = view;
+  open_probe = (GhConversationOpenProbe) { 0 };
+  open_probe.generation = ++open_probe_generation;
+  open_probe.trace = trace;
+  return &open_probe;
+}
+
+void
+gh_conversation_open_probe_disarm(GhConversationView *view)
+{
+  if (open_probe_view == view)
+    open_probe_view = NULL;
+}
+
+gboolean
+gh_conversation_open_probe_scroll_pending(GhConversationView *view)
+{
+  return view->open_scroll != OPEN_NONE || view->open_idle || view->pin_idle ||
+         view->pin_pending || view->older_scroll_idle;
+}
+
+void
+gh_conversation_open_probe_bind(GhMessageRow *row, gint64 elapsed_us,
+                                guint widgets, guint optional_flags)
+{
+  /* GtkListView may bind synchronously in set_model(), before the row has
+   * an ancestor. The opt-in test arms exactly one view at a time. */
+  (void)row;
+  if (!open_probe_view || !open_probe.entry_us || !open_probe.trace)
+    return;
+  gint64 now = g_get_monotonic_time();
+  if (!open_probe.first_bind_us)
+    open_probe.first_bind_us = now - elapsed_us;
+  open_probe.last_bind_us = now;
+  open_probe.bind_count++;
+  open_probe.bind_wall_us += elapsed_us;
+  open_probe.bind_wall_max_us = MAX(open_probe.bind_wall_max_us, elapsed_us);
+  if (!optional_flags && !open_probe.plain_row_widgets)
+    open_probe.plain_row_widgets = widgets;
+  open_probe.optional_replies += !!(optional_flags & GH_OPEN_REPLY);
+  open_probe.optional_attachments += !!(optional_flags & GH_OPEN_ATTACHMENT);
+  open_probe.optional_polls += !!(optional_flags & GH_OPEN_POLL);
+  open_probe.optional_links += !!(optional_flags & GH_OPEN_LINK);
+  open_probe.optional_audio += !!(optional_flags & GH_OPEN_AUDIO);
+  open_probe.optional_reactions += !!(optional_flags & GH_OPEN_REACTION);
+}
+
+void
+gh_conversation_open_probe_construct(gint64 elapsed_us)
+{
+  if (!open_probe_view || !open_probe.entry_us || !open_probe.trace)
+    return;
+  open_probe.row_construct_count++;
+  open_probe.row_construct_wall_us += elapsed_us;
+}
+
+void
+gh_conversation_open_probe_dispose(gint64 elapsed_us)
+{
+  if (!open_probe_view || !open_probe.entry_us || !open_probe.trace)
+    return;
+  open_probe.row_dispose_count++;
+  open_probe.row_dispose_wall_us += elapsed_us;
+}
+#endif
+
 G_DEFINE_FINAL_TYPE(GhConversationView, gh_conversation_view, ADW_TYPE_BREAKPOINT_BIN)
 
 /* ---- announcements ------------------------------------------------------------------ */
@@ -852,6 +928,10 @@ request_older(GhConversationView *self, gboolean from_button)
   }
   gtk_widget_set_visible(self->loading_box, TRUE);
   update_older(self);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us && open_probe.trace)
+    open_probe.older_requests++;
+#endif
   self->load_older(self, self->conversation, self->load_older_data);
 }
 
@@ -884,6 +964,12 @@ static gboolean
 pin_to_latest(gpointer data)
 {
   GhConversationView *self = data;
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
+    open_probe.pin_count++;
+    open_probe.last_scroll_us = g_get_monotonic_time();
+  }
+#endif
   self->pin_idle = 0;
   GtkAdjustment *adj = vadjustment(self);
   gtk_adjustment_set_value(adj, gtk_adjustment_get_upper(adj) - gtk_adjustment_get_page_size(adj));
@@ -908,6 +994,12 @@ static gboolean
 run_open_scroll(gpointer data)
 {
   GhConversationView *self = data;
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
+    open_probe.open_scroll_count++;
+    open_probe.last_scroll_us = g_get_monotonic_time();
+  }
+#endif
   self->open_idle = 0;
   GtkAdjustment *adj = vadjustment(self);
   if (self->open_scroll == OPEN_NONE || gtk_adjustment_get_page_size(adj) <= 0)
@@ -951,6 +1043,14 @@ queue_open_scroll(GhConversationView *self)
 static void
 on_adjustment_changed(GhConversationView *self)
 {
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
+    open_probe.adjustment_changes++;
+    if (!open_probe.first_allocation_us &&
+        gtk_adjustment_get_page_size(vadjustment(self)) > 0)
+      open_probe.first_allocation_us = g_get_monotonic_time();
+  }
+#endif
   queue_open_scroll(self);
   if (self->sticky && self->open_scroll == OPEN_NONE)
     queue_pin(self);
@@ -1162,6 +1262,10 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   g_return_if_fail(!conversation || GH_IS_CONVERSATION(conversation));
   if (self->conversation == conversation)
     return;
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self)
+    open_probe.entry_us = g_get_monotonic_time();
+#endif
 
   unwatch_messages(self);
   if (self->conversation)
@@ -1187,10 +1291,22 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   self->new_below = 0;
   self->open_scroll = OPEN_NONE;
   g_set_object(&self->conversation, conversation);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
+    open_probe.cleanup_end_us = g_get_monotonic_time();
+    open_probe.timeline_start_us = open_probe.cleanup_end_us;
+  }
+#endif
 
   if (conversation) {
     self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation),
                                   self->reactions);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+    if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
+      open_probe.timeline_end_us = g_get_monotonic_time();
+      open_probe.timeline_items = g_list_model_get_n_items(G_LIST_MODEL(self->timeline));
+    }
+#endif
     on_conversation_changed(self, 0, 0, g_list_model_get_n_items(G_LIST_MODEL(conversation)),
                             G_LIST_MODEL(conversation));
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
@@ -1201,10 +1317,6 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(self->timeline, "items-changed", G_CALLBACK(on_timeline_changed),
                             self, G_CONNECT_SWAPPED);
-    g_autoptr(GtkNoSelection) selection =
-      gtk_no_selection_new(g_object_ref(G_LIST_MODEL(self->timeline)));
-    gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
-
     guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
     guint first = n;
     guint listed = gh_conversation_get_listed_unread(conversation, &first);
@@ -1216,6 +1328,26 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     self->open_scroll = unread ? OPEN_FIRST_UNREAD : OPEN_LATEST;
     /* A timer-change row before it shifts it in the timeline. */
     self->open_target = unread ? timeline_index_of(self->timeline, first) : n_visible(self);
+
+    /* GTK initially keeps a 200-item range at position zero. Establish the
+     * opening anchor without building those message rows, then populate only
+     * the range around the requested position. The idle scroll below still
+     * corrects the final adjustment after real row heights are measured. */
+    g_autoptr(GtkListItemFactory) factory =
+      g_object_ref(gtk_list_view_get_factory(self->message_list));
+    gtk_list_view_set_factory(self->message_list, NULL);
+    g_autoptr(GtkNoSelection) selection =
+      gtk_no_selection_new(g_object_ref(G_LIST_MODEL(self->timeline)));
+    gtk_list_view_set_model(self->message_list, GTK_SELECTION_MODEL(selection));
+    if (n_visible(self) > 0)
+      gtk_list_view_scroll_to(self->message_list,
+                              unread ? self->open_target : n_visible(self) - 1,
+                              GTK_LIST_SCROLL_NONE, NULL);
+    gtk_list_view_set_factory(self->message_list, factory);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+    if (open_probe_view == self && open_probe.entry_us && open_probe.trace)
+      open_probe.attach_end_us = g_get_monotonic_time();
+#endif
     self->new_below = listed;
     self->sticky = !unread;
     schedule_midnight(self);
@@ -1226,6 +1358,10 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   update_older(self);
   update_jump(self);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CONVERSATION]);
+#ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
+  if (open_probe_view == self && open_probe.entry_us)
+    open_probe.return_us = g_get_monotonic_time();
+#endif
 }
 
 GhConversation *
