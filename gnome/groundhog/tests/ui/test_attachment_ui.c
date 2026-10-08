@@ -1459,6 +1459,40 @@ test_card_download_and_save(void)
 /* AT-8 in the UI: Cancel stops a download at once, Download is offered
  * again, nothing is kept; failures are said in words. */
 static void
+test_auto_download_image_preference(void)
+{
+  Fixture f;
+  fixture_init(&f);
+  fixture_up(&f, TRUE);
+  GhConversation *bob = receive_text(&f, "An encrypted photo");
+  g_autoptr(GBytes) png = make_png(90);
+  g_autoptr(GhNip17File) file = upload_file(&f, png);
+  GhMessage *message = receive_file(&f, bob, file);
+  send_stack_select(&f.s, bob);
+  GhAttachmentCard *card = card_of(&f, message);
+  GhAttachmentTransfer *transfer = gh_attachment_card_get_transfer(card);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "GET"), ==, 0);
+
+  blossom_fixture_set_stall(f.blossom, TRUE);
+  g_settings_set_boolean(f.s.settings, "load-remote-images", TRUE);
+  gh_test_spin_until(fixture_held, f.blossom);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==,
+                  GH_ATTACHMENT_STATE_DOWNLOADING);
+  g_settings_set_boolean(f.s.settings, "load-remote-images", FALSE);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==, GH_ATTACHMENT_STATE_IDLE);
+  blossom_fixture_release_held(f.blossom);
+  blossom_fixture_set_stall(f.blossom, FALSE);
+  gh_test_run_until_idle();
+  g_assert_null(shown_picture(GTK_WIDGET(card)));
+
+  g_settings_set_boolean(f.s.settings, "load-remote-images", TRUE);
+  gh_test_spin_until(transfer_not_downloading, transfer);
+  g_assert_cmpint(gh_attachment_transfer_get_state(transfer), ==, GH_ATTACHMENT_STATE_READY);
+  g_assert_nonnull(shown_picture(GTK_WIDGET(card)));
+  fixture_clear(&f);
+}
+
+static void
 test_card_cancel_and_errors(void)
 {
   Fixture f;
@@ -1647,15 +1681,15 @@ stub_lookup(GhMessage *message, guint index, gpointer data)
 static void
 stub_download(GhAttachmentTransfer *transfer, gpointer data)
 {
-  (void)transfer;
   ((StubGroups *)data)->downloads++;
+  gh_attachment_transfer_start(transfer);
 }
 
 static void
 stub_cancel(GhAttachmentTransfer *transfer, gpointer data)
 {
-  (void)transfer;
   (void)data;
+  gh_attachment_transfer_reset(transfer);
 }
 
 static const GhAttachmentUiGroups stub_groups = {
@@ -1850,6 +1884,57 @@ test_group_inline_audio(void)
   fixture_clear(&f);
   g_clear_object(&stub.group);
   g_clear_object(&stub.transfer);
+}
+
+static void
+test_group_auto_download_media(void)
+{
+  const gchar *mimes[] = { "image/png", "audio/ogg" };
+  for (guint i = 0; i < G_N_ELEMENTS(mimes); i++) {
+    Fixture f;
+    fixture_init(&f);
+    fixture_up(&f, TRUE);
+    StubGroups stub = { 0 };
+    stub.transfer = gh_attachment_transfer_new_described(i ? "group/audio-auto" : "group/image-auto",
+                                                         mimes[i], i ? "clip.ogg" : "photo.png");
+    stub.group = g_simple_action_new("group", NULL);
+    gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+    g_autoptr(GhMessage) message = group_file_message_with_content(&f, i ? "audio" : "image");
+    if (i) {
+      g_autoptr(GPtrArray) files =
+        g_ptr_array_new_with_free_func((GDestroyNotify)gh_message_attachment_free);
+      GhMessageAttachment *attachment = g_new0(GhMessageAttachment, 1);
+      attachment->media_type = g_strdup("audio/ogg");
+      attachment->filename = g_strdup("clip.ogg");
+      g_ptr_array_add(files, attachment);
+      gh_message_set_attachments(message, files, 0);
+    }
+    g_autoptr(GError) error = NULL;
+    gh_conversation_store_add_message(f.s.model, message, &error);
+    g_assert_no_error(error);
+    GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                         gh_message_get_room_id(message));
+    gh_conversation_accept(group);
+    send_stack_select(&f.s, group);
+    GhAttachmentCard *card = card_of(&f, message);
+    g_assert_cmpuint(stub.downloads, ==, 0);
+    g_settings_set_boolean(f.s.settings, "load-remote-images", TRUE);
+    g_assert_cmpuint(stub.downloads, ==, 1);
+    g_assert_cmpint(gh_attachment_transfer_get_state(stub.transfer), ==,
+                    GH_ATTACHMENT_STATE_DOWNLOADING);
+    g_autoptr(GBytes) bytes = i ? g_bytes_new_static("OggS", 4) : make_png(90);
+    gh_attachment_transfer_succeed(stub.transfer, bytes, !i, FALSE);
+    gh_test_run_until_idle();
+    if (i)
+      g_assert_nonnull(find_media_controls(GTK_WIDGET(card)));
+    else
+      g_assert_nonnull(shown_picture(GTK_WIDGET(card)));
+    g_assert_cmpuint(stub.downloads, ==, 1);
+    gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+    fixture_clear(&f);
+    g_clear_object(&stub.group);
+    g_clear_object(&stub.transfer);
+  }
 }
 
 static void
@@ -2211,10 +2296,12 @@ main(int argc, char **argv)
   ADD("drop-and-paste", test_drop_and_paste);
   ADD("paste-after-close", test_paste_after_close);
   ADD("card-download-and-save", test_card_download_and_save);
+  ADD("auto-download-image-preference", test_auto_download_image_preference);
   ADD("card-cancel-and-errors", test_card_cancel_and_errors);
   ADD("preferences", test_preferences);
   ADD("group-inline-image", test_group_inline_image);
   ADD("group-inline-audio", test_group_inline_audio);
+  ADD("group-auto-download-media", test_group_auto_download_media);
   ADD("group-delegate", test_group_delegate);
   ADD("group-first-use-suggested-send", test_group_first_use_suggested_send);
   ADD("group-policy-overrides-selected-server", test_group_policy_overrides_selected_server);

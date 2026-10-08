@@ -22,8 +22,9 @@ G_BEGIN_DECLS
  *  - Received files. gh_mls_attachments_lookup() gives the
  *    GhAttachmentTransfer of file `index` of an MLS message (its
  *    gh_message_get_attachment()), IDLE the first time: nothing is fetched by
- *    looking. There is no auto-download preference in Groundhog, so only
- *    gh_mls_attachments_download(), the user's Download, fetches: the
+ *    looking. The card may ask gh_mls_attachments_download() when the
+ *    media preference allows automatic loading, or the user may choose
+ *    Download. Either path fetches:
  *    encrypted cache first (this very file: its group, source epoch,
  *    hashes, nonce, type and name), else the file's own blossom-v1 locators,
  *    then the group's verified 0x800b media servers, each body checked

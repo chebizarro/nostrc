@@ -594,6 +594,19 @@ bind_transfer(GhAttachmentCard *self)
   }
   update_download_note(self);
   update(self);
+  gh_attachment_card_maybe_auto_download(self);
+}
+
+void
+gh_attachment_card_maybe_auto_download(GhAttachmentCard *self)
+{
+  g_return_if_fail(GH_IS_ATTACHMENT_CARD(self));
+  if (!self->transfer || !self->message || !gtk_widget_get_mapped(GTK_WIDGET(self)))
+    return;
+  Provider *provider = find_provider(self);
+  if (provider && provider->vtable.auto_download)
+    provider->vtable.auto_download(GTK_WIDGET(self), self->message, self->index,
+                                   self->transfer, provider->data);
 }
 
 /* ---- actions --------------------------------------------------------------------------- */
@@ -726,6 +739,13 @@ gh_attachment_card_root(GtkWidget *widget)
 }
 
 static void
+gh_attachment_card_map(GtkWidget *widget)
+{
+  GTK_WIDGET_CLASS(gh_attachment_card_parent_class)->map(widget);
+  gh_attachment_card_maybe_auto_download(GH_ATTACHMENT_CARD(widget));
+}
+
+static void
 gh_attachment_card_unroot(GtkWidget *widget)
 {
   unbind_transfer(GH_ATTACHMENT_CARD(widget));
@@ -800,6 +820,7 @@ gh_attachment_card_class_init(GhAttachmentCardClass *klass)
   object_class->dispose = gh_attachment_card_dispose;
   object_class->finalize = gh_attachment_card_finalize;
   widget_class->root = gh_attachment_card_root;
+  widget_class->map = gh_attachment_card_map;
   widget_class->unroot = gh_attachment_card_unroot;
 
   const GParamFlags rw = G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS;

@@ -15,8 +15,9 @@ G_BEGIN_DECLS
  *
  * It says what the file is and who sent it: a type icon, "Photo", "Video",
  * "Audio" or "File (PDF)" from the declared type (never trusted to decode),
- * the size and "from <sender>". Nothing is fetched to show it (PD-2, AT-7):
- * the Download button is the user's explicit request, and its tooltip says
+ * the size and "from <sender>". Lookup fetches nothing; in an accepted
+ * conversation, the enabled media preference starts visible image and audio
+ * downloads. Otherwise the Download button is the explicit request and says
  * which server it contacts and who learns what (the provider's
  * download_note). While downloading it shows a spinner and Cancel; a failure
  * is said in the transfer's words, with Try Again when that can help. Once
@@ -43,7 +44,7 @@ G_BEGIN_DECLS
  *
  * An encrypted group message (W25, nostrc-q3a6) shows one card per file
  * ("index"), described by what the MLS layer read from its imeta tags
- * (gh_message_get_attachment()), with the same Download-only-on-request,
+ * (gh_message_get_attachment()), with the same opt-in automatic download,
  * image decode guard, audio playback and Save As.
  *
  * Actions (widget actions): attachment.download, attachment.cancel and
@@ -64,6 +65,9 @@ typedef struct {
   /* Nullable (W25): the transfer of file index of a message with several
    * (an encrypted group's); NULL: lookup() for index 0 only. */
   GhAttachmentTransfer *(*lookup_at)(GhMessage *message, guint index, gpointer data);
+  /* Called for a mapped card; the provider decides whether to auto-download. */
+  void (*auto_download)(GtkWidget *card, GhMessage *message, guint index,
+                        GhAttachmentTransfer *transfer, gpointer data);
 } GhAttachmentCardProvider;
 
 /* Every card inside widget (e.g. the window) uses provider (copied) with
@@ -85,6 +89,8 @@ void gh_attachment_card_set_index(GhAttachmentCard *self, guint index);
 guint gh_attachment_card_get_index(GhAttachmentCard *self);
 /* The transfer the card shows (borrowed), or NULL. */
 GhAttachmentTransfer *gh_attachment_card_get_transfer(GhAttachmentCard *self);
+/* Re-check auto-download when the media preference changes. */
+void gh_attachment_card_maybe_auto_download(GhAttachmentCard *self);
 const gchar *gh_attachment_card_get_summary(GhAttachmentCard *self);
 
 /* "Photo", "Video", "Audio", "File (PDF)" or "File" for a declared MIME

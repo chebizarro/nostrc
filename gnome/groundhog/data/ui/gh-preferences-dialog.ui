@@ -60,7 +60,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="description" translatable="yes">Nothing is loaded from the web unless you ask for it.</property>
             <child>
               <object class="AdwSwitchRow" id="remote_images_row">
-                <property name="title" translatable="yes">Load Images in Messages</property>
+                <property name="title" translatable="yes">Load Images and Audio in Messages</property>
                 <property name="subtitle" translatable="yes">An explicit allow can be remembered for a sender only until you leave the conversation; never loads automatically</property>
               </object>
             </child>
