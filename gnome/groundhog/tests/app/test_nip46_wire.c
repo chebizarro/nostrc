@@ -1,5 +1,6 @@
 /* Real local kind-24133 REQ/EOSE, signed EVENT/OK and NIP-42 client-key AUTH. */
 #include "gh-nip46-session.h"
+#include "gh-nip46-session-private.h"
 #include "wire-relay.h"
 #include <nostr-keys.h>
 #include <nostr-utils.h>
@@ -32,6 +33,9 @@ static gboolean
 received(gpointer data)
 { return ((WireRelay *)data)->events > 0; }
 static gboolean
+auth_attempted(gpointer data)
+{ return ((WireRelay *)data)->auth_frames > 0; }
+static gboolean
 finished(gpointer data)
 { return ((Result *)data)->done; }
 
@@ -42,6 +46,68 @@ wait_until(gboolean (*predicate)(gpointer), gpointer data)
   while (!predicate(data) && g_get_monotonic_time() < deadline)
     g_main_context_iteration(NULL, FALSE);
   g_assert_true(predicate(data));
+}
+
+static void
+inject_public_key_reply(WireRelay *relay, const gchar *signer_secret,
+                        const gchar *signer_pubkey, const gchar *client_pubkey)
+{
+  g_assert_cmpuint(relay->stored->len, ==, 1);
+  WireStored *request_event = g_ptr_array_index(relay->stored, 0);
+  g_assert_cmpint(nostr_event_get_kind(request_event->event), ==, 24133);
+  g_assert_cmpstr(nostr_event_get_pubkey(request_event->event), ==, client_pubkey);
+  guint8 signer_sk[32], client_pk[32], *plain = NULL;
+  size_t length = 0;
+  g_assert_true(nostr_hex2bin(signer_sk, signer_secret, sizeof signer_sk));
+  g_assert_true(nostr_hex2bin(client_pk, client_pubkey, sizeof client_pk));
+  g_assert_cmpint(nostr_nip44_decrypt_v2(signer_sk, client_pk,
+    nostr_event_get_content(request_event->event), &plain, &length), ==, 0);
+  g_autofree gchar *request_json = g_strndup((gchar *)plain, length);
+  free(plain);
+  NostrNip46Request request = { 0 };
+  g_assert_cmpint(nostr_nip46_request_parse(request_json, &request), ==, 0);
+  g_assert_cmpstr(request.method, ==, "get_public_key");
+  g_autofree gchar *quoted = g_strdup_printf("\"%s\"", signer_pubkey);
+  char *response_json = nostr_nip46_response_build_ok(request.id, quoted);
+  char *ciphertext = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(signer_sk, client_pk,
+    (guint8 *)response_json, strlen(response_json), &ciphertext), ==, 0);
+  NostrEvent *response = NULL;
+  g_assert_cmpint(nostr_nip46_build_response_event(signer_pubkey,
+    client_pubkey, response_json, &response), ==, 0);
+  nostr_event_set_content(response, ciphertext);
+  g_assert_cmpint(nostr_event_sign(response, signer_secret), ==, 0);
+  char *response_event_json = nostr_event_serialize_compact(response);
+  wire_relay_inject(relay, response_event_json);
+  free(response_event_json);
+  nostr_event_free(response);
+  free(ciphertext);
+  free(response_json);
+  nostr_nip46_request_free(&request);
+}
+
+static void
+assert_client_auth_frames(WireRelay *relay, const gchar *client_pubkey,
+                          const gchar *account_pubkey)
+{
+  guint found = 0;
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (!frame->inbound || !g_str_has_prefix(frame->text, "[\"AUTH\","))
+      continue;
+    g_autofree gchar *json = wire_frame_payload(frame->text, "[\"AUTH\",");
+    g_assert_nonnull(json);
+    NostrEvent *event = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_signed(event, json, NULL), ==,
+                    NOSTR_EVENT_VALIDATION_OK);
+    g_assert_cmpint(nostr_event_get_kind(event), ==, 22242);
+    g_assert_cmpstr(nostr_event_get_pubkey(event), ==, client_pubkey);
+    g_assert_cmpstr(nostr_event_get_pubkey(event), !=, account_pubkey);
+    nostr_event_free(event);
+    found++;
+  }
+  g_assert_cmpuint(found, ==, relay->auth_frames);
+  g_assert_cmpuint(found, >, 0);
 }
 
 static void
@@ -64,35 +130,8 @@ test_wire(void)
   gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
                               completed, &result);
   wait_until(received, &relay);
-  g_assert_cmpuint(relay.stored->len, ==, 1);
-  WireStored *request_event = g_ptr_array_index(relay.stored, 0);
-  g_assert_cmpint(nostr_event_get_kind(request_event->event), ==, 24133);
-  g_assert_cmpstr(nostr_event_get_pubkey(request_event->event), ==,
-                  gh_nip46_session_get_client_pubkey(session));
-  guint8 signer_sk[32], client_pk[32], *plain = NULL;
-  size_t length = 0;
-  g_assert_true(nostr_hex2bin(signer_sk, signer_secret, sizeof signer_sk));
-  g_assert_true(nostr_hex2bin(client_pk, gh_nip46_session_get_client_pubkey(session),
-                               sizeof client_pk));
-  g_assert_cmpint(nostr_nip44_decrypt_v2(signer_sk, client_pk,
-    nostr_event_get_content(request_event->event), &plain, &length), ==, 0);
-  g_autofree gchar *request_json = g_strndup((gchar *)plain, length);
-  free(plain);
-  NostrNip46Request request = { 0 };
-  g_assert_cmpint(nostr_nip46_request_parse(request_json, &request), ==, 0);
-  g_assert_cmpstr(request.method, ==, "get_public_key");
-  g_autofree gchar *quoted = g_strdup_printf("\"%s\"", signer_pubkey);
-  char *response_json = nostr_nip46_response_build_ok(request.id, quoted);
-  char *ciphertext = NULL;
-  g_assert_cmpint(nostr_nip44_encrypt_v2(signer_sk, client_pk,
-    (guint8 *)response_json, strlen(response_json), &ciphertext), ==, 0);
-  NostrEvent *response = NULL;
-  g_assert_cmpint(nostr_nip46_build_response_event(signer_pubkey,
-    gh_nip46_session_get_client_pubkey(session), response_json, &response), ==, 0);
-  nostr_event_set_content(response, ciphertext);
-  g_assert_cmpint(nostr_event_sign(response, signer_secret), ==, 0);
-  char *response_event_json = nostr_event_serialize_compact(response);
-  wire_relay_inject(&relay, response_event_json);
+  inject_public_key_reply(&relay, signer_secret, signer_pubkey,
+                          gh_nip46_session_get_client_pubkey(session));
   wait_until(finished, &result);
   g_assert_no_error(result.error);
   g_assert_cmpstr(result.text, ==, signer_pubkey);
@@ -103,14 +142,104 @@ test_wire(void)
   gh_nip46_session_cancel(session);
   g_assert_false(gh_nip46_session_is_ready(session));
   g_free(result.text);
-  free(response_event_json);
-  nostr_event_free(response);
-  free(ciphertext);
-  free(response_json);
-  nostr_nip46_request_free(&request);
   free(signer_pubkey);
   free(signer_secret);
   relay_clear(&relay);
+}
+
+static void
+test_auth_refused_relay_isolated(void)
+{
+  WireRelay refused = { .serve = TRUE, .record = TRUE,
+                        .require_auth = TRUE, .refuse_auth = TRUE };
+  WireRelay working = { .serve = TRUE, .record = TRUE, .require_auth = TRUE };
+  relay_init(&refused);
+  relay_init(&working);
+  char *signer_secret = nostr_key_generate_private();
+  char *signer_pubkey = nostr_key_get_public(signer_secret);
+  char *account_secret = nostr_key_generate_private();
+  char *account_pubkey = nostr_key_get_public(account_secret);
+  const gchar *urls[] = { refused.url, working.url, NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip46Session) session = gh_nip46_session_new(CLIENT_SECRET,
+    signer_pubkey, urls, NULL, NULL, NULL, NULL, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(session);
+  const gchar *client_pubkey = gh_nip46_session_get_client_pubkey(session);
+  g_assert_cmpstr(client_pubkey, !=, account_pubkey);
+  gh_nip46_session_start(session);
+  wait_until(ready, session);
+  wait_until(auth_attempted, &refused);
+  g_assert_cmpuint(refused.auth_frames, >=, 1);
+  g_assert_cmpuint(refused.auth_ok, ==, 0);
+  g_assert_cmpuint(working.auth_ok, >=, 1);
+  assert_client_auth_frames(&refused, client_pubkey, account_pubkey);
+  assert_client_auth_frames(&working, client_pubkey, account_pubkey);
+  Result result = { 0 };
+  gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
+                              completed, &result);
+  wait_until(received, &working);
+  inject_public_key_reply(&working, signer_secret, signer_pubkey, client_pubkey);
+  wait_until(finished, &result);
+  g_assert_no_error(result.error);
+  g_assert_cmpstr(result.text, ==, signer_pubkey);
+  g_assert_true(gh_nip46_session_is_ready(session));
+  g_assert_cmpuint(refused.auth_ok, ==, 0);
+  assert_client_auth_frames(&working, client_pubkey, account_pubkey);
+  g_free(result.text);
+  gh_nip46_session_cancel(session);
+  free(account_pubkey);
+  free(account_secret);
+  free(signer_pubkey);
+  free(signer_secret);
+  relay_clear(&working);
+  relay_clear(&refused);
+}
+
+static void
+test_auth_all_relays_refused(void)
+{
+  WireRelay first = { .serve = TRUE, .record = TRUE,
+                      .require_auth = TRUE, .refuse_auth = TRUE };
+  WireRelay second = { .serve = TRUE, .record = TRUE,
+                       .require_auth = TRUE, .refuse_auth = TRUE };
+  relay_init(&first);
+  relay_init(&second);
+  char *signer_secret = nostr_key_generate_private();
+  char *signer_pubkey = nostr_key_get_public(signer_secret);
+  char *account_secret = nostr_key_generate_private();
+  char *account_pubkey = nostr_key_get_public(account_secret);
+  const gchar *urls[] = { first.url, second.url, NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip46Session) session = gh_nip46_session_new(CLIENT_SECRET,
+    signer_pubkey, urls, NULL, NULL, NULL, NULL, NULL, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(session);
+  gh_nip46_session_set_test_deadlines(session, 1, 1, 2, 1);
+  const gchar *client_pubkey = gh_nip46_session_get_client_pubkey(session);
+  g_assert_cmpstr(client_pubkey, !=, account_pubkey);
+  gh_nip46_session_start(session);
+  Result result = { 0 };
+  gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
+                              completed, &result);
+  wait_until(finished, &result);
+  g_assert_error(result.error, GH_NIP46_SESSION_ERROR,
+                 GH_NIP46_SESSION_ERROR_UNAVAILABLE);
+  g_assert_false(gh_nip46_session_is_ready(session));
+  g_assert_cmpuint(first.auth_ok, ==, 0);
+  g_assert_cmpuint(second.auth_ok, ==, 0);
+  g_assert_cmpuint(first.events, ==, 0);
+  g_assert_cmpuint(second.events, ==, 0);
+  assert_client_auth_frames(&first, client_pubkey, account_pubkey);
+  assert_client_auth_frames(&second, client_pubkey, account_pubkey);
+  g_clear_error(&result.error);
+  gh_nip46_session_cancel(session);
+  free(account_pubkey);
+  free(account_secret);
+  free(signer_pubkey);
+  free(signer_secret);
+  relay_clear(&second);
+  relay_clear(&first);
 }
 
 #ifdef GROUNDHOG_NIP46_TOR_TEST
@@ -164,6 +293,8 @@ int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/nip46/wire-local-relay", test_wire);
+  g_test_add_func("/groundhog/nip46/auth-refused-relay-isolated", test_auth_refused_relay_isolated);
+  g_test_add_func("/groundhog/nip46/auth-all-relays-refused", test_auth_all_relays_refused);
 #ifdef GROUNDHOG_NIP46_TOR_TEST
   g_test_add_func("/groundhog/nip46/tor-socks-mode-switch",
                   test_tor_socks_and_mode_switch);

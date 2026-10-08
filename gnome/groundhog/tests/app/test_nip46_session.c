@@ -9,6 +9,7 @@ static const gchar *relays[] = { RELAY, NULL };
 
 typedef struct {
   gboolean done;
+  guint calls;
   gchar *result;
   GError *error;
 } Await;
@@ -20,6 +21,7 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
   wait->result = gh_nip46_session_call_finish(GH_NIP46_SESSION(source), result,
                                                &wait->error);
   wait->done = TRUE;
+  wait->calls++;
 }
 
 static void
@@ -29,6 +31,7 @@ pair_done(GObject *source, GAsyncResult *result, gpointer data)
   wait->result = gh_nip46_session_pair_finish(GH_NIP46_SESSION(source), result,
                                                &wait->error);
   wait->done = TRUE;
+  wait->calls++;
 }
 
 static void
@@ -153,6 +156,95 @@ test_wrong_author_and_cancel(void)
   nostr_nip46_request_free(&request);
   free(reply); free(wrong);
   gh_nip46_session_cancel(session);
+  bunker_clear(&bunker);
+}
+
+static void
+test_late_replies_after_teardown(void)
+{
+  TestBunker bunker;
+  GhNip46Session *session = new_session(&bunker);
+  gpointer weak_session = session;
+  g_object_add_weak_pointer(G_OBJECT(session), &weak_session);
+  gh_nip46_session_start(session);
+  bunker_eose(&bunker);
+  Await wait = { 0 };
+  gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
+                              call_done, &wait);
+  until(has_publish, &bunker);
+  bunker_accept(&bunker);
+  g_autofree gchar *request_json = bunker_request_json(&bunker);
+  NostrNip46Request request = { 0 };
+  g_assert_cmpint(nostr_nip46_request_parse(request_json, &request), ==, 0);
+  char *reply = nostr_nip46_response_build_ok(request.id, "\"late\"");
+  g_assert_nonnull(reply);
+  gh_nip46_session_cancel(session);
+  g_clear_object(&session); /* exercise disposal before the valid late reply */
+  until(await_done, &wait);
+  g_assert_cmpuint(wait.calls, ==, 1);
+  g_assert_error(wait.error, GH_NIP46_SESSION_ERROR,
+                 GH_NIP46_SESSION_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_null(wait.result);
+  g_assert_null(weak_session);
+  BunkerHandle *scope = g_ptr_array_index(bunker.scopes, 0);
+  g_assert_true(scope->closed);
+  bunker_reply(&bunker, reply); /* matching id, correct author and recipient */
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_cmpuint(wait.calls, ==, 1);
+  g_assert_null(wait.result);
+  g_assert_null(wait.error);
+  nostr_nip46_request_free(&request);
+  free(reply);
+  bunker_clear(&bunker);
+}
+
+static void
+test_late_pair_reply_after_cancel(void)
+{
+  TestBunker bunker;
+  bunker_init(&bunker, CLIENT_SECRET);
+  g_autoptr(GError) error = NULL;
+  gchar *uri = NULL;
+  GhNip46Session *session = gh_nip46_session_new_qr(relays,
+    &bunker_scope_transport, NULL, &bunker_publish_transport, NULL,
+    &bunker, &uri, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(session);
+  gpointer weak_session = session;
+  g_object_add_weak_pointer(G_OBJECT(session), &weak_session);
+  g_free(bunker.client_pubkey);
+  bunker.client_pubkey = g_strdup(gh_nip46_session_get_client_pubkey(session));
+  NostrNip46ConnectURI parsed = { 0 };
+  g_assert_cmpint(nostr_nip46_uri_parse_connect(uri, &parsed), ==, 0);
+  Await wait = { 0 };
+  g_autoptr(GCancellable) cancellable = g_cancellable_new();
+  gh_nip46_session_pair_async(session, cancellable, pair_done, &wait);
+  bunker_eose(&bunker);
+  g_assert_true(gh_nip46_session_is_ready(session));
+  g_cancellable_cancel(cancellable);
+  until(await_done, &wait);
+  g_assert_cmpuint(wait.calls, ==, 1);
+  g_assert_error(wait.error, GH_NIP46_SESSION_ERROR,
+                 GH_NIP46_SESSION_ERROR_CANCELLED);
+  g_clear_error(&wait.error);
+  g_assert_null(wait.result);
+  g_clear_object(&session);
+  g_assert_null(weak_session);
+  BunkerHandle *scope = g_ptr_array_index(bunker.scopes, 0);
+  g_assert_true(scope->closed);
+  g_autofree gchar *secret_json = g_strdup_printf("\"%s\"", parsed.secret);
+  char *reply = nostr_nip46_response_build_ok("connect", secret_json);
+  g_assert_nonnull(reply);
+  bunker_reply(&bunker, reply); /* valid secret from the real signer, after cancel */
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_cmpuint(wait.calls, ==, 1);
+  g_assert_cmpuint(bunker.publishes->len, ==, 0);
+  g_assert_null(wait.result);
+  g_assert_null(wait.error);
+  free(reply);
+  nostr_nip46_uri_connect_free(&parsed);
+  g_free(uri);
   bunker_clear(&bunker);
 }
 
@@ -613,6 +705,8 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/nip46/request-wire-eose", test_request_wire_and_eose);
   g_test_add_func("/groundhog/nip46/wrong-author-cancel", test_wrong_author_and_cancel);
+  g_test_add_func("/groundhog/nip46/late-reply-after-teardown", test_late_replies_after_teardown);
+  g_test_add_func("/groundhog/nip46/late-pair-reply-after-cancel", test_late_pair_reply_after_cancel);
   g_test_add_func("/groundhog/nip46/auth-url", test_auth_url_same_id);
   g_test_add_func("/groundhog/nip46/qr-pairing", test_qr_pairing);
   g_test_add_func("/groundhog/nip46/qr-connect-request", test_qr_connect_request_ack);
