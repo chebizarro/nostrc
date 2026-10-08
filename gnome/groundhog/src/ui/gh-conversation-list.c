@@ -373,6 +373,13 @@ gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend
     gh_picture_cache_set_consent(list->pictures, backend, data);
 }
 
+GhPictureCache *
+gh_conversation_list_get_picture_cache(GhWindow *window)
+{
+  GhConversationList *list = list_of(window);
+  return list ? list->pictures : NULL;
+}
+
 GdkTexture *
 gh_conversation_list_get_picture(GhWindow *window, const gchar *pubkey)
 {

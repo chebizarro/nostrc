@@ -206,6 +206,19 @@ template $GhConversationInfoDialog: Adw.Dialog {
                     "flat",
                   ]
                 }
+
+                [suffix]
+                Button their_qr_button {
+                  icon-name: "qr-code-symbolic";
+                  valign: center;
+                  tooltip-text: _("Show QR code");
+                  action-name: "info.show-key-qr";
+                  action-target: "''";
+
+                  styles [
+                    "flat",
+                  ]
+                }
               }
             }
 
@@ -293,6 +306,19 @@ template $GhConversationInfoDialog: Adw.Dialog {
                   tooltip-text: _("Copy npub");
                   action-name: "info.copy-key";
                   // The npub, set from C.
+                  action-target: "''";
+
+                  styles [
+                    "flat",
+                  ]
+                }
+
+                [suffix]
+                Button your_qr_button {
+                  icon-name: "qr-code-symbolic";
+                  valign: center;
+                  tooltip-text: _("Show QR code");
+                  action-name: "info.show-key-qr";
                   action-target: "''";
 
                   styles [

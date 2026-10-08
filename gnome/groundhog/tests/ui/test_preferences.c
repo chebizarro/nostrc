@@ -22,6 +22,7 @@
  */
 #include "gh-features.h"
 #include "gh-preferences-dialog.h"
+#include "gh-qr-code.h"
 #include "gh-window.h"
 
 #include <string.h>
@@ -862,6 +863,13 @@ test_account_rows(Fixture *f, gconstpointer data)
   g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(account)));
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(account)), ==, "Alice <b>");
   g_assert_cmpstr(adw_action_row_get_subtitle(account), ==, NPUB);
+  AdwAvatar *avatar = child(f, "account_avatar");
+  const guint8 pixel[] = { 0, 0, 0 };
+  g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof pixel);
+  g_autoptr(GdkTexture) picture = gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8,
+                                                         bytes, 3);
+  gh_preferences_dialog_set_account_picture(f->dialog, GDK_PAINTABLE(picture));
+  g_assert_true(adw_avatar_get_custom_image(avatar) == GDK_PAINTABLE(picture));
   /* No forget function (a build without the encrypted store): nothing offered. */
   g_assert_false(gtk_widget_get_visible(group));
 
@@ -874,6 +882,7 @@ test_account_rows(Fixture *f, gconstpointer data)
                                         fake.target);
   g_assert_true(gtk_widget_get_visible(group));
   gh_preferences_dialog_set_account(f->dialog, NULL, NULL);
+  g_assert_null(adw_avatar_get_custom_image(avatar));
   g_assert_false(gtk_widget_get_visible(group));
   g_assert_true(gtk_widget_get_visible(none));
   /* Nothing to delete: the action does nothing. */
@@ -1630,6 +1639,16 @@ test_screenshots(Fixture *f, gconstpointer data)
   fake_reset();
 }
 
+static void
+test_npub_qr_texture(void)
+{
+  g_autofree gchar *uri = g_strconcat("nostr:", NPUB, NULL);
+  g_autoptr(GdkTexture) texture = gh_qr_code_texture_new(uri);
+  g_assert_nonnull(texture);
+  g_assert_cmpint(gdk_texture_get_width(texture), ==, gdk_texture_get_height(texture));
+  g_assert_cmpint(gdk_texture_get_width(texture), >, 100);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1684,5 +1703,6 @@ main(int argc, char **argv)
 #undef ADD
   g_test_add_func("/groundhog/preferences/copy-follows-features", test_copy_follows_features);
   g_test_add_func("/groundhog/preferences/url-rules", test_url_rules);
+  g_test_add_func("/groundhog/preferences/npub-qr-texture", test_npub_qr_texture);
   return g_test_run();
 }

@@ -85,6 +85,12 @@ gchar *gh_inbox_setup_build_unsigned(const gchar *pubkey_hex, const gchar *const
 gchar *gh_inbox_setup_build_relay_list_unsigned(const gchar *pubkey_hex,
                                                 const gchar *const *relays,
                                                 gint64 created_at);
+/* Edit the write role of an existing 10002 without dropping its read-only
+ * relays, unmarked read/write relays, content, or unrelated tags. */
+gchar *gh_inbox_setup_build_relay_list_edit_unsigned(const gchar *base_json,
+                                                     const gchar *pubkey_hex,
+                                                     const gchar *const *write_relays,
+                                                     gint64 created_at);
 
 /* ---- the private-reads check ---------------------------------------------- */
 

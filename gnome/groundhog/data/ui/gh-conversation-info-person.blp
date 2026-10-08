@@ -5,8 +5,8 @@ using Adw 1;
 // (gh-conversation-info-dialog.blp, charter G19): the name Groundhog shows
 // for them (a cached display name or their short npub; nothing is fetched
 // for it), their short npub and any NIP-05 address they claim (never
-// checked, and said so), whether you marked their key verified, and Copy
-// npub. Activating the row opens Verify Key. Filled from
+// checked, and whether you marked their key verified. Copy
+// npub or show it as QR. Activating the row opens Verify Key. Filled from
 // gh-conversation-info-dialog.c.
 template $GhConversationInfoPerson: Adw.ActionRow {
   activatable: true;
@@ -35,6 +35,19 @@ template $GhConversationInfoPerson: Adw.ActionRow {
     tooltip-text: _("Copy npub");
     action-name: "info.copy-key";
     // The npub, set from C.
+    action-target: "''";
+
+    styles [
+      "flat",
+    ]
+  }
+
+  [suffix]
+  Button qr_button {
+    icon-name: "qr-code-symbolic";
+    valign: center;
+    tooltip-text: _("Show QR code");
+    action-name: "info.show-key-qr";
     action-target: "''";
 
     styles [

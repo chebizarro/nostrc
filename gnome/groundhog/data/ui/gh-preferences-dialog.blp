@@ -553,6 +553,18 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
           size: 32;
           show-initials: true;
         }
+
+        [suffix]
+        Button {
+          icon-name: "qr-code-symbolic";
+          valign: center;
+          tooltip-text: _("Show QR code");
+          action-name: "prefs.show-npub-qr";
+
+          styles [
+            "flat",
+          ]
+        }
       }
 
       Label {

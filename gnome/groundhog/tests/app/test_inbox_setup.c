@@ -1409,6 +1409,36 @@ test_edit_same_timestamp_skipped(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->rec.pubs->len, ==, 0);
 }
 
+static void
+test_edit_write_preserves_read(void)
+{
+  g_autofree gchar *base = signed_event(1, 10002, nostr_tags_new(4,
+    nostr_tag_new("r", WRITE_W, "write", NULL),
+    nostr_tag_new("r", READ_R, "read", NULL),
+    nostr_tag_new("r", INBOX_A, NULL),
+    nostr_tag_new("client", "Groundhog", NULL)));
+  const gchar *write[] = { READ_R, INBOX_B, NULL };
+  g_autofree gchar *json = gh_inbox_setup_build_relay_list_edit_unsigned(
+    base, hex[1], write, 123456789);
+  g_assert_nonnull(json);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_created_at(event), ==, 123456789);
+  NostrTags *tags = nostr_event_get_tags(event);
+  g_assert_cmpuint(nostr_tags_size(tags), ==, 4);
+  NostrTag *read_write = nostr_tags_get(tags, 0);
+  g_assert_cmpstr(nostr_tag_get(read_write, 1), ==, READ_R);
+  g_assert_cmpuint(nostr_tag_size(read_write), ==, 2);
+  NostrTag *read_only = nostr_tags_get(tags, 1);
+  g_assert_cmpstr(nostr_tag_get(read_only, 1), ==, INBOX_A);
+  g_assert_cmpstr(nostr_tag_get(read_only, 2), ==, "read");
+  g_assert_cmpstr(nostr_tag_get(nostr_tags_get(tags, 2), 0), ==, "client");
+  NostrTag *added = nostr_tags_get(tags, 3);
+  g_assert_cmpstr(nostr_tag_get(added, 1), ==, INBOX_B);
+  g_assert_cmpstr(nostr_tag_get(added, 2), ==, "write");
+  nostr_event_free(event);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1422,6 +1452,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/inbox-setup/parse-suggestions-refuses",
                   test_parse_suggestions_refuses);
   g_test_add_func("/groundhog/inbox-setup/build-unsigned", test_build_unsigned);
+  g_test_add_func("/groundhog/inbox-setup/edit-write-preserves-read",
+                  test_edit_write_preserves_read);
   g_test_add_func("/groundhog/inbox-setup/classify-closed", test_classify_closed);
 #define ADD(path, func) \
   g_test_add("/groundhog/inbox-setup/" path, Fixture, NULL, fixture_setup, func, fixture_teardown)

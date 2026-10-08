@@ -1,4 +1,5 @@
 #include "gh-preferences-dialog.h"
+#include "gh-qr-code.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -1364,6 +1365,16 @@ delete_all_activated(GtkWidget *widget, const gchar *action, GVariant *parameter
     adw_dialog_present(ADW_DIALOG(self->delete_all_dialog), widget);
 }
 
+static void
+show_npub_qr_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(widget);
+  if (self->account_npub)
+    gh_npub_qr_dialog_present(widget, self->account_npub);
+}
+
 static gchar *
 short_npub(const gchar *npub)
 {
@@ -1391,7 +1402,17 @@ gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
     adw_action_row_set_subtitle(self->account_row, npub);
     adw_avatar_set_text(self->account_avatar, title);
   }
+  if (!active)
+    adw_avatar_set_custom_image(self->account_avatar, NULL);
   sync_delete(self);
+}
+
+void
+gh_preferences_dialog_set_account_picture(GhPreferencesDialog *self, GdkPaintable *picture)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (!self->disposed)
+    adw_avatar_set_custom_image(self->account_avatar, picture);
 }
 
 void
@@ -1649,6 +1670,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
                                   clear_attachments_activated);
   gtk_widget_class_install_action(widget_class, "prefs.change-relays", NULL,
                                   change_relays_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.show-npub-qr", NULL,
+                                  show_npub_qr_activated);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");

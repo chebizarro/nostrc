@@ -1,4 +1,5 @@
 #include "gh-conversation-info-dialog.h"
+#include "gh-qr-code.h"
 #include "gh-conversation-actions.h"
 #include "gh-conversation-view.h"
 #include "gh-expiry.h"
@@ -41,6 +42,7 @@ struct _GhConversationInfoPerson {
   AdwAvatar *avatar;
   GtkImage *verified_icon;
   GtkButton *copy_button;
+  GtkButton *qr_button;
   gchar *pubkey;
   gchar *npub;
   gchar *name;
@@ -78,6 +80,7 @@ gh_conversation_info_person_class_init(GhConversationInfoPersonClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, verified_icon);
   gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, copy_button);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationInfoPerson, qr_button);
 }
 
 static void
@@ -120,6 +123,7 @@ person_new(const gchar *pubkey, const gchar *name, const gchar *nip05, GdkPainta
   self->name = name && *name ? g_strdup(name) : NULL;
   self->nip05 = nip05 && *nip05 ? g_strdup(nip05) : NULL;
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", self->npub);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->qr_button), "s", self->npub);
   return self;
 }
 
@@ -158,12 +162,14 @@ struct _GhConversationInfoDialog {
   AdwPreferencesGroup *their_group;
   AdwActionRow *their_key_row;
   GtkButton *their_copy_button;
+  GtkButton *their_qr_button;
   AdwPreferencesGroup *code_group;
   GtkLabel *their_code_title;
   GtkLabel *their_code_label;
   GtkLabel *your_code_label;
   AdwActionRow *your_key_row;
   GtkButton *your_copy_button;
+  GtkButton *your_qr_button;
   AdwActionRow *verified_row;
   GtkButton *verify_button;
   AdwAlertDialog *block_dialog;
@@ -545,6 +551,7 @@ action_verify(GtkWidget *widget, const char *name, GVariant *parameter)
   g_autofree gchar *their_key = gh_privacy_format_key(person->npub);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->their_key_row), their_key);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->their_copy_button), "s", person->npub);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->their_qr_button), "s", person->npub);
 
   /* Plain text: the name is not markup here. */
   g_autofree gchar *their_code_title = g_strdup_printf(_("%s’s code"),
@@ -566,6 +573,7 @@ action_verify(GtkWidget *widget, const char *name, GVariant *parameter)
   g_autofree gchar *own_key = gh_privacy_format_key(own_npub);
   adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->your_key_row), own_key);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->your_copy_button), "s", own_npub);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->your_qr_button), "s", own_npub);
 
   sync_verified(self);
   if (adw_navigation_view_get_visible_page(self->navigation) !=
@@ -613,6 +621,15 @@ action_copy_key(GtkWidget *widget, const char *name, GVariant *parameter)
     return;
   gdk_clipboard_set_text(gtk_widget_get_clipboard(widget), text);
   toast(self, _("Copied"));
+}
+
+static void
+action_show_key_qr(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  const gchar *npub = g_variant_get_string(parameter, NULL);
+  if (*npub)
+    gh_npub_qr_dialog_present(widget, npub);
 }
 
 static void
@@ -807,12 +824,14 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   BIND(their_group);
   BIND(their_key_row);
   BIND(their_copy_button);
+  BIND(their_qr_button);
   BIND(code_group);
   BIND(their_code_title);
   BIND(their_code_label);
   BIND(your_code_label);
   BIND(your_key_row);
   BIND(your_copy_button);
+  BIND(your_qr_button);
   BIND(verified_row);
   BIND(verify_button);
   BIND(block_dialog);
@@ -823,6 +842,7 @@ gh_conversation_info_dialog_class_init(GhConversationInfoDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "info.clear-verified", NULL,
                                   action_clear_verified);
   gtk_widget_class_install_action(widget_class, "info.copy-key", "s", action_copy_key);
+  gtk_widget_class_install_action(widget_class, "info.show-key-qr", "s", action_show_key_qr);
   gtk_widget_class_install_action(widget_class, "info.mute", "s", action_mute);
   gtk_widget_class_install_action(widget_class, "info.unmute", NULL, action_unmute);
   gtk_widget_class_install_action(widget_class, "info.block", NULL, action_block);

@@ -284,6 +284,75 @@ gh_inbox_setup_build_relay_list_unsigned(const gchar *pubkey_hex, const gchar *c
   return build_list(pubkey_hex, relays, created_at, GH_INBOX_SETUP_RELAY_LIST_KIND);
 }
 
+gchar *
+gh_inbox_setup_build_relay_list_edit_unsigned(const gchar *base_json,
+                                                     const gchar *pubkey_hex,
+                                                     const gchar *const *write_relays,
+                                                     gint64 created_at)
+{
+  g_return_val_if_fail(pubkey_hex != NULL && write_relays != NULL, NULL);
+  if (!base_json)
+    return gh_inbox_setup_build_relay_list_unsigned(pubkey_hex, write_relays, created_at);
+  NostrEvent *base = nostr_event_new();
+  if (!base || nostr_event_deserialize_compact(base, base_json, NULL) != 1) {
+    if (base) nostr_event_free(base);
+    return NULL;
+  }
+  NostrEvent *event = nostr_event_new();
+  NostrTags *tags = nostr_tags_new(0);
+  gsize n_write = 0;
+  while (write_relays[n_write]) n_write++;
+  g_autofree gboolean *covered = g_new0(gboolean, n_write + 1);
+  NostrTags *old_tags = nostr_event_get_tags(base);
+  for (size_t i = 0; old_tags && i < nostr_tags_size(old_tags); i++) {
+    NostrTag *tag = nostr_tags_get(old_tags, i);
+    if (!tag || nostr_tag_size(tag) == 0) continue;
+    const gchar *key = nostr_tag_get(tag, 0);
+    const gchar *url = g_strcmp0(key, "r") == 0 && nostr_tag_size(tag) >= 2
+      ? nostr_tag_get(tag, 1) : NULL;
+    const gchar *marker = url && nostr_tag_size(tag) >= 3 ? nostr_tag_get(tag, 2) : NULL;
+    gint match = -1;
+    g_autofree gchar *normal = url ? gh_inbox_setup_normalize_url(url, NULL) : NULL;
+    for (gsize w = 0; normal && w < n_write && match < 0; w++)
+      if (g_str_equal(normal, write_relays[w])) match = (gint)w;
+    if (url && (!marker || g_str_equal(marker, "read") || g_str_equal(marker, "write"))) {
+      if (match >= 0) covered[match] = TRUE;
+      if (marker && g_str_equal(marker, "write") && match < 0)
+        continue;
+      if (marker && g_str_equal(marker, "read") && match >= 0)
+        nostr_tags_append(tags, nostr_tag_new("r", url, NULL));
+      else if (!marker && match < 0)
+        nostr_tags_append(tags, nostr_tag_new("r", url, "read", NULL));
+      else {
+        NostrTag *copy = nostr_tag_new(key, NULL);
+        for (size_t j = 1; j < nostr_tag_size(tag); j++)
+          nostr_tag_append(copy, nostr_tag_get(tag, j));
+        nostr_tags_append(tags, copy);
+      }
+      continue;
+    }
+    NostrTag *copy = nostr_tag_new(key, NULL);
+    for (size_t j = 1; j < nostr_tag_size(tag); j++)
+      nostr_tag_append(copy, nostr_tag_get(tag, j));
+    nostr_tags_append(tags, copy);
+  }
+  for (gsize w = 0; w < n_write; w++)
+    if (!covered[w])
+      nostr_tags_append(tags, nostr_tag_new("r", write_relays[w], "write", NULL));
+  nostr_event_set_kind(event, GH_INBOX_SETUP_RELAY_LIST_KIND);
+  nostr_event_set_created_at(event, created_at);
+  const gchar *content = nostr_event_get_content(base);
+  nostr_event_set_content(event, content ? content : "");
+  nostr_event_set_pubkey(event, pubkey_hex);
+  nostr_event_set_tags(event, tags);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  nostr_event_free(base);
+  gchar *json = raw ? g_strdup(raw) : NULL;
+  free(raw);
+  return json;
+}
+
 /* ---- the private-reads check ---------------------------------------------- */
 
 GhInboxProbeResult
