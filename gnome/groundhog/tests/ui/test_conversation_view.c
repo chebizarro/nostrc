@@ -309,6 +309,24 @@ row_for(GhConversationView *view, GhMessage *message)
   return item_row(item);
 }
 
+typedef struct {
+  GhConversationView *view;
+  GhMessage *message;
+} VisibleRowWait;
+
+static gboolean
+row_visible(gpointer data)
+{
+  VisibleRowWait *wait = data;
+  GtkWidget *item = item_for(wait->view, wait->message);
+  GtkWidget *scroller = view_child(wait->view, "scroller");
+  graphene_rect_t bounds;
+  return item && gtk_widget_get_mapped(item) &&
+         gtk_widget_compute_bounds(item, scroller, &bounds) &&
+         bounds.origin.y + bounds.size.height > 0 &&
+         bounds.origin.y < gtk_widget_get_height(scroller);
+}
+
 /* The day separator texts, in list order. */
 static GPtrArray *
 header_texts(GhConversationView *view)
@@ -2699,16 +2717,28 @@ test_recycled_scroll_directions(Fixture *f, gconstpointer data)
   GhConversation *conversation = room_of(f->store, first);
   gh_conversation_mark_read(conversation);
   show(f, conversation, 480, 360);
+  VisibleRowWait first_visible = { f->view, first };
+  VisibleRowWait last_visible = { f->view, last };
+  guint last_position = timeline_length(f->view) - 1;
+  gtk_list_view_scroll_to(gh_conversation_view_get_message_list(f->view),
+                          last_position, GTK_LIST_SCROLL_NONE, NULL);
   spin_until(at_bottom, f->view);
+  spin_until(row_visible, &last_visible);
   guint plain_widgets = widget_tree_count(GTK_WIDGET(row_for(f->view, last)));
   for (guint pass = 0; pass < 3; pass++) {
+    gtk_list_view_scroll_to(gh_conversation_view_get_message_list(f->view),
+                            0, GTK_LIST_SCROLL_NONE, NULL);
     gtk_adjustment_set_value(vadjustment(f->view), 0);
     spin_until(scrolled_up, f->view);
+    spin_until(row_visible, &first_visible);
     drain_idle();
     g_assert_nonnull(row_child(row_for(f->view, first), "attachment_card"));
+    gtk_list_view_scroll_to(gh_conversation_view_get_message_list(f->view),
+                            last_position, GTK_LIST_SCROLL_NONE, NULL);
     gtk_adjustment_set_value(vadjustment(f->view),
                              gtk_adjustment_get_upper(vadjustment(f->view)));
     spin_until(at_bottom, f->view);
+    spin_until(row_visible, &last_visible);
     drain_idle();
     GhMessageRow *row = row_for(f->view, last);
     g_assert_null(row_child(row, "attachment_card"));
