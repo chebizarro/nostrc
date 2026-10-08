@@ -1,3 +1,15 @@
+groundhog (0.12.0~alpha5-1) unstable; urgency=medium
+
+  * Faster conversation opening: about half the time for long histories.
+  * Polls: your own polls show immediately, options as radio buttons or
+    check boxes, votes update results instead of adding bubbles.
+  * Account switcher with display names and profile pictures; copy
+    buttons for your npub in Preferences and the QR dialog.
+  * Earlier messages button only near the top of the history; consistent
+    order of reactions, time and receipt on both sides.
+
+ -- Biz <chebizarro@protonmail.com>  Thu, 08 Oct 2026 18:00:00 +0000
+
 groundhog (0.12.0~alpha4-1) unstable; urgency=medium
 
   * Remote signers (NIP-46): pair Amber by scanning a QR code or paste a

@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha4 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha5 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha4
+%global upstream_version 0.12.0-alpha5
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.4.alpha4%{?dist}
+Release:        0.5.alpha5%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -169,6 +169,15 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Thu Oct 08 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.5.alpha5
+- Faster conversation opening: about half the time for long histories.
+- Polls: your own polls show immediately, options as radio buttons or
+  check boxes, votes update results instead of adding bubbles.
+- Account switcher with display names and profile pictures; copy
+  buttons for your npub in Preferences and the QR dialog.
+- Earlier messages button only near the top of the history; consistent
+  order of reactions, time and receipt on both sides.
+
 * Thu Oct 08 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.4.alpha4
 - Remote signers (NIP-46): pair Amber by scanning a QR code or paste a
   bunker:// link (nsec.app and others); per-account choice of Grotto or a

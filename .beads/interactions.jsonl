@@ -951,3 +951,5 @@
 {"id":"int-e0df05a0","kind":"field_change","created_at":"2026-10-08T15:23:30.057743Z","actor":"Biz","issue_id":"nostrc-l1kn6.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-a1a079da","kind":"field_change","created_at":"2026-10-08T15:27:12.269993Z","actor":"Biz","issue_id":"nostrc-l1kn6.3","extra":{"field":"status","new_value":"in_progress","old_value":"closed"}}
 {"id":"int-7e45d6d4","kind":"field_change","created_at":"2026-10-08T15:48:23.696275Z","actor":"Biz","issue_id":"nostrc-l1kn6.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-6fc4f5fc","kind":"field_change","created_at":"2026-10-08T15:59:56.327046Z","actor":"Biz","issue_id":"nostrc-l1kn6.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Merged"}}
+{"id":"int-52149e6f","kind":"field_change","created_at":"2026-10-08T16:00:00.17742Z","actor":"Biz","issue_id":"nostrc-l1kn6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Alpha 5 polish merged"}}
