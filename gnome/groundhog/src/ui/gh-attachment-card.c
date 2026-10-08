@@ -24,6 +24,7 @@ struct _GhAttachmentCard {
   GtkLabel *title_label;
   GtkLabel *detail_label;
   GtkPicture *preview;
+  GtkBox *audio_slot;
   GtkBox *status_box;
   GtkSpinner *spinner;
   GtkImage *status_icon;
@@ -43,6 +44,8 @@ struct _GhAttachmentCard {
   GhAttachmentState shown;         /* the state last shown (announcements) */
   gboolean compact;
   gchar *summary;
+  GtkMediaStream *audio_stream;
+  GBytes *audio_bytes;
 };
 
 enum { PROP_0, PROP_MESSAGE, PROP_INDEX, PROP_COMPACT, PROP_SUMMARY, N_PROPS };
@@ -356,6 +359,37 @@ update_preview(GhAttachmentCard *self)
   return TRUE;
 }
 
+/* Playback uses the decrypted bytes in memory, never a temporary plaintext
+ * file.  Recycled cards and cleared transfers stop playback immediately. */
+static void
+update_audio(GhAttachmentCard *self)
+{
+  GBytes *plaintext = self->transfer &&
+    gh_attachment_transfer_get_state(self->transfer) == GH_ATTACHMENT_STATE_READY &&
+    self->mime && g_ascii_strncasecmp(self->mime, "audio/", 6) == 0 && self->mime[6]
+      ? gh_attachment_transfer_get_plaintext(self->transfer) : NULL;
+  if (plaintext == self->audio_bytes)
+    return;
+  GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->audio_slot));
+  if (child)
+    gtk_box_remove(self->audio_slot, child);
+  if (self->audio_stream) {
+    gtk_media_stream_pause(self->audio_stream);
+    gtk_media_file_clear(GTK_MEDIA_FILE(self->audio_stream));
+    g_clear_object(&self->audio_stream);
+  }
+  g_clear_pointer(&self->audio_bytes, g_bytes_unref);
+  if (plaintext) {
+    g_autoptr(GInputStream) input = g_memory_input_stream_new_from_bytes(plaintext);
+    self->audio_stream = gtk_media_file_new_for_input_stream(input);
+    self->audio_bytes = g_bytes_ref(plaintext);
+    GtkWidget *controls = gtk_media_controls_new(self->audio_stream);
+    gtk_widget_set_size_request(controls, self->compact ? 200 : 280, -1);
+    gtk_box_append(self->audio_slot, controls);
+  }
+  gtk_widget_set_visible(GTK_WIDGET(self->audio_slot), plaintext != NULL);
+}
+
 static void
 show_status(GhAttachmentCard *self, const gchar *text, gboolean spinning, gboolean warning)
 {
@@ -417,6 +451,7 @@ update(GhAttachmentCard *self)
 {
   gboolean had_focus = focus_in_actions(self);
   update_header(self);
+  update_audio(self);
   g_autofree gchar *kind = gh_attachment_card_describe_type(self->described ? self->mime
                                                                             : NULL);
   const gchar *state_text = NULL;
@@ -536,6 +571,7 @@ unbind_transfer(GhAttachmentCard *self)
     return;
   g_signal_handlers_disconnect_by_data(self->transfer, self);
   g_clear_object(&self->transfer);
+  update_audio(self);
 }
 
 /* The transfer of the message, from the provider of the window the card is
@@ -662,6 +698,9 @@ gh_attachment_card_set_compact(GhAttachmentCard *self, gboolean compact)
     return;
   self->compact = !!compact;
   update_preview(self);
+  GtkWidget *controls = gtk_widget_get_first_child(GTK_WIDGET(self->audio_slot));
+  if (controls)
+    gtk_widget_set_size_request(controls, self->compact ? 200 : 280, -1);
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_COMPACT]);
 }
 
@@ -727,6 +766,12 @@ gh_attachment_card_dispose(GObject *object)
 {
   GhAttachmentCard *self = GH_ATTACHMENT_CARD(object);
   unbind_transfer(self);
+  if (self->audio_stream) {
+    gtk_media_stream_pause(self->audio_stream);
+    gtk_media_file_clear(GTK_MEDIA_FILE(self->audio_stream));
+    g_clear_object(&self->audio_stream);
+  }
+  g_clear_pointer(&self->audio_bytes, g_bytes_unref);
   g_clear_object(&self->message);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_ATTACHMENT_CARD);
   /* The template's unnamed children too. */
@@ -772,6 +817,7 @@ gh_attachment_card_class_init(GhAttachmentCardClass *klass)
   BIND(title_label);
   BIND(detail_label);
   BIND(preview);
+  BIND(audio_slot);
   BIND(status_box);
   BIND(spinner);
   BIND(status_icon);

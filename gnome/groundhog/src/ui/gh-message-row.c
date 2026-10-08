@@ -389,7 +389,10 @@ update_web_images(GhMessageRow *self)
     /* Loaded (or loading): the picture speaks for itself, no button left. */
     if (state == GH_LINK_PREVIEW_LOADED || state == GH_LINK_PREVIEW_LOADING)
       gtk_widget_set_visible(GTK_WIDGET(button), FALSE);
-    failed |= state == GH_LINK_PREVIEW_FAILED;
+    /* The avatar supplies its own initials fallback.  A failed profile
+     * picture must not put an image error under every bubble in the run. */
+    if (i == GH_WEB_IMAGE)
+      failed |= state == GH_LINK_PREVIEW_FAILED;
     if (self->message) {
       g_autofree gchar *id = g_strconcat(i == GH_WEB_IMAGE ? "image:" : "picture:",
                                         gh_message_get_rumor_id(self->message), NULL);

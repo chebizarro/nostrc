@@ -37,6 +37,7 @@ Depends: ${shlibs:Depends},
          ${misc:Depends},
          dbus-user-session,
          libqrencode4,
+         libgtk-4-media-gstreamer,
          gstreamer1.0-plugins-base,
          gstreamer1.0-plugins-good
 Recommends: gnome-keyring | org.freedesktop.secrets,

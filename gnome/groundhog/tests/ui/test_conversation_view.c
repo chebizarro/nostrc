@@ -1436,6 +1436,51 @@ test_web_allow_covers_sender(Fixture *f, gconstpointer data)
   blossom_fixture_free(server);
 }
 
+typedef struct { Fixture *f; GhMessage *message; } PictureFailure;
+static gboolean
+picture_failed(gpointer data)
+{
+  PictureFailure *wait = data;
+  GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+  gh_conversation_view_get_web_texture(wait->f->view, wait->message, GH_WEB_PICTURE, &state);
+  return state == GH_LINK_PREVIEW_FAILED;
+}
+
+static void
+test_failed_picture_has_no_row_error(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_settings_set_string(f->settings, "network-mode", "none");
+  BlossomFixture *server = blossom_fixture_new();
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/missing.png",
+                                          blossom_fixture_port(server));
+  GhMessage *first = add_dm(f->store, 2, 1, noon_today() - 60, "first");
+  GhMessage *second = add_dm(f->store, 2, 1, noon_today() - 30, "second");
+  GhConversation *conversation = room_of(f->store, first);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 700, 700);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(f->settings);
+  static const GhHttpTransport transport = { web_local_get, web_local_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, http);
+  g_autoptr(GObject) source = g_object_new(test_picture_source_get_type(), NULL);
+  g_object_set_data_full(source, "picture", g_strdup(uri), g_free);
+  gh_conversation_view_set_picture_source(f->view, web_picture_uri, source);
+  GtkWidget *button = row_child(row_for(f->view, first), "picture_button");
+  click(button);
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  PictureFailure failed = { f, first };
+  spin_until(picture_failed, &failed);
+  drain_idle();
+  g_assert_false(shown(row_child(row_for(f->view, first), "web_error")));
+  g_assert_false(shown(row_child(row_for(f->view, second), "web_error")));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  blossom_fixture_free(server);
+}
+
 /* Timing probe (not an assertion): how long opening a room with many
  * messages takes, from set_conversation to rows bound and idle. Run with
  * GROUNDHOG_TEST_TIMING=1; prints the numbers. */
@@ -2296,6 +2341,7 @@ main(int argc, char **argv)
     g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
+  ADD("failed-picture-has-no-row-error", test_failed_picture_has_no_row_error);
   ADD("open-timing", test_open_timing);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);

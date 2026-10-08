@@ -23,8 +23,9 @@ G_BEGIN_DECLS
  * downloaded, a photo whose plaintext passed the decode guard
  * (GhAttachmentTransfer:previewable, gh_attachment_check_preview()) is shown
  * inline, decoded here with gdk_texture_new_from_bytes() (GTK's own PNG and
- * JPEG loaders, never gdk-pixbuf) and kept on the transfer; anything else
- * stays a card. "Save As…" exports the plaintext only through the
+ * JPEG loaders, never gdk-pixbuf) and kept on the transfer. Downloaded audio
+ * gets in-memory GtkMediaFile controls when GTK has a media backend; other
+ * files stay cards. "Save As…" exports the plaintext only through the
  * provider's save, the Save dialog (the portal), with the note that saved
  * files aren't protected by Groundhog.
  *
@@ -43,7 +44,7 @@ G_BEGIN_DECLS
  * An encrypted group message (W25, nostrc-q3a6) shows one card per file
  * ("index"), described by what the MLS layer read from its imeta tags
  * (gh_message_get_attachment()), with the same Download-only-on-request,
- * decode guard and Save As.
+ * image decode guard, audio playback and Save As.
  *
  * Actions (widget actions): attachment.download, attachment.cancel and
  * attachment.save. Properties: "message" (a kind-15 GhMessage or an MLS
