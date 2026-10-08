@@ -697,6 +697,10 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_executable(test-groundhog-account-ui tests/app/test_account_ui.c
     src/app/gh-account-ui.c)
   target_link_libraries(test-groundhog-account-ui PRIVATE groundhog-account groundhog-ui)
+  if (TARGET groundhog-conversation-ui)
+    target_link_libraries(test-groundhog-account-ui PRIVATE groundhog-conversation-ui)
+    target_compile_definitions(test-groundhog-account-ui PRIVATE GROUNDHOG_HAVE_INBOX=1)
+  endif()
   target_compile_options(test-groundhog-account-ui PRIVATE -Wall -Wextra -Werror)
   add_dependencies(test-groundhog-account-ui groundhog-test-schemas)
   add_test(NAME groundhog-account-ui COMMAND test-groundhog-account-ui)

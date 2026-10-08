@@ -12,6 +12,12 @@
  */
 #include "gh-account-ui.h"
 #include "gh-identity.h"
+#if GROUNDHOG_HAVE_INBOX
+#include "gh-conversation-list.h"
+#include <nostr/nip19/nip19.h>
+#include <stdlib.h>
+#include <string.h>
+#endif
 
 #include "nostrc-test-gdk-frame.h"
 
@@ -131,8 +137,6 @@ assert_account_widgets(GhWindow *window)
   };
   GhSidebarPage *sidebar = gh_window_get_sidebar(window);
   GtkStack *stack = gh_sidebar_page_get_stack(sidebar);
-  GMenuModel *account_menu = NULL;
-
   for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
     GtkWidget *page = gtk_stack_get_child_by_name(stack, pages[i].name);
     g_assert_true(ADW_IS_STATUS_PAGE(page));
@@ -142,20 +146,12 @@ assert_account_widgets(GhWindow *window)
       g_assert_null(button);
       continue;
     }
-    if (GTK_IS_MENU_BUTTON(button)) {
-      /* "Choose an Account" opens the account menu itself. */
-      g_assert_cmpstr(gtk_menu_button_get_label(GTK_MENU_BUTTON(button)), ==,
-                      pages[i].action_label);
-      g_assert_true(gtk_menu_button_get_use_underline(GTK_MENU_BUTTON(button)));
-      g_assert_true(gtk_widget_has_css_class(button, "pill"));
-      account_menu = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
-      continue;
-    }
     g_assert_true(GTK_IS_BUTTON(button));
     g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, pages[i].action_label);
     g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(button)));
-    g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
-                    "account.refresh");
+    if (g_strcmp0(pages[i].name, "account-unselected") != 0)
+      g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
+                      "account.refresh");
     g_assert_true(gtk_widget_has_css_class(button, "pill"));
   }
   /* Standalone onboarding is only for builds without account support. */
@@ -187,23 +183,8 @@ assert_account_widgets(GhWindow *window)
   g_assert_true(g_menu_model_get_item_attribute(account_section, 0, G_MENU_ATTRIBUTE_LABEL, "s",
                                                 &account_label));
   g_assert_cmpstr(account_label, ==, "_Account");
-  g_autoptr(GMenuModel) menu = g_menu_model_get_item_link(account_section, 0,
-                                                          G_MENU_LINK_SUBMENU);
-  g_assert_nonnull(menu);
-  /* The same menu as the "Choose an Account" page's button. */
-  g_assert_true(menu == account_menu);
-  g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
-  GMenuModel *identities = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION);
-  GMenuModel *other = g_menu_model_get_item_link(menu, 1, G_MENU_LINK_SECTION);
-  g_assert_nonnull(identities);
-  g_assert_nonnull(other);
-  g_assert_cmpint(g_menu_model_get_n_items(other), ==, 4);
-  assert_menu_item(other, 0, "No Account (Read-Only)", "account.select", "");
-  assert_menu_item(other, 1, "Add Remote Signer…", "account.add-remote", NULL);
-  assert_menu_item(other, 2, "Remove Remote Signer…", "account.remove-remote", NULL);
-  assert_menu_item(other, 3, "_Refresh Accounts", "account.refresh", NULL);
-  g_object_unref(identities);
-  g_object_unref(other);
+  assert_menu_item(account_section, 0, "_Account", "account.open", NULL);
+  g_assert_null(g_menu_model_get_item_link(account_section, 0, G_MENU_LINK_SUBMENU));
 }
 
 static void
@@ -255,7 +236,7 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
 
   /* An identity appears but none is chosen: the focus target is named
-   * explicitly as the page's Choose Account menu (charter §7.14,
+   * explicitly as the page's Choose Account button (charter §7.14,
    * qp24.8.6). */
   g_mutex_lock(&store.lock);
   store.empty = FALSE;
@@ -265,7 +246,7 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-unselected");
   GtkWidget *unselected = gtk_stack_get_child_by_name(stack, "account-unselected");
   GtkWidget *account_button = adw_status_page_get_child(ADW_STATUS_PAGE(unselected));
-  g_assert_true(GTK_IS_MENU_BUTTON(account_button));
+  g_assert_true(GTK_IS_BUTTON(account_button));
   GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
   g_assert_nonnull(focus);
   g_assert_true(focus == GTK_WIDGET(account_button) ||
@@ -380,6 +361,21 @@ test_header_title_fits(void)
       g_error("the sidebar title is ellipsized at %d px (%s): %d px wide in a %d px sidebar",
               sizes[i].width, sizes[i].layout, gtk_widget_get_width(GTK_WIDGET(label)),
               gtk_widget_get_width(GTK_WIDGET(sidebar)));
+    if (i == 0) {
+      g_assert_true(gtk_widget_activate_action(GTK_WIDGET(window), "account.open", NULL));
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      GtkMenuButton *primary = find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(sidebar)));
+      GtkPopover *switcher = NULL;
+      for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(primary)); child;
+           child = gtk_widget_get_next_sibling(child))
+        if (GTK_IS_POPOVER(child) && !GTK_IS_POPOVER_MENU(child))
+          switcher = GTK_POPOVER(child);
+      g_assert_nonnull(switcher);
+      g_assert_true(gtk_widget_get_visible(GTK_WIDGET(switcher)));
+      g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
+      gtk_popover_popdown(switcher);
+    }
     gtk_window_destroy(GTK_WINDOW(window));
   }
   g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", "appmenu:close", NULL);
@@ -389,6 +385,64 @@ test_header_title_fits(void)
   g_object_unref(controller);
   spin_until(is_null, &weak);
 }
+
+#if GROUNDHOG_HAVE_INBOX
+static gchar *
+npub_for_byte(guint8 value)
+{
+  guint8 pubkey[32];
+  memset(pubkey, value, sizeof pubkey);
+  char *encoded = NULL;
+  g_assert_cmpint(nostr_nip19_encode_npub(pubkey, &encoded), ==, 0);
+  gchar *npub = g_strdup(encoded);
+  free(encoded);
+  return npub;
+}
+
+static GPtrArray *
+one_identity(gpointer data, GError **error)
+{
+  (void)error;
+  GPtrArray *ids = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(data);
+  g_ptr_array_add(ids, info);
+  return ids;
+}
+
+static void
+test_all_own_pictures_without_consent(void)
+{
+  g_autofree gchar *local = npub_for_byte(1);
+  g_autofree gchar *remote = npub_for_byte(2);
+  g_autofree gchar *local_key = gh_identity_pubkey_hex(local);
+  g_autofree gchar *remote_key = gh_identity_pubkey_hex(remote);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "current-npub", local);
+  g_settings_set_string(settings, "current-backend", "grotto");
+  GhAccountController *controller = gh_account_controller_new_full_with_remote_list(
+    settings, NULL, one_identity, local, one_identity, remote);
+  spin_until(is_active_account, controller);
+  GPtrArray *identities = gh_account_controller_get_identities(controller);
+  g_assert_cmpuint(identities->len, ==, 2);
+  g_autoptr(GhConversationStore) conversations = gh_conversation_store_new();
+  gh_conversation_store_set_account(conversations, local_key, NULL, NULL, NULL);
+  for (guint enabled = 0; enabled < 2; enabled++) {
+    g_settings_set_boolean(settings, "load-profile-pictures", enabled);
+    GhWindow *window = gh_window_new(NULL);
+    gh_account_ui_attach(window, controller, settings);
+    gh_conversation_list_attach(window, conversations, settings);
+    /* The app binds the directory after attaching the conversation list. */
+    gh_account_ui_set_name_source(window, NULL, NULL);
+    GhPictureCache *cache = gh_conversation_list_get_picture_cache(window);
+    g_assert_nonnull(cache);
+    g_assert_cmpint(gh_picture_cache_is_allowed(cache, local_key), ==, enabled);
+    g_assert_cmpint(gh_picture_cache_is_allowed(cache, remote_key), ==, enabled);
+    gtk_window_destroy(GTK_WINDOW(window));
+  }
+  g_object_unref(controller);
+}
+#endif
 
 int
 main(int argc, char **argv)
@@ -413,5 +467,9 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-ui/focus-and-announce-only-on-transition",
                   test_focus_and_announce_only_on_transition);
   g_test_add_func("/groundhog/account-ui/header-title-fits", test_header_title_fits);
+#if GROUNDHOG_HAVE_INBOX
+  g_test_add_func("/groundhog/account-ui/all-own-pictures-without-consent",
+                  test_all_own_pictures_without_consent);
+#endif
   return g_test_run();
 }

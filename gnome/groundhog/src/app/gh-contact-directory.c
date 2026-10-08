@@ -365,7 +365,13 @@ contact_offer(GhContactDirectory *self, Contact *contact, NostrEvent *event, con
     name = display ? g_steal_pointer(&display) : clean_text(raw_name, MAX_NAME_CHARS);
     nip05 = clean_nip05(raw_nip05);
   }
-  if (fetch && (g_strcmp0(name, contact->name) != 0 || g_strcmp0(nip05, contact->nip05) != 0))
+  g_autofree gchar *old_content = contact->profile_json
+    ? json_string(contact->profile_json, "content") : NULL;
+  g_autofree gchar *old_picture = old_content ? json_string(old_content, "picture") : NULL;
+  g_autofree gchar *new_picture = content ? json_string(content, "picture") : NULL;
+  if (fetch && (g_strcmp0(name, contact->name) != 0 ||
+                g_strcmp0(nip05, contact->nip05) != 0 ||
+                g_strcmp0(new_picture, old_picture) != 0))
     g_hash_table_add(fetch->profile_changed, g_strdup(contact->pubkey));
   g_free(contact->profile_id);
   g_free(contact->profile_json);
@@ -1057,8 +1063,12 @@ sync_account(GhContactDirectory *self)
     account = npub ? gh_identity_pubkey_hex(npub) : NULL;
     generation = account ? gh_account_controller_get_generation(self->accounts) : 0;
   }
-  if (generation == self->generation)
+  if (generation == self->generation) {
+    /* A signer refresh can add or remove an own identity without switching
+     * the active account. Keep its profile eligibility in sync too. */
+    rescan(self, FALSE, FALSE);
     return;
+  }
   /* Nothing of the old generation survives into the next one. */
   stop_schedule(self);
   abort_fetches(self);
@@ -1086,6 +1096,30 @@ on_model_changed(GListModel *model, guint position, guint removed, guint added, 
   (void)removed;
   (void)added;
   rescan(data, FALSE, FALSE);
+}
+
+static void
+accept_own_profile(GhContactDirectory *self, GHashTable *before,
+                   const gchar *pubkey, gboolean initial)
+{
+  if (!hex64(pubkey))
+    return;
+  Contact *own = contact_ensure(self, pubkey);
+  gboolean was_accepted = g_hash_table_contains(before, own->pubkey);
+  own->accepted = TRUE;
+  /* Own identities are not contact-acceptance transitions. A new identity
+   * joins the near-term own-profile lookup, not a contact lookup. */
+  g_hash_table_add(before, own->pubkey);
+  if (self->store && !initial && !was_accepted && !own->profile_json)
+    schedule_soon(self, own);
+}
+
+static void
+schedule_uncached_own_profile(GhContactDirectory *self, const gchar *pubkey)
+{
+  Contact *own = pubkey ? g_hash_table_lookup(self->contacts, pubkey) : NULL;
+  if (own && own->accepted && !own->profile_json)
+    schedule_soon(self, own);
 }
 
 /* The accepted set: peers of the account's NIP-17 rooms that are not
@@ -1137,16 +1171,18 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
         if (hex64(peers[p]))
           contact_ensure(self, peers[p])->accepted = TRUE;
     }
-    /* The account itself: its kind 0 names the sidebar (owner report: the
-     * npub there). Looked up like a contact's, on the same schedule and
-     * from the discovery relays; the account is no secret to relays it
-     * already reads its messages from. */
-    if (self->own_profile && self->account && hex64(self->account)) {
-      Contact *me = contact_ensure(self, self->account);
-      me->accepted = TRUE;
-      /* Never an "accepted" transition (no one-off lookup): the scheduled
-       * run picks it up with the other stale entries. */
-      g_hash_table_add(before, me->pubkey);
+  }
+  /* Every listed signer identity is the owner's own profile, including
+   * inactive Grotto and NIP-46 accounts. Their kind 0 supplies the switcher
+   * names and picture URLs. Use the same discovery-relay path as the active
+   * account, never a direct image fetch from metadata here. */
+  if (self->own_profile && self->accounts) {
+    accept_own_profile(self, before, self->account, initial);
+    GPtrArray *identities = gh_account_controller_get_identities(self->accounts);
+    for (guint i = 0; identities && i < identities->len; i++) {
+      const GhIdentityInfo *info = g_ptr_array_index(identities, i);
+      g_autofree gchar *pubkey = gh_identity_pubkey_hex(info->npub);
+      accept_own_profile(self, before, pubkey, initial);
     }
   }
   g_autoptr(GPtrArray) shown = g_ptr_array_new_with_free_func(g_free);
@@ -1157,7 +1193,7 @@ rescan(GhContactDirectory *self, gboolean initial, gboolean accept_transition)
     gboolean was = g_hash_table_contains(before, contact->pubkey);
     if (was == contact->accepted)
       continue;
-    if (contact->name || contact->nip05)
+    if (contact->name || contact->nip05 || contact->profile_json)
       g_ptr_array_add(shown, g_strdup(contact->pubkey));
     if (!contact->accepted || initial)
       continue;
@@ -1189,7 +1225,7 @@ gh_contact_directory_set_conversations(GhContactDirectory *self,
   rescan(self, FALSE, FALSE);
 }
 
-/* Accepted contacts whose name or NIP-05 is shown, into shown. */
+/* Accepted contacts with cached profile data that the UI may show. */
 static void
 collect_shown(GhContactDirectory *self, GHashTable *shown)
 {
@@ -1198,7 +1234,7 @@ collect_shown(GhContactDirectory *self, GHashTable *shown)
   g_hash_table_iter_init(&iter, self->contacts);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Contact *contact = value;
-    if (contact->accepted && (contact->name || contact->nip05))
+    if (contact->accepted && (contact->name || contact->nip05 || contact->profile_json))
       g_hash_table_add(shown, g_strdup(contact->pubkey));
   }
 }
@@ -1227,14 +1263,16 @@ gh_contact_directory_set_store(GhContactDirectory *self, GhStore *store, GError 
     restore(self);
     /* S1: nothing is refreshed right away. */
     schedule_run_within(self, RUN_MIN_S, RUN_MAX_S);
-    /* The account's own name titles the sidebar (W33: it still showed the
-     * npub, waiting 2-30 min for the first run): looked up on its own soon
-     * after the store opens, when not cached yet. */
-    if (self->own_profile && self->account && hex64(self->account)) {
-      Contact *me = contact_ensure(self, self->account);
-      me->accepted = TRUE;
-      if (!me->name)
-        schedule_soon(self, me);
+    /* Own profiles serve the sidebar and every account-switcher row. Fetch
+     * uncached kind 0 soon, including inactive local and remote identities. */
+    if (self->own_profile && self->accounts) {
+      schedule_uncached_own_profile(self, self->account);
+      GPtrArray *identities = gh_account_controller_get_identities(self->accounts);
+      for (guint i = 0; identities && i < identities->len; i++) {
+        const GhIdentityInfo *info = g_ptr_array_index(identities, i);
+        g_autofree gchar *pubkey = gh_identity_pubkey_hex(info->npub);
+        schedule_uncached_own_profile(self, pubkey);
+      }
     }
     collect_shown(self, shown);
   }

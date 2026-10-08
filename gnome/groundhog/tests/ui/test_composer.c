@@ -1823,8 +1823,8 @@ test_focus_guard(void)
     g_assert_cmpuint(made, ==, step);
 
   /* Back, and typing in the composer when the account goes: the composer
-   * went with the conversation, so focus moves to the page's action (the
-   * account menu) once the window is active. */
+   * went with the conversation, so focus moves to the page's Choose Account
+   * button once the window is active. */
   gtk_window_set_focus(GTK_WINDOW(window), NULL);
   g_settings_set_string(f.s.settings, "current-npub", stack_npub[1]);
   RoomWait back = { f.s.model, room };
@@ -1837,8 +1837,8 @@ test_focus_guard(void)
   GtkWidget *focus = focus_of(window);
   if (gtk_window_is_active(GTK_WINDOW(window))) {
     g_assert_nonnull(focus);
-    g_assert_true(GTK_IS_MENU_BUTTON(focus) ||
-                  gtk_widget_get_ancestor(focus, GTK_TYPE_MENU_BUTTON) != NULL);
+    g_assert_true(GTK_IS_BUTTON(focus));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(focus)), ==, "_Choose Account…");
   } else {
     g_assert_false(text_view_focused(composer));
   }

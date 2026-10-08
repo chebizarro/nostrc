@@ -18,10 +18,11 @@ G_BEGIN_DECLS
  *
  * Contacts. A contact is accepted when it is a peer of a NIP-17 conversation
  * of the account that is not a message request (the conversation model set
- * with gh_contact_directory_set_conversations()). Only accepted contacts are
- * ever refreshed, and only their kind 0 is ever asked for (PT-8): a request's
- * sender is looked up for nothing until it is accepted, and then only its
- * name. Replying to a request is sending, which accepts it.
+ * with gh_contact_directory_set_conversations()). With own_profile enabled,
+ * every listed signer identity is also accepted as the owner's own profile.
+ * Only accepted contacts are ever refreshed, and only their kind 0 is ever
+ * asked for (PT-8): a request's sender is looked up for nothing until it is
+ * accepted. Replying to a request is sending, which accepts it.
  *
  * Cache. With the account's encrypted store bound
  * (gh_contact_directory_set_store()), the newest admitted signed event per
@@ -75,10 +76,9 @@ typedef struct {
   const GhRelayTransport *transport;          /* NULL: gnostr relays (with NIP-42) */
   const GhRelayAuthTransport *auth_transport; /* custom transport only; NULL: no AUTH */
   gpointer transport_data;
-  /* The account's own kind 0 too (its name titles the sidebar): the
-   * account is treated as an accepted contact for the scheduled refresh,
-   * and looked up on its own 5-60 s after the store opens while its name
-   * is not cached. Default off. */
+  /* The listed signer identities' kind 0 too (names and picture URLs for
+   * the sidebar/account switcher): treated as accepted own profiles and
+   * looked up within 5-60 s of store open when uncached. Default off. */
   gboolean own_profile;
 } GhContactDirectoryConfig;
 
@@ -117,9 +117,9 @@ gchar *gh_contact_directory_dup_picture_uri(GhContactDirectory *self, const gcha
 gchar *gh_contact_directory_dup_conversation_title(GhContactDirectory *self,
                                                    GhConversation *conversation);
 
-/* "profile-changed" (gchar *pubkey): a contact's display name or NIP-05, or
- * whether it may be shown, changed (a fetch, an accept, or a store bound or
- * unbound, which restores or drops the cache). */
+/* "profile-changed" (gchar *pubkey): a contact's display name, NIP-05 or
+ * picture URL, or whether it may be shown, changed (a fetch, an accept, or a
+ * store bound or unbound, which restores or drops the cache). */
 
 G_END_DECLS
 #endif

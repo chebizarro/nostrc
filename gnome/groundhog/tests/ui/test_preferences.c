@@ -863,6 +863,16 @@ test_account_rows(Fixture *f, gconstpointer data)
   g_assert_false(adw_preferences_row_get_use_markup(ADW_PREFERENCES_ROW(account)));
   g_assert_cmpstr(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(account)), ==, "Alice <b>");
   g_assert_cmpstr(adw_action_row_get_subtitle(account), ==, NPUB);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->dialog), "prefs.copy-npub", NULL));
+  GdkContentProvider *content = gdk_clipboard_get_content(
+    gtk_widget_get_clipboard(GTK_WIDGET(f->dialog)));
+  g_assert_nonnull(content);
+  GValue copied = G_VALUE_INIT;
+  g_value_init(&copied, G_TYPE_STRING);
+  g_autoptr(GError) copy_error = NULL;
+  g_assert_true(gdk_content_provider_get_value(content, &copied, &copy_error));
+  g_assert_cmpstr(g_value_get_string(&copied), ==, NPUB);
+  g_value_unset(&copied);
   AdwAvatar *avatar = child(f, "account_avatar");
   const guint8 pixel[] = { 0, 0, 0 };
   g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof pixel);
