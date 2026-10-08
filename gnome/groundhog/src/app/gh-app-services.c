@@ -1231,7 +1231,13 @@ preferences_unblock(gpointer data, const gchar *room_id, GError **error)
 static void
 sync_preferences_account(GhAccountController *accounts, gpointer dialog)
 {
+#if GROUNDHOG_HAVE_INBOX
+  GhAppServices *self = g_object_get_data(G_OBJECT(dialog), "gh-app-services");
+#endif
   const gchar *npub = gh_account_controller_get_active_npub(accounts);
+#if GROUNDHOG_HAVE_INBOX
+  g_autofree gchar *pubkey = npub ? gh_identity_pubkey_hex(npub) : NULL;
+#endif
   GPtrArray *identities = gh_account_controller_get_identities(accounts);
   const gchar *label = NULL;
   for (guint i = 0; npub && identities && i < identities->len; i++) {
@@ -1239,8 +1245,47 @@ sync_preferences_account(GhAccountController *accounts, gpointer dialog)
     if (g_strcmp0(info->npub, npub) == 0)
       label = info->label;
   }
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  const gchar *name = pubkey ? gh_display_name_lookup(pubkey) : NULL;
+  if (name && *name)
+    label = name;
+#endif
   gh_preferences_dialog_set_account(GH_PREFERENCES_DIALOG(dialog), npub, label);
+#if GROUNDHOG_HAVE_INBOX
+  GtkWindow *window = self ? gtk_application_get_active_window(self->app) : NULL;
+  if (pubkey && GH_IS_WINDOW(window) &&
+      g_settings_get_boolean(self->settings, "load-profile-pictures")) {
+    GhPictureCache *cache = gh_conversation_list_get_picture_cache(GH_WINDOW(window));
+    if (cache && !gh_picture_cache_is_allowed(cache, pubkey))
+      gh_picture_cache_allow(cache, pubkey);
+  }
+  GdkTexture *picture = pubkey && GH_IS_WINDOW(window)
+    ? gh_conversation_list_get_picture(GH_WINDOW(window), pubkey) : NULL;
+  gh_preferences_dialog_set_account_picture(GH_PREFERENCES_DIALOG(dialog),
+                                            picture ? GDK_PAINTABLE(picture) : NULL);
+#endif
 }
+
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+static void
+on_preferences_profile_changed(GhContactDirectory *directory, const gchar *pubkey,
+                               gpointer dialog)
+{
+  (void)directory;
+  g_autofree gchar *own = gh_identity_pubkey_hex(
+    gh_account_controller_get_active_npub(g_object_get_data(G_OBJECT(dialog), "gh-accounts")));
+  if (g_strcmp0(pubkey, own) == 0)
+    sync_preferences_account(g_object_get_data(G_OBJECT(dialog), "gh-accounts"), dialog);
+}
+
+static void
+on_preferences_picture_changed(GhPictureCache *cache, const gchar *pubkey,
+                               gpointer dialog)
+{
+  (void)cache;
+  on_preferences_profile_changed(NULL, pubkey, dialog);
+}
+#endif
 
 #if GROUNDHOG_HAVE_GROUP_UI && GROUNDHOG_HAVE_MLS_UI
 static GhMlsService *mls_ui_service(gpointer data);
@@ -1370,7 +1415,7 @@ on_relay_edit_changed(GhRelayListSetup *setup, gpointer dialog)
 /* Build a modified 10050 event: current relays ± url. */
 static gchar *
 build_modified_inbox(GhAccountRelays *relays, GhAccountController *accounts,
-                     const gchar *url, gboolean add)
+                     const gchar *url, gboolean add, gint64 created_at)
 {
   const gchar *const *current = gh_account_relays_get_inbox_relays(relays);
   g_autoptr(GPtrArray) urls = g_ptr_array_new();
@@ -1385,13 +1430,13 @@ build_modified_inbox(GhAccountRelays *relays, GhAccountController *accounts,
   g_autofree gchar *pubkey = gh_identity_pubkey_hex(
     gh_account_controller_get_active_npub(accounts));
   return pubkey ? gh_inbox_setup_build_unsigned(pubkey,
-    (const gchar *const *)urls->pdata, g_get_real_time() / G_USEC_PER_SEC) : NULL;
+    (const gchar *const *)urls->pdata, created_at) : NULL;
 }
 
 /* Build a modified 10002 event: current relays ± url (as write). */
 static gchar *
 build_modified_relay_list(GhAccountRelays *relays, GhAccountController *accounts,
-                          const gchar *url, gboolean add)
+                          const gchar *url, gboolean add, gint64 created_at)
 {
   const gchar *const *current = gh_account_relays_get_write_relays(relays);
   g_autoptr(GPtrArray) urls = g_ptr_array_new();
@@ -1405,28 +1450,39 @@ build_modified_relay_list(GhAccountRelays *relays, GhAccountController *accounts
   g_ptr_array_add(urls, NULL);
   g_autofree gchar *pubkey = gh_identity_pubkey_hex(
     gh_account_controller_get_active_npub(accounts));
-  return pubkey ? gh_inbox_setup_build_relay_list_unsigned(pubkey,
-    (const gchar *const *)urls->pdata, g_get_real_time() / G_USEC_PER_SEC) : NULL;
+  return pubkey ? gh_inbox_setup_build_relay_list_edit_unsigned(
+    gh_account_relays_get_relay_list_json(relays), pubkey,
+    (const gchar *const *)urls->pdata, created_at) : NULL;
 }
 
-/* Collect the publish targets: the account's own write relays and the
- * discovery relays from settings (where the lists are found). */
+/* Publish to the updated list and the discovery relays where it is found.
+ * A relay removed from this role must not block its own removal if offline. */
 static GStrv
-relay_edit_targets(GhAppServices *self)
+relay_edit_targets(GhAppServices *self, gint kind, const gchar *url, gboolean add)
 {
   g_autoptr(GPtrArray) targets = g_ptr_array_new_with_free_func(g_free);
   if (self->relays) {
     const gchar *const *write = gh_account_relays_get_write_relays(self->relays);
     for (guint i = 0; write && write[i]; i++)
-      g_ptr_array_add(targets, g_strdup(write[i]));
+      if (add || kind != 10002 || !g_str_equal(write[i], url))
+        g_ptr_array_add(targets, g_strdup(write[i]));
     const gchar *const *inbox = gh_account_relays_get_inbox_relays(self->relays);
     for (guint i = 0; inbox && inbox[i]; i++) {
+      if (!add && kind == 10050 && g_str_equal(inbox[i], url))
+        continue;
       gboolean dup = FALSE;
       for (guint j = 0; !dup && j < targets->len; j++)
         dup = g_str_equal(g_ptr_array_index(targets, j), inbox[i]);
       if (!dup)
         g_ptr_array_add(targets, g_strdup(inbox[i]));
     }
+  }
+  if (add) {
+    gboolean dup = FALSE;
+    for (guint j = 0; !dup && j < targets->len; j++)
+      dup = g_str_equal(g_ptr_array_index(targets, j), url);
+    if (!dup)
+      g_ptr_array_add(targets, g_strdup(url));
   }
   if (self->settings) {
     g_auto(GStrv) discovery = g_settings_get_strv(self->settings, "discovery-relays");
@@ -1467,30 +1523,27 @@ on_edit_relay(GhPreferencesDialog *dialog, gint kind, const gchar *url, gboolean
 {
   if (!self->relays || !self->accounts)
     return;
-  g_autofree gchar *unsigned_json = NULL;
-  const gchar *base_json = NULL;
-  if (kind == 10050) {
-    unsigned_json = build_modified_inbox(self->relays, self->accounts, url, add);
-  } else if (kind == 10002) {
-    unsigned_json = build_modified_relay_list(self->relays, self->accounts, url, add);
-    base_json = gh_account_relays_get_relay_list_json(self->relays);
-  } else
-    return;
-  if (!unsigned_json) {
-    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
-      adw_toast_new(_("Could not build the relay list")));
-    return;
-  }
   g_autofree gchar *base_id = NULL;
   gint64 base_created_at = 0;
   if (kind == 10050) {
     const gchar *inbox_id = gh_account_relays_get_inbox_event_id(self->relays);
     base_id = inbox_id ? g_strdup(inbox_id) : NULL;
     base_created_at = gh_account_relays_get_inbox_created_at(self->relays);
-  } else {
-    base_event_info(base_json, &base_id, &base_created_at);
+  } else if (kind == 10002) {
+    base_event_info(gh_account_relays_get_relay_list_json(self->relays),
+                    &base_id, &base_created_at);
+  } else
+    return;
+  gint64 created_at = MAX(g_get_real_time() / G_USEC_PER_SEC, base_created_at + 1);
+  g_autofree gchar *unsigned_json = kind == 10050
+    ? build_modified_inbox(self->relays, self->accounts, url, add, created_at)
+    : build_modified_relay_list(self->relays, self->accounts, url, add, created_at);
+  if (!unsigned_json) {
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(dialog),
+      adw_toast_new(_("Could not build the relay list")));
+    return;
   }
-  g_auto(GStrv) targets = relay_edit_targets(self);
+  g_auto(GStrv) targets = relay_edit_targets(self, kind, url, add);
   GhInboxSetupConfig config = {
     .accounts = self->accounts,
     .account_relays = self->relays,
@@ -1552,13 +1605,11 @@ key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
   }
   /* nostrc-mi1z: "Change Relays…" closes the dialog and opens the relay
    * setup step, the same as the key-package [Set Up] button. */
-  g_signal_connect_object(dialog, "change-relays",
-                          G_CALLBACK(on_change_relays), self, G_CONNECT_SWAPPED);
+  g_signal_connect_swapped(dialog, "change-relays",
+                           G_CALLBACK(on_change_relays), self);
   /* nostrc-mi1z phase 2: inline add/remove relays in Preferences. */
-  g_signal_connect_object(dialog, "add-relay",
-                          G_CALLBACK(on_add_relay), self, 0);
-  g_signal_connect_object(dialog, "remove-relay",
-                          G_CALLBACK(on_remove_relay), self, 0);
+  g_signal_connect(dialog, "add-relay", G_CALLBACK(on_add_relay), self);
+  g_signal_connect(dialog, "remove-relay", G_CALLBACK(on_remove_relay), self);
 }
 #endif
 
@@ -1581,9 +1632,21 @@ present_preferences(GhAppServices *self, const gchar *page)
   GhPreferencesDialog *dialog = gh_preferences_dialog_new(self->settings,
                                                           gh_features_for_preferences());
   g_set_weak_pointer(&self->preferences_dialog, dialog);
+  g_object_set_data(G_OBJECT(dialog), "gh-app-services", self);
+  g_object_set_data(G_OBJECT(dialog), "gh-accounts", self->accounts);
   sync_preferences_account(self->accounts, dialog);
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_preferences_account),
                           dialog, 0);
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  GhContactDirectory *directory = gh_app_outbox_get_directory(self->outbox);
+  if (directory)
+    g_signal_connect_object(directory, "profile-changed",
+                            G_CALLBACK(on_preferences_profile_changed), dialog, 0);
+  GhPictureCache *pictures = gh_conversation_list_get_picture_cache(GH_WINDOW(window));
+  if (pictures)
+    g_signal_connect_object(pictures, "picture-changed",
+                            G_CALLBACK(on_preferences_picture_changed), dialog, 0);
+#endif
 #if GROUNDHOG_HAVE_TOR
   sync_preferences_tor(self->network, NULL, dialog);
   g_signal_connect_object(self->network, "notify::tor-state", G_CALLBACK(sync_preferences_tor),

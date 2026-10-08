@@ -2,6 +2,7 @@
 #define GH_CONVERSATION_LIST_H
 
 #include "gh-conversation-store.h"
+#include "gh-picture-cache.h"
 #include "gh-requests-view.h"
 #include "gh-window.h"
 
@@ -52,6 +53,8 @@ void gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer ba
                                               gpointer data);
 /* The loaded, consented profile picture of pubkey, or NULL (borrowed). */
 GdkTexture *gh_conversation_list_get_picture(GhWindow *window, const gchar *pubkey);
+/* Borrowed cache, for UI that needs to refresh when a picture finishes loading. */
+GhPictureCache *gh_conversation_list_get_picture_cache(GhWindow *window);
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);

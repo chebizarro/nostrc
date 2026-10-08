@@ -20,8 +20,8 @@ struct _GhNotifier;
  *  - People: each other person with the name Groundhog shows for them (the
  *    profile function's cached display name, else the short npub; nothing is
  *    fetched), their short npub, a NIP-05 address they claim, shown as not
- *    checked, and whether you marked their key verified. Copy npub; the row
- *    opens Verify Key.
+ *    checked, and whether you marked their key verified. Copy or show their
+ *    npub as QR; activating the row opens Verify Key.
  *  - Verify Key: their full npub in groups of four, the safety code
  *    (gh_privacy_safety_code() of both keys) and your own npub. "Mark as
  *    Verified" records the time in the encrypted store
@@ -46,6 +46,7 @@ struct _GhNotifier;
  *
  * Actions (widget actions of the dialog): info.verify (s: pubkey hex),
  * info.mark-verified, info.clear-verified, info.copy-key (s: text),
+ * info.show-key-qr (s: npub),
  * info.mute (s: seconds, or "always"), info.unmute, info.block and
  * info.forget (each presents its confirmation).
  */

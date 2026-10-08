@@ -574,6 +574,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="show-initials">true</property>
                   </object>
                 </child>
+                <child type="suffix">
+                  <object class="GtkButton">
+                    <property name="icon-name">qr-code-symbolic</property>
+                    <property name="valign">3</property>
+                    <property name="tooltip-text" translatable="yes">Show QR code</property>
+                    <property name="action-name">prefs.show-npub-qr</property>
+                    <style>
+                      <class name="flat"/>
+                    </style>
+                  </object>
+                </child>
               </object>
             </child>
             <child>

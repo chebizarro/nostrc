@@ -143,6 +143,8 @@ gboolean gh_preferences_dialog_get_key_available(GhPreferencesDialog *self, cons
  * name, or NULL to show a shortened npub. */
 void gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
                                        const gchar *label);
+void gh_preferences_dialog_set_account_picture(GhPreferencesDialog *self,
+                                             GdkPaintable *picture);
 /* The Tor status row, shown in Tor mode (with the TOR feature) unless the
  * status is UNKNOWN. */
 void gh_preferences_dialog_set_tor_status(GhPreferencesDialog *self,

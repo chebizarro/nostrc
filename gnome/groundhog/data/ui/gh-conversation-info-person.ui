@@ -37,6 +37,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
     <child type="suffix">
+      <object class="GtkButton" id="qr_button">
+        <property name="icon-name">qr-code-symbolic</property>
+        <property name="valign">3</property>
+        <property name="tooltip-text" translatable="yes">Show QR code</property>
+        <property name="action-name">info.show-key-qr</property>
+        <property name="action-target">''</property>
+        <style>
+          <class name="flat"/>
+        </style>
+      </object>
+    </child>
+    <child type="suffix">
       <object class="GtkImage">
         <property name="icon-name">go-next-symbolic</property>
         <property name="accessible-role">43</property>

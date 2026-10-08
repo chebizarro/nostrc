@@ -142,6 +142,7 @@ add_custom_command(
           ${GROUNDHOG_DATA}/icons/scalable/actions/open-menu-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/package-x-generic-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/preferences-system-privacy-symbolic.svg
+          ${GROUNDHOG_DATA}/icons/scalable/actions/qr-code-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/system-lock-screen-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/system-log-out-symbolic.svg
           ${GROUNDHOG_DATA}/icons/scalable/actions/text-x-generic-symbolic.svg
@@ -166,7 +167,7 @@ add_custom_command(
 # instantiates exactly the tree the application ships. GTK-only: the typed
 # conversation UI (groundhog-conversation-ui below) binds its models.
 add_library(groundhog-ui STATIC src/app/gh-shell.c src/app/gh-window.c src/ui/gh-status.c
-            ${GROUNDHOG_RESOURCE_C})
+            src/ui/gh-qr-code.c ${GROUNDHOG_RESOURCE_C})
 target_include_directories(groundhog-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                            ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_compile_definitions(groundhog-ui PUBLIC
@@ -175,7 +176,7 @@ target_compile_definitions(groundhog-ui PUBLIC
   GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14
   GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14)
 target_compile_options(groundhog-ui PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(groundhog-ui PUBLIC PkgConfig::GROUNDHOG_DEPS)
+target_link_libraries(groundhog-ui PUBLIC PkgConfig::GROUNDHOG_DEPS PkgConfig::GROUNDHOG_QRENCODE)
 
 add_executable(groundhog src/main.c)
 target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
@@ -3303,13 +3304,13 @@ endif()
 # in its own library so every GUI test links the same implementation.
 if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
     TARGET groundhog-nip46-credentials AND TARGET groundhog-net)
-    add_library(groundhog-nip46-pair-dialog STATIC src/ui/gh-nip46-pair-dialog.c)
+  add_library(groundhog-nip46-pair-dialog STATIC src/ui/gh-nip46-pair-dialog.c)
   target_include_directories(groundhog-nip46-pair-dialog PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-    target_link_libraries(groundhog-nip46-pair-dialog PUBLIC groundhog-ui
-      groundhog-nip46-auth-url
+  target_link_libraries(groundhog-nip46-pair-dialog PUBLIC groundhog-ui
+    groundhog-nip46-auth-url
     groundhog-account groundhog-nip46-session groundhog-nip46-credentials
-    groundhog-net PkgConfig::GROUNDHOG_QRENCODE)
+    groundhog-net)
   target_compile_options(groundhog-nip46-pair-dialog PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-nip46-pair-dialog)
   foreach(ui_target test-groundhog-account-ui test-groundhog-onboarding test-groundhog-composer

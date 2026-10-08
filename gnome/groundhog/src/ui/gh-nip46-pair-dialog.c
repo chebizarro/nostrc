@@ -3,9 +3,9 @@
 #include "gh-net-session.h"
 #include "nostr/nip19/nip19.h"
 #include "nostr/nip46/nip46_uri.h"
+#include "gh-qr-code.h"
 
 #include <glib/gi18n.h>
-#include <qrencode.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -178,29 +178,6 @@ qr_relays(GhNip46PairDialog *self, GError **error)
   return validate_relays(self, (const gchar *const *)nonempty->pdata, error);
 }
 
-static GdkTexture *
-qr_texture(const gchar *uri)
-{
-  QRcode *qr = QRcode_encodeString(uri, 0, QR_ECLEVEL_M, QR_MODE_8, 1);
-  if (!qr) return NULL;
-  const int border = 4, scale = 4;
-  const int size = (qr->width + border * 2) * scale;
-  guchar *pixels = g_malloc((gsize)size * size * 3);
-  memset(pixels, 255, (gsize)size * size * 3);
-  for (int y = 0; y < qr->width; y++)
-    for (int x = 0; x < qr->width; x++)
-      if (qr->data[y * qr->width + x] & 1)
-        for (int sy = 0; sy < scale; sy++)
-          for (int sx = 0; sx < scale; sx++) {
-            gsize offset = ((gsize)(y + border) * scale + sy) * size * 3 +
-                           ((gsize)(x + border) * scale + sx) * 3;
-            memset(pixels + offset, 0, 3);
-          }
-  QRcode_free(qr);
-  g_autoptr(GBytes) bytes = g_bytes_new_take(pixels, (gsize)size * size * 3);
-  return gdk_memory_texture_new(size, size, GDK_MEMORY_R8G8B8, bytes, size * 3);
-}
-
 static void
 on_auth_launch_failed(GhNip46AuthUrl *prompt, GError *error, gpointer data)
 {
@@ -228,7 +205,7 @@ on_ready(GhNip46Session *session, gpointer data)
   GhNip46PairDialog *self = data;
   if (self->closing || self->session != session || self->state != PAIR_WAITING ||
       !self->uri) return;
-  g_autoptr(GdkTexture) texture = qr_texture(self->uri);
+  g_autoptr(GdkTexture) texture = gh_qr_code_texture_new(self->uri);
   if (!texture) {
     stop_attempt(self);
     self->state = PAIR_EDITING;
