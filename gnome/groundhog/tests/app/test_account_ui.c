@@ -197,9 +197,11 @@ assert_account_widgets(GhWindow *window)
   GMenuModel *other = g_menu_model_get_item_link(menu, 1, G_MENU_LINK_SECTION);
   g_assert_nonnull(identities);
   g_assert_nonnull(other);
-  g_assert_cmpint(g_menu_model_get_n_items(other), ==, 2);
+  g_assert_cmpint(g_menu_model_get_n_items(other), ==, 4);
   assert_menu_item(other, 0, "No Account (Read-Only)", "account.select", "");
-  assert_menu_item(other, 1, "_Refresh Accounts", "account.refresh", NULL);
+  assert_menu_item(other, 1, "Add Remote Signer…", "account.add-remote", NULL);
+  assert_menu_item(other, 2, "Remove Remote Signer…", "account.remove-remote", NULL);
+  assert_menu_item(other, 3, "_Refresh Accounts", "account.refresh", NULL);
   g_object_unref(identities);
   g_object_unref(other);
 }

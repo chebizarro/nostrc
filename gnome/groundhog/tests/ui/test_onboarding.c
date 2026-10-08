@@ -519,7 +519,7 @@ test_first_run_publishes(Fixture *f, gconstpointer data)
                   "Grotto is running");
   act(f, "onboarding.test-signer");
   gh_test_spin_until(signer_answered, f);
-  g_assert_true(g_str_has_prefix(gtk_label_get_text(child(f, "signer_result")), "It works"));
+  g_assert_true(g_str_has_prefix(gtk_label_get_text(child(f, "signer_result")), "Permissions verified"));
   g_assert_cmpuint(f->mock.calls, ==, 3);
   act(f, "onboarding.signer-continue");
 

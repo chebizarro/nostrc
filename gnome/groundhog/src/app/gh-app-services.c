@@ -8,6 +8,7 @@
 #include "gh-account-controller.h"
 #include "gh-account-ui.h"
 #include "gh-nip46-credentials.h"
+#include "gh-nip46-auth-url.h"
 #endif
 #if GROUNDHOG_HAVE_RELAYS
 #include "gh-account-relays.h"
@@ -131,6 +132,9 @@ struct _GhAppServices {
 #if GROUNDHOG_HAVE_ACCOUNTS
   GhNip46CredentialStore *nip46_credentials;
   GhAccountController *accounts;
+  GhNip46AuthUrl *nip46_auth_url;
+  guint64 nip46_auth_generation;
+  gboolean nip46_auth_pending;
 #endif
 #if GROUNDHOG_HAVE_RELAYS
   GhAccountRelays *relays;
@@ -205,6 +209,38 @@ settings_teardown(GhAppServices *self)
   g_clear_object(&self->settings);
 }
 
+static void
+on_account_auth_changed(GhAccountController *accounts, GhAppServices *self)
+{
+  if (self->nip46_auth_url && self->nip46_auth_pending &&
+      self->nip46_auth_generation != gh_account_controller_get_generation(accounts)) {
+    gh_nip46_auth_url_clear(self->nip46_auth_url);
+    self->nip46_auth_pending = FALSE;
+  }
+}
+
+static gboolean
+on_account_auth_url(GhAccountController *accounts, const gchar *url,
+                    GhAppServices *self)
+{
+  if (!self->nip46_auth_url) return FALSE;
+  gboolean handled = gh_nip46_auth_url_handle(self->nip46_auth_url, url,
+    gh_account_controller_get_cancellable(accounts));
+  if (handled) {
+    self->nip46_auth_generation = gh_account_controller_get_generation(accounts);
+    self->nip46_auth_pending = TRUE;
+  }
+  return handled;
+}
+
+static void
+on_account_auth_launch_failed(GhNip46AuthUrl *prompt, GError *error,
+                              GhAppServices *self)
+{
+  (void)prompt; (void)self;
+  g_warning("Could not open signer authorization page: %s", error->message);
+}
+
 /* The active account, its signer and its generation. Without a session bus
  * the signer is reported unreachable, not faked. */
 static gboolean
@@ -215,6 +251,11 @@ accounts_init(GhAppServices *self, GError **error)
   self->accounts = gh_account_controller_new_with_credentials(self->settings,
     g_application_get_dbus_connection(G_APPLICATION(self->app)),
     self->nip46_credentials);
+  self->nip46_auth_url = gh_nip46_auth_url_new(self->app, NULL);
+  g_signal_connect(self->accounts, "auth-url", G_CALLBACK(on_account_auth_url), self);
+  g_signal_connect(self->accounts, "changed", G_CALLBACK(on_account_auth_changed), self);
+  g_signal_connect(self->nip46_auth_url, "launch-failed",
+                   G_CALLBACK(on_account_auth_launch_failed), self);
   return TRUE;
 }
 
@@ -223,6 +264,7 @@ static void
 accounts_teardown(GhAppServices *self)
 {
   dispose_object(&self->accounts);
+  dispose_object(&self->nip46_auth_url);
   dispose_object(&self->nip46_credentials);
 }
 #endif

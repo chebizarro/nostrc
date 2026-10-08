@@ -49,7 +49,7 @@ struct _GhAccountController {
   GCancellable *signer_cancel;
 };
 
-enum { SIGNAL_CHANGED, N_SIGNALS };
+enum { SIGNAL_CHANGED, SIGNAL_AUTH_URL, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhAccountController, gh_account_controller, G_TYPE_OBJECT)
@@ -136,6 +136,22 @@ remote_offline(GhNip46Session *session, GhAccountController *self)
     set_remote_state(self, GH_REMOTE_SIGNER_OFFLINE);
 }
 
+static gboolean
+remote_auth_url(GhNip46Session *session, const gchar *url, gpointer data)
+{
+  GhAccountController *self = data;
+  const guint64 *bound_generation = g_object_get_data(G_OBJECT(session),
+                                                       "gh-account-generation");
+  if (!self->settings || session != self->remote_session || !bound_generation ||
+      *bound_generation != self->generation ||
+      self->active_backend != GH_SIGNER_BACKEND_NIP46 ||
+      (self->generation_cancel && g_cancellable_is_cancelled(self->generation_cancel)))
+    return FALSE;
+  gboolean handled = FALSE;
+  g_signal_emit(self, signals[SIGNAL_AUTH_URL], 0, url, &handled);
+  return handled;
+}
+
 static void
 activate_remote_session(GhAccountController *self, GhNip46Session *session)
 {
@@ -151,6 +167,11 @@ activate_remote_session(GhAccountController *self, GhNip46Session *session)
     set_remote_state(self, GH_REMOTE_SIGNER_ERROR);
     return;
   }
+  guint64 *bound_generation = g_new(guint64, 1);
+  *bound_generation = self->generation;
+  g_object_set_data_full(G_OBJECT(session), "gh-account-generation",
+                         bound_generation, g_free);
+  gh_nip46_session_set_auth_url_handler(session, remote_auth_url, self);
   g_signal_connect_object(session, "ready", G_CALLBACK(remote_ready), self, 0);
   g_signal_connect_object(session, "offline", G_CALLBACK(remote_offline), self, 0);
   set_remote_state(self, GH_REMOTE_SIGNER_CONNECTING);
@@ -1172,6 +1193,9 @@ gh_account_controller_class_init(GhAccountControllerClass *klass)
   signals[SIGNAL_CHANGED] = g_signal_new("changed", G_TYPE_FROM_CLASS(klass),
                                          G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                          G_TYPE_NONE, 0);
+  signals[SIGNAL_AUTH_URL] = g_signal_new("auth-url", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, g_signal_accumulator_true_handled, NULL, NULL,
+    G_TYPE_BOOLEAN, 1, G_TYPE_STRING);
 }
 
 static void

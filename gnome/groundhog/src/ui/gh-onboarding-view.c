@@ -2,6 +2,7 @@
 #include "gh-relay-list-setup.h"
 #include "gh-identity.h"
 #include "gh-signer.h"
+#include "gh-nip46-pair-dialog.h"
 
 #include <glib/gi18n.h>
 #include <nostr-event.h>
@@ -471,25 +472,25 @@ signer_error_text(const GError *error)
   if (error->domain == GH_SIGNER_ERROR) {
     switch (error->code) {
     case GH_SIGNER_ERROR_DENIED:
-      return g_strdup(_("You declined the request in Grotto. That's fine: nothing was "
+      return g_strdup(_("You declined the request in your signer. That's fine: nothing was "
                         "sent, and Groundhog will ask again when it needs to."));
     case GH_SIGNER_ERROR_TIMED_OUT:
-      return g_strdup(_("Grotto didn't get an answer in time. Try again when you're "
+      return g_strdup(_("Your signer didn't answer in time. Try again when you're "
                         "ready to approve."));
     case GH_SIGNER_ERROR_UNAVAILABLE:
-      return g_strdup(_("Grotto isn't running, so it couldn't answer."));
+      return g_strdup(_("Your signer isn't available, so it couldn't answer."));
     case GH_SIGNER_ERROR_NO_APPROVER:
-      return g_strdup(_("Grotto has no way to ask you right now. Make sure it can show "
+      return g_strdup(_("Your signer has no way to ask you right now. Make sure it can show "
                         "its approval window."));
     case GH_SIGNER_ERROR_KEY_MISMATCH:
-      return g_strdup(_("Grotto answered with a different key than this account's."));
+      return g_strdup(_("Your signer answered with a different key than this account's."));
     case GH_SIGNER_ERROR_INVALID_RESULT:
-      return g_strdup(_("Grotto's answer didn't check out, so Groundhog ignored it."));
+      return g_strdup(_("Your signer's answer didn't check out, so Groundhog ignored it."));
     default:
       break;
     }
   }
-  return g_strdup_printf(_("Grotto couldn't finish: %s"), error->message);
+  return g_strdup_printf(_("Your signer couldn't finish: %s"), error->message);
 }
 
 /* ---- account ------------------------------------------------------------- */
@@ -514,11 +515,19 @@ update_identities(GhOnboardingView *self)
   for (guint i = 0; identities && i < identities->len; i++) {
     const GhIdentityInfo *info = g_ptr_array_index(identities, i);
     g_autofree gchar *npub = short_npub(info->npub);
-    const gchar *title = info->label && *info->label ? info->label : npub;
-    GhOnboardingItem *item = item_new(info->npub, title, FALSE);
-    gboolean is_active = g_strcmp0(info->npub, active) == 0;
-    g_autofree gchar *subtitle =
-      is_active ? g_strdup_printf(_("%s · Chosen"), npub) : g_strdup(npub);
+    const gchar *title = info->backend == GH_SIGNER_BACKEND_NIP46 ? npub :
+      (info->label && *info->label ? info->label : npub);
+    g_autofree gchar *key = info->backend == GH_SIGNER_BACKEND_NIP46 ?
+      g_strdup_printf("nip46:%s", info->npub) : g_strdup(info->npub);
+    GhOnboardingItem *item = item_new(key, title, FALSE);
+    gboolean is_active = info->backend ==
+      gh_account_controller_get_active_backend(accounts) &&
+      g_strcmp0(info->npub, active) == 0;
+    const gchar *backend = info->backend == GH_SIGNER_BACKEND_NIP46 ?
+      _("Remote signer") : _("Grotto");
+    g_autofree gchar *subtitle = is_active ?
+      g_strdup_printf(_("%s · %s · Chosen"), npub, backend) :
+      g_strdup_printf(_("%s · %s"), npub, backend);
     item_set_subtitle(item, subtitle);
     item_set_icon_name(item, is_active ? "object-select-symbolic" : NULL);
     g_ptr_array_add(items, item);
@@ -539,8 +548,10 @@ on_identity_activate(GhOnboardingView *self, GtkListBoxRow *row)
   g_autoptr(GError) error = NULL;
   if (!item)
     return;
-  /* Writes only org.nostr.Groundhog current-npub (UX-6). */
-  if (!gh_account_controller_select(self->config.accounts, item->key, &error))
+  gboolean remote = g_str_has_prefix(item->key, "nip46:");
+  if (!gh_account_controller_select_backend(self->config.accounts,
+        remote ? GH_SIGNER_BACKEND_NIP46 : GH_SIGNER_BACKEND_GROTTO,
+        remote ? item->key + strlen("nip46:") : item->key, &error))
     toast(self, error->message);
 }
 
@@ -550,6 +561,24 @@ static void
 update_signer_status(GhOnboardingView *self)
 {
   const gchar *title, *subtitle, *icon;
+  if (gh_account_controller_get_active_backend(self->config.accounts) ==
+      GH_SIGNER_BACKEND_NIP46) {
+    GhRemoteSignerState state = gh_account_controller_get_remote_state(self->config.accounts);
+    title = state == GH_REMOTE_SIGNER_READY ? _("Remote signer connected") :
+            state == GH_REMOTE_SIGNER_LOCKED ? _("Unlock your keyring") :
+            state == GH_REMOTE_SIGNER_OFFLINE ? _("Remote signer offline") :
+            state == GH_REMOTE_SIGNER_ERROR ? _("Remote signer needs attention") :
+            _("Connecting to your remote signer…");
+    subtitle = state == GH_REMOTE_SIGNER_READY ?
+      _("You can test its permissions below. Your phone may ask for approval.") :
+      _("Open your signer or check its pairing relays, then try again.");
+    icon = state == GH_REMOTE_SIGNER_READY ? "emblem-ok-symbolic" :
+                                                "dialog-warning-symbolic";
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self->signer_status), title);
+    adw_action_row_set_subtitle(self->signer_status, subtitle);
+    gtk_image_set_from_icon_name(self->signer_icon, icon);
+    return;
+  }
   switch (gh_account_controller_get_signer_availability(self->config.accounts)) {
   case GH_SIGNER_AVAILABILITY_RUNNING:
     title = _("Grotto is running");
@@ -642,7 +671,7 @@ on_test_decrypted(GObject *source, GAsyncResult *result, gpointer data)
   if (plaintext && !g_str_equal(plaintext, SIGNER_TEST_TEXT))
     g_set_error_literal(&error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT, "mismatch");
   signer_test_end(test, error,
-                  _("It works: Grotto signed, locked and unlocked a test message."));
+                  _("Permissions verified: your signer signed, encrypted and decrypted a test message."));
 }
 
 static void
@@ -1425,6 +1454,11 @@ nav_action(GtkWidget *widget, const char *name, GVariant *parameter)
     push(self, "account");
   } else if (g_str_equal(name, "onboarding.refresh")) {
     gh_account_controller_refresh(self->config.accounts);
+  } else if (g_str_equal(name, "onboarding.add-remote-signer")) {
+    GhNip46PairConfig config = { .accounts = self->config.accounts,
+                                 .settings = self->config.settings };
+    GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
+    adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
   } else if (g_str_equal(name, "onboarding.read-only")) {
     g_autoptr(GError) error = NULL;
     if (gh_account_controller_select(self->config.accounts, "", &error))
@@ -1755,7 +1789,8 @@ gh_onboarding_view_class_init(GhOnboardingViewClass *klass)
   gtk_widget_class_bind_template_child_full(widget_class, "inbox_footer", FALSE, 0);
 
   static const gchar *const navigation_actions[] = {
-    "onboarding.start", "onboarding.refresh", "onboarding.read-only",
+    "onboarding.start", "onboarding.refresh", "onboarding.add-remote-signer",
+    "onboarding.read-only",
     "onboarding.account-continue", "onboarding.signer-continue", "onboarding.inbox-continue",
     "onboarding.keep-current", "onboarding.retry", "onboarding.publish-continue",
     "onboarding.later", "onboarding.finish", "onboarding.start-conversation",

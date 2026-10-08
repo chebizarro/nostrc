@@ -205,6 +205,13 @@ template $GhOnboardingView: Adw.Bin {
                       }
                     }
 
+                    Button account_add_remote {
+                      label: _("Add Remote Signer…");
+                      halign: center;
+                      action-name: "onboarding.add-remote-signer";
+                      styles ["pill"]
+                    }
+
                     Label {
                       label: _("Choosing an account here doesn't change the account Gnostr uses.");
                       wrap: true;

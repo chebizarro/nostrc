@@ -15,6 +15,8 @@ if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GROUNDHOG_DEPS REQUIRED IMPORTED_TARGET gtk4>=4.14 libadwaita-1>=1.5)
+# The QR flow is the primary Amber pairing path; never ship a GUI without it.
+pkg_check_modules(GROUNDHOG_QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources)
 find_program(GLIB_COMPILE_SCHEMAS glib-compile-schemas)
 if (NOT GLIB_COMPILE_RESOURCES OR NOT GLIB_COMPILE_SCHEMAS)
@@ -36,6 +38,7 @@ set(GROUNDHOG_DATA ${CMAKE_CURRENT_SOURCE_DIR}/data)
 # groundhog-update-ui target regenerates them on request.
 set(GROUNDHOG_BLUEPRINTS
   gh-window gh-sidebar-page gh-content-page gh-onboarding-view gh-onboarding-row gh-account-ui
+  gh-nip46-pair-dialog
   gh-conversation-row gh-shortcuts-window
   gh-conversation-section gh-timeline-row
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
@@ -236,6 +239,14 @@ if (TARGET nostr AND TARGET nip19)
   target_compile_options(groundhog-account PRIVATE -Wall -Wextra -Werror)
   target_sources(groundhog PRIVATE src/app/gh-account-ui.c)
   target_link_libraries(groundhog PRIVATE groundhog-account)
+  # Approval links are needed by account sessions even without the optional
+  # pairing/network UI. Keep this GTK helper independent of that target.
+  add_library(groundhog-nip46-auth-url STATIC src/ui/gh-nip46-auth-url.c)
+  target_include_directories(groundhog-nip46-auth-url PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-nip46-auth-url PUBLIC groundhog-ui)
+  target_compile_options(groundhog-nip46-auth-url PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-nip46-auth-url)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
   # The outbound codec is part of the production executable, not a test-only
   # helper. The inbound unwrap/seen-set (gh-nip17-inbox.c) comes with the
@@ -3226,4 +3237,40 @@ if (TARGET test-groundhog-about AND TARGET groundhog-issue AND TARGET groundhog-
   add_dependencies(test-groundhog-about groundhog-test-schemas)
   set_tests_properties(groundhog-about groundhog-about-gui PROPERTIES TIMEOUT 120
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+endif()
+
+# WI-5: pairing UI is shared by onboarding and the account switcher. Keep it
+# in its own library so every GUI test links the same implementation.
+if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
+    TARGET groundhog-nip46-credentials AND TARGET groundhog-net)
+    add_library(groundhog-nip46-pair-dialog STATIC src/ui/gh-nip46-pair-dialog.c)
+  target_include_directories(groundhog-nip46-pair-dialog PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+    target_link_libraries(groundhog-nip46-pair-dialog PUBLIC groundhog-ui
+      groundhog-nip46-auth-url
+    groundhog-account groundhog-nip46-session groundhog-nip46-credentials
+    groundhog-net PkgConfig::GROUNDHOG_QRENCODE)
+  target_compile_options(groundhog-nip46-pair-dialog PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-nip46-pair-dialog)
+  foreach(ui_target test-groundhog-account-ui test-groundhog-onboarding test-groundhog-composer
+                    test-groundhog-e2e-dm test-groundhog-attachment-ui)
+    if (TARGET ${ui_target})
+      target_link_libraries(${ui_target} PRIVATE groundhog-nip46-pair-dialog)
+    endif()
+  endforeach()
+  if (TARGET groundhog-onboarding)
+    target_link_libraries(groundhog-onboarding PUBLIC groundhog-nip46-pair-dialog)
+  endif()
+  if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+    add_executable(test-groundhog-nip46-pair-dialog tests/ui/test_nip46_pair_dialog.c)
+    target_include_directories(test-groundhog-nip46-pair-dialog PRIVATE
+      ${CMAKE_SOURCE_DIR}/tests/common ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-nip46-pair-dialog PRIVATE
+      groundhog-nip46-pair-dialog groundhog-account)
+    target_compile_options(test-groundhog-nip46-pair-dialog PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-nip46-pair-dialog groundhog-test-schemas)
+    add_test(NAME groundhog-nip46-pair-dialog COMMAND test-groundhog-nip46-pair-dialog)
+    set_tests_properties(groundhog-nip46-pair-dialog PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
 endif()
