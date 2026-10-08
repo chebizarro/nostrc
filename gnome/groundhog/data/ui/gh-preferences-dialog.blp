@@ -556,6 +556,18 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
 
         [suffix]
         Button {
+          icon-name: "edit-copy-symbolic";
+          valign: center;
+          tooltip-text: _("Copy npub");
+          action-name: "prefs.copy-npub";
+
+          styles [
+            "flat",
+          ]
+        }
+
+        [suffix]
+        Button {
           icon-name: "qr-code-symbolic";
           valign: center;
           tooltip-text: _("Show QR code");

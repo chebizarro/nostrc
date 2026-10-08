@@ -131,8 +131,6 @@ assert_account_widgets(GhWindow *window)
   };
   GhSidebarPage *sidebar = gh_window_get_sidebar(window);
   GtkStack *stack = gh_sidebar_page_get_stack(sidebar);
-  GMenuModel *account_menu = NULL;
-
   for (guint i = 0; i < G_N_ELEMENTS(pages); i++) {
     GtkWidget *page = gtk_stack_get_child_by_name(stack, pages[i].name);
     g_assert_true(ADW_IS_STATUS_PAGE(page));
@@ -142,20 +140,12 @@ assert_account_widgets(GhWindow *window)
       g_assert_null(button);
       continue;
     }
-    if (GTK_IS_MENU_BUTTON(button)) {
-      /* "Choose an Account" opens the account menu itself. */
-      g_assert_cmpstr(gtk_menu_button_get_label(GTK_MENU_BUTTON(button)), ==,
-                      pages[i].action_label);
-      g_assert_true(gtk_menu_button_get_use_underline(GTK_MENU_BUTTON(button)));
-      g_assert_true(gtk_widget_has_css_class(button, "pill"));
-      account_menu = gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(button));
-      continue;
-    }
     g_assert_true(GTK_IS_BUTTON(button));
     g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, pages[i].action_label);
     g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(button)));
-    g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
-                    "account.refresh");
+    if (g_strcmp0(pages[i].name, "account-unselected") != 0)
+      g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(button)), ==,
+                      "account.refresh");
     g_assert_true(gtk_widget_has_css_class(button, "pill"));
   }
   /* Standalone onboarding is only for builds without account support. */
@@ -187,23 +177,8 @@ assert_account_widgets(GhWindow *window)
   g_assert_true(g_menu_model_get_item_attribute(account_section, 0, G_MENU_ATTRIBUTE_LABEL, "s",
                                                 &account_label));
   g_assert_cmpstr(account_label, ==, "_Account");
-  g_autoptr(GMenuModel) menu = g_menu_model_get_item_link(account_section, 0,
-                                                          G_MENU_LINK_SUBMENU);
-  g_assert_nonnull(menu);
-  /* The same menu as the "Choose an Account" page's button. */
-  g_assert_true(menu == account_menu);
-  g_assert_cmpint(g_menu_model_get_n_items(menu), ==, 2);
-  GMenuModel *identities = g_menu_model_get_item_link(menu, 0, G_MENU_LINK_SECTION);
-  GMenuModel *other = g_menu_model_get_item_link(menu, 1, G_MENU_LINK_SECTION);
-  g_assert_nonnull(identities);
-  g_assert_nonnull(other);
-  g_assert_cmpint(g_menu_model_get_n_items(other), ==, 4);
-  assert_menu_item(other, 0, "No Account (Read-Only)", "account.select", "");
-  assert_menu_item(other, 1, "Add Remote Signer…", "account.add-remote", NULL);
-  assert_menu_item(other, 2, "Remove Remote Signer…", "account.remove-remote", NULL);
-  assert_menu_item(other, 3, "_Refresh Accounts", "account.refresh", NULL);
-  g_object_unref(identities);
-  g_object_unref(other);
+  assert_menu_item(account_section, 0, "_Account", "account.open", NULL);
+  g_assert_null(g_menu_model_get_item_link(account_section, 0, G_MENU_LINK_SUBMENU));
 }
 
 static void
@@ -255,7 +230,7 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
 
   /* An identity appears but none is chosen: the focus target is named
-   * explicitly as the page's Choose Account menu (charter §7.14,
+   * explicitly as the page's Choose Account button (charter §7.14,
    * qp24.8.6). */
   g_mutex_lock(&store.lock);
   store.empty = FALSE;
@@ -265,7 +240,7 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpstr(gtk_stack_get_visible_child_name(stack), ==, "account-unselected");
   GtkWidget *unselected = gtk_stack_get_child_by_name(stack, "account-unselected");
   GtkWidget *account_button = adw_status_page_get_child(ADW_STATUS_PAGE(unselected));
-  g_assert_true(GTK_IS_MENU_BUTTON(account_button));
+  g_assert_true(GTK_IS_BUTTON(account_button));
   GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
   g_assert_nonnull(focus);
   g_assert_true(focus == GTK_WIDGET(account_button) ||
@@ -380,6 +355,21 @@ test_header_title_fits(void)
       g_error("the sidebar title is ellipsized at %d px (%s): %d px wide in a %d px sidebar",
               sizes[i].width, sizes[i].layout, gtk_widget_get_width(GTK_WIDGET(label)),
               gtk_widget_get_width(GTK_WIDGET(sidebar)));
+    if (i == 0) {
+      g_assert_true(gtk_widget_activate_action(GTK_WIDGET(window), "account.open", NULL));
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      GtkMenuButton *primary = find_menu_button(GTK_WIDGET(gh_sidebar_page_get_header(sidebar)));
+      GtkPopover *switcher = NULL;
+      for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(primary)); child;
+           child = gtk_widget_get_next_sibling(child))
+        if (GTK_IS_POPOVER(child) && !GTK_IS_POPOVER_MENU(child))
+          switcher = GTK_POPOVER(child);
+      g_assert_nonnull(switcher);
+      g_assert_true(gtk_widget_get_visible(GTK_WIDGET(switcher)));
+      g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
+      gtk_popover_popdown(switcher);
+    }
     gtk_window_destroy(GTK_WINDOW(window));
   }
   g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", "appmenu:close", NULL);

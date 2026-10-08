@@ -67,12 +67,11 @@ Adw.StatusPage account_unselected {
     "groundhog-shell-status",
   ]
 
-  // Focus target: the same menu as the main menu's Account entry.
-  child: MenuButton account_choose_button {
+  // Focus target: opens the same account switcher as the main menu.
+  child: Button account_choose_button {
     label: _("_Choose Account…");
     use-underline: true;
     halign: center;
-    menu-model: account_menu;
 
     styles [
       "pill",
@@ -102,38 +101,11 @@ Adw.StatusPage account_missing {
   };
 }
 
-// The first section of the sidebar's main menu (gh-account-ui.c): the
-// account switcher lives there rather than in its own header button, so the
-// sidebar header keeps room for its title down to the 280 px sidebar and the
-// 360 px window (nostrc-qp24.70).
+// The first section of the sidebar's main menu opens the account switcher
+// popover without adding another button to the narrow sidebar header.
 menu account_section {
-  submenu account_menu {
+  item {
     label: _("_Account");
-
-    // Filled from the signer's identity list by gh-account-ui.c.
-    section identities {}
-
-    section {
-      item {
-        label: _("No Account (Read-Only)");
-        action: "account.select";
-        target: "";
-      }
-
-      item {
-        label: _("Add Remote Signer…");
-        action: "account.add-remote";
-      }
-
-      item {
-        label: _("Remove Remote Signer…");
-        action: "account.remove-remote";
-      }
-
-      item {
-        label: _("_Refresh Accounts");
-        action: "account.refresh";
-      }
-    }
+    action: "account.open";
   }
 }

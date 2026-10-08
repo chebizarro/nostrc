@@ -1366,6 +1366,18 @@ delete_all_activated(GtkWidget *widget, const gchar *action, GVariant *parameter
 }
 
 static void
+copy_npub_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(widget);
+  if (!self->account_npub)
+    return;
+  gdk_clipboard_set_text(gtk_widget_get_clipboard(widget), self->account_npub);
+  adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(_("Copied")));
+}
+
+static void
 show_npub_qr_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
@@ -1672,6 +1684,8 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
                                   change_relays_activated);
   gtk_widget_class_install_action(widget_class, "prefs.show-npub-qr", NULL,
                                   show_npub_qr_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.copy-npub", NULL,
+                                  copy_npub_activated);
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-preferences-dialog.ui");
