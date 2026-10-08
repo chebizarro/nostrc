@@ -54,8 +54,8 @@
     <!-- Privacy / Web Content -->
     <key name="load-remote-images" type="b">
       <default>false</default>
-      <summary>Load images in messages</summary>
-      <description>Off by default: ask before each requested item. An explicit allow can remember consent only for the open conversation, until you leave it. Turning this off revokes that consent and cancels pending loads. Turning it on alone does not grant consent or fetch anything. Web hosts learn your IP address unless you use Tor. Attachments and NIP-05 lookups always need their own action.</description>
+      <summary>Load images and audio in messages</summary>
+      <description>Off by default. In accepted conversations, turning this on automatically downloads encrypted image and audio attachments when their cards appear, within the attachment size limit; turning it off cancels pending automatic downloads. Remote images in message text still ask for per-item consent. Media servers learn your IP address unless you use Tor. NIP-05 lookups need their own action.</description>
     </key>
     <key name="link-previews" type="b">
       <default>false</default>

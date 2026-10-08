@@ -41,6 +41,7 @@ typedef struct {
   GhConversationStore *model;
   GhAttachments *attachments;
   GSettings *settings;
+  GHashTable *auto_transfers; /* refs to automatic downloads still in flight */
   gboolean allow_onion;
   gboolean destroyed;         /* the window went: nothing more is shown */
   GCancellable *loading;      /* reading a chosen file */
@@ -63,6 +64,7 @@ typedef struct {
 
 static void close_offer(GhAttachmentUi *ui);
 static void on_state_source(GtkWidget *window);
+static void cancel_auto_downloads(GhAttachmentUi *ui, gboolean groups_only);
 
 static GhAttachmentUi *
 ui_of(GtkWidget *window)
@@ -114,6 +116,8 @@ ui_free(gpointer data)
 {
   GhAttachmentUi *ui = data;
   watch(ui, NULL);
+  cancel_auto_downloads(ui, FALSE);
+  g_clear_pointer(&ui->auto_transfers, g_hash_table_unref);
   if (ui->loading)
     g_cancellable_cancel(ui->loading);
   g_clear_object(&ui->loading);
@@ -992,6 +996,81 @@ card_download(GhAttachmentTransfer *transfer, gpointer data)
     ui->groups.download(transfer, ui->groups_data);
 }
 
+static void card_cancel(GhAttachmentTransfer *transfer, gpointer data);
+
+static void
+on_auto_transfer_state(GhAttachmentTransfer *transfer, GParamSpec *pspec, gpointer data)
+{
+  GhAttachmentUi *ui = data;
+  (void)pspec;
+  if (gh_attachment_transfer_get_state(transfer) == GH_ATTACHMENT_STATE_DOWNLOADING)
+    return;
+  g_signal_handlers_disconnect_by_func(transfer, G_CALLBACK(on_auto_transfer_state), ui);
+  g_hash_table_remove(ui->auto_transfers, transfer);
+}
+
+static void
+cancel_auto_downloads(GhAttachmentUi *ui, gboolean groups_only)
+{
+  if (!ui->auto_transfers)
+    return;
+  g_autoptr(GPtrArray) transfers = g_ptr_array_new_with_free_func(g_object_unref);
+  GHashTableIter iter;
+  gpointer key;
+  g_hash_table_iter_init(&iter, ui->auto_transfers);
+  while (g_hash_table_iter_next(&iter, &key, NULL)) {
+    GhAttachmentTransfer *transfer = key;
+    if (groups_only && !is_group_transfer(transfer))
+      continue;
+    g_signal_handlers_disconnect_by_func(transfer, G_CALLBACK(on_auto_transfer_state), ui);
+    g_ptr_array_add(transfers, g_object_ref(transfer));
+  }
+  for (guint i = 0; i < transfers->len; i++) {
+    GhAttachmentTransfer *transfer = g_ptr_array_index(transfers, i);
+    g_hash_table_remove(ui->auto_transfers, transfer);
+  }
+  for (guint i = 0; i < transfers->len; i++) {
+    GhAttachmentTransfer *transfer = g_ptr_array_index(transfers, i);
+    if (gh_attachment_transfer_get_state(transfer) == GH_ATTACHMENT_STATE_DOWNLOADING)
+      card_cancel(transfer, ui);
+  }
+}
+
+static void
+card_auto_download(GtkWidget *card, GhMessage *message, guint index,
+                   GhAttachmentTransfer *transfer, gpointer data)
+{
+  GhAttachmentUi *ui = data;
+  if (ui->destroyed || !ui->settings || !ui->auto_transfers ||
+      !g_settings_get_boolean(ui->settings, "load-remote-images") ||
+      gh_attachment_transfer_get_state(transfer) != GH_ATTACHMENT_STATE_IDLE)
+    return;
+  GtkWidget *scroller = gtk_widget_get_ancestor(card, GTK_TYPE_SCROLLED_WINDOW);
+  graphene_rect_t bounds;
+  if (!scroller || !gtk_widget_compute_bounds(card, scroller, &bounds))
+    return;
+  if (bounds.origin.x + bounds.size.width <= 0 ||
+      bounds.origin.y + bounds.size.height <= 0 ||
+      bounds.origin.x >= gtk_widget_get_width(scroller) ||
+      bounds.origin.y >= gtk_widget_get_height(scroller))
+    return;
+  GhConversation *active = gh_conversation_view_get_conversation(ui->view);
+  if (!active || gh_conversation_get_is_request(active) ||
+      g_strcmp0(gh_conversation_get_room_id(active), gh_message_get_room_id(message)) != 0 ||
+      card_lookup_at(message, index, ui) != transfer)
+    return;
+  const gchar *mime = gh_attachment_transfer_get_media_type(transfer);
+  if (!mime || !(g_ascii_strncasecmp(mime, "image/", 6) == 0 ||
+                 g_ascii_strncasecmp(mime, "audio/", 6) == 0))
+    return;
+  g_hash_table_add(ui->auto_transfers, g_object_ref(transfer));
+  g_signal_connect(transfer, "notify::state", G_CALLBACK(on_auto_transfer_state), ui);
+  card_download(transfer, ui);
+  if (gh_attachment_transfer_get_state(transfer) != GH_ATTACHMENT_STATE_DOWNLOADING &&
+      g_hash_table_contains(ui->auto_transfers, transfer))
+    on_auto_transfer_state(transfer, NULL, ui);
+}
+
 static void
 card_cancel(GhAttachmentTransfer *transfer, gpointer data)
 {
@@ -1148,9 +1227,59 @@ static const GhAttachmentCardProvider card_provider = {
   .save = card_save,
   .download_note = card_download_note,
   .lookup_at = card_lookup_at,
+  .auto_download = card_auto_download,
 };
 
 /* ---- state -------------------------------------------------------------------------- */
+
+static void
+maybe_auto_download_in(GtkWidget *widget)
+{
+  if (GH_IS_ATTACHMENT_CARD(widget))
+    gh_attachment_card_maybe_auto_download(GH_ATTACHMENT_CARD(widget));
+#ifdef GROUNDHOG_HAVE_VOICE
+  if (GH_IS_VOICE_BUBBLE(widget))
+    gh_voice_bubble_maybe_auto_download(GH_VOICE_BUBBLE(widget));
+#endif
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child))
+    maybe_auto_download_in(child);
+}
+
+static GtkScrolledWindow *
+find_scroller(GtkWidget *widget)
+{
+  if (GTK_IS_SCROLLED_WINDOW(widget))
+    return GTK_SCROLLED_WINDOW(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkScrolledWindow *found = find_scroller(child);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static void
+on_media_scroll(GtkWidget *window)
+{
+  GhAttachmentUi *ui = ui_of(window);
+  if (ui && ui->settings && g_settings_get_boolean(ui->settings, "load-remote-images"))
+    maybe_auto_download_in(GTK_WIDGET(ui->view));
+}
+
+static void
+on_media_preference_changed(GSettings *settings, gchar *key, GtkWidget *window)
+{
+  GhAttachmentUi *ui = ui_of(window);
+  (void)key;
+  if (!ui)
+    return;
+  if (g_settings_get_boolean(settings, "load-remote-images"))
+    maybe_auto_download_in(window);
+  else
+    cancel_auto_downloads(ui, FALSE);
+}
 
 static void
 on_state_source(GtkWidget *window)
@@ -1185,6 +1314,7 @@ on_window_destroy(GtkWidget *window)
   cancel_recorder(ui);
 #endif
   watch(ui, NULL);
+  cancel_auto_downloads(ui, FALSE);
   ui->destroyed = TRUE;
   gh_attachment_card_set_provider(window, NULL, NULL, NULL);
 #ifdef GROUNDHOG_HAVE_VOICE
@@ -1216,6 +1346,8 @@ gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config)
   ui->model = g_object_ref(config->conversations);
   ui->attachments = g_object_ref(config->attachments);
   ui->settings = config->settings ? g_object_ref(config->settings) : NULL;
+  ui->auto_transfers = g_hash_table_new_full(g_direct_hash, g_direct_equal, g_object_unref,
+                                              NULL);
   ui->allow_onion = config->allow_onion;
   g_object_set_data_full(G_OBJECT(window), ATTACHMENT_UI_DATA, ui, ui_free);
 
@@ -1227,11 +1359,22 @@ gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config)
                           0);
   g_signal_connect_object(ui->view, "notify::conversation", G_CALLBACK(on_state_source), window,
                           G_CONNECT_SWAPPED);
+  GtkScrolledWindow *scroller = find_scroller(GTK_WIDGET(ui->view));
+  if (scroller) {
+    GtkAdjustment *adjustment = gtk_scrolled_window_get_vadjustment(scroller);
+    g_signal_connect_object(adjustment, "value-changed", G_CALLBACK(on_media_scroll), window,
+                            G_CONNECT_SWAPPED);
+    g_signal_connect_object(adjustment, "notify::page-size", G_CALLBACK(on_media_scroll), window,
+                            G_CONNECT_SWAPPED);
+  }
   g_signal_connect_object(ui->store, "changed", G_CALLBACK(on_state_source), window,
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(ui->attachments, "reset", G_CALLBACK(on_attachments_reset), window,
                           G_CONNECT_SWAPPED);
   g_signal_connect(window, "destroy", G_CALLBACK(on_window_destroy), NULL);
+  if (ui->settings)
+    g_signal_connect_object(ui->settings, "changed::load-remote-images",
+                            G_CALLBACK(on_media_preference_changed), window, 0);
   gh_attachment_card_set_provider(GTK_WIDGET(window), &card_provider, ui, NULL);
 #ifdef GROUNDHOG_HAVE_VOICE
   /* Scrub named plaintext left by older builds or a create/unlink crash.
@@ -1250,6 +1393,7 @@ gh_attachment_ui_attach(GhWindow *window, const GhAttachmentUiConfig *config)
     .save = card_save,
     .download_note = card_download_note,
     .lookup_at = card_lookup_at,
+    .auto_download = card_auto_download,
   };
   gh_voice_bubble_set_provider(GTK_WIDGET(window), &voice_provider, ui, NULL);
   /* W27 voice recording (nostrc-cxh4): the mic button starts recording. */
@@ -1278,6 +1422,7 @@ gh_attachment_ui_set_groups(GhWindow *window, const GhAttachmentUiGroups *groups
       destroy(data);
     return;
   }
+  cancel_auto_downloads(ui, TRUE);
   if (ui->groups_destroy)
     ui->groups_destroy(ui->groups_data);
   memset(&ui->groups, 0, sizeof ui->groups);

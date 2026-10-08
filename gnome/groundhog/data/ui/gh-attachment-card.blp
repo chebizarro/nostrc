@@ -4,8 +4,8 @@ using Gtk 4.0;
 // G22), driven by gh-attachment-card.c: the type icon, "Photo" or
 // "File (PDF)", the size and the sender; nothing is fetched until Download.
 // C shows one of the action buttons for the transfer's state, the spinner
-// while downloading, the transfer's error, and the photo once it passed the
-// decode guard. Every button is focusable and says what it does.
+// while downloading, the transfer's error, and inline photo or audio once
+// decrypted. Every button is focusable and says what it does.
 template $GhAttachmentCard: Widget {
   layout-manager: BoxLayout {
     orientation: vertical;
@@ -70,6 +70,12 @@ template $GhAttachmentCard: Widget {
     styles [
       "groundhog-attachment-preview",
     ]
+  }
+
+  // Playback is created only after the encrypted attachment has been opened.
+  Box audio_slot {
+    visible: false;
+    hexpand: true;
   }
 
   Box status_box {

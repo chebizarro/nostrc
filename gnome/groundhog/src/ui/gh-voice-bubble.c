@@ -296,6 +296,19 @@ gh_voice_bubble_bind_transfer(GhVoiceBubble *self)
                               G_CONNECT_SWAPPED);
   }
   gh_voice_bubble_update_for_transfer(self);
+  gh_voice_bubble_maybe_auto_download(self);
+}
+
+void
+gh_voice_bubble_maybe_auto_download(GhVoiceBubble *self)
+{
+  g_return_if_fail(GH_IS_VOICE_BUBBLE(self));
+  if (!self->transfer || !self->message || !gtk_widget_get_mapped(GTK_WIDGET(self)))
+    return;
+  VoiceBubbleProviderData *pd = find_provider(GTK_WIDGET(self));
+  if (pd && pd->provider.auto_download)
+    pd->provider.auto_download(GTK_WIDGET(self), self->message, self->index,
+                               self->transfer, pd->data);
 }
 
 static void
@@ -458,6 +471,13 @@ gh_voice_bubble_root(GtkWidget *widget)
 }
 
 static void
+gh_voice_bubble_map(GtkWidget *widget)
+{
+  GTK_WIDGET_CLASS(gh_voice_bubble_parent_class)->map(widget);
+  gh_voice_bubble_maybe_auto_download(GH_VOICE_BUBBLE(widget));
+}
+
+static void
 gh_voice_bubble_unroot(GtkWidget *widget)
 {
   GhVoiceBubble *self = GH_VOICE_BUBBLE(widget);
@@ -541,6 +561,7 @@ gh_voice_bubble_class_init(GhVoiceBubbleClass *klass)
   object_class->set_property = gh_voice_bubble_set_property;
 
   widget_class->root = gh_voice_bubble_root;
+  widget_class->map = gh_voice_bubble_map;
   widget_class->unroot = gh_voice_bubble_unroot;
 
   props[PROP_MESSAGE] =

@@ -14,8 +14,9 @@ G_BEGIN_DECLS
  * account's attachment service (src/media/gh-attachments.h), which alone
  * changes it; every card that shows the message binds to the same object.
  *
- * Nothing here fetches anything: a transfer starts IDLE and moves only when
- * the user chooses Download (PD-2, AT-7). The plaintext of a READY transfer
+ * Nothing here fetches anything: a transfer starts IDLE and moves when the
+ * attachment service is asked to Download, manually or by the enabled media
+ * preference for a visible, accepted conversation. The plaintext of a READY transfer
  * is held in memory that is wiped when freed (gh-attachment.h), never in a
  * file. "previewable" says the plaintext passed the decode guard
  * (gh_attachment_check_preview(): PNG or JPEG by magic bytes, dimensions
@@ -30,7 +31,7 @@ G_BEGIN_DECLS
 
 typedef enum {
   GH_ATTACHMENT_STATE_IDLE,        /* nothing fetched: the card offers Download */
-  GH_ATTACHMENT_STATE_DOWNLOADING, /* the user asked; Cancel is possible */
+  GH_ATTACHMENT_STATE_DOWNLOADING, /* a download was requested; Cancel is possible */
   GH_ATTACHMENT_STATE_READY,       /* the decrypted file is here */
   GH_ATTACHMENT_STATE_FAILED       /* "error" says why */
 } GhAttachmentState;
