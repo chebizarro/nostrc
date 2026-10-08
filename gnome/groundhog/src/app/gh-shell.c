@@ -124,8 +124,10 @@ update_banner(GhSidebarPage *self)
 {
   GhStatusBanner banner = self->status ? gh_status_get_banner(self->status)
                                        : GH_STATUS_BANNER_NONE;
+  g_autofree gchar *title = NULL;
   if (banner != GH_STATUS_BANNER_NONE) {
-    adw_banner_set_title(self->status_banner, gh_status_banner_get_title(banner));
+    g_object_get(self->status, "banner-title", &title, NULL);
+    adw_banner_set_title(self->status_banner, title);
     adw_banner_set_button_label(self->status_banner, gh_status_banner_get_button_label(banner));
     gtk_actionable_set_action_name(GTK_ACTIONABLE(self->status_banner),
                                    gh_status_banner_get_action(banner));
@@ -134,7 +136,7 @@ update_banner(GhSidebarPage *self)
    * mid-animation. */
   adw_banner_set_revealed(self->status_banner, banner != GH_STATUS_BANNER_NONE);
   if (banner != self->banner && gh_status_banner_is_problem(banner))
-    gtk_accessible_announce(GTK_ACCESSIBLE(self), gh_status_banner_get_title(banner),
+    gtk_accessible_announce(GTK_ACCESSIBLE(self), title,
                             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
   self->banner = banner;
 }
@@ -435,6 +437,8 @@ gh_sidebar_page_set_status(GhSidebarPage *self, GhStatus *status)
   g_return_if_fail(self->status == NULL);
   self->status = g_object_ref(status);
   g_signal_connect_object(status, "notify::banner", G_CALLBACK(on_status_banner), self,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(status, "notify::banner-title", G_CALLBACK(on_status_banner), self,
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(status, "notify::inbox", G_CALLBACK(on_status_inbox), self,
                           G_CONNECT_SWAPPED);

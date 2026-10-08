@@ -11,6 +11,7 @@ struct _GhStatus {
   GhStatusSigner signer;
   GhStatusInbox inbox;
   gchar *inbox_error;
+  guint inbox_backlog;
   GhStatusStore store;
   gchar *store_error;
   GhStatusBanner banner;
@@ -24,8 +25,10 @@ enum {
   PROP_TOR_UNAVAILABLE,
   PROP_SIGNER,
   PROP_INBOX,
+  PROP_INBOX_BACKLOG,
   PROP_STORE,
   PROP_BANNER,
+  PROP_BANNER_TITLE,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -278,6 +281,8 @@ compute_banner(GhStatus *self)
   if (self->signer == GH_STATUS_SIGNER_NO_BUS)
     return GH_STATUS_BANNER_SIGNER_NO_BUS;
   GhStatusBanner inbox = inbox_banner(self->inbox);
+  if (self->inbox_backlog && self->inbox == GH_STATUS_INBOX_LIVE)
+    inbox = GH_STATUS_BANNER_BACKFILLING;
   if (gh_status_banner_is_problem(inbox))
     return inbox;
   if (self->store == GH_STATUS_STORE_EPHEMERAL)
@@ -294,10 +299,13 @@ update(GhStatus *self, GParamSpec *changed)
   g_object_freeze_notify(G_OBJECT(self));
   if (changed)
     g_object_notify_by_pspec(G_OBJECT(self), changed);
-  if (banner != self->banner) {
+  gboolean banner_changed = banner != self->banner;
+  if (banner_changed) {
     self->banner = banner;
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_BANNER]);
   }
+  if (banner_changed || changed == props[PROP_INBOX_BACKLOG])
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_BANNER_TITLE]);
   g_object_thaw_notify(G_OBJECT(self));
 }
 
@@ -449,11 +457,23 @@ gh_status_get_property(GObject *object, guint id, GValue *value, GParamSpec *psp
   case PROP_INBOX:
     g_value_set_enum(value, self->inbox);
     break;
+  case PROP_INBOX_BACKLOG:
+    g_value_set_uint(value, self->inbox_backlog);
+    break;
   case PROP_STORE:
     g_value_set_enum(value, self->store);
     break;
   case PROP_BANNER:
     g_value_set_enum(value, self->banner);
+    break;
+  case PROP_BANNER_TITLE:
+    if (self->banner == GH_STATUS_BANNER_BACKFILLING && self->inbox_backlog)
+      g_value_take_string(value, g_strdup_printf(
+        g_dngettext(NULL, "Decrypting %u message with your signer",
+                    "Decrypting %u messages with your signer", self->inbox_backlog),
+        self->inbox_backlog));
+    else
+      g_value_set_string(value, gh_status_banner_get_title(self->banner));
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
@@ -482,6 +502,12 @@ gh_status_set_property(GObject *object, guint id, const GValue *value, GParamSpe
     break;
   case PROP_INBOX:
     gh_status_set_inbox(self, g_value_get_enum(value), NULL);
+    break;
+  case PROP_INBOX_BACKLOG:
+    if (self->inbox_backlog != g_value_get_uint(value)) {
+      self->inbox_backlog = g_value_get_uint(value);
+      update(self, props[PROP_INBOX_BACKLOG]);
+    }
     break;
   case PROP_STORE:
     gh_status_set_store(self, g_value_get_enum(value), NULL);
@@ -516,12 +542,17 @@ gh_status_class_init(GhStatusClass *klass)
                                          GH_STATUS_SIGNER_UNKNOWN, rw);
   props[PROP_INBOX] = g_param_spec_enum("inbox", NULL, NULL, GH_TYPE_STATUS_INBOX,
                                         GH_STATUS_INBOX_INACTIVE, rw);
+  props[PROP_INBOX_BACKLOG] = g_param_spec_uint("inbox-backlog", NULL, NULL, 0, G_MAXUINT,
+                                                0, rw);
   props[PROP_STORE] = g_param_spec_enum("store", NULL, NULL, GH_TYPE_STATUS_STORE,
                                         GH_STATUS_STORE_NONE, rw);
   props[PROP_BANNER] = g_param_spec_enum("banner", NULL, NULL, GH_TYPE_STATUS_BANNER,
                                          GH_STATUS_BANNER_NONE,
                                          G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY |
                                          G_PARAM_STATIC_STRINGS);
+  props[PROP_BANNER_TITLE] = g_param_spec_string("banner-title", NULL, NULL, "",
+                                                  G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY |
+                                                  G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(object_class, N_PROPS, props);
 }
 

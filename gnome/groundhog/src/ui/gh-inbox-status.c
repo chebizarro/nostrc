@@ -53,13 +53,19 @@ sync_status(GhStatus *status)
   g_autoptr(GhDmInbox) inbox = g_weak_ref_get(&adapter->inbox);
   g_autoptr(GhAccountRelays) relays = g_weak_ref_get(&adapter->relays);
   if (!inbox || !relays) {
+    g_object_set(status, "inbox-backlog", 0u, NULL);
     gh_status_set_inbox(status, GH_STATUS_INBOX_INACTIVE, NULL);
     return;
   }
   GhStatusInbox state = gh_inbox_status_map(gh_dm_inbox_get_state(inbox),
                                             gh_account_relays_get_state(relays),
                                             gh_dm_inbox_get_relays(inbox) != NULL);
+  guint backlog = state == GH_STATUS_INBOX_BACKFILLING || state == GH_STATUS_INBOX_LIVE ?
+                   gh_dm_inbox_get_remote_backlog(inbox) : 0;
+  g_object_freeze_notify(G_OBJECT(status));
   gh_status_set_inbox(status, state, gh_dm_inbox_get_error(inbox));
+  g_object_set(status, "inbox-backlog", backlog, NULL);
+  g_object_thaw_notify(G_OBJECT(status));
 }
 
 void
