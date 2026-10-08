@@ -247,7 +247,12 @@ static gboolean
 accounts_init(GhAppServices *self, GError **error)
 {
   (void)error;
-  self->nip46_credentials = gh_nip46_credential_store_new();
+#ifdef GH_MLS_TEST_HOOKS
+  if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0)
+    self->nip46_credentials = gh_nip46_credential_store_new_secret_service();
+  else
+#endif
+    self->nip46_credentials = gh_nip46_credential_store_new();
   self->accounts = gh_account_controller_new_with_credentials(self->settings,
     g_application_get_dbus_connection(G_APPLICATION(self->app)),
     self->nip46_credentials);
