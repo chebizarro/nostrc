@@ -481,6 +481,8 @@ endif()
 option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
 if (BUILD_GROUNDHOG)
   add_subdirectory(gnome/groundhog)
+else()
+  message(STATUS "Skipping Groundhog (BUILD_GROUNDHOG=OFF); enable it with -DBUILD_GROUNDHOG=ON and libqrencode installed")
 endif()
 
 # --- GNOME integration (Seahorse helpers, optional PKCS#11) ---

@@ -496,6 +496,19 @@ if (TARGET groundhog-account-relays AND TARGET groundhog-conversations)
   target_link_libraries(groundhog-dm-inbox PUBLIC groundhog-auth-policy groundhog-account-relays
                         groundhog-conversations)
   target_compile_options(groundhog-dm-inbox PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-remote-feature-matrix
+      tests/app/test_remote_feature_matrix.c src/app/gh-nip17-envelope.c)
+    target_include_directories(test-groundhog-remote-feature-matrix PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-remote-feature-matrix PRIVATE
+      groundhog-dm-inbox nostr_nip17_core nostr_nip59_core)
+    target_compile_options(test-groundhog-remote-feature-matrix PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-remote-feature-matrix groundhog-test-schemas)
+    add_test(NAME groundhog-remote-feature-matrix COMMAND test-groundhog-remote-feature-matrix)
+    set_tests_properties(groundhog-remote-feature-matrix PROPERTIES TIMEOUT 30
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/test-schemas;GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
 endif()
 
 # NIP-17 send pipeline: recipient kind-10050 lookup (URL-scoped REQ, no
@@ -1955,6 +1968,10 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
   target_link_libraries(groundhog-nip29-service PUBLIC groundhog-nip29 groundhog-net
     groundhog-store groundhog-auth-policy groundhog-conversations)
   target_compile_options(groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
+  if (TARGET test-groundhog-remote-feature-matrix)
+    target_link_libraries(test-groundhog-remote-feature-matrix PRIVATE groundhog-nip29-service)
+    target_compile_definitions(test-groundhog-remote-feature-matrix PRIVATE GH_REMOTE_MATRIX_NIP29=1)
+  endif()
   if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
     target_link_libraries(groundhog PRIVATE groundhog-nip29-service)
     target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_NIP29=1)
@@ -2071,6 +2088,26 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     add_test(NAME groundhog-mls-service COMMAND test-groundhog-mls-service)
     set_tests_properties(groundhog-mls-service PROPERTIES TIMEOUT 300
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    add_executable(test-groundhog-mls-remote tests/mls/test_mls_remote.c
+      ${GROUNDHOG_MLS_SERVICE_SOURCES} src/store/gh-store-marmot.c
+      src/store/gh-mls-commits.c src/store/gh-store-conversations.c
+      src/app/gh-nip17-envelope.c ${GROUNDHOG_DM_SEND_SOURCES})
+    target_include_directories(test-groundhog-mls-remote PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
+    target_link_libraries(test-groundhog-mls-remote PRIVATE groundhog-store-testhooks marmot
+      groundhog-dm-inbox groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays nostr_nip17_core nostr_nip59_core nostrc-test-bus
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_options(test-groundhog-mls-remote PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-mls-remote PRIVATE GH_MLS_TEST_HOOKS=1
+      ${GROUNDHOG_MLS_SERVICE_DEFS})
+    groundhog_store_link_sqlcipher_first(test-groundhog-mls-remote)
+    add_dependencies(test-groundhog-mls-remote groundhog-test-schemas)
+    add_test(NAME groundhog-mls-remote COMMAND test-groundhog-mls-remote)
+    set_tests_properties(groundhog-mls-remote PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
     # The real Groundhog executable exposes a private D-Bus control interface
     # only in testing builds, and only when GH_TEST_CONTROL=1 at runtime.
     target_compile_definitions(groundhog PRIVATE GH_MLS_TEST_HOOKS=1)
@@ -2124,6 +2161,29 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
         COMMAND test-groundhog-two-instance-acceptance)
     endif()
     set_tests_properties(groundhog-two-instance-acceptance PROPERTIES TIMEOUT 300
+      ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
+
+    add_executable(test-groundhog-two-instance-remote-acceptance
+      tests/app/test_two_instance_acceptance.c)
+    target_include_directories(test-groundhog-two-instance-remote-acceptance PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/app ${CMAKE_CURRENT_SOURCE_DIR}/src/identity
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/mls ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
+    target_link_libraries(test-groundhog-two-instance-remote-acceptance PRIVATE
+      nostrc-test-bus nostr nip19 nostr_nip44_core nostr_nip46_core marmot
+      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
+    target_compile_options(test-groundhog-two-instance-remote-acceptance PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(test-groundhog-two-instance-remote-acceptance PRIVATE GH_TEST_REMOTE_VARIANT=1)
+    add_dependencies(test-groundhog-two-instance-remote-acceptance groundhog)
+    if (GROUNDHOG_XVFB_RUN)
+      add_test(NAME groundhog-two-instance-remote-acceptance
+        COMMAND ${GROUNDHOG_XVFB_RUN} -a $<TARGET_FILE:test-groundhog-two-instance-remote-acceptance>)
+    else()
+      add_test(NAME groundhog-two-instance-remote-acceptance
+        COMMAND test-groundhog-two-instance-remote-acceptance)
+    endif()
+    set_tests_properties(groundhog-two-instance-remote-acceptance PROPERTIES TIMEOUT 300
       ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
 
     # NIP-88 poll model unit tests (nostrc-efa8): parse/validate, create,

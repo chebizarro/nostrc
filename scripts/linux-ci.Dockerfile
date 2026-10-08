@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
-    libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+    libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
     desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
     blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
     # W27 voice messages (groundhog-ci.yml sanitizer job)
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad gstreamer1.0-libav \
     # gnostr-appimage.yml (Gnostr, grotto, nostr-gtk)
-    libpeas-2-dev libqrencode-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
+    libpeas-2-dev librsvg2-dev libgdk-pixbuf-2.0-dev \
     # signet-ci.yml
     libmicrohttpd-dev libcbor-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock

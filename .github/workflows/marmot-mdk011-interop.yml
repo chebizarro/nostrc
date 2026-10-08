@@ -42,7 +42,7 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
-            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             desktop-file-utils appstream blueprint-compiler xvfb xauth
           docker version
 

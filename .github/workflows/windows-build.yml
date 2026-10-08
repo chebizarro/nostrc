@@ -169,6 +169,7 @@ jobs:
             -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_LIBHANAMI=OFF \
             -DBUILD_GNOSTR_APP=OFF \
+            -DBUILD_GROUNDHOG=OFF \
             -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=OFF \
             -DENABLE_NIP55L=OFF \

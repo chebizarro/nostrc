@@ -36,7 +36,7 @@ jobs:
             libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
-            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
             blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
@@ -98,7 +98,12 @@ jobs:
             test-groundhog-bus-probe test-groundhog-two-instance \
             test-groundhog-gdk-frame-tolerance test-groundhog-status-notifier \
             groundhog-test-harness test-groundhog-two-instance-acceptance \
-            test-groundhog-voice test-groundhog-voice-ui test-groundhog-mdk011-interop
+            test-groundhog-voice test-groundhog-voice-ui test-groundhog-mdk011-interop \
+            test-groundhog-nip46-session test-groundhog-signer-nip46 \
+            test-groundhog-nip46-wire test-groundhog-nip46-credentials-keyring \
+            test-groundhog-account-backends test-groundhog-account-remote-switch \
+            test-groundhog-nip46-pair-dialog test-groundhog-remote-feature-matrix \
+            test-groundhog-mls-remote test-groundhog-two-instance-remote-acceptance
 
       - name: GTK bind performance regression gate (serial, no retry)
         run: |
@@ -155,7 +160,11 @@ jobs:
               'groundhog-mls-poll',
               'groundhog-bus-probe', 'groundhog-two-instance',
               'groundhog-gdk-frame-tolerance', 'groundhog-status-notifier',
-              'groundhog-two-instance-acceptance',
+              'groundhog-two-instance-acceptance', 'groundhog-two-instance-remote-acceptance',
+              'groundhog-nip46-session', 'groundhog-signer-nip46', 'groundhog-nip46-wire',
+              'groundhog-nip46-credentials-keyring', 'groundhog-account-backends',
+              'groundhog-account-remote-switch', 'groundhog-nip46-pair-dialog',
+              'groundhog-remote-feature-matrix', 'groundhog-mls-remote',
               'groundhog-voice',
               'groundhog-voice-ui',
               'groundhog-mdk011-interop-white-noise-voice',
@@ -283,7 +292,7 @@ jobs:
             libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
-            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \

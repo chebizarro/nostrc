@@ -84,6 +84,7 @@ GhAccountState gh_account_controller_get_state(GhAccountController *self);
 GhSignerAvailability gh_account_controller_get_signer_availability(GhAccountController *self);
 GhSignerBackend gh_account_controller_get_active_backend(GhAccountController *self);
 GhRemoteSignerState gh_account_controller_get_remote_state(GhAccountController *self);
+gboolean gh_account_controller_is_remote_storage_ready(GhAccountController *self);
 /* Stale generations are ignored. Only a matching remote account can open the gate. */
 void gh_account_controller_set_remote_storage_ready(GhAccountController *self,
                                                     guint64 generation,

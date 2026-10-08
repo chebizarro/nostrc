@@ -797,6 +797,13 @@ gh_account_controller_get_remote_state(GhAccountController *self)
   return self->remote_state;
 }
 
+gboolean
+gh_account_controller_is_remote_storage_ready(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), FALSE);
+  return self->active_backend == GH_SIGNER_BACKEND_NIP46 && self->remote_storage_ready;
+}
+
 void
 gh_account_controller_set_remote_storage_ready(GhAccountController *self,
                                                 guint64 generation, gboolean ready)

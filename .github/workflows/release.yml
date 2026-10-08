@@ -87,7 +87,7 @@ jobs:
           sudo gem install --no-document fpm
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j
       - name: Stage install tree
@@ -161,7 +161,7 @@ jobs:
             libnsync-dev \
             wget file patchelf desktop-file-utils
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j --target grotto
       - name: Download AppImage tools
@@ -220,7 +220,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config wget file patchelf
       - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
         run: cmake --build build -j --target grotto-daemon
       - name: Download AppImage tools
@@ -361,7 +361,7 @@ jobs:
             libnsync-dev ruby ruby-dev rubygems git ca-certificates
           sudo gem install --no-document fpm
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j
       - name: Stage install tree
@@ -430,7 +430,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j --target grotto-daemon
       - name: Assemble tarball tree
@@ -469,7 +469,7 @@ jobs:
             libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
             libnsync-dev
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j
       - name: Assemble tarball tree
@@ -527,7 +527,7 @@ jobs:
             libnsync-dev ruby ruby-dev rubygems git ca-certificates
           sudo gem install --no-document fpm
       - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
         run: cmake --build build -j --target grotto-daemon
       - name: Stage install tree
@@ -562,7 +562,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
       - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
       - name: Build
         run: cmake --build build -j --target grotto-daemon
       - name: Assemble tarball tree
@@ -602,7 +602,7 @@ jobs:
             libnsync-dev ruby ruby-dev rubygems git ca-certificates
           sudo gem install --no-document fpm
       - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
         run: cmake --build build -j --target grotto-daemon
       - name: Stage install tree
@@ -695,6 +695,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_GROUNDHOG=OFF \
             -DBUILD_MACOS_BUNDLE=ON \
             -DGNOSTR_SIGNER_VERSION="${RELEASE_VERSION}"
       - name: Build
@@ -729,7 +730,7 @@ jobs:
           echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
       - name: Build
         run: cmake --build build -j
       - name: Create tarball

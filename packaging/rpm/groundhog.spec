@@ -56,13 +56,14 @@ BuildRequires:  nsync-devel
 Provides:       bundled(nsync) = 1.29.2
 %endif
 
-Requires:       grotto = %{version}-%{release}
+Requires:       qrencode-libs
 Requires:       hicolor-icon-theme
 Requires:       gstreamer1-plugins-base
 Requires:       gstreamer1-plugins-good
 Recommends:     gnome-keyring
 Recommends:     gstreamer1-plugins-bad-free
 Recommends:     webp-pixbuf-loader
+Suggests:       grotto = %{version}-%{release}
 Suggests:       tor
 
 %description
@@ -71,9 +72,10 @@ Groundhog is a GTK4 and libadwaita messenger for Nostr: private messages
 end-to-end encrypted Marmot groups that interoperate with White Noise.
 
 Messages are kept only on this device, in an encrypted database. Your
-private key never enters Groundhog: it stays in Grotto, which asks you
-before anything is signed or unlocked. There are no read receipts, typing
-indicators or online status, and nothing loads from the web unless you ask.
+private key never enters Groundhog: use Grotto for a local account or pair
+a NIP-46 remote signer (phone or bunker). Grotto is not needed for
+remote-signer-only accounts. There are no read receipts, typing indicators
+or online status, and nothing loads from the web unless you ask.
 
 This is an alpha release.
 
