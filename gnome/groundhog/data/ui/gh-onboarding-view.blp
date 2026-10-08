@@ -83,7 +83,7 @@ template $GhOnboardingView: Adw.Bin {
                 }
 
                 Adw.ActionRow {
-                  title: _("Your private key stays in Grotto");
+                  title: _("Your private key stays with your signer");
                   subtitle: _("Groundhog never sees it. The signer asks you before anything is signed or unlocked.");
 
                   [prefix]
@@ -188,7 +188,7 @@ template $GhOnboardingView: Adw.Bin {
                     margin-end: 12;
 
                     Label {
-                      label: _("Groundhog uses an identity you already keep in Grotto. Choose the one people will write to.");
+                      label: _("Choose the identity people will write to. Each account keeps its own signer.");
                       wrap: true;
                       xalign: 0;
                     }
@@ -263,7 +263,7 @@ template $GhOnboardingView: Adw.Bin {
 
     Adw.NavigationPage signer_page {
       tag: "signer";
-      title: _("Grotto");
+      title: _("Your signer");
 
       child: Adw.ToolbarView {
         [top]
@@ -285,7 +285,7 @@ template $GhOnboardingView: Adw.Bin {
               margin-end: 12;
 
               Label {
-                label: _("Your private key never leaves Grotto. Whenever Groundhog sends a message or unlocks one you received, the signer asks you to approve.");
+                label: _("Your private key stays with your signer. Groundhog asks it to sign messages and unlock encrypted content.");
                 wrap: true;
                 xalign: 0;
               }
@@ -584,7 +584,7 @@ template $GhOnboardingView: Adw.Bin {
                 ]
 
                 Adw.ActionRow {
-                  title: _("Grotto asks you to approve");
+                  title: _("Your signer asks you to approve");
                   subtitle: _("Your list of message relays is signed with your key.");
                   title-lines: 0;
                   subtitle-lines: 0;

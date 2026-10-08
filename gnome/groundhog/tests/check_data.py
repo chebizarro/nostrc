@@ -42,7 +42,8 @@ keys = {key.attrib["name"]: key for key in schema.findall("key")}
 # check_privacy.py (groundhog-privacy-static) pins the complete key set with
 # types and defaults; this only requires the identity-contract keys.
 assert set(keys) >= {
-    "current-npub", "signer-method", "notifications-enabled",
+    "current-npub", "current-backend", "backend-migration-version",
+    "signer-method", "notifications-enabled",
     "notification-privacy", "sound-enabled", "window-width",
     "window-height", "window-maximized", "discovery-relays",
 }

@@ -590,6 +590,13 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_test(NAME groundhog-account COMMAND test-groundhog-account)
   set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  add_executable(test-groundhog-account-backends tests/app/test_account_backends.c)
+  target_link_libraries(test-groundhog-account-backends PRIVATE groundhog-account)
+  target_compile_options(test-groundhog-account-backends PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account-backends groundhog-test-schemas)
+  add_test(NAME groundhog-account-backends COMMAND test-groundhog-account-backends)
+  set_tests_properties(groundhog-account-backends PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Account switch/teardown and relay-list admission against a recording
   # transport and, when libsoup is present, a real local WebSocket relay.
@@ -932,6 +939,13 @@ if (TARGET groundhog-identity AND TARGET PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_D
         SKIP_RETURN_CODE 77 TIMEOUT 45 ENVIRONMENT "G_DEBUG=fatal-criticals")
     endif()
   endif()
+endif()
+if (TARGET groundhog-account)
+  if (NOT TARGET groundhog-nip46-credentials)
+    message(FATAL_ERROR "Groundhog account model requires the NIP-46 credential store")
+  endif()
+  target_link_libraries(groundhog-account PUBLIC groundhog-nip46-credentials)
+  target_link_libraries(groundhog PRIVATE groundhog-nip46-credentials)
 endif()
 
 # --- G02 store ---

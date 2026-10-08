@@ -2,6 +2,8 @@
 #define GH_ACCOUNT_CONTROLLER_H
 
 #include <gio/gio.h>
+#include "gh-identity.h"
+#include "gh-nip46-credentials.h"
 
 G_BEGIN_DECLS
 
@@ -22,6 +24,15 @@ typedef enum {
   GH_SIGNER_AVAILABILITY_RUNNING
 } GhSignerAvailability;
 
+typedef enum {
+  GH_REMOTE_SIGNER_LOADING_CREDENTIAL,
+  GH_REMOTE_SIGNER_CONNECTING,
+  GH_REMOTE_SIGNER_READY,
+  GH_REMOTE_SIGNER_OFFLINE,
+  GH_REMOTE_SIGNER_LOCKED,
+  GH_REMOTE_SIGNER_ERROR
+} GhRemoteSignerState;
+
 /* Runs in a worker thread and returns GhIdentityInfo items (gh-identity.h). */
 typedef GPtrArray *(*GhAccountListFunc)(gpointer user_data, GError **error);
 
@@ -29,30 +40,53 @@ typedef GPtrArray *(*GhAccountListFunc)(gpointer user_data, GError **error);
 G_DECLARE_FINAL_TYPE(GhAccountController, gh_account_controller, GH,
                      ACCOUNT_CONTROLLER, GObject)
 
-/* Groundhog's active account. It reads only signer-owned public metadata,
- * writes only the org.nostr.Groundhog current-npub key, and watches whether
- * org.nostr.Signer is reachable; it never loads secrets. bus may be NULL.
- * Emits "changed" on the main context after every state update. */
+/* Groundhog's active (backend, npub) account. Grotto metadata and remote
+ * credential metadata are listed independently. The controller owns the
+ * active remote credential/session, but never exposes secret material.
+ * bus may be NULL. Emits "changed" after state updates. */
 GhAccountController *gh_account_controller_new(GSettings *settings,
                                                GDBusConnection *bus);
 GhAccountController *gh_account_controller_new_full(GSettings *settings,
                                                     GDBusConnection *bus,
                                                     GhAccountListFunc list,
                                                     gpointer list_data);
+GhAccountController *gh_account_controller_new_with_credentials(GSettings *settings,
+                                           GDBusConnection *bus,
+                                           GhNip46CredentialStore *credentials);
+GhAccountController *gh_account_controller_new_full_with_credentials(GSettings *settings,
+                                           GDBusConnection *bus, GhAccountListFunc list,
+                                           gpointer list_data,
+                                           GhNip46CredentialStore *credentials);
+/* Test seam: substitutes public remote metadata listing without a keyring. */
+GhAccountController *gh_account_controller_new_full_with_remote_list(GSettings *settings,
+                                           GDBusConnection *bus, GhAccountListFunc grotto_list,
+                                           gpointer grotto_data, GhAccountListFunc remote_list,
+                                           gpointer remote_data);
 /* Re-lists identities; a result from an older listing is discarded. */
 void gh_account_controller_refresh(GhAccountController *self);
 gboolean gh_account_controller_select(GhAccountController *self,
                                       const gchar *npub, GError **error);
+gboolean gh_account_controller_select_backend(GhAccountController *self,
+                                              GhSignerBackend backend,
+                                              const gchar *npub, GError **error);
 
 GhAccountState gh_account_controller_get_state(GhAccountController *self);
 GhSignerAvailability gh_account_controller_get_signer_availability(GhAccountController *self);
+GhSignerBackend gh_account_controller_get_active_backend(GhAccountController *self);
+GhRemoteSignerState gh_account_controller_get_remote_state(GhAccountController *self);
+/* Stale generations are ignored. Only a matching remote account can open the gate. */
+void gh_account_controller_set_remote_storage_ready(GhAccountController *self,
+                                                    guint64 generation,
+                                                    gboolean ready);
+gchar *gh_account_controller_describe_limits(GhAccountController *self,
+                                             gboolean network_available);
 /* NULL unless the state is ACTIVE. */
 const gchar *gh_account_controller_get_active_npub(GhAccountController *self);
 /* Borrowed; NULL until a listing succeeds. */
 GPtrArray *gh_account_controller_get_identities(GhAccountController *self);
 
-/* The generation changes whenever the active account (or its absence)
- * or its requested signer method changes. It is revoked before its cancellable is cancelled, so work bound
+/* The generation changes whenever the active account pair (or its absence)
+ * or remote network mode changes. It is revoked before its cancellable is cancelled, so work bound
  * to either sees itself as stale; callbacks must check is_current.
  * The controller owns its signer and cancels its operations on revocation;
  * GhSigner closes each private sender to revoke pending approvals. */

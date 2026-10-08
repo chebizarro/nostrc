@@ -82,7 +82,6 @@ struct _GhPreferencesDialog {
   AdwActionRow *no_account_row;
   AdwActionRow *account_row;
   AdwAvatar *account_avatar;
-  AdwComboRow *signer_row;
   AdwSwitchRow *run_in_background_row;
   AdwPreferencesGroup *delete_group;
   AdwAlertDialog *delete_all_dialog;
@@ -1503,11 +1502,6 @@ gh_preferences_dialog_constructed(GObject *object)
     g_variant_unref(g_variant_ref_sink(modes[n_modes]));
   }
   bind_choice(self, self->network_mode_row, "network-mode", modes, n_modes, unsupported_label);
-  GVariant *signers[] = { g_variant_new_string("auto"), g_variant_new_string("local"),
-                          g_variant_new_string("nip55l"), g_variant_new_string("nip46") };
-  bind_choice(self, self->signer_row, "signer-method", signers, G_N_ELEMENTS(signers),
-              unsupported_label);
-
   GVariant *dm_protocols[] = { g_variant_new_string("marmot"), g_variant_new_string("nip17") };
   bind_choice(self, self->default_dm_protocol_row, "default-dm-protocol", dm_protocols,
               G_N_ELEMENTS(dm_protocols), unsupported_label);
@@ -1701,7 +1695,6 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(no_account_row);
   BIND(account_row);
   BIND(account_avatar);
-  BIND(signer_row);
   BIND(run_in_background_row);
   BIND(delete_group);
   BIND(delete_all_dialog);

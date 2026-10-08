@@ -18,7 +18,7 @@ G_BEGIN_DECLS
  *   Messages  enter-sends, default-disappearing-seconds, retention-days,
  *             blossom-servers (the Attachments group, G22)
  *   Network   network-mode, tor-socks-address, discovery-relays
- *   Account   signer-method, run-in-background
+ *   Account   run-in-background
  *
  * Switches follow their key directly. A choice row shows the key's value; a
  * value that none of its choices has (set elsewhere, e.g. retention-days=90)

@@ -293,7 +293,7 @@ tc_handle_onboard(GDBusMethodInvocation *invocation, GVariant *parameters)
     return;
   }
   const gchar *discovery[] = { discovery_url, NULL };
-  g_settings_set_string(settings, "signer-method", "auto");
+  g_settings_set_string(settings, "current-backend", "grotto");
   g_settings_set_strv(settings, "discovery-relays", discovery);
   tc_spin_until(tc_identities_listed, accounts, "signer identity listing", 30);
   g_autoptr(GError) error = NULL;

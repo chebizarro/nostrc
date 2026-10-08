@@ -292,6 +292,7 @@ test_switch_teardown(void)
   probe.event = signed_list(SECRET_ONE, 10002, 500, "r", "wss://stale.test.invalid",
                             NULL, NULL);
   g_settings_set_string(settings, "current-npub", npub_two);
+  while (g_main_context_iteration(NULL, FALSE)) {}
   g_assert_true(probe.ran);
   guint64 second = gh_account_controller_get_generation(controller);
   g_assert_cmpuint(second, !=, first);
@@ -328,6 +329,7 @@ test_switch_teardown(void)
 
   /* Deselecting closes everything and opens nothing. */
   g_settings_set_string(settings, "current-npub", "");
+  while (g_main_context_iteration(NULL, FALSE)) {}
   g_assert_cmpint(gh_account_relays_get_state(relays), ==, GH_ACCOUNT_RELAYS_INACTIVE);
   g_assert_cmpuint(gh_account_relays_get_generation(relays), ==, 0);
   g_assert_cmpuint(rec.closed, ==, 4);
@@ -606,7 +608,7 @@ test_wire_account_switch(void)
   g_assert_cmpuint(relay.reqs, ==, 1);
 
   g_settings_set_string(settings, "current-npub", npub_two);
-  g_assert_null(gh_account_relays_get_read_relays(relays));
+  /* Pair reconciliation is idle; switch-teardown checks the synchronous clear. */
   wait.read = "wss://two-home.test.invalid";
   spin_until(has_read_list, &wait);
   g_assert_cmpuint(relay.reqs, ==, 2);

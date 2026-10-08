@@ -7,6 +7,7 @@
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-account-controller.h"
 #include "gh-account-ui.h"
+#include "gh-nip46-credentials.h"
 #endif
 #if GROUNDHOG_HAVE_RELAYS
 #include "gh-account-relays.h"
@@ -128,6 +129,7 @@ struct _GhAppServices {
   GhNetSession *network; /* the network mode of every connection (G09) */
 #endif
 #if GROUNDHOG_HAVE_ACCOUNTS
+  GhNip46CredentialStore *nip46_credentials;
   GhAccountController *accounts;
 #endif
 #if GROUNDHOG_HAVE_RELAYS
@@ -209,8 +211,10 @@ static gboolean
 accounts_init(GhAppServices *self, GError **error)
 {
   (void)error;
-  self->accounts = gh_account_controller_new(self->settings,
-    g_application_get_dbus_connection(G_APPLICATION(self->app)));
+  self->nip46_credentials = gh_nip46_credential_store_new();
+  self->accounts = gh_account_controller_new_with_credentials(self->settings,
+    g_application_get_dbus_connection(G_APPLICATION(self->app)),
+    self->nip46_credentials);
   return TRUE;
 }
 
@@ -219,6 +223,7 @@ static void
 accounts_teardown(GhAppServices *self)
 {
   dispose_object(&self->accounts);
+  dispose_object(&self->nip46_credentials);
 }
 #endif
 

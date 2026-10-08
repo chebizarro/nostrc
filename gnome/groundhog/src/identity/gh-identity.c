@@ -46,9 +46,10 @@ gh_identity_list(GError **error)
   if (!bus) {
     g_debug("gh_identity_list: no session bus: %s", bus_err ? bus_err->message : "?");
     g_clear_error(&bus_err);
+    g_ptr_array_unref(result);
     if (error) g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                                    "session bus unavailable");
-    return result;
+    return NULL;
   }
   GVariant *ret = g_dbus_connection_call_sync(bus,
     "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
@@ -57,8 +58,10 @@ gh_identity_list(GError **error)
   g_object_unref(bus);
   if (!ret) {
     g_debug("gh_identity_list: ListIdentities failed: %s", bus_err ? bus_err->message : "?");
-    g_clear_error(&bus_err);
-    return result;
+    g_ptr_array_unref(result);
+    if (error && bus_err) g_propagate_error(error, bus_err);
+    else g_clear_error(&bus_err);
+    return NULL;
   }
   GVariantIter *iter = NULL;
   g_variant_get(ret, "(as)", &iter);
