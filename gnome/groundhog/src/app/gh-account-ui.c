@@ -192,11 +192,11 @@ update(GhAccountUi *ui)
   GPtrArray *identities = gh_account_controller_get_identities(ui->controller);
   const gchar *active = gh_account_controller_get_active_npub(ui->controller);
   g_autofree gchar *current = g_settings_get_string(ui->settings, "current-npub");
-  g_autofree gchar *method = g_settings_get_string(ui->settings, "signer-method");
+  GhSignerBackend active_backend = gh_account_controller_get_active_backend(ui->controller);
   gboolean online = g_network_monitor_get_network_available(g_network_monitor_get_default());
   GhSignerAvailability availability =
     gh_account_controller_get_signer_availability(ui->controller);
-  g_autofree gchar *limits = gh_account_describe_limits(state, availability, method, online);
+  g_autofree gchar *limits = gh_account_controller_describe_limits(ui->controller, online);
   g_autofree gchar *subtitle = NULL;
   const gchar *page_name = page_for_state(state);
 
@@ -204,7 +204,14 @@ update(GhAccountUi *ui)
   g_object_freeze_notify(G_OBJECT(ui->status));
   gh_status_set_account_active(ui->status, state == GH_ACCOUNT_STATE_ACTIVE);
   gh_status_set_network_available(ui->status, online);
-  gh_status_set_signer(ui->status, status_signer(availability));
+  GhStatusSigner signer_status = status_signer(availability);
+  if (state == GH_ACCOUNT_STATE_ACTIVE && active_backend == GH_SIGNER_BACKEND_NIP46) {
+    GhRemoteSignerState remote = gh_account_controller_get_remote_state(ui->controller);
+    signer_status = remote == GH_REMOTE_SIGNER_READY ? GH_STATUS_SIGNER_AVAILABLE :
+      remote == GH_REMOTE_SIGNER_CONNECTING || remote == GH_REMOTE_SIGNER_LOADING_CREDENTIAL ?
+      GH_STATUS_SIGNER_UNKNOWN : GH_STATUS_SIGNER_UNAVAILABLE;
+  }
+  gh_status_set_signer(ui->status, signer_status);
   g_object_thaw_notify(G_OBJECT(ui->status));
 
   /* Only react to an actual state transition: a keyboard/screen-reader user
@@ -227,13 +234,17 @@ update(GhAccountUi *ui)
   g_menu_remove_all(ui->identities_menu);
   for (guint i = 0; identities && i < identities->len; i++) {
     const GhIdentityInfo *info = g_ptr_array_index(identities, i);
-    g_autofree gchar *label = identity_title(info);
+    g_autofree gchar *title = identity_title(info);
+    g_autofree gchar *label = info->backend == GH_SIGNER_BACKEND_NIP46 ?
+      g_strdup_printf("%s — Remote signer", title) : g_strdup_printf("%s — Grotto", title);
+    g_autofree gchar *target = info->backend == GH_SIGNER_BACKEND_NIP46 ?
+      g_strdup_printf("nip46:%s", info->npub) : g_strdup(info->npub);
     g_autoptr(GMenuItem) item = g_menu_item_new(label, NULL);
     g_menu_item_set_action_and_target_value(item, "account.select",
-                                            g_variant_new_string(info->npub));
+                                            g_variant_new_string(target));
     g_menu_append_item(ui->identities_menu, item);
-    if (g_strcmp0(info->npub, active) == 0) {
-      subtitle = g_steal_pointer(&label);
+    if (info->backend == active_backend && g_strcmp0(info->npub, active) == 0) {
+      subtitle = g_strdup(title);
       /* The profile name, when the directory has cached it. */
       g_autofree gchar *pubkey = gh_identity_pubkey_hex(info->npub);
       const gchar *name = ui->name && ui->names && pubkey ? ui->name(ui->names, pubkey) : NULL;
@@ -243,7 +254,10 @@ update(GhAccountUi *ui)
       }
     }
   }
-  g_simple_action_set_state(ui->select, g_variant_new_string(current));
+  g_autofree gchar *current_backend = g_settings_get_string(ui->settings, "current-backend");
+  g_autofree gchar *selected_target = *current && g_strcmp0(current_backend, "nip46") == 0 ?
+    g_strdup_printf("nip46:%s", current) : g_strdup(current);
+  g_simple_action_set_state(ui->select, g_variant_new_string(selected_target));
   /* The active account names the sidebar, without a subtitle: the app's
    * name is the window's own, and a title over a subtitle is cut short in a
    * narrow sidebar header (nostrc-qp24.70). No account: "Groundhog". */
@@ -272,8 +286,11 @@ on_select(GSimpleAction *action, GVariant *value, gpointer data)
   GhAccountUi *ui = data;
   g_autoptr(GError) error = NULL;
   (void)action;
-  if (!gh_account_controller_select(ui->controller, g_variant_get_string(value, NULL),
-                                    &error)) {
+  const gchar *target = g_variant_get_string(value, NULL);
+  gboolean remote = g_str_has_prefix(target, "nip46:");
+  if (!gh_account_controller_select_backend(ui->controller,
+        remote ? GH_SIGNER_BACKEND_NIP46 : GH_SIGNER_BACKEND_GROTTO,
+        remote ? target + strlen("nip46:") : target, &error)) {
     adw_toast_overlay_add_toast(ui->toasts, adw_toast_new(error->message));
     update(ui);
   }

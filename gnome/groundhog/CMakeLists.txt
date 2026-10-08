@@ -221,7 +221,8 @@ if (TARGET nostr AND TARGET nip19)
                      ${CMAKE_CURRENT_BINARY_DIR}/gnostr-secret)
   endif()
   add_library(groundhog-identity STATIC
-    src/identity/gh-identity.c src/identity/gh-signer.c)
+    src/identity/gh-identity.c src/identity/gh-signer.c
+    src/identity/gh-signer-nip55l.c src/identity/gh-signer-nip46.c)
   target_include_directories(groundhog-identity PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/identity)
   target_link_libraries(groundhog-identity PUBLIC gnostr-secret nip19 nostr)
@@ -319,6 +320,9 @@ if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
   target_link_libraries(groundhog-nip46-session PUBLIC
     groundhog-relay nostr_nip46_core)
   target_compile_options(groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
+    if (TARGET groundhog-identity)
+      target_link_libraries(groundhog-identity PUBLIC groundhog-nip46-session)
+    endif()
   if (BUILD_TESTING)
     add_executable(test-groundhog-nip46-session tests/app/test_nip46_session.c)
     target_include_directories(test-groundhog-nip46-session PRIVATE
@@ -327,6 +331,11 @@ if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
     target_compile_options(test-groundhog-nip46-session PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-nip46-session COMMAND test-groundhog-nip46-session)
     set_tests_properties(groundhog-nip46-session PROPERTIES TIMEOUT 30)
+    add_executable(test-groundhog-signer-nip46 tests/app/test_signer_nip46.c)
+    target_link_libraries(test-groundhog-signer-nip46 PRIVATE groundhog-identity)
+    target_compile_options(test-groundhog-signer-nip46 PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-signer-nip46 COMMAND test-groundhog-signer-nip46)
+    set_tests_properties(groundhog-signer-nip46 PROPERTIES TIMEOUT 30)
     if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
       add_executable(test-groundhog-nip46-wire tests/app/test_nip46_wire.c)
       target_include_directories(test-groundhog-nip46-wire PRIVATE
@@ -585,6 +594,21 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
   add_dependencies(test-groundhog-account groundhog-test-schemas)
   add_test(NAME groundhog-account COMMAND test-groundhog-account)
   set_tests_properties(groundhog-account PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  add_executable(test-groundhog-account-backends tests/app/test_account_backends.c)
+  target_link_libraries(test-groundhog-account-backends PRIVATE groundhog-account)
+  target_compile_options(test-groundhog-account-backends PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account-backends groundhog-test-schemas)
+  add_test(NAME groundhog-account-backends COMMAND test-groundhog-account-backends)
+  set_tests_properties(groundhog-account-backends PROPERTIES TIMEOUT 30
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
+  add_executable(test-groundhog-account-remote-switch
+    tests/app/test_account_remote_switch.c)
+  target_link_libraries(test-groundhog-account-remote-switch PRIVATE groundhog-account)
+  target_compile_options(test-groundhog-account-remote-switch PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-groundhog-account-remote-switch groundhog-test-schemas)
+  add_test(NAME groundhog-account-remote-switch COMMAND test-groundhog-account-remote-switch)
+  set_tests_properties(groundhog-account-remote-switch PROPERTIES TIMEOUT 30
     ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Account switch/teardown and relay-list admission against a recording
@@ -928,6 +952,13 @@ if (TARGET groundhog-identity AND TARGET PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_D
         SKIP_RETURN_CODE 77 TIMEOUT 45 ENVIRONMENT "G_DEBUG=fatal-criticals")
     endif()
   endif()
+endif()
+if (TARGET groundhog-account)
+  if (NOT TARGET groundhog-nip46-credentials)
+    message(FATAL_ERROR "Groundhog account model requires the NIP-46 credential store")
+  endif()
+  target_link_libraries(groundhog-account PUBLIC groundhog-nip46-credentials)
+  target_link_libraries(groundhog PRIVATE groundhog-nip46-credentials)
 endif()
 
 # --- G02 store ---

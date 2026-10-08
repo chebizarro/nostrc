@@ -17,7 +17,7 @@ typedef struct {
   GhConversationStore *conversations;  /* required: the model the window lists */
   GhAccountStore *account_store;       /* required: drafts and the account's outbox */
   GhDmInbox *inbox;                    /* nullable: messages waiting for the signer */
-  GSettings *settings;                 /* nullable: enter-sends, signer-method */
+  GSettings *settings;                 /* nullable: enter-sends */
   struct _GhExpiry *expiry;            /* nullable: the open store's timers (G07) */
 } GhSendUiConfig;
 

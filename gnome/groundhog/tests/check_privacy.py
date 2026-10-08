@@ -193,6 +193,8 @@ Key = namedtuple("Key", "type default choices", defaults=(None,))
 # and an entry here (§8.4).
 GSETTINGS = {
     "current-npub": Key("s", "''"),
+    "current-backend": Key("s", "'grotto'", ("grotto", "nip46")),
+    "backend-migration-version": Key("i", "0"),
     # §7.11 Privacy / Notifications (PD-9). notifications-enabled becomes
     # true only when onboarding chooses background delivery.
     "notifications-enabled": Key("b", "false"),
@@ -247,7 +249,8 @@ BLUEPRINT_DENYLIST = {
 }
 
 # Schema keys that are state, not preferences: the dialog has no row for them.
-STATE_KEYS = {"current-npub", "window-width", "window-height", "window-maximized"}
+STATE_KEYS = {"current-npub", "current-backend", "backend-migration-version",
+              "signer-method", "window-width", "window-height", "window-maximized"}
 PREFS_DIALOG = "src/ui/gh-preferences-dialog.c"
 PREFS_DIALOG_PREFIX = "src/ui/gh-preferences-dialog."
 FEATURES_FILE = "src/app/gh-features.h"

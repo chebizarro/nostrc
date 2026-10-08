@@ -555,21 +555,8 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         }
       }
 
-      Adw.ComboRow signer_row {
-        title: _("Signer");
-
-        model: StringList {
-          strings [
-            _("Automatic"),
-            _("Grotto"),
-            _("Grotto (NIP-55L)"),
-            _("Remote Signer (NIP-46)"),
-          ]
-        };
-      }
-
       Label {
-        label: _("Your private key stays in Grotto. Remote signers (NIP-46) aren't supported yet: choosing one makes Groundhog read-only.");
+        label: _("Each account uses its selected signer. Groundhog never stores your account's private key.");
         wrap: true;
         xalign: 0;
         margin-top: 12;

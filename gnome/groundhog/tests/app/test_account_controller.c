@@ -316,6 +316,7 @@ test_switch_invalidates(void)
 
   /* An out-of-band write (e.g. gsettings CLI) switches like the menu does. */
   g_settings_set_string(settings, "current-npub", npub_two);
+  while (g_main_context_iteration(NULL, FALSE)) {}
   g_assert_cmpstr(gh_account_controller_get_active_npub(controller), ==, npub_two);
   g_assert_true(probe.fired);
   g_assert_false(probe.current_when_fired); /* revoked before cancellation */
@@ -335,6 +336,7 @@ test_switch_invalidates(void)
   /* A selection that disappears from the store revokes the account. */
   guint64 second = gh_account_controller_get_generation(controller);
   g_settings_set_string(settings, "current-npub", npub_three);
+  while (g_main_context_iteration(NULL, FALSE)) {}
   g_assert_cmpint(gh_account_controller_get_state(controller), ==,
                   GH_ACCOUNT_STATE_SELECTED_MISSING);
   g_assert_null(gh_account_controller_get_active_npub(controller));
@@ -930,20 +932,25 @@ test_account_signer_switch_dispose(void)
   gh_account_controller_sign_async(controller, second_request, account_signer_done, &third);
   MockCount count = { &mock, 3 };
   spin_until(mock_count_reached, &count);
+  guint64 unchanged = gh_account_controller_get_generation(controller);
   g_settings_set_string(settings, "signer-method", "nip46");
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_cmpuint(gh_account_controller_get_generation(controller), ==, unchanged);
+  g_assert_false(third.done); /* deprecated global setting cannot revoke an account */
+  g_assert_true(gh_account_controller_select(controller, "", NULL));
   spin_until(signer_done, &third);
   g_assert_null(third.value);
   g_assert_error(third.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED);
   g_clear_error(&third.error);
-  SignerWait unsupported = { .sign = TRUE };
+  SignerWait unavailable = { .sign = TRUE };
   gh_account_controller_sign_async(controller, second_request, account_signer_done,
-                                   &unsupported);
-  spin_until(signer_done, &unsupported);
-  g_assert_error(unsupported.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
-  g_clear_error(&unsupported.error);
+                                   &unavailable);
+  spin_until(signer_done, &unavailable);
+  g_assert_error(unavailable.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE);
+  g_clear_error(&unavailable.error);
   g_assert_cmpuint(mock.calls, ==, 3);
 
-  g_settings_set_string(settings, "signer-method", "auto");
+  g_assert_true(gh_account_controller_select(controller, npub_two, NULL));
   SignerWait fourth = { .sign = TRUE };
   gh_account_controller_sign_async(controller, second_request, account_signer_done, &fourth);
   count.count = 4;

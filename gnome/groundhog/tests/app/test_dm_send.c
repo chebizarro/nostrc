@@ -1131,6 +1131,7 @@ test_invalid_input(void)
   }
   /* No active account. */
   g_settings_set_string(f.settings, "current-npub", "");
+  drain(); /* external pair writes reconcile together at idle */
   GhDmSend *send = gh_dm_sender_send(f.sender, hex_bob, "hello", NULL);
   g_assert_true(gh_dm_send_is_done(send));
   g_assert_cmpint(gh_dm_send_get_status(send)->result, ==, GH_DM_SEND_RESULT_FAILED);

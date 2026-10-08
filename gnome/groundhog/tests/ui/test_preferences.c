@@ -68,14 +68,15 @@ drain_idle(void)
 
 /* The schema keys that are not preferences (no row). */
 static const char *const not_preferences[] = {
-  "current-npub", "window-width", "window-height", "window-maximized",
+  "current-npub", "current-backend", "backend-migration-version", "signer-method",
+  "window-width", "window-height", "window-maximized",
 };
 
 /* Charter §7.11, one row each. */
 static const char *const preference_keys[] = {
   "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
   "link-previews", "load-profile-pictures", "filter-unknown-senders", "show-message-previews",
-  "network-mode", "tor-socks-address", "discovery-relays", "signer-method",
+  "network-mode", "tor-socks-address", "discovery-relays",
   "run-in-background", "retention-days", "default-disappearing-seconds", "enter-sends",
   "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
   "default-dm-protocol",
@@ -286,9 +287,6 @@ static const Choice choices[] = {
   /* Without G09 there is no Tor item; a stored "tor" is shown, not offered. */
   { "network-mode", { "System Settings", "No Proxy" }, { "'system'", "'none'" }, "'tor'",
     "Tor (not available in this version)" },
-  { "signer-method",
-    { "Automatic", "Grotto", "Grotto (NIP-55L)", "Remote Signer (NIP-46)" },
-    { "'auto'", "'local'", "'nip55l'", "'nip46'" }, "'bunker'", "Unsupported (“bunker”)" },
 };
 
 static GVariant *
@@ -1386,7 +1384,6 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "network-mode", TRUE },
     { "tor-socks-address", GH_FEATURE_TOR },
     { "discovery-relays", TRUE },
-    { "signer-method", TRUE },
     { "run-in-background", TRUE },
     { "retention-days", GH_FEATURE_EXPIRY },
     { "default-disappearing-seconds", GH_FEATURE_COMPOSER && GH_FEATURE_EXPIRY },

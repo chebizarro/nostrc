@@ -6,6 +6,7 @@
 G_BEGIN_DECLS
 
 typedef struct _GhSigner GhSigner;
+typedef struct _GhNip46Session GhNip46Session;
 typedef enum {
   GH_SIGNER_ERROR_INVALID_INPUT = 1,
   GH_SIGNER_ERROR_UNAVAILABLE,
@@ -19,7 +20,9 @@ typedef enum {
 #define GH_SIGNER_ERROR gh_signer_error_quark()
 GQuark gh_signer_error_quark(void);
 
-/* The org.nostr.Signer service adapter only. NIP-46 sessions are not implied.
+/* Backend-neutral signer facade. The Grotto constructor below preserves the
+ * existing D-Bus contract; gh_signer_new_nip46 binds a remote session.
+ * For the Grotto backend:
  * Calls always use the selected npub as the signer selector. Signed events are
  * independently verified; NIP-44 replies carry no pubkey, so their key binding
  * relies on the service contract rather than an attestation in the reply.
@@ -34,6 +37,8 @@ GQuark gh_signer_error_quark(void);
  * Address lookup and connection setup run asynchronously. */
 GhSigner *gh_signer_new(GDBusConnection *bus, const gchar *selected_npub,
                         GError **error);
+GhSigner *gh_signer_new_nip46(GhNip46Session *session, const gchar *selected_npub,
+                              GError **error);
 /* Revokes pending service approvals and cancels their D-Bus calls. The owning
  * thread-default main context must keep iterating until callbacks finish. */
 void gh_signer_free(GhSigner *signer);

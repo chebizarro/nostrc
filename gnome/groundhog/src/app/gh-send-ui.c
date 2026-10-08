@@ -487,12 +487,8 @@ update_reason(GhSendUi *ui)
   if (ui->updating)
     return;
   ui->updating = TRUE;
-  GhAccountState state = gh_account_controller_get_state(ui->accounts);
-  GhSignerAvailability availability = gh_account_controller_get_signer_availability(ui->accounts);
-  g_autofree gchar *method = ui->settings ? g_settings_get_string(ui->settings, "signer-method")
-                                          : g_strdup("auto");
   /* Offline is not a reason: the outbox waits for the connection. */
-  g_autofree gchar *reason = gh_account_describe_limits(state, availability, method, TRUE);
+  g_autofree gchar *reason = gh_account_controller_describe_limits(ui->accounts, TRUE);
   if (!reason)
     reason = store_reason(ui);
   GhMessage *no_inbox = NULL;
@@ -826,8 +822,6 @@ gh_send_ui_attach(GhWindow *window, const GhSendUiConfig *config)
     if (schema && g_settings_schema_has_key(schema, "enter-sends"))
       g_settings_bind(ui->settings, "enter-sends", ui->composer, "enter-sends",
                       G_SETTINGS_BIND_GET);
-    g_signal_connect_object(ui->settings, "changed::signer-method",
-                            G_CALLBACK(on_state_source), ui->composer, G_CONNECT_SWAPPED);
   }
   gh_composer_set_length_func(ui->composer, text_fits, ui, NULL);
   g_signal_connect(ui->composer, "send", G_CALLBACK(on_send), ui);

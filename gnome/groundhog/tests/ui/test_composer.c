@@ -1255,9 +1255,9 @@ test_reasons_account_signer_store(void)
   g_assert_cmpint(gh_account_store_get_state(f.s.store), ==, GH_ACCOUNT_STORE_OPEN);
 
   g_settings_set_string(f.s.settings, "signer-method", "nip46");
-  wait_reason(composer, "NIP-46");
+  while (g_main_context_iteration(NULL, FALSE)) {}
+  g_assert_null(gh_composer_get_disabled_reason(composer));
   g_settings_set_string(f.s.settings, "signer-method", "auto");
-  wait_reason(composer, NULL);
 
   g_settings_set_string(f.s.settings, "current-npub", "");
   wait_reason(composer, "no Groundhog account");
