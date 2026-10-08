@@ -2005,6 +2005,21 @@ gh_app_services_free(GhAppServices *self)
   g_free(self);
 }
 
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_ACCOUNT_STORE
+static gboolean
+search_stored_messages(const gchar *query, GHashTable **out_rooms, GError **error,
+                       gpointer data)
+{
+  GhAppServices *self = data;
+  GhStore *store = gh_account_store_get_store(self->account_store);
+  if (!store) {
+    *out_rooms = NULL;
+    return TRUE;
+  }
+  return gh_store_search_message_rooms(store, query, out_rooms, error);
+}
+#endif
+
 void
 gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 {
@@ -2017,6 +2032,9 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
 #if GROUNDHOG_HAVE_INBOX
   gh_conversation_list_attach(window, self->conversations, self->settings);
+#if GROUNDHOG_HAVE_ACCOUNT_STORE
+  gh_conversation_list_set_message_search_source(window, search_stored_messages, self, NULL);
+#endif
   {
     GhAccountStoreState state = gh_account_store_get_state(self->account_store);
     GhStore *open = state == GH_ACCOUNT_STORE_OPEN || state == GH_ACCOUNT_STORE_EPHEMERAL

@@ -12,8 +12,8 @@ G_BEGIN_DECLS
  *  - the sidebar lists the conversations that are not message requests in
  *    the store's order (newest activity first) and counts the requests in its
  *    Message Requests entry, both filtered by the search text, which matches
- *    the title and the participants' full npubs (profile names are never
- *    fetched for this);
+ *    titles, subjects, cached profile names and participants' full npubs;
+ *    an attached encrypted store also matches persisted message bodies;
  *  - rows are GhConversationRow; they show message previews only while the
  *    sidebar's show-previews is set, which follows the settings key
  *    show-message-previews when settings has it and stays off otherwise;
@@ -55,6 +55,17 @@ GdkTexture *gh_conversation_list_get_picture(GhWindow *window, const gchar *pubk
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
+
+/* Optional encrypted-store search. Returns a set of "<backend>:<backend_key>"
+ * room keys matching stored message bodies, including unloaded pages. The
+ * caller owns the set. Metadata search still works while no store is open. */
+typedef gboolean (*GhConversationListSearchMessages)(const gchar *query,
+                                                      GHashTable **out_rooms,
+                                                      GError **error,
+                                                      gpointer user_data);
+void gh_conversation_list_set_message_search_source(GhWindow *window,
+                                                    GhConversationListSearchMessages search,
+                                                    gpointer user_data, GDestroyNotify destroy);
 
 /* An encrypted group's member count, the account included (qp24.13 part 2:
  * the header's "Encrypted group · N members", charter §2.2 surface 1), or 0

@@ -26,7 +26,11 @@ typedef struct {
   GtkFilter *requests;        /* a message request */
   GtkFilter *accepted_search; /* the sidebar's search text */
   GtkFilter *requests_search;
-  GListModel *listed;         /* the accepted conversations as listed: pinned first */
+  GhConversationListSearchMessages search_messages;
+  gpointer search_messages_data;
+  GDestroyNotify search_messages_destroy;
+  GHashTable *matched_rooms;
+  GListModel *listed;
   GtkListItemFactory *sections; /* "Pinned" and "Recent" headers */
   GhConversation *shown;
   /* Older history (gh_conversation_list_set_history_source()). */
@@ -51,6 +55,9 @@ list_free(gpointer data)
     list->load_older_destroy(list->load_older_data);
   if (list->member_count_destroy)
     list->member_count_destroy(list->member_count_data);
+  if (list->search_messages_destroy)
+    list->search_messages_destroy(list->search_messages_data);
+  g_clear_pointer(&list->matched_rooms, g_hash_table_unref);
   g_clear_object(&list->view);
   g_clear_object(&list->pictures);
   g_clear_object(&list->store);
@@ -184,12 +191,12 @@ sectioned(GListModel *conversations)
 
 /* ---- filters ---------------------------------------------------------------- */
 
-/* What a search matches: the title, the subject (a request's secondary
- * text) and every participant's full npub. */
+/* What a search matches: metadata, every participant's full npub and
+ * message-body matches returned from the encrypted store. */
 static gchar *
 search_key(GObject *item, gpointer data)
 {
-  (void)data;
+  GhConversationList *list = data;
   if (!GH_IS_CONVERSATION(item))
     return NULL;
   GhConversation *conversation = GH_CONVERSATION(item);
@@ -209,18 +216,50 @@ search_key(GObject *item, gpointer data)
       g_string_append(key, name);
     }
   }
+  if (list->matched_rooms) {
+    g_autofree gchar *room_key = g_strdup_printf("%d:%s", gh_conversation_get_backend(conversation),
+                                                gh_conversation_get_room_id(conversation));
+    if (g_hash_table_contains(list->matched_rooms, room_key)) {
+      g_string_append_c(key, '\n');
+      g_string_append(key, gh_sidebar_page_get_search_text(list->sidebar));
+    }
+  }
   return g_string_free(g_steal_pointer(&key), FALSE);
 }
 
+static void
+refresh_message_search(GhConversationList *list)
+{
+  g_clear_pointer(&list->matched_rooms, g_hash_table_unref);
+  const gchar *query = gh_sidebar_page_get_search_text(list->sidebar);
+  if (*query && list->search_messages) {
+    g_autoptr(GError) error = NULL;
+    if (!list->search_messages(query, &list->matched_rooms, &error,
+                               list->search_messages_data))
+      g_message("Groundhog could not search stored messages: %s",
+                error ? error->message : "the store is unavailable");
+  }
+  gtk_filter_changed(list->accepted_search, GTK_FILTER_CHANGE_DIFFERENT);
+  gtk_filter_changed(list->requests_search, GTK_FILTER_CHANGE_DIFFERENT);
+}
+
+static void
+on_search_text_changed(GhWindow *window)
+{
+  GhConversationList *list = list_of(window);
+  if (list)
+    refresh_message_search(list);
+}
+
 static GtkFilter *
-search_filter(GhSidebarPage *sidebar)
+search_filter(GhConversationList *list)
 {
   GtkExpression *expression = gtk_cclosure_expression_new(G_TYPE_STRING, NULL, 0, NULL,
-                                                          G_CALLBACK(search_key), NULL, NULL);
+                                                          G_CALLBACK(search_key), list, NULL);
   GtkStringFilter *filter = gtk_string_filter_new(expression);
   gtk_string_filter_set_ignore_case(filter, TRUE);
   gtk_string_filter_set_match_mode(filter, GTK_STRING_FILTER_MATCH_MODE_SUBSTRING);
-  g_object_bind_property(sidebar, "search-text", filter, "search", G_BINDING_SYNC_CREATE);
+  g_object_bind_property(list->sidebar, "search-text", filter, "search", G_BINDING_SYNC_CREATE);
   return GTK_FILTER(filter);
 }
 
@@ -399,11 +438,29 @@ gh_conversation_list_set_history_source(GhWindow *window, GhConversationListLoad
                                           NULL);
 }
 
+void
+gh_conversation_list_set_message_search_source(GhWindow *window,
+                                                GhConversationListSearchMessages search,
+                                                gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhConversationList *list = list_of(window);
+  g_return_if_fail(list != NULL);
+  if (list->search_messages_destroy)
+    list->search_messages_destroy(list->search_messages_data);
+  list->search_messages = search;
+  list->search_messages_data = user_data;
+  list->search_messages_destroy = destroy;
+  refresh_message_search(list);
+}
+
 static void
 on_message_added(GhWindow *window, GhConversation *conversation, GhMessage *message)
 {
   GhConversationList *list = list_of(window);
   (void)message;
+  if (*gh_sidebar_page_get_search_text(list->sidebar))
+    refresh_message_search(list);
   if (conversation == list->shown)
     mark_read_if_seen(window, list);
 }
@@ -504,8 +561,10 @@ gh_conversation_list_attach(GhWindow *window, GhConversationStore *store, GSetti
   list->accepted = GTK_FILTER(gtk_bool_filter_new(gtk_expression_ref(is_request)));
   gtk_bool_filter_set_invert(GTK_BOOL_FILTER(list->accepted), TRUE);
   list->requests = GTK_FILTER(gtk_bool_filter_new(is_request));
-  list->accepted_search = search_filter(list->sidebar);
-  list->requests_search = search_filter(list->sidebar);
+  list->accepted_search = search_filter(list);
+  list->requests_search = search_filter(list);
+  g_signal_connect_object(list->sidebar, "notify::search-text",
+                          G_CALLBACK(on_search_text_changed), window, G_CONNECT_SWAPPED);
   g_autoptr(GListModel) conversations = filtered(store, list->accepted, list->accepted_search);
   g_autoptr(GListModel) requests = filtered(store, list->requests, list->requests_search);
 

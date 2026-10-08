@@ -946,6 +946,42 @@ test_paging(void)
   fixture_clear(&f);
 }
 
+static void
+test_search_stored_message_bodies(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 1);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *aq = room_of(ACCOUNT_A, PEER_Q, NULL);
+  Rumor old = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 30,
+                .content = "Needle in the older page" };
+  Rumor newer = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 20,
+                  .content = "ordinary newest message" };
+  Rumor other = { .author = PEER_Q, .to = { ACCOUNT_A }, .created_at = T0 - 10,
+                  .content = "different room" };
+  g_assert_cmpint(deliver(f.model, &old, "search/old"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &newer, "search/newer"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &other, "search/other"), ==, GH_CONVERSATION_ADD_NEW);
+  fixture_restart(&f);
+  g_assert_true(gh_conversation_get_has_older(room(&f, ap)));
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GHashTable) matches = NULL;
+  g_assert_true(gh_store_search_message_rooms(f.store, "NEEDLE", &matches, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *p_key = g_strdup_printf("%d:%s", GH_STORE_BACKEND_NIP17, ap);
+  g_autofree gchar *q_key = g_strdup_printf("%d:%s", GH_STORE_BACKEND_NIP17, aq);
+  g_assert_true(g_hash_table_contains(matches, p_key));
+  g_assert_false(g_hash_table_contains(matches, q_key));
+  g_clear_pointer(&matches, g_hash_table_unref);
+  g_assert_true(gh_store_search_message_rooms(f.store, "different", &matches, &error));
+  g_assert_true(g_hash_table_contains(matches, q_key));
+  g_assert_false(g_hash_table_contains(matches, p_key));
+  g_clear_pointer(&matches, g_hash_table_unref);
+  g_assert_true(gh_store_search_message_rooms(f.store, "%", &matches, &error));
+  g_assert_cmpuint(g_hash_table_size(matches), ==, 0); /* literal, not LIKE wildcard */
+  fixture_clear(&f);
+}
+
 /* Restored messages are verified again from the stored rumor JSON: a row
  * that does not match its id is skipped (and logged), never shown. */
 static void
@@ -2121,6 +2157,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/pins", test_pins);
   g_test_add_func("/groundhog/store-conversations/timer-change", test_timer_change);
   g_test_add_func("/groundhog/store-conversations/restart/paging", test_paging);
+  g_test_add_func("/groundhog/store-conversations/search-stored-message-bodies",
+                  test_search_stored_message_bodies);
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);
   g_test_add_func("/groundhog/store-conversations/notify-state", test_notify_state);
