@@ -8,9 +8,8 @@
 #include <sqlite3.h>
 
 #define MAX_PAGE 1000
-/* Rows of an MLS conversation that are no messages: the account's own
- * Commits (kind 445, gh-mls-commits.c) and Welcome wraps (kind 444). */
-#define LISTED_KIND GH_MESSAGE_MLS_KIND
+/* Only application messages belong in a conversation. Commits (kind 445)
+ * and Welcome wraps (kind 444) do not; poll definitions and votes do. */
 
 struct _GhStoreMls {
   GObject parent_instance;
@@ -178,13 +177,16 @@ message_row(GhStore *store, gint64 conversation_id, const gchar *message_id, gin
 {
   *row = 0;
   sqlite3_stmt *stmt = prepare(store,
-    "SELECT id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2 AND kind = ?3",
+    "SELECT id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2 "
+    "AND kind IN (?3, ?4, ?5)",
     error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
   BIND(bind_text(stmt, 2, message_id));
-  BIND(sqlite3_bind_int(stmt, 3, LISTED_KIND));
+  BIND(sqlite3_bind_int(stmt, 3, GH_MESSAGE_MLS_KIND));
+  BIND(sqlite3_bind_int(stmt, 4, GH_MESSAGE_MLS_POLL_KIND));
+  BIND(sqlite3_bind_int(stmt, 5, GH_MESSAGE_MLS_POLL_VOTE_KIND));
   gboolean has_row = FALSE;
   gboolean ok = step_row(store, stmt, &has_row, "Looking up an encrypted-group message", error);
   if (ok && has_row)
@@ -357,7 +359,8 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
   }
   stmt = prepare(store,
     "SELECT created_at, backend_msg_id, raw_json, expires_at, seq, mls_epoch FROM messages "
-    "WHERE conversation_id = ?1 AND kind = ?6 AND (?2 = 0 OR created_at < ?3 OR "
+    "WHERE conversation_id = ?1 AND kind IN (?6, ?7, ?8) "
+    "AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
   if (!stmt)
@@ -370,7 +373,9 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
     BIND(sqlite3_bind_int64(stmt, 3, cursor.created_at));
     BIND(bind_text(stmt, 4, cursor.has ? cursor.id : ""));
     BIND(sqlite3_bind_int64(stmt, 5, (gint64)limit + 1));
-    BIND(sqlite3_bind_int(stmt, 6, LISTED_KIND));
+    BIND(sqlite3_bind_int(stmt, 6, GH_MESSAGE_MLS_KIND));
+    BIND(sqlite3_bind_int(stmt, 7, GH_MESSAGE_MLS_POLL_KIND));
+    BIND(sqlite3_bind_int(stmt, 8, GH_MESSAGE_MLS_POLL_VOTE_KIND));
     guint rows = 0;
     more = FALSE;
     while (TRUE) {
@@ -486,11 +491,14 @@ gh_store_mls_attach(GhStoreMls *self, GhConversationStore *model, guint page_siz
   g_autoptr(GPtrArray) groups = g_ptr_array_new_with_free_func(g_free);
   sqlite3_stmt *stmt = prepare(store,
     "SELECT id, backend_key FROM conversations c WHERE backend = 3 AND "
-    "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.kind = ?1) "
+    "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
+      "AND m.kind IN (?1, ?2, ?3)) "
     "ORDER BY last_activity DESC, backend_key", error);
   if (!stmt)
     return FALSE;
-  if (sqlite3_bind_int(stmt, 1, LISTED_KIND) != SQLITE_OK) {
+  if (sqlite3_bind_int(stmt, 1, GH_MESSAGE_MLS_KIND) != SQLITE_OK ||
+      sqlite3_bind_int(stmt, 2, GH_MESSAGE_MLS_POLL_KIND) != SQLITE_OK ||
+      sqlite3_bind_int(stmt, 3, GH_MESSAGE_MLS_POLL_VOTE_KIND) != SQLITE_OK) {
     gh_store_set_sqlite_error(store, SQLITE_ERROR, "Binding an encrypted-group value", error);
     sqlite3_finalize(stmt);
     return FALSE;

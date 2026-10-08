@@ -133,10 +133,10 @@ test_own_poll_card_on_open(void)
   GhConversationView *view = GH_CONVERSATION_VIEW(
     gh_content_page_get_view(gh_window_get_content(window)));
   wait_for_window_or_card(GTK_WIDGET(window), FALSE);
-  gh_conversation_view_set_conversation(view, conversation);
+  g_assert_true(gh_window_open_item(window, conversation));
   wait_for_window_or_card(GTK_WIDGET(view), TRUE);
   GtkWidget *card = find_card(GTK_WIDGET(view));
-  g_assert_nonnull(card);
+  wait_for_window_or_card(card, FALSE);
   GhMlsPoll *on_screen = gh_poll_card_get_poll(GH_POLL_CARD(card));
   g_assert_cmpstr(gh_mls_poll_get_question(on_screen), ==, "What to drink?");
   const gchar *choices[] = { gh_mls_poll_get_option(on_screen, 0)->id };
@@ -149,6 +149,45 @@ test_own_poll_card_on_open(void)
   admit(store, vote);
   g_assert_true(find_card(GTK_WIDGET(view)) == card);
   g_assert_cmpuint(gh_mls_poll_get_total_voters(on_screen), ==, 1);
+  g_assert_cmpuint(g_list_model_get_n_items(gh_conversation_view_get_timeline(view)), ==, 1);
+  gtk_window_destroy(GTK_WINDOW(window));
+}
+
+static void
+test_unread_vote_on_open(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, account, NULL, NULL, NULL);
+  g_autoptr(GhMessage) poll_message = NULL;
+  g_autoptr(GhMlsPoll) poll = new_poll(FALSE, &poll_message);
+  admit(store, poll_message);
+  const gchar *choices[] = { gh_mls_poll_get_option(poll, 0)->id };
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *vote_event = gh_mls_poll_build_vote_event(
+    peer, group_id, gh_message_get_created_at(poll_message) + 1,
+    gh_message_get_rumor_id(poll_message), choices, 1, &error);
+  g_assert_no_error(error);
+  g_autoptr(GhMessage) vote = message_from_event(vote_event);
+  admit(store, vote);
+  GhConversation *conversation = gh_conversation_store_lookup(
+    store, gh_message_get_room_id(poll_message));
+  g_assert_nonnull(conversation);
+  guint first = 0;
+  g_assert_cmpuint(gh_conversation_get_listed_unread(conversation, &first), ==, 1);
+  g_assert_cmpuint(first, ==, 1); /* the unread vote has no visible row */
+
+  GhWindow *window = gh_window_new(NULL);
+  gh_conversation_list_attach(window, store, NULL);
+  GhPollUiConfig config = { 0 };
+  gh_poll_ui_attach(window, &config);
+  gtk_window_present(GTK_WINDOW(window));
+  GhConversationView *view = GH_CONVERSATION_VIEW(
+    gh_content_page_get_view(gh_window_get_content(window)));
+  wait_for_window_or_card(GTK_WIDGET(window), FALSE);
+  g_assert_true(gh_window_open_item(window, conversation));
+  wait_for_window_or_card(GTK_WIDGET(view), TRUE);
+  GtkWidget *card = find_card(GTK_WIDGET(view));
+  wait_for_window_or_card(card, FALSE);
   g_assert_cmpuint(g_list_model_get_n_items(gh_conversation_view_get_timeline(view)), ==, 1);
   gtk_window_destroy(GTK_WINDOW(window));
 }
@@ -525,6 +564,7 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/groundhog/poll/own-poll-card-on-open", test_own_poll_card_on_open);
+  g_test_add_func("/groundhog/poll/unread-vote-on-open", test_unread_vote_on_open);
   g_test_add_func("/groundhog/poll/own-poll-and-vote-timeline", test_own_poll_and_vote_timeline);
   g_test_add_func("/groundhog/poll/nip17-own-poll-and-vote", test_private_transport_poll);
   g_test_add_func("/groundhog/poll/nip29-own-poll-and-vote", test_nip29_transport_poll);

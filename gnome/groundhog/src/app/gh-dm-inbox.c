@@ -48,7 +48,7 @@ typedef struct {
   gboolean run_skipped;   /* the run stepped over an unpageable second */
   guint run_max;          /* most wraps one answer of the run brought: a lower
                            * bound on the relay's cap (review B2) */
-  GSource *settle;        /* low-priority idle that judges EOSEs */
+  GSource *settle;        /* deferred EOSE judgment on the main context */
 } Endpoint;
 
 typedef struct {
@@ -639,6 +639,10 @@ schedule_settle(Endpoint *endpoint)
   if (endpoint->settle)
     return;
   endpoint->settle = g_idle_source_new();
+  /* EOSE is a state transition, not best-effort background work. An idle at
+   * G_PRIORITY_DEFAULT_IDLE can be starved by a busy GTK/main-context source,
+   * leaving the inbox banner in BACKFILLING after the relay finished. */
+  g_source_set_priority(endpoint->settle, G_PRIORITY_DEFAULT);
   g_source_set_callback(endpoint->settle, settle_now, endpoint, NULL);
   g_source_attach(endpoint->settle, g_main_context_get_thread_default());
 }

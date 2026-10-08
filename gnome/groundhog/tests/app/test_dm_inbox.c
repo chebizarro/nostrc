@@ -3,6 +3,8 @@
  * scopes the inbox opened; nothing sleeps. */
 #include "gh-account-auth.h"
 #include "gh-dm-inbox.h"
+#include "gh-inbox-status.h"
+#include "gh-status.h"
 #include "gh-nip17-inbox.h"
 #include "gh-nip04-inbox.h"
 #include "gh-message.h"
@@ -730,6 +732,41 @@ test_req_exact(void)
   g_assert_cmpint(relay_state(f.inbox, INBOX_B, &detail), ==, GH_DM_INBOX_RELAY_FAILED);
   g_assert_cmpstr(detail, ==, "refused");
   g_assert_cmpuint(f.signer.calls, ==, 0);
+  fixture_down(&f);
+}
+
+static gboolean
+keep_context_busy(gpointer data)
+{
+  (*(guint *)data)++;
+  return G_SOURCE_CONTINUE;
+}
+
+/* The app's status adapter must leave the checking banner after EOSE even
+ * while normal-priority UI work keeps the main context busy. */
+static void
+test_eose_settles_under_load(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f);
+  g_autoptr(GhStatus) status = gh_status_new();
+  gh_status_set_account_active(status, TRUE);
+  gh_status_set_store(status, GH_STATUS_STORE_OPEN, NULL);
+  gh_inbox_status_attach(status, f.inbox, f.relays);
+  publish_list(&f, 2, 10050, INBOX_A, NULL);
+  g_assert_cmpint(gh_status_get_inbox(status), ==, GH_STATUS_INBOX_CONNECTING);
+  eose(&f, INBOX_A);
+  g_assert_cmpint(gh_status_get_inbox(status), ==, GH_STATUS_INBOX_BACKFILLING);
+  g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_BACKFILLING);
+
+  guint ticks = 0;
+  guint busy = g_idle_add_full(G_PRIORITY_DEFAULT, keep_context_busy, &ticks, NULL);
+  for (guint i = 0; i < 64 && gh_status_get_inbox(status) != GH_STATUS_INBOX_LIVE; i++)
+    g_main_context_iteration(NULL, FALSE);
+  g_source_remove(busy);
+  g_assert_cmpuint(ticks, >, 0);
+  g_assert_cmpint(gh_status_get_inbox(status), ==, GH_STATUS_INBOX_LIVE);
+  g_assert_cmpint(gh_status_get_banner(status), ==, GH_STATUS_BANNER_NONE);
   fixture_down(&f);
 }
 
@@ -1936,6 +1973,8 @@ main(int argc, char **argv)
     hex[key] = gh_test_pub(key);
   }
   g_test_add_func("/groundhog/dm-inbox/req-exact", test_req_exact);
+  g_test_add_func("/groundhog/dm-inbox/eose-settles-under-load",
+                  test_eose_settles_under_load);
   g_test_add_func("/groundhog/dm-inbox/backfill-relay-cap-below-limit",
                   test_backfill_relay_cap_below_limit);
   g_test_add_func("/groundhog/dm-inbox/backfill-honest-tied-second",

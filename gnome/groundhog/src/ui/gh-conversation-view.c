@@ -1357,7 +1357,11 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     gboolean unread = first < n;
     self->open_scroll = unread ? OPEN_FIRST_UNREAD : OPEN_LATEST;
     /* A timer-change row before it shifts it in the timeline. */
-    self->open_target = unread ? timeline_index_of(self->timeline, first) : n_visible(self);
+    guint visible = n_visible(self);
+    /* A vote is unread in the source but has no timeline row. If it is the
+     * last source item, its mapped position is one past the visible model. */
+    self->open_target = unread && visible
+      ? MIN(timeline_index_of(self->timeline, first), visible - 1) : visible;
 
     /* GTK initially keeps a 200-item range at position zero. Establish the
      * opening anchor without building those message rows, then populate only
