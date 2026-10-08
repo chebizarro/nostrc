@@ -56,10 +56,16 @@ typedef struct {
   guint announcements; /* made (only while the window is active, §7.14) */
 } GhAccountUi;
 
+static void names_gone(gpointer data, GObject *where_the_object_was);
+
 static void
 account_ui_free(gpointer data)
 {
   GhAccountUi *ui = data;
+  if (ui->names) {
+    g_signal_handlers_disconnect_by_data(ui->names, ui);
+    g_object_weak_unref(ui->names, names_gone, ui);
+  }
   g_clear_object(&ui->controller);
   g_clear_object(&ui->settings);
   g_clear_object(&ui->identities_menu);
@@ -476,13 +482,15 @@ gh_account_ui_set_name_source(GhWindow *window, GhAccountNameFunc name, GObject 
 {
   GhAccountUi *ui = g_object_get_data(G_OBJECT(window), "groundhog-account-ui");
   g_return_if_fail(ui != NULL);
-  if (ui->names)
+  if (ui->names) {
+    g_signal_handlers_disconnect_by_data(ui->names, ui);
     g_object_weak_unref(ui->names, names_gone, ui);
+  }
   ui->name = name;
   ui->names = source;
   if (ui->names) {
     g_object_weak_ref(ui->names, names_gone, ui);
-    g_signal_connect_object(ui->names, "profile-changed", G_CALLBACK(on_profile_changed), ui, 0);
+      g_signal_connect(ui->names, "profile-changed", G_CALLBACK(on_profile_changed), ui);
   }
   update(ui);
 }

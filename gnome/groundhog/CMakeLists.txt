@@ -239,6 +239,14 @@ if (TARGET nostr AND TARGET nip19)
   target_compile_options(groundhog-account PRIVATE -Wall -Wextra -Werror)
   target_sources(groundhog PRIVATE src/app/gh-account-ui.c)
   target_link_libraries(groundhog PRIVATE groundhog-account)
+  # Approval links are needed by account sessions even without the optional
+  # pairing/network UI. Keep this GTK helper independent of that target.
+  add_library(groundhog-nip46-auth-url STATIC src/ui/gh-nip46-auth-url.c)
+  target_include_directories(groundhog-nip46-auth-url PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-nip46-auth-url PUBLIC groundhog-ui)
+  target_compile_options(groundhog-nip46-auth-url PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-nip46-auth-url)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ACCOUNTS=1)
   # The outbound codec is part of the production executable, not a test-only
   # helper. The inbound unwrap/seen-set (gh-nip17-inbox.c) comes with the
@@ -3235,10 +3243,11 @@ endif()
 # in its own library so every GUI test links the same implementation.
 if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
     TARGET groundhog-nip46-credentials AND TARGET groundhog-net)
-  add_library(groundhog-nip46-pair-dialog STATIC src/ui/gh-nip46-pair-dialog.c)
+    add_library(groundhog-nip46-pair-dialog STATIC src/ui/gh-nip46-pair-dialog.c)
   target_include_directories(groundhog-nip46-pair-dialog PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-  target_link_libraries(groundhog-nip46-pair-dialog PUBLIC groundhog-ui
+    target_link_libraries(groundhog-nip46-pair-dialog PUBLIC groundhog-ui
+      groundhog-nip46-auth-url
     groundhog-account groundhog-nip46-session groundhog-nip46-credentials
     groundhog-net PkgConfig::GROUNDHOG_QRENCODE)
   target_compile_options(groundhog-nip46-pair-dialog PRIVATE -Wall -Wextra -Werror)

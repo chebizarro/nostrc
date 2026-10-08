@@ -14,6 +14,11 @@ G_DECLARE_FINAL_TYPE(GhNip46PairDialog, gh_nip46_pair_dialog, GH, NIP46_PAIR_DIA
  * NULL to use the platform's default Secret Service or Keychain. Optional
  * transports are for deterministic UI tests. */
 typedef const gchar *(*GhNip46PairNameFunc)(gpointer source, const gchar *pubkey_hex);
+/* Deterministic test seam; production always uses GhNip46CredentialStore. */
+typedef void (*GhNip46PairTestSaveFunc)(const GhNip46Credential *credential,
+                                        GAsyncReadyCallback callback,
+                                        gpointer callback_data,
+                                        gpointer user_data);
 
 typedef struct {
   GhAccountController *accounts;
@@ -26,6 +31,8 @@ typedef struct {
   const GhRelayPublishTransport *publish_transport;
   const GhRelayPublishAuthTransport *publish_auth;
   gpointer transport_data;
+  GhNip46PairTestSaveFunc test_save;
+  gpointer test_save_data;
 } GhNip46PairConfig;
 
 /* Emits "confirmation-presented" with the AdwAlertDialog after the remote

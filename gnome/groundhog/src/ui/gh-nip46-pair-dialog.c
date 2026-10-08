@@ -1,4 +1,5 @@
 #include "gh-nip46-pair-dialog.h"
+#include "gh-nip46-auth-url.h"
 #include "gh-net-session.h"
 #include "nostr/nip19/nip19.h"
 #include "nostr/nip46/nip46_uri.h"
@@ -7,9 +8,6 @@
 #include <qrencode.h>
 #include <string.h>
 #include <stdlib.h>
-
-#define AUTH_ACTION "open-signer-authorization"
-#define AUTH_NOTIFICATION "groundhog-signer-authorization"
 
 static const gchar * const amber_relays[] = {
   "wss://auth.nostr1.com", "wss://bucket.coracle.social",
@@ -46,6 +44,8 @@ struct _GhNip46PairDialog {
   GhRelayPublishTransport publish_transport;
   GhRelayPublishAuthTransport publish_auth;
   gpointer transport_data;
+  GhNip46PairTestSaveFunc test_save;
+  gpointer test_save_data;
   gboolean custom_scope, custom_scope_auth, custom_publish, custom_publish_auth;
 
   GhNip46Session *session;
@@ -54,7 +54,7 @@ struct _GhNip46PairDialog {
   gchar **relays;
   gchar *user_pubkey;
   gchar *pending_npub;
-  gchar *auth_url;
+  GhNip46AuthUrl *auth_prompt;
   PairState state;
   gboolean closing;
   guint select_timeout;
@@ -80,7 +80,7 @@ clear_sensitive_fields(GhNip46PairDialog *self)
   gtk_editable_set_text(GTK_EDITABLE(self->uri_row), "");
   gtk_editable_set_text(GTK_EDITABLE(self->bunker_row), "");
   wipe_free(&self->uri);
-  wipe_free(&self->auth_url);
+  if (self->auth_prompt) gh_nip46_auth_url_clear(self->auth_prompt);
 }
 
 static void
@@ -202,50 +202,15 @@ qr_texture(const gchar *uri)
 }
 
 static void
-uri_launched(GObject *source, GAsyncResult *result, gpointer data)
+on_auth_launch_failed(GhNip46AuthUrl *prompt, GError *error, gpointer data)
 {
+  (void)prompt; (void)error;
   GhNip46PairDialog *self = data;
-  g_autoptr(GError) error = NULL;
-  if (!gtk_uri_launcher_launch_finish(GTK_URI_LAUNCHER(source), result, &error) &&
-      !self->closing && self->session) {
+  if (!self->closing && self->session) {
     stop_attempt(self);
     self->state = PAIR_EDITING;
     show_error(self, _("Could not open the signer's authorization page. Try pairing again."));
   }
-  g_object_unref(self);
-}
-
-static void
-open_auth_url(GhNip46PairDialog *self)
-{
-  if (!self->auth_url || self->closing) return;
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  g_autoptr(GtkUriLauncher) launcher = gtk_uri_launcher_new(self->auth_url);
-  gtk_uri_launcher_launch(launcher, GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL,
-                          self->attempt_cancel, uri_launched, g_object_ref(self));
-  GApplication *app = g_application_get_default();
-  if (app) g_application_withdraw_notification(app, AUTH_NOTIFICATION);
-}
-
-static void
-on_auth_action(GSimpleAction *action, GVariant *parameter, gpointer data)
-{
-  (void)action; (void)parameter;
-  GApplication *app = data;
-  GWeakRef *ref = g_object_get_data(G_OBJECT(app), "groundhog-signer-auth-dialog");
-  GhNip46PairDialog *self = ref ? g_weak_ref_get(ref) : NULL;
-  if (self) {
-    open_auth_url(self);
-    g_object_unref(self);
-  }
-}
-
-static void
-weak_ref_free(gpointer data)
-{
-  GWeakRef *ref = data;
-  g_weak_ref_clear(ref);
-  g_free(ref);
 }
 
 static gboolean
@@ -253,32 +218,8 @@ on_auth_url(GhNip46Session *session, const gchar *url, gpointer data)
 {
   GhNip46PairDialog *self = data;
   if (self->closing || self->session != session) return FALSE;
-  wipe_free(&self->auth_url);
-  self->auth_url = g_strdup(url);
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  if (GTK_IS_WINDOW(root) && gtk_widget_get_visible(GTK_WIDGET(root)) &&
-      gtk_window_is_active(GTK_WINDOW(root))) {
-    open_auth_url(self);
-    return TRUE;
-  }
-  GApplication *app = g_application_get_default();
-  if (!app) return FALSE;
-  GWeakRef *ref = g_object_get_data(G_OBJECT(app), "groundhog-signer-auth-dialog");
-  if (!ref) {
-    ref = g_new0(GWeakRef, 1);
-    g_weak_ref_init(ref, self);
-    g_object_set_data_full(G_OBJECT(app), "groundhog-signer-auth-dialog", ref, weak_ref_free);
-  } else g_weak_ref_set(ref, self);
-  if (!g_action_map_lookup_action(G_ACTION_MAP(app), AUTH_ACTION)) {
-    g_autoptr(GSimpleAction) action = g_simple_action_new(AUTH_ACTION, NULL);
-    g_signal_connect(action, "activate", G_CALLBACK(on_auth_action), app);
-    g_action_map_add_action(G_ACTION_MAP(app), G_ACTION(action));
-  }
-  g_autoptr(GNotification) notice = g_notification_new(_("Signer Authorization Needed"));
-  g_notification_set_body(notice, _("Open your signer's authorization page to finish pairing."));
-  g_notification_set_default_action(notice, "app." AUTH_ACTION);
-  g_application_send_notification(app, AUTH_NOTIFICATION, notice);
-  return TRUE;
+  return self->auth_prompt &&
+    gh_nip46_auth_url_handle(self->auth_prompt, url, self->attempt_cancel);
 }
 
 static void
@@ -351,7 +292,8 @@ selection_changed(GhAccountController *accounts, gpointer data)
                                            self->pending_npub, &error)) {
     g_clear_handle_id(&self->select_timeout, g_source_remove);
     self->state = PAIR_COMPLETE;
-    adw_dialog_close(ADW_DIALOG(self));
+    if (gtk_widget_get_root(GTK_WIDGET(self)))
+      adw_dialog_close(ADW_DIALOG(self));
   }
 }
 
@@ -360,8 +302,9 @@ stored(GObject *source, GAsyncResult *result, gpointer data)
 {
   GhNip46PairDialog *self = data;
   g_autoptr(GError) error = NULL;
-  gboolean saved = gh_nip46_credential_store_store_finish(GH_NIP46_CREDENTIAL_STORE(source),
-                                                           result, &error);
+  gboolean saved = self->test_save ? g_task_propagate_boolean(G_TASK(result), &error) :
+    gh_nip46_credential_store_store_finish(GH_NIP46_CREDENTIAL_STORE(source),
+                                             result, &error);
   adw_dialog_set_can_close(ADW_DIALOG(self), TRUE);
   gtk_widget_set_visible(GTK_WIDGET(self->cancel_button), TRUE);
   if (self->closing) { g_object_unref(self); return; }
@@ -412,8 +355,11 @@ confirm_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
   adw_dialog_set_can_close(ADW_DIALOG(self), FALSE);
   gtk_widget_set_visible(GTK_WIDGET(self->cancel_button), FALSE);
   show_error(self, NULL);
-  gh_nip46_credential_store_store_async(self->credentials, credential, TRUE, NULL,
-                                        stored, g_object_ref(self));
+  if (self->test_save)
+    self->test_save(credential, stored, g_object_ref(self), self->test_save_data);
+  else
+    gh_nip46_credential_store_store_async(self->credentials, credential, TRUE, NULL,
+                                          stored, g_object_ref(self));
 }
 
 static void
@@ -670,16 +616,7 @@ on_closed(AdwDialog *dialog, gpointer data)
   self->closing = TRUE;
   g_clear_handle_id(&self->select_timeout, g_source_remove);
   stop_attempt(self);
-  GApplication *app = g_application_get_default();
-  if (app) {
-    g_application_withdraw_notification(app, AUTH_NOTIFICATION);
-    GWeakRef *ref = g_object_get_data(G_OBJECT(app), "groundhog-signer-auth-dialog");
-    if (ref) {
-      GhNip46PairDialog *current = g_weak_ref_get(ref);
-      if (current == self) g_weak_ref_set(ref, NULL);
-      g_clear_object(&current);
-    }
-  }
+  if (self->auth_prompt) gh_nip46_auth_url_clear(self->auth_prompt);
 }
 
 static void
@@ -704,6 +641,7 @@ dispose(GObject *object)
   g_clear_object(&self->accounts);
   g_clear_object(&self->settings);
   g_clear_object(&self->credentials);
+  g_clear_object(&self->auth_prompt);
   g_clear_object(&self->name_source);
   g_clear_pointer(&self->pending_npub, g_free);
   G_OBJECT_CLASS(gh_nip46_pair_dialog_parent_class)->dispose(object);
@@ -758,6 +696,12 @@ gh_nip46_pair_dialog_new(const GhNip46PairConfig *config)
   self->settings = g_object_ref(config->settings);
   self->credentials = config->credentials ? g_object_ref(config->credentials) :
                                           gh_nip46_credential_store_new();
+  GApplication *app = g_application_get_default();
+  if (GTK_IS_APPLICATION(app)) {
+    self->auth_prompt = gh_nip46_auth_url_new(GTK_APPLICATION(app), GTK_WIDGET(self));
+    g_signal_connect(self->auth_prompt, "launch-failed",
+                     G_CALLBACK(on_auth_launch_failed), self);
+  }
   if (config->display_name && config->name_source) {
     self->display_name = config->display_name;
     self->name_source = g_object_ref(config->name_source);
@@ -776,6 +720,8 @@ gh_nip46_pair_dialog_new(const GhNip46PairConfig *config)
     self->custom_publish_auth = TRUE;
   }
   self->transport_data = config->transport_data;
+  self->test_save = config->test_save;
+  self->test_save_data = config->test_save_data;
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(selection_changed), self, 0);
   start_qr(self);
   return self;

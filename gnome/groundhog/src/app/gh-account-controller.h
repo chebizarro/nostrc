@@ -46,7 +46,10 @@ G_DECLARE_FINAL_TYPE(GhAccountController, gh_account_controller, GH,
 /* Groundhog's active (backend, npub) account. Grotto metadata and remote
  * credential metadata are listed independently. The controller owns the
  * active remote credential/session, but never exposes secret material.
- * bus may be NULL. Emits "changed" after state updates. */
+ * bus may be NULL. Emits "changed" after state updates. Emits "auth-url"
+ * with an HTTPS approval URL for the active remote session; a handler returns
+ * TRUE only when it launched or queued a notification. Stale sessions cannot
+ * emit it. */
 GhAccountController *gh_account_controller_new(GSettings *settings,
                                                GDBusConnection *bus);
 GhAccountController *gh_account_controller_new_full(GSettings *settings,
