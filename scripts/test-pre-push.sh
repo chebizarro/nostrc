@@ -186,6 +186,8 @@ assert_clean() {
 run_hook > "$tmp/output" 2>&1
 grep -q '^BEADS$' "$tmp/trace"
 grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
+grep -q 'NIP55L_SECRET_BACKEND=libsecret' "$tmp/trace"
+grep -q 'GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service' "$tmp/trace"
 grep -q '^BUILD ' "$tmp/trace"
 grep -q '^CTEST ' "$tmp/trace"
 grep -q '^DOCKER_RUN linux .*/linux-src:/src:ro' "$tmp/trace"

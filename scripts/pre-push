@@ -245,7 +245,8 @@ while read -r local_ref local_oid remote_ref remote_oid; do
         echo "Groundhog requires libqrencode on macOS; install it with 'brew install qrencode' before pushing" >&2
         exit 1
     fi
-    cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG="$groundhog"
+    cmake -S "$checkout" -B "$build" -DCMAKE_BUILD_TYPE=Debug -DBUILD_GROUNDHOG="$groundhog" \
+        -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service
     cmake --build "$build"
     : > "$host_build_done"
     finish_stages if-done
