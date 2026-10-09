@@ -408,6 +408,32 @@ messages_reached(gpointer data)
                  gh_test_spin_until(messages_reached, &w_); } G_STMT_END
 
 typedef struct {
+  GhStore *store;
+  const gchar *room_id;
+  guint n;
+} StoredMessagesWait;
+
+static gboolean
+stored_messages_reached(gpointer data)
+{
+  StoredMessagesWait *wait = data;
+  sqlite3_stmt *stmt = NULL;
+  int rc = sqlite3_prepare_v2(gh_store_get_db(wait->store),
+    "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE c.backend = 2 AND c.backend_key = ?", -1, &stmt, NULL);
+  g_assert_cmpint(rc, ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->room_id, -1, SQLITE_STATIC);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  guint count = (guint)sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count >= wait->n;
+}
+
+#define wait_stored(store, room_id, count) \
+  G_STMT_START { StoredMessagesWait w_ = { (store), (room_id), (count) }; \
+                 gh_test_spin_until(stored_messages_reached, &w_); } G_STMT_END
+
+typedef struct {
   GhNip29Room *room;
   const gchar *pubkey;
 } MemberWait;
@@ -1552,7 +1578,7 @@ test_first_read_history_paged_and_persisted(void)
   g_autoptr(GhNip29Room) room = join(&f, &relay, "first-read", NULL);
   wait_join(room, GH_NIP29_JOIN_MEMBER);
   g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
-  wait_messages(f.model, room_id, 120);
+  wait_stored(f.store, room_id, 120);
   wait_read(room, GH_NIP29_READ_LIVE);
   guint paged = 0;
   for (guint i = 0; i < relay.req_frames->len; i++)
@@ -1562,6 +1588,7 @@ test_first_read_history_paged_and_persisted(void)
   restart(&f);
   GhConversation *conversation = gh_conversation_store_lookup(f.model, room_id);
   g_assert_nonnull(conversation);
+  gh_conversation_window_set_active(conversation, TRUE);
   g_autoptr(GError) error = NULL;
   while (gh_conversation_get_has_older(conversation)) {
     guint loaded = 0;
@@ -1575,10 +1602,9 @@ test_first_read_history_paged_and_persisted(void)
   nip29_relay_clear(&relay);
 }
 
-/* Distinguish a missing relay fetch from a local-listing bug. A capped relay
- * holds more messages than one 16-page live backfill can cover. The stored
- * count and listed count must agree, and Earlier Messages must reach the
- * remainder over a separate historical REQ. */
+/* A capped relay holds more messages than one 16-page live backfill can
+ * cover. The store receives them while the inactive model stays bounded;
+ * Earlier Messages reaches the remainder over a historical REQ. */
 static void
 test_history_past_live_page_budget(void)
 {
@@ -1621,17 +1647,24 @@ test_history_past_live_page_budget(void)
   sqlite3_finalize(stmt);
   guint listed = g_list_model_get_n_items(G_LIST_MODEL(conversation));
   g_test_message("history: relay=%u stored=%u listed=%u", total, stored, listed);
-  g_assert_cmpuint(stored, ==, listed); /* fetched vs listing, before paging */
+  g_assert_cmpuint(listed, <=, GH_CONVERSATION_WINDOW_OPEN);
+  g_assert_cmpuint(stored, >=, listed);
   g_assert_cmpuint(stored, <=, total);
   if (stored < total) {
     g_assert_true(gh_conversation_get_has_older(conversation));
-    guint loaded = 0;
-    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
-                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    gh_conversation_window_set_active(conversation, TRUE);
+    for (guint page = 0; page < 30; page++) {
+      guint loaded = 0;
+      g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                                 GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+      if (loaded == 0)
+        break; /* persisted history exhausted; network history starts */
+    }
     g_assert_no_error(error);
-    wait_messages(f.model, gh_nip29_room_get_room_id(room), total);
+    wait_stored(f.store, gh_nip29_room_get_room_id(room), total);
   }
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, total);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                   GH_CONVERSATION_WINDOW_MAX);
   fixture_down(&f);
   nip29_relay_clear(&relay);
 }
@@ -1664,16 +1697,25 @@ test_history_resumes_after_restart(void)
   g_assert_true(gh_conversation_get_has_older(conversation));
   g_autoptr(GError) error = NULL;
   guint loaded = 0;
+  gh_conversation_window_set_active(conversation, TRUE);
+  for (guint page = 0; page < 30 && gh_conversation_get_floor(conversation, NULL, NULL); page++) {
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_false(gh_conversation_get_floor(conversation, NULL, NULL));
   g_assert_true(gh_nip29_service_load_older(f.service, conversation,
                                              GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
   g_assert_no_error(error);
-  wait_messages(f.model, room_id, 520);
+  wait_stored(f.store, room_id, 520);
   g_clear_object(&room); /* the service may now cancel a page without EOSE */
   restart(&f);
   room = gh_nip29_service_lookup(f.service, relay.url, "resume-history");
   g_assert_nonnull(room);
   conversation = room_conversation(&f, room);
   g_assert_nonnull(conversation);
+  gh_conversation_window_set_active(conversation, TRUE);
   while (gh_conversation_get_floor(conversation, NULL, NULL)) {
     loaded = 0;
     g_assert_true(gh_nip29_service_load_older(f.service, conversation,
@@ -1681,13 +1723,14 @@ test_history_resumes_after_restart(void)
     g_assert_no_error(error);
     g_assert_cmpuint(loaded, >, 0);
   }
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), >=, 520);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                   GH_CONVERSATION_WINDOW_MAX);
   g_assert_true(gh_conversation_get_has_older(conversation));
   guint before = relay.req_frames->len;
   g_assert_true(gh_nip29_service_load_older(f.service, conversation,
                                              GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
   g_assert_no_error(error);
-  wait_messages(f.model, room_id, total);
+  wait_stored(f.store, room_id, total);
   g_assert_cmpuint(relay.req_frames->len, >, before);
   fixture_down(&f);
   nip29_relay_clear(&relay);
@@ -1721,15 +1764,25 @@ test_history_same_second_partial(void)
   wait_read(room, GH_NIP29_READ_LIVE);
   GhConversation *conversation = room_conversation(&f, room);
   g_assert_nonnull(conversation);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 25);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  wait_stored(f.store, room_id, 25);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                   GH_CONVERSATION_WINDOW_OPEN);
   g_assert_true(gh_conversation_get_has_older(conversation));
+  gh_conversation_window_set_active(conversation, TRUE);
   g_autoptr(GError) error = NULL;
+  while (gh_conversation_get_floor(conversation, NULL, NULL)) {
+    guint loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
   g_assert_true(gh_nip29_service_load_older(f.service, conversation,
                                              GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
   g_assert_no_error(error);
   gh_test_spin_until(history_is_partial, conversation);
   g_assert_false(gh_conversation_get_has_older(conversation));
-  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
   g_clear_object(&room);
   restart(&f);
   conversation = gh_conversation_store_lookup(f.model, room_id);
@@ -1761,9 +1814,18 @@ test_history_cancel_keeps_position(void)
   g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
   GhConversation *conversation = room_conversation(&f, room);
   g_assert_nonnull(conversation);
+  gh_conversation_window_set_active(conversation, TRUE);
+  g_autoptr(GError) error = NULL;
+  for (guint page = 0; page < 30 && gh_conversation_get_floor(conversation, NULL, NULL); page++) {
+    guint loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_false(gh_conversation_get_floor(conversation, NULL, NULL));
   relay.hold_eose = TRUE;
   guint before = relay.req_frames->len;
-  g_autoptr(GError) error = NULL;
   g_assert_true(gh_nip29_service_load_older(f.service, conversation,
                                              GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
   g_assert_no_error(error);
@@ -1785,6 +1847,7 @@ test_history_cancel_keeps_position(void)
   g_assert_nonnull(room);
   conversation = room_conversation(&f, room);
   g_assert_nonnull(conversation);
+  gh_conversation_window_set_active(conversation, TRUE);
   while (gh_conversation_get_floor(conversation, NULL, NULL)) {
     guint loaded = 0;
     g_assert_true(gh_nip29_service_load_older(f.service, conversation,
@@ -1795,7 +1858,7 @@ test_history_cancel_keeps_position(void)
   g_assert_true(gh_nip29_service_load_older(f.service, conversation,
                                              GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
   g_assert_no_error(error);
-  wait_messages(f.model, room_id, 430);
+  wait_stored(f.store, room_id, 430);
   fixture_down(&f);
   nip29_relay_clear(&relay);
 }
@@ -1834,7 +1897,7 @@ test_backfill_paged_past_relay_cap(void)
   relay.max_limit = 25;
   guint frames = relay.req_frames->len;
   restart(&f);
-  wait_messages(f.model, room_id, 1 + away);
+  wait_stored(f.store, room_id, 1 + away);
   g_autoptr(GhNip29Room) back = gh_nip29_service_lookup(f.service, relay.url, "pizza");
   wait_read(back, GH_NIP29_READ_LIVE);
   guint paged = 0;
@@ -1843,7 +1906,7 @@ test_backfill_paged_past_relay_cap(void)
   g_assert_cmpuint(paged, >=, away / 25);
   /* Still live on the REQ that was open throughout. */
   live_post(&relay, KEY_BOB, "pizza", "live again");
-  wait_messages(f.model, room_id, 2 + away);
+  wait_stored(f.store, room_id, 2 + away);
   g_clear_object(&back);
 
   /* That backfill was complete: the next REQ asks from its newest. */

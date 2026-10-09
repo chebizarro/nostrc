@@ -9581,3 +9581,42 @@ gh_mls_service_init(GhMlsService *self)
     self->kp[f].event_ids = g_ptr_array_new_with_free_func(g_free);
   }
 }
+
+gboolean
+gh_mls_service_load_older(GhMlsService *self, GhConversation *conversation,
+                          guint limit, guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!self->rooms) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "No encrypted-group storage is open");
+    return FALSE;
+  }
+  return gh_store_mls_load_older(self->rooms, conversation, limit, out_loaded, error);
+}
+
+gboolean
+gh_mls_service_load_newer(GhMlsService *self, GhConversation *conversation,
+                          guint limit, guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!self->rooms) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "No encrypted-group storage is open");
+    return FALSE;
+  }
+  return gh_store_mls_load_newer(self->rooms, conversation, limit, out_loaded, error);
+}
+
+gboolean
+gh_mls_service_reset_latest(GhMlsService *self, GhConversation *conversation,
+                            GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  if (!self->rooms) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                        "No encrypted-group storage is open");
+    return FALSE;
+  }
+  return gh_store_mls_reset_latest(self->rooms, conversation, error);
+}

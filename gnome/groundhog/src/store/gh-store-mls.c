@@ -316,11 +316,18 @@ fail:
   return FALSE;
 }
 
+static gboolean
+delegate_reset_latest(gpointer data, GhConversation *conversation, GError **error)
+{
+  return gh_store_mls_reset_latest(data, conversation, error);
+}
+
 static const GhConversationDelegate mls_delegate = {
   .has_wrap = delegate_has_wrap,
   .has_rumor = delegate_has_rumor,
   .admit = delegate_admit,
   .mark_read = delegate_mark_read,
+  .reset_latest = delegate_reset_latest,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -336,7 +343,7 @@ typedef struct {
 static gboolean
 restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_id,
              const gchar *group_hex, GhConversation *conversation, guint limit,
-             guint *out_listed, GError **error)
+             gboolean reset, guint *out_listed, GError **error)
 {
   GhStore *store = self->store;
   const gint64 now = gh_clock_get_unix(gh_store_get_clock(store));
@@ -456,7 +463,14 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
     .reply_id = read.reply_id,
     .pinned_rank = pinned_rank,
   };
-  gh_conversation_store_restore(model, room_id, messages, &state);
+  if (reset) {
+    GhConversation *existing = gh_conversation_store_lookup(model, room_id);
+    if (existing)
+      gh_conversation_window_clear(existing);
+  }
+  GhConversation *listed = gh_conversation_store_restore(model, room_id, messages, &state);
+  if (listed)
+    gh_conversation_window_enable(listed);
   *out_listed = messages->len;
 done:
   g_free(cursor.id);
@@ -519,7 +533,7 @@ gh_store_mls_attach(GhStoreMls *self, GhConversationStore *model, guint page_siz
   for (guint i = 0; i < ids->len; i++) {
     guint listed = 0;
     if (!restore_room(self, model, g_array_index(ids, gint64, i), g_ptr_array_index(groups, i),
-                      NULL, limit, &listed, error))
+                      NULL, limit, FALSE, &listed, error))
       return FALSE;
   }
   return TRUE;
@@ -553,11 +567,123 @@ gh_store_mls_load_older(GhStoreMls *self, GhConversation *conversation, guint li
     return FALSE;
   }
   guint listed = 0;
-  if (!restore_room(self, model, id, hex, conversation, limit, &listed, error))
+  if (!restore_room(self, model, id, hex, conversation, limit, FALSE, &listed, error))
     return FALSE;
   if (out_loaded)
     *out_loaded = listed;
   return TRUE;
+}
+
+gboolean
+gh_store_mls_load_newer(GhStoreMls *self, GhConversation *conversation, guint limit,
+                        guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_MLS(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (out_loaded)
+    *out_loaded = 0;
+  if (!check_open(self, error))
+    return FALSE;
+  if (limit == 0 || limit > MAX_PAGE)
+    return invalid(error, "Invalid page size");
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  g_autofree gchar *hex = NULL;
+  if (!model || gh_conversation_store_lookup(model, room_id) != conversation ||
+      !gh_message_mls_room_split(room_id, &hex))
+    return invalid(error, "The encrypted group is not listed by the attached model");
+  gint64 at = 0, id = 0;
+  const gchar *edge_id = NULL;
+  gboolean found = FALSE;
+  if (!gh_conversation_get_newer_cursor(conversation, &at, &edge_id) ||
+      !lookup_room(self->store, room_id, &found, &id, error))
+    return FALSE;
+  if (!found)
+    return invalid(error, "No such encrypted group");
+  GhStore *store = self->store;
+  g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT raw_json, expires_at, seq, mls_epoch FROM messages "
+    "WHERE conversation_id = ?1 AND kind IN (?4, ?5, ?6) "
+    "AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
+    "ORDER BY created_at ASC, backend_msg_id ASC", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, id));
+  BIND(sqlite3_bind_int64(stmt, 2, at));
+  BIND(bind_text(stmt, 3, edge_id));
+  BIND(sqlite3_bind_int(stmt, 4, GH_MESSAGE_MLS_KIND));
+  BIND(sqlite3_bind_int(stmt, 5, GH_MESSAGE_MLS_POLL_KIND));
+  BIND(sqlite3_bind_int(stmt, 6, GH_MESSAGE_MLS_POLL_VOTE_KIND));
+  gboolean more = FALSE;
+  gint64 now = gh_clock_get_unix(gh_store_get_clock(self->store));
+  while (TRUE) {
+    gboolean has_row = FALSE;
+    if (!step_row(self->store, stmt, &has_row, "Reading newer encrypted-group messages", error))
+      goto fail;
+    if (!has_row)
+      break;
+    if (messages->len == limit) {
+      more = TRUE;
+      break;
+    }
+    gint64 expires_at = sqlite3_column_int64(stmt, 1);
+    if (expires_at > 0 && expires_at <= now)
+      continue;
+    g_autoptr(GError) bad = NULL;
+    GhMessage *message = gh_message_new_from_mls(self->account, hex,
+      (const gchar *)sqlite3_column_text(stmt, 0), &bad);
+    if (!message) {
+      g_warning("Groundhog skipped a stored encrypted-group message that failed verification: %s",
+                bad ? bad->message : "invalid message");
+      continue;
+    }
+    gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 2), 0));
+    gboolean has_epoch = sqlite3_column_type(stmt, 3) == SQLITE_INTEGER &&
+                         sqlite3_column_int64(stmt, 3) >= 0;
+    gh_mls_imeta_describe(message, hex, has_epoch,
+                          has_epoch ? (guint64)sqlite3_column_int64(stmt, 3) : 0);
+    gboolean withdrawn = FALSE;
+    if (!gh_store_mls_is_withdrawn(self->store, hex, gh_message_get_rumor_id(message),
+                                   &withdrawn, error)) {
+      g_object_unref(message);
+      goto fail;
+    }
+    gh_message_set_withdrawn(message, withdrawn);
+    g_ptr_array_add(messages, message);
+  }
+  sqlite3_finalize(stmt);
+  gh_conversation_window_add_newer(conversation, messages, more);
+  if (out_loaded)
+    *out_loaded = messages->len;
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_mls_reset_latest(GhStoreMls *self, GhConversation *conversation, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_MLS(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (!check_open(self, error))
+    return FALSE;
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  g_autofree gchar *hex = NULL;
+  if (!model || gh_conversation_store_lookup(model, room_id) != conversation ||
+      !gh_message_mls_room_split(room_id, &hex))
+    return invalid(error, "The encrypted group is not listed by the attached model");
+  gint64 id = 0;
+  gboolean found = FALSE;
+  if (!lookup_room(self->store, room_id, &found, &id, error))
+    return FALSE;
+  if (!found)
+    return invalid(error, "No such encrypted group");
+  guint listed = 0;
+  return restore_room(self, model, id, hex, NULL, GH_CONVERSATION_WINDOW_OPEN,
+                      TRUE, &listed, error);
 }
 
 /* ---- Object ---------------------------------------------------------------------- */

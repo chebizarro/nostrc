@@ -68,8 +68,33 @@ load_older_page(GhConversation *conversation, GError **error, gpointer data)
                         "No message storage is open");
     return FALSE;
   }
-  return gh_account_store_load_older(store, conversation, GH_STORE_CONVERSATIONS_PAGE_SIZE,
+  return gh_account_store_load_older(store, conversation, GH_CONVERSATION_WINDOW_PAGE,
                                      NULL, error);
+}
+
+static gboolean
+load_newer_page(GhConversation *conversation, GError **error, gpointer data)
+{
+  g_autoptr(GhAccountStore) store = g_weak_ref_get(data);
+  if (!store) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE,
+                        "No message storage is open");
+    return FALSE;
+  }
+  return gh_account_store_load_newer(store, conversation, GH_CONVERSATION_WINDOW_PAGE,
+                                     NULL, error);
+}
+
+static gboolean
+reset_latest_page(GhConversation *conversation, GError **error, gpointer data)
+{
+  g_autoptr(GhAccountStore) store = g_weak_ref_get(data);
+  if (!store) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE,
+                        "No message storage is open");
+    return FALSE;
+  }
+  return gh_account_store_reset_latest(store, conversation, error);
 }
 
 void
@@ -80,6 +105,10 @@ gh_store_status_attach_history(GhWindow *window, GhAccountStore *store)
   GWeakRef *ref = g_new0(GWeakRef, 1);
   g_weak_ref_init(ref, store);
   gh_conversation_list_set_history_source(window, load_older_page, ref, weak_ref_free);
+  GWeakRef *window_ref = g_new0(GWeakRef, 1);
+  g_weak_ref_init(window_ref, store);
+  gh_conversation_list_set_window_source(window, load_newer_page, reset_latest_page,
+                                         window_ref, weak_ref_free);
 }
 
 /* ---- start fresh / reset storage (charter §3.4, §7.15 #16) ----------------------- */

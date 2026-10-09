@@ -2,6 +2,7 @@
 #define GH_STORE_CONVERSATIONS_H
 
 #include "gh-conversation-store.h"
+#include "gh-conversation-window.h"
 #include "gh-store.h"
 
 G_BEGIN_DECLS
@@ -60,7 +61,7 @@ G_DECLARE_FINAL_TYPE(GhStoreConversations, gh_store_conversations, GH,
 
 /* Newest messages listed per room by gh_store_conversations_attach() when
  * page_size is 0, and the largest page any call loads. */
-#define GH_STORE_CONVERSATIONS_PAGE_SIZE     50
+#define GH_STORE_CONVERSATIONS_PAGE_SIZE     GH_CONVERSATION_WINDOW_OPEN
 #define GH_STORE_CONVERSATIONS_MAX_PAGE_SIZE 1000
 /* The largest legacy seen file imported (an oversized one is refused). */
 #define GH_STORE_CONVERSATIONS_MAX_SEEN_FILE (32 * 1024 * 1024)
@@ -84,6 +85,12 @@ gboolean gh_store_conversations_attach(GhStoreConversations *self,
 gboolean gh_store_conversations_load_older(GhStoreConversations *self,
                                            GhConversation *conversation, guint limit,
                                            guint *out_loaded, GError **error);
+/* Adjacent stored messages after the visible window, oldest first. */
+gboolean gh_store_conversations_load_newer(GhStoreConversations *self,
+                                           GhConversation *conversation, guint limit,
+                                           guint *out_loaded, GError **error);
+gboolean gh_store_conversations_reset_latest(GhStoreConversations *self,
+                                             GhConversation *conversation, GError **error);
 
 /* The composer draft of a room (NULL: none). @room_id is a canonical NIP-17
  * room id of the account (gh_message_get_room_id()). Setting a draft for a

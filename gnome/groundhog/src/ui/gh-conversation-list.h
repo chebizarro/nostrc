@@ -58,6 +58,11 @@ GhPictureCache *gh_conversation_list_get_picture_cache(GhWindow *window);
 void gh_conversation_list_set_history_source(GhWindow *window,
                                              GhConversationListLoadOlder load_older,
                                              gpointer user_data, GDestroyNotify destroy);
+/* Newer adjacent page and direct reset to the newest 30, from one provider. */
+void gh_conversation_list_set_window_source(GhWindow *window,
+                                            GhConversationListLoadOlder load_newer,
+                                            GhConversationListLoadOlder reset_latest,
+                                            gpointer user_data, GDestroyNotify destroy);
 
 /* Optional encrypted-store search. Returns a set of "<backend>:<backend_key>"
  * room keys matching stored message bodies, including unloaded pages. The

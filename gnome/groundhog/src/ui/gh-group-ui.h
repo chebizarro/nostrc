@@ -45,6 +45,8 @@ typedef struct {
   gpointer names_data;
   /* The other rooms' older history (e.g. the account store's), or NULL. */
   GhConversationListLoadOlder load_older;
+  GhConversationListLoadOlder load_newer;
+  GhConversationListLoadOlder reset_latest;
   gpointer load_older_data;
 } GhGroupUiConfig;
 

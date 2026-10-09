@@ -3,6 +3,7 @@
 #endif
 
 #include "gh-store-conversations.h"
+#include "gh-conversation-private.h"
 #include "gh-store-reactions.h"
 
 #include "crash-harness.h"
@@ -878,12 +879,13 @@ test_paging(void)
                 .content = text, .subject = i == 0 ? "Old name" : NULL };
     g_assert_cmpint(deliver(f.model, &r, wrap), ==, GH_CONVERSATION_ADD_NEW);
   }
-  assert_room(&f, ap, 60, 60, TRUE);
+  assert_room(&f, ap, GH_CONVERSATION_WINDOW_OPEN, 60, TRUE);
 
   /* The newest page is listed; unread and the name cover the unloaded rest. */
   fixture_restart(&f);
   GhConversation *c = room(&f, ap);
   assert_room(&f, ap, 10, 60, TRUE);
+  gh_conversation_window_set_active(c, TRUE);
   g_assert_true(gh_conversation_get_has_older(c));
   /* A request: the stored name is its subject, never its title (§7.9). */
   g_assert_cmpstr(gh_conversation_get_subject(c), ==, "Old name");
@@ -943,6 +945,73 @@ test_paging(void)
   g_assert_error(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID);
   g_clear_error(&error);
   assert_store_consistent(f.store);
+  fixture_clear(&f);
+}
+
+static void
+test_bounded_window_paging(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *room_id = room_of(ACCOUNT_A, PEER_P, NULL);
+  for (guint i = 0; i < 180; i++) {
+    g_autofree gchar *text = g_strdup_printf("window %u", i);
+    g_autofree gchar *wrap = g_strdup_printf("window/%u", i);
+    Rumor rumor = { .author = PEER_P, .to = { ACCOUNT_A },
+                    .created_at = T0 - 2000 + i, .content = text };
+    g_assert_cmpint(deliver(f.model, &rumor, wrap), ==, GH_CONVERSATION_ADD_NEW);
+  }
+  fixture_restart(&f);
+  GhConversation *conversation = room(&f, room_id);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   GH_CONVERSATION_WINDOW_OPEN);
+  gh_conversation_window_set_active(conversation, TRUE);
+  g_autoptr(GError) error = NULL;
+  guint loaded = 0;
+  for (guint i = 0; i < 6; i++) {
+    g_assert_true(gh_store_conversations_load_older(f.conversations, conversation,
+      GH_CONVERSATION_WINDOW_PAGE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, ==, GH_CONVERSATION_WINDOW_PAGE);
+    g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                     GH_CONVERSATION_WINDOW_MAX);
+  }
+  g_assert_false(gh_conversation_get_has_older(conversation));
+  g_assert_true(gh_conversation_get_has_newer(conversation));
+  for (guint i = 0; gh_conversation_get_has_newer(conversation) && i < 8; i++) {
+    g_assert_true(gh_store_conversations_load_newer(f.conversations, conversation,
+      GH_CONVERSATION_WINDOW_PAGE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+    g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                     GH_CONVERSATION_WINDOW_MAX);
+  }
+  g_assert_false(gh_conversation_get_has_newer(conversation));
+  guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+  g_autoptr(GhMessage) last = g_list_model_get_item(G_LIST_MODEL(conversation), n - 1);
+  g_assert_cmpstr(gh_message_get_content(last), ==, "window 179");
+  for (guint i = 0; i < 6; i++) {
+    g_assert_true(gh_store_conversations_load_older(f.conversations, conversation,
+      GH_CONVERSATION_WINDOW_PAGE, &loaded, &error));
+    g_assert_no_error(error);
+  }
+  g_assert_true(gh_conversation_get_has_newer(conversation));
+  Rumor own = { .author = ACCOUNT_A, .to = { PEER_P },
+                .created_at = T0, .content = "window own" };
+  g_assert_cmpint(deliver(f.model, &own, NULL), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_false(gh_conversation_get_has_newer(conversation));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   GH_CONVERSATION_WINDOW_OPEN);
+  g_autoptr(GhMessage) sent = g_list_model_get_item(G_LIST_MODEL(conversation),
+    GH_CONVERSATION_WINDOW_OPEN - 1);
+  g_assert_cmpstr(gh_message_get_content(sent), ==, "window own");
+  gh_conversation_window_set_active(conversation, FALSE);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   GH_CONVERSATION_WINDOW_OPEN);
+  g_assert_true(gh_store_conversations_reset_latest(f.conversations, conversation, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   GH_CONVERSATION_WINDOW_OPEN);
   fixture_clear(&f);
 }
 
@@ -2168,6 +2237,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/pins", test_pins);
   g_test_add_func("/groundhog/store-conversations/timer-change", test_timer_change);
   g_test_add_func("/groundhog/store-conversations/restart/paging", test_paging);
+  g_test_add_func("/groundhog/store-conversations/restart/bounded-window",
+                  test_bounded_window_paging);
   g_test_add_func("/groundhog/store-conversations/search-stored-message-bodies",
                   test_search_stored_message_bodies);
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);

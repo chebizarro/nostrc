@@ -81,6 +81,8 @@ typedef struct {
   gboolean (*unblock)(gpointer data, const gchar *room_id, GError **error);
   gboolean (*mark_unread)(gpointer data, GhConversation *conversation,
                           GhMessage *first_unread, GError **error);
+  /* Recent-page recenter after an own local send in older history. */
+  gboolean (*reset_latest)(gpointer data, GhConversation *conversation, GError **error);
 } GhConversationDelegate;
 
 #define GH_TYPE_CONVERSATION_STORE (gh_conversation_store_get_type())

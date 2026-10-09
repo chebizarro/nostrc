@@ -140,6 +140,10 @@ GObject *gh_account_store_get_outbox(GhAccountStore *self);
  * no store is open. */
 gboolean gh_account_store_load_older(GhAccountStore *self, GhConversation *conversation,
                                      guint limit, guint *out_loaded, GError **error);
+gboolean gh_account_store_load_newer(GhAccountStore *self, GhConversation *conversation,
+                                     guint limit, guint *out_loaded, GError **error);
+gboolean gh_account_store_reset_latest(GhAccountStore *self, GhConversation *conversation,
+                                       GError **error);
 
 /* LOCKED: open again, allowing the keyring's unlock prompt. FALSE when not
  * LOCKED. */

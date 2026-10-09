@@ -1,0 +1,20 @@
+#ifndef GH_CONVERSATION_WINDOW_H
+#define GH_CONVERSATION_WINDOW_H
+
+/* Bounded in-memory message window. Tests may override these at build time. */
+#ifndef GH_CONVERSATION_WINDOW_OPEN
+#define GH_CONVERSATION_WINDOW_OPEN 30
+#endif
+#ifndef GH_CONVERSATION_WINDOW_PAGE
+#define GH_CONVERSATION_WINDOW_PAGE 25
+#endif
+#ifndef GH_CONVERSATION_WINDOW_MAX
+#define GH_CONVERSATION_WINDOW_MAX 120
+#endif
+
+#if GH_CONVERSATION_WINDOW_OPEN < 1 || GH_CONVERSATION_WINDOW_PAGE < 1 || \
+    GH_CONVERSATION_WINDOW_MAX < GH_CONVERSATION_WINDOW_OPEN + GH_CONVERSATION_WINDOW_PAGE
+#error "Invalid conversation window bounds"
+#endif
+
+#endif

@@ -88,6 +88,10 @@ gint64 gh_conversation_get_timer_change(GhConversation *self, gint64 *out_second
 /* A durable store holds older messages than those listed, or a NIP-29 relay
  * may have history beyond the stored edge. The backend loads it on request. */
 gboolean gh_conversation_get_has_older(GhConversation *self);
+/* TRUE while messages newer than the visible window remain in the store. */
+gboolean gh_conversation_get_has_newer(GhConversation *self);
+/* New incoming messages committed beyond the window's newest edge. */
+guint gh_conversation_get_newer_arrivals(GhConversation *self);
 /* The relay could not safely page through a same-second NIP-29 boundary. */
 gboolean gh_conversation_get_history_partial(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);

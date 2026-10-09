@@ -2,6 +2,7 @@
 #define GH_STORE_NIP29_H
 
 #include "gh-conversation-store.h"
+#include "gh-conversation-window.h"
 #include "gh-store.h"
 
 G_BEGIN_DECLS
@@ -87,7 +88,7 @@ gboolean gh_store_nip29_delete_message(GhStore *store, const gchar *room_id,
 #define GH_TYPE_STORE_NIP29 (gh_store_nip29_get_type())
 G_DECLARE_FINAL_TYPE(GhStoreNip29, gh_store_nip29, GH, STORE_NIP29, GObject)
 
-#define GH_STORE_NIP29_PAGE_SIZE 50
+#define GH_STORE_NIP29_PAGE_SIZE GH_CONVERSATION_WINDOW_OPEN
 
 GhStoreNip29 *gh_store_nip29_new(GhStore *store);
 /* Installs this as model's NIP-29 delegate (model must be bound to the
@@ -98,8 +99,12 @@ gboolean gh_store_nip29_attach(GhStoreNip29 *self, GhConversationStore *model,
                                guint page_size, GError **error);
 /* Lists up to limit (1 to 1000) older messages of an attached group room;
  * *out_loaded (nullable) is how many. Nothing older is success with 0. */
-gboolean gh_store_nip29_load_older(GhStoreNip29 *self, GhConversation *conversation,
-                                   guint limit, guint *out_loaded, GError **error);
+gboolean gh_store_nip29_load_older(GhStoreNip29 *self, GhConversation *conversation, guint limit,
+                                   guint *out_loaded, GError **error);
+gboolean gh_store_nip29_load_newer(GhStoreNip29 *self, GhConversation *conversation, guint limit,
+                                   guint *out_loaded, GError **error);
+gboolean gh_store_nip29_reset_latest(GhStoreNip29 *self, GhConversation *conversation,
+                                     GError **error);
 /* Detaches from the model and the store. Idempotent. */
 void gh_store_nip29_close(GhStoreNip29 *self);
 

@@ -105,6 +105,18 @@ void gh_conversation_set_timer_change(GhConversation *self, gint64 seconds,
 /* Makes the unread count equal the durable one (the unloaded part absorbs
  * the difference). */
 void gh_conversation_sync_unread(GhConversation *self, guint unread);
+/* Store-backed bounded window; direction is the end that remains in view. */
+void gh_conversation_window_enable(GhConversation *self);
+void gh_conversation_window_set_active(GhConversation *self, gboolean active);
+void gh_conversation_window_trim(GhConversation *self, gboolean keep_older, guint limit);
+void gh_conversation_window_clear(GhConversation *self);
+void gh_conversation_window_add_newer(GhConversation *self, GPtrArray *messages,
+                                      gboolean has_newer);
+gboolean gh_conversation_get_newer_cursor(GhConversation *self, gint64 *created_at,
+                                          const gchar **id);
+void gh_conversation_window_set_has_newer(GhConversation *self, gboolean has_newer);
+void gh_conversation_add_newer_history(GhConversation *self, GhMessage *message,
+                                       gboolean delivered);
 /* The history floor; FALSE when the room has no unloaded older history. */
 gboolean gh_conversation_get_floor(GhConversation *self, gint64 *created_at,
                                    const gchar **id);
@@ -112,6 +124,8 @@ gboolean gh_conversation_get_floor(GhConversation *self, gint64 *created_at,
 /* ---- Store side of the conversation hooks (gh-conversation-store.c) ------- */
 
 /* The read marker moved to last_read (gh_conversation_mark_read). */
+void gh_conversation_store_reindex_window(GhConversationStore *self,
+                                          GhConversation *conversation);
 void gh_conversation_store_persist_read(GhConversationStore *self,
                                         GhConversation *conversation,
                                         GhMessage *last_read);

@@ -941,5 +941,13 @@ GhMlsGroup *gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrappe
 gboolean gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id,
                                        GError **error);
 
+/* Store-backed directional paging of an open encrypted-group conversation. */
+gboolean gh_mls_service_load_older(GhMlsService *self, GhConversation *conversation,
+                                   guint limit, guint *out_loaded, GError **error);
+gboolean gh_mls_service_load_newer(GhMlsService *self, GhConversation *conversation,
+                                   guint limit, guint *out_loaded, GError **error);
+gboolean gh_mls_service_reset_latest(GhMlsService *self, GhConversation *conversation,
+                                     GError **error);
+
 G_END_DECLS
 #endif
