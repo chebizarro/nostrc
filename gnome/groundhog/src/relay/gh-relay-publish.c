@@ -1,4 +1,5 @@
 #include "gh-relay-publish.h"
+#include "gh-diagnostics.h"
 #include "gh-relay-scope.h"
 
 #include <gio/gio.h>
@@ -438,9 +439,19 @@ finish_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint,
   publish->terminal++;
   switch (outcome) {
   case GH_RELAY_PUBLISH_ACCEPTED: publish->summary.accepted++; break;
-  case GH_RELAY_PUBLISH_REJECTED: publish->summary.rejected++; break;
+  case GH_RELAY_PUBLISH_REJECTED:
+    publish->summary.rejected++;
+    gh_diagnostics_record_default(GH_DIAGNOSTIC_COMPONENT_RELAY,
+                                  GH_DIAGNOSTIC_EVENT_PUBLISH_REJECTED,
+                                  GH_DIAGNOSTIC_RESULT_FAILED);
+    break;
   case GH_RELAY_PUBLISH_AUTH_REQUIRED: publish->summary.auth_required++; break;
-  case GH_RELAY_PUBLISH_CONNECTION_FAILED: publish->summary.connection_failed++; break;
+  case GH_RELAY_PUBLISH_CONNECTION_FAILED:
+    publish->summary.connection_failed++;
+    gh_diagnostics_record_default(GH_DIAGNOSTIC_COMPONENT_RELAY,
+                                  GH_DIAGNOSTIC_EVENT_CONNECT_FAILED,
+                                  GH_DIAGNOSTIC_RESULT_RETRY);
+    break;
   case GH_RELAY_PUBLISH_PENDING:
   case GH_RELAY_PUBLISH_CANCELLED: g_assert_not_reached();
   }

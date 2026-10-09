@@ -1,5 +1,6 @@
 #include "gh-preferences-dialog.h"
 #include "gh-qr-code.h"
+#include "gh-diagnostics.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -84,6 +85,9 @@ struct _GhPreferencesDialog {
   AdwActionRow *account_row;
   AdwAvatar *account_avatar;
   AdwSwitchRow *run_in_background_row;
+  AdwSwitchRow *diagnostics_row;
+  GtkButton *diagnostics_clear_button;
+  AdwAlertDialog *clear_diagnostics_dialog;
   AdwPreferencesGroup *delete_group;
   AdwAlertDialog *delete_all_dialog;
 
@@ -195,6 +199,7 @@ static const struct {
   { "show-message-previews", G_STRUCT_OFFSET(GhPreferencesDialog, message_previews_row) },
   { "enter-sends", G_STRUCT_OFFSET(GhPreferencesDialog, enter_sends_row) },
   { "run-in-background", G_STRUCT_OFFSET(GhPreferencesDialog, run_in_background_row) },
+  { "diagnostics-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, diagnostics_row) },
 };
 
 /* ---- URL rules ---------------------------------------------------------------- */
@@ -1272,6 +1277,52 @@ on_settings_changed(GSettings *settings, const gchar *key, GhPreferencesDialog *
     sync_network(self);
 }
 
+static void
+diagnostics_status_changed(GhDiagnostics *diagnostics, gpointer data)
+{
+  GhPreferencesDialog *self = data;
+  if (self->disposed) return;
+  const gchar *message = NULL;
+  if (gh_diagnostics_get_delete_error(diagnostics))
+    message = _("Diagnostics could not be deleted");
+  else if (gh_diagnostics_get_save_error(diagnostics))
+    message = _("Diagnostics could not be saved; counts remain in memory for this session");
+  if (message) {
+    g_free(self->last_toast);
+    self->last_toast = g_strdup(message);
+    adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+    gtk_accessible_announce(GTK_ACCESSIBLE(self), message, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+  }
+}
+
+static void
+on_clear_diagnostics_response(AdwAlertDialog *dialog, const gchar *response,
+                              GhPreferencesDialog *self)
+{
+  (void)dialog;
+  if (!g_str_equal(response, "clear-diagnostics")) return;
+  GhDiagnostics *diagnostics = gh_diagnostics_get_default();
+  g_autoptr(GError) error = NULL;
+  gboolean cleared = diagnostics && gh_diagnostics_clear(diagnostics, &error);
+  const gchar *message = cleared ? _("Local diagnostics cleared") :
+                                   _("Diagnostics could not be deleted");
+  g_free(self->last_toast);
+  self->last_toast = g_strdup(message);
+  adw_preferences_dialog_add_toast(ADW_PREFERENCES_DIALOG(self), adw_toast_new(message));
+  gtk_accessible_announce(GTK_ACCESSIBLE(self), message,
+      cleared ? GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM :
+                GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+}
+
+static void
+clear_diagnostics_activated(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(widget);
+  (void)action;
+  (void)parameter;
+  adw_dialog_present(ADW_DIALOG(self->clear_diagnostics_dialog), widget);
+}
+
 static gboolean
 can_delete(GhPreferencesDialog *self)
 {
@@ -1548,6 +1599,13 @@ gh_preferences_dialog_constructed(GObject *object)
 
   self->settings_changed = g_signal_connect(self->settings, "changed",
                                             G_CALLBACK(on_settings_changed), self);
+  GhDiagnostics *diagnostics = gh_diagnostics_get_default();
+  if (diagnostics) {
+    gh_diagnostics_set_status_callback(diagnostics, diagnostics_status_changed, self);
+    if (gh_diagnostics_get_save_error(diagnostics) ||
+        gh_diagnostics_get_delete_error(diagnostics))
+      diagnostics_status_changed(diagnostics, self);
+  }
   sync_network(self);
   sync_key_package(self);
   sync_notifications(self);
@@ -1604,6 +1662,10 @@ gh_preferences_dialog_dispose(GObject *object)
   if (self->clear_attachments_dialog)
     g_signal_handlers_disconnect_by_func(self->clear_attachments_dialog,
                                          on_clear_attachments_response, self);
+  if (self->clear_diagnostics_dialog)
+    g_signal_handlers_disconnect_by_func(self->clear_diagnostics_dialog,
+                                         on_clear_diagnostics_response, self);
+  gh_diagnostics_set_status_callback(gh_diagnostics_get_default(), NULL, NULL);
   if (self->notifications_row)
     g_signal_handlers_disconnect_by_func(self->notifications_row, sync_notifications, self);
   /* The rows' handlers point into the bindings: drop the rows first. */
@@ -1679,7 +1741,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   gtk_widget_class_install_action(widget_class, "prefs.retry-identity", NULL,
                                   retry_identity_activated);
   gtk_widget_class_install_action(widget_class, "prefs.clear-attachments", NULL,
-                                  clear_attachments_activated);
+                                   clear_attachments_activated);
+  gtk_widget_class_install_action(widget_class, "prefs.clear-diagnostics", NULL,
+                                   clear_diagnostics_activated);
   gtk_widget_class_install_action(widget_class, "prefs.change-relays", NULL,
                                   change_relays_activated);
   gtk_widget_class_install_action(widget_class, "prefs.show-npub-qr", NULL,
@@ -1733,6 +1797,9 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(account_row);
   BIND(account_avatar);
   BIND(run_in_background_row);
+  BIND(diagnostics_row);
+  BIND(diagnostics_clear_button);
+  BIND(clear_diagnostics_dialog);
   BIND(delete_group);
   BIND(delete_all_dialog);
   BIND(published_relays_group);
@@ -1757,6 +1824,8 @@ gh_preferences_dialog_init(GhPreferencesDialog *self)
                    self);
   g_signal_connect(self->clear_attachments_dialog, "response",
                    G_CALLBACK(on_clear_attachments_response), self);
+  g_signal_connect(self->clear_diagnostics_dialog, "response",
+                   G_CALLBACK(on_clear_diagnostics_response), self);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.delete-all", FALSE);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "prefs.clear-attachments", FALSE);
 }

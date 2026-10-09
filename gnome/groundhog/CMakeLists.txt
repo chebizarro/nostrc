@@ -183,6 +183,23 @@ target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSIO
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-ui)
 
+# Local-only, typed diagnostic aggregates. The library is also linked by the
+# standalone service tests and by the few producers of reviewed event enums.
+add_library(groundhog-diagnostics STATIC src/app/gh-diagnostics.c)
+target_include_directories(groundhog-diagnostics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+target_link_libraries(groundhog-diagnostics PUBLIC PkgConfig::GROUNDHOG_DEPS)
+target_compile_options(groundhog-diagnostics PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(groundhog PRIVATE groundhog-diagnostics)
+
+if (BUILD_TESTING)
+  add_executable(test-groundhog-diagnostics tests/app/test_diagnostics.c)
+  target_link_libraries(test-groundhog-diagnostics PRIVATE groundhog-diagnostics)
+  target_compile_options(test-groundhog-diagnostics PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-diagnostics COMMAND test-groundhog-diagnostics)
+  set_tests_properties(groundhog-diagnostics PROPERTIES TIMEOUT 20
+    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
+endif()
+
 if (BUILD_TESTING)
   # Private D-Bus buses for the signer, account, DM and keyring tests
   # (tests/common/nostrc-test-bus.h; never GTestDBus).
@@ -281,7 +298,7 @@ if (TARGET nostr_gobject AND TARGET nostr)
     src/relay/gh-relay-guard.c)
   target_include_directories(groundhog-relay PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
-  target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr)
+  target_link_libraries(groundhog-relay PUBLIC nostr_gobject nostr groundhog-diagnostics)
   target_compile_options(groundhog-relay PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     add_executable(test-groundhog-relay tests/relay/test_relay_scope.c)
@@ -1273,7 +1290,7 @@ pkg_check_modules(GROUNDHOG_LINK_POLICY_DEPS REQUIRED IMPORTED_TARGET glib-2.0>=
 add_library(groundhog-link-policy STATIC src/ui/gh-link-policy.c)
 target_include_directories(groundhog-link-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS
-                      groundhog-conversations)
+                      groundhog-conversations groundhog-diagnostics)
 target_compile_options(groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
 if (BUILD_TESTING)
   add_executable(test-groundhog-link-policy tests/ui/test_link_policy.c)
@@ -1409,7 +1426,7 @@ endif()
 # requires a consumer for every row it leaves live.
 add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-target_link_libraries(groundhog-preferences PUBLIC groundhog-ui)
+target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
 
@@ -1978,7 +1995,7 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
   target_include_directories(groundhog-nip29-service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-nip29-service PUBLIC groundhog-nip29 groundhog-net
-    groundhog-store groundhog-auth-policy groundhog-conversations)
+    groundhog-store groundhog-auth-policy groundhog-conversations groundhog-diagnostics)
   target_compile_options(groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
   if (TARGET test-groundhog-remote-feature-matrix)
     target_link_libraries(test-groundhog-remote-feature-matrix PRIVATE groundhog-nip29-service)
