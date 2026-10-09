@@ -767,6 +767,9 @@ struct _GhConversationView {
   gchar *render_account;
   guint64 render_generation;
   GCancellable *render_cancel;
+  GhReferenceSummaryFunc reference_summary;
+  gpointer reference_data;
+  GDestroyNotify reference_destroy;
 
   /* W26 slice B: reactions */
   GhReactionStore *reactions;
@@ -790,7 +793,7 @@ enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_COPY_TEXT,
-       SIGNAL_PREVIEW_CHANGED, SIGNAL_RENDER_CHANGED, N_SIGNALS };
+       SIGNAL_PREVIEW_CHANGED, SIGNAL_RENDER_CHANGED, SIGNAL_PUBLIC_REFERENCE_ACTION, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -1252,6 +1255,7 @@ typedef struct {
   gchar *markup;
   gchar *reference_uri;
   gchar *reference_label;
+  GnNostrReference *reference_descriptor;
   gchar *preview_uri;
   gsize bytes;
   gboolean pending;
@@ -1286,6 +1290,7 @@ render_entry_free(RenderEntry *entry)
   g_free(entry->markup);
   g_free(entry->reference_uri);
   g_free(entry->reference_label);
+  gn_nostr_reference_free(entry->reference_descriptor);
   g_free(entry->preview_uri);
   g_free(entry);
 }
@@ -1305,6 +1310,7 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
 {
   g_clear_pointer(&entry->reference_uri, g_free);
   g_clear_pointer(&entry->reference_label, g_free);
+  g_clear_pointer(&entry->reference_descriptor, gn_nostr_reference_free);
   g_autoptr(GnNostrRepostDescriptor) repost = NULL;
   if (body && body[0] == '{' &&
       strlen(body) <= GN_MARKDOWN_MAX_INPUT_BYTES)
@@ -1328,6 +1334,9 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
     }
   }
   if (!reference) return;
+  entry->reference_descriptor = repost ? g_steal_pointer(&repost->target)
+                                       : g_steal_pointer(&parsed);
+  reference = entry->reference_descriptor;
   entry->reference_uri = g_strdup(reference->uri);
   g_autofree gchar *short_id = reference->id
     ? g_utf8_substring(reference->id, 0, MIN(12, g_utf8_strlen(reference->id, -1)))
@@ -1501,6 +1510,55 @@ gh_conversation_view_get_preview_uri(GhConversationView *self, GhMessage *messag
   g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   RenderEntry *entry = render_cache_ensure(self, message, FALSE);
   return entry ? entry->preview_uri : NULL;
+}
+
+void
+gh_conversation_view_set_reference_source(GhConversationView *self,
+                                           GhReferenceSummaryFunc summary,
+                                           gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->reference_destroy)
+    self->reference_destroy(self->reference_data);
+  self->reference_summary = summary;
+  self->reference_data = user_data;
+  self->reference_destroy = destroy;
+  gh_conversation_view_references_changed(self);
+}
+
+gchar *
+gh_conversation_view_dup_reference_summary(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  if (!self->reference_summary) return NULL;
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry && entry->reference_descriptor
+    ? self->reference_summary(entry->reference_descriptor, self->reference_data) : NULL;
+}
+
+gboolean
+gh_conversation_view_has_public_note_reference(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self) && GH_IS_MESSAGE(message), FALSE);
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry && entry->reference_descriptor &&
+    (entry->reference_descriptor->type == GN_NOSTR_REFERENCE_EVENT ||
+     entry->reference_descriptor->type == GN_NOSTR_REFERENCE_ADDRESS);
+}
+
+gboolean
+gh_conversation_view_can_find_references(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->reference_summary != NULL;
+}
+
+void
+gh_conversation_view_references_changed(GhConversationView *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  g_signal_emit(self, signals[SIGNAL_RENDER_CHANGED], 0, NULL);
 }
 
 static void
@@ -2704,6 +2762,33 @@ action_share_reference(GtkWidget *widget, const char *name, GVariant *parameter)
 }
 
 static void
+action_public_reference(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  if (!self->conversation || !self->reference_summary) return;
+  const gchar *id = g_variant_get_string(parameter, NULL);
+  GhMessage *message = gh_conversation_lookup_message(self->conversation, id);
+  if (!message || gh_message_get_withdrawn(message) ||
+      g_strcmp0(gh_message_get_account(message),
+                gh_conversation_get_account(self->conversation)) != 0 ||
+      (gh_message_get_expires_at(message) > 0 &&
+       gh_message_get_expires_at(message) <= g_get_real_time() / G_USEC_PER_SEC))
+    return;
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  if (!entry || !entry->reference_descriptor ||
+      (entry->reference_descriptor->type != GN_NOSTR_REFERENCE_EVENT &&
+       entry->reference_descriptor->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
+  gboolean find = g_str_equal(name, "conversation.find-reference");
+  g_autofree gchar *summary = self->reference_summary(entry->reference_descriptor,
+                                                       self->reference_data);
+  if ((find && summary) || (!find && !summary)) return;
+  const gchar *operation = find ? "find" :
+    g_str_equal(name, "conversation.repost-reference") ? "repost" : "quote";
+  g_signal_emit(self, signals[SIGNAL_PUBLIC_REFERENCE_ACTION], 0,
+                operation, entry->reference_descriptor->uri);
+}
+
+static void
 action_retry(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(widget);
@@ -3017,6 +3102,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
+  gh_conversation_view_set_reference_source(self, NULL, NULL, NULL);
   if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);
   g_clear_object(&self->web);
   if (self->picture_source)
@@ -3083,6 +3169,9 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_RENDER_CHANGED] = g_signal_new("render-changed", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_PUBLIC_REFERENCE_ACTION] = g_signal_new("public-reference-action",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
+    G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
 
   /* The templates name these types; they resolve by name. */
   g_type_ensure(GH_TYPE_TIMELINE_ITEM);
@@ -3116,6 +3205,12 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
                                   action_copy_message);
   gtk_widget_class_install_action(widget_class, "conversation.share-reference", "s",
                                   action_share_reference);
+  gtk_widget_class_install_action(widget_class, "conversation.find-reference", "s",
+                                  action_public_reference);
+  gtk_widget_class_install_action(widget_class, "conversation.repost-reference", "s",
+                                  action_public_reference);
+  gtk_widget_class_install_action(widget_class, "conversation.quote-reference", "s",
+                                  action_public_reference);
   gtk_widget_class_install_action(widget_class, "conversation.scroll-to-reply", "s",
                                   action_scroll_to_reply);
   gtk_widget_class_install_action(widget_class, "conversation.react", "(ssb)", action_react);

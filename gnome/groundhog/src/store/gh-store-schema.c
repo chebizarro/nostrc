@@ -411,6 +411,21 @@ static const gchar schema_v8[] =
 static const gchar schema_v9[] =
   "ALTER TABLE contacts ADD COLUMN picture_allowed_at INTEGER NOT NULL DEFAULT 0;";
 
+/* Verified public events fetched only after an explicit reference lookup.
+ * Bound per account so an old relay answer cannot grow the encrypted store
+ * without limit; callers recheck signatures on restore. */
+static const gchar schema_v10[] =
+  "CREATE TABLE public_notes ("
+  "  id TEXT PRIMARY KEY,"
+  "  pubkey TEXT NOT NULL,"
+  "  kind INTEGER NOT NULL,"
+  "  dtag TEXT,"
+  "  created_at INTEGER NOT NULL,"
+  "  event_json TEXT NOT NULL,"
+  "  stored_at INTEGER NOT NULL) WITHOUT ROWID;"
+  "CREATE INDEX public_notes_address ON public_notes(kind, pubkey, dtag, created_at DESC, id);"
+  "CREATE INDEX public_notes_age ON public_notes(stored_at);";
+
 static const GhStoreMigration migrations[] = {
   { 1, "Groundhog store schema v1 (privacy charter §3.3)", schema_v1 },
   { 2, "MLS state for libmarmot's MarmotStorage (charter §3.9, G23)", schema_v2 },
@@ -421,6 +436,7 @@ static const GhStoreMigration migrations[] = {
   { 7, "NIP-25 reactions on messages (W26 slice B, nostrc-191r)", schema_v7 },
   { 8, "Bounded pending reactions and deletion tombstones (W28, nostrc-r41l)", schema_v8 },
   { 9, "Profile-picture consent per contact (W32)", schema_v9 },
+  { 10, "Verified public-note cache for explicit repost and quote references (B2)", schema_v10 },
 };
 
 G_STATIC_ASSERT(G_N_ELEMENTS(migrations) == GH_STORE_SCHEMA_VERSION);

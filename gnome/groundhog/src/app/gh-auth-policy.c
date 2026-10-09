@@ -27,7 +27,8 @@ static const struct {
   [GH_AUTH_PURPOSE_RECIPIENT_WRAP] = { "recipient-wrap", GH_RELAY_AUTH_EPHEMERAL },
   [GH_AUTH_PURPOSE_SELF_WRAP] = { "self-wrap", GH_RELAY_AUTH_ACCOUNT },
   [GH_AUTH_PURPOSE_GROUP] = { "group", GH_RELAY_AUTH_ACCOUNT },
-  [GH_AUTH_PURPOSE_MLS_ROUTING] = { "mls-routing", GH_RELAY_AUTH_EPHEMERAL },
+    [GH_AUTH_PURPOSE_MLS_ROUTING] = { "mls-routing", GH_RELAY_AUTH_EPHEMERAL },
+    [GH_AUTH_PURPOSE_PUBLIC_POST] = { "public-post", GH_RELAY_AUTH_EPHEMERAL },
 };
 
 GhRelayAuthMode

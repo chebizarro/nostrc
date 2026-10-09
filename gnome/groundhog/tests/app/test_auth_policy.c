@@ -335,7 +335,8 @@ test_decide(void)
     [GH_AUTH_PURPOSE_RECIPIENT_WRAP] = GH_RELAY_AUTH_EPHEMERAL,
     [GH_AUTH_PURPOSE_SELF_WRAP] = GH_RELAY_AUTH_ACCOUNT,
     [GH_AUTH_PURPOSE_GROUP] = GH_RELAY_AUTH_ACCOUNT,
-    [GH_AUTH_PURPOSE_MLS_ROUTING] = GH_RELAY_AUTH_EPHEMERAL,
+      [GH_AUTH_PURPOSE_MLS_ROUTING] = GH_RELAY_AUTH_EPHEMERAL,
+      [GH_AUTH_PURPOSE_PUBLIC_POST] = GH_RELAY_AUTH_EPHEMERAL,
   };
   for (guint p = 0; p < GH_AUTH_N_PURPOSES; p++) {
     g_assert_cmpint(gh_auth_policy_decide(p), ==, expected[p]);
@@ -395,7 +396,7 @@ test_matrix(void)
     }
   }
   g_assert_cmpuint(account_connections, ==, 8);
-  g_assert_cmpuint(g_hash_table_size(ephemeral), ==, 8);
+  g_assert_cmpuint(g_hash_table_size(ephemeral), ==, 10);
   g_assert_cmpuint(f.mock.calls, ==, 8);
   fixture_down(&f);
 }

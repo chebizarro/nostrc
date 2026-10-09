@@ -792,7 +792,7 @@ gboolean gh_store_checkpoint(GhStore *store, GError **error);
  * Ordered, append-only migrations; each runs in one transaction that also
  * records it in schema_migrations and sets PRAGMA user_version. A store with
  * a higher user_version is refused (NEWER_SCHEMA). */
-#define GH_STORE_SCHEMA_VERSION 9
+#define GH_STORE_SCHEMA_VERSION 10
 
 typedef struct {
   gint version;

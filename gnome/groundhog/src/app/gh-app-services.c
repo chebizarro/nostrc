@@ -1,4 +1,7 @@
 #include "gh-about-dialog.h"
+#if GROUNDHOG_HAVE_PUBLIC_NOTES
+#include "gh-public-note-ui.h"
+#endif
 #if GROUNDHOG_HAVE_ISSUE
 #include "gh-issue-dialog.h"
 #endif
@@ -2395,6 +2398,15 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
 #endif
   };
   gh_send_ui_attach(window, &send);
+#if GROUNDHOG_HAVE_PUBLIC_NOTES
+  GhPublicNoteUiConfig public_notes = {
+    .accounts = self->accounts,
+    .store = self->account_store,
+    .relays = self->relays,
+    .settings = self->settings,
+  };
+  gh_public_note_ui_attach(window, &public_notes);
+#endif
 #if GROUNDHOG_HAVE_MLS_UI && GROUNDHOG_HAVE_GROUP_UI
   /* Shared NIP-88 projection and composer for private, relay-group and
    * Marmot conversations. Attach before the legacy MLS UI so it can leave

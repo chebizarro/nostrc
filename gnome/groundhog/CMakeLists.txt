@@ -1125,6 +1125,30 @@ else()
 endif()
 # --- end G02 store ---
 
+# B2 public-note cache: signed events, bounded in the encrypted account store.
+if (TARGET groundhog-store AND TARGET libnostr)
+  add_library(groundhog-public-notes STATIC src/store/gh-store-public-notes.c)
+  target_include_directories(groundhog-public-notes PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
+  target_link_libraries(groundhog-public-notes PUBLIC groundhog-store libnostr)
+  target_compile_options(groundhog-public-notes PRIVATE -Wall -Wextra -Werror)
+endif()
+if (TARGET groundhog-public-notes AND TARGET groundhog-relay AND TARGET nostr_gtk_portable)
+  add_library(groundhog-public-note-post STATIC src/ui/gh-public-note-post.c)
+  target_include_directories(groundhog-public-note-post PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-public-note-post PUBLIC
+    groundhog-public-notes groundhog-relay NostrGtk::Portable)
+  target_compile_options(groundhog-public-note-post PRIVATE -Wall -Wextra -Werror)
+  if (BUILD_TESTING)
+    add_executable(test-groundhog-public-note-post tests/ui/test_public_note_post.c)
+    target_link_libraries(test-groundhog-public-note-post PRIVATE groundhog-public-note-post)
+    target_compile_options(test-groundhog-public-note-post PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-public-note-post)
+    add_test(NAME groundhog-public-note-post COMMAND test-groundhog-public-note-post)
+    set_tests_properties(groundhog-public-note-post PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+  endif()
+endif()
+
 # --- G23 store marmot ---
 # libmarmot's MarmotStorage over the encrypted per-account GhStore (privacy
 # charter §3.9, decision D5 = vtable): MLS state, its snapshots and the outbox
@@ -2808,6 +2832,22 @@ else()
                  "group UI)")
 endif()
 # --- end W21 encrypted-group UI ---
+# Public NIP-21 note lookup and opt-in kind 6/16 repost / kind 1 quote authoring.
+if (TARGET groundhog-public-note-post AND TARGET groundhog-conversation-ui AND
+    TARGET groundhog-account-store AND TARGET groundhog-account-relays AND
+    TARGET groundhog-auth-policy)
+  add_library(groundhog-public-note-ui STATIC src/ui/gh-public-note-ui.c
+    src/ui/gh-public-post-dialog.c)
+  target_include_directories(groundhog-public-note-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
+  target_link_libraries(groundhog-public-note-ui PUBLIC groundhog-public-note-post
+    groundhog-conversation-ui groundhog-account-store groundhog-account-relays
+    groundhog-auth-policy)
+  target_compile_options(groundhog-public-note-ui PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(groundhog PRIVATE groundhog-public-note-ui)
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_PUBLIC_NOTES=1)
+else()
+  target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_PUBLIC_NOTES=0)
+endif()
 # --- W16 UX polish (nostrc-qp24.66, .70, .71, .72, .74, .80) ---
 # Small UX items on top of G11-G19 (privacy charter §7.4, §7.8, §7.9, §7.13):
 #  - GhBlockedPage (data/ui/gh-blocked-page.blp, gh-blocked-row.blp): Preferences

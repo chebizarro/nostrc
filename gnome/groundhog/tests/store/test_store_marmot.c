@@ -2208,6 +2208,7 @@ make_v1_store(const TestAccount *account)
    * v4 (W18) the arrival order, read, timer and inbox columns and two
    * triggers; v5 (W25) the MLS source epoch, attachment identities and
    * group pictures; v9 (W32) the picture consent column. */
+  sql_exec(store, "DROP TABLE public_notes"); /* v10 (B2) */
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
   sql_exec(store, "DROP INDEX conversations_by_backend_key");
@@ -2267,7 +2268,7 @@ test_migration_v1_to_v2(void)
 {
   TestAccount account;
   test_account_init(&account, ACCOUNT_A);
-  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 9);
+  g_assert_cmpint(GH_STORE_SCHEMA_VERSION, ==, 10);
   make_v1_store(&account);
   assert_migrated(&account);
   /* Reopening does not migrate again. */
@@ -2303,6 +2304,7 @@ test_migration_v6_scrubs_messages(void)
   /* Back to schema 5. */
   sql_exec(store, "ALTER TABLE contacts DROP COLUMN picture_allowed_at"); /* v9 (W32) */
   sql_exec(store, "DROP INDEX mls_messages_by_epoch");
+  sql_exec(store, "DROP TABLE public_notes"); /* v10 (B2) */
   sql_exec(store, "DROP TABLE reaction_tombstones");
   sql_exec(store, "DROP TABLE pending_reactions");
   sql_exec(store, "DROP INDEX conversations_by_backend_key");
