@@ -26,10 +26,10 @@ G_BEGIN_DECLS
  * running, or quit). It is remembered in a marker file under the state
  * directory, never in GSettings.
  *
- * Autostart (B2) follows only a confirmed choice: the key has a user value
- * (set by onboarding, Preferences or gh_background_set_enabled_async()).
- * With the default merely in effect, nothing is written and no portal is
- * asked. Confirmed on: start at login; confirmed off (or reset): not.
+ * Autostart follows the distinct launch-on-login key. A fresh profile starts
+ * with it off; on upgrade an explicit old background choice is copied once.
+ * Turning background off also turns launch off; turning launch off leaves
+ * background delivery unchanged.
  *   - Host install (GH_BACKGROUND_METHOD_FILE): writes or removes
  *     $XDG_CONFIG_HOME/autostart/org.nostr.Groundhog.desktop
  *     (Exec=<bindir>/groundhog --gapplication-service; the template is
@@ -62,7 +62,7 @@ typedef enum {
 } GhBackgroundMethod;
 
 typedef struct {
-  GSettings *settings;         /* required: org.nostr.Groundhog (run-in-background) */
+  GSettings *settings;         /* required: org.nostr.Groundhog (background and launch keys) */
   GDBusConnection *connection; /* the portal's bus; NULL = the application's */
   GhBackgroundMethod method;
   const gchar *config_dir;     /* absolute; NULL = g_get_user_config_dir() */
@@ -90,7 +90,7 @@ G_DECLARE_FINAL_TYPE(GhBackground, gh_background, GH, BACKGROUND, GObject)
  * handling). Takes the hold at once when the key is on and reconciles a
  * confirmed autostart choice. Dispose (g_object_run_dispose()) releases the
  * hold, cancels portal requests and detaches from app. Properties:
- * "enabled" and "holding" (booleans), "status" (string), "explained". */
+ * "enabled", "launch-on-login" and "holding" (booleans), "status" (string), "explained". */
 GhBackground *gh_background_new(GApplication *app, const GhBackgroundConfig *config);
 
 /* Borrowed; NULL when the build or the process has none. For onboarding and
@@ -99,6 +99,10 @@ GhBackground *gh_background_get_for_application(GApplication *app);
 
 /* run-in-background, as now in effect (the default included). */
 gboolean gh_background_get_enabled(GhBackground *self);
+/* Effective launch preference. A host autostart entry disabled in system
+ * settings is reported as off and is never overwritten. */
+gboolean gh_background_get_launch_on_login(GhBackground *self);
+gboolean gh_background_launch_disabled_in_system_settings(GhBackground *self);
 /* Whether the application hold is taken. */
 gboolean gh_background_get_holding(GhBackground *self);
 /* FILE or PORTAL (AUTO resolved). */
@@ -112,9 +116,10 @@ const gchar *gh_background_get_status(GhBackground *self);
  * explained by the caller of gh_background_set_enabled_async()). */
 gboolean gh_background_get_explained(GhBackground *self);
 
-/* The user's explicit choice (onboarding, D11): writes run-in-background,
- * marks background mode as explained, updates the hold and applies
- * autostart. Completes once the autostart entry or the portal agrees.
+/* The user's explicit background choice (onboarding, D11): writes
+ * run-in-background, marks background mode as explained and updates the hold.
+ * Launch on Login remains a separate choice. Completes once the current
+ * autostart state or the portal agrees.
  * Errors: G_IO_ERROR_PERMISSION_DENIED (the portal refused; the key is now
  * off), G_IO_ERROR_NOT_SUPPORTED (no portal, or autostart unavailable), a
  * GFileError for the autostart file, G_IO_ERROR_CANCELLED on dispose. */
@@ -123,6 +128,11 @@ void gh_background_set_enabled_async(GhBackground *self, gboolean enabled,
                                      gpointer user_data);
 gboolean gh_background_set_enabled_finish(GhBackground *self, GAsyncResult *result,
                                           GError **error);
+void gh_background_set_launch_on_login_async(GhBackground *self, gboolean enabled,
+                                             GCancellable *cancellable,
+                                             GAsyncReadyCallback callback, gpointer user_data);
+gboolean gh_background_set_launch_on_login_finish(GhBackground *self, GAsyncResult *result,
+                                                  GError **error);
 
 G_END_DECLS
 #endif

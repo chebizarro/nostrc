@@ -78,7 +78,8 @@ static const char *const preference_keys[] = {
   "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
   "link-previews", "load-profile-pictures", "filter-unknown-senders", "show-message-previews",
   "network-mode", "tor-socks-address", "discovery-relays",
-  "run-in-background", "diagnostics-enabled", "retention-days", "default-disappearing-seconds", "enter-sends",
+  "run-in-background", "launch-on-login", "diagnostics-enabled", "retention-days",
+  "default-disappearing-seconds", "enter-sends",
   "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
   "default-dm-protocol",
 };
@@ -86,7 +87,8 @@ static const char *const preference_keys[] = {
 static const char *const switch_keys[] = {
   "notifications-enabled", "sound-enabled", "load-remote-images", "link-previews",
   "load-profile-pictures", "filter-unknown-senders", "show-message-previews", "enter-sends",
-  "run-in-background", "diagnostics-enabled", "only-join-verified-mls-groups", "mls-legacy-key-packages",
+  "run-in-background", "launch-on-login", "diagnostics-enabled",
+  "only-join-verified-mls-groups", "mls-legacy-key-packages",
 };
 
 typedef struct {
@@ -1404,6 +1406,7 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "tor-socks-address", GH_FEATURE_TOR },
     { "discovery-relays", TRUE },
     { "run-in-background", TRUE },
+    { "launch-on-login", TRUE },
     { "diagnostics-enabled", TRUE },
     { "retention-days", GH_FEATURE_EXPIRY },
     { "default-disappearing-seconds", GH_FEATURE_COMPOSER && GH_FEATURE_EXPIRY },
@@ -1514,10 +1517,13 @@ test_copy_follows_features(void)
                           "unless you use Tor"));
   g_assert_true(gtk_widget_get_visible(template_child(all, "notifications_note")));
 
-  /* G15: switching background delivery on here also starts at login. */
+  /* Background delivery and login startup are separate choices. */
   const char *background = adw_action_row_get_subtitle(template_child(all,
                                                                       "run_in_background_row"));
-  g_assert_nonnull(strstr(background, "starts Groundhog when you log in"));
+  g_assert_null(strstr(background, "log in"));
+  const char *launch = adw_action_row_get_subtitle(template_child(all,
+                                                                  "launch_on_login_row"));
+  g_assert_nonnull(strstr(launch, "inbox relays"));
   reset_all(settings);
 }
 

@@ -85,6 +85,7 @@ struct _GhPreferencesDialog {
   AdwActionRow *account_row;
   AdwAvatar *account_avatar;
   AdwSwitchRow *run_in_background_row;
+  AdwSwitchRow *launch_on_login_row;
   AdwSwitchRow *diagnostics_row;
   GtkButton *diagnostics_clear_button;
   AdwAlertDialog *clear_diagnostics_dialog;
@@ -199,6 +200,7 @@ static const struct {
   { "show-message-previews", G_STRUCT_OFFSET(GhPreferencesDialog, message_previews_row) },
   { "enter-sends", G_STRUCT_OFFSET(GhPreferencesDialog, enter_sends_row) },
   { "run-in-background", G_STRUCT_OFFSET(GhPreferencesDialog, run_in_background_row) },
+  { "launch-on-login", G_STRUCT_OFFSET(GhPreferencesDialog, launch_on_login_row) },
   { "diagnostics-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, diagnostics_row) },
 };
 
@@ -1527,6 +1529,13 @@ gh_preferences_dialog_new(GSettings *settings, GhPreferencesFeatures features)
 /* ---- GObject ---------------------------------------------------------------------- */
 
 static void
+on_launch_error(GObject *background, const gchar *message, GhPreferencesDialog *self)
+{
+  (void)background;
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self->launch_on_login_row), message);
+}
+
+static void
 gh_preferences_dialog_constructed(GObject *object)
 {
   GhPreferencesDialog *self = GH_PREFERENCES_DIALOG(object);
@@ -1557,6 +1566,23 @@ gh_preferences_dialog_constructed(GObject *object)
              always_on ? _("Always on in this version: messages from people you haven't "
                            "accepted go to Message Requests, without profile lookups")
                        : _(NOT_AVAILABLE));
+  }
+  if (g_getenv("GROUNDHOG_INSTANCE") && *g_getenv("GROUNDHOG_INSTANCE")) {
+    gtk_widget_set_sensitive(GTK_WIDGET(self->launch_on_login_row), FALSE);
+    adw_action_row_set_subtitle(ADW_ACTION_ROW(self->launch_on_login_row),
+                                _("Unavailable for named Groundhog instances"));
+  }
+  GApplication *app = g_application_get_default();
+  GObject *background = app ? g_object_get_data(G_OBJECT(app), "gh-background") : NULL;
+  if (background) {
+    gboolean disabled = FALSE;
+    g_object_get(background, "launch-disabled", &disabled, NULL);
+    if (disabled) {
+      gtk_widget_set_sensitive(GTK_WIDGET(self->launch_on_login_row), FALSE);
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(self->launch_on_login_row),
+                                  _("Off: disabled in system startup settings"));
+    }
+    g_signal_connect_object(background, "launch-error", G_CALLBACK(on_launch_error), self, 0);
   }
   /* Scoped to the dialog: a row may outlive it (its settings binding still
    * following the key) and must never call back into it. */
@@ -1797,6 +1823,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(account_row);
   BIND(account_avatar);
   BIND(run_in_background_row);
+  BIND(launch_on_login_row);
   BIND(diagnostics_row);
   BIND(diagnostics_clear_button);
   BIND(clear_diagnostics_dialog);

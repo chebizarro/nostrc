@@ -709,10 +709,10 @@ A self-copy failure never changes the status. It adds the secondary note "Not sa
 
 ### 5.3 Background delivery (window closed)
 
-- **B1** `run-in-background` (default on, D11) is chosen explicitly in onboarding and changeable in Preferences.
+- **B1** `run-in-background` (default on, D11) is chosen explicitly in onboarding and changeable in Preferences. `launch-on-login` (default off) is a separate choice. Enabling launch also enables background delivery after disclosure; disabling launch leaves background delivery on; disabling background also disables launch. On upgrade, a prior explicit background choice is copied to launch once so existing autostart behavior is retained.
 - **B2 Autostart.**
-  - Host install: Groundhog writes or removes `~/.config/autostart/org.nostr.Groundhog.desktop` (`Exec=groundhog --gapplication-service`).
-  - Flatpak: `org.freedesktop.portal.Background.RequestBackground` with `autostart` and `commandline`.
+  - Host install: only a confirmed launch choice writes or removes `~/.config/autostart/org.nostr.Groundhog.desktop` (`Exec=groundhog --gapplication-service`). An entry disabled in system startup settings remains untouched and is reported off.
+  - Flatpak: `org.freedesktop.portal.Background.RequestBackground` with `autostart` and `commandline`; if only autostart is denied, background delivery remains on, while a background denial turns both choices off.
 - **B3 Process model.** One `AdwApplication`.
   - `--gapplication-service` starts windowless, and `g_application_hold()` is taken while background mode is on.
   - Closing the window destroys widgets and in-memory message models of closed conversations; the store, inbox and group scopes stay.
@@ -1146,7 +1146,7 @@ Each page is reachable again from Preferences. The window stays usable at 360×2
 | Network / Connection | Mode (System Settings / No Proxy / Tor); Tor address (visible in Tor mode); status row | `network-mode` (s, `system`), `tor-socks-address` (s, `127.0.0.1:9050`) |
 | Network / Relays | Discovery relays editor; "Private Message Relays…" subpage (inbox editor + publish, reuses `GhInboxSetup`); Relay Status list (host, purpose, state, "Signed in as you") | `discovery-relays` (as, `[]`) |
 | Account & Storage / Account | Identity (name, npub fingerprint, Verify); signer requested vs resolved | `signer-method` (s, `auto`) |
-| Account & Storage / Background | Receive messages when closed | `run-in-background` (b, true) |
+| Account & Storage / Background | Receive messages when closed; Launch on Login | `run-in-background` (b, true); `launch-on-login` (b, false) |
 | Account & Storage / Messages | Keep Messages (Forever / 1 Year / 30 Days); Default Disappearing Timer; storage used; Send with Enter; Attachment servers (G21) | `retention-days` (i, 0), `default-disappearing-seconds` (i, 0), `enter-sends` (b, true), `blossom-servers` (as, `[]`) |
 | Account & Storage / (destructive) | "Delete All Messages on This Device…" | — |
 
@@ -1680,7 +1680,7 @@ flowchart LR
   - `--gapplication-service` creates no window, and the inbox scope opens.
   - Closing the window keeps the process when background mode is on.
   - `app.quit` closes scopes and store (WAL checkpointed).
-- **NO-10 Background off.** The autostart file is removed (host), or the portal is called with `autostart=false` (Flatpak, mocked).
+- **NO-10 Background and launch split.** Launch-off removes Groundhog's enabled host autostart file or asks the portal for `autostart=false`, without releasing the background hold. Background-off also turns launch off. An entry disabled in system startup settings is not modified.
 - **NO-11 Locked store at start.** No inbox REQ, one hidden notification, no prompt. This holds with the default settings; only an explicit "notifications off" suppresses it (§5.3 B4).
 - **NO-12 Idle timers.** After EOSE with no traffic, H6 holds no timer shorter than 60 s.
 

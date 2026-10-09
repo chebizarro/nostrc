@@ -768,9 +768,20 @@ if (BUILD_TESTING)
   install(CODE "message(FATAL_ERROR \"Groundhog testing build has a test-only D-Bus control interface; reconfigure with BUILD_TESTING=OFF before installing.\")")
 endif()
 
+# The package builder selects the update handoff channel; a local build is source.
+set(GROUNDHOG_PACKAGE_CHANNEL "source" CACHE STRING "Groundhog package channel (flatpak, deb, rpm, arch, nix, source)")
+set_property(CACHE GROUNDHOG_PACKAGE_CHANNEL PROPERTY STRINGS flatpak deb rpm arch nix source)
+if (NOT GROUNDHOG_PACKAGE_CHANNEL MATCHES "^(flatpak|deb|rpm|arch|nix|source)$")
+  message(FATAL_ERROR "Unsupported GROUNDHOG_PACKAGE_CHANNEL: ${GROUNDHOG_PACKAGE_CHANNEL}")
+endif()
+target_compile_definitions(groundhog PRIVATE GH_PACKAGE_CHANNEL="${GROUNDHOG_PACKAGE_CHANNEL}")
 # W32: an app indicator where a StatusNotifierWatcher runs (Ubuntu, KDE).
 target_sources(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-status-notifier.c)
-target_include_directories(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common)
+if (TARGET groundhog-account)
+  target_sources(groundhog PRIVATE src/app/gh-tray.c src/app/gh-update-handoff.c)
+endif()
+target_include_directories(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
 
 install(TARGETS groundhog RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
@@ -808,6 +819,13 @@ if (BUILD_TESTING)
   target_compile_options(test-groundhog-status-notifier PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-status-notifier COMMAND test-groundhog-status-notifier)
   set_tests_properties(groundhog-status-notifier PROPERTIES TIMEOUT 60)
+
+  add_executable(test-groundhog-update-handoff tests/app/test_update_handoff.c
+                 src/app/gh-update-handoff.c)
+  target_include_directories(test-groundhog-update-handoff PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(test-groundhog-update-handoff PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-update-handoff PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-update-handoff COMMAND test-groundhog-update-handoff)
 
   add_executable(test-groundhog-bus-probe tests/app/test_bus_probe.c)
   target_link_libraries(test-groundhog-bus-probe PRIVATE nostrc-test-bus PkgConfig::GROUNDHOG_DEPS)

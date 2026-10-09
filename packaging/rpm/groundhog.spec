@@ -112,6 +112,7 @@ Grotto is a preview: its interface is still being reworked.
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_GROUNDHOG=ON \
+    -DGROUNDHOG_PACKAGE_CHANNEL=rpm \
     -DBUILD_APPS=ON \
     -DBUILD_GNOSTR_APP=OFF \
     -DBUILD_NATIVE_HOST=OFF \
