@@ -1,4 +1,5 @@
 #include "gh-link-policy.h"
+#include "gh-diagnostics.h"
 #include "gh-display-name.h"
 
 #include <nostr/nip19/nip19.h>
@@ -321,6 +322,9 @@ gh_link_policy_to_markup(const gchar *text)
   if (!text)
     return g_strdup("");
   if (!g_utf8_validate(text, -1, NULL)) {
+    gh_diagnostics_record_default(GH_DIAGNOSTIC_COMPONENT_UI,
+                                  GH_DIAGNOSTIC_EVENT_RENDER_FALLBACK,
+                                  GH_DIAGNOSTIC_RESULT_FAILED);
     g_autofree gchar *valid = g_utf8_make_valid(text, -1);
     return g_markup_escape_text(valid, -1);
   }

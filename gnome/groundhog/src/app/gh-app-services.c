@@ -3,6 +3,7 @@
 #include "gh-issue-dialog.h"
 #endif
 #include "gh-app-services.h"
+#include "gh-diagnostics.h"
 
 #if GROUNDHOG_HAVE_ACCOUNTS
 #include "gh-account-controller.h"
@@ -127,6 +128,7 @@ struct _GhAppServices {
   GhNip04Inbox *nip04;  /* W33: older NIP-04 DMs, read-only */
   GtkApplication *app; /* borrowed: owns the process's services */
   GSettings *settings;
+  GhDiagnostics *diagnostics;
 #if GROUNDHOG_HAVE_ACCOUNTS && GROUNDHOG_HAVE_TOR
   GhNetSession *network; /* the network mode of every connection (G09) */
 #endif
@@ -208,6 +210,23 @@ static void
 settings_teardown(GhAppServices *self)
 {
   g_clear_object(&self->settings);
+}
+
+static gboolean
+diagnostics_init(GhAppServices *self, GError **error)
+{
+  (void)error;
+  self->diagnostics = gh_diagnostics_new(self->settings, NULL);
+  gh_diagnostics_set_default(self->diagnostics);
+  return self->diagnostics != NULL;
+}
+
+static void
+diagnostics_teardown(GhAppServices *self)
+{
+  gh_diagnostics_set_default(NULL);
+  gh_diagnostics_free(self->diagnostics);
+  self->diagnostics = NULL;
 }
 
 static void
@@ -1990,6 +2009,7 @@ static const GhAppService services[] = {
   { "application", NULL, NULL },
 #if GROUNDHOG_HAVE_ACCOUNTS
   { "settings", settings_init, settings_teardown },
+  { "diagnostics", diagnostics_init, diagnostics_teardown },
 #if GROUNDHOG_HAVE_TOR
   { "network", network_init, network_teardown },
 #elif GH_APP_RELAY_GUARD

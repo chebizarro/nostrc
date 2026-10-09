@@ -92,6 +92,29 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     }
 
     Adw.PreferencesGroup {
+      title: _("Local Diagnostics");
+      description: _("Off by default. Groundhog records only daily counts of reviewed operational events on this device. Other apps running as you can read these files. Nothing is sent automatically; including a report in a public issue requires a separate preview and Publish.");
+
+      Adw.SwitchRow diagnostics_row {
+        title: _("Enable Local Diagnostics");
+        subtitle: _("No message text, identifiers, relay addresses, or raw errors are recorded");
+      }
+
+      Adw.ActionRow diagnostics_clear_row {
+        title: _("Clear Local Diagnostics");
+        subtitle: _("Delete saved daily counts now");
+        activatable-widget: diagnostics_clear_button;
+
+        [suffix]
+        Button diagnostics_clear_button {
+          label: _("Clear…");
+          valign: center;
+          action-name: "prefs.clear-diagnostics";
+        }
+      }
+    }
+
+    Adw.PreferencesGroup {
       title: _("Conversations");
 
       Adw.SwitchRow filter_unknown_senders_row {
@@ -627,6 +650,18 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
       }
     }
   }
+}
+
+Adw.AlertDialog clear_diagnostics_dialog {
+  heading: _("Clear Local Diagnostics?");
+  body: _("Delete Groundhog's saved daily operational counts from this device? This does not affect an issue you already published.");
+  default-response: "keep-diagnostics";
+  close-response: "keep-diagnostics";
+
+  responses [
+    keep-diagnostics: _("_Cancel"),
+    clear-diagnostics: _("_Clear") destructive,
+  ]
 }
 
 // Confirmation for prefs.clear-attachments (G22): the encrypted cache of

@@ -36,8 +36,11 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 - About → Report an Issue opens a public NIP-34 composer, not a private chat.
   The GitHub issues page remains a secondary external link. It targets the
   same nostrc repository announcement as gnostr (`30617`, owner Biz, `d=nostrc`)
-  using the same libnip34 issue builder. Unlike a diagnostic uploader, it adds
-  no logs, attachments, system information or conversation data.
+  using the same libnip34 issue builder. No diagnostics are collected by default;
+  local sanitized aggregates can be enabled in Preferences. An issue includes
+  them only after an explicit preview and Publish. Groundhog never uploads logs
+  or attachments; attachment URLs, if supplied, are manual text references.
+  It never adds conversation data automatically.
 - The editable relay list starts with the user's discovery settings (empty
   when unconfigured). There is no implicit repository lookup or hidden relay
   fallback. Review shows the exact title/body, normalized relays, account
@@ -163,7 +166,11 @@ Where this charter tightens the plan, the tightening is called out and the plan 
 - **P7 One account at a time.** Switching tears down every socket, RPC, notification and decrypted model of the old account before the next one opens (existing invariant). *(PT-6.)*
 - **P8 Local-only signals.** Read state, pins, mutes, drafts and blocks are never published. *(PT-1.)*
 - **P9 Explain every exception.** Each opt-in that increases exposure shows a one-sentence explanation of who learns what.
-- **P10 No telemetry.** No crash reporter or analytics endpoint exists.
+- **P10 No network telemetry.** No crash reporter, analytics endpoint or automatic
+  diagnostic upload exists. Off by default, Groundhog may collect only local,
+  typed, sanitized daily operational aggregates. The user can clear them or
+  disable collection (which deletes them). They enter a public NIP-34 issue only
+  after an explicit appendix preview and Publish; plaintext logs remain banned.
 
 ### 1.4 Explicit non-goals (say so in UI and metainfo)
 
@@ -192,7 +199,7 @@ Each default has an ID, a rationale and a test. Test IDs are defined in §9.
 | PD-7 | Timestamps: seal and wrap `created_at` randomized independently; the rumor carries the real time. Inbox backfill `since` = cursor − 172 800 − 600 s. The seal and wrap `expiration` are jittered (§3.7) | NIP-17/59: grouping by `created_at` must not reveal metadata | PT-7 |
 | PD-8 | Message Requests: senders you haven't accepted (not in your local accepted set) are quarantined. No profile fetch until you accept, and notifications are forced to hidden | Stops spam and harassment, and avoids revealing to relays that you looked at a stranger's profile | PT-8 |
 | PD-9 | Notification content `hidden`, sound off (existing schema), notifications enabled once background mode is chosen | Lock screen and shoulder-surfing | NO-1 |
-| PD-10 | No logs of plaintext, keys, bunker URIs or full relay responses at any debug level | Logs persist in the journal, readable by the user's other processes | PT-10 |
+| PD-10 | No logs of plaintext, keys, bunker URIs or full relay responses at any debug level; local diagnostics accept only reviewed enum fields and daily counts, never raw error strings or identifiers | Logs and local state are readable by the user's other processes | PT-10 |
 | PD-11 | GSettings holds only app-global preferences plus `current-npub`. Per-conversation or per-contact state (mute, pins, drafts, petnames, blocks) lives in the encrypted store | dconf is plaintext and readable by any same-user process | PT-11 |
 | PD-12 | Contact directory (others' 10050 and kind 0): only on discovery connections, unauthenticated or ephemeral-authenticated, cached, refreshed off the send path | Lookups reveal your social graph; send-time lookups correlate with the publish that follows | NT-11 |
 | PD-13 | No relay is contacted before the user confirms one (existing `discovery-relays=[]`) | P1 | PT-9 |
@@ -1134,6 +1141,7 @@ Each page is reachable again from Preferences. The window stays usable at 360×2
 |---|---|---|
 | Privacy / Notifications | Enable; Content (Hidden / Sender Name / Sender and Message); Sound; lock-screen footer | `notifications-enabled` (b, true once onboarding chooses background, else false), `notification-privacy` (s, `hidden`), `sound-enabled` (b, false) |
 | Privacy / Web Content | Load Images in Messages; Link Previews; Load Profile Pictures; footer "Loading anything from the web shows your IP address to that website unless you use Tor." | `load-remote-images` (b, false), `link-previews` (b, false), `load-profile-pictures` (b, false) |
+| Privacy / Local Diagnostics | Enable Local Diagnostics; Clear Diagnostics; disclosure that records contain only daily counts of reviewed operational events, stay on this device, are readable by other same-user processes, and never enter an issue without explicit preview and Publish | `diagnostics-enabled` (b, false) |
 | Privacy / Conversations | Filter Unknown Senders; Only join groups where every member's app proves their account; Let people using older Marmot apps invite me (amended 2026-10-01, §2.2); Show Message Previews in List | `filter-unknown-senders` (b, true), `only-join-verified-mls-groups` (b, false), `mls-legacy-key-packages` (b, true), `show-message-previews` (b, true) |
 | Network / Connection | Mode (System Settings / No Proxy / Tor); Tor address (visible in Tor mode); status row | `network-mode` (s, `system`), `tor-socks-address` (s, `127.0.0.1:9050`) |
 | Network / Relays | Discovery relays editor; "Private Message Relays…" subpage (inbox editor + publish, reuses `GhInboxSetup`); Relay Status list (host, purpose, state, "Signed in as you") | `discovery-relays` (as, `[]`) |
@@ -1143,6 +1151,20 @@ Each page is reachable again from Preferences. The window stays usable at 360×2
 | Account & Storage / (destructive) | "Delete All Messages on This Device…" | — |
 
 The Network page hides the Tor mode until G09 lands (no fake support).
+
+Local diagnostics are process-owned and inactive before explicit opt-in. They
+record only reviewed `day`, `component`, `event`, `result`, `count` aggregates:
+no per-message time, raw error, identifier, relay/website address, host, key,
+message, path, stack trace or full response. The state directory is
+`$XDG_STATE_HOME/groundhog/diagnostics/` (0700), with 0600 atomic daily files:
+at most three files, 256 KiB each, no day older than seven days. A storage
+failure retains at most 64 KiB of the same sanitized counts in memory and is
+shown in Preferences. Turning the setting off stops collection and deletes the
+files; deletion failure is shown instead of a false confirmation. An issue's
+separate include checkbox starts off for every draft and freezes at most 8,000
+UTF-8 bytes of the report into the reviewed public body; Groundhog never
+sends it automatically. Same-user applications can read these local files
+(A4); this is not a promise of secrecy from the local user session.
 
 ### 7.12 Adaptive layouts
 

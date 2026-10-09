@@ -1,4 +1,5 @@
 #include "gh-nip29-service.h"
+#include "gh-diagnostics.h"
 
 #include "gh-auth-policy.h"
 #include "gh-conversation-private.h"
@@ -1246,6 +1247,9 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
        * the first one would move it past the unfetched stretch (review B1)
        * -- so the next REQ asks for that stretch again. */
       if (update->incomplete) {
+        gh_diagnostics_record_default(GH_DIAGNOSTIC_COMPONENT_NIP29,
+                                      GH_DIAGNOSTIC_EVENT_HISTORY_PARTIAL,
+                                      GH_DIAGNOSTIC_RESULT_FAILED);
         room->sync_failed = TRUE;
         room->reaction_sync_failed = TRUE;
         g_message("Groundhog could not fetch every older message of a group; its read "

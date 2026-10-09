@@ -142,11 +142,11 @@ RULES = (
     "lookup-sources", "account-auth-purpose", "auth-policy", "account-auth-setter",
     "message-status", "log-ids",
     "relay-suggestions",
-    "app-id", "preference-consumers", "exceptions",
+    "app-id", "preference-consumers", "diagnostics-allowlist", "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
-              "exceptions"}
+              "diagnostics-allowlist", "exceptions"}
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
@@ -233,6 +233,7 @@ GSETTINGS = {
     # §7.11 Account & Storage.
     "signer-method": Key("s", "'auto'"),
     "run-in-background": Key("b", "true"),  # D11: on, chosen in onboarding
+    "diagnostics-enabled": Key("b", "false"),  # §7.11: local-only, explicit opt-in
     "retention-days": Key("i", "0"),  # D10: keep forever
     "default-disappearing-seconds": Key("i", "0"),
     "enter-sends": Key("b", "true"),
@@ -874,13 +875,56 @@ def check_preference_consumers(tree):
     return found
 
 
+DIAGNOSTIC_ENUMS = {
+    "GhDiagnosticComponent": ("RELAY", "STORE", "SIGNER", "NIP17", "NIP29", "MARMOT", "UI", "N"),
+    "GhDiagnosticEvent": ("CONNECT_FAILED", "PUBLISH_REJECTED", "HISTORY_PARTIAL", "RENDER_FALLBACK", "N"),
+    "GhDiagnosticResult": ("OK", "RETRY", "FAILED", "N"),
+}
+DIAGNOSTIC_NAMES = {
+    "components": ("relay", "store", "signer", "nip17", "nip29", "marmot", "ui"),
+    "events": ("connect_failed", "publish_rejected", "history_partial", "render_fallback"),
+    "results": ("ok", "retry", "failed"),
+}
+DIAGNOSTIC_FIELDS = ("day", "component", "event", "result", "count")
+
+
+def check_diagnostics(tree):
+    """Pin the entire persisted/report vocabulary, and reject raw values."""
+    rule = "diagnostics-allowlist"
+    header, source = "src/app/gh-diagnostics.h", "src/app/gh-diagnostics.c"
+    if not tree.exists(header) or not tree.exists(source):
+        return [Violation(rule, header, 0, "typed diagnostics source/header missing", "missing")]
+    htext, hkeep, _ = tree.views(header)
+    ctext, ckeep, _ = tree.views(source)
+    found = []
+    for type_name, suffixes in DIAGNOSTIC_ENUMS.items():
+        m = re.search(r"typedef\s+enum\s*\{([^{}]*)\}\s*" + type_name + r"\s*;", hkeep, re.S)
+        prefix = "GH_DIAGNOSTIC_" + type_name.removeprefix("GhDiagnostic").upper() + "_"
+        actual = tuple(re.findall(r"\b" + prefix + r"([A-Z0-9_]+)\b", m.group(1))) if m else ()
+        if actual != suffixes:
+            found.append(Violation(rule, header, 0, f"{type_name} is not the reviewed enum", type_name))
+    for array, names in DIAGNOSTIC_NAMES.items():
+        m = re.search(r"static\s+const\s+gchar\s*\*const\s+" + array +
+                      r"\[\]\s*=\s*\{([^{}]*)\}", ckeep, re.S)
+        actual = tuple(re.findall(r'"([^"\n]+)"', m.group(1))) if m else ()
+        if actual != names:
+            found.append(Violation(rule, source, 0, f"{array} is not the reviewed vocabulary", array))
+    report_header = "\\t".join(DIAGNOSTIC_FIELDS) + "\\n"
+    if report_header not in ctext:
+        found.append(Violation(rule, source, 0, "report fields differ from the reviewed allowlist", "fields"))
+    for m in re.finditer(r"->message\b|\b(?:pubkey|rumor_id|wrap_id|event_id|relay_url|message_text|signer_payload|bunker_uri|ip_address)\b", ckeep):
+        found.append(Violation(rule, source, line_of(ckeep, m.start()),
+                               "raw errors or identifiers must never enter diagnostics", m.group()))
+    return found
+
+
 def check(root, exceptions=None):
     """Return the violations in the Groundhog tree at `root`."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
     tree = Tree(root)
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
-           + check_app_id(tree) + check_preference_consumers(tree))
+           + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -1074,6 +1118,21 @@ def clean_tree():
         "src/ui/gh-conversation-view.c": (
             '/* "enter-sends" is G13\'s composer\'s to read. */\n'
             'static const char *const previews = "link-previews";\n'),
+        "src/app/gh-diagnostics.h": (
+            "typedef enum { GH_DIAGNOSTIC_COMPONENT_RELAY, GH_DIAGNOSTIC_COMPONENT_STORE, "
+            "GH_DIAGNOSTIC_COMPONENT_SIGNER, GH_DIAGNOSTIC_COMPONENT_NIP17, "
+            "GH_DIAGNOSTIC_COMPONENT_NIP29, GH_DIAGNOSTIC_COMPONENT_MARMOT, "
+            "GH_DIAGNOSTIC_COMPONENT_UI, GH_DIAGNOSTIC_COMPONENT_N } GhDiagnosticComponent;\n"
+            "typedef enum { GH_DIAGNOSTIC_EVENT_CONNECT_FAILED, "
+            "GH_DIAGNOSTIC_EVENT_PUBLISH_REJECTED, GH_DIAGNOSTIC_EVENT_HISTORY_PARTIAL, "
+            "GH_DIAGNOSTIC_EVENT_RENDER_FALLBACK, GH_DIAGNOSTIC_EVENT_N } GhDiagnosticEvent;\n"
+            "typedef enum { GH_DIAGNOSTIC_RESULT_OK, GH_DIAGNOSTIC_RESULT_RETRY, "
+            "GH_DIAGNOSTIC_RESULT_FAILED, GH_DIAGNOSTIC_RESULT_N } GhDiagnosticResult;\n"),
+        "src/app/gh-diagnostics.c": (
+            'static const gchar *const components[] = { "relay", "store", "signer", "nip17", "nip29", "marmot", "ui" };\n'
+            'static const gchar *const events[] = { "connect_failed", "publish_rejected", "history_partial", "render_fallback" };\n'
+            'static const gchar *const results[] = { "ok", "retry", "failed" };\n'
+            'static const char *header = "day\\tcomponent\\tevent\\tresult\\tcount\\n";\n'),
         SCHEMA_FILE: render_schema(),
         # The banned host is named only in the synthetic AGENTS.md, and the
         # host it recommends instead is not banned.
@@ -1154,6 +1213,14 @@ MUTATIONS = [
     M("url-ui", {"url-literal"},
       [replace("data/ui/gh-window.ui", '<property name="title">',
                '<property name="tooltip-text">ws://198.51.100.7:7777</property>\n    <property name="title">')]),
+    M("diagnostics-raw-error", {"diagnostics-allowlist"},
+      [append("src/app/gh-diagnostics.c", 'static void bad(GError *error) { g_print("%s", error->message); }\n')]),
+    M("diagnostics-identifier", {"diagnostics-allowlist"},
+      [append("src/app/gh-diagnostics.c", 'static const char *event_id = "secret";\n')]),
+    M("diagnostics-extra-event", {"diagnostics-allowlist"},
+      [replace("src/app/gh-diagnostics.c", '"render_fallback"', '"render_fallback", "unreviewed"')]),
+    M("diagnostics-extra-field", {"diagnostics-allowlist"},
+      [replace("src/app/gh-diagnostics.c", 'result\\tcount', 'result\\tmessage\\tcount')]),
     M("gsettings-default-flip", {"gsettings-allowlist"},
       [replace(SCHEMA_FILE, '<key name="link-previews" type="b">\n      <default>false',
                '<key name="link-previews" type="b">\n      <default>true')]),

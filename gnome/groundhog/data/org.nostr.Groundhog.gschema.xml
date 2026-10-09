@@ -130,6 +130,13 @@
       <description>Deprecated rollback setting. New Groundhog versions use current-backend per account and reset this value to auto during migration.</description>
     </key>
 
+    <!-- Privacy / Local Diagnostics -->
+    <key name="diagnostics-enabled" type="b">
+      <default>false</default>
+      <summary>Collect local diagnostics</summary>
+      <description>Store only reviewed daily operational event counts on this device. No diagnostic is sent automatically; public issue inclusion requires a separate preview and Publish.</description>
+    </key>
+
     <!-- Account & Storage / Background -->
     <key name="run-in-background" type="b">
       <default>true</default>

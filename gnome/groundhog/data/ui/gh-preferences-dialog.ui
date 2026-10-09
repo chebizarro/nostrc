@@ -92,6 +92,32 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwPreferencesGroup">
+            <property name="title" translatable="yes">Local Diagnostics</property>
+            <property name="description" translatable="yes">Off by default. Groundhog records only daily counts of reviewed operational events on this device. Other apps running as you can read these files. Nothing is sent automatically; including a report in a public issue requires a separate preview and Publish.</property>
+            <child>
+              <object class="AdwSwitchRow" id="diagnostics_row">
+                <property name="title" translatable="yes">Enable Local Diagnostics</property>
+                <property name="subtitle" translatable="yes">No message text, identifiers, relay addresses, or raw errors are recorded</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwActionRow" id="diagnostics_clear_row">
+                <property name="title" translatable="yes">Clear Local Diagnostics</property>
+                <property name="subtitle" translatable="yes">Delete saved daily counts now</property>
+                <property name="activatable-widget">diagnostics_clear_button</property>
+                <child type="suffix">
+                  <object class="GtkButton" id="diagnostics_clear_button">
+                    <property name="label" translatable="yes">Clear…</property>
+                    <property name="valign">3</property>
+                    <property name="action-name">prefs.clear-diagnostics</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="AdwPreferencesGroup">
             <property name="title" translatable="yes">Conversations</property>
             <child>
               <object class="AdwSwitchRow" id="filter_unknown_senders_row">
@@ -650,6 +676,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       </object>
     </child>
   </template>
+  <object class="AdwAlertDialog" id="clear_diagnostics_dialog">
+    <property name="heading" translatable="yes">Clear Local Diagnostics?</property>
+    <property name="body" translatable="yes">Delete Groundhog's saved daily operational counts from this device? This does not affect an issue you already published.</property>
+    <property name="default-response">keep-diagnostics</property>
+    <property name="close-response">keep-diagnostics</property>
+    <responses>
+      <response id="keep-diagnostics" translatable="yes">_Cancel</response>
+      <response id="clear-diagnostics" translatable="yes" appearance="destructive">_Clear</response>
+    </responses>
+  </object>
   <object class="AdwAlertDialog" id="clear_attachments_dialog">
     <property name="heading" translatable="yes">Clear Downloaded Files?</property>
     <property name="body" translatable="yes">Groundhog deletes its decrypted copies of the files you downloaded or sent from this device. The messages stay. Downloading a file again needs the server that holds it, which may have deleted it.</property>
