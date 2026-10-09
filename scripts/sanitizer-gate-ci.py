@@ -68,6 +68,7 @@ SANITIZER_BUILD_PATHS = (
     "tools/CMakeLists.txt",
     "gnome/groundhog/",
     "gnome/common/",                  # gn-status-notifier, compiled into groundhog (W32)
+    "nostr-gtk/",                     # nostr_gtk_portable: Markdown, references, issue fields (alpha 6)
     "gnome/seahorse/",                # gnostr-secret, linked by groundhog-identity
     "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml",  # Groundhog's test schemas
     "libnostr/",
