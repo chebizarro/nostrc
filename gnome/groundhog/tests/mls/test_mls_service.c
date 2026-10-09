@@ -2194,7 +2194,16 @@ test_backfill_store_bounded(void)
   wait_stored_text(bob, room, "live after the bounded backfill");
   g_assert_true(gh_mls_group_get_history_incomplete(gb));
   g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);   /* the gap is asked again */
-  g_assert_nonnull(find_message(bob, room, "backlog 99"));     /* the newest were applied */
+  /* The newest were applied, and no more than the bound: the store is asked,
+   * not the room. The room is a window of its newest 30 by (created_at, rumor
+   * id), and Alice's backlog shares a second or a few, so "backlog 99" may lie
+   * outside it while stored (nostrc-gofet.12). The older 40 arrive after the
+   * flush, behind libmarmot's window of skipped keys: unreadable. */
+  StoredTextWait newest_applied = { bob, room, "backlog 99" };
+  g_assert_true(text_stored(&newest_applied));
+  TextsWait applied = { bob, room, backlog.texts, 0 };
+  texts_listed(&applied);
+  g_assert_cmpuint(applied.next, ==, 60);
 
   /* The next subscription, with room enough, completes, and only then does
    * the cursor move (past the backlog). */
