@@ -18,6 +18,11 @@
 
 /* Widget headers */
 #include "content_renderer.h"
+#include "gn-markdown.h"
+#include "gn-nostr-reference.h"
+#include "gn-og-preview-card.h"
+#include "gn-media-viewer.h"
+#include "gn-nip34-issue-fields.h"
 #include "gn-timeline-tabs.h"
 #include "gnostr-card-visibility-policy.h"
 #include "gnostr-composer.h"

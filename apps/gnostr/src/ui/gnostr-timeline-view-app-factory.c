@@ -2,6 +2,7 @@
 #include "gnostr-avatar-cache.h"
 #include "gnostr-publish-gate.h"
 #include <nostr-gtk-1.0/gn-timeline-tabs.h>
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gnostr-card-visibility-policy.h>
 /* nostrc-hqtn: gnostr-main-window.h moved to gnostr-timeline-action-relay.c */
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
@@ -991,6 +992,8 @@ bind_row_common(NostrGtkTimelineView *self,
       g_object_get(obj, "kind", &event_kind, NULL);
     }
     nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), event_kind);
+    g_autoptr(GnNostrRepostDescriptor) nip18_descriptor = tags_json ?
+      gn_nostr_repost_descriptor_parse_tags(event_kind, tags_json) : NULL;
 
     /* NIP-23: Handle long-form content (kind 30023) */
     if (gnostr_article_is_article(event_kind) && tags_json) {
@@ -1197,12 +1200,13 @@ bind_row_common(NostrGtkTimelineView *self,
       g_autofree char *legacy_reposted_id = NULL;
       const char *reposted_id = NULL;
       if (is_snapshot_row) {
-        is_repost = (event_kind == 6 && snapshot_reposted_id && *snapshot_reposted_id);
+        is_repost = ((event_kind == 6 || event_kind == 16) && snapshot_reposted_id && *snapshot_reposted_id);
         reposted_id = snapshot_reposted_id;
       } else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
-        is_repost = gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj));
+        is_repost = nip18_descriptor && !nip18_descriptor->quote &&
+          nip18_descriptor->target->type == GN_NOSTR_REFERENCE_EVENT;
         if (is_repost)
-          legacy_reposted_id = gn_nostr_event_item_get_reposted_event_id(GN_NOSTR_EVENT_ITEM(obj));
+          legacy_reposted_id = g_strdup(nip18_descriptor->target->id);
         reposted_id = legacy_reposted_id;
       }
       if (is_repost) {
@@ -1353,13 +1357,14 @@ bind_row_common(NostrGtkTimelineView *self,
      * Skip when is_repost (kind 6) — the repost block above already handles those. */
     {
       gboolean quote_is_repost = is_snapshot_row
-        ? (event_kind == 6)
-        : (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type()) &&
-           gn_nostr_event_item_get_is_repost(GN_NOSTR_EVENT_ITEM(obj)));
+        ? (event_kind == 6 || event_kind == 16)
+        : (nip18_descriptor && !nip18_descriptor->quote);
       const char *quoted_id = is_snapshot_row
         ? snapshot_quoted_id
         : (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())
-           ? gn_nostr_event_item_get_quoted_event_id(GN_NOSTR_EVENT_ITEM(obj))
+           ? (nip18_descriptor && nip18_descriptor->quote &&
+              nip18_descriptor->target->type == GN_NOSTR_REFERENCE_EVENT ?
+              nip18_descriptor->target->id : NULL)
            : NULL);
       if (!quote_is_repost && quoted_id) {
         if (is_snapshot_row) {

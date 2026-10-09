@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
-set(NOSTR_GTK_MINOR_VERSION 0)
-set(NOSTR_GTK_MICRO_VERSION 1)
+set(NOSTR_GTK_MINOR_VERSION 1)
+set(NOSTR_GTK_MICRO_VERSION 0)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}
@@ -151,12 +151,34 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/content_renderer.h
   include/nostr-gtk-1.0/nostr-gtk-error.h
   include/nostr-gtk-1.0/gnostr-nip05.h
+  include/nostr-gtk-1.0/gn-markdown.h
+  include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-og-preview-card.h
+  include/nostr-gtk-1.0/gn-media-viewer.h
+  include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+)
+
+set(NOSTR_GTK_PORTABLE_HEADERS
+  include/nostr-gtk-1.0/content_renderer.h
+  include/nostr-gtk-1.0/nostr-gtk-error.h
+  include/nostr-gtk-1.0/gn-markdown.h
+  include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-og-preview-card.h
+  include/nostr-gtk-1.0/gn-media-viewer.h
+  include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+)
+
+set(NOSTR_GTK_PORTABLE_SOURCES
+  src/gn-markdown.c
+  src/gn-nostr-reference.c
+  src/gn-og-preview-card.c
+  src/gn-media-viewer.c
+  src/gn-nip34-issue-fields.c
 )
 
 # ── Shared content parser component ─────────────────────────────────
 # Kept as an object library so lightweight model/tests can consume the parser
-# without linking the app-coupled widget archive. Its objects remain embedded
-# in nostr_gtk, preserving the installed legacy renderer ABI.
+# without linking GTK. Its objects are owned by the installed portable target.
 add_library(gn_content_parser OBJECT
   src/content_renderer.c
   src/nostr-gtk-error.c)
@@ -173,11 +195,35 @@ target_link_libraries(gn_content_parser
     PkgConfig::GLIB2
     nostr_gobject
     PkgConfig::JSON_GLIB)
+set_target_properties(gn_content_parser PROPERTIES POSITION_INDEPENDENT_CODE ON)
 apply_sanitizers(gn_content_parser)
 
-# ── Library target ───────────────────────────────────────────────────
+# ── Portable library target ─────────────────────────────────────────
+add_library(nostr_gtk_portable SHARED ${NOSTR_GTK_PORTABLE_SOURCES}
+  $<TARGET_OBJECTS:gn_content_parser>)
+set_target_properties(nostr_gtk_portable PROPERTIES
+  OUTPUT_NAME nostr-gtk-portable-1.0
+  VERSION ${NOSTR_GTK_VERSION}
+  SOVERSION ${NOSTR_GTK_MAJOR_VERSION})
+target_include_directories(nostr_gtk_portable PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/nostr-gtk-1.0)
+target_link_libraries(nostr_gtk_portable PUBLIC
+  PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2
+  PkgConfig::GOBJECT2 PkgConfig::GIO2
+  PRIVATE nostr_gobject PkgConfig::JSON_GLIB nip19)
+target_compile_definitions(nostr_gtk_portable PRIVATE
+  GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6
+  GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6
+  GTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6
+  GTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6)
+apply_sanitizers(nostr_gtk_portable)
+add_library(NostrGtk::Portable ALIAS nostr_gtk_portable)
+
+# ── Legacy library target ───────────────────────────────────────────
 add_library(nostr_gtk ${NOSTR_GTK_SOURCES})
-target_link_libraries(nostr_gtk PRIVATE gn_content_parser)
+target_link_libraries(nostr_gtk PUBLIC nostr_gtk_portable)
 
 set(nostr_gtk_VERSION "${NOSTR_GTK_VERSION}")
 set_target_properties(nostr_gtk PROPERTIES
@@ -266,10 +312,12 @@ if(NOSTR_GTK_ENABLE_GIR)
       if(APPLE)
         target_link_options(nostr_gtk_shared PRIVATE
           "-Wl,-force_load,$<TARGET_FILE:nostr_gtk>"
+          "-Wl,-force_load,$<TARGET_FILE:nostr_gtk_portable>"
           "-Wl,-undefined,dynamic_lookup")
       else()
         target_link_options(nostr_gtk_shared PRIVATE
-          -Wl,--whole-archive $<TARGET_FILE:nostr_gtk> -Wl,--no-whole-archive)
+          -Wl,--whole-archive $<TARGET_FILE:nostr_gtk>
+          $<TARGET_FILE:nostr_gtk_portable> -Wl,--no-whole-archive)
       endif()
       set(_gir_lib_name nostr_gtk_shared)
       set(_gir_lib_dep  nostr_gtk_shared)
@@ -282,7 +330,7 @@ if(NOSTR_GTK_ENABLE_GIR)
     foreach(_hdr ${NOSTR_GTK_HEADERS})
       list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_hdr}")
     endforeach()
-    foreach(_src ${NOSTR_GTK_SOURCES})
+    foreach(_src ${NOSTR_GTK_SOURCES} ${NOSTR_GTK_PORTABLE_SOURCES})
       # Skip generated files (absolute paths)
       if(NOT IS_ABSOLUTE "${_src}")
         list(APPEND _gir_input "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
@@ -355,7 +403,7 @@ includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
 Name: nostr-gtk-1.0
 Description: GTK4/libadwaita widgets for Nostr — built on nostr-gobject
 Version: ${NOSTR_GTK_VERSION}
-Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1
+Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1 nostr-gtk-portable-1.0
 Requires.private: nostr-gobject-1.0
 Libs: -L\${libdir} -lnostr-gtk-1.0
 Cflags: -I\${includedir} -I\${includedir}/nostr-gtk-1.0
@@ -363,8 +411,48 @@ Cflags: -I\${includedir} -I\${includedir}/nostr-gtk-1.0
 
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-1.0.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-portable-1.0.pc"
+"prefix=${CMAKE_INSTALL_PREFIX}
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/${CMAKE_INSTALL_LIBDIR}
+includedir=\${prefix}/${CMAKE_INSTALL_INCLUDEDIR}
+
+Name: nostr-gtk-portable-1.0
+Description: App-independent Nostr parsing and GTK widgets
+Version: ${NOSTR_GTK_VERSION}
+Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1
+Requires.private: nostr-gobject-1.0
+Libs: -L\${libdir} -lnostr-gtk-portable-1.0
+Libs.private: -lnip19 -lnostr
+Cflags: -I\${includedir}
+")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-portable-1.0.pc"
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
 # ── Installation ─────────────────────────────────────────────────────
+install(TARGETS nostr_gtk_portable
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# A hand-written imported target is needed until nostr_gobject and nip19
+# themselves provide CMake export sets. Locate the installed library at use
+# time rather than recording a build-tree path.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/NostrGtkPortableConfig.cmake"
+"include(CMakeFindDependencyMacro)
+find_dependency(PkgConfig)
+pkg_check_modules(NGTP_DEPS REQUIRED IMPORTED_TARGET gtk4>=4.6 libadwaita-1>=1.2 glib-2.0>=2.70 gio-2.0>=2.70 json-glib-1.0)
+get_filename_component(_ngtp_prefix \"\${CMAKE_CURRENT_LIST_DIR}/../../..\" ABSOLUTE)
+find_library(_ngtp_library NAMES nostr-gtk-portable-1.0 PATHS \"\${_ngtp_prefix}/${CMAKE_INSTALL_LIBDIR}\" NO_DEFAULT_PATH REQUIRED)
+if(NOT TARGET NostrGtk::Portable)
+  add_library(NostrGtk::Portable UNKNOWN IMPORTED)
+  set_target_properties(NostrGtk::Portable PROPERTIES
+    IMPORTED_LOCATION \"\${_ngtp_library}\"
+    INTERFACE_INCLUDE_DIRECTORIES \"\${_ngtp_prefix}/${CMAKE_INSTALL_INCLUDEDIR}\"
+    INTERFACE_LINK_LIBRARIES PkgConfig::NGTP_DEPS)
+endif()
+")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/NostrGtkPortableConfig.cmake"
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/NostrGtkPortable)
 install(TARGETS nostr_gtk
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -379,6 +467,12 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-version.h"
 # ── Tests ────────────────────────────────────────────────────────────
 if(BUILD_TESTING)
   include(${CMAKE_SOURCE_DIR}/cmake/GnTest.cmake)
+
+  gn_add_gtest_xvfb(test_nostr_gtk_portable
+    SOURCES tests/test_portable.c
+    LIBS nostr_gtk_portable nip19 PkgConfig::GTK4 PkgConfig::GLIB2
+  )
+  target_include_directories(test_nostr_gtk_portable PRIVATE ${PROJECT_ROOT}/tests/common)
 
   gn_add_gtest(test_nostr_gtk_content_parser
     SOURCES tests/test_content_parser.c

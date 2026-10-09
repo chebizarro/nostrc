@@ -5,6 +5,7 @@
  */
 
 #include "gnostr-image-viewer.h"
+#include <nostr-gtk-1.0/gn-media-viewer.h>
 #include "gnostr-main-window.h"
 #include "gnostr-avatar-cache.h"
 #include "../util/utils.h"
@@ -58,6 +59,7 @@ struct _GnostrImageViewer {
   char **gallery_urls;    /* NULL-terminated array of URLs */
   guint gallery_count;    /* Number of images in gallery */
   guint gallery_index;    /* Current image index */
+  GnMediaViewer *portable_viewer; /* app-free gallery/zoom state */
 
 #ifdef HAVE_SOUP3
   /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
@@ -130,6 +132,10 @@ static void gnostr_image_viewer_dispose(GObject *obj) {
   /* Shared session is managed globally - do not clear here */
 #endif
 
+  if (self->portable_viewer) {
+    gtk_window_destroy(GTK_WINDOW(self->portable_viewer));
+    g_clear_object(&self->portable_viewer);
+  }
   g_clear_object(&self->texture);
   g_clear_pointer(&self->image_url, g_free);
   g_strfreev(self->gallery_urls);
@@ -157,6 +163,8 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
 
   /* Initialize state */
   self->zoom_level = FIT_ZOOM;
+  self->portable_viewer = gn_media_viewer_new(NULL);
+  g_object_ref_sink(self->portable_viewer);
   self->actual_zoom = 1.0;
   self->is_dragging = FALSE;
 
@@ -893,6 +901,10 @@ void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url)
 
   g_clear_pointer(&self->image_url, g_free);
   self->image_url = g_strdup(url);
+  if (self->gallery_count == 0) {
+    const char *single[] = { url, NULL };
+    gn_media_viewer_set_gallery(self->portable_viewer, url ? single : NULL, 0);
+  }
 
   g_clear_object(&self->texture);
   if (GTK_IS_PICTURE(self->picture)) {
@@ -928,6 +940,8 @@ void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *textur
 
   g_clear_object(&self->texture);
   self->texture = g_object_ref(texture);
+  gn_media_viewer_set_texture(self->portable_viewer,
+                              gn_media_viewer_get_index(self->portable_viewer), texture);
 
   if (GTK_IS_PICTURE(self->picture)) {
     gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
@@ -1119,6 +1133,7 @@ void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
   self->gallery_count = 0;
   self->gallery_index = 0;
 
+  gn_media_viewer_set_gallery(self->portable_viewer, urls, current_index);
   if (!urls || !urls[0]) {
     update_nav_display(self);
     return;
@@ -1143,14 +1158,8 @@ void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
 gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta) {
   g_return_val_if_fail(GNOSTR_IS_IMAGE_VIEWER(self), FALSE);
 
-  if (self->gallery_count <= 1) return FALSE;
-
-  int new_index = (int)self->gallery_index + delta;
-  if (new_index < 0 || new_index >= (int)self->gallery_count) {
-    return FALSE;
-  }
-
-  self->gallery_index = (guint)new_index;
+  if (!gn_media_viewer_navigate(self->portable_viewer, delta)) return FALSE;
+  self->gallery_index = gn_media_viewer_get_index(self->portable_viewer);
 
   /* Load the new image */
   gnostr_image_viewer_set_image_url(self, self->gallery_urls[self->gallery_index]);
