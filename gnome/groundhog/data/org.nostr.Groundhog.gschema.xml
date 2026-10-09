@@ -138,6 +138,11 @@
     </key>
 
     <!-- Account & Storage / Background -->
+    <key name="launch-on-login" type="b">
+      <default>false</default>
+      <summary>Start Groundhog when you log in</summary>
+      <description>Start Groundhog in the background when you log in. This also requires receiving messages when the window is closed.</description>
+    </key>
     <key name="run-in-background" type="b">
       <default>true</default>
       <summary>Receive messages when closed</summary>

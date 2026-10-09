@@ -618,11 +618,14 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
     Adw.PreferencesGroup {
       title: _("Background");
 
-      // Turning it on here is the confirmed choice that also writes the
-      // autostart entry (G15, P9).
       Adw.SwitchRow run_in_background_row {
         title: _("Receive Messages When Closed");
-        subtitle: _("Groundhog keeps running after its window is closed; Quit stops it. Turning this on here also starts Groundhog when you log in.");
+        subtitle: _("Groundhog keeps running after its window is closed; Quit stops it.");
+      }
+
+      Adw.SwitchRow launch_on_login_row {
+        title: _("Launch on Login");
+        subtitle: _("Start Groundhog in the background when you log in. This also keeps it receiving messages when closed; your inbox relays can see when this device is online and its IP address.");
       }
     }
 

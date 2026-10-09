@@ -644,7 +644,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <child>
               <object class="AdwSwitchRow" id="run_in_background_row">
                 <property name="title" translatable="yes">Receive Messages When Closed</property>
-                <property name="subtitle" translatable="yes">Groundhog keeps running after its window is closed; Quit stops it. Turning this on here also starts Groundhog when you log in.</property>
+                <property name="subtitle" translatable="yes">Groundhog keeps running after its window is closed; Quit stops it.</property>
+              </object>
+            </child>
+            <child>
+              <object class="AdwSwitchRow" id="launch_on_login_row">
+                <property name="title" translatable="yes">Launch on Login</property>
+                <property name="subtitle" translatable="yes">Start Groundhog in the background when you log in. This also keeps it receiving messages when closed; your inbox relays can see when this device is online and its IP address.</property>
               </object>
             </child>
           </object>

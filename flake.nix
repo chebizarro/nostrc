@@ -49,7 +49,7 @@
             src = ./.;
             nativeBuildInputs = desktopNativeBuildInputs;
             buildInputs = desktopBuildInputs;
-            cmakeFlags = desktopCmakeFlags;
+            cmakeFlags = desktopCmakeFlags ++ [ "-DGROUNDHOG_PACKAGE_CHANNEL=nix" ];
             ninjaFlags = [ "gnome/groundhog/all" ];
             doCheck = false;
             installPhase = ''

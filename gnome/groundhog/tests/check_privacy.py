@@ -234,6 +234,7 @@ GSETTINGS = {
     "signer-method": Key("s", "'auto'"),
     "run-in-background": Key("b", "true"),  # D11: on, chosen in onboarding
     "diagnostics-enabled": Key("b", "false"),  # §7.11: local-only, explicit opt-in
+    "launch-on-login": Key("b", "false"),
     "retention-days": Key("i", "0"),  # D10: keep forever
     "default-disappearing-seconds": Key("i", "0"),
     "enter-sends": Key("b", "true"),

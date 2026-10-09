@@ -17,6 +17,7 @@ override_dh_auto_configure:
 	dh_auto_configure -- \
 		-DCMAKE_BUILD_TYPE=RelWithDebInfo \
 		-DBUILD_GROUNDHOG=ON \
+		-DGROUNDHOG_PACKAGE_CHANNEL=deb \
 		-DBUILD_APPS=ON \
 		-DBUILD_GNOSTR_APP=OFF \
 		-DBUILD_NATIVE_HOST=OFF \

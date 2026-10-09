@@ -31,6 +31,7 @@
 #define INBOX_A "wss://inbox-a.test.invalid"
 #define CANARY "GROUNDHOG-CANARY-background"
 #define RUN "run-in-background"
+#define LAUNCH "launch-on-login"
 
 void groundhog_register_resource(void);
 
@@ -137,6 +138,8 @@ typedef struct {
   guint registration;
   guint version;
   gboolean deny;          /* Response 1 (the user said no) */
+  gboolean deny_autostart; /* background granted, autostart denied */
+  gboolean hold_response; /* leave a reconciliation pending for cancellation */
   gboolean unknown;       /* answer RequestBackground as an unknown method */
   GPtrArray *requests;    /* GVariant a{sv}: every RequestBackground's options */
   GPtrArray *statuses;    /* gchar*: every SetStatus message */
@@ -177,13 +180,14 @@ portal_call(GDBusConnection *connection, const gchar *sender, const gchar *path,
   g_autofree gchar *handle = g_strdup_printf("/org/freedesktop/portal/desktop/request/%s/%s",
                                              who, token);
   g_dbus_method_invocation_return_value(invocation, g_variant_new("(o)", handle));
+  if (portal.hold_response) return;
   gboolean autostart = FALSE;
   g_variant_lookup(options, "autostart", "b", &autostart);
   GVariantBuilder results;
   g_variant_builder_init(&results, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&results, "{sv}", "background", g_variant_new_boolean(!portal.deny));
   g_variant_builder_add(&results, "{sv}", "autostart",
-                        g_variant_new_boolean(!portal.deny && autostart));
+                        g_variant_new_boolean(!portal.deny && !portal.deny_autostart && autostart));
   g_dbus_connection_emit_signal(connection, sender, handle, "org.freedesktop.portal.Request",
                                 "Response", g_variant_new("(ua{sv})", portal.deny ? 1u : 0u,
                                                           &results), NULL);
@@ -233,6 +237,8 @@ portal_reset(guint version)
 {
   portal.version = version;
   portal.deny = FALSE;
+  portal.deny_autostart = FALSE;
+  portal.hold_response = FALSE;
   portal.unknown = FALSE;
   portal.version_reads = 0;
   g_ptr_array_set_size(portal.requests, 0);
@@ -343,6 +349,7 @@ fixture_up(Fixture *f, GhBackgroundMethod method)
   f->settings = g_settings_new("org.nostr.Groundhog");
   f->gnostr = g_settings_new("org.gnostr.Client");
   g_settings_reset(f->settings, RUN); /* the default, unconfirmed */
+  g_settings_reset(f->settings, LAUNCH);
   g_settings_set_string(f->gnostr, "current-npub", npub[1]);
   const gchar *sources[] = { DISCOVERY, NULL };
   g_settings_set_strv(f->settings, "discovery-relays", sources);
@@ -367,6 +374,7 @@ fixture_down(Fixture *f)
   g_ptr_array_unref(f->events);
   g_settings_reset(f->gnostr, "current-npub");
   g_settings_reset(f->settings, RUN);
+  g_settings_reset(f->settings, LAUNCH);
   g_settings_reset(f->settings, "current-npub");
   g_settings_reset(f->settings, "discovery-relays");
   g_object_unref(f->gnostr);
@@ -1178,6 +1186,17 @@ set_enabled(GhBackground *background, gboolean enabled, GError **error)
   return ok;
 }
 
+static gboolean
+set_launch(GhBackground *background, gboolean enabled, GError **error)
+{
+  Wait wait = { 0 };
+  gh_background_set_launch_on_login_async(background, enabled, NULL, on_set, &wait);
+  gh_test_spin_until(waited, &wait);
+  gboolean ok = gh_background_set_launch_on_login_finish(background, wait.result, error);
+  g_object_unref(wait.result);
+  return ok;
+}
+
 static gchar *
 autostart_path(Fixture *f)
 {
@@ -1240,8 +1259,11 @@ test_no10_host_file(void)
   g_autofree gchar *autostart_dir = g_build_filename(f.config_dir, "autostart", NULL);
   g_assert_false(g_file_test(autostart_dir, G_FILE_TEST_EXISTS));
 
-  /* Onboarding confirms: the entry is written, private, as templated. */
+  /* Confirming background alone does not start Groundhog at login. */
   g_assert_true(set_enabled(background, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+  g_assert_true(set_launch(background, TRUE, &error));
   g_assert_no_error(error);
   g_autofree gchar *written = read_file(path);
   g_assert_cmpstr(written, ==, expected);
@@ -1260,10 +1282,15 @@ test_no10_host_file(void)
   g_assert_false(gh_background_get_holding(background));
   g_assert_null(gh_background_get_status(background));
 
-  /* Reset to the default: held again, still nothing at login. */
+  /* Re-enabling background leaves launch off. */
   g_settings_set_boolean(f.settings, RUN, TRUE);
   gh_test_run_until_idle();
+  g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+  g_assert_true(set_launch(background, TRUE, &error));
   g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS));
+  /* Disabling launch leaves the background hold intact. */
+  g_assert_true(set_launch(background, FALSE, &error));
+  g_assert_true(gh_background_get_holding(background));
   g_settings_reset(f.settings, RUN);
   gh_test_run_until_idle();
   g_assert_true(gh_background_get_holding(background));
@@ -1276,6 +1303,7 @@ test_no10_host_file(void)
   g_autofree gchar *kept = read_file(path);
   g_assert_cmpstr(kept, ==, foreign);
   g_assert_true(set_enabled(background, TRUE, &error));
+  g_assert_true(set_launch(background, TRUE, &error));
   g_autofree gchar *kept_again = read_file(path);
   g_assert_cmpstr(kept_again, ==, foreign);
   drop(background);
@@ -1285,6 +1313,7 @@ test_no10_host_file(void)
   write_file(path, "[Desktop Entry]\nType=Application\nName=Groundhog\n"
                    "Exec=/old/prefix/groundhog --gapplication-service\n"
                    "X-Groundhog-Autostart=true\n");
+  g_settings_set_boolean(f.settings, LAUNCH, TRUE);
   background = background_new(&f, app, NULL);
   gh_test_run_until_idle();
   g_autofree gchar *repaired = read_file(path);
@@ -1298,6 +1327,13 @@ test_no10_host_file(void)
   gh_test_run_until_idle();
   g_autofree gchar *still_hidden = read_file(path);
   g_assert_cmpstr(still_hidden, ==, hidden);
+  g_assert_false(gh_background_get_launch_on_login(background));
+  g_assert_true(gh_background_launch_disabled_in_system_settings(background));
+  g_assert_false(set_launch(background, TRUE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error(&error);
+  g_autofree gchar *still_disabled = read_file(path);
+  g_assert_cmpstr(still_disabled, ==, hidden);
   drop(background);
 
   /* A confirmed "off" at start removes a leftover entry of ours. */
@@ -1311,10 +1347,71 @@ test_no10_host_file(void)
   fixture_down(&f);
 }
 
+static void
+test_launch_migration(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, GH_BACKGROUND_METHOD_FILE);
+  g_autoptr(GApplication) app = unit_app();
+  g_autofree gchar *path = autostart_path(&f);
+  g_assert_null(g_settings_get_user_value(f.settings, LAUNCH));
+  GhBackground *background = background_new(&f, app, NULL);
+  g_assert_false(gh_background_get_launch_on_login(background));
+  drop(background);
+  g_settings_set_boolean(f.settings, RUN, TRUE); /* a new profile confirms background */
+  background = background_new(&f, app, NULL);
+  g_assert_false(gh_background_get_launch_on_login(background));
+  drop(background);
+  /* An old profile had no launch key but had a confirmed background choice. */
+  g_settings_reset(f.settings, LAUNCH);
+  background = background_new(&f, app, NULL);
+  gh_test_run_until_idle();
+  g_assert_true(g_settings_get_boolean(f.settings, LAUNCH));
+  g_assert_true(gh_background_get_launch_on_login(background));
+  g_assert_true(g_file_test(path, G_FILE_TEST_EXISTS));
+  drop(background);
+  /* Once migrated, an explicit launch-off choice is not overwritten. */
+  g_settings_set_boolean(f.settings, LAUNCH, FALSE);
+  background = background_new(&f, app, NULL);
+  gh_test_run_until_idle();
+  g_assert_false(gh_background_get_launch_on_login(background));
+  g_assert_false(g_file_test(path, G_FILE_TEST_EXISTS));
+  drop(background);
+  g_settings_reset(f.settings, LAUNCH);
+  g_settings_set_boolean(f.settings, RUN, FALSE);
+  background = background_new(&f, app, NULL);
+  g_autoptr(GVariant) migrated_off = g_settings_get_user_value(f.settings, LAUNCH);
+  g_assert_nonnull(migrated_off);
+  g_assert_false(g_variant_get_boolean(migrated_off));
+  drop(background);
+  fixture_down(&f);
+}
+
 static gboolean
 requests_at_least(gpointer data)
 {
   return portal.requests->len >= GPOINTER_TO_UINT(data);
+}
+
+static void
+test_launch_shutdown_rollback(void)
+{
+  Fixture f = { 0 };
+  fixture_up(&f, GH_BACKGROUND_METHOD_PORTAL);
+  portal_reset(2);
+  g_autoptr(GApplication) app = unit_app();
+  GhBackground *background = background_new(&f, app, bus.client);
+  g_autoptr(GError) error = NULL;
+  g_assert_true(set_enabled(background, FALSE, &error));
+  g_assert_no_error(error);
+  portal.hold_response = TRUE;
+  g_settings_set_boolean(f.settings, LAUNCH, TRUE);
+  gh_test_spin_until(requests_at_least, GUINT_TO_POINTER(2));
+  drop(background);
+  g_assert_false(g_settings_get_boolean(f.settings, LAUNCH));
+  g_assert_false(g_settings_get_boolean(f.settings, RUN));
+  portal_reset(2);
+  fixture_down(&f);
 }
 
 static void
@@ -1332,12 +1429,16 @@ test_no10_portal(void)
   gh_test_spin_until(portal_has_status, (gpointer)GH_BACKGROUND_STATUS_RECEIVING);
   g_assert_cmpuint(portal.requests->len, ==, 0);
 
-  /* Confirmed on: RequestBackground with autostart and the service command. */
+  /* Confirmed background is independent of autostart. */
   g_assert_true(set_enabled(background, TRUE, &error));
   g_assert_no_error(error);
   g_assert_cmpuint(portal.requests->len, ==, 1);
-  GVariant *options = portal_request(0);
-  g_assert_true(request_autostart(0));
+  g_assert_false(request_autostart(0));
+  g_assert_true(set_launch(background, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_background_get_launch_on_login(background));
+  GVariant *options = portal_request(1);
+  g_assert_true(request_autostart(1));
   g_autofree const gchar **commandline = NULL;
   g_assert_true(g_variant_lookup(options, "commandline", "^a&s", &commandline));
   g_assert_cmpuint(g_strv_length((gchar **)commandline), ==, 2);
@@ -1353,31 +1454,35 @@ test_no10_portal(void)
   g_autofree gchar *autostart_dir = g_build_filename(f.config_dir, "autostart", NULL);
   g_assert_false(g_file_test(autostart_dir, G_FILE_TEST_EXISTS));
 
-  /* NO-10: off → the portal is told autostart=false. */
-  g_assert_true(set_enabled(background, FALSE, &error));
-  g_assert_cmpuint(portal.requests->len, ==, 2);
-  g_assert_false(request_autostart(1));
-  g_assert_false(gh_background_get_holding(background));
+  /* Turning launch off does not release the background hold. */
+  g_assert_true(set_launch(background, FALSE, &error));
+  g_assert_false(request_autostart(2));
+  g_assert_true(gh_background_get_holding(background));
 
-  /* From Preferences (a settings write), and two changes in a row: one
-   * request at a time, the last choice wins. */
-  g_settings_set_boolean(f.settings, RUN, TRUE);
-  g_settings_set_boolean(f.settings, RUN, FALSE);
-  gh_test_spin_until(requests_at_least, GUINT_TO_POINTER(4));
+  /* A portal may grant background but refuse autostart: only launch rolls back. */
+  portal.deny_autostart = TRUE;
+  g_assert_false(set_launch(background, TRUE, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error(&error);
+  g_assert_false(g_settings_get_boolean(f.settings, LAUNCH));
+  g_assert_true(g_settings_get_boolean(f.settings, RUN));
+  portal.deny_autostart = FALSE;
+
+  /* Rapid choices are serialized: a stale completion cannot restore launch. */
+  g_settings_set_boolean(f.settings, LAUNCH, TRUE);
+  g_settings_set_boolean(f.settings, LAUNCH, FALSE);
+  gh_test_spin_until(requests_at_least, GUINT_TO_POINTER(6));
   gh_test_run_until_idle();
-  g_assert_cmpuint(portal.requests->len, ==, 4);
-  g_assert_true(request_autostart(2));
-  g_assert_false(request_autostart(3));
+  g_assert_false(g_settings_get_boolean(f.settings, LAUNCH));
+  g_assert_false(request_autostart(portal.requests->len - 1));
 
-  /* The portal refuses background activity: the key goes off, honestly,
-   * with no further request. */
+  /* Portal refusal of background disables both settings. */
   portal.deny = TRUE;
-  g_assert_false(set_enabled(background, TRUE, &error));
+  g_assert_false(set_launch(background, TRUE, &error));
   g_assert_error(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
   g_clear_error(&error);
-  gh_test_run_until_idle();
-  g_assert_cmpuint(portal.requests->len, ==, 5);
   g_assert_false(g_settings_get_boolean(f.settings, RUN));
+  g_assert_false(g_settings_get_boolean(f.settings, LAUNCH));
   g_assert_false(gh_background_get_holding(background));
   drop(background);
 
@@ -1391,14 +1496,15 @@ test_no10_portal(void)
   g_assert_false(g_file_test(autostart_dir, G_FILE_TEST_EXISTS));
   drop(background);
 
-  /* Background version 1 has no SetStatus. */
+  /* Background version 1 still grants an explicit background choice. */
+  gh_test_run_until_idle();
   portal_reset(1);
   g_settings_reset(f.settings, RUN);
   background = background_new(&f, app, bus.client);
   g_assert_true(set_enabled(background, TRUE, &error));
   g_assert_no_error(error);
   gh_test_run_until_idle();
-  g_assert_cmpuint(portal.statuses->len, ==, 0);
+  g_assert_true(gh_background_get_enabled(background));
   drop(background);
   fixture_down(&f);
 }
@@ -1419,6 +1525,7 @@ test_auto_host_uses_file(void)
   GhBackground *background = background_new(&f, app, bus.client);
   g_assert_cmpint(gh_background_get_method(background), ==, GH_BACKGROUND_METHOD_FILE);
   g_assert_true(set_enabled(background, TRUE, &error));
+  g_assert_true(set_launch(background, TRUE, &error));
   g_assert_no_error(error);
   g_autofree gchar *path = autostart_path(&f);
   g_assert_true(g_file_test(path, G_FILE_TEST_IS_REGULAR));
@@ -1706,6 +1813,9 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/background/no9-process-service",
                            test_no9_process_service);
   nostrc_test_bus_add_func("/groundhog/background/no10-host-file", test_no10_host_file);
+  nostrc_test_bus_add_func("/groundhog/background/launch-migration", test_launch_migration);
+  nostrc_test_bus_add_func("/groundhog/background/launch-shutdown-rollback",
+                           test_launch_shutdown_rollback);
   nostrc_test_bus_add_func("/groundhog/background/no10-portal", test_no10_portal);
   nostrc_test_bus_add_func("/groundhog/background/no10-process-autostart",
                            test_no10_process_autostart);

@@ -8,7 +8,9 @@
 static NostrcTestBus *bus;
 static GDBusConnection *watcher;   /* the fake watcher's connection */
 static gchar *registered_service;  /* what RegisterStatusNotifierItem got */
-static guint activations, quits;
+static guint activations, quits, item_activations, layout_updates;
+static gint last_item, last_parent;
+static guint last_revision;
 
 static const gchar watcher_xml[] =
   "<node><interface name='org.kde.StatusNotifierWatcher'>"
@@ -42,6 +44,18 @@ static const GDBusInterfaceVTable watcher_vtable = { watcher_method, watcher_pro
 
 static void on_activate(GnStatusNotifier *n, gpointer data) { (void)n; (void)data; activations++; }
 static void on_quit(GnStatusNotifier *n, gpointer data) { (void)n; (void)data; quits++; }
+static void on_item(GnStatusNotifier *n, gint id, gpointer data)
+{ (void)n; (void)data; item_activations++; last_item = id; }
+static void on_layout_updated(GDBusConnection *c, const gchar *sender, const gchar *path,
+                              const gchar *iface, const gchar *signal, GVariant *params,
+                              gpointer data)
+{
+  (void)c; (void)sender; (void)path; (void)iface; (void)signal; (void)data;
+  g_variant_get(params, "(ui)", &last_revision, &last_parent);
+  layout_updates++;
+}
+static gboolean layout_changed(gpointer data)
+{ (void)data; return layout_updates > 0; }
 
 /* A call whose reply arrives while the main context keeps serving the
  * item (a synchronous call from this thread would wait on itself). */
@@ -99,6 +113,7 @@ test_with_watcher(void)
   g_autoptr(GnStatusNotifier) item = gn_status_notifier_new(app, "org.nostr.Groundhog", "Groundhog");
   g_signal_connect(item, "activate", G_CALLBACK(on_activate), NULL);
   g_signal_connect(item, "quit", G_CALLBACK(on_quit), NULL);
+  g_signal_connect(item, "item-activated", G_CALLBACK(on_item), NULL);
   spin_until(has_service, NULL);
   spin_until(registered, item);
 
@@ -136,6 +151,99 @@ test_with_watcher(void)
   g_assert_nonnull(e3);
   g_assert_cmpuint(activations, ==, 2);
   g_assert_cmpuint(quits, ==, 1);
+
+  /* A fake host observes LayoutUpdated, then re-queries the new snapshot. */
+  guint sub = g_dbus_connection_signal_subscribe(host, registered_service,
+      "com.canonical.dbusmenu", "LayoutUpdated", "/MenuBar", NULL,
+      G_DBUS_SIGNAL_FLAGS_NONE, on_layout_updated, NULL, NULL);
+  GnStatusNotifierItem items[] = {
+    { 10, "Open test", TRUE, TRUE, FALSE, -1 },
+    { 11, "Launch", TRUE, TRUE, FALSE, 1 },
+    { 12, "Hidden", TRUE, FALSE, FALSE, -1 },
+    { 13, "Disabled", FALSE, TRUE, FALSE, -1 },
+    { 14, NULL, FALSE, TRUE, TRUE, -1 },
+  };
+  gn_status_notifier_set_menu_items(item, items, G_N_ELEMENTS(items));
+  spin_until(layout_changed, NULL);
+  g_assert_cmpint(last_parent, ==, 0);
+  g_assert_cmpuint(last_revision, >, 1);
+  g_autoptr(GVariant) updated = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "GetLayout", g_variant_new("(iias)", 0, -1, NULL),
+      G_VARIANT_TYPE("(u(ia{sv}av))"));
+  g_assert_nonnull(updated);
+  guint revision = 0;
+  g_variant_get_child(updated, 0, "u", &revision);
+  g_assert_cmpuint(revision, ==, last_revision);
+  g_autoptr(GVariant) updated_root = g_variant_get_child_value(updated, 1);
+  g_autoptr(GVariant) updated_children = g_variant_get_child_value(updated_root, 2);
+  g_assert_cmpuint(g_variant_n_children(updated_children), ==, 5);
+
+  const gchar *only_label[] = { "label", NULL };
+  g_autoptr(GVariant) shallow = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "GetLayout", g_variant_new("(ii@as)", 0, 0,
+      g_variant_new_strv(only_label, -1)), G_VARIANT_TYPE("(u(ia{sv}av))"));
+  g_autoptr(GVariant) shallow_root = g_variant_get_child_value(shallow, 1);
+  g_autoptr(GVariant) shallow_children = g_variant_get_child_value(shallow_root, 2);
+  g_assert_cmpuint(g_variant_n_children(shallow_children), ==, 0);
+  g_autoptr(GVariant) checked = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "GetProperty", g_variant_new("(is)", 11, "toggle-state"),
+      G_VARIANT_TYPE("(v)"));
+  g_autoptr(GVariant) checked_box = g_variant_get_child_value(checked, 0);
+  g_autoptr(GVariant) checked_value = g_variant_get_variant(checked_box);
+  g_assert_true(g_variant_is_of_type(checked_value, G_VARIANT_TYPE_INT32));
+  g_assert_cmpint(g_variant_get_int32(checked_value), ==, 1);
+
+  g_autoptr(GVariant) click = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "Event", g_variant_new("(isvu)", 11, "clicked",
+      g_variant_new_int32(0), 0u), NULL);
+  g_assert_nonnull(click);
+  g_assert_cmpint(last_item, ==, 11);
+  guint count = item_activations;
+  g_autoptr(GVariant) hidden = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "Event", g_variant_new("(isvu)", 12, "clicked",
+      g_variant_new_int32(0), 0u), NULL);
+  g_assert_nonnull(hidden);
+  g_assert_cmpuint(item_activations, ==, count);
+  gint32 ids[] = { 11, 14 };
+  const gchar *toggle_only[] = { "toggle-state", NULL };
+  g_autoptr(GVariant) grouped = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "GetGroupProperties", g_variant_new("(@ai@as)",
+      g_variant_new_fixed_array(G_VARIANT_TYPE_INT32, ids, G_N_ELEMENTS(ids), sizeof(gint32)),
+      g_variant_new_strv(toggle_only, -1)), G_VARIANT_TYPE("(a(ia{sv}))"));
+  g_assert_nonnull(grouped);
+  g_autoptr(GVariant) groups = g_variant_get_child_value(grouped, 0);
+  g_autoptr(GVariant) first_group = g_variant_get_child_value(groups, 0);
+  g_autoptr(GVariant) first_props = g_variant_get_child_value(first_group, 1);
+  g_assert_cmpuint(g_variant_n_children(first_props), ==, 1);
+  g_autoptr(GVariant) second_group = g_variant_get_child_value(groups, 1);
+  g_autoptr(GVariant) second_props = g_variant_get_child_value(second_group, 1);
+  g_assert_cmpuint(g_variant_n_children(second_props), ==, 0);
+
+  GVariantBuilder events;
+  g_variant_builder_init(&events, G_VARIANT_TYPE("a(isvu)"));
+  g_variant_builder_add(&events, "(isvu)", 13, "clicked", g_variant_new_int32(0), 0u);
+  g_variant_builder_add(&events, "(isvu)", 999, "clicked", g_variant_new_int32(0), 0u);
+  g_variant_builder_add(&events, "(isvu)", 10, "clicked", g_variant_new_int32(0), 0u);
+  g_autoptr(GVariant) grouped_events = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "EventGroup", g_variant_new("(a(isvu))", &events),
+      G_VARIANT_TYPE("(ai)"));
+  g_assert_nonnull(grouped_events);
+  g_autoptr(GVariant) errors = g_variant_get_child_value(grouped_events, 0);
+  g_assert_cmpuint(g_variant_n_children(errors), ==, 1);
+  gint bad_id = 0;
+  g_variant_get_child(errors, 0, "i", &bad_id);
+  g_assert_cmpint(bad_id, ==, 999);
+  g_assert_cmpint(last_item, ==, 10);
+  g_assert_cmpuint(item_activations, ==, count + 1);
+
+  g_autoptr(GVariant) bad = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "GetProperty", g_variant_new("(is)", 999, "label"), NULL);
+  g_assert_null(bad);
+  g_autoptr(GVariant) stale = call(host, registered_service, "/MenuBar",
+      "com.canonical.dbusmenu", "Event", g_variant_new("(isvu)", 1, "clicked",
+      g_variant_new_int32(0), 0u), NULL);
+  g_assert_null(stale);
+  g_dbus_connection_signal_unsubscribe(host, sub);
 
   g_dbus_connection_unregister_object(watcher, reg);
   g_autoptr(GVariant) rel = g_dbus_connection_call_sync(watcher, "org.freedesktop.DBus",

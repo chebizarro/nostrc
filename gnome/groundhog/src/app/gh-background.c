@@ -13,6 +13,7 @@
 #endif
 
 #define RUN_IN_BACKGROUND "run-in-background"
+#define LAUNCH_ON_LOGIN "launch-on-login"
 #define APP_DATA_KEY "gh-background"
 #define OWN_ENTRY_KEY "X-Groundhog-Autostart"
 
@@ -44,6 +45,9 @@ struct _GhBackground {
   GObject *account_store; /* nullable */
   GCancellable *cancellable;
   gboolean enabled;
+  gboolean launch_on_login;
+  gboolean confirmed_launch;
+  gboolean confirmed_background;
   gboolean holding;
   gboolean explained;
   gboolean disposed;
@@ -60,25 +64,32 @@ struct _GhBackground {
   guint response_subscription;
   gchar *request_path;
   guint token_serial;
+  guint request_sequence;
+  guint active_sequence;
 
   /* The one-time explanation. */
   AdwDialog *dialog;    /* weak */
   GtkWindow *closing;   /* weak */
 };
 
-enum { PROP_0, PROP_ENABLED, PROP_HOLDING, PROP_STATUS, PROP_EXPLAINED, N_PROPS };
+enum { PROP_0, PROP_ENABLED, PROP_LAUNCH_ON_LOGIN, PROP_LAUNCH_DISABLED,
+       PROP_HOLDING, PROP_STATUS,
+       PROP_EXPLAINED, N_PROPS };
 static GParamSpec *props[N_PROPS];
+enum { SIGNAL_LAUNCH_ERROR, N_SIGNALS };
+static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhBackground, gh_background, G_TYPE_OBJECT)
 
 static void request_reconcile(GhBackground *self);
+static void mark_explained(GhBackground *self);
 
 /* ---- key, hold, status ----------------------------------------------------------- */
 
 static KeyState
 key_state(GhBackground *self)
 {
-  g_autoptr(GVariant) user = g_settings_get_user_value(self->settings, RUN_IN_BACKGROUND);
+  g_autoptr(GVariant) user = g_settings_get_user_value(self->settings, LAUNCH_ON_LOGIN);
   if (!user)
     return KEY_DEFAULT;
   return g_variant_get_boolean(user) ? KEY_ON : KEY_OFF;
@@ -195,15 +206,29 @@ on_portal_version(GObject *source, GAsyncResult *result, gpointer data)
 static void
 on_settings_changed(GSettings *settings, const gchar *key, GhBackground *self)
 {
-  (void)key;
   gboolean enabled = g_settings_get_boolean(settings, RUN_IN_BACKGROUND);
-  if (self->named_instance && enabled) {
-    g_settings_set_boolean(settings, RUN_IN_BACKGROUND, FALSE);
+  gboolean launch = g_settings_get_boolean(settings, LAUNCH_ON_LOGIN);
+  if (self->named_instance && (enabled || launch)) {
+    if (enabled) g_settings_set_boolean(settings, RUN_IN_BACKGROUND, FALSE);
+    if (launch) g_settings_set_boolean(settings, LAUNCH_ON_LOGIN, FALSE);
+    return;
+  }
+  if (!enabled && launch) {
+    if (g_str_equal(key, LAUNCH_ON_LOGIN)) {
+      mark_explained(self);
+      g_settings_set_boolean(settings, RUN_IN_BACKGROUND, TRUE);
+    } else {
+      g_settings_set_boolean(settings, LAUNCH_ON_LOGIN, FALSE);
+    }
     return;
   }
   if (enabled != self->enabled) {
     self->enabled = enabled;
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_ENABLED]);
+  }
+  if (launch != self->launch_on_login) {
+    self->launch_on_login = launch;
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_LAUNCH_ON_LOGIN]);
   }
   sync_hold(self);
   update_status(self);
@@ -259,6 +284,7 @@ file_apply(GhBackground *self, gboolean want, GError **error)
   if (exists && !ours)
     return TRUE;
   if (!want) {
+    if (exists && switched_off) return TRUE;
     if (exists && g_unlink(path) != 0 && errno != ENOENT) {
       int saved = errno;
       g_set_error(error, G_FILE_ERROR, g_file_error_from_errno(saved),
@@ -267,8 +293,13 @@ file_apply(GhBackground *self, gboolean want, GError **error)
     }
     return TRUE;
   }
-  /* Switched off in the desktop's startup settings: that wins. */
-  if (exists && (switched_off || g_str_equal(current, GH_BACKGROUND_AUTOSTART_TEMPLATE)))
+  /* A desktop-disabled entry is an explicit user choice, not ours to undo. */
+  if (exists && switched_off) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "Autostart is disabled in system settings");
+    return FALSE;
+  }
+  if (exists && g_str_equal(current, GH_BACKGROUND_AUTOSTART_TEMPLATE))
     return TRUE;
   if (g_mkdir_with_parents(self->autostart_dir, 0700) != 0) {
     int saved = errno;
@@ -312,17 +343,28 @@ on_portal_response(GDBusConnection *connection, const gchar *sender, const gchar
   g_variant_lookup(results, "background", "b", &background);
   g_variant_lookup(results, "autostart", "b", &autostart);
   GError *error = NULL;
+  if (self->active_sequence != self->request_sequence) {
+    reconcile_done(self, NULL);
+    return;
+  }
   if (response != 0 || !background) {
+    self->confirmed_background = FALSE;
     error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
                                 "The system did not allow Groundhog to run in the background");
     /* Honest state: the system will not let it run without a window. */
-    if (g_settings_get_boolean(self->settings, RUN_IN_BACKGROUND)) {
-      self->target = KEY_OFF; /* already what the portal was told */
+    self->confirmed_launch = FALSE;
+    self->target = KEY_OFF;
+    if (g_settings_get_boolean(self->settings, LAUNCH_ON_LOGIN))
+      g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, FALSE);
+    if (g_settings_get_boolean(self->settings, RUN_IN_BACKGROUND))
       g_settings_set_boolean(self->settings, RUN_IN_BACKGROUND, FALSE);
-    }
   } else if (self->requested_autostart && !autostart) {
+    self->confirmed_background = TRUE;
+    self->confirmed_launch = FALSE;
     error = g_error_new_literal(G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
                                 "Groundhog could not be set to start when you log in");
+  } else {
+    self->confirmed_background = self->enabled;
   }
   reconcile_done(self, error);
 }
@@ -351,14 +393,20 @@ subscribe_response(GhBackground *self, const gchar *path)
     on_portal_response, g_object_ref(self), g_object_unref);
 }
 
+typedef struct {
+  GhBackground *self;
+  guint sequence;
+} PortalCall;
+
 static void
 on_request_called(GObject *source, GAsyncResult *result, gpointer data)
 {
-  g_autoptr(GhBackground) self = data;
+  g_autofree PortalCall *call = data;
+  g_autoptr(GhBackground) self = g_steal_pointer(&call->self);
   g_autoptr(GError) error = NULL;
   g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result,
                                                             &error);
-  if (self->disposed)
+  if (self->disposed || call->sequence != self->active_sequence)
     return;
   if (!reply) {
     unsubscribe_response(self);
@@ -409,10 +457,13 @@ portal_request(GhBackground *self)
   g_variant_builder_add(&options, "{sv}", "commandline", g_variant_new_strv(commandline, -1));
   /* Started by its command line: D-Bus activation would open a window. */
   g_variant_builder_add(&options, "{sv}", "dbus-activatable", g_variant_new_boolean(FALSE));
+  PortalCall *call = g_new0(PortalCall, 1);
+  call->self = g_object_ref(self);
+  call->sequence = self->active_sequence;
   g_dbus_connection_call(self->connection, PORTAL_BUS, PORTAL_PATH, PORTAL_BACKGROUND,
                          "RequestBackground", g_variant_new("(sa{sv})", "", &options),
                          G_VARIANT_TYPE("(o)"), G_DBUS_CALL_FLAGS_NONE, -1, self->cancellable,
-                         on_request_called, g_object_ref(self));
+                         on_request_called, call);
 }
 
 /* ---- reconciliation -------------------------------------------------------------------- */
@@ -435,6 +486,7 @@ static void
 run_reconcile(GhBackground *self)
 {
   self->in_flight = TRUE;
+  self->active_sequence = self->request_sequence;
   /* Keeps the process until the entry or the portal agrees, even if the
    * key was just turned off with no window open. */
   g_application_hold(self->app);
@@ -444,6 +496,7 @@ run_reconcile(GhBackground *self)
     return;
   }
   GError *error = NULL;
+  self->confirmed_background = self->enabled;
   file_apply(self, self->requested_autostart, &error);
   reconcile_done(self, error);
 }
@@ -460,8 +513,15 @@ reconcile_done(GhBackground *self, GError *error)
     g_application_release(self->app);
     return;
   }
-  if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+  if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
     g_message("Groundhog could not update its autostart entry: %s", error->message);
+    g_signal_emit(self, signals[SIGNAL_LAUNCH_ERROR], 0, error->message);
+    self->target = self->confirmed_launch ? KEY_ON : KEY_OFF;
+    if (g_settings_get_boolean(self->settings, LAUNCH_ON_LOGIN) != self->confirmed_launch)
+      g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, self->confirmed_launch);
+  } else if (!error) {
+    self->confirmed_launch = self->requested_autostart;
+  }
   complete_waiters(self, error);
   g_clear_error(&error);
   g_application_release(self->app);
@@ -473,6 +533,7 @@ request_reconcile(GhBackground *self)
   if (self->disposed)
     return;
   self->target = key_state(self);
+  self->request_sequence++;
   if (self->in_flight) {
     self->again = TRUE;
     return;
@@ -578,6 +639,9 @@ gh_background_get_property(GObject *object, guint id, GValue *value, GParamSpec 
   GhBackground *self = GH_BACKGROUND(object);
   switch (id) {
   case PROP_ENABLED: g_value_set_boolean(value, self->enabled); break;
+  case PROP_LAUNCH_ON_LOGIN: g_value_set_boolean(value, self->launch_on_login); break;
+  case PROP_LAUNCH_DISABLED:
+    g_value_set_boolean(value, gh_background_launch_disabled_in_system_settings(self)); break;
   case PROP_HOLDING: g_value_set_boolean(value, self->holding); break;
   case PROP_STATUS: g_value_set_string(value, self->status); break;
   case PROP_EXPLAINED: g_value_set_boolean(value, self->explained); break;
@@ -603,6 +667,13 @@ gh_background_dispose(GObject *object)
     g_clear_weak_pointer(&self->dialog);
     g_clear_weak_pointer(&self->closing);
     g_cancellable_cancel(self->cancellable);
+    /* A cancelled portal request never leaves an unconfirmed choice persisted. */
+    if (self->method == GH_BACKGROUND_METHOD_PORTAL && self->in_flight &&
+        g_settings_get_boolean(self->settings, RUN_IN_BACKGROUND) != self->confirmed_background)
+      g_settings_set_boolean(self->settings, RUN_IN_BACKGROUND, self->confirmed_background);
+    if (self->in_flight &&
+        g_settings_get_boolean(self->settings, LAUNCH_ON_LOGIN) != self->confirmed_launch)
+      g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, self->confirmed_launch);
     unsubscribe_response(self);
     if (self->request_path && self->connection)
       g_dbus_connection_call(self->connection, PORTAL_BUS, self->request_path, PORTAL_REQUEST,
@@ -649,6 +720,10 @@ gh_background_class_init(GhBackgroundClass *klass)
   object_class->finalize = gh_background_finalize;
   props[PROP_ENABLED] = g_param_spec_boolean("enabled", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+  props[PROP_LAUNCH_ON_LOGIN] = g_param_spec_boolean("launch-on-login", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
+  props[PROP_LAUNCH_DISABLED] = g_param_spec_boolean("launch-disabled", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   props[PROP_HOLDING] = g_param_spec_boolean("holding", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   props[PROP_STATUS] = g_param_spec_string("status", NULL, NULL, NULL,
@@ -656,6 +731,8 @@ gh_background_class_init(GhBackgroundClass *klass)
   props[PROP_EXPLAINED] = g_param_spec_boolean("explained", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_STATIC_STRINGS | G_PARAM_EXPLICIT_NOTIFY);
   g_object_class_install_properties(object_class, N_PROPS, props);
+  signals[SIGNAL_LAUNCH_ERROR] = g_signal_new("launch-error", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
 
 static void
@@ -699,15 +776,39 @@ gh_background_new(GApplication *app, const GhBackgroundConfig *config)
   g_autofree gchar *marker = explained_path(self);
   self->explained = g_file_test(marker, G_FILE_TEST_EXISTS);
   self->named_instance = g_getenv("GROUNDHOG_INSTANCE") && *g_getenv("GROUNDHOG_INSTANCE");
+  /* One-time migration: old confirmed background choice implied autostart. */
+  g_autoptr(GVariant) old_choice = g_settings_get_user_value(self->settings, RUN_IN_BACKGROUND);
+  g_autoptr(GVariant) launch_choice = g_settings_get_user_value(self->settings, LAUNCH_ON_LOGIN);
+  gboolean should_reconcile = launch_choice != NULL || old_choice != NULL;
+  if (!launch_choice && !self->named_instance)
+    g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN,
+                           old_choice ? g_variant_get_boolean(old_choice) : FALSE);
   self->enabled = g_settings_get_boolean(self->settings, RUN_IN_BACKGROUND);
+  self->launch_on_login = g_settings_get_boolean(self->settings, LAUNCH_ON_LOGIN);
+  if (!self->enabled && self->launch_on_login) {
+    g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, FALSE);
+    self->launch_on_login = FALSE;
+  }
+  self->confirmed_launch = self->launch_on_login;
+  self->confirmed_background = self->enabled;
+  if (self->launch_on_login && gh_background_launch_disabled_in_system_settings(self)) {
+    g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, FALSE);
+    self->launch_on_login = self->confirmed_launch = FALSE;
+  }
   if (self->named_instance && self->enabled) {
     g_settings_set_boolean(self->settings, RUN_IN_BACKGROUND, FALSE);
     self->enabled = FALSE;
+  }
+  if (self->named_instance && self->launch_on_login) {
+    g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, FALSE);
+    self->launch_on_login = self->confirmed_launch = FALSE;
   }
   self->target = KEY_DEFAULT;
 
   g_object_set_data(G_OBJECT(app), APP_DATA_KEY, self);
   g_signal_connect(self->settings, "changed::" RUN_IN_BACKGROUND,
+                   G_CALLBACK(on_settings_changed), self);
+  g_signal_connect(self->settings, "changed::" LAUNCH_ON_LOGIN,
                    G_CALLBACK(on_settings_changed), self);
   if (config->account_store) {
     self->account_store = g_object_ref(config->account_store);
@@ -728,7 +829,7 @@ gh_background_new(GApplication *app, const GhBackgroundConfig *config)
   sync_hold(self);
   update_status(self);
   /* Only a confirmed choice touches autostart. */
-  if (!self->named_instance && key_state(self) != KEY_DEFAULT)
+  if (!self->named_instance && should_reconcile)
     request_reconcile(self);
   return self;
 }
@@ -745,6 +846,30 @@ gh_background_get_enabled(GhBackground *self)
 {
   g_return_val_if_fail(GH_IS_BACKGROUND(self), FALSE);
   return self->enabled;
+}
+
+gboolean
+gh_background_launch_disabled_in_system_settings(GhBackground *self)
+{
+  g_return_val_if_fail(GH_IS_BACKGROUND(self), FALSE);
+  if (self->method != GH_BACKGROUND_METHOD_FILE) return FALSE;
+  g_autofree gchar *path = g_build_filename(self->autostart_dir,
+                                            GH_BACKGROUND_AUTOSTART_FILE, NULL);
+  g_autoptr(GKeyFile) entry = g_key_file_new();
+  if (!g_key_file_load_from_file(entry, path, G_KEY_FILE_NONE, NULL)) return FALSE;
+  const gchar *group = G_KEY_FILE_DESKTOP_GROUP;
+  if (!g_key_file_get_boolean(entry, group, OWN_ENTRY_KEY, NULL)) return FALSE;
+  return g_key_file_get_boolean(entry, group, G_KEY_FILE_DESKTOP_KEY_HIDDEN, NULL) ||
+         (g_key_file_has_key(entry, group, "X-GNOME-Autostart-enabled", NULL) &&
+          !g_key_file_get_boolean(entry, group, "X-GNOME-Autostart-enabled", NULL));
+}
+
+gboolean
+gh_background_get_launch_on_login(GhBackground *self)
+{
+  g_return_val_if_fail(GH_IS_BACKGROUND(self), FALSE);
+  return self->launch_on_login &&
+         !gh_background_launch_disabled_in_system_settings(self);
 }
 
 gboolean
@@ -807,6 +932,46 @@ gh_background_set_enabled_async(GhBackground *self, gboolean enabled,
 
 gboolean
 gh_background_set_enabled_finish(GhBackground *self, GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(GH_IS_BACKGROUND(self), FALSE);
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  return g_task_propagate_boolean(G_TASK(result), error);
+}
+
+void
+gh_background_set_launch_on_login_async(GhBackground *self, gboolean enabled,
+                                        GCancellable *cancellable,
+                                        GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BACKGROUND(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_background_set_launch_on_login_async);
+  if (self->disposed) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "Background service stopped");
+  } else if (self->named_instance) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                            "Launch on Login is unavailable for named Groundhog instances");
+  } else if (enabled && gh_background_launch_disabled_in_system_settings(self)) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                            "Autostart is disabled in system settings");
+  } else {
+    g_ptr_array_add(self->waiters, task);
+    if (enabled && !self->enabled) {
+      mark_explained(self);
+      g_settings_set_boolean(self->settings, RUN_IN_BACKGROUND, TRUE);
+    }
+    g_settings_set_boolean(self->settings, LAUNCH_ON_LOGIN, enabled);
+    if (!self->in_flight && self->waiters->len > 0)
+      request_reconcile(self);
+    return;
+  }
+  g_object_unref(task);
+}
+
+gboolean
+gh_background_set_launch_on_login_finish(GhBackground *self, GAsyncResult *result,
+                                         GError **error)
 {
   g_return_val_if_fail(GH_IS_BACKGROUND(self), FALSE);
   g_return_val_if_fail(g_task_is_valid(result, self), FALSE);

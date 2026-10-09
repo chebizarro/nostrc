@@ -10,7 +10,7 @@
 #endif
 #if GROUNDHOG_HAVE_BACKGROUND
 #include "gh-background.h"
-#include "gn-status-notifier.h"
+#include "gh-tray.h"
 #endif
 #include "gh-window.h"
 #ifdef GH_TEST_FONTCONFIG_CLEANUP
@@ -32,6 +32,9 @@ static int smoke_status = 0;
  * encrypted store and its outbox) lives in the container; see
  * gh-app-services.h. */
 static GhAppServices *app_services;
+#if GROUNDHOG_HAVE_BACKGROUND
+static GhTray *app_tray;
+#endif
 
 /* TRUE when the session bus was detected as unresponsive (nostrc-v59q) and
  * Groundhog falls back to non-unique mode. The account controller sees a
@@ -320,16 +323,12 @@ smoke_check(gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
-static void indicator_attach(GApplication *app);
-
 static void
 app_startup(GApplication *app, gpointer user_data)
 {
   g_autoptr(GError) error = NULL;
   (void)user_data;
   gh_window_setup_application(GTK_APPLICATION(app));
-  if (!smoke_mode)
-    indicator_attach(app);
   app_services = gh_app_services_new(GTK_APPLICATION(app), &error);
   if (!app_services) {
     g_printerr("%s\n", error->message);
@@ -337,6 +336,10 @@ app_startup(GApplication *app, gpointer user_data)
     g_application_quit(app);
     return;
   }
+#if GROUNDHOG_HAVE_BACKGROUND
+  if (!smoke_mode)
+    app_tray = gh_tray_new(GTK_APPLICATION(app), gh_app_services_get_settings(app_services));
+#endif
 #if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
   if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0) {
     GDBusConnection *bus = g_application_get_dbus_connection(app);
@@ -358,6 +361,12 @@ app_shutdown(GApplication *app, gpointer user_data)
   if (g_strcmp0(g_getenv("GH_TEST_CONTROL"), "1") == 0)
     gh_test_control_unregister();
 #endif
+#if GROUNDHOG_HAVE_BACKGROUND
+  if (app_tray) {
+    g_object_run_dispose(G_OBJECT(app_tray));
+    g_clear_object(&app_tray);
+  }
+#endif
   g_clear_pointer(&app_services, gh_app_services_free);
 }
 
@@ -370,37 +379,7 @@ on_terminate(gpointer data)
   return G_SOURCE_CONTINUE;
 }
 
-/* Not called in service mode (`--gapplication-service`, the autostart
- * command): the process then runs windowless until something activates it,
- * held by the background service while run-in-background is on. */
-/* W32 (owner decision): an app indicator on desktops that show one (Ubuntu's
- * AppIndicator extension, KDE); on stock GNOME nothing registers. Open
- * activates the app; Quit quits it. */
-static void
-indicator_activate(GnStatusNotifier *indicator, GApplication *app)
-{
-  (void)indicator;
-  g_application_activate(app);
-}
-
-static void
-indicator_quit(GnStatusNotifier *indicator, GApplication *app)
-{
-  (void)indicator;
-  g_application_quit(app);
-}
-
-static void
-indicator_attach(GApplication *app)
-{
-  if (g_object_get_data(G_OBJECT(app), "groundhog-indicator"))
-    return;
-  const gchar *app_id = g_application_get_application_id(app);
-  GnStatusNotifier *indicator = gn_status_notifier_new(app, app_id ? app_id : GROUNDHOG_APP_ID, "Groundhog");
-  g_signal_connect(indicator, "activate", G_CALLBACK(indicator_activate), app);
-  g_signal_connect(indicator, "quit", G_CALLBACK(indicator_quit), app);
-  g_object_set_data_full(G_OBJECT(app), "groundhog-indicator", indicator, g_object_unref);
-}
+/* Service mode stays windowless until a tray or D-Bus activation presents it. */
 
 static void
 activate(GApplication *app, gpointer user_data)
