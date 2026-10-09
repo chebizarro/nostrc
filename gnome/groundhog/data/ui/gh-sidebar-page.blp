@@ -301,6 +301,12 @@ menu primary_menu {
     }
 
     item {
+      label: _("_Report an Issue…");
+      action: "app.report-issue";
+      hidden-when: "action-missing";
+    }
+
+    item {
       label: _("_About Groundhog");
       action: "app.about";
     }
