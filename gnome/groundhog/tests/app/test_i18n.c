@@ -1,7 +1,7 @@
 /* test_i18n.c — the generated en@pseudo catalog loads at runtime through
  * gh_i18n_init(), and the merged desktop entry and metainfo carry it
- * (nostrc-gofet.10). Skips (77) when the C library offers no non-C locale,
- * because GNU gettext ignores LANGUAGE under the C locale. */
+ * (nostrc-gofet.10). Skips (77) when the C library offers no non-C locale:
+ * GNU gettext ignores LANGUAGE under C, and glibc treats C.UTF-8 as C. */
 #include "gh-i18n.h"
 
 #include <stdio.h>
@@ -11,7 +11,7 @@
 static gboolean
 select_locale(void)
 {
-  static const char *const candidates[] = { "en_US.UTF-8", "C.UTF-8", "C.utf8", "en_US.utf8" };
+  static const char *const candidates[] = { "en_US.UTF-8", "en_US.utf8", "en_GB.UTF-8" };
   for (gsize i = 0; i < G_N_ELEMENTS(candidates); i++) {
     g_setenv("LC_ALL", candidates[i], TRUE);
     if (gh_i18n_init(GH_TEST_LOCALEDIR))
@@ -56,7 +56,7 @@ main(int argc, char **argv)
   g_unsetenv("LC_MESSAGES");
   g_unsetenv("LANG");
   if (!select_locale()) {
-    fprintf(stderr, "no non-C UTF-8 locale available; skipping\n");
+    fprintf(stderr, "no en_US/en_GB UTF-8 locale available; skipping\n");
     return 77;
   }
   g_test_init(&argc, &argv, NULL);

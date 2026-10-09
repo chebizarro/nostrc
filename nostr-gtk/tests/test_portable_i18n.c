@@ -52,7 +52,8 @@ test_widget_labels(void)
 int
 main(int argc, char **argv)
 {
-  static const char *const locales[] = { "en_US.UTF-8", "C.UTF-8", "C.utf8" };
+  /* Not C.UTF-8: glibc treats it as C and then ignores LANGUAGE. */
+  static const char *const locales[] = { "en_US.UTF-8", "en_US.utf8", "en_GB.UTF-8" };
   gboolean ok = FALSE;
   g_setenv("LANGUAGE", "en@pseudo", TRUE);
   for (gsize i = 0; i < G_N_ELEMENTS(locales) && !ok; i++) {
@@ -60,7 +61,7 @@ main(int argc, char **argv)
     ok = setlocale(LC_ALL, "") != NULL;
   }
   if (!ok) {
-    fprintf(stderr, "no non-C UTF-8 locale available; skipping\n");
+    fprintf(stderr, "no en_US/en_GB UTF-8 locale available; skipping\n");
     return 77;
   }
   gn_portable_gettext_domain();
