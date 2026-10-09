@@ -1065,12 +1065,46 @@ test_template_properties(void)
   g_signal_handlers_disconnect_by_data(room, &preview_notified);
   g_signal_handlers_disconnect_by_data(echo, &status_notified);
 
-  /* A note to self is titled with the account's own npub. */
+  /* A note to self is identified by its purpose, not the account's npub. */
   Rumor note = { .author = 1, .p = { 1 }, .created_at = 40 };
   g_assert_cmpint(add(store, 1, &note), ==, GH_CONVERSATION_ADD_NEW);
   g_autofree gchar *self_room = room_id(1, 0, 0);
-  g_assert_true(g_str_has_prefix(
-    gh_conversation_get_title(gh_conversation_store_lookup(store, self_room)), "npub1"));
+  g_assert_cmpstr(gh_conversation_get_title(gh_conversation_store_lookup(store, self_room)),
+                  ==, "Note to Self");
+}
+
+static void
+test_note_to_self_title(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  const gchar *const no_peers[] = { NULL };
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  g_autoptr(GError) error = NULL;
+  GhConversation *note = gh_conversation_store_open_room(store, no_peers, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(note);
+  g_assert_cmpstr(gh_conversation_get_participants(note)[0], ==, hex[1]);
+  g_assert_null(gh_conversation_get_participants(note)[1]);
+  g_assert_null(gh_conversation_get_peers(note)[0]);
+  g_assert_cmpstr(gh_conversation_get_title(note), ==, "Note to Self");
+  g_autofree gchar *title = NULL;
+  g_object_get(note, "title", &title, NULL);
+  g_assert_cmpstr(title, ==, "Note to Self");
+
+  Rumor self_message = { .author = 1, .p = { 1 }, .created_at = 100,
+                         .subject = "Not a room title" };
+  g_autoptr(GhMessage) message = message_for(1, &self_message, NULL);
+  g_autoptr(GPtrArray) page = g_ptr_array_new_with_free_func(g_object_unref);
+  g_ptr_array_add(page, g_object_ref(message));
+  GhConversationState state = { .accepted = TRUE, .subject = "Old subject" };
+  gh_conversation_store_set_account(store, hex[2], NULL, NULL, NULL);
+  g_assert_null(gh_conversation_store_lookup(store, hex[1]));
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  GhConversation *restored = gh_conversation_store_restore(store, hex[1], page, &state);
+  g_assert_nonnull(restored);
+  g_assert_cmpstr(gh_conversation_get_title(restored), ==, "Note to Self");
+  gh_conversation_set_contact_title(restored, "Account display name");
+  g_assert_cmpstr(gh_conversation_get_title(restored), ==, "Note to Self");
 }
 
 /* Charter §7.9 (W13 review #4): a request's subject is text its sender
@@ -1266,6 +1300,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/conversations/order-and-dedup", test_order_and_dedup);
   g_test_add_func("/groundhog/conversations/subject", test_subject);
   g_test_add_func("/groundhog/conversations/request-title", test_request_title);
+  g_test_add_func("/groundhog/conversations/note-to-self-title", test_note_to_self_title);
   g_test_add_func("/groundhog/conversations/unread", test_unread);
   g_test_add_func("/groundhog/conversations/read-by-arrival", test_read_by_arrival);
   g_test_add_func("/groundhog/conversations/store-order-and-account",

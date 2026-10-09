@@ -85,18 +85,21 @@ gboolean gh_conversation_get_pinned(GhConversation *self);
  * *out_seconds (nullable) the timer it was set to: the local timeline row
  * "You set messages to disappear after 1 day" (charter §3.7). */
 gint64 gh_conversation_get_timer_change(GhConversation *self, gint64 *out_seconds);
-/* A durable store holds older messages of this room than those listed; it
- * loads them on request (gh_store_conversations_load_older()). */
+/* A durable store holds older messages than those listed, or a NIP-29 relay
+ * may have history beyond the stored edge. The backend loads it on request. */
 gboolean gh_conversation_get_has_older(GhConversation *self);
+/* The relay could not safely page through a same-second NIP-29 boundary. */
+gboolean gh_conversation_get_history_partial(GhConversation *self);
 GhConversationBackend gh_conversation_get_backend(GhConversation *self);
 /* Whether this conversation is a direct message (two parties, one-on-one).
  * For NIP-17, true when there is exactly one peer. For MLS, set by the
  * service when the group has two members and no name (the shape White Noise
  * uses for DMs). The "is-direct" property notifies on change. */
 gboolean gh_conversation_get_is_direct(GhConversation *self);
-/* The subject when there is one; otherwise the peers' names set with
+/* A NIP-17 room containing only the account is titled "Note to Self".
+ * Otherwise the subject when there is one; then the peers' names set with
  * gh_conversation_set_contact_title(), else their abbreviated npubs (the
- * account's own for a note to self). A request is always titled by the
+ * account's own only as a defensive fallback). A request is always titled by the
  * npubs (charter §7.9): its subject is text the sender chose, which the UI
  * shows only as secondary text (gh_conversation_get_subject()) until the
  * request is accepted. Profile names are not fetched here: a request must not

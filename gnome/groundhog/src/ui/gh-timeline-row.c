@@ -62,6 +62,12 @@ gh_timeline_row_set_item(GhTimelineRow *self, GhTimelineItem *item)
   if (!g_set_object(&self->item, item))
     return;
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_ITEM]);
+  /* Template bindings have no ordering guarantee: the message setter clears
+   * the old summary for recycled rows. Reapply the new item's summary after
+   * the message binding has run, including on the initial bind. */
+  gh_message_row_set_message(self->message_row, item ? gh_timeline_item_get_message(item) : NULL);
+  gh_message_row_set_reaction_summary(self->message_row,
+    item ? gh_timeline_item_get_reaction_summary(item) : NULL);
   update_summary(self);
 }
 

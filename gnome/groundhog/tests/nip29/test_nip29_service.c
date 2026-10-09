@@ -18,12 +18,14 @@
 #include "gh-store-nip29.h"
 #include "gh-store-reactions.h"
 #include "gh-reaction-store.h"
+#include "gh-conversation-private.h"
 #include "gh-test-signer.h"
 #include "nip29-relay.h"
 #include "../gh-test-port.h"
 
 #include <nostr-kinds.h>
 #include <glib/gstdio.h>
+#include <sqlite3.h>
 
 #define STORE_ID "7d0c2a51-3b8e-4f6a-9c1d-2e4f5a6b7c8d"
 #define KEY_ALICE 1
@@ -1573,6 +1575,231 @@ test_first_read_history_paged_and_persisted(void)
   nip29_relay_clear(&relay);
 }
 
+/* Distinguish a missing relay fetch from a local-listing bug. A capped relay
+ * holds more messages than one 16-page live backfill can cover. The stored
+ * count and listed count must agree, and Earlier Messages must reach the
+ * remainder over a separate historical REQ. */
+static void
+test_history_past_live_page_budget(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "long-history", "Long History");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  const guint total = GH_NIP29_SERVICE_MAX_PAGES * 25 + 30;
+  for (guint i = 0; i < total; i++) {
+    g_autofree gchar *text = g_strdup_printf("history %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay),
+                                       "long-history", text));
+  }
+  relay.max_limit = 25;
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "long-history", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  GhConversation *conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) groups = gh_store_nip29_list_groups(f.store, &error);
+  g_assert_no_error(error);
+  gint64 conversation_id = 0;
+  for (guint i = 0; i < groups->len; i++) {
+    GhStoreNip29Group *record = g_ptr_array_index(groups, i);
+    if (g_strcmp0(record->group_id, "long-history") == 0)
+      conversation_id = record->conversation_id;
+  }
+  g_assert_cmpint(conversation_id, >, 0);
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(f.store),
+    "SELECT count(*) FROM messages WHERE conversation_id = ?", -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_int64(stmt, 1, conversation_id);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  guint stored = (guint)sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  guint listed = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+  g_test_message("history: relay=%u stored=%u listed=%u", total, stored, listed);
+  g_assert_cmpuint(stored, ==, listed); /* fetched vs listing, before paging */
+  g_assert_cmpuint(stored, <=, total);
+  if (stored < total) {
+    g_assert_true(gh_conversation_get_has_older(conversation));
+    guint loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    wait_messages(f.model, gh_nip29_room_get_room_id(room), total);
+  }
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, total);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
+/* A restart in the middle of a historical batch keeps only EOSE-committed
+ * pages; the next request resumes from that old edge, not the live cursor. */
+static void
+test_history_resumes_after_restart(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "resume-history", "History");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  const guint total = 850;
+  for (guint i = 0; i < total; i++) {
+    g_autofree gchar *text = g_strdup_printf("resume history %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay),
+                                       "resume-history", text));
+  }
+  relay.max_limit = 25;
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "resume-history", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  GhConversation *conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+  g_assert_true(gh_conversation_get_has_older(conversation));
+  g_autoptr(GError) error = NULL;
+  guint loaded = 0;
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                             GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+  g_assert_no_error(error);
+  wait_messages(f.model, room_id, 520);
+  g_clear_object(&room); /* the service may now cancel a page without EOSE */
+  restart(&f);
+  room = gh_nip29_service_lookup(f.service, relay.url, "resume-history");
+  g_assert_nonnull(room);
+  conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+  while (gh_conversation_get_floor(conversation, NULL, NULL)) {
+    loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), >=, 520);
+  g_assert_true(gh_conversation_get_has_older(conversation));
+  guint before = relay.req_frames->len;
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                             GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+  g_assert_no_error(error);
+  wait_messages(f.model, room_id, total);
+  g_assert_cmpuint(relay.req_frames->len, >, before);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
+static gboolean
+history_is_partial(gpointer data)
+{
+  return gh_conversation_get_history_partial(data);
+}
+
+static void
+test_history_same_second_partial(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "tied-history", "History");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  gint64 at = nip29_past(&relay);
+  for (guint i = 0; i < 30; i++) {
+    g_autofree gchar *text = g_strdup_printf("tied %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, at,
+                                       "tied-history", text));
+  }
+  relay.max_limit = 25;
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "tied-history", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  GhConversation *conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 25);
+  g_assert_true(gh_conversation_get_has_older(conversation));
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                             GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
+  g_assert_no_error(error);
+  gh_test_spin_until(history_is_partial, conversation);
+  g_assert_false(gh_conversation_get_has_older(conversation));
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  g_clear_object(&room);
+  restart(&f);
+  conversation = gh_conversation_store_lookup(f.model, room_id);
+  g_assert_nonnull(conversation);
+  g_assert_true(gh_conversation_get_history_partial(conversation));
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
+static void
+test_history_cancel_keeps_position(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "cancel-history", "History");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  for (guint i = 0; i < 430; i++) {
+    g_autofree gchar *text = g_strdup_printf("cancel history %u", i);
+    g_ptr_array_add(relay.events,
+                    nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay),
+                                       "cancel-history", text));
+  }
+  relay.max_limit = 25;
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "cancel-history", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
+  GhConversation *conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+  relay.hold_eose = TRUE;
+  guint before = relay.req_frames->len;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                             GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
+  g_assert_no_error(error);
+  wait_count(&relay.req_frames->len, before + 1);
+  g_clear_object(&room);
+  restart(&f); /* cancels the in-flight page without committing it */
+  g_autoptr(GPtrArray) groups = gh_store_nip29_list_groups(f.store, &error);
+  g_assert_no_error(error);
+  gboolean unchanged = FALSE;
+  for (guint i = 0; i < groups->len; i++) {
+    GhStoreNip29Group *record = g_ptr_array_index(groups, i);
+    if (g_strcmp0(record->group_id, "cancel-history") == 0)
+      unchanged = record->state_json &&
+                  strstr(record->state_json, "\"oldest_until\":0") != NULL;
+  }
+  g_assert_true(unchanged);
+  relay.hold_eose = FALSE;
+  room = gh_nip29_service_lookup(f.service, relay.url, "cancel-history");
+  g_assert_nonnull(room);
+  conversation = room_conversation(&f, room);
+  g_assert_nonnull(conversation);
+  while (gh_conversation_get_floor(conversation, NULL, NULL)) {
+    guint loaded = 0;
+    g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                               GH_STORE_NIP29_PAGE_SIZE, &loaded, &error));
+    g_assert_no_error(error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation,
+                                             GH_STORE_NIP29_PAGE_SIZE, NULL, &error));
+  g_assert_no_error(error);
+  wait_messages(f.model, room_id, 430);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 /* nostrc-cpwf (nostrc-x055): a relay that caps every REQ's stored answer (at
  * 25 here; strfry at 500) and answers newest first. Back after 120 messages,
  * the room's backfill is paged backwards with until, per filter, while the
@@ -1754,6 +1981,14 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/cursor-waits-for-eose", test_cursor_waits_for_eose);
   g_test_add_func("/groundhog/nip29-service/first-read-history-paged-and-persisted",
                    test_first_read_history_paged_and_persisted);
+  g_test_add_func("/groundhog/nip29-service/history-past-live-page-budget",
+                  test_history_past_live_page_budget);
+  g_test_add_func("/groundhog/nip29-service/history-resumes-after-restart",
+                  test_history_resumes_after_restart);
+  g_test_add_func("/groundhog/nip29-service/history-same-second-partial",
+                  test_history_same_second_partial);
+  g_test_add_func("/groundhog/nip29-service/history-cancel-keeps-position",
+                  test_history_cancel_keeps_position);
   g_test_add_func("/groundhog/nip29-service/backfill-paged-past-relay-cap",
                    test_backfill_paged_past_relay_cap);
   g_test_add_func("/groundhog/nip29-service/incomplete-backfill-holds-cursor",

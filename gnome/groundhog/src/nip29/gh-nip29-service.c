@@ -20,6 +20,12 @@
 #define KEY_RETRY_S      600     /* a failed NIP-11 fetch is tried again after this */
 #define MAX_SNAPSHOT     (2 * 1024 * 1024)  /* a larger snapshot is used, not kept */
 
+typedef enum {
+  HISTORY_INCOMPLETE,
+  HISTORY_COMPLETE,
+  HISTORY_PARTIAL
+} HistoryState;
+
 /* ---- Enums ----------------------------------------------------------------- */
 
 GType
@@ -105,6 +111,16 @@ struct _GhNip29Room {
   gint64 sync_cursor;          /* newest stored by this REQ's backfill; committed at EOSE */
   gint64 reaction_cursor;      /* independent kind-5/7 backfill checkpoint */
   gint64 reaction_sync_cursor;
+  gint64 history_oldest;       /* inclusive until of the next historical REQ */
+  HistoryState history_state;
+  GhRelayScope *history_scope; /* one per-group, one-page historical REQ */
+  GPtrArray *history_events;   /* signed JSON buffered until EOSE */
+  guint history_pages;         /* this Earlier Messages request's budget */
+  guint history_idle;
+  gint64 history_requested_until;
+  gint64 history_page_oldest;
+  gint64 history_page_newest;
+  guint history_page_count;
   gboolean reaction_sync_failed;
   gboolean sync_failed;        /* an admission of this REQ failed, or its backfill came
                                 * back incomplete: the cursor stays */
@@ -294,6 +310,9 @@ room_set_detail(GhNip29Room *room, const gchar *detail)
   room_notify(room, ROOM_PROP_DETAIL);
 }
 
+static void history_close(GhNip29Room *room);
+static void history_refresh_availability(GhNip29Room *room);
+
 /* A group the account is in (again) is read in full: its REQ is rebuilt.
  * One it no longer is in stops being read, unless its refusal still awaits
  * the group state; then the REQ it is in stays (its answer is on the way)
@@ -312,7 +331,10 @@ room_set_join(GhNip29Room *room, GhNip29JoinState join, gint64 at, const gchar *
   }
   if (join_subscribed(join))
     room->awaiting_state = FALSE;
+  else
+    history_close(room);
   room_save(room);
+  history_refresh_availability(room);
   GhNip29Service *self = room->service;
   if (self && (was_reading != room_reads(room) || (!was_subscribed && join_subscribed(join)))) {
     Relay *relay = g_hash_table_lookup(self->relays, room_relay(room)); /* made with the room */
@@ -430,6 +452,12 @@ room_record(GhNip29Room *room)
   json_builder_add_int_value(builder, room->cursor);
   json_builder_set_member_name(builder, "reaction_cursor");
   json_builder_add_int_value(builder, room->reaction_cursor);
+  json_builder_set_member_name(builder, "oldest_until");
+  json_builder_add_int_value(builder, room->history_oldest);
+  json_builder_set_member_name(builder, "history_state");
+  json_builder_add_string_value(builder, room->history_state == HISTORY_COMPLETE ? "complete"
+                                       : room->history_state == HISTORY_PARTIAL ? "partial"
+                                                                                : "incomplete");
   json_builder_set_member_name(builder, "backfilled");
   json_builder_add_boolean_value(builder, room->backfilled);
   json_builder_set_member_name(builder, "joined_at");
@@ -495,6 +523,35 @@ room_save_flush(GhNip29Room *room)
   g_source_remove(room->save_idle); /* drops the source's reference, not the room */
   room->save_idle = 0;
   room_save_now(room);
+}
+
+static void
+history_refresh_availability(GhNip29Room *room)
+{
+  if (!room->service)
+    return;
+  GhConversation *conversation =
+    gh_conversation_store_lookup(room->service->conversations, room->room_id);
+  if (conversation)
+  {
+    gh_conversation_set_remote_older(conversation,
+      join_subscribed(room->join) && room->history_state == HISTORY_INCOMPLETE &&
+      !room->history_scope && !room->history_idle);
+    gh_conversation_set_history_partial(conversation,
+      join_subscribed(room->join) && room->history_state == HISTORY_PARTIAL);
+  }
+}
+
+static void
+history_close(GhNip29Room *room)
+{
+  if (room->history_idle)
+    g_clear_handle_id(&room->history_idle, g_source_remove);
+  if (room->history_scope) {
+    gh_relay_scope_cancel(room->history_scope);
+    g_clear_pointer(&room->history_scope, gh_relay_scope_unref);
+  }
+  g_clear_pointer(&room->history_events, g_ptr_array_unref);
 }
 
 /* ---- Snapshots -------------------------------------------------------------------- */
@@ -1240,6 +1297,8 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
     case GH_RELAY_NOTICE_EOSE:
       room_set_read(room, GH_NIP29_READ_LIVE, NULL);
       room->backfilled = TRUE;
+      if (!update->incomplete && !room->sync_failed && room->cursor == 0)
+        room->history_state = HISTORY_COMPLETE;
       /* The backfill is complete (paged past the relay's cap): what it
        * stored has nothing missing before it. An incomplete one keeps the
        * cursor for as long as this REQ lives -- live messages included, or
@@ -1258,6 +1317,7 @@ on_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
             MAX(room->reaction_sync_cursor, now_unix(self)));
       }
       room_save(room);
+      history_refresh_availability(room);
       break;
     case GH_RELAY_NOTICE_CLOSED:
       room_set_read(room, gh_relay_auth_is_required(update->detail)
@@ -1608,6 +1668,12 @@ room_restore(GhNip29Service *self, const GhStoreNip29Group *stored)
     room->detail = g_strdup(json_object_get_string_member_with_default(record, "detail", NULL));
     room->cursor = json_object_get_int_member_with_default(record, "cursor", 0);
     room->reaction_cursor = json_object_get_int_member_with_default(record, "reaction_cursor", 0);
+    room->history_oldest = json_object_get_int_member_with_default(record, "oldest_until", 0);
+    const gchar *history_state =
+      json_object_get_string_member_with_default(record, "history_state", "incomplete");
+    room->history_state = g_strcmp0(history_state, "complete") == 0 ? HISTORY_COMPLETE
+                          : g_strcmp0(history_state, "partial") == 0 ? HISTORY_PARTIAL
+                                                                    : HISTORY_INCOMPLETE;
     room->backfilled = json_object_get_boolean_member_with_default(record, "backfilled", FALSE);
     room->joined_at = json_object_get_int_member_with_default(record, "joined_at", 0);
     JsonArray *timeline = json_object_has_member(record, "timeline")
@@ -1645,6 +1711,7 @@ room_restore(GhNip29Service *self, const GhStoreNip29Group *stored)
       room->join == GH_NIP29_JOIN_DENIED ||
       room->join == GH_NIP29_JOIN_CLOSED || room->join == GH_NIP29_JOIN_NOT_SENT)
     gh_conversation_store_ensure_group(self->conversations, room->room_id, room->name);
+  history_refresh_availability(room);
 }
 
 /* The ops of the restored groups may have moved on after their last save. */
@@ -1691,10 +1758,17 @@ update_activity(GhNip29Service *self)
         g_clear_object(&relay->key_fetch);
       }
     }
+    for (guint i = 0; i < self->rooms->len; i++)
+      history_close(g_ptr_array_index(self->rooms, i));
+  } else if (!online) {
+    for (guint i = 0; i < self->rooms->len; i++)
+      history_close(g_ptr_array_index(self->rooms, i));
   }
   self->generation = generation;
   self->online = online;
   sync_all(self);
+  for (guint i = 0; i < self->rooms->len; i++)
+    history_refresh_availability(g_ptr_array_index(self->rooms, i));
 }
 
 static void
@@ -2277,12 +2351,198 @@ gh_nip29_service_set_role_policy(GhNip29Service *self, const gchar *relay_url,
     g_hash_table_remove(self->role_policies, url);
 }
 
+/* Historical REQs are separate from the live multi-room REQ. A page is
+ * buffered until EOSE; its position is saved only after every admission.
+ * Partial writes are idempotent on retry, and remain visible after failure. */
+static gboolean history_start_page(GhNip29Room *room);
+
+static gboolean
+history_next_page(gpointer data)
+{
+  GhNip29Room *room = data;
+  room->history_idle = 0;
+  if (room->service && room->history_state == HISTORY_INCOMPLETE &&
+      room->history_pages < GH_NIP29_SERVICE_MAX_PAGES && !history_start_page(room))
+    history_refresh_availability(room);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+history_commit_page(GhNip29Room *room, HistoryState next_state, gint64 next_oldest)
+{
+  GhNip29Service *self = room->service;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *record = NULL;
+  gint64 conversation_id = 0;
+  gint64 old_oldest = room->history_oldest;
+  HistoryState old_state = room->history_state;
+  room_save_flush(room);
+  for (guint i = 0; i < room->history_events->len; i++) {
+    GhMessage *message = g_ptr_array_index(room->history_events, i);
+    GhConversationAddResult added = gh_conversation_store_admit(
+      self->conversations, message, gh_message_get_rumor_id(message), &error);
+    if (added == GH_CONVERSATION_ADD_FAILED || added == GH_CONVERSATION_ADD_REJECTED) {
+      if (!error)
+        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                            "Group history message was rejected");
+      goto fail;
+    }
+  }
+  room->history_oldest = next_oldest;
+  room->history_state = next_state;
+  record = room_record(room);
+  if (!gh_store_nip29_save_group(self->store, room_relay(room), room_group_id(room),
+                                 room->relay_pubkey, record, room->name, &conversation_id,
+                                 &error)) {
+    room->history_oldest = old_oldest;
+    room->history_state = old_state;
+    goto fail;
+  }
+  room->conversation_id = conversation_id;
+  return TRUE;
+fail:
+  g_warning("Groundhog could not commit a group history page: %s",
+            error ? error->message : "unknown error");
+  return FALSE;
+}
+
+static void
+on_history_scope_update(GhRelayScope *scope, const GhRelayUpdate *update, gpointer data)
+{
+  GhNip29Room *room = data;
+  if (room->history_scope != scope || !room->service)
+    return;
+  if (update->notice == GH_RELAY_NOTICE_EVENT && update->stored) {
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GhMessage) message = gh_message_new_from_nip29_event(
+      room->service->account, room_relay(room), update->event_json, &error);
+    if (message && g_strcmp0(gh_message_get_room_id(message), room->room_id) == 0) {
+      gint64 at = gh_message_get_created_at(message);
+      room->history_page_oldest = MIN(room->history_page_oldest, at);
+      room->history_page_newest = MAX(room->history_page_newest, at);
+      room->history_page_count++;
+      g_ptr_array_add(room->history_events, g_steal_pointer(&message));
+    }
+    return;
+  }
+  if (update->notice == GH_RELAY_NOTICE_CLOSED ||
+      update->notice == GH_RELAY_NOTICE_DISCONNECTED ||
+      update->notice == GH_RELAY_NOTICE_ERROR) {
+    history_close(room); /* no EOSE: retry from the prior committed position */
+    history_refresh_availability(room);
+    return;
+  }
+  if (update->notice != GH_RELAY_NOTICE_EOSE)
+    return;
+  if (update->incomplete) {
+    history_close(room); /* a truncated answer cannot move the position */
+    history_refresh_availability(room);
+    return;
+  }
+  gint64 requested = room->history_requested_until;
+  gint64 oldest = room->history_page_oldest;
+  guint count = room->history_page_count;
+  HistoryState next_state = HISTORY_INCOMPLETE;
+  gint64 next_oldest = room->history_oldest;
+  if (count == 0 || (oldest >= requested && count < gh_relay_page_threshold(
+                                                       GH_NIP29_SERVICE_PAGE_LIMIT))) {
+    next_state = HISTORY_COMPLETE;
+  } else if (oldest >= requested ||
+             (count >= GH_NIP29_SERVICE_PAGE_LIMIT && oldest == room->history_page_newest)) {
+    next_state = HISTORY_PARTIAL; /* a capped same-second page cannot advance safely */
+  } else {
+    next_oldest = oldest;
+  }
+  gboolean committed = history_commit_page(room, next_state, next_oldest);
+  history_close(room);
+  if (!committed)
+    return;
+  if (room->history_state == HISTORY_INCOMPLETE &&
+      room->history_pages < GH_NIP29_SERVICE_MAX_PAGES)
+    room->history_idle = g_idle_add_full(G_PRIORITY_DEFAULT_IDLE, history_next_page,
+                                         g_object_ref(room), g_object_unref);
+  history_refresh_availability(room);
+}
+
+static gboolean
+history_start_page(GhNip29Room *room)
+{
+  GhNip29Service *self = room->service;
+  if (!self || !running(self) || !join_subscribed(room->join) || room->history_scope)
+    return FALSE;
+  gint64 until = room->history_oldest;
+  if (until <= 0) {
+    GhConversation *conversation =
+      gh_conversation_store_lookup(self->conversations, room->room_id);
+    guint n = conversation ? g_list_model_get_n_items(G_LIST_MODEL(conversation)) : 0;
+    if (n > 0) {
+      g_autoptr(GhMessage) oldest = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+      until = gh_message_get_created_at(oldest);
+    }
+  }
+  NostrFilters *filters = nostr_filters_new();
+  NostrFilter *filter = nostr_filter_new();
+  int kinds[] = { NOSTR_KIND_SIMPLE_GROUP_CHAT_MESSAGE, NOSTR_KIND_SIMPLE_GROUP_THREADED_REPLY,
+                  NOSTR_KIND_SIMPLE_GROUP_THREAD, NOSTR_KIND_SIMPLE_GROUP_REPLY };
+  nostr_filter_set_kinds(filter, kinds, G_N_ELEMENTS(kinds));
+  nostr_filter_tags_append(filter, "h", room_group_id(room), NULL);
+  if (until > 0)
+    nostr_filter_set_until_i64(filter, until);
+  nostr_filter_set_limit(filter, GH_NIP29_SERVICE_PAGE_LIMIT);
+  nostr_filters_add(filters, filter);
+  nostr_filter_free(filter);
+  GhRelayScope *scope = self->custom_scope
+    ? gh_relay_scope_new_with_transport(self->generation, filters, &self->scope_transport,
+                                        self->scope_data, on_history_scope_update, room)
+    : gh_relay_scope_new(self->generation, filters, on_history_scope_update, room);
+  if (self->custom_scope && self->has_scope_auth)
+    gh_relay_scope_set_auth_transport(scope, &self->scope_auth);
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_scope_add_url(scope, room_relay(room), &error)) {
+    gh_relay_scope_unref(scope);
+    g_warning("Groundhog cannot read group history: %s", error->message);
+    return FALSE;
+  }
+  if (!gh_auth_policy_apply_scope(self->policy, scope, GH_AUTH_PURPOSE_GROUP,
+                                  room_relay(room), &error))
+    g_clear_error(&error);
+  room->history_scope = scope;
+  room->history_events = g_ptr_array_new_with_free_func(g_object_unref);
+  room->history_requested_until = until > 0 ? until : G_MAXINT64;
+  room->history_page_oldest = G_MAXINT64;
+  room->history_page_newest = 0;
+  room->history_page_count = 0;
+  room->history_pages++;
+  history_refresh_availability(room);
+  gh_relay_scope_start(scope);
+  return TRUE;
+}
+
 gboolean
 gh_nip29_service_load_older(GhNip29Service *self, GhConversation *conversation, guint limit,
                             guint *out_loaded, GError **error)
 {
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), FALSE);
-  return gh_store_nip29_load_older(self->rooms_store, conversation, limit, out_loaded, error);
+  guint loaded = 0;
+  if (!gh_store_nip29_load_older(self->rooms_store, conversation, limit, &loaded, error))
+    return FALSE;
+  if (out_loaded)
+    *out_loaded = loaded;
+  if (loaded > 0 || gh_conversation_get_floor(conversation, NULL, NULL))
+    return TRUE;
+  GhNip29Room *room = g_hash_table_lookup(self->by_room_id,
+                                          gh_conversation_get_room_id(conversation));
+  if (!room || room->history_state != HISTORY_INCOMPLETE)
+    return TRUE;
+  if (room->history_scope || room->history_idle)
+    return TRUE;
+  if (!running(self)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        "The group relay is offline");
+    return FALSE;
+  }
+  room->history_pages = 0;
+  return history_start_page(room);
 }
 
 gboolean
@@ -2585,6 +2845,7 @@ gh_nip29_service_dispose(GObject *object)
     g_hash_table_remove_all(self->relays); /* cancels every REQ and key fetch */
   for (guint i = 0; self->rooms && i < self->rooms->len; i++) {
     GhNip29Room *room = g_ptr_array_index(self->rooms, i);
+    history_close(room);
     room_save_flush(room); /* the store is still open (see the header) */
     room->service = NULL;
   }
