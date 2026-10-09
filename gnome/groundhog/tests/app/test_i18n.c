@@ -45,8 +45,8 @@ test_merged_metadata(void)
   g_assert_nonnull(strstr(desktop, "Comment[en@pseudo]=⟦"));
   g_assert_nonnull(strstr(desktop, "Exec=groundhog %U"));
   g_assert_true(g_file_get_contents(GH_TEST_METAINFO, &metainfo, NULL, NULL));
-  /* msgfmt --xml writes the BCP 47 tag for the en@pseudo catalog. */
-  g_assert_nonnull(strstr(metainfo, "xml:lang=\"en-pseudo\">⟦"));
+  /* gettext >= 0.22 writes the BCP 47 tag (en-pseudo), older the POSIX name. */
+  g_assert_true(g_regex_match_simple("xml:lang=\"en[-@]pseudo\">⟦", metainfo, 0, 0));
 }
 
 int
