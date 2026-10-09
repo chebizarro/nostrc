@@ -19,8 +19,42 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'apps/**'
+      - 'nostr-gobject/**'
+      - 'nostr-gtk/**'
+      - 'gnome/common/**'
+      - '.github/workflows/windows-build.yml'
   pull_request:
     branches: [main, master]
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'apps/**'
+      - 'nostr-gobject/**'
+      - 'nostr-gtk/**'
+      - 'gnome/common/**'
+      - '.github/workflows/windows-build.yml'
   workflow_dispatch:
     inputs:
       debug_enabled:

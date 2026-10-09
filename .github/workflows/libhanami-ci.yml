@@ -3,8 +3,42 @@ name: libhanami CI
 on:
   push:
     branches: [ main, master ]
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'Testing/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'libhanami/**'
+      - '.github/workflows/libhanami-ci.yml'
   pull_request:
     branches: [ main, master ]
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'Testing/**'
+      - 'tests/**'
+      - 'tools/**'
+      - 'libhanami/**'
+      - '.github/workflows/libhanami-ci.yml'
   workflow_dispatch:
 
 jobs:

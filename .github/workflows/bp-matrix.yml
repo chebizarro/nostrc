@@ -4,7 +4,41 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'apps/relayd/**'
+      - 'scripts/run_bp_matrix.py'
+      - 'scripts/aggregate_bp_matrix.py'
+      - 'scripts/generate_bp_report.py'
+      - '.github/workflows/bp-matrix.yml'
   pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'NipOptions.cmake'
+      - 'cmake/**'
+      - 'libgo/**'
+      - 'libnostr/**'
+      - 'libjson/**'
+      - 'nips/**'
+      - 'third_party/**'
+      - 'components/**'
+      - '.gitmodules'
+      - 'apps/relayd/**'
+      - 'scripts/run_bp_matrix.py'
+      - 'scripts/aggregate_bp_matrix.py'
+      - 'scripts/generate_bp_report.py'
+      - '.github/workflows/bp-matrix.yml'
 
 jobs:
   bp-matrix:
