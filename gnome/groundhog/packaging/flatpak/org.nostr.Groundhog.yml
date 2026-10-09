@@ -196,6 +196,9 @@ modules:
     no-make-install: true
     post-install:
       - cmake --install gnome/groundhog
+      # Catalogs land in /app/share/locale; flatpak-builder moves them into
+      # the org.nostr.Groundhog.Locale extension (nostrc-gofet.10).
+      - test -f /app/share/locale/en@pseudo/LC_MESSAGES/groundhog.mo
       # A package manager compiles schemas with a trigger; here nobody else does.
       - glib-compile-schemas /app/share/glib-2.0/schemas
     sources:

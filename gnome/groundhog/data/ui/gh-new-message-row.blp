@@ -41,6 +41,7 @@ template $GhNewMessageRow: Adw.ActionRow {
     visible: bind template.item as <$GhNewMessageItem>.busy;
   }
 
+  // UI copy at the row's end edge: GTK mirrors xalign for RTL locales.
   [suffix]
   Label status_label {
     valign: center;

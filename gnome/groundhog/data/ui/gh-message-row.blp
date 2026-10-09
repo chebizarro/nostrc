@@ -19,6 +19,9 @@ template $GhMessageRow: Widget {
     "groundhog-message-row",
   ]
 
+  // xalign 0 is the start edge: GTK mirrors it for RTL, and
+  // gh-message-row.c gives the sender, body and reference labels the
+  // direction of their own text (gh-bidi.h, nostrc-gofet.10).
   Label sender_label {
     visible: false;
     xalign: 0;
@@ -151,12 +154,22 @@ template $GhMessageRow: Widget {
       Button repost_reference_button {
         label: _("Repost");
         action-name: "conversation.repost-reference";
+
+        accessibility {
+          description: _("Opens a preview before anything is published publicly");
+        }
+
         action-target: "''";
         styles ["flat"]
       }
       Button quote_reference_button {
         label: _("Quote…");
         action-name: "conversation.quote-reference";
+
+        accessibility {
+          description: _("Opens a preview before anything is published publicly");
+        }
+
         action-target: "''";
         styles ["flat"]
       }
@@ -241,6 +254,11 @@ template $GhMessageRow: Widget {
       valign: center;
       action-name: "conversation.add-reaction";
       tooltip-text: _("React");
+
+      accessibility {
+        label: _("Add Reaction");
+      }
+
 
       styles [
         "flat",

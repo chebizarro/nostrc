@@ -29,6 +29,7 @@ BuildRequires:  gcc
 BuildRequires:  gcc-c++
 BuildRequires:  pkgconfig
 BuildRequires:  python3
+BuildRequires:  gettext
 BuildRequires:  pkgconfig(glib-2.0) >= 2.76
 BuildRequires:  pkgconfig(gtk4) >= 4.14
 BuildRequires:  pkgconfig(libadwaita-1) >= 1.5
@@ -138,13 +139,17 @@ DESTDIR=%{buildroot} cmake --install %{__cmake_builddir}/apps/grotto
 # (where systemd also looks); Fedora keeps units in %%{_userunitdir}.
 install -d %{buildroot}%{_userunitdir}
 mv %{buildroot}%{_datadir}/systemd/user/grotto-daemon.service %{buildroot}%{_userunitdir}/
+# Locale catalogs: Groundhog's and the bundled portable widgets' domains.
+%find_lang groundhog
+%find_lang nostr-gtk
+cat nostr-gtk.lang >> groundhog.lang
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Groundhog.desktop
 desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Grotto.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Groundhog.metainfo.xml
 
-%files
+%files -f groundhog.lang
 %license LICENSE gnome/groundhog/data/icons/COPYING
 %{_bindir}/groundhog
 %dir %{_libdir}/groundhog

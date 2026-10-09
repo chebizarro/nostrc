@@ -34,6 +34,7 @@
 #include "gh-timeline-row.h"
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
+#include "gh-agent-event-row.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include "gh-reaction-store.h"
@@ -3421,6 +3422,87 @@ test_recycled_optional_subtrees(void)
   g_object_unref(row);
 }
 
+/* nostrc-gofet.10: forced-RTL smoke. Under an RTL UI an incoming bubble sits
+ * at the right (start) edge, and the body label takes its own text's
+ * direction, falling back to the UI's for neutral text. */
+static gboolean
+row_mapped(gpointer row)
+{
+  return gtk_widget_get_mapped(GTK_WIDGET(row));
+}
+
+static void
+test_rtl_message_row(void)
+{
+  const guint to[] = { 1, 0 };
+  GtkTextDirection saved = gtk_widget_get_default_direction();
+  gtk_widget_set_default_direction(GTK_TEXT_DIR_RTL);
+  g_autoptr(GhMessage) arabic = rumor(2, to, noon_today(), "مرحبا بالعالم", NULL);
+  g_autoptr(GhMessage) latin = rumor(2, to, noon_today(), "hello **world**", NULL);
+  g_autoptr(GhMessage) neutral = rumor(2, to, noon_today(), "12345 🙂", NULL);
+  GtkWindow *window = GTK_WINDOW(gtk_window_new());
+  gtk_window_set_default_size(window, 640, 240);
+  GhMessageRow *row = GH_MESSAGE_ROW(gh_message_row_new());
+  gtk_window_set_child(window, GTK_WIDGET(row));
+  GtkWidget *body = row_child(row, "body_label");
+
+  gh_message_row_set_message(row, arabic);
+  g_assert_cmpint(gtk_widget_get_direction(body), ==, GTK_TEXT_DIR_RTL);
+  gh_message_row_set_message(row, latin);
+  g_assert_cmpint(gtk_widget_get_direction(body), ==, GTK_TEXT_DIR_LTR);
+  gh_message_row_set_message(row, neutral);
+  g_assert_cmpint(gtk_widget_get_direction(body), ==, GTK_TEXT_DIR_RTL);
+  g_assert_cmpint(gtk_widget_get_direction(row_child(row, "sender_label")), !=, GTK_TEXT_DIR_NONE);
+
+  gh_message_row_set_message(row, arabic);
+  gtk_window_present(window);
+  spin_until(row_mapped, row);
+  drain_idle();
+  graphene_rect_t bubble, whole;
+  g_assert_true(gtk_widget_compute_bounds(row_child(row, "bubble"), GTK_WIDGET(window), &bubble));
+  g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(row), GTK_WIDGET(window), &whole));
+  /* Start edge is the right edge under RTL. */
+  g_assert_cmpfloat(bubble.origin.x + bubble.size.width, >, whole.origin.x + whole.size.width / 2);
+  gtk_window_destroy(window);
+  gtk_widget_set_default_direction(saved);
+}
+
+/* nostrc-gofet.10: icon-only and new alpha-6 actions have accessible names. */
+static void
+test_message_action_accessibility(void)
+{
+  const guint to[] = { 1, 0 };
+  g_autoptr(GhMessage) message = rumor(2, to, noon_today(), "plain", NULL);
+  GhMessageRow *row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
+  gh_message_row_set_message(row, message);
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "copy_button")),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy message");
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "reference_copy_button")),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy Nostr address");
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "react_button")),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Add Reaction");
+  for (guint i = 0; i < 2; i++) {
+    const char *name = i ? "quote_reference_button" : "repost_reference_button";
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, name)),
+      GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+      "Opens a preview before anything is published publicly");
+  }
+  GtkWidget *avatar = row_child(row, "avatar");
+  g_assert_true(gtk_test_accessible_has_property(GTK_ACCESSIBLE(avatar),
+                                                 GTK_ACCESSIBLE_PROPERTY_LABEL));
+  g_assert_true(gtk_test_accessible_has_property(GTK_ACCESSIBLE(avatar),
+                                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION));
+  g_object_unref(row);
+
+  GtkWidget *agent = g_object_ref_sink(GTK_WIDGET(gh_agent_event_row_new()));
+  g_assert_cmpint(gtk_accessible_get_accessible_role(GTK_ACCESSIBLE(agent)), ==,
+                  GTK_ACCESSIBLE_ROLE_GROUP);
+  g_assert_cmpint(gtk_accessible_get_accessible_role(
+                    GTK_ACCESSIBLE(gtk_widget_get_first_child(agent))), ==,
+                  GTK_ACCESSIBLE_ROLE_PRESENTATION);
+  g_object_unref(agent);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -3477,6 +3559,8 @@ main(int argc, char **argv)
   ADD("reaction-view-binding", test_reaction_view_binding);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/recycled-optional-subtrees", test_recycled_optional_subtrees);
+  g_test_add_func("/groundhog/conversation-view/rtl-message-row", test_rtl_message_row);
+  g_test_add_func("/groundhog/conversation-view/action-accessibility", test_message_action_accessibility);
   g_test_add_func("/groundhog/conversation-view/reaction-meta-layout", test_reaction_meta_layout);
   g_test_add_func("/groundhog/conversation-view/day-format", test_day_format);
   g_test_add_func("/groundhog/conversation-view/screenshots", test_screenshots);

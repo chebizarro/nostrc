@@ -1,6 +1,7 @@
 #include "gh-poll-card.h"
 
 #include <glib/gi18n.h>
+#include "gh-bidi.h"
 
 /* ---- GhPollCard --------------------------------------------------------- */
 
@@ -185,6 +186,7 @@ rebuild_options(GhPollCard *self)
   }
 
   gtk_label_set_text(self->question_label, gh_mls_poll_get_question(self->poll));
+  gh_bidi_label_follow_content(self->question_label);
 
   guint n_options = gh_mls_poll_get_n_options(self->poll);
   GtkCheckButton *radio_group = NULL;
@@ -318,6 +320,7 @@ gh_poll_card_init(GhPollCard *self)
   self->question_label = GTK_LABEL(gtk_label_new(NULL));
   gtk_label_set_wrap(self->question_label, TRUE);
   gtk_label_set_wrap_mode(self->question_label, PANGO_WRAP_WORD_CHAR);
+  /* Start edge of the question's own direction (gh-bidi.h). */
   gtk_label_set_xalign(self->question_label, 0);
   gtk_label_set_max_width_chars(self->question_label, 50);
   gtk_widget_add_css_class(GTK_WIDGET(self->question_label), "heading");
@@ -335,6 +338,7 @@ gh_poll_card_init(GhPollCard *self)
 
   /* Status label. */
   self->status_label = GTK_LABEL(gtk_label_new(NULL));
+  /* UI copy: start edge of the inherited (locale) direction. */
   gtk_label_set_xalign(self->status_label, 0);
   gtk_widget_add_css_class(GTK_WIDGET(self->status_label), "caption");
   gtk_widget_add_css_class(GTK_WIDGET(self->status_label), "dim-label");

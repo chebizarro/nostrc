@@ -1,4 +1,5 @@
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
+#include "gn-portable-i18n-private.h"
 
 struct _GnOgPreviewCard {
   GtkBox parent_instance;
@@ -33,6 +34,7 @@ static void gn_og_preview_card_class_init(GnOgPreviewCardClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   object_class->dispose = dispose;
   object_class->finalize = finalize;
+  gn_portable_gettext_domain();
   signals[LOAD_REQUESTED] = g_signal_new("load-requested", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[IMAGE_LOAD_REQUESTED] = g_signal_new("image-load-requested", G_TYPE_FROM_CLASS(klass),
@@ -46,8 +48,8 @@ static void gn_og_preview_card_init(GnOgPreviewCard *self) {
   self->site = gtk_label_new(NULL);
   self->status = gtk_label_new(NULL);
   self->image = gtk_picture_new();
-  self->load = gtk_button_new_with_label("Load preview");
-  self->load_image = gtk_button_new_with_label("Load image");
+  self->load = gtk_button_new_with_label(_("Load preview"));
+  self->load_image = gtk_button_new_with_label(_("Load image"));
   gtk_label_set_wrap(GTK_LABEL(self->description), TRUE);
   gtk_widget_set_halign(self->title, GTK_ALIGN_START);
   gtk_widget_set_halign(self->description, GTK_ALIGN_START);
@@ -124,7 +126,7 @@ void gn_og_preview_card_set_result_for_url(GnOgPreviewCard *self, const gchar *u
 }
 void gn_og_preview_card_set_error(GnOgPreviewCard *self, const gchar *message) {
   g_return_if_fail(GN_IS_OG_PREVIEW_CARD(self));
-  gtk_label_set_text(GTK_LABEL(self->status), message ? message : "Preview unavailable");
+  gtk_label_set_text(GTK_LABEL(self->status), message ? message : _("Preview unavailable"));
   gtk_widget_set_visible(self->load, self->url != NULL);
 }
 void gn_og_preview_card_set_error_for_url(GnOgPreviewCard *self, const gchar *url,

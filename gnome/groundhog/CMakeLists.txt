@@ -179,7 +179,8 @@ target_compile_options(groundhog-ui PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog-ui PUBLIC PkgConfig::GROUNDHOG_DEPS PkgConfig::GROUNDHOG_QRENCODE)
 
 add_executable(groundhog src/main.c)
-target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}"
+  GROUNDHOG_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-ui)
 
@@ -752,8 +753,20 @@ if (BUILD_TESTING AND TARGET groundhog-account AND EXISTS ${GROUNDHOG_GNOSTR_SCH
 endif()
 
 set(GROUNDHOG_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
+# nostrc-gofet.10: one "groundhog" gettext domain for C, Blueprint, desktop
+# entry and metainfo (po/POTFILES). The desktop entry is configured, then
+# merged with the catalogs; the metainfo is merged from the source template.
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in
-               ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop @ONLY)
+               ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop.in @ONLY)
+include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcGettext.cmake)
+nostrc_gettext(DOMAIN groundhog INSTALL REQUIRED
+  PODIR ${CMAKE_CURRENT_SOURCE_DIR}/po
+  SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}
+  DESKTOP ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop.in
+          ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop
+  METAINFO ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml
+           ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml)
+add_dependencies(groundhog groundhog-i18n)
 configure_file(${GROUNDHOG_DATA}/org.nostr.Groundhog.service.in
                ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.service @ONLY)
 
@@ -799,7 +812,7 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.service
         DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/services)
-install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
 install(FILES ${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml
         DESTINATION ${CMAKE_INSTALL_DATADIR}/glib-2.0/schemas)
@@ -877,7 +890,28 @@ if (BUILD_TESTING)
   if (APPSTREAMCLI)
     add_test(NAME groundhog-metainfo
       COMMAND ${APPSTREAMCLI} validate --no-net ${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml)
+    add_test(NAME groundhog-metainfo-merged
+      COMMAND ${APPSTREAMCLI} validate --no-net ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml)
   endif()
+  # nostrc-gofet.10: every C/Blueprint source with _()/N_()/C_()/ngettext
+  # strings must be listed in po/POTFILES, or extraction is silently partial.
+  add_test(NAME groundhog-potfiles
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/nostrc-check-potfiles.py
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES
+            "src/**/*.c" "src/**/*.h" "data/ui/*.blp")
+  # The generated pseudo-locale catalog loads and translates at runtime,
+  # through the same gh_i18n_init() that main() calls.
+  add_executable(test-groundhog-i18n tests/app/test_i18n.c)
+  target_include_directories(test-groundhog-i18n PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+  target_link_libraries(test-groundhog-i18n PRIVATE PkgConfig::GROUNDHOG_DEPS)
+  target_compile_options(test-groundhog-i18n PRIVATE -Wall -Wextra -Werror)
+  target_compile_definitions(test-groundhog-i18n PRIVATE
+    GH_TEST_LOCALEDIR="${groundhog_LOCALE_BUILD_DIR}"
+    GH_TEST_DESKTOP="${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop"
+    GH_TEST_METAINFO="${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml")
+  add_dependencies(test-groundhog-i18n groundhog-i18n)
+  add_test(NAME groundhog-i18n COMMAND test-groundhog-i18n)
+  set_tests_properties(groundhog-i18n PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 endif()
 
 # --- G01 privacy static ---
@@ -3427,6 +3461,14 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   if (NOT APPLE AND NOT WIN32)
     install(TARGETS nostr_gtk_portable nostr_gobject
             LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog)
+    # The bundled portable widgets bring their "nostr-gtk" catalogs along;
+    # packages install only this directory, so ship them from here.
+    get_property(_gh_ngtk_locale GLOBAL PROPERTY NOSTRC_LOCALE_BUILD_DIR_nostr-gtk)
+    if (NOT _gh_ngtk_locale)
+      message(FATAL_ERROR "Groundhog bundles nostr-gtk portable widgets and needs their catalogs (install gettext)")
+    endif()
+    install(DIRECTORY ${_gh_ngtk_locale}/ DESTINATION ${CMAKE_INSTALL_LOCALEDIR}
+            FILES_MATCHING PATTERN "*.mo")
     file(RELATIVE_PATH _gh_portable_rel "${CMAKE_INSTALL_FULL_BINDIR}"
          "${CMAKE_INSTALL_FULL_LIBDIR}/groundhog")
     set_property(TARGET groundhog APPEND PROPERTY INSTALL_RPATH

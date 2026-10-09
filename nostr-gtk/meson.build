@@ -116,6 +116,7 @@ nostr_gtk_portable_sources = files(
   'src/gn-og-preview-card.c',
   'src/gn-media-viewer.c',
   'src/gn-nip34-issue-fields.c',
+  'src/gn-portable-i18n.c',
 )
 nostr_gtk_portable_headers = files(
   'include/nostr-gtk-1.0/content_renderer.h',
@@ -125,6 +126,7 @@ nostr_gtk_portable_headers = files(
   'include/nostr-gtk-1.0/gn-og-preview-card.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
 # ── Header files (public API) ───────────────────────────────────────
@@ -145,6 +147,7 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gn-og-preview-card.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
 # ── Include directories ───────────────────────────────────────────────────────
@@ -219,6 +222,7 @@ nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
                  nostr_lib],
   link_args: nostr_gtk_link_args,
   c_args: ['-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
+           '-DNOSTR_GTK_LOCALEDIR="@0@"'.format(get_option('prefix') / get_option('localedir')),
            '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6',
            '-DGTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
            '-DGTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6'],

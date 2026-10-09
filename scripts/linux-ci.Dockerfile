@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
     libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
-    desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
+    gettext locales desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
     blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
     # W27 voice messages (groundhog-ci.yml sanitizer job)
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
@@ -29,6 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
+# A real (non-C) UTF-8 locale: gettext ignores LANGUAGE under C and C.UTF-8,
+# so the en@pseudo catalog tests (nostrc-gofet.10) need one to run.
+RUN localedef -i en_US -f UTF-8 en_US.UTF-8
 # Fail the image build if partial runtime plugins would crash or disable voice.
 RUN for element in appsrc appsink decodebin audioconvert audioresample \
     scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \

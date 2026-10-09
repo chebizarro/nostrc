@@ -153,6 +153,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="repost_reference_button">
                 <property name="label" translatable="yes">Repost</property>
                 <property name="action-name">conversation.repost-reference</property>
+                <accessibility>
+                  <property name="description" translatable="yes">Opens a preview before anything is published publicly</property>
+                </accessibility>
                 <property name="action-target">''</property>
                 <style>
                   <class name="flat"/>
@@ -163,6 +166,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="GtkButton" id="quote_reference_button">
                 <property name="label" translatable="yes">Quote…</property>
                 <property name="action-name">conversation.quote-reference</property>
+                <accessibility>
+                  <property name="description" translatable="yes">Opens a preview before anything is published publicly</property>
+                </accessibility>
                 <property name="action-target">''</property>
                 <style>
                   <class name="flat"/>
@@ -247,6 +253,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="valign">3</property>
             <property name="action-name">conversation.add-reaction</property>
             <property name="tooltip-text" translatable="yes">React</property>
+            <accessibility>
+              <property name="label" translatable="yes">Add Reaction</property>
+            </accessibility>
             <style>
               <class name="flat"/>
               <class name="groundhog-react-button"/>

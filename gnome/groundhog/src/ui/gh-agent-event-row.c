@@ -52,6 +52,9 @@ static void
 gh_agent_event_row_class_init(GhAgentEventRowClass *klass)
 {
   G_OBJECT_CLASS(klass)->finalize = gh_agent_event_row_finalize;
+  /* A labelled group, so screen readers announce the summary label rather
+   * than skipping a generic box (nostrc-gofet.10). */
+  gtk_widget_class_set_accessible_role(GTK_WIDGET_CLASS(klass), GTK_ACCESSIBLE_ROLE_GROUP);
 }
 
 static void
@@ -66,7 +69,9 @@ gh_agent_event_row_init(GhAgentEventRow *self)
   gtk_box_set_spacing(GTK_BOX(self), 6);
   gtk_widget_add_css_class(GTK_WIDGET(self), "groundhog-timeline-event");
   gtk_widget_add_css_class(GTK_WIDGET(self), "groundhog-agent-event");
-  self->icon = GTK_IMAGE(gtk_image_new());
+  /* The icon repeats the event kind already in the summary: decorative. */
+  self->icon = GTK_IMAGE(g_object_new(GTK_TYPE_IMAGE, "accessible-role",
+                                      GTK_ACCESSIBLE_ROLE_PRESENTATION, NULL));
   gtk_image_set_pixel_size(self->icon, 12);
   gtk_box_append(GTK_BOX(self), GTK_WIDGET(self->icon));
   self->primary = GTK_LABEL(gtk_label_new(NULL));
