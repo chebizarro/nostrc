@@ -6,6 +6,7 @@
 #include "gh-delivery-indicator.h"
 
 #include "gh-web-content.h"
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 
 G_BEGIN_DECLS
 
@@ -139,6 +140,20 @@ gboolean gh_conversation_view_get_reference(GhConversationView *self, GhMessage 
                                            const gchar **uri, const gchar **label);
 const gchar *gh_conversation_view_get_preview_uri(GhConversationView *self,
                                                 GhMessage *message);
+/* The descriptor was parsed off the row-bind path. The source must answer from
+ * a verified local memory cache, without I/O or network access. NULL means
+ * unresolved; the returned summary is owned by the caller. */
+typedef gchar *(*GhReferenceSummaryFunc)(const GnNostrReference *reference,
+                                         gpointer user_data);
+void gh_conversation_view_set_reference_source(GhConversationView *self,
+                                                GhReferenceSummaryFunc summary,
+                                                gpointer user_data,
+                                                GDestroyNotify destroy);
+gchar *gh_conversation_view_dup_reference_summary(GhConversationView *self, GhMessage *message);
+gboolean gh_conversation_view_has_public_note_reference(GhConversationView *self,
+                                                       GhMessage *message);
+gboolean gh_conversation_view_can_find_references(GhConversationView *self);
+void gh_conversation_view_references_changed(GhConversationView *self);
 
 /* Scrolls to the newest message and sticks there. */
 void gh_conversation_view_scroll_to_latest(GhConversationView *self);

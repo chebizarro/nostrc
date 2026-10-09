@@ -52,6 +52,10 @@ struct _GhMessageRow {
   GtkLabel *reference_label;
   GtkButton *reference_copy_button;
   GtkButton *share_reference_button;
+  GtkButton *find_reference_button;
+  GtkBox *public_actions;
+  GtkButton *repost_reference_button;
+  GtkButton *quote_reference_button;
   GtkButton *preview_button;
   GtkButton *image_button;
   GtkPicture *remote_image;
@@ -816,10 +820,21 @@ update_reference(GhMessageRow *self)
                                                          &uri, &label);
   gtk_widget_set_visible(GTK_WIDGET(self->reference_box), visible);
   if (!visible) return;
-  gtk_label_set_text(self->reference_label, label);
+  g_autofree gchar *summary = gh_conversation_view_dup_reference_summary(self->view,
+                                                                           self->message);
+  g_autofree gchar *display = summary ? g_strdup_printf("%s\n%s", label, summary) : NULL;
+  gtk_label_set_text(self->reference_label, display ? display : label);
+  gboolean public_note = gh_conversation_view_has_public_note_reference(self->view,
+                                                                        self->message);
+ gtk_widget_set_visible(GTK_WIDGET(self->find_reference_button),
+     public_note && !summary && gh_conversation_view_can_find_references(self->view));
+ gtk_widget_set_visible(GTK_WIDGET(self->public_actions), public_note && summary != NULL);
+  const gchar *id = gh_message_get_rumor_id(self->message);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->reference_copy_button), "s", uri);
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->share_reference_button), "s",
-                                   gh_message_get_rumor_id(self->message));
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->share_reference_button), "s", id);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->find_reference_button), "s", id);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->repost_reference_button), "s", id);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->quote_reference_button), "s", id);
 }
 
 static void
@@ -1212,7 +1227,7 @@ on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
 static void
 on_render_changed(GhMessageRow *self, const gchar *id)
 {
-  if (self->message && g_strcmp0(gh_message_get_rumor_id(self->message), id) == 0) {
+  if (self->message && (!id || g_strcmp0(gh_message_get_rumor_id(self->message), id) == 0)) {
     refresh_body_markup(self);
     refresh_preview_uri(self);
     update_preview(self);
@@ -1625,6 +1640,10 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, share_reference_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, find_reference_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, public_actions);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, repost_reference_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, quote_reference_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);

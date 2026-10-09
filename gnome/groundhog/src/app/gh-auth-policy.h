@@ -23,6 +23,7 @@ G_BEGIN_DECLS
  *   SELF_WRAP             ACCOUNT    the self-copy, or a note to self, to the own 10050
  *   GROUP                 ACCOUNT    a NIP-29 group relay
  *   MLS_ROUTING           EPHEMERAL  MLS kind-445 routing relays
+ *   PUBLIC_POST           EPHEMERAL  public repost/quote on own NIP-65 write relays
  *
  * Rules (§4.4):
  *  - R1: the account signs a kind-22242 event only for OWN_INBOX_READ,
@@ -70,6 +71,7 @@ typedef enum {
   GH_AUTH_PURPOSE_SELF_WRAP,
   GH_AUTH_PURPOSE_GROUP,
   GH_AUTH_PURPOSE_MLS_ROUTING,
+  GH_AUTH_PURPOSE_PUBLIC_POST,
   GH_AUTH_N_PURPOSES
 } GhAuthPurpose;
 

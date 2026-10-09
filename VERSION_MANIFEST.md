@@ -34,7 +34,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
-| B2 Groundhog content UX (nostrc-gofet.7): safe cached Markdown, offline reference cards, consent-gated OG artwork/viewer, avatar menu and copy/share actions. | groundhog | 0.12.0 | No further bump: folded into unreleased alpha 6; public repost/quote publishing remains open under nostrc-2yqk3. |
+| B2 public repost and quote authoring (nostrc-2yqk3): encrypted local public-note cache, explicit discovery, exact public-post review and relay publishing. | groundhog | 0.12.0 | No further bump: additive UI and internal store schema migration are folded into unreleased alpha 6; no installed Groundhog API changed. |
+| B2 Groundhog content UX (nostrc-gofet.7): safe cached Markdown, offline reference cards, consent-gated OG artwork/viewer, avatar menu and copy/share actions. | groundhog | 0.12.0 | No further bump: folded into unreleased alpha 6. |
 | B2 descriptor correction (nostrc-gofet.7): parsed NIP-18 repost and quote targets now carry a canonical NIP-21 URI and a kind-6 target is known to be kind 1. | nostr-gtk | 1.1.1 | PATCH: backward-compatible descriptor completion for offline cards and sharing. |
 | B1 portable core (nostrc-gofet.6): installed app-independent library and new Markdown, NIP-21/18, OG, viewer and issue-field APIs | nostr-gtk | 1.1.0 | MINOR from 1.0.1: additive public API and package target; legacy `nostr_gtk` symbols remain available. |
 | Same: Gnostr compatibility adapters and fixtures | gnostr | 0.1.0 | No further bump: changes are internal to the already-declared, unreleased 0.1.0; public APIs and wire/storage formats are unchanged. |

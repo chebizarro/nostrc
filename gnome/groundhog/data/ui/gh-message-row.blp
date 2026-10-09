@@ -136,6 +136,31 @@ template $GhMessageRow: Widget {
       action-target: "''";
       styles ["flat"]
     }
+
+    Button find_reference_button {
+      label: _("Find on Relays…");
+      halign: start;
+      action-name: "conversation.find-reference";
+      action-target: "''";
+      styles ["flat"]
+    }
+
+    Box public_actions {
+      spacing: 6;
+      visible: false;
+      Button repost_reference_button {
+        label: _("Repost");
+        action-name: "conversation.repost-reference";
+        action-target: "''";
+        styles ["flat"]
+      }
+      Button quote_reference_button {
+        label: _("Quote…");
+        action-name: "conversation.quote-reference";
+        action-target: "''";
+        styles ["flat"]
+      }
+    }
   }
 
   // Remote-image controls and content are inserted only when needed.
