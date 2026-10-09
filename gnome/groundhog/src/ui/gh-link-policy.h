@@ -2,6 +2,7 @@
 #define GH_LINK_POLICY_H
 
 #include <glib.h>
+#include <nostr-gtk-1.0/gn-markdown.h>
 
 G_BEGIN_DECLS
 
@@ -47,6 +48,15 @@ gchar *gh_link_policy_to_markup(const gchar *text);
 /* Like the above, but valid nostr:npub mentions show cached display names;
  * mentions of @account_pubkey are bold. The original URI remains the link. */
 gchar *gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_pubkey);
+
+/* Formats bounded portable Markdown tokens without fetching or embedding
+ * markup from the message. A Markdown label is never itself a link: its
+ * literal target is shown separately and only linked if this policy accepts
+ * that raw address. The document can be parsed off the UI thread. */
+gchar *gh_link_policy_format_markdown(const GnMarkdownDocument *document,
+                                      const gchar *account_pubkey);
+gchar *gh_link_policy_to_markdown_markup(const gchar *text,
+                                         const gchar *account_pubkey);
 
 typedef enum {
   GH_LINK_ACTION_REFUSE,  /* not an address Groundhog opens */

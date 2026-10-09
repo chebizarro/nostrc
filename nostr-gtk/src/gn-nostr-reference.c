@@ -154,11 +154,12 @@ GnNostrRepostDescriptor *gn_nostr_repost_descriptor_parse(const gchar *event_jso
   }
   if (!target) return NULL;
   GnNostrRepostDescriptor *d = g_new0(GnNostrRepostDescriptor, 1);
+  char *encoded = NULL;
   d->source_kind = kind;
   d->quote = kind == 1;
   d->target = g_new0(GnNostrReference, 1);
   d->target->type = address ? GN_NOSTR_REFERENCE_ADDRESS : GN_NOSTR_REFERENCE_EVENT;
-  d->target->kind = -1;
+  d->target->kind = kind == 6 ? 1 : -1;
   if (address) {
     g_autofree gchar *coordinate = address_from_tag(target);
     if (!coordinate) goto fail;
@@ -170,7 +171,7 @@ GnNostrRepostDescriptor *gn_nostr_repost_descriptor_parse(const gchar *event_jso
     if (!hex64(target)) goto fail;
     d->target->id = g_ascii_strdown(target, -1);
     if (hex64(author)) d->target->author = g_ascii_strdown(author, -1);
-    if (kind_tag) {
+    if (kind == 16 && kind_tag) {
       char *end = NULL;
       gint64 k = g_ascii_strtoll(kind_tag, &end, 10);
       if (*end == '\0' && k > 0 && k <= G_MAXINT) d->target->kind = (gint)k;
@@ -198,8 +199,28 @@ GnNostrRepostDescriptor *gn_nostr_repost_descriptor_parse(const gchar *event_jso
       }
     }
   }
+  /* Descriptor consumers need a canonical shareable NIP-21 URI, not only
+   * the raw e/a tag value. Include the verified author when one was supplied;
+   * relay hints remain inert. */
+  if (address) {
+    NostrEntityPointer pointer = { .identifier = d->target->id,
+      .public_key = d->target->author, .kind = d->target->kind,
+      .relays = d->target->relay_hints,
+      .relays_count = d->target->relay_hints ? g_strv_length(d->target->relay_hints) : 0 };
+    if (nostr_nip19_encode_naddr(&pointer, &encoded)) goto fail;
+  } else {
+    NostrEventPointer pointer = { .id = d->target->id,
+      .author = d->target->author,
+      .kind = d->target->kind > 0 ? d->target->kind : 0,
+      .relays = d->target->relay_hints,
+      .relays_count = d->target->relay_hints ? g_strv_length(d->target->relay_hints) : 0 };
+    if (nostr_nip19_encode_nevent(&pointer, &encoded)) goto fail;
+  }
+  d->target->uri = g_strdup_printf("nostr:%s", encoded);
+  free(encoded);
   return d;
 fail:
+  free(encoded);
   gn_nostr_repost_descriptor_free(d);
   return NULL;
 }

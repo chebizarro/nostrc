@@ -1,5 +1,6 @@
 #include "gh-web-content.h"
 #include "gh-metadata-strip.h"
+#include "gh-link-policy.h"
 #include <libxml/HTMLparser.h>
 #include <string.h>
 
@@ -14,7 +15,8 @@ G_DEFINE_FINAL_TYPE(GhWebContent, gh_web_content, G_TYPE_OBJECT)
 const gchar *
 gh_web_content_setting(GhWebKind kind)
 {
-  static const gchar *keys[] = { "link-previews", "load-remote-images", "load-profile-pictures" };
+  static const gchar *keys[] = { "link-previews", "load-remote-images", "load-profile-pictures",
+                                 "load-remote-images" };
   g_return_val_if_fail(kind < GH_WEB_N_KINDS, NULL);
   return keys[kind];
 }
@@ -25,6 +27,7 @@ gh_web_result_free(GhWebResult *result)
   if (!result) return;
   g_free(result->title);
   g_free(result->description);
+  g_free(result->image_url);
   g_clear_object(&result->texture);
   g_free(result);
 }
@@ -85,6 +88,13 @@ parse_result(GBytes *bytes, GhWebKind kind, GError **error)
           xmlChar *property = xmlGetProp(node, BAD_CAST "property");
           if (!property) property = xmlGetProp(node, BAD_CAST "name");
           xmlChar *value = xmlGetProp(node, BAD_CAST "content");
+          if (property && value && !xmlStrcasecmp(property, BAD_CAST "og:image")) {
+            g_autofree gchar *candidate = bounded_text(value);
+            if (candidate && gh_link_policy_can_preview(candidate)) {
+              g_free(result->image_url);
+              result->image_url = g_steal_pointer(&candidate);
+            }
+          }
           gchar **dest = property && !xmlStrcasecmp(property, BAD_CAST "og:title")
             ? &result->title : property && (!xmlStrcasecmp(property, BAD_CAST "og:description") ||
                                             !xmlStrcasecmp(property, BAD_CAST "description"))

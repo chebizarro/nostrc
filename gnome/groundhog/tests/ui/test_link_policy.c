@@ -261,6 +261,37 @@ test_mention_display_names(void)
   gh_display_name_set_resolver(NULL, NULL);
 }
 
+static void
+test_markdown_safe_links(void)
+{
+  g_autofree gchar *markup = gh_link_policy_to_markdown_markup(
+    "# <b>Heading</b>\n**strong** *em* `https://code.example`\n"
+    "[trusted site](https://evil.example/path?a=1&b=2)\n"
+    "[unsafe](javascript:alert(1))", NULL);
+  g_assert_nonnull(strstr(markup, "<b>&lt;b&gt;Heading&lt;/b&gt;</b>"));
+  g_assert_nonnull(strstr(markup, "<b>strong</b> <i>em</i>"));
+  g_assert_nonnull(strstr(markup, "<tt>https://code.example</tt>"));
+  g_assert_null(strstr(markup, "href=\"https://code.example\""));
+  g_assert_nonnull(strstr(markup, "trusted site ("));
+  g_assert_nonnull(strstr(markup, "href=\"https://evil.example/path?a=1&amp;b=2\""));
+  g_assert_null(strstr(markup, ">trusted site</a>"));
+  g_assert_nonnull(strstr(markup, "unsafe (javascript:alert(1))"));
+  g_assert_null(strstr(markup, "href=\"javascript:"));
+}
+
+static void
+test_markdown_bounded_invalid_utf8(void)
+{
+  const gchar invalid[] = { 'H', 'i', ' ', (gchar)0xff, 0 };
+  g_autofree gchar *markup = gh_link_policy_to_markdown_markup(invalid, NULL);
+  g_assert_true(g_utf8_validate(markup, -1, NULL));
+  g_assert_nonnull(strstr(markup, "Hi "));
+  g_autofree gchar *long_text = g_strnfill(GN_MARKDOWN_MAX_INPUT_BYTES + 200, 'a');
+  g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(long_text, -1);
+  g_assert_true(document->truncated);
+  g_assert_cmpuint(strlen(document->source), <=, GN_MARKDOWN_MAX_INPUT_BYTES);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -273,5 +304,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/link-policy/nostr-uris", test_nostr_uris);
   g_test_add_func("/groundhog/link-policy/preview-eligibility", test_preview_eligibility);
   g_test_add_func("/groundhog/link-policy/mention-display-names", test_mention_display_names);
+  g_test_add_func("/groundhog/link-policy/markdown-safe-links", test_markdown_safe_links);
+  g_test_add_func("/groundhog/link-policy/markdown-bounded-invalid-utf8",
+                  test_markdown_bounded_invalid_utf8);
   return g_test_run();
 }

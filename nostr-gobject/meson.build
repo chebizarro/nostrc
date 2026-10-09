@@ -1,5 +1,5 @@
 project('nostr-gobject', 'c',
-  version: '2.2.1',
+  version: '2.2.2',
   license: 'MIT',
   meson_version: '>= 0.59.0',
   default_options: [

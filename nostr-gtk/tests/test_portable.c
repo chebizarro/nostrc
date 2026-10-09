@@ -57,6 +57,8 @@ static void references(void) {
   g_assert_nonnull(parsed);
   g_assert_cmpint(parsed->source_kind, ==, 6);
   g_assert_cmpstr(parsed->target->id, ==, r.id);
+  g_assert_true(g_str_has_prefix(parsed->target->uri, "nostr:nevent1"));
+  g_assert_cmpint(parsed->target->kind, ==, 1);
   g_autoptr(GnNostrRepostDescriptor) q = gn_nostr_repost_descriptor_parse(quote, FALSE);
   g_assert_nonnull(q);
   g_assert_true(q->quote);
@@ -92,6 +94,7 @@ static void references(void) {
     gn_nostr_repost_descriptor_parse(address_repost, FALSE);
   g_assert_nonnull(address_parsed);
   g_assert_cmpstr(address_parsed->target->id, ==, "article");
+  g_assert_true(g_str_has_prefix(address_parsed->target->uri, "nostr:naddr1"));
 }
 
 static guint loads, image_loads, viewer_loads;

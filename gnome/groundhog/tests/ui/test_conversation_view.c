@@ -20,6 +20,8 @@
 #include "gh-conversation-list.h"
 #include "gh-conversation-open-probe-private.h"
 #include "gh-window.h"
+#include "gh-shell.h"
+#include "gh-composer.h"
 
 #include "nostrc-test-gdk-frame.h"
 #include "gh-conversation-private.h"
@@ -32,6 +34,8 @@
 #include "gh-timeline-row.h"
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
+#include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include "gh-reaction-store.h"
 #include "gh-reaction-picker.h"
 
@@ -949,6 +953,98 @@ test_file_message(Fixture *f, gconstpointer data)
 
 /* ---- links and previews (PT-2 render side, PT-3, D13) ---------------------------------- */
 
+static void
+test_markdown_copy_identity(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(),
+                              "**Hello** [site](https://example.com/x)");
+  GhConversation *conversation = room_of(f->store, message);
+  show(f, conversation, 700, 600);
+  GhMessageRow *row = row_for(f->view, message);
+  GtkLabel *body = row_child(row, "body_label");
+  g_assert_nonnull(strstr(gtk_label_get_label(body), "<b>Hello</b>"));
+  g_assert_nonnull(strstr(gtk_label_get_text(body),
+                          "site (https://example.com/x)"));
+  GtkWidget *copy = row_child(row, "copy_button");
+  g_assert_true(shown(copy));
+  click(copy);
+  g_assert_cmpstr(f->copied, ==, gtk_label_get_text(body));
+  g_free(f->copied);
+  f->copied = NULL;
+  g_autofree gchar *old_id = g_strdup(gh_message_get_rumor_id(message));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.copy-message", "s", old_id);
+  g_assert_null(f->copied);
+}
+
+static void
+test_reference_card(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *uri = "nostr:note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), uri);
+  g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
+  g_assert_nonnull(reference);
+  reference->kind = 1;
+  g_autofree gchar *repost = gn_nostr_build_repost_template(reference, NULL);
+  g_assert_nonnull(repost);
+  GhMessage *repost_message = add_dm(f->store, 2, 1, noon_today() + 1, repost);
+  g_assert_cmpstr(gh_message_get_content(repost_message), ==, repost);
+  g_autoptr(GnNostrRepostDescriptor) parsed_repost =
+    gn_nostr_repost_descriptor_parse(repost, FALSE);
+  g_assert_nonnull(parsed_repost);
+  GhConversation *conversation = room_of(f->store, message);
+  show(f, conversation, 700, 600);
+  GhMessageRow *row = row_for(f->view, message);
+  const gchar *cached_uri = NULL;
+  const gchar *label = NULL;
+  g_assert_true(gh_conversation_view_get_reference(f->view, message, &cached_uri, &label));
+  g_assert_cmpstr(cached_uri, ==, uri);
+  g_assert_nonnull(strstr(label, "Nostr note"));
+  g_assert_true(shown(row_child(row, "reference_box")));
+  g_assert_true(shown(row_child(row, "share_reference_button")));
+  const gchar *repost_label = NULL;
+  g_assert_true(gh_conversation_view_get_reference(f->view, repost_message,
+                                                     NULL, &repost_label));
+  g_assert_nonnull(strstr(repost_label, "Reposted Nostr note"));
+  g_assert_true(shown(row_child(row_for(f->view, repost_message), "reference_box")));
+  g_assert_cmpuint(f->fetches, ==, 0);
+}
+
+static void
+test_share_reference(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const gchar *uri = "nostr:note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), uri);
+  GhConversation *conversation = room_of(f->store, message);
+  GhWindow *window = gh_window_new(NULL);
+  gh_conversation_list_attach(window, f->store, NULL);
+  GhContentPage *content = gh_window_get_content(window);
+  GhConversationView *view = GH_CONVERSATION_VIEW(gh_content_page_get_view(content));
+  GhComposer *composer = gh_content_page_get_composer(content);
+  g_assert_true(GH_IS_CONVERSATION_VIEW(view));
+  gh_conversation_view_set_conversation(view, conversation);
+  gh_composer_set_text(composer, "hello");
+  gtk_widget_activate_action(GTK_WIDGET(view), "conversation.share-reference", "s",
+                             gh_message_get_rumor_id(message));
+  GtkTextBuffer *buffer = gtk_text_view_get_buffer(gh_composer_get_text_view(composer));
+  GtkTextIter start, end;
+  gtk_text_buffer_get_bounds(buffer, &start, &end);
+  g_autofree gchar *draft = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+  g_autofree gchar *expected = g_strdup_printf("hello %s", uri);
+  g_assert_cmpstr(draft, ==, expected);
+  g_assert_true(GH_IS_CONVERSATION_VIEW(view));
+  gh_conversation_view_set_conversation(view, NULL);
+  gtk_widget_activate_action(GTK_WIDGET(view), "conversation.share-reference", "s",
+                             gh_message_get_rumor_id(message));
+  gtk_text_buffer_get_bounds(buffer, &start, &end);
+  g_autofree gchar *unchanged = gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
+  g_assert_cmpstr(unchanged, ==, expected);
+  gtk_window_destroy(GTK_WINDOW(window));
+}
+
 /* On screen: libadwaita 1.5 ignores a close before the dialog is mapped. */
 static gboolean
 dialog_presented(gpointer dialog)
@@ -1173,9 +1269,12 @@ test_link_previews(Fixture *f, gconstpointer data)
   answer_fetch(f, "Second Story", "What happened next");
   StateWait loaded = { f, second, GH_LINK_PREVIEW_LOADED };
   spin_until(state_is, &loaded);
-  g_assert_true(shown(row_child(row, "preview_title")));
-  g_assert_cmpstr(text_of(row_child(row, "preview_title")), ==, "Second Story");
-  g_assert_cmpstr(text_of(row_child(row, "preview_text")), ==, "What happened next");
+  GtkWidget *card = row_child(row, "og_card");
+  g_assert_true(shown(card));
+  GtkWidget *card_title = gtk_widget_get_first_child(card);
+  GtkWidget *card_description = gtk_widget_get_next_sibling(card_title);
+  g_assert_cmpstr(text_of(card_title), ==, "Second Story");
+  g_assert_cmpstr(text_of(card_description), ==, "What happened next");
   g_assert_false(shown(button));
 
   /* Allowed now: a tap fetches without asking; a failure can be retried. */
@@ -1391,6 +1490,18 @@ test_web_consent(Fixture *f, gconstpointer data)
     const gchar *title = NULL;
     gh_conversation_view_get_link_preview(f->view, message, &title, NULL);
     g_assert_cmpstr(title, ==, "Local story");
+    g_assert_cmpstr(gh_conversation_view_get_og_image_uri(f->view, message), ==,
+                    "https://127.0.0.1:1/not-fetched");
+    /* Metadata never fetches artwork; an explicit artwork action asks for
+     * separate consent, and Cancel sends no second request. */
+    GnOgPreviewCard *card = GN_OG_PREVIEW_CARD(
+      row_child(row_for(f->view, message), "og_card"));
+    g_assert_true(GN_IS_OG_PREVIEW_CARD(card));
+    gn_og_preview_card_request_image(card);
+    spin_until(dialog_presented, dialog);
+    g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 1);
+    g_signal_emit_by_name(dialog, "response", "preview-cancel");
+    close_dialog(ADW_DIALOG(dialog));
   }
   /* Revocation clears results and consent. A pending request cannot restore
    * the old result after its callback arrives, even in the same room. */
@@ -1455,10 +1566,14 @@ test_web_allow_covers_sender(Fixture *f, gconstpointer data)
   gh_conversation_view_set_picture_source(f->view, web_picture_uri, source);
   drain_idle();
   g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
-  GtkWidget *button = row_child(row_for(f->view, first), "picture_button");
+  /* No separate bubble button: only the visible run-end avatar offers the
+   * action, and creating its menu must not fetch the picture. */
+  g_assert_null(row_child(row_for(f->view, first), "picture_button"));
+  GhMessageRow *avatar_row = row_for(f->view, second);
+  gtk_widget_activate_action(GTK_WIDGET(avatar_row), "message.avatar-menu", NULL);
+  GtkWidget *button = row_child(avatar_row, "picture_menu_button");
   g_assert_true(shown(button));
-  /* The button is once per run (W33): the second message of the run has none. */
-  g_assert_false(shown(row_child(row_for(f->view, second), "picture_button")));
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 0);
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   click(button);
   spin_until(dialog_presented, dialog);
@@ -1469,8 +1584,10 @@ test_web_allow_covers_sender(Fixture *f, gconstpointer data)
   WebWait other = { f, second, GH_WEB_PICTURE };
   spin_until(web_loaded, &other);
   g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 1); /* shared, not refetched */
-  g_assert_false(shown(row_child(row_for(f->view, first), "picture_button")));
-  g_assert_false(shown(row_child(row_for(f->view, second), "picture_button")));
+  g_assert_null(row_child(row_for(f->view, first), "picture_button"));
+  g_assert_null(row_child(row_for(f->view, second), "picture_button"));
+  gtk_widget_activate_action(GTK_WIDGET(avatar_row), "message.avatar-menu", NULL);
+  g_assert_false(shown(row_child(avatar_row, "avatar_menu")));
   WebWait own = { f, mine, GH_WEB_PICTURE };
   g_assert_false(web_loaded(&own)); /* another sender: nothing loaded for it */
   gh_conversation_view_set_conversation(f->view, NULL);
@@ -1508,13 +1625,16 @@ test_failed_picture_has_no_row_error(Fixture *f, gconstpointer data)
   g_autoptr(GObject) source = g_object_new(test_picture_source_get_type(), NULL);
   g_object_set_data_full(source, "picture", g_strdup(uri), g_free);
   gh_conversation_view_set_picture_source(f->view, web_picture_uri, source);
-  GtkWidget *button = row_child(row_for(f->view, first), "picture_button");
+  GhMessageRow *avatar_row = row_for(f->view, second);
+  gtk_widget_activate_action(GTK_WIDGET(avatar_row), "message.avatar-menu", NULL);
+  GtkWidget *button = row_child(avatar_row, "picture_menu_button");
+  g_assert_true(shown(button));
   click(button);
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   spin_until(dialog_presented, dialog);
   g_signal_emit_by_name(dialog, "response", "preview-show");
   close_dialog(ADW_DIALOG(dialog));
-  PictureFailure failed = { f, first };
+  PictureFailure failed = { f, second };
   spin_until(picture_failed, &failed);
   drain_idle();
   g_assert_false(shown(row_child(row_for(f->view, first), "web_error")));
@@ -1749,10 +1869,18 @@ test_open_timing(Fixture *f, gconstpointer data)
     GhMessage *a_first = NULL, *b_first = NULL;
     gint64 base = noon_today() - 200000;
     for (guint i = 0; i < size; i++) {
-      g_autofree char *a_text = g_strdup_printf("A message %u, ordinary text with a few words to wrap%s", i,
-                                               i % 20 == 0 ? " https://example.com/a" : "");
-      g_autofree char *b_text = g_strdup_printf("B message %u, ordinary text with a few words to wrap %s", i,
-                                               i % 20 == 0 ? nprofile : "");
+      g_autoptr(GString) long_body = NULL;
+      if (size == 1000 && i % 50 == 0) {
+        long_body = g_string_sized_new(4300);
+        while (long_body->len <= 4300)
+          g_string_append(long_body, " a long message with ordinary words and punctuation.");
+      }
+      g_autofree char *a_text = g_strdup_printf("A message %u, **ordinary text** with a few words to wrap%s%s", i,
+                                               i % 20 == 0 ? " https://example.com/a" : "",
+                                               long_body ? long_body->str : "");
+      g_autofree char *b_text = g_strdup_printf("B message %u, _ordinary text_ with a few words to wrap %s%s", i,
+                                               i % 20 == 0 ? nprofile : "",
+                                               long_body ? long_body->str : "");
       GhMessage *a = add_dm(store, i % 2 ? 2 : 1, i % 2 ? 1 : 2,
                             base + 10000 + i * 60, a_text);
       GhMessage *b = add_dm(store, i % 2 ? 3 : 1, i % 2 ? 1 : 3,
@@ -3321,6 +3449,9 @@ main(int argc, char **argv)
   ADD("multi-party-senders", test_multi_party_senders);
   ADD("delivery-indicator", test_delivery_indicator);
   ADD("links", test_links);
+  ADD("markdown-copy-identity", test_markdown_copy_identity);
+  ADD("reference-card", test_reference_card);
+  ADD("share-reference", test_share_reference);
   ADD("link-previews", test_link_previews);
   ADD("sender-scoped-consent", test_sender_scoped_consent);
   ADD("file-message", test_file_message);
@@ -3334,8 +3465,9 @@ main(int argc, char **argv)
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);
   ADD("wide-is-not-compact", test_wide_is_not_compact);
-  for (guint kind = 0; kind < GH_WEB_N_KINDS; kind++) {
-    g_autofree gchar *path = g_strdup_printf("/groundhog/conversation-view/web-consent/%s", gh_web_content_setting(kind));
+  for (guint kind = 0; kind <= GH_WEB_IMAGE; kind++) {
+    g_autofree gchar *path = g_strdup_printf("/groundhog/conversation-view/web-consent/%u-%s", kind,
+                                         gh_web_content_setting(kind));
     g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);

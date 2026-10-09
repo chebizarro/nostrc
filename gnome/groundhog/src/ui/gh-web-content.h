@@ -3,11 +3,13 @@
 #include <gtk/gtk.h>
 #include "gh-net-http.h"
 G_BEGIN_DECLS
-typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_N_KINDS } GhWebKind;
+typedef enum { GH_WEB_PREVIEW, GH_WEB_IMAGE, GH_WEB_PICTURE, GH_WEB_OG_IMAGE,
+               GH_WEB_N_KINDS } GhWebKind;
 const gchar *gh_web_content_setting(GhWebKind kind);
 typedef struct {
   gchar *title;
   gchar *description;
+  gchar *image_url; /* inert HTTPS og:image; never fetched with the page */
   GdkTexture *texture;
 } GhWebResult;
 void gh_web_result_free(GhWebResult *result);

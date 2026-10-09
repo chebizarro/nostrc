@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
 set(NOSTR_GTK_MINOR_VERSION 1)
-set(NOSTR_GTK_MICRO_VERSION 0)
+set(NOSTR_GTK_MICRO_VERSION 1)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}

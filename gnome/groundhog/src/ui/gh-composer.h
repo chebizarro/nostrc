@@ -90,6 +90,9 @@ gchar *gh_composer_dup_text(GhComposer *self);
 /* Replaces the text (NULL: empty) without reporting a draft, and cancels a
  * pending report and any error. */
 void gh_composer_set_text(GhComposer *self, const gchar *text);
+/* Insert an explicit shared Nostr reference at the caret. This is a normal
+ * edit: it preserves existing draft text and reports draft-changed. */
+void gh_composer_insert_text(GhComposer *self, const gchar *text);
 /* Emits a pending "draft-changed" now; nothing when there is none. */
 void gh_composer_flush_draft(GhComposer *self);
 /* Whether an edit has not been reported by "draft-changed" yet. */
