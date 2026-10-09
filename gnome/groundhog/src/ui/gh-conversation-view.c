@@ -913,18 +913,24 @@ update_older(GhConversationView *self)
   if (!self->older_button)
     return;
   self->near_top = compute_near_top(self);
+  gboolean has_older = self->conversation &&
+                       gh_conversation_get_has_older(self->conversation);
+  gboolean partial = self->conversation && !has_older &&
+                     gh_conversation_get_history_partial(self->conversation);
   gboolean shown = self->conversation && !self->loading_older && self->near_top &&
-                   gh_conversation_get_has_older(self->conversation);
+                   (has_older || partial);
   gtk_widget_set_visible(GTK_WIDGET(self->older_button), shown);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "conversation.load-older",
-                                shown && self->load_older != NULL);
+                                shown && has_older && self->load_older != NULL);
   if (!shown)
     return;
   guint listed = gh_conversation_get_listed_unread(self->conversation, NULL);
   guint unread = gh_conversation_get_unread_count(self->conversation);
   guint older_unread = unread > listed ? unread - listed : 0;
   g_autofree gchar *label = NULL;
-  if (!self->load_older)
+  if (partial)
+    label = g_strdup(_("Some earlier messages may be unavailable"));
+  else if (!self->load_older)
     label = g_strdup(_("Earlier Messages Can't Be Shown"));
   else if (self->older_failed)
     label = g_strdup(_("Couldn't Load Earlier Messages"));
@@ -936,8 +942,9 @@ update_older(GhConversationView *self)
     label = g_strdup(_("Earlier Messages"));
   adw_button_content_set_label(self->older_content, label);
   gtk_widget_set_tooltip_text(GTK_WIDGET(self->older_button),
-                              self->older_failed ? _("Try again")
-                                                 : _("Load earlier messages"));
+                              partial ? _("The relay could not page through messages with the same timestamp")
+                                      : self->older_failed ? _("Try again")
+                                                           : _("Load earlier messages"));
 }
 
 static void
@@ -1342,6 +1349,10 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     g_signal_connect_object(conversation, "items-changed", G_CALLBACK(on_conversation_changed),
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::unread-count", G_CALLBACK(update_older),
+                            self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::has-older", G_CALLBACK(update_older),
+                            self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::history-partial", G_CALLBACK(update_older),
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::is-request", G_CALLBACK(on_request_changed),
                             self, G_CONNECT_SWAPPED);

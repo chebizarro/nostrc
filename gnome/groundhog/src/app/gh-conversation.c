@@ -55,6 +55,8 @@ struct _GhConversation {
   gint64 timer_changed_at;   /* when it last changed (0: never; nostrc-qp24.83) */
   /* Durable paging: stored messages before the floor are not loaded. */
   gboolean has_older;
+  gboolean remote_older;       /* NIP-29 relay history not yet complete */
+  gboolean history_partial;    /* an unpageable same-second boundary */
   gint64 floor_created_at;
   gchar *floor_id;
   gchar *fallback_title;     /* abbreviated npubs of the peers */
@@ -82,6 +84,8 @@ enum {
   PROP_TIMER_SECONDS,
   PROP_TIMER_CHANGED_AT,
   PROP_IS_DIRECT,
+  PROP_HAS_OLDER,
+  PROP_HISTORY_PARTIAL,
   N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -593,6 +597,7 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
   g_autofree gchar *old_preview = g_strdup(self->preview);
   gboolean was_request = gh_conversation_get_is_request(self);
+  gboolean had_older = gh_conversation_get_has_older(self);
 
   g_object_freeze_notify(G_OBJECT(self));
   for (guint i = 0; messages && i < messages->len; i++) {
@@ -626,6 +631,8 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   self->floor_id = state->has_older ? g_strdup(state->floor_id) : NULL;
   self->floor_created_at = state->has_older ? state->floor_created_at : 0;
   self->has_older = state->has_older;
+  if (had_older != gh_conversation_get_has_older(self))
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HAS_OLDER]);
   guint loaded = count_loaded_unread(self, FALSE, NULL);
   self->unread_older = state->unread > loaded ? state->unread - loaded : 0;
 
@@ -929,7 +936,36 @@ gboolean
 gh_conversation_get_has_older(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
-  return self->has_older;
+  return self->has_older || self->remote_older;
+}
+
+void
+gh_conversation_set_remote_older(GhConversation *self, gboolean remote_older)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  g_return_if_fail(self->backend == GH_CONVERSATION_BACKEND_NIP29);
+  gboolean before = gh_conversation_get_has_older(self);
+  self->remote_older = !!remote_older;
+  if (before != gh_conversation_get_has_older(self))
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HAS_OLDER]);
+}
+
+gboolean
+gh_conversation_get_history_partial(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  return self->history_partial;
+}
+
+void
+gh_conversation_set_history_partial(GhConversation *self, gboolean partial)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  g_return_if_fail(self->backend == GH_CONVERSATION_BACKEND_NIP29);
+  if (self->history_partial == !!partial)
+    return;
+  self->history_partial = !!partial;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HISTORY_PARTIAL]);
 }
 
 GhConversationBackend
@@ -992,6 +1028,12 @@ const gchar *
 gh_conversation_get_title(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
+  /* The account is the sole participant of a NIP-17 self-chat. Its purpose
+   * wins over a stale subject or cached contact name, including on restore. */
+  if (self->backend == GH_CONVERSATION_BACKEND_NIP17 && self->participants &&
+      self->participants[0] && !self->participants[1] &&
+      g_strcmp0(self->participants[0], self->account) == 0)
+    return _("Note to Self");
   /* A request's subject is whatever its sender chose: never its name. */
   gboolean request = gh_conversation_get_is_request(self);
   const gchar *subject = request ? NULL : gh_conversation_get_subject(self);
@@ -1102,6 +1144,12 @@ gh_conversation_get_property(GObject *object, guint id, GValue *value, GParamSpe
   case PROP_IS_DIRECT:
     g_value_set_boolean(value, gh_conversation_get_is_direct(self));
     break;
+  case PROP_HAS_OLDER:
+    g_value_set_boolean(value, gh_conversation_get_has_older(self));
+    break;
+  case PROP_HISTORY_PARTIAL:
+    g_value_set_boolean(value, self->history_partial);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
   }
@@ -1152,6 +1200,10 @@ gh_conversation_class_init(GhConversationClass *klass)
   props[PROP_UNREAD_COUNT] = g_param_spec_uint("unread-count", NULL, NULL,
     0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_PINNED] = g_param_spec_boolean("pinned", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_HAS_OLDER] = g_param_spec_boolean("has-older", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_HISTORY_PARTIAL] = g_param_spec_boolean("history-partial", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_TIMER_SECONDS] = g_param_spec_int64("timer-seconds", NULL, NULL,
     G_MININT64, G_MAXINT64, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);

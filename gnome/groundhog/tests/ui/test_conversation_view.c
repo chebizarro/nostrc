@@ -32,6 +32,7 @@
 #include "gh-delivery-indicator.h"
 #include "gh-message-row.h"
 #include "gh-reaction-store.h"
+#include "gh-reaction-picker.h"
 
 #include "nostr-event.h"
 #include "nostr-keys.h"
@@ -2895,6 +2896,81 @@ test_reaction_meta_layout(void)
   }
 }
 
+typedef struct {
+  guint calls;
+  GhMessage *target;
+  gchar *emoji;
+  gboolean add;
+} ReactCall;
+
+static void
+capture_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
+              gboolean add, gpointer data)
+{
+  ReactCall *call = data;
+  g_assert_cmpstr(gh_conversation_get_room_id(conversation), ==,
+                  gh_message_get_room_id(target));
+  call->calls++;
+  call->target = target;
+  g_free(call->emoji);
+  call->emoji = g_strdup(emoji);
+  call->add = add;
+}
+
+static void
+test_reaction_view_binding(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *target = add_dm(f->store, 2, 1, noon_today(), "react here");
+  GhConversation *conversation = room_of(f->store, target);
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+  g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(target),
+    "view-reaction", hex[2], "👍", now_seconds(), gh_message_get_room_id(target));
+  g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
+  gh_conversation_view_set_reaction_store(f->view, reactions);
+  ReactCall call = { 0 };
+  gh_conversation_view_set_reaction_func(f->view, capture_react, &call, NULL);
+  show(f, conversation, 640, 360);
+  GhMessageRow *row = row_for(f->view, target);
+
+  /* A known reaction must survive the initial message + summary bindings. */
+  GtkWidget *bar = row_child(row, "reaction_bar");
+  g_assert_nonnull(bar);
+  g_assert_true(shown(bar));
+  g_assert_true(shown(row_child(row, "meta_box")));
+  g_assert_cmpuint(chip_count(bar), ==, 1);
+
+  /* The button-to-picker-to-view action must preserve target and emoji. */
+  click(row_child(row, "react_button"));
+  g_autoptr(GPtrArray) pickers = g_ptr_array_new();
+  collect(GTK_WIDGET(row), GH_TYPE_REACTION_PICKER, pickers);
+  g_assert_cmpuint(pickers->len, ==, 1);
+  g_assert_true(gtk_widget_get_mapped(g_ptr_array_index(pickers, 0)));
+  g_signal_emit_by_name(g_ptr_array_index(pickers, 0), "emoji-picked", "❤️");
+  g_assert_cmpuint(call.calls, ==, 1);
+  g_assert_true(call.target == target);
+  g_assert_cmpstr(call.emoji, ==, "❤️");
+  g_assert_true(call.add);
+
+  g_assert_true(gh_reaction_store_remove(reactions, "view-reaction", NULL));
+  g_assert_null(row_child(row, "reaction_bar"));
+  g_autoptr(GhReaction) later = gh_reaction_new(gh_message_get_rumor_id(target),
+    "view-reaction-later", hex[2], "👍", now_seconds(), gh_message_get_room_id(target));
+  g_assert_true(gh_reaction_store_admit(reactions, later, NULL));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_set_conversation(f->view, conversation);
+  spin_until(rows_bound, f);
+  drain_idle();
+  row = row_for(f->view, target);
+  g_assert_cmpuint(chip_count(row_child(row, "reaction_bar")), ==, 1);
+  gh_conversation_view_set_reaction_store(f->view, NULL);
+  g_assert_null(row_child(row, "reaction_bar"));
+  gh_conversation_view_set_reaction_store(f->view, reactions);
+  g_assert_cmpuint(chip_count(row_child(row, "reaction_bar")), ==, 1);
+  g_clear_pointer(&call.emoji, g_free);
+}
+
 static guint
 widget_tree_count(GtkWidget *root)
 {
@@ -3115,6 +3191,7 @@ main(int argc, char **argv)
   ADD("failed-picture-has-no-row-error", test_failed_picture_has_no_row_error);
   ADD("open-timing", test_open_timing);
   ADD("recycled-scroll-directions", test_recycled_scroll_directions);
+  ADD("reaction-view-binding", test_reaction_view_binding);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/recycled-optional-subtrees", test_recycled_optional_subtrees);
   g_test_add_func("/groundhog/conversation-view/reaction-meta-layout", test_reaction_meta_layout);

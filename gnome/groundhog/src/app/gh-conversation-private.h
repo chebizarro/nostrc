@@ -24,6 +24,10 @@ GhConversation *gh_conversation_new_mls(const gchar *account, const gchar *room_
  * group's relay-signed name); NULL or "" clears. Notifies subject and title
  * when they change. */
 void gh_conversation_set_name(GhConversation *self, const gchar *name);
+/* Service-only: NIP-29 relay history remains requestable after local SQL
+ * pages are exhausted. Does not change the local durable-history floor. */
+void gh_conversation_set_remote_older(GhConversation *self, gboolean remote_older);
+void gh_conversation_set_history_partial(GhConversation *self, gboolean partial);
 /* Store-only: marks an MLS conversation as a direct message (two members,
  * no group name — the shape White Noise uses for DMs). Notifies "is-direct"
  * and "title" when the value changes. */
