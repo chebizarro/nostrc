@@ -19,8 +19,8 @@ G_BEGIN_DECLS
  * conversation model its room id is gh_message_mls_room_id() ("mls:" + the
  * hex id), so it can never equal a NIP-17 or NIP-29 room id.
  *
- * Messages. The decrypted kind-9 inner events (gh_message_new_from_mls())
- * are admitted with gh_store_admit() (T-admit: the inner event id, scoped
+ * Messages. Decrypted kind-9 and durable agent inner events
+ * (gh_message_new_from_mls()) are admitted with gh_store_admit() (T-admit: the inner event id, scoped
  * to its group, in `seen` ns GH_STORE_SEEN_MLS_MESSAGE and the message, in
  * one transaction; inside
  * the caller's transaction when there is one, so a received kind 445's

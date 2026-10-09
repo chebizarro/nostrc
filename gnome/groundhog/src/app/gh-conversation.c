@@ -1,6 +1,7 @@
 #include "gh-conversation-private.h"
 #include "gh-display-name.h"
 #include "gh-conversation-window.h"
+#include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
 
@@ -332,7 +333,8 @@ is_read(GhConversation *self, GhMessage *message)
 static gboolean
 is_unread(GhConversation *self, GhMessage *message)
 {
-  return !gh_message_is_self(message) && !is_read(self, message);
+  return !gh_agent_event_is_kind(gh_message_get_kind(message)) &&
+         !gh_message_is_self(message) && !is_read(self, message);
 }
 
 static gboolean
@@ -493,9 +495,10 @@ place_message(GhConversation *self, GhMessage *message)
   if (gh_message_get_subject(message) &&
       (!self->subject_source || gh_message_compare(message, self->subject_source) > 0))
     self->subject_source = message;
-  if (gh_message_is_self(message))
+  if (gh_message_is_self(message) &&
+      !gh_agent_event_is_kind(gh_message_get_kind(message)))
     self->has_own_message = TRUE;
-  if (position == self->messages->len - 1 &&
+  if (!gh_agent_event_is_kind(gh_message_get_kind(message)) &&
       (!self->latest_id || compare_place(message, self->latest_activity,
                                          self->latest_id) > 0)) {
     self->latest_activity = gh_message_get_created_at(message);
@@ -525,10 +528,11 @@ gh_conversation_insert(GhConversation *self, GhMessage *message, gboolean delive
                              GH_CONVERSATION_WINDOW_OPEN - 1));
   guint position = place_message(self, message);
   /* Replying implies having read what came before. */
-  if (gh_message_is_self(message))
+  if (gh_message_is_self(message) &&
+      !gh_agent_event_is_kind(gh_message_get_kind(message)))
     note_own(self, message, delivered);
   gboolean subject_changed = g_strcmp0(old_subject, gh_conversation_get_subject(self)) != 0;
-  gboolean newest = position == self->messages->len - 1;
+  gboolean newest = g_strcmp0(gh_message_get_rumor_id(message), self->latest_id) == 0;
 
   g_object_freeze_notify(G_OBJECT(self));
   g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
@@ -579,20 +583,21 @@ gh_conversation_remove(GhConversation *self, const gchar *rumor_id)
         self->subject_source = candidate;
     }
   }
-  gboolean newest = position == self->messages->len;
+  gboolean newest = g_strcmp0(gh_message_get_rumor_id(message), self->latest_id) == 0;
   if (newest && !self->has_newer) {
-    self->latest_activity = self->messages->len
-      ? gh_message_get_created_at(g_ptr_array_index(self->messages, self->messages->len - 1))
-      : 0;
+    GhMessage *latest = NULL;
+    for (guint i = self->messages->len; i-- > 0;) {
+      GhMessage *candidate = g_ptr_array_index(self->messages, i);
+      if (!gh_agent_event_is_kind(gh_message_get_kind(candidate))) {
+        latest = candidate;
+        break;
+      }
+    }
+    self->latest_activity = latest ? gh_message_get_created_at(latest) : 0;
     g_free(self->latest_id);
-    self->latest_id = self->messages->len
-      ? g_strdup(gh_message_get_rumor_id(g_ptr_array_index(self->messages,
-                                                           self->messages->len - 1))) : NULL;
-  }
-  if (newest && !self->has_newer) {
+    self->latest_id = latest ? g_strdup(gh_message_get_rumor_id(latest)) : NULL;
     g_free(self->preview);
-    self->preview = self->messages->len
-      ? preview_of(g_ptr_array_index(self->messages, self->messages->len - 1)) : NULL;
+    self->preview = latest ? preview_of(latest) : NULL;
   }
 
   g_object_freeze_notify(G_OBJECT(self));
@@ -917,15 +922,17 @@ gh_conversation_add_newer_history(GhConversation *self, GhMessage *message,
 {
   g_return_if_fail(GH_IS_CONVERSATION(self));
   g_return_if_fail(GH_IS_MESSAGE(message));
-  if (gh_message_is_self(message)) {
+  if (gh_message_is_self(message) &&
+      !gh_agent_event_is_kind(gh_message_get_kind(message))) {
     self->has_own_message = TRUE;
     if (note_own(self, message, delivered))
       self->unread_older = 0;
   } else if (is_unread(self, message)) {
     self->unread_older++;
   }
-  if (!self->latest_id || compare_place(message, self->latest_activity,
-                                        self->latest_id) > 0) {
+  if (!gh_agent_event_is_kind(gh_message_get_kind(message)) &&
+      (!self->latest_id || compare_place(message, self->latest_activity,
+                                        self->latest_id) > 0)) {
     if (gh_message_get_subject(message)) {
       g_free(self->stored_subject);
       self->stored_subject = g_strdup(gh_message_get_subject(message));
@@ -941,9 +948,11 @@ gh_conversation_add_newer_history(GhConversation *self, GhMessage *message,
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
   }
   gh_conversation_window_set_has_newer(self, TRUE);
-  if (self->newer_arrivals < G_MAXUINT)
-    self->newer_arrivals++;
-  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_NEWER_ARRIVALS]);
+  if (!gh_agent_event_is_kind(gh_message_get_kind(message))) {
+    if (self->newer_arrivals < G_MAXUINT)
+      self->newer_arrivals++;
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_NEWER_ARRIVALS]);
+  }
   update_unread(self);
 }
 
@@ -1001,10 +1010,7 @@ gint64
 gh_conversation_get_last_activity(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
-  if (self->messages->len == 0)
-    return MAX(self->opened_at, self->latest_activity);
-  return MAX(self->latest_activity, gh_message_get_created_at(
-    g_ptr_array_index(self->messages, self->messages->len - 1)));
+  return MAX(self->opened_at, self->latest_activity);
 }
 
 guint

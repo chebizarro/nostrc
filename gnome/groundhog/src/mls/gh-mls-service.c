@@ -1,5 +1,6 @@
 #include "gh-mls-service.h"
 
+#include "gh-agent-event.h"
 #include "gh-auth-policy.h"
 #include "gh-conversation-private.h"
 #include "gh-identity.h"
@@ -2732,9 +2733,16 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     if (message && g_strcmp0(gh_message_get_sender(message),
                              result.app_msg.sender_pubkey_hex) != 0)
       g_clear_object(&message);
-    /* Its files: display data, and the epoch libmarmot authenticated for it
-     * (never a tag), which opening them needs. */
-    if (message)
+    /* A malformed experimental activity body is not a timeline item. Keep
+     * the authenticated MLS ratchet step, but do not admit that payload. */
+    if (message && gh_message_get_kind(message) != GH_AGENT_STREAM_START_KIND &&
+        !gh_agent_event_is_visible(gh_message_get_kind(message),
+                                    gh_message_get_content(message)))
+      g_clear_object(&message);
+    /* Kind 9 (including complete stream finals and incomplete stream-ish
+     * tags) is an ordinary chat message. The 1200–1202 agent inner kinds
+     * are stored by the same authenticated path; only kind 9 has files. */
+    if (message && gh_message_get_kind(message) == GH_MESSAGE_MLS_KIND)
       gh_mls_imeta_describe(message, group->gid_hex, TRUE, result.app_msg.epoch);
     if (message && account_matches_model(self)) {
       if (url)

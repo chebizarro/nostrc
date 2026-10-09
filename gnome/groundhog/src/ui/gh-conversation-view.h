@@ -33,6 +33,8 @@ const gchar *gh_timeline_item_get_day_label(GhTimelineItem *self);
  * seconds). Readable properties "is-message", "is-event" and "event-text".
  * NULL and 0 for a message. */
 const gchar *gh_timeline_item_get_event_text(GhTimelineItem *self);
+/* A valid kind-1201/1202 Marmot activity row, never a bubble. */
+gboolean gh_timeline_item_get_is_agent(GhTimelineItem *self);
 gint64 gh_timeline_item_get_event_at(GhTimelineItem *self);
 
 /* W26 slice B (nostrc-191r): the live reaction summary for this message,

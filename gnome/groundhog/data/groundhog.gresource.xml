@@ -2,6 +2,7 @@
 <gresources>
   <gresource prefix="/org/nostr/Groundhog">
     <file>style.css</file>
+    <file>agents/connectors.ini</file>
     <!-- The app icon (About, the window icon): the hicolor layout under icons/. -->
     <file>icons/512x512/apps/org.nostr.Groundhog.png</file>
     <file>icons/256x256/apps/org.nostr.Groundhog.png</file>

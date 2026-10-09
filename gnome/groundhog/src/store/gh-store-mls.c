@@ -1,4 +1,5 @@
 #include "gh-store-mls.h"
+#include "gh-agent-event.h"
 
 #include "gh-conversation-private.h"
 #include "gh-mls-imeta.h"
@@ -178,7 +179,7 @@ message_row(GhStore *store, gint64 conversation_id, const gchar *message_id, gin
   *row = 0;
   sqlite3_stmt *stmt = prepare(store,
     "SELECT id FROM messages WHERE conversation_id = ?1 AND backend_msg_id = ?2 "
-    "AND kind IN (?3, ?4, ?5)",
+    "AND kind IN (?3, ?4, ?5, 1200, 1201, 1202)",
     error);
   if (!stmt)
     return FALSE;
@@ -247,7 +248,7 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
     .body = gh_message_get_content(message),
     .raw_json = gh_message_get_rumor_json(message),
     .expires_at = gh_message_get_expires_at(message),
-    .unread = !own,
+    .unread = !own && !gh_agent_event_is_kind(gh_message_get_kind(message)),
     .request_state = GH_STORE_REQUEST_ACCEPTED,
     .has_mls_epoch = has_epoch,
     .mls_epoch = epoch,
@@ -266,6 +267,8 @@ delegate_admit(gpointer data, GhMessage *message, const gchar *wrap_id,
       !message_row(store, conversation_id, m.backend_msg_id, &row, error))
     goto fail;
   if (found && row > 0) {
+    if (!gh_agent_event_is_visible(m.kind, m.body))
+      commit->hidden = TRUE;
     GhStoreReadMove move = !own ? GH_STORE_READ_RECOUNT
                            : !wrap_id ? GH_STORE_READ_LISTED
                            : result == GH_STORE_ADMIT_STORED ? GH_STORE_READ_REPLY
@@ -366,7 +369,7 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
   }
   stmt = prepare(store,
     "SELECT created_at, backend_msg_id, raw_json, expires_at, seq, mls_epoch FROM messages "
-    "WHERE conversation_id = ?1 AND kind IN (?6, ?7, ?8) "
+    "WHERE conversation_id = ?1 AND kind IN (?6, ?7, ?8, 1201, 1202) "
     "AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
@@ -410,13 +413,19 @@ restore_room(GhStoreMls *self, GhConversationStore *model, gint64 conversation_i
                   "verification: %s", bad->message);
         continue;
       }
+      if (!gh_agent_event_is_visible(gh_message_get_kind(message),
+                                     gh_message_get_content(message))) {
+        g_object_unref(message);
+        continue;
+      }
       gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 4), 0));
       /* Its files again, with the epoch stored when it arrived (W25); a row
        * from before has none, and its files show but can't be opened. */
       gboolean has_epoch = sqlite3_column_type(stmt, 5) == SQLITE_INTEGER &&
                            sqlite3_column_int64(stmt, 5) >= 0;
-      gh_mls_imeta_describe(message, group_hex, has_epoch,
-                            has_epoch ? (guint64)sqlite3_column_int64(stmt, 5) : 0);
+      if (gh_message_get_kind(message) == GH_MESSAGE_MLS_KIND)
+        gh_mls_imeta_describe(message, group_hex, has_epoch,
+                              has_epoch ? (guint64)sqlite3_column_int64(stmt, 5) : 0);
       /* Withdrawn when the group resolved a conflict (nostrc-xrza). */
       gboolean withdrawn = FALSE;
       if (!gh_store_mls_is_withdrawn(store, group_hex, gh_message_get_rumor_id(message),
@@ -506,7 +515,7 @@ gh_store_mls_attach(GhStoreMls *self, GhConversationStore *model, guint page_siz
   sqlite3_stmt *stmt = prepare(store,
     "SELECT id, backend_key FROM conversations c WHERE backend = 3 AND "
     "EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id "
-      "AND m.kind IN (?1, ?2, ?3)) "
+      "AND m.kind IN (?1, ?2, ?3, 1201, 1202)) "
     "ORDER BY last_activity DESC, backend_key", error);
   if (!stmt)
     return FALSE;
@@ -604,7 +613,7 @@ gh_store_mls_load_newer(GhStoreMls *self, GhConversation *conversation, guint li
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   sqlite3_stmt *stmt = prepare(store,
     "SELECT raw_json, expires_at, seq, mls_epoch FROM messages "
-    "WHERE conversation_id = ?1 AND kind IN (?4, ?5, ?6) "
+    "WHERE conversation_id = ?1 AND kind IN (?4, ?5, ?6, 1201, 1202) "
     "AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
     "ORDER BY created_at ASC, backend_msg_id ASC", error);
   if (!stmt)
@@ -638,11 +647,17 @@ gh_store_mls_load_newer(GhStoreMls *self, GhConversation *conversation, guint li
                 bad ? bad->message : "invalid message");
       continue;
     }
+    if (!gh_agent_event_is_visible(gh_message_get_kind(message),
+                                   gh_message_get_content(message))) {
+      g_object_unref(message);
+      continue;
+    }
     gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 2), 0));
     gboolean has_epoch = sqlite3_column_type(stmt, 3) == SQLITE_INTEGER &&
                          sqlite3_column_int64(stmt, 3) >= 0;
-    gh_mls_imeta_describe(message, hex, has_epoch,
-                          has_epoch ? (guint64)sqlite3_column_int64(stmt, 3) : 0);
+    if (gh_message_get_kind(message) == GH_MESSAGE_MLS_KIND)
+      gh_mls_imeta_describe(message, hex, has_epoch,
+                             has_epoch ? (guint64)sqlite3_column_int64(stmt, 3) : 0);
     gboolean withdrawn = FALSE;
     if (!gh_store_mls_is_withdrawn(self->store, hex, gh_message_get_rumor_id(message),
                                    &withdrawn, error)) {

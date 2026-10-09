@@ -1,6 +1,7 @@
 #include "gh-preferences-dialog.h"
 #include "gh-qr-code.h"
 #include "gh-diagnostics.h"
+#include "gh-agents-page.h"
 
 #include <glib/gi18n.h>
 #include <string.h>
@@ -99,6 +100,7 @@ struct _GhPreferencesDialog {
   GPtrArray *bindings;     /* Binding */
   gulong settings_changed;
   gchar *account_npub;
+  AdwPreferencesPage *agents_page;
   GhPreferencesForgetAsyncFunc forget_async;
   GhPreferencesForgetFinishFunc forget_finish;
   GObject *forget_target;
@@ -1469,7 +1471,18 @@ gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
   }
   if (!active)
     adw_avatar_set_custom_image(self->account_avatar, NULL);
+  if (self->agents_page)
+    gh_agents_page_set_account(self->agents_page, self->account_npub);
   sync_delete(self);
+}
+
+void
+gh_preferences_dialog_set_agent_start_func(GhPreferencesDialog *self,
+                                                GhAgentsStartFunc start, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_PREFERENCES_DIALOG(self));
+  if (!self->disposed)
+    gh_agents_page_set_start_func(self->agents_page, start, user_data);
 }
 
 void
@@ -1829,6 +1842,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(clear_diagnostics_dialog);
   BIND(delete_group);
   BIND(delete_all_dialog);
+  BIND(agents_page);
   BIND(published_relays_group);
   BIND(inbox_relays_group);
   BIND(inbox_relays_list);
@@ -1845,6 +1859,7 @@ static void
 gh_preferences_dialog_init(GhPreferencesDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  gh_agents_page_populate(self->agents_page);
   self->key_widgets = g_hash_table_new(g_str_hash, g_str_equal);
   self->bindings = g_ptr_array_new_with_free_func(binding_free);
   g_signal_connect(self->delete_all_dialog, "response", G_CALLBACK(on_delete_all_response),

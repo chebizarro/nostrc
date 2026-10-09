@@ -150,6 +150,16 @@ UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggesti
 
 # (rule, path relative to GROUNDHOG_DIR, exact reported match) -> justification.
 EXCEPTIONS = {
+    # F1: Connector guides are copied into user-approved installation prompts
+    # or opened only by a deliberate Docs click. Groundhog never fetches them.
+    ("url-literal", "data/agents/connectors.ini", "https://github.com/marmot-protocol/mdk/blob/master/crates/agent-connector/README.md"):
+        "agent connector documentation; copied or opened only on user action",
+    ("url-literal", "data/agents/connectors.ini", "https://github.com/marmot-protocol/mdk/blob/master/integrations/codex/marmot/README.md"):
+        "Codex connector documentation; copied or opened only on user action",
+    ("url-literal", "data/agents/connectors.ini", "https://github.com/marmot-protocol/mdk/blob/master/integrations/claude/marmot/README.md"):
+        "Claude Code connector documentation; copied or opened only on user action",
+    ("url-literal", "data/agents/connectors.ini", "https://github.com/marmot-protocol/mdk/blob/master/integrations/pi/marmot/README.md"):
+        "Pi connector documentation; copied or opened only on user action",
     # WI-5: Amber's four documented signer-control relay defaults are shown
     # in the editable pairing dialog before any connection. Only the user's
     # Add Remote Signer action starts a fresh pairing listener; these are not
@@ -455,7 +465,7 @@ def includes(view):
 
 def check_url_literals(tree):
     found = []
-    for rel in tree.files("src", "data/ui"):
+    for rel in tree.files("src", "data/ui", "data/agents"):
         _, keep, _ = tree.views(rel)
         found += find_all("url-literal", rel, keep, URL_RE,
                           lambda url: f"URL literal {url!r}: every destination must come from a "

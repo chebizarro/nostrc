@@ -13,6 +13,7 @@
 #include "gh-reaction-store.h"
 #include "gh-picture-cache.h"
 #include "gh-conversation-open-probe-private.h"
+#include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
 
@@ -34,6 +35,7 @@
 struct _GhTimelineItem {
   GObject parent_instance;
   GhMessage *message;  /* NULL for a local event */
+  gboolean agent;      /* durable MLS activity, not a chat bubble */
   gchar *event_text;   /* a local event (nostrc-qp24.83), else NULL */
   gint64 event_at;
   gint day;        /* local calendar day of created_at, as yyyymmdd */
@@ -53,6 +55,7 @@ enum {
   ITEM_PROP_DAY_LABEL,
   ITEM_PROP_IS_MESSAGE,
   ITEM_PROP_IS_EVENT,
+  ITEM_PROP_IS_AGENT,
   ITEM_PROP_EVENT_TEXT,
   ITEM_PROP_REACTION_SUMMARY,
   ITEM_N_PROPS
@@ -127,6 +130,7 @@ timeline_item_new(GhMessage *message, GDateTime *now)
 {
   GhTimelineItem *self = g_object_new(GH_TYPE_TIMELINE_ITEM, NULL);
   self->message = g_object_ref(message);
+  self->agent = gh_agent_event_is_kind(gh_message_get_kind(message));
   return timeline_item_init_time(self, now);
 }
 
@@ -231,6 +235,13 @@ gh_timeline_item_get_event_text(GhTimelineItem *self)
   return self->event_text;
 }
 
+gboolean
+gh_timeline_item_get_is_agent(GhTimelineItem *self)
+{
+  g_return_val_if_fail(GH_IS_TIMELINE_ITEM(self), FALSE);
+  return self->agent;
+}
+
 gint64
 gh_timeline_item_get_event_at(GhTimelineItem *self)
 {
@@ -275,10 +286,13 @@ gh_timeline_item_get_property(GObject *object, guint id, GValue *value, GParamSp
     g_value_set_string(value, gh_timeline_item_get_day_label(self));
     break;
   case ITEM_PROP_IS_MESSAGE:
-    g_value_set_boolean(value, self->message != NULL);
+    g_value_set_boolean(value, self->message != NULL && !self->agent);
     break;
   case ITEM_PROP_IS_EVENT:
     g_value_set_boolean(value, self->message == NULL);
+    break;
+  case ITEM_PROP_IS_AGENT:
+    g_value_set_boolean(value, self->agent);
     break;
   case ITEM_PROP_EVENT_TEXT:
     g_value_set_string(value, self->event_text);
@@ -321,6 +335,7 @@ gh_timeline_item_class_init(GhTimelineItemClass *klass)
   item_props[ITEM_PROP_IS_MESSAGE] = g_param_spec_boolean("is-message", NULL, NULL, TRUE,
                                                           constant);
   item_props[ITEM_PROP_IS_EVENT] = g_param_spec_boolean("is-event", NULL, NULL, FALSE, constant);
+  item_props[ITEM_PROP_IS_AGENT] = g_param_spec_boolean("is-agent", NULL, NULL, FALSE, constant);
   item_props[ITEM_PROP_EVENT_TEXT] = g_param_spec_string("event-text", NULL, NULL, NULL,
                                                          constant);
   item_props[ITEM_PROP_REACTION_SUMMARY] = g_param_spec_object("reaction-summary", NULL, NULL,
@@ -427,7 +442,7 @@ gh_timeline_section_model_init(GtkSectionModelInterface *iface)
 static gboolean
 same_run(GhTimelineItem *a, GhTimelineItem *b)
 {
-  if (!a->message || !b->message)
+  if (!a->message || !b->message || a->agent || b->agent)
     return FALSE; /* an event stands alone */
   gint64 gap = gh_message_get_created_at(b->message) - gh_message_get_created_at(a->message);
   return a->day == b->day && gap >= 0 && gap <= RUN_GAP_SECONDS &&
@@ -474,7 +489,7 @@ timeline_splice(GhTimeline *self, guint at, guint position, guint removed, guint
       continue;
     g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
     GhTimelineItem *item = timeline_item_new(message, now);
-    if (self->reactions && message) {
+    if (self->reactions && message && !item->agent) {
       const gchar *rumor_id = gh_message_get_rumor_id(message);
       if (rumor_id)
         timeline_item_set_reaction_summary(item,
@@ -541,7 +556,10 @@ on_source_changed(GhTimeline *self, guint position, guint removed, guint added,
     g_array_remove_range(self->visible, position, removed);
   for (guint i = 0; i < added; i++) {
     g_autoptr(GhMessage) message = g_list_model_get_item(self->source, position + i);
-    gboolean visible = !message || gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND;
+    gboolean visible = !message ||
+      (gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND &&
+       gh_agent_event_is_visible(gh_message_get_kind(message),
+                                 gh_message_get_content(message)));
     g_array_insert_vals(self->visible, position + i, &visible, 1);
   }
   if (!self->event) {

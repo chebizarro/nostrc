@@ -351,3 +351,7 @@ flowbox.groundhog-recipient-chips > flowboxchild {
 .groundhog-attachment-preview {
   border-radius: 12px;
 }
+
+.groundhog-agent-event label {
+  font-style: italic;
+}

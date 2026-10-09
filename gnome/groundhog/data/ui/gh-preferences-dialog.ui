@@ -681,6 +681,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
       </object>
     </child>
+    <child>
+      <object class="AdwPreferencesPage" id="agents_page">
+        <property name="name">agents</property>
+        <property name="title" translatable="yes">AI Agents</property>
+        <property name="icon-name">computer-symbolic</property>
+      </object>
+    </child>
   </template>
   <object class="AdwAlertDialog" id="clear_diagnostics_dialog">
     <property name="heading" translatable="yes">Clear Local Diagnostics?</property>

@@ -65,6 +65,7 @@
 #if GROUNDHOG_HAVE_NEW_MESSAGE
 #include "gh-new-message-dialog.h"
 #include "gh-add-contact-dialog.h"
+#include "gh-recipient.h"
 #endif
 
 /* G20b: NIP-29 relay groups (gh-group-ui.h). */
@@ -181,6 +182,9 @@ struct _GhAppServices {
   GSimpleAction *about_action;
   GSimpleAction *network_settings_action;
   GhPreferencesDialog *preferences_dialog; /* weak: the one that is open */
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_MLS_UI
+  GCancellable *agent_chat_cancel; /* one agent DM creation at a time */
+#endif
 #endif
   guint started; /* services initialized, from the top of the table */
 };
@@ -1633,6 +1637,119 @@ key_package_sync_attach(GhAppServices *self, GhPreferencesDialog *dialog)
 }
 #endif
 
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_MLS_UI
+static void app_create_marmot_dm(const gchar *pubkey, GCancellable *cancellable,
+                                 GAsyncReadyCallback callback, gpointer user_data,
+                                 gpointer config_data);
+
+typedef struct {
+  GtkApplication *app;
+  GhAccountController *accounts;
+  GCancellable *cancellable;
+  GWeakRef window;
+  GWeakRef page;
+  gchar *account;
+  gchar *npub;
+  gulong changed_id;
+} AgentChatStart;
+
+static void
+agent_chat_account_changed(GhAccountController *accounts, AgentChatStart *ctx)
+{
+  if (g_strcmp0(ctx->npub, gh_account_controller_get_active_npub(accounts)) != 0)
+    g_cancellable_cancel(ctx->cancellable);
+}
+
+static void
+agent_chat_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  AgentChatStart *ctx = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhConversation) conversation = g_task_propagate_pointer(G_TASK(result), &error);
+  GhAppServices *owner = g_object_get_data(G_OBJECT(ctx->app), "gh-agent-chat-owner");
+  gboolean current = owner && owner->agent_chat_cancel == ctx->cancellable;
+  g_autoptr(GtkWindow) window = g_weak_ref_get(&ctx->window);
+  g_autoptr(AdwPreferencesPage) page = g_weak_ref_get(&ctx->page);
+  if (current)
+    g_clear_object(&owner->agent_chat_cancel);
+  if (page)
+    gh_agents_page_set_start_busy(page, FALSE);
+  if (current && window && GH_IS_WINDOW(window) &&
+      !g_cancellable_is_cancelled(ctx->cancellable) &&
+      g_strcmp0(ctx->account, gh_conversation_store_get_account(owner->conversations)) == 0) {
+    if (conversation) {
+      gh_window_open_item(GH_WINDOW(window), conversation);
+      if (page && owner->preferences_dialog &&
+          gtk_widget_is_ancestor(GTK_WIDGET(page),
+                                 GTK_WIDGET(owner->preferences_dialog)))
+        adw_dialog_close(ADW_DIALOG(owner->preferences_dialog));
+    } else {
+      AdwDialog *notice = adw_alert_dialog_new(_("Could Not Start Agent Chat"),
+        error ? error->message : _("Marmot could not create the chat."));
+      adw_alert_dialog_add_response(ADW_ALERT_DIALOG(notice), "close", _("Close"));
+      adw_dialog_present(notice, GTK_WIDGET(window));
+    }
+  }
+  g_signal_handler_disconnect(ctx->accounts, ctx->changed_id);
+  g_clear_object(&ctx->accounts);
+  g_clear_object(&ctx->app);
+  g_clear_object(&ctx->cancellable);
+  g_weak_ref_clear(&ctx->window);
+  g_weak_ref_clear(&ctx->page);
+  g_free(ctx->account);
+  g_free(ctx->npub);
+  g_free(ctx);
+}
+
+static void
+start_agent_chat(const gchar *raw, GtkWidget *from, gpointer data)
+{
+  GhAppServices *self = data;
+  AdwPreferencesPage *page = ADW_PREFERENCES_PAGE(
+    gtk_widget_get_ancestor(from, ADW_TYPE_PREFERENCES_PAGE));
+  g_autoptr(GhRecipientInput) input = gh_recipient_input_parse(raw);
+  const gchar *account = self->conversations ?
+    gh_conversation_store_get_account(self->conversations) : NULL;
+  const gchar *problem = NULL;
+  if (!account)
+    problem = _("Select an account before starting a chat.");
+  else if (!input || input->kind != GH_RECIPIENT_INPUT_PUBKEY)
+    problem = _("Paste a valid agent npub, nprofile, or nostr: QR text. Never paste a secret key.");
+  else if (g_strcmp0(account, input->pubkey) == 0)
+    problem = _("Use Note to Self for your own account.");
+  else if (self->agent_chat_cancel)
+    problem = _("An agent chat is already being created. Wait for it to finish.");
+  if (problem) {
+    AdwDialog *notice = adw_alert_dialog_new(_("Cannot Start Agent Chat"), problem);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(notice), "close", _("Close"));
+    adw_dialog_present(notice, from);
+    if (page)
+      gh_agents_page_set_start_busy(page, FALSE);
+    return;
+  }
+  GtkRoot *root = gtk_widget_get_root(from);
+  if (!GH_IS_WINDOW(root)) {
+    if (page)
+      gh_agents_page_set_start_busy(page, FALSE);
+    return;
+  }
+  AgentChatStart *ctx = g_new0(AgentChatStart, 1);
+  ctx->app = g_object_ref(self->app);
+  ctx->accounts = g_object_ref(self->accounts);
+  ctx->cancellable = g_cancellable_new();
+  ctx->account = g_strdup(account);
+  ctx->npub = g_strdup(gh_account_controller_get_active_npub(self->accounts));
+  g_weak_ref_init(&ctx->window, G_OBJECT(root));
+  g_weak_ref_init(&ctx->page, page ? G_OBJECT(page) : NULL);
+  ctx->changed_id = g_signal_connect(ctx->accounts, "changed",
+                                     G_CALLBACK(agent_chat_account_changed), ctx);
+  self->agent_chat_cancel = g_object_ref(ctx->cancellable);
+  g_object_set_data(G_OBJECT(self->app), "gh-agent-chat-owner", self);
+  app_create_marmot_dm(input->pubkey, ctx->cancellable, agent_chat_done, ctx, self);
+}
+#endif
+
 /* page: the page to show (NULL: the dialog's first). */
 static void
 present_preferences(GhAppServices *self, const gchar *page)
@@ -1654,6 +1771,9 @@ present_preferences(GhAppServices *self, const gchar *page)
   g_set_weak_pointer(&self->preferences_dialog, dialog);
   g_object_set_data(G_OBJECT(dialog), "gh-app-services", self);
   g_object_set_data(G_OBJECT(dialog), "gh-accounts", self->accounts);
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_MLS_UI
+  gh_preferences_dialog_set_agent_start_func(dialog, start_agent_chat, self);
+#endif
   sync_preferences_account(self->accounts, dialog);
   g_signal_connect_object(self->accounts, "changed", G_CALLBACK(sync_preferences_account),
                           dialog, 0);
@@ -1852,9 +1972,9 @@ directory_claimed_nip05(gpointer data, const gchar *pubkey)
  * NIP-17 (gh-new-message-dialog.c marmot_dm_done()). */
 
 typedef struct {
-  GhAppServices *services;   /* borrowed through the window's lifetime */
+  GhConversationStore *conversations; /* held across account switches/shutdown */
   GTask *task;
-  gchar *pubkey;
+  gchar *account;
 } MarmotDmCreate;
 
 static void
@@ -1866,12 +1986,16 @@ marmot_dm_create_done(GObject *source, GAsyncResult *result, gpointer data)
   GhMlsGroup *group = gh_mls_service_create_group_finish(mls, result, &error);
   if (!group) {
     g_task_return_error(ctx->task, g_steal_pointer(&error));
+  } else if (g_strcmp0(ctx->account,
+                        gh_conversation_store_get_account(ctx->conversations)) != 0) {
+    g_task_return_new_error(ctx->task, G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                            "The account changed while creating a Marmot DM");
   } else {
     /* The group_list_room() call inside create_group already ensured a
      * GhConversation with is_direct=TRUE in the store. Look it up. */
     const gchar *room_id = gh_mls_group_get_room_id(group);
     GhConversation *conv = room_id
-      ? gh_conversation_store_lookup(ctx->services->conversations, room_id)
+      ? gh_conversation_store_lookup(ctx->conversations, room_id)
       : NULL;
     if (conv)
       g_task_return_pointer(ctx->task, g_object_ref(conv), g_object_unref);
@@ -1880,7 +2004,8 @@ marmot_dm_create_done(GObject *source, GAsyncResult *result, gpointer data)
                               "Marmot DM group created but no conversation found");
   }
   g_object_unref(ctx->task);
-  g_free(ctx->pubkey);
+  g_clear_object(&ctx->conversations);
+  g_free(ctx->account);
   g_free(ctx);
 }
 
@@ -1911,9 +2036,9 @@ app_create_marmot_dm(const gchar *pubkey, GCancellable *cancellable,
   }
 
   MarmotDmCreate *ctx = g_new0(MarmotDmCreate, 1);
-  ctx->services = self;
+  ctx->conversations = g_object_ref(self->conversations);
   ctx->task = task;
-  ctx->pubkey = g_strdup(pubkey);
+  ctx->account = g_strdup(gh_conversation_store_get_account(self->conversations));
 
   const gchar *invitees[] = { pubkey, NULL };
   /* WN DM shape: empty name, no description, the account's write relays,
@@ -2117,6 +2242,12 @@ gh_app_services_free(GhAppServices *self)
 {
   if (!self)
     return;
+#if GROUNDHOG_HAVE_NEW_MESSAGE && GROUNDHOG_HAVE_MLS_UI
+  if (self->agent_chat_cancel)
+    g_cancellable_cancel(self->agent_chat_cancel);
+  g_object_set_data(G_OBJECT(self->app), "gh-agent-chat-owner", NULL);
+  g_clear_object(&self->agent_chat_cancel);
+#endif
   while (self->started > 0) {
     const GhAppService *service = &services[--self->started];
     if (service->teardown)
