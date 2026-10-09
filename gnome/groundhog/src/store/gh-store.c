@@ -2692,7 +2692,8 @@ gh_store_read_state_update(GhStore *store, gint64 conversation_id, GhStoreReadMo
   }
   ok = ok && read_exec(store,
     "UPDATE conversations SET unread_count = (SELECT count(*) FROM messages m WHERE "
-    "m.conversation_id = conversations.id AND m.direction = 0 AND NOT "
+    "m.conversation_id = conversations.id AND m.direction = 0 "
+    "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) AND NOT "
     READ_BY("m", "conversations") ") WHERE id = ?1", conversation_id, 0, 0, error);
   if (!ok || !out_unread)
     return ok;
@@ -3008,6 +3009,9 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   gboolean found = FALSE;
   gint64 conversation_id = 0;
   gint64 forgotten_before = 0;
+  /* Agent stream/activity chrome is durable, but not sidebar activity. */
+  gint64 activity_at = m->backend == GH_STORE_BACKEND_MLS &&
+    m->kind >= 1200 && m->kind <= 1202 ? 0 : m->created_at;
 
   if (m->wrap_id && !seen_insert(store, GH_STORE_SEEN_WRAP, m->wrap_id, now, NULL, error))
     return FALSE;
@@ -3032,7 +3036,7 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
     *result = GH_STORE_ADMIT_FORGOTTEN;
     return TRUE;
   }
-  if (!found && !conversation_insert(store, m->backend, m->backend_key, now, m->created_at,
+  if (!found && !conversation_insert(store, m->backend, m->backend_key, now, activity_at,
                                      m->request_state, &conversation_id, error))
     return FALSE;
   STORE_CUT("admit", "conversation");
@@ -3082,7 +3086,7 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   BIND(sqlite3_bind_int64(stmt, 1,
                           m->unread && m->direction == GH_STORE_DIRECTION_IN ? 1 : 0));
   BIND(bind_text(stmt, 2, m->title));
-  BIND(sqlite3_bind_int64(stmt, 3, m->created_at));
+  BIND(sqlite3_bind_int64(stmt, 3, activity_at));
   BIND(sqlite3_bind_int64(stmt, 4, conversation_id));
   if (!store_step_done(store, stmt, "Updating a conversation", error))
     goto fail;
@@ -4021,6 +4025,7 @@ purge_read_state(GhStore *store, gint64 now, gint64 cutoff, GError **error)
            "UPDATE conversations SET unread_count = ("
            "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
            "AND m.direction = 0 AND NOT " PURGE_DOOMED("m") " "
+           "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) "
            "AND NOT " READ_BY("m", "conversations") ") "
            "WHERE id IN (SELECT d.conversation_id FROM messages d WHERE " PURGE_DOOMED("d") ") "
            "AND (last_read_msg IS NULL OR "
@@ -4089,7 +4094,9 @@ gh_store_purge_full(GhStore *store, gint64 retention_cutoff, GPtrArray **out_pur
       !gh_store_exec(store,
         "UPDATE conversations SET unread_count = MIN(unread_count, "
         "(SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
-        "AND m.direction = 0)) WHERE unread_count > 0", error))
+        "AND m.direction = 0 "
+        "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202))) "
+        "WHERE unread_count > 0", error))
     goto fail;
   STORE_CUT("purge", "conversations");
   if (!store_query_int64(store,

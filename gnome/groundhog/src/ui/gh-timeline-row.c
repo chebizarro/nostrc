@@ -1,5 +1,6 @@
 #include "gh-timeline-row.h"
 #include "gh-conversation-row.h"
+#include "gh-agent-event-row.h"
 
 #include <glib/gi18n.h>
 
@@ -8,6 +9,7 @@ struct _GhTimelineRow {
   GhMessageRow *message_row;
   GtkWidget *event_box;
   GtkLabel *event_label;
+  GhAgentEventRow *agent_row;
   GhTimelineItem *item;
   gchar *summary;
 };
@@ -23,7 +25,9 @@ update_summary(GhTimelineRow *self)
 {
   const gchar *event = self->item ? gh_timeline_item_get_event_text(self->item) : NULL;
   g_autofree gchar *summary = NULL;
-  if (event) {
+  if (self->item && gh_timeline_item_get_is_agent(self->item)) {
+    summary = g_strdup(gh_agent_event_row_get_summary(self->agent_row));
+  } else if (event) {
     g_autofree gchar *time =
       gh_conversation_row_format_time_of_day(gh_timeline_item_get_event_at(self->item));
     /* TRANSLATORS: a local timeline event ("You set messages to disappear
@@ -65,9 +69,13 @@ gh_timeline_row_set_item(GhTimelineRow *self, GhTimelineItem *item)
   /* Template bindings have no ordering guarantee: the message setter clears
    * the old summary for recycled rows. Reapply the new item's summary after
    * the message binding has run, including on the initial bind. */
-  gh_message_row_set_message(self->message_row, item ? gh_timeline_item_get_message(item) : NULL);
+  gboolean agent = item && gh_timeline_item_get_is_agent(item);
+  gh_message_row_set_message(self->message_row,
+    item && !agent ? gh_timeline_item_get_message(item) : NULL);
   gh_message_row_set_reaction_summary(self->message_row,
-    item ? gh_timeline_item_get_reaction_summary(item) : NULL);
+    item && !agent ? gh_timeline_item_get_reaction_summary(item) : NULL);
+  gh_agent_event_row_set_message(self->agent_row,
+    agent ? gh_timeline_item_get_message(item) : NULL);
   update_summary(self);
 }
 
@@ -165,6 +173,8 @@ static void
 gh_timeline_row_init(GhTimelineRow *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->agent_row = GH_AGENT_EVENT_ROW(gh_agent_event_row_new());
+  gtk_widget_set_parent(GTK_WIDGET(self->agent_row), GTK_WIDGET(self));
   self->summary = g_strdup("");
   g_signal_connect_swapped(self->message_row, "notify::summary", G_CALLBACK(update_summary),
                            self);

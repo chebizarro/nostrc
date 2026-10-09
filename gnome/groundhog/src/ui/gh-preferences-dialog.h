@@ -2,6 +2,7 @@
 #define GH_PREFERENCES_DIALOG_H
 
 #include <adwaita.h>
+#include "gh-agents-page.h"
 
 G_BEGIN_DECLS
 
@@ -141,6 +142,8 @@ gboolean gh_preferences_dialog_get_key_available(GhPreferencesDialog *self, cons
 
 /* The active account; npub NULL when there is none. label is its display
  * name, or NULL to show a shortened npub. */
+void gh_preferences_dialog_set_agent_start_func(GhPreferencesDialog *self,
+                                                GhAgentsStartFunc start, gpointer user_data);
 void gh_preferences_dialog_set_account(GhPreferencesDialog *self, const gchar *npub,
                                        const gchar *label);
 void gh_preferences_dialog_set_account_picture(GhPreferencesDialog *self,

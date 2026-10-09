@@ -1134,6 +1134,10 @@ test_relay_layout(Fixture *f, gconstpointer data)
     g_assert_true(ADW_IS_ENTRY_ROW(entry));
     g_assert_cmpuint(n_rows(list), ==, 2); /* no disabled pseudo-heading */
     g_assert_true(gtk_widget_get_sensitive(url));
+    /* A fifth page can leave the switched-to Network page awaiting a frame;
+     * measure the row after its actual allocation, not the first dialog draw. */
+    for (guint frame = 0; frame < 12 && gtk_widget_get_width(url) <= 200; frame++)
+      gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
     g_assert_cmpint(gtk_widget_get_width(url), >, 200);
     g_assert_cmpint(gtk_widget_get_width(url), ==, gtk_widget_get_width(entry));
     GtkWidget *remove = icon_button(url, "edit-delete-symbolic");

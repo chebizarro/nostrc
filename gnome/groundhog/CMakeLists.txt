@@ -411,13 +411,15 @@ endif()
 # whose header names the relay publish outcomes (enums only, no link).
 if (TARGET nostr AND TARGET nip19)
   pkg_check_modules(GROUNDHOG_GIO REQUIRED IMPORTED_TARGET gio-2.0>=2.72)
+  pkg_check_modules(GROUNDHOG_AGENT_JSON REQUIRED IMPORTED_TARGET json-glib-1.0>=1.6)
   add_library(groundhog-conversations STATIC
-    src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c
+    src/app/gh-agent-event.c src/app/gh-message.c src/app/gh-conversation.c src/app/gh-conversation-store.c
     src/app/gh-message-status.c src/app/gh-reaction.c src/app/gh-reaction-store.c
     src/app/gh-display-name.c)
   target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
-  target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO)
+  target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO
+                        PkgConfig::GROUNDHOG_AGENT_JSON)
   target_compile_options(groundhog-conversations PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     add_executable(test-groundhog-conversations tests/app/test_conversation_store.c)
@@ -433,6 +435,13 @@ if (TARGET nostr AND TARGET nip19)
     target_compile_options(test-groundhog-message-reply PRIVATE -Wall -Wextra -Werror)
     add_test(NAME groundhog-message-reply COMMAND test-groundhog-message-reply)
     set_tests_properties(groundhog-message-reply PROPERTIES TIMEOUT 20
+      ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+
+    add_executable(test-groundhog-agent-events tests/app/test_agent_events.c)
+    target_link_libraries(test-groundhog-agent-events PRIVATE groundhog-conversations)
+    target_compile_options(test-groundhog-agent-events PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-agent-events COMMAND test-groundhog-agent-events)
+    set_tests_properties(groundhog-agent-events PROPERTIES TIMEOUT 20
       ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
@@ -1442,11 +1451,20 @@ endif()
 # is the one list of what the build performs, flipped one line per feature (G09
 # Tor, G13 composer, G16 notifications, ...), and tests/check_privacy.py
 # requires a consumer for every row it leaves live.
-add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c)
+add_library(groundhog-preferences STATIC src/ui/gh-preferences-dialog.c
+  src/ui/gh-agents-page.c)
 target_include_directories(groundhog-preferences PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-preferences PUBLIC groundhog-ui groundhog-diagnostics)
 target_compile_options(groundhog-preferences PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-preferences)
+if (BUILD_TESTING)
+  add_executable(test-groundhog-agents-page tests/ui/test_agents_page.c ${GROUNDHOG_RESOURCE_C})
+  target_link_libraries(test-groundhog-agents-page PRIVATE groundhog-preferences)
+  target_compile_options(test-groundhog-agents-page PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-agents-page COMMAND test-groundhog-agents-page)
+  set_tests_properties(groundhog-agents-page PROPERTIES TIMEOUT 20
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+endif()
 
 # The About dialog (app.about): the app icon from the resource bundle, the
 # version, the licence and the project links; no network, no settings.
@@ -3176,7 +3194,8 @@ endif()
 #    event such as the disappearing timer's change (GhTimelineRow,
 #    data/ui/gh-timeline-row.blp; the list item binds it).
 if (TARGET groundhog-conversation-ui)
-  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-timeline-row.c)
+  target_sources(groundhog-conversation-ui PRIVATE src/ui/gh-timeline-row.c
+    src/ui/gh-agent-event-row.c)
 endif()
 # --- end W18 messaging polish ---
 # --- G22 attachment UI ---

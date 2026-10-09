@@ -1,4 +1,5 @@
 #include "gh-message.h"
+#include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
 
@@ -794,7 +795,8 @@ gh_message_new_from_mls(const gchar *account_pubkey, const gchar *group_id_hex,
   else if (!reason &&
            nostr_event_get_kind(event) != GH_MESSAGE_MLS_KIND &&
            nostr_event_get_kind(event) != GH_MESSAGE_MLS_POLL_KIND &&
-           nostr_event_get_kind(event) != GH_MESSAGE_MLS_POLL_VOTE_KIND)
+           nostr_event_get_kind(event) != GH_MESSAGE_MLS_POLL_VOTE_KIND &&
+           !gh_agent_event_is_kind(nostr_event_get_kind(event)))
     reason = "unsupported inner event kind";
   else if (!reason && nostr_event_get_created_at(event) <= 0)
     reason = "no created_at";

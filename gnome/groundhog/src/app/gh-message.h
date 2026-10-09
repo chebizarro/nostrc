@@ -166,7 +166,8 @@ gboolean gh_message_is_signed(GhMessage *self);
 
 /* ---- Marmot (MLS) encrypted-group messages (nostrc-qp24.13) -----------------
  * A message can also be the decrypted inner event of a Marmot group's kind
- * 445 (MIP-03): an unsigned kind-9 chat event whose author libmarmot
+ * 445 (MIP-03): an unsigned kind-9 chat event (or durable agent inner kind
+ * 1200, 1201 or 1202) whose author libmarmot
  * authenticated as the MLS sender (0.9.0: the inner pubkey must be the
  * sender leaf's account). Its room is the group: "mls:" followed by the
  * lowercase hex MLS group id (never the routing h, which can change), so no
@@ -176,7 +177,7 @@ gboolean gh_message_is_signed(GhMessage *self);
  * return the inner event's id and JSON.
  *
  * The inner event must be unsigned (a signed inner event would be a
- * publishable proof of authorship, MIP-03), kind 9, authored by a lowercase
+ * publishable proof of authorship, MIP-03), of a supported kind, authored by a lowercase
  * hex pubkey, with a positive created_at, content, and an id that matches
  * (a missing one is computed). G_IO_ERROR_INVALID_DATA otherwise
  * (G_IO_ERROR_INVALID_ARGUMENT for a bad account or group id). */
