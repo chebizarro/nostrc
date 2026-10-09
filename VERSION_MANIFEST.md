@@ -14,7 +14,7 @@ files already declare a version.
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.2.1 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
-| nostr-gtk | `nostr-gtk/` | 1.0.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
+| nostr-gtk | `nostr-gtk/` | 1.1.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
@@ -34,6 +34,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| B1 portable core (nostrc-gofet.6): installed app-independent library and new Markdown, NIP-21/18, OG, viewer and issue-field APIs | nostr-gtk | 1.1.0 | MINOR from 1.0.1: additive public API and package target; legacy `nostr_gtk` symbols remain available. |
+| Same: Gnostr compatibility adapters and fixtures | gnostr | 0.1.0 | No further bump: changes are internal to the already-declared, unreleased 0.1.0; public APIs and wire/storage formats are unchanged. |
 | Concurrency audit fixes (nostrc-q9lp0, nostrc-3pcgj, nostrc-9bygk, nostrc-val0v): libgo fiber scheduler claim-based park protocol (lost-wakeup/double-run), select fiber_handle lock discipline, ticker/scheduler spawn checks; libnostr connection priv graveyard + double-close fix, simplepool worker lifecycle claim, synchronized log rate limiter/JSON backend/env caches/jitter seed; libjson reentrant strtok_r. | libgo, libnostr, libjson | 0.1.3, 1.1.3, untracked | No further bump: backward-compatible concurrency bug fixes folded into the unreleased 0.1.3/1.1.3 (both already PATCH bumps; per the wave-folding precedent). No API or ABI change — the `_Atomic` spellings keep identical struct layouts and symbol sizes, and public headers expose plain types to pre-C++23 C++ consumers via guards. libjson has no declared component version. |
 | Concurrency audit follow-ups (nostrc-e08s7, nostrc-e9ou3, nostrc-bme1g): fiber scheduler broadcasts idle workers when the last fiber finishes (multi-worker shutdown hang; multi-worker test variants added), mpmc_wait_busy computes its fiber-park deadline in the monotonic domain, gof_chan_close and io on_ready wake waiters while holding their registry mutex. | libgo | 0.1.3 | No further bump: backward-compatible concurrency bug fixes folded into the unreleased 0.1.3; no API or ABI change. |
 | W31 R4 Grotto UX pass (nostrc-wic1): the active identity after a daemon restart, signing preview | nip55l, grotto | 0.7.0, — | Folded into the unreleased nip55l 0.7.0: the keyring lookups that read a secret now load it (SECRET_SEARCH_LOAD_SECRETS; a restarted daemon answered NoKeyConfigured for every stored key), and an empty selector falls back to Grotto's chosen identity, then to the only stored one (never a guess between several). The ApprovalRequested preview for SignEvent names the kind and parses the event (was a hand scan cut at 96 bytes); display text only, same signal. |

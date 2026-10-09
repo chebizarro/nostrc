@@ -25,6 +25,16 @@ xvfb_run = find_program('xvfb-run', required: host_machine.system() == 'linux')
 
 test_deps = [nostr_gtk_dep, gtk_dep, adw_dep, glib_dep, gobject_dep]
 
+portable_test = executable('test_portable', 'test_portable.c',
+  c_args: ['-DNOSTR_GTK_MESON_EXTERNAL_CORE'],
+  dependencies: [nostr_gtk_portable_dep, gtk_dep, glib_dep],
+  include_directories: [include_directories('../../tests/common'), nostr_gtk_repo_inc])
+if xvfb_run.found()
+  test('nostr-gtk:portable', xvfb_run, args: ['-a', portable_test], env: test_env)
+else
+  test('nostr-gtk:portable', portable_test, env: test_env)
+endif
+
 # ── Recycling stress test ────────────────────────────────────────────
 test_recycle = executable(
   'test_listview_recycle_stress',

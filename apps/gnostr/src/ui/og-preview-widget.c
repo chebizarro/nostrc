@@ -5,6 +5,7 @@
 #include "../util/utils.h"
 #include "../util/youtube_url.h"
 #include <nostr-gtk-1.0/content_renderer.h>
+#include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include <string.h>
 
 struct _OgPreviewWidget {
@@ -25,6 +26,7 @@ struct _OgPreviewWidget {
   GCancellable *external_cancellable;
   gulong external_cancelled_id;
   guint64 request_generation;
+  GnOgPreviewCard *portable_card; /* portable URL/result state and load signal */
 
   GtkWidget *image_overlay_widget;
   GtkWidget *play_overlay;
@@ -117,6 +119,7 @@ on_preview_texture_ready(GnostrMediaService *service,
     return;
 
   if (texture && GTK_IS_PICTURE(self->image_widget)) {
+    gn_og_preview_card_set_image_texture(self->portable_card, texture);
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget),
                               GDK_PAINTABLE(texture));
     gtk_widget_set_visible(self->image_widget, TRUE);
@@ -138,6 +141,8 @@ update_ui_with_metadata(OgPreviewWidget *self,
   const char *description = gnostr_og_metadata_get_description(metadata);
   const char *source_url = gnostr_og_metadata_get_source_url(metadata);
   const char *image_url = gnostr_og_metadata_get_image_url(metadata);
+  gn_og_preview_card_set_result(self->portable_card, title, description,
+                                source_url, image_url);
   g_autofree char *domain = extract_domain(
       source_url && *source_url ? source_url : self->current_url);
 
@@ -221,6 +226,8 @@ on_metadata_ready(GnostrMediaService *service,
     update_ui_with_metadata(self, metadata);
   } else {
     set_error_state(self);
+    gn_og_preview_card_set_error(self->portable_card,
+                                 error ? error->message : NULL);
     if (error && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
       g_debug("OG metadata unavailable for %s: %s", url, error->message);
   }
@@ -315,6 +322,25 @@ on_card_clicked(GtkGestureClick *gesture,
 }
 
 static void
+on_portable_load_requested(GnOgPreviewCard *card, const char *url,
+                           gpointer user_data)
+{
+  (void)card;
+  OgPreviewWidget *self = user_data;
+  if (self->disposed || g_strcmp0(self->current_url, url) != 0)
+    return;
+  self->request_generation++;
+  restart_cancellable(self);
+  gtk_widget_set_visible(self->load_button, FALSE);
+  set_loading_state(self);
+  gnostr_media_service_request_og_metadata_with_intent(
+      gnostr_media_service_get_default(), url,
+      GNOSTR_MEDIA_FETCH_USER_INITIATED, self->cancellable,
+      on_metadata_ready, og_request_context_new(self),
+      og_request_context_free);
+}
+
+static void
 og_preview_widget_dispose(GObject *object)
 {
   OgPreviewWidget *self = OG_PREVIEW_WIDGET(object);
@@ -325,6 +351,7 @@ og_preview_widget_dispose(GObject *object)
     g_cancellable_cancel(self->cancellable);
   g_clear_object(&self->cancellable);
   disconnect_external_cancellable(self);
+  g_clear_object(&self->portable_card);
 
   gtk_widget_set_layout_manager(GTK_WIDGET(self), NULL);
   if (self->text_box && GTK_IS_WIDGET(self->text_box))
@@ -412,6 +439,10 @@ og_preview_widget_init(OgPreviewWidget *self)
                                  GTK_ORIENTATION_VERTICAL);
 
   self->cancellable = g_cancellable_new();
+  self->portable_card = gn_og_preview_card_new();
+  g_object_ref_sink(self->portable_card);
+  g_signal_connect(self->portable_card, "load-requested",
+                   G_CALLBACK(on_portable_load_requested), self);
 
   self->spinner = gtk_spinner_new();
   gtk_widget_set_halign(self->spinner, GTK_ALIGN_CENTER);
@@ -521,6 +552,7 @@ og_preview_widget_set_url(OgPreviewWidget *self, const char *url)
   self->request_generation++;
   g_free(self->current_url);
   self->current_url = g_strdup(url);
+  gn_og_preview_card_set_url(self->portable_card, url);
   g_autoptr(GUri) uri = g_uri_parse(url, G_URI_FLAGS_NONE, NULL);
   const char *host = uri ? g_uri_get_host(uri) : NULL;
   g_autofree char *tooltip = g_strdup_printf(
@@ -548,18 +580,7 @@ og_preview_widget_load(OgPreviewWidget *self)
   if (self->disposed || !self->current_url || !*self->current_url)
     return;
 
-  self->request_generation++;
-  restart_cancellable(self);
-  gtk_widget_set_visible(self->load_button, FALSE);
-  set_loading_state(self);
-  gnostr_media_service_request_og_metadata_with_intent(
-      gnostr_media_service_get_default(),
-      self->current_url,
-      GNOSTR_MEDIA_FETCH_USER_INITIATED,
-      self->cancellable,
-      on_metadata_ready,
-      og_request_context_new(self),
-      og_request_context_free);
+  gn_og_preview_card_request_load(self->portable_card);
 }
 
 void
@@ -596,6 +617,7 @@ og_preview_widget_clear(OgPreviewWidget *self)
 
   disconnect_external_cancellable(self);
   g_clear_pointer(&self->current_url, g_free);
+  if (self->portable_card) gn_og_preview_card_clear(self->portable_card);
   if (GTK_IS_PICTURE(self->image_widget))
     gtk_picture_set_paintable(GTK_PICTURE(self->image_widget), NULL);
   if (self->spinner)
@@ -632,5 +654,6 @@ og_preview_widget_prepare_for_unbind(OgPreviewWidget *self)
   self->request_generation++;
   if (self->cancellable)
     g_cancellable_cancel(self->cancellable);
+  if (self->portable_card) gn_og_preview_card_clear(self->portable_card);
   disconnect_external_cancellable(self);
 }

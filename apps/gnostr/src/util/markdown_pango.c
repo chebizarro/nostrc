@@ -5,6 +5,7 @@
  */
 
 #include "markdown_pango.h"
+#include <nostr-gtk-1.0/gn-markdown.h>
 #include <string.h>
 #include <ctype.h>
 
@@ -380,6 +381,12 @@ char *markdown_to_pango(const char *markdown, gsize max_length) {
   if (!markdown || !*markdown) {
     return g_strdup("");
   }
+
+  /* The portable parser owns bounded UTF-8 normalization and tokenization.
+   * Retain the legacy Pango formatting below for output compatibility. */
+  g_autoptr(GnMarkdownDocument) portable = gn_markdown_parse(markdown, -1);
+  if (portable && !portable->truncated)
+    markdown = portable->source;
 
   /* nostrc-csaf: Sanitize UTF-8 first. Relay content can contain invalid
    * byte sequences that corrupt Pango if passed through as-is. */

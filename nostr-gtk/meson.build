@@ -1,5 +1,5 @@
 project('nostr-gtk', 'c',
-  version: '1.0.1',
+  version: '1.1.0',
   license: 'GPL-3.0-or-later',
   meson_version: '>= 1.2.0',
   default_options: [
@@ -16,7 +16,7 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.70')
 gio_dep     = dependency('gio-2.0',     version: '>= 2.70')
 gtk4_dep    = dependency('gtk4',        version: '>= 4.6')
 adw_dep     = dependency('libadwaita-1', version: '>= 1.2')
-json_glib_dep = dependency('json-glib-1.0', required: false)
+json_glib_dep = dependency('json-glib-1.0', required: true)
 soup3_dep   = dependency('libsoup-3.0', required: false)
 
 # nostr-gobject-1.0 (sibling library, pre-built)
@@ -91,7 +91,6 @@ nostr_gtk_core_sources = files(
   'src/nostr-gtk-init.c',
   'src/gnostr-composer.c',
   'src/gnostr-card-visibility-policy.c',
-  'src/content_renderer.c',
   'src/note-card-binding-ctx.c',
   'src/note-card-data.c',
   'src/gn-timeline-tabs.c',
@@ -109,6 +108,24 @@ nostr_gtk_gnostr_coupled_sources = files(
 )
 
 nostr_gtk_sources = nostr_gtk_core_sources + nostr_gtk_gnostr_coupled_sources
+nostr_gtk_portable_sources = files(
+  'src/content_renderer.c',
+  'src/nostr-gtk-error.c',
+  'src/gn-markdown.c',
+  'src/gn-nostr-reference.c',
+  'src/gn-og-preview-card.c',
+  'src/gn-media-viewer.c',
+  'src/gn-nip34-issue-fields.c',
+)
+nostr_gtk_portable_headers = files(
+  'include/nostr-gtk-1.0/content_renderer.h',
+  'include/nostr-gtk-1.0/nostr-gtk-error.h',
+  'include/nostr-gtk-1.0/gn-markdown.h',
+  'include/nostr-gtk-1.0/gn-nostr-reference.h',
+  'include/nostr-gtk-1.0/gn-og-preview-card.h',
+  'include/nostr-gtk-1.0/gn-media-viewer.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+)
 
 # ── Header files (public API) ───────────────────────────────────────
 nostr_gtk_headers = files(
@@ -123,6 +140,11 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/nostr-note-card-row.h',
   'include/nostr-gtk-1.0/gn-timeline-tabs.h',
   'include/nostr-gtk-1.0/gnostr-timeline-view.h',
+  'include/nostr-gtk-1.0/gn-markdown.h',
+  'include/nostr-gtk-1.0/gn-nostr-reference.h',
+  'include/nostr-gtk-1.0/gn-og-preview-card.h',
+  'include/nostr-gtk-1.0/gn-media-viewer.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
 )
 
 # ── Include directories ───────────────────────────────────────────────────────
@@ -178,7 +200,34 @@ elif host_machine.system() == 'linux'
   nostr_gtk_link_args += ['-Wl,--allow-shlib-undefined']
 endif
 
-# ── Build the library ────────────────────────────────────────────────
+# ── Build the libraries ──────────────────────────────────────────────
+nip19_lib = cc.find_library('nip19', dirs: [cmake_build_dir / 'nips/nip19'], required: true)
+nostrdb_storage_lib = cc.find_library('nostrdb_storage',
+  dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
+nostrdb_vendored_lib = cc.find_library('nostrdb_vendored',
+  dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
+nostrdb_lib = cc.find_library('nostrdb',
+  dirs: [cmake_build_dir / 'libnostr'], required: true)
+nostr_lib = cc.find_library('nostr',
+  dirs: [cmake_build_dir / 'libnostr'], required: true)
+nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
+  nostr_gtk_portable_sources,
+  include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
+  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep,
+                 json_glib_dep, nostr_gobject_dep, nip19_lib,
+                 nostrdb_storage_lib, nostrdb_vendored_lib, nostrdb_lib,
+                 nostr_lib],
+  link_args: nostr_gtk_link_args,
+  c_args: ['-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
+           '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6',
+           '-DGTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6',
+           '-DGTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6'],
+  install: true)
+nostr_gtk_portable_dep = declare_dependency(
+  link_with: nostr_gtk_portable_lib,
+  include_directories: nostr_gtk_pub_inc,
+  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep])
+
 nostr_gtk_gnostr_coupled = static_library('nostr-gtk-gnostr-coupled',
   nostr_gtk_gnostr_coupled_sources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc,
@@ -192,7 +241,7 @@ nostr_gtk_lib = library('nostr-gtk-1.0',
   nostr_gtk_core_sources + nostr_gtk_resources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
   link_whole: nostr_gtk_gnostr_coupled,
-  dependencies: nostr_gtk_deps,
+  dependencies: nostr_gtk_deps + [nostr_gtk_portable_dep],
   c_args: nostr_gtk_compile_args,
   link_args: nostr_gtk_link_args,
   install: true)
@@ -201,7 +250,7 @@ nostr_gtk_lib = library('nostr-gtk-1.0',
 nostr_gtk_dep = declare_dependency(
   link_with: nostr_gtk_lib,
   include_directories: nostr_gtk_pub_inc,
-  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep])
+  dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep, nostr_gtk_portable_dep])
 
 # ── GObject Introspection ────────────────────────────────────────────
 if get_option('introspection')
@@ -219,7 +268,7 @@ if get_option('introspection')
   gir_env.set('XDG_DATA_DIRS', ':'.join(gir_xdg_data_dirs))
 
   nostr_gtk_gir = gnome.generate_gir(nostr_gtk_lib,
-    sources: nostr_gtk_sources + nostr_gtk_headers,
+    sources: nostr_gtk_sources + nostr_gtk_portable_sources + nostr_gtk_headers,
     namespace: 'GNostrGtk',
     nsversion: '1.0',
     symbol_prefix: 'nostr_gtk',
@@ -248,6 +297,12 @@ pkg = import('pkgconfig')
 pkg.generate(nostr_gtk_lib,
   name: 'nostr-gtk-1.0',
   description: 'GTK4/libadwaita widgets for Nostr — built on nostr-gobject',
+  requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'gtk4', 'libadwaita-1', 'nostr-gtk-portable-1.0'],
+  requires_private: ['nostr-gobject-1.0'])
+
+pkg.generate(nostr_gtk_portable_lib,
+  name: 'nostr-gtk-portable-1.0',
+  description: 'App-independent Nostr parsing and GTK widgets',
   requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'gtk4', 'libadwaita-1'],
   requires_private: ['nostr-gobject-1.0'])
 
