@@ -1,0 +1,5 @@
+# Catalogs built and installed. Alpha 6 ships the machinery only: en@pseudo
+# is generated from the POT at build time to prove extraction, install and
+# runtime loading. Reviewed catalogs (es pt_BR nl de fr fa ar ja) are added
+# here only after native review; machine drafts may sit in po/ unlisted.
+en@pseudo

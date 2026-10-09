@@ -18,7 +18,7 @@ arch=('x86_64' 'aarch64')
 url="https://github.com/chebizarro/nostrc"
 license=('MIT')
 makedepends=(
-  'cmake' 'ninja' 'pkgconf' 'python'
+  'cmake' 'ninja' 'pkgconf' 'python' 'gettext'
   'glib2' 'glib2-devel' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
   'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs'
   'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets'
@@ -68,6 +68,8 @@ package_groundhog() {
     'webp-pixbuf-loader: profile pictures and images in WebP'
   )
   DESTDIR="$pkgdir" cmake --install build/gnome/groundhog
+  # Locale catalogs ship with the app (nostrc-gofet.10).
+  test -f "$pkgdir/usr/share/locale/en@pseudo/LC_MESSAGES/groundhog.mo"
   install -Dm644 "groundhog-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -Dm644 "groundhog-${_version}/gnome/groundhog/data/icons/COPYING" \
     "$pkgdir/usr/share/licenses/$pkgname/COPYING.icons"

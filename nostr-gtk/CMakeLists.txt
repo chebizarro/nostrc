@@ -156,6 +156,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+  include/nostr-gtk-1.0/gn-portable-i18n.h
 )
 
 set(NOSTR_GTK_PORTABLE_HEADERS
@@ -166,6 +167,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+  include/nostr-gtk-1.0/gn-portable-i18n.h
 )
 
 set(NOSTR_GTK_PORTABLE_SOURCES
@@ -174,7 +176,15 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-og-preview-card.c
   src/gn-media-viewer.c
   src/gn-nip34-issue-fields.c
+  src/gn-portable-i18n.c
 )
+
+# nostrc-gofet.10: portable widgets translate through their own "nostr-gtk"
+# domain (gn-portable-i18n.h), bound lazily to the install locale directory.
+include(${CMAKE_SOURCE_DIR}/cmake/NostrcGettext.cmake)
+nostrc_gettext(DOMAIN nostr-gtk INSTALL
+  PODIR ${CMAKE_CURRENT_SOURCE_DIR}/po
+  SOURCE_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
 
 # ── Shared content parser component ─────────────────────────────────
 # Kept as an object library so lightweight model/tests can consume the parser
@@ -214,12 +224,16 @@ target_link_libraries(nostr_gtk_portable PUBLIC
   PkgConfig::GOBJECT2 PkgConfig::GIO2
   PRIVATE nostr_gobject PkgConfig::JSON_GLIB nip19)
 target_compile_definitions(nostr_gtk_portable PRIVATE
+  NOSTR_GTK_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}"
   GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6
   GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6
   GTK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6
   GTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_6)
 apply_sanitizers(nostr_gtk_portable)
 add_library(NostrGtk::Portable ALIAS nostr_gtk_portable)
+if (TARGET nostr-gtk-i18n)
+  add_dependencies(nostr_gtk_portable nostr-gtk-i18n)
+endif()
 
 # ── Legacy library target ───────────────────────────────────────────
 add_library(nostr_gtk ${NOSTR_GTK_SOURCES})
@@ -473,6 +487,20 @@ if(BUILD_TESTING)
     LIBS nostr_gtk_portable nip19 PkgConfig::GTK4 PkgConfig::GLIB2
   )
   target_include_directories(test_nostr_gtk_portable PRIVATE ${PROJECT_ROOT}/tests/common)
+
+  if (TARGET nostr-gtk-i18n)
+  gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n
+    SOURCES tests/test_portable_i18n.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2)
+  target_include_directories(test_nostr_gtk_portable_i18n PRIVATE ${PROJECT_ROOT}/tests/common)
+  target_compile_definitions(test_nostr_gtk_portable_i18n PRIVATE
+    NOSTR_GTK_TEST_LOCALEDIR="${nostr-gtk_LOCALE_BUILD_DIR}")
+  set_tests_properties(test_nostr_gtk_portable_i18n PROPERTIES SKIP_RETURN_CODE 77)
+  endif()
+  add_test(NAME nostr_gtk_portable_potfiles
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/nostrc-check-potfiles.py
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES
+            ${NOSTR_GTK_PORTABLE_SOURCES})
 
   gn_add_gtest(test_nostr_gtk_content_parser
     SOURCES tests/test_content_parser.c

@@ -1,4 +1,5 @@
 #include <nostr-gtk-1.0/gn-media-viewer.h>
+#include "gn-portable-i18n-private.h"
 
 struct _GnMediaViewer {
   GtkWindow parent_instance;
@@ -18,7 +19,7 @@ static void update(GnMediaViewer *self) {
   GdkTexture *texture = count ? g_ptr_array_index(self->textures, self->index) : NULL;
   gtk_picture_set_paintable(GTK_PICTURE(self->picture), texture ? GDK_PAINTABLE(texture) : NULL);
   gtk_widget_set_visible(self->load, count && !texture);
-  g_autofree gchar *label = g_strdup_printf("%u / %u", count ? self->index + 1 : 0, count);
+  g_autofree gchar *label = g_strdup_printf(C_("image position", "%u / %u"), count ? self->index + 1 : 0, count);
   gtk_label_set_text(GTK_LABEL(self->position), label);
   if (!texture || self->zoom == 0) {
     gtk_widget_set_size_request(self->picture, -1, -1);
@@ -99,6 +100,7 @@ static void finalize(GObject *object) {
 }
 static void gn_media_viewer_class_init(GnMediaViewerClass *klass) {
   G_OBJECT_CLASS(klass)->finalize = finalize;
+  gn_portable_gettext_domain();
   load_signal = g_signal_new("load-requested", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
 }
@@ -109,13 +111,18 @@ static void gn_media_viewer_init(GnMediaViewer *self) {
   gtk_window_set_default_size(GTK_WINDOW(self), 800, 600);
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
   GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-  GtkWidget *prev = gtk_button_new_with_label("Previous");
-  GtkWidget *next = gtk_button_new_with_label("Next");
-  GtkWidget *fit = gtk_button_new_with_label("Fit");
+  GtkWidget *prev = gtk_button_new_with_label(_("Previous"));
+  GtkWidget *next = gtk_button_new_with_label(_("Next"));
+  GtkWidget *fit = gtk_button_new_with_label(_("Fit"));
   GtkWidget *plus = gtk_button_new_with_label("+");
   GtkWidget *minus = gtk_button_new_with_label("−");
-  self->position = gtk_label_new("0 / 0");
-  self->load = gtk_button_new_with_label("Load image");
+  /* The zoom buttons show only a symbol; name them for screen readers. */
+  gtk_widget_set_tooltip_text(plus, _("Zoom In"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(plus), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Zoom In"), -1);
+  gtk_widget_set_tooltip_text(minus, _("Zoom Out"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(minus), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Zoom Out"), -1);
+  self->position = gtk_label_new(NULL);
+  self->load = gtk_button_new_with_label(_("Load image"));
   gtk_box_append(GTK_BOX(bar), prev);
   gtk_box_append(GTK_BOX(bar), self->position);
   gtk_box_append(GTK_BOX(bar), next);

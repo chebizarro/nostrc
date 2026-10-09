@@ -33,7 +33,8 @@
           "-DBUILD_TESTING_FRAMEWORK=OFF"
           "-DNOSTR_USE_SYSTEM_NSYNC=ON"
         ];
-        desktopNativeBuildInputs = with pkgs; [ cmake ninja pkg-config python3 glib wrapGAppsHook4 ];
+        # gettext: xgettext/msgfmt build the locale catalogs (nostrc-gofet.10).
+        desktopNativeBuildInputs = with pkgs; [ cmake ninja pkg-config python3 glib gettext wrapGAppsHook4 ];
         desktopBuildInputs = with pkgs; [
           glib gtk4 libadwaita json-glib libsoup_3 libsecret sqlcipher libxml2
           gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
@@ -55,6 +56,8 @@
             installPhase = ''
               runHook preInstall
               cmake --install gnome/groundhog
+              # The locale machinery must ship (alpha 6 release blocker).
+              test -f "$out/share/locale/en@pseudo/LC_MESSAGES/groundhog.mo"
               runHook postInstall
             '';
             meta = with pkgs.lib; {

@@ -1,0 +1,4 @@
+# Portable nostr-gtk widget sources with translatable strings (domain nostr-gtk).
+src/gn-media-viewer.c
+src/gn-nip34-issue-fields.c
+src/gn-og-preview-card.c

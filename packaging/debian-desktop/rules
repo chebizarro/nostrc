@@ -39,6 +39,9 @@ override_dh_auto_install:
 	DESTDIR=$(CURDIR)/debian/grotto cmake --install $(BUILDDIR)/apps/grotto
 	# CMake fills in the activation files; an unconfigured @VAR@ must never ship.
 	! grep -rq '@[A-Z_]*@' debian/groundhog/usr/share/dbus-1 debian/grotto/usr/share/dbus-1
+	# Locale catalogs ship with the app (nostrc-gofet.10).
+	test -f debian/groundhog/usr/share/locale/en@pseudo/LC_MESSAGES/groundhog.mo
+	test -f debian/groundhog/usr/share/locale/en@pseudo/LC_MESSAGES/nostr-gtk.mo
 
 # The JSON backend in /usr/lib/<triplet>/<app>/ is private to each app: no
 # shlibs entry, no ldconfig trigger.

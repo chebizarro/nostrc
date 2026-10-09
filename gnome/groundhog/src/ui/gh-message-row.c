@@ -18,6 +18,7 @@
 
 #include <adwaita.h>
 #include <glib/gi18n.h>
+#include "gh-bidi.h"
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
 #include <stdlib.h>
@@ -824,6 +825,7 @@ update_reference(GhMessageRow *self)
                                                                            self->message);
   g_autofree gchar *display = summary ? g_strdup_printf("%s\n%s", label, summary) : NULL;
   gtk_label_set_text(self->reference_label, display ? display : label);
+  gh_bidi_label_follow_content(self->reference_label);
   gboolean public_note = gh_conversation_view_has_public_note_reference(self->view,
                                                                         self->message);
  gtk_widget_set_visible(GTK_WIDGET(self->find_reference_button),
@@ -853,6 +855,7 @@ refresh_body_markup(GhMessageRow *self)
     g_autofree gchar *plain = g_markup_escape_text(valid, -1);
     gtk_label_set_markup(self->body_label, plain);
   }
+  gh_bidi_label_follow_content(self->body_label);
 }
 
 static void
@@ -1019,6 +1022,8 @@ update_all(GhMessageRow *self)
     gtk_label_set_text(self->body_label, "");
     gtk_label_set_text(self->sender_label, "");
     gtk_label_set_text(self->time_label, "");
+    gtk_widget_set_direction(GTK_WIDGET(self->body_label), GTK_TEXT_DIR_NONE);
+    gtk_widget_set_direction(GTK_WIDGET(self->sender_label), GTK_TEXT_DIR_NONE);
   } else {
     g_autofree gchar *file = self->undecryptable || withdrawn || show_body ? NULL : file_text(message);
     if (self->undecryptable) {
@@ -1033,6 +1038,9 @@ update_all(GhMessageRow *self)
     }
     g_autofree gchar *sender = gh_message_row_sender_name(message);
     gtk_label_set_text(self->sender_label, sender);
+    gh_bidi_label_follow_content(self->sender_label);
+    if (self->undecryptable || withdrawn || file)
+      gtk_widget_set_direction(GTK_WIDGET(self->body_label), GTK_TEXT_DIR_NONE);
     gint64 created = gh_message_get_created_at(message);
     g_autofree gchar *time = gh_conversation_row_format_time_of_day(created);
     gtk_label_set_text(self->time_label, time);
@@ -1158,6 +1166,8 @@ show_avatar_menu(GhMessageRow *self)
   if (!self->avatar_menu) {
     self->avatar_menu = GTK_POPOVER(gtk_popover_new());
     gtk_widget_set_name(GTK_WIDGET(self->avatar_menu), "avatar_menu");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->avatar_menu),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, _("Profile Picture"), -1);
     gtk_widget_set_parent(GTK_WIDGET(self->avatar_menu), GTK_WIDGET(self->avatar));
     GtkWidget *button = gtk_button_new_with_label(_("Load Profile Picture"));
     gtk_widget_set_name(button, "picture_menu_button");

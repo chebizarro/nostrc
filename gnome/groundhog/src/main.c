@@ -5,6 +5,7 @@
 #include <signal.h>
 
 #include "gh-app-services.h"
+#include "gh-i18n.h"
 #if defined(GH_MLS_TEST_HOOKS) && GROUNDHOG_HAVE_MLS
 #include "app/gh-test-control.h"
 #endif
@@ -46,11 +47,13 @@ static gboolean bus_fallback = FALSE;
 static const gchar *instance_name;
 static gchar *parsed_instance_option;
 static gboolean parsed_smoke_option;
+/* Descriptions are N_() and translated by GApplication, whose option group
+ * uses the default domain bound in gh_i18n_init(). */
 static const GOptionEntry instance_options[] = {
   { "instance", 0, 0, G_OPTION_ARG_STRING, &parsed_instance_option,
-    "Use an isolated Groundhog device instance", "NAME" },
+    N_("Use an isolated Groundhog device instance"), N_("NAME") },
   { "smoke", 0, 0, G_OPTION_ARG_NONE, &parsed_smoke_option,
-    "Check the Groundhog GUI and exit", NULL },
+    N_("Check the Groundhog GUI and exit"), NULL },
   { 0 }
 };
 
@@ -408,6 +411,10 @@ main(int argc, char **argv)
   GApplicationFlags flags = G_APPLICATION_HANDLES_OPEN;
   g_autoptr(AdwApplication) app = NULL;
   int status;
+
+  /* nostrc-gofet.10: locale and the "groundhog" domain come first, before any
+   * settings, tray label, option description or UI string exists. */
+  gh_i18n_init(GROUNDHOG_LOCALEDIR);
 
   /* Instance support (nostrc-lrac): must run before any GLib function that
    * caches XDG directories. Uses only libc, not GLib. */

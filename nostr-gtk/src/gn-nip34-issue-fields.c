@@ -1,11 +1,15 @@
 #include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
+#include "gn-portable-i18n-private.h"
 
 struct _GnNip34IssueFields {
   GtkBox parent_instance;
   GtkWidget *steps, *expected, *actual, *labels, *commits, *attachments;
 };
 G_DEFINE_TYPE(GnNip34IssueFields, gn_nip34_issue_fields, GTK_TYPE_BOX)
-static void gn_nip34_issue_fields_class_init(GnNip34IssueFieldsClass *klass) { (void)klass; }
+static void gn_nip34_issue_fields_class_init(GnNip34IssueFieldsClass *klass) {
+  (void)klass;
+  gn_portable_gettext_domain();
+}
 static GtkWidget *row(GnNip34IssueFields *self, const char *label) {
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
   GtkWidget *title = gtk_label_new(label);
@@ -20,23 +24,27 @@ static GtkWidget *text_row(GnNip34IssueFields *self, const char *label) {
   gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
   gtk_widget_set_size_request(view, -1, 70);
   gtk_box_append(GTK_BOX(box), view);
+  /* The title labels the field for assistive technologies (labelled-by). */
+  gtk_label_set_mnemonic_widget(GTK_LABEL(gtk_widget_get_first_child(box)), view);
   return view;
 }
 static GtkWidget *entry_row(GnNip34IssueFields *self, const char *label) {
   GtkWidget *box = row(self, label);
   GtkWidget *entry = gtk_entry_new();
   gtk_box_append(GTK_BOX(box), entry);
+  /* The title labels the field for assistive technologies (labelled-by). */
+  gtk_label_set_mnemonic_widget(GTK_LABEL(gtk_widget_get_first_child(box)), entry);
   return entry;
 }
 static void gn_nip34_issue_fields_init(GnNip34IssueFields *self) {
   gtk_orientable_set_orientation(GTK_ORIENTABLE(self), GTK_ORIENTATION_VERTICAL);
   gtk_box_set_spacing(GTK_BOX(self), 8);
-  self->steps = text_row(self, "Steps to Reproduce");
-  self->expected = text_row(self, "Expected Result");
-  self->actual = text_row(self, "Actual Result");
-  self->labels = entry_row(self, "Labels (comma-separated)");
-  self->commits = entry_row(self, "Related commits");
-  self->attachments = entry_row(self, "Attachment URLs (manual references only)");
+  self->steps = text_row(self, _("Steps to Reproduce"));
+  self->expected = text_row(self, _("Expected Result"));
+  self->actual = text_row(self, _("Actual Result"));
+  self->labels = entry_row(self, _("Labels (comma-separated)"));
+  self->commits = entry_row(self, _("Related commits"));
+  self->attachments = entry_row(self, _("Attachment URLs (manual references only)"));
 }
 GnNip34IssueFields *gn_nip34_issue_fields_new(void) {
   return g_object_new(GN_TYPE_NIP34_ISSUE_FIELDS, NULL);
