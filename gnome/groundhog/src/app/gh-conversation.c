@@ -1,5 +1,6 @@
 #include "gh-conversation-private.h"
 #include "gh-display-name.h"
+#include "gh-conversation-window.h"
 
 #include <glib/gi18n.h>
 
@@ -55,7 +56,13 @@ struct _GhConversation {
   gint64 timer_changed_at;   /* when it last changed (0: never; nostrc-qp24.83) */
   /* Durable paging: stored messages before the floor are not loaded. */
   gboolean has_older;
-  gboolean remote_older;       /* NIP-29 relay history not yet complete */
+  gboolean has_newer;
+  gboolean window_enabled;
+  gboolean window_active;
+  guint newer_arrivals;
+  gint64 latest_activity;   /* sidebar activity survives trimming the newer edge */
+  gchar *latest_id;          /* resolve same-second sidebar preview by store order */
+  gboolean remote_older;
   gboolean history_partial;    /* an unpageable same-second boundary */
   gint64 floor_created_at;
   gchar *floor_id;
@@ -85,6 +92,8 @@ enum {
   PROP_TIMER_CHANGED_AT,
   PROP_IS_DIRECT,
   PROP_HAS_OLDER,
+  PROP_HAS_NEWER,
+  PROP_NEWER_ARRIVALS,
   PROP_HISTORY_PARTIAL,
   N_PROPS
 };
@@ -486,7 +495,12 @@ place_message(GhConversation *self, GhMessage *message)
     self->subject_source = message;
   if (gh_message_is_self(message))
     self->has_own_message = TRUE;
-  if (position == self->messages->len - 1) {
+  if (position == self->messages->len - 1 &&
+      (!self->latest_id || compare_place(message, self->latest_activity,
+                                         self->latest_id) > 0)) {
+    self->latest_activity = gh_message_get_created_at(message);
+    g_free(self->latest_id);
+    self->latest_id = g_strdup(gh_message_get_rumor_id(message));
     g_free(self->preview);
     self->preview = preview_of(message);
   }
@@ -504,6 +518,11 @@ gh_conversation_insert(GhConversation *self, GhMessage *message, gboolean delive
   g_autofree gchar *old_subject = g_strdup(gh_conversation_get_subject(self));
   g_autofree gchar *old_title = g_strdup(gh_conversation_get_title(self));
   gboolean was_request = gh_conversation_get_is_request(self);
+  if (self->window_enabled && self->messages->len >=
+      (self->window_active ? GH_CONVERSATION_WINDOW_MAX : GH_CONVERSATION_WINDOW_OPEN))
+    gh_conversation_window_trim(self, self->has_newer,
+      (self->window_active ? GH_CONVERSATION_WINDOW_MAX - GH_CONVERSATION_WINDOW_PAGE :
+                             GH_CONVERSATION_WINDOW_OPEN - 1));
   guint position = place_message(self, message);
   /* Replying implies having read what came before. */
   if (gh_message_is_self(message))
@@ -561,7 +580,16 @@ gh_conversation_remove(GhConversation *self, const gchar *rumor_id)
     }
   }
   gboolean newest = position == self->messages->len;
-  if (newest) {
+  if (newest && !self->has_newer) {
+    self->latest_activity = self->messages->len
+      ? gh_message_get_created_at(g_ptr_array_index(self->messages, self->messages->len - 1))
+      : 0;
+    g_free(self->latest_id);
+    self->latest_id = self->messages->len
+      ? g_strdup(gh_message_get_rumor_id(g_ptr_array_index(self->messages,
+                                                           self->messages->len - 1))) : NULL;
+  }
+  if (newest && !self->has_newer) {
     g_free(self->preview);
     self->preview = self->messages->len
       ? preview_of(g_ptr_array_index(self->messages, self->messages->len - 1)) : NULL;
@@ -573,7 +601,7 @@ gh_conversation_remove(GhConversation *self, const gchar *rumor_id)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
   }
-  if (newest)
+  if (newest && !self->has_newer)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
   if (gh_conversation_get_last_activity(self) != last_activity)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_LAST_ACTIVITY]);
@@ -598,12 +626,28 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   g_autofree gchar *old_preview = g_strdup(self->preview);
   gboolean was_request = gh_conversation_get_is_request(self);
   gboolean had_older = gh_conversation_get_has_older(self);
+  gboolean older_page = FALSE;
+  if (self->messages->len && messages && messages->len) {
+    GhMessage *first = g_ptr_array_index(self->messages, 0);
+    for (guint i = 0; i < messages->len; i++) {
+      GhMessage *item = g_ptr_array_index(messages, i);
+      if (GH_IS_MESSAGE(item) && gh_message_compare(item, first) < 0) {
+        older_page = TRUE;
+        break;
+      }
+    }
+  }
 
   g_object_freeze_notify(G_OBJECT(self));
   for (guint i = 0; messages && i < messages->len; i++) {
     GhMessage *message = g_ptr_array_index(messages, i);
     if (!GH_IS_MESSAGE(message) || !belongs(self, message))
       continue;
+    guint window_limit = self->window_active ? GH_CONVERSATION_WINDOW_MAX :
+                                               GH_CONVERSATION_WINDOW_OPEN;
+    if (self->window_enabled && self->messages->len >= window_limit)
+      gh_conversation_window_trim(self, self->window_active && older_page,
+                                  window_limit - GH_CONVERSATION_WINDOW_PAGE);
     guint position = place_message(self, message);
     g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
   }
@@ -654,6 +698,9 @@ gh_conversation_restore(GhConversation *self, GPtrArray *messages,
   }
   update_unread(self);
   g_object_thaw_notify(G_OBJECT(self));
+  if (self->window_enabled)
+    gh_conversation_window_trim(self, self->window_active && older_page,
+      self->window_active ? GH_CONVERSATION_WINDOW_MAX : GH_CONVERSATION_WINDOW_OPEN);
 }
 
 gboolean
@@ -661,8 +708,14 @@ gh_conversation_is_older_history(GhConversation *self, GhMessage *message)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
   g_return_val_if_fail(GH_IS_MESSAGE(message), FALSE);
-  return self->has_older &&
-         compare_place(message, self->floor_created_at, self->floor_id) < 0;
+  if (self->has_older)
+    return compare_place(message, self->floor_created_at, self->floor_id) < 0;
+  if (self->window_enabled && !self->window_active &&
+      self->messages->len >= GH_CONVERSATION_WINDOW_OPEN) {
+    GhMessage *first = g_ptr_array_index(self->messages, 0);
+    return gh_message_compare(message, first) < 0;
+  }
+  return FALSE;
 }
 
 void
@@ -671,6 +724,14 @@ gh_conversation_add_older_history(GhConversation *self, GhMessage *message, gboo
   g_return_if_fail(GH_IS_CONVERSATION(self));
   g_return_if_fail(GH_IS_MESSAGE(message));
   gboolean was_request = gh_conversation_get_is_request(self);
+  if (!self->has_older && self->messages->len) {
+    GhMessage *first = g_ptr_array_index(self->messages, 0);
+    self->has_older = TRUE;
+    self->floor_created_at = gh_message_get_created_at(first);
+    g_free(self->floor_id);
+    self->floor_id = g_strdup(gh_message_get_rumor_id(first));
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HAS_OLDER]);
+  }
   if (gh_message_is_self(message)) {
     self->has_own_message = TRUE;
     /* How many unloaded messages it read is the store's to say (sync). */
@@ -692,6 +753,197 @@ gh_conversation_sync_unread(GhConversation *self, guint unread)
   g_return_if_fail(GH_IS_CONVERSATION(self));
   guint loaded = count_loaded_unread(self, FALSE, NULL);
   self->unread_older = unread > loaded ? unread - loaded : 0;
+  update_unread(self);
+}
+
+gboolean
+gh_conversation_get_has_newer(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  return self->has_newer;
+}
+
+guint
+gh_conversation_get_newer_arrivals(GhConversation *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
+  return self->newer_arrivals;
+}
+
+void
+gh_conversation_window_set_has_newer(GhConversation *self, gboolean has_newer)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  has_newer = !!has_newer;
+  if (self->has_newer != has_newer) {
+    self->has_newer = has_newer;
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HAS_NEWER]);
+  }
+  if (!has_newer && self->newer_arrivals) {
+    self->newer_arrivals = 0;
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_NEWER_ARRIVALS]);
+  }
+}
+
+gboolean
+gh_conversation_get_newer_cursor(GhConversation *self, gint64 *created_at,
+                                 const gchar **id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(self), FALSE);
+  if (self->messages->len == 0)
+    return FALSE;
+  GhMessage *last = g_ptr_array_index(self->messages, self->messages->len - 1);
+  if (created_at)
+    *created_at = gh_message_get_created_at(last);
+  if (id)
+    *id = gh_message_get_rumor_id(last);
+  return TRUE;
+}
+
+/* Remove whole pages from the end opposite an active reader; an inactive room
+ * keeps exactly its newest 30. Nothing is removed from the encrypted store. */
+void
+gh_conversation_window_trim(GhConversation *self, gboolean keep_older, guint limit)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  g_return_if_fail(limit > 0);
+  if (self->messages->len <= limit)
+    return;
+  while (self->messages->len > limit) {
+    guint count = MIN(GH_CONVERSATION_WINDOW_PAGE,
+      !self->window_active && limit <= GH_CONVERSATION_WINDOW_OPEN
+        ? self->messages->len - limit : self->messages->len - 1);
+    guint start = keep_older ? self->messages->len - count : 0;
+    for (guint i = 0; i < count; i++) {
+      GhMessage *message = g_ptr_array_index(self->messages, start);
+      if (is_unread(self, message) && !in_seen(self, message))
+        self->unread_older++;
+      if (self->subject_source == message)
+        self->subject_source = NULL;
+      g_hash_table_remove(self->by_id, gh_message_get_rumor_id(message));
+      g_ptr_array_remove_index(self->messages, start);
+    }
+    g_list_model_items_changed(G_LIST_MODEL(self), start, count, 0);
+  }
+  if (keep_older) {
+    gh_conversation_window_set_has_newer(self, TRUE);
+  } else {
+    GhMessage *first = g_ptr_array_index(self->messages, 0);
+    self->has_older = TRUE;
+    self->floor_created_at = gh_message_get_created_at(first);
+    g_free(self->floor_id);
+    self->floor_id = g_strdup(gh_message_get_rumor_id(first));
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_HAS_OLDER]);
+  }
+  update_unread(self);
+  if (self->store)
+    gh_conversation_store_reindex_window(self->store, self);
+}
+
+void
+gh_conversation_window_enable(GhConversation *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  if (self->window_enabled)
+    return;
+  self->window_enabled = TRUE;
+  if (!self->has_newer)
+    gh_conversation_window_trim(self, FALSE, self->window_active ?
+                                GH_CONVERSATION_WINDOW_MAX : GH_CONVERSATION_WINDOW_OPEN);
+}
+
+void
+gh_conversation_window_set_active(GhConversation *self, gboolean active)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  self->window_active = !!active;
+  if (!active && self->window_enabled && !self->has_newer)
+    gh_conversation_window_trim(self, FALSE, GH_CONVERSATION_WINDOW_OPEN);
+}
+
+void
+gh_conversation_window_add_newer(GhConversation *self, GPtrArray *messages,
+                                 gboolean has_newer)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  guint incoming = 0;
+  for (guint i = 0; messages && i < messages->len; i++) {
+    GhMessage *message = g_ptr_array_index(messages, i);
+    if (GH_IS_MESSAGE(message) && belongs(self, message))
+      incoming++;
+  }
+  g_return_if_fail(incoming <= GH_CONVERSATION_WINDOW_MAX);
+  if (incoming > 0 && self->messages->len + incoming > GH_CONVERSATION_WINDOW_MAX)
+    gh_conversation_window_trim(self, FALSE, GH_CONVERSATION_WINDOW_MAX - incoming);
+  for (guint i = 0; messages && i < messages->len; i++) {
+    GhMessage *message = g_ptr_array_index(messages, i);
+    if (!GH_IS_MESSAGE(message) || !belongs(self, message))
+      continue;
+    guint position = place_message(self, message);
+    if (is_unread(self, message) && !in_seen(self, message) && self->unread_older)
+      self->unread_older--;
+    g_list_model_items_changed(G_LIST_MODEL(self), position, 0, 1);
+  }
+  gh_conversation_window_set_has_newer(self, has_newer);
+  update_unread(self);
+  if (self->store)
+    gh_conversation_store_reindex_window(self->store, self);
+}
+
+void
+gh_conversation_window_clear(GhConversation *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  guint n = self->messages->len;
+  g_hash_table_remove_all(self->by_id);
+  g_ptr_array_set_size(self->messages, 0);
+  if (n)
+    g_list_model_items_changed(G_LIST_MODEL(self), 0, n, 0);
+  self->subject_source = NULL;
+  self->latest_activity = 0;
+  g_clear_pointer(&self->latest_id, g_free);
+  g_clear_pointer(&self->preview, g_free);
+  self->has_older = FALSE;
+  g_clear_pointer(&self->floor_id, g_free);
+  self->floor_created_at = 0;
+  gh_conversation_window_set_has_newer(self, FALSE);
+  if (self->store)
+    gh_conversation_store_reindex_window(self->store, self);
+}
+
+void
+gh_conversation_add_newer_history(GhConversation *self, GhMessage *message,
+                                  gboolean delivered)
+{
+  g_return_if_fail(GH_IS_CONVERSATION(self));
+  g_return_if_fail(GH_IS_MESSAGE(message));
+  if (gh_message_is_self(message)) {
+    self->has_own_message = TRUE;
+    if (note_own(self, message, delivered))
+      self->unread_older = 0;
+  } else if (is_unread(self, message)) {
+    self->unread_older++;
+  }
+  if (!self->latest_id || compare_place(message, self->latest_activity,
+                                        self->latest_id) > 0) {
+    if (gh_message_get_subject(message)) {
+      g_free(self->stored_subject);
+      self->stored_subject = g_strdup(gh_message_get_subject(message));
+      g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SUBJECT]);
+      g_object_notify_by_pspec(G_OBJECT(self), props[PROP_TITLE]);
+    }
+    self->latest_activity = gh_message_get_created_at(message);
+    g_free(self->latest_id);
+    self->latest_id = g_strdup(gh_message_get_rumor_id(message));
+    g_free(self->preview);
+    self->preview = preview_of(message);
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_LAST_ACTIVITY]);
+    g_object_notify_by_pspec(G_OBJECT(self), props[PROP_PREVIEW]);
+  }
+  gh_conversation_window_set_has_newer(self, TRUE);
+  if (self->newer_arrivals < G_MAXUINT)
+    self->newer_arrivals++;
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_NEWER_ARRIVALS]);
   update_unread(self);
 }
 
@@ -740,8 +992,8 @@ gh_conversation_get_subject(GhConversation *self)
   g_return_val_if_fail(GH_IS_CONVERSATION(self), NULL);
   /* Loaded messages are the newest ones, so a loaded subject is never older
    * than the stored name of the unloaded history. */
-  const gchar *subject = self->subject_source ?
-    gh_message_get_subject(self->subject_source) : self->stored_subject;
+  const gchar *subject = self->has_newer ? self->stored_subject :
+    self->subject_source ? gh_message_get_subject(self->subject_source) : self->stored_subject;
   return subject && *subject ? subject : NULL;
 }
 
@@ -750,9 +1002,9 @@ gh_conversation_get_last_activity(GhConversation *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION(self), 0);
   if (self->messages->len == 0)
-    return self->opened_at;
-  return gh_message_get_created_at(
-    g_ptr_array_index(self->messages, self->messages->len - 1));
+    return MAX(self->opened_at, self->latest_activity);
+  return MAX(self->latest_activity, gh_message_get_created_at(
+    g_ptr_array_index(self->messages, self->messages->len - 1)));
 }
 
 guint
@@ -1147,6 +1399,12 @@ gh_conversation_get_property(GObject *object, guint id, GValue *value, GParamSpe
   case PROP_HAS_OLDER:
     g_value_set_boolean(value, gh_conversation_get_has_older(self));
     break;
+  case PROP_HAS_NEWER:
+    g_value_set_boolean(value, self->has_newer);
+    break;
+  case PROP_NEWER_ARRIVALS:
+    g_value_set_uint(value, self->newer_arrivals);
+    break;
   case PROP_HISTORY_PARTIAL:
     g_value_set_boolean(value, self->history_partial);
     break;
@@ -1173,6 +1431,7 @@ gh_conversation_finalize(GObject *object)
   g_free(self->fallback_title);
   g_free(self->contact_title);
   g_free(self->preview);
+  g_free(self->latest_id);
   G_OBJECT_CLASS(gh_conversation_parent_class)->finalize(object);
 }
 
@@ -1203,6 +1462,10 @@ gh_conversation_class_init(GhConversationClass *klass)
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_HAS_OLDER] = g_param_spec_boolean("has-older", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_HAS_NEWER] = g_param_spec_boolean("has-newer", NULL, NULL, FALSE,
+    G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  props[PROP_NEWER_ARRIVALS] = g_param_spec_uint("newer-arrivals", NULL, NULL,
+    0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_HISTORY_PARTIAL] = g_param_spec_boolean("history-partial", NULL, NULL, FALSE,
     G_PARAM_READABLE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
   props[PROP_TIMER_SECONDS] = g_param_spec_int64("timer-seconds", NULL, NULL,

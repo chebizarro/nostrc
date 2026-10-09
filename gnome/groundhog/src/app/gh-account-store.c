@@ -763,6 +763,35 @@ gh_account_store_load_older(GhAccountStore *self, GhConversation *conversation, 
                                            error);
 }
 
+gboolean
+gh_account_store_load_newer(GhAccountStore *self, GhConversation *conversation, guint limit,
+                            guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_STORE(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (!self->conversations) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE,
+                        "No message storage is open");
+    return FALSE;
+  }
+  return gh_store_conversations_load_newer(self->conversations, conversation, limit,
+                                           out_loaded, error);
+}
+
+gboolean
+gh_account_store_reset_latest(GhAccountStore *self, GhConversation *conversation,
+                              GError **error)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_STORE(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (!self->conversations) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_STATE,
+                        "No message storage is open");
+    return FALSE;
+  }
+  return gh_store_conversations_reset_latest(self->conversations, conversation, error);
+}
+
 static gboolean
 reopen(GhAccountStore *self, GhStoreKeyFlags flags)
 {

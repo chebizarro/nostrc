@@ -9,6 +9,7 @@
  * account switch closes every group connection and reselecting reopens
  * them. */
 #include "mls-world.h"
+#include <sqlite3.h>
 #include "gh-store-mls-identity.h"
 #include "gh-mls-poll.h"
 #include "gh-store-reactions.h"
@@ -1589,6 +1590,37 @@ test_same_text_two_groups(void)
 }
 
 
+static gboolean
+message_sent(gpointer data)
+{
+  return gh_message_get_status(data) == GH_MESSAGE_STATUS_SENT;
+}
+
+typedef struct {
+  App *app;
+  const gchar *group_id;
+  const gchar *first_id;
+  const gchar *last_id;
+} StoredBurstWait;
+
+static gboolean
+stored_burst_reached(gpointer data)
+{
+  StoredBurstWait *wait = data;
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(wait->app->store),
+    "SELECT count(*) FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE c.backend = 3 AND c.backend_key = ? AND "
+    "m.backend_msg_id IN (?, ?)", -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->group_id, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, wait->first_id, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, wait->last_id, -1, SQLITE_STATIC);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  guint count = (guint)sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count == 2;
+}
+
 /* nostrc-2lrz, review W24 M2: libmarmot dates a group's events strictly
  * after each other, within a bounded lead over the clock. A burst of
  * messages, then a Commit, through a group relay that refuses events dated
@@ -1608,12 +1640,24 @@ test_burst_then_commit_accepted(void)
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhMlsGroup *gb = join(bob, ALICE);
   enum { BURST = 90 };
+  g_autoptr(GhMessage) first_message = NULL;
+  g_autoptr(GhMessage) last_message = NULL;
   for (guint i = 0; i < BURST; i++) {
     g_autofree gchar *text = g_strdup_printf("burst %u", i);
-    send_text(alice, ga, text);
+    if (i == 0 || i + 1 == BURST) {
+      g_autoptr(GError) error = NULL;
+      GhMessage *message = gh_mls_service_send(alice->service, ga, text, &error);
+      g_assert_no_error(error);
+      g_assert_nonnull(message);
+      if (i == 0)
+        first_message = message;
+      else
+        last_message = message;
+    } else {
+      send_text(alice, ga, text);
+    }
   }
-  StatusWait last = { alice, room, "burst 89" };
-  spin_until(sent, &last, "the last message of the burst sent");
+  spin_until(message_sent, last_message, "the last message of the burst sent");
   OpWait renamed = { 0 };
   gh_mls_service_update_metadata_async(alice->service, ga, "After the burst", NULL, NULL,
                                        on_changed, &renamed);
@@ -1621,8 +1665,10 @@ test_burst_then_commit_accepted(void)
   g_assert_cmpuint(w.g.future_refused, ==, 0);
   NameWait bob_name = { gb, "After the burst" };
   spin_until(name_is, &bob_name, "Bob follows the Commit");
-  wait_message(bob, room, "burst 0");
-  wait_message(bob, room, "burst 89");
+  StoredBurstWait received = { bob, gh_message_get_group_id(last_message),
+                               gh_message_get_rumor_id(first_message),
+                               gh_message_get_rumor_id(last_message) };
+  spin_until(stored_burst_reached, &received, "Bob persisting both ends of the burst");
   world_down(&w);
 }
 
@@ -1797,7 +1843,7 @@ typedef struct {
   App *app;
   const gchar *room;
   GPtrArray *texts;
-  guint next;            /* texts[0..next) are listed */
+  guint next;            /* number of distinct backlog bodies persisted */
 } TextsWait;
 
 static gboolean
@@ -1810,11 +1856,50 @@ static gboolean
 texts_listed(gpointer data)
 {
   TextsWait *wait = data;
-  while (wait->next < wait->texts->len &&
-         find_message(wait->app, wait->room, g_ptr_array_index(wait->texts, wait->next)))
-    wait->next++;
-  return wait->next == wait->texts->len;
+  g_assert_true(g_str_has_prefix(wait->room, GH_MESSAGE_MLS_ROOM_PREFIX));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(wait->app->store),
+    "SELECT count(DISTINCT m.body) FROM messages m "
+    "JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE c.backend = 3 AND c.backend_key = ? AND m.body LIKE 'backlog %'",
+    -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->room + strlen(GH_MESSAGE_MLS_ROOM_PREFIX),
+                    -1, SQLITE_STATIC);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  wait->next = (guint)sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return wait->next >= wait->texts->len;
 }
+
+typedef struct {
+  App *app;
+  const gchar *room;
+  const gchar *text;
+} StoredTextWait;
+
+static gboolean
+text_stored(gpointer data)
+{
+  StoredTextWait *wait = data;
+  g_assert_true(g_str_has_prefix(wait->room, GH_MESSAGE_MLS_ROOM_PREFIX));
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(wait->app->store),
+    "SELECT EXISTS(SELECT 1 FROM messages m "
+    "JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE c.backend = 3 AND c.backend_key = ? AND m.body = ?)",
+    -1, &stmt, NULL), ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->room + strlen(GH_MESSAGE_MLS_ROOM_PREFIX),
+                    -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 2, wait->text, -1, SQLITE_STATIC);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  gboolean found = sqlite3_column_int(stmt, 0) != 0;
+  sqlite3_finalize(stmt);
+  return found;
+}
+
+#define wait_stored_text(app_, room_, text_) \
+  G_STMT_START { StoredTextWait w_ = { (app_), (room_), (text_) }; \
+                 spin_until(text_stored, &w_, "message stored"); } G_STMT_END
 
 typedef struct {
   WireRelay *relay;
@@ -1981,7 +2066,7 @@ test_catch_up_past_relay_cap(void)
   /* 303 events at 50 a page: the live answer and at least five older pages. */
   g_assert_cmpuint(paged_reqs(&w.g) - paged_before, >=, 5);
   send_text(alice, ga, "after the capped catch-up");
-  wait_message(bob, room, "after the capped catch-up");   /* the live REQ */
+  wait_stored_text(bob, room, "after the capped catch-up");   /* the live REQ */
   backlog_clear(&backlog);
   world_down(&w);
 }
@@ -2052,7 +2137,7 @@ test_catch_up_two_relays_partial(void)
   g_assert_cmpuint(paged_reqs(&w.g), >=, 3);   /* each relay held about 200: paged */
   g_assert_cmpuint(paged_reqs(&w.h), >=, 3);
   send_text(alice, ga, "after the two-relay catch-up");
-  wait_message(bob, room, "after the two-relay catch-up");
+  wait_stored_text(bob, room, "after the two-relay catch-up");
   backlog_clear(&backlog);
   world_down(&w);
 }
@@ -2106,7 +2191,7 @@ test_backfill_store_bounded(void)
   spin_until(history_incomplete, gb, "the backfill reported incomplete");
   wait_live(gb);
   send_text(alice, ga, "live after the bounded backfill");
-  wait_message(bob, room, "live after the bounded backfill");
+  wait_stored_text(bob, room, "live after the bounded backfill");
   g_assert_true(gh_mls_group_get_history_incomplete(gb));
   g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);   /* the gap is asked again */
   g_assert_nonnull(find_message(bob, room, "backlog 99"));     /* the newest were applied */
@@ -2180,12 +2265,12 @@ test_stalled_relay_given_up(void)
   send_text(alice, ga, "live while g stalls");
   TextsWait all = { bob, room, backlog.texts, 0 };
   spin_until(texts_listed, &all, "every message of the backlog");
-  wait_message(bob, room, "live while g stalls");
+  wait_stored_text(bob, room, "live while g stalls");
   spin_until(history_incomplete, gb, "g given up as incomplete");
   wait_live(gb);
   g_assert_cmpint(gh_mls_group_get_cursor(gb), ==, before);   /* g never answered */
   send_text(alice, ga, "live after g was given up");
-  wait_message(bob, room, "live after g was given up");
+  wait_stored_text(bob, room, "live after g was given up");
   backlog_clear(&backlog);
   world_down(&w);
 }
@@ -2264,7 +2349,7 @@ test_busy_group_stalled_relay(void)
   wait_for_count(&w.g.stalled_reqs, 1);
   Burst burst = { alice, ga, 0, 20 };
   guint source = g_timeout_add(250, burst_tick, &burst);
-  wait_message(bob, room, "burst 0");
+  wait_stored_text(bob, room, "burst 0");
   g_assert_cmpuint(burst.sent, <, burst.total);   /* read while the group is still busy */
   if (burst.sent < burst.total)
     g_source_remove(source);
@@ -2336,7 +2421,7 @@ test_catch_up_over_200(void)
   g_assert_cmpstr(gh_mls_group_get_name(gb), ==, "Backlog 3");
   g_assert_cmpint(gh_mls_group_get_unreadable(gb), ==, base);   /* none of the backlog */
   send_text(alice, ga, "after the backlog");
-  wait_message(bob, room, "after the backlog");
+  wait_stored_text(bob, room, "after the backlog");
   CursorWait moved = { gb, newest };
   spin_until(cursor_reached, &moved, "the cursor past the backlog");
   backlog_clear(&backlog);

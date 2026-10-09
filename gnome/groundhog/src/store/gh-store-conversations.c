@@ -554,6 +554,12 @@ delegate_unblock(gpointer data, const gchar *room_id, GError **error)
   return unblock_room(data, room_id, TRUE, error);
 }
 
+static gboolean
+delegate_reset_latest(gpointer data, GhConversation *conversation, GError **error)
+{
+  return gh_store_conversations_reset_latest(data, conversation, error);
+}
+
 static const GhConversationDelegate store_delegate = {
   .has_wrap = delegate_has_wrap,
   .has_rumor = delegate_has_rumor,
@@ -565,6 +571,7 @@ static const GhConversationDelegate store_delegate = {
   .is_blocked = delegate_is_blocked,
   .unblock = delegate_unblock,
   .mark_unread = delegate_mark_unread,
+  .reset_latest = delegate_reset_latest,
 };
 
 /* ---- Restore ------------------------------------------------------------------------ */
@@ -647,7 +654,7 @@ conversation_state(const RoomState *state, gboolean has_older, gint64 floor_crea
 static gboolean
 restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conversation_id,
              const gchar *room_id, GhConversation *conversation, guint limit,
-             guint *out_listed, GError **error)
+             gboolean reset, guint *out_listed, GError **error)
 {
   GhStore *store = self->store;
   const gint64 now = gh_clock_get_unix(gh_store_get_clock(store));
@@ -720,7 +727,14 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
     goto fail;
   GhConversationState restored = conversation_state(&state, more && cursor.has,
                                                     cursor.created_at, cursor.id);
-  gh_conversation_store_restore(model, room_id, messages, &restored);
+  if (reset) {
+    GhConversation *existing = gh_conversation_store_lookup(model, room_id);
+    if (existing)
+      gh_conversation_window_clear(existing);
+  }
+  GhConversation *listed = gh_conversation_store_restore(model, room_id, messages, &restored);
+  if (listed)
+    gh_conversation_window_enable(listed);
   *out_listed = messages->len;
   room_state_clear(&state);
   place_clear(&cursor);
@@ -772,7 +786,7 @@ gh_store_conversations_attach(GhStoreConversations *self, GhConversationStore *m
   for (guint i = 0; i < ids->len; i++) {
     guint listed = 0;
     if (!restore_room(self, model, g_array_index(ids, gint64, i),
-                      g_ptr_array_index(rooms, i), NULL, limit, &listed, error))
+                      g_ptr_array_index(rooms, i), NULL, limit, FALSE, &listed, error))
       return FALSE;
   }
   return TRUE;
@@ -810,11 +824,121 @@ gh_store_conversations_load_older(GhStoreConversations *self, GhConversation *co
     return FALSE;
   }
   guint listed = 0;
-  if (!restore_room(self, model, conversation_id, room_id, conversation, limit, &listed, error))
+  if (!restore_room(self, model, conversation_id, room_id, conversation, limit, FALSE, &listed, error))
     return FALSE;
   if (out_loaded)
     *out_loaded = listed;
   return TRUE;
+}
+
+gboolean
+gh_store_conversations_load_newer(GhStoreConversations *self, GhConversation *conversation,
+                                  guint limit, guint *out_loaded, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (out_loaded)
+    *out_loaded = 0;
+  if (!check_open(self, error))
+    return FALSE;
+  if (limit == 0 || limit > GH_STORE_CONVERSATIONS_MAX_PAGE_SIZE) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID, "Invalid page size");
+    return FALSE;
+  }
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  if (!model || gh_conversation_store_lookup(model, room_id) != conversation ||
+      gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP17) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "The conversation is not listed by the attached model");
+    return FALSE;
+  }
+  gint64 at = 0, conversation_id = 0;
+  const gchar *edge_id = NULL;
+  gboolean found = FALSE;
+  if (!gh_conversation_get_newer_cursor(conversation, &at, &edge_id) ||
+      !lookup_room(self->store, room_id, &found, &conversation_id, error))
+    return FALSE;
+  if (!found) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    return FALSE;
+  }
+  GhStore *store = self->store;
+  g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
+  sqlite3_stmt *stmt = prepare(store,
+    "SELECT raw_json, expires_at, seq FROM messages WHERE conversation_id = ?1 "
+    "AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
+    "ORDER BY created_at ASC, backend_msg_id ASC", error);
+  if (!stmt)
+    return FALSE;
+  BIND(sqlite3_bind_int64(stmt, 1, conversation_id));
+  BIND(sqlite3_bind_int64(stmt, 2, at));
+  BIND(bind_text(stmt, 3, edge_id));
+  gboolean more = FALSE, has_row = FALSE;
+  gint64 now = gh_clock_get_unix(gh_store_get_clock(self->store));
+  while (TRUE) {
+    if (!step_row(self->store, stmt, &has_row, "Reading newer stored messages", error)) {
+      sqlite3_finalize(stmt);
+      return FALSE;
+    }
+    if (!has_row)
+      break;
+    if (messages->len == limit) {
+      more = TRUE;
+      break;
+    }
+    gint64 expires_at = sqlite3_column_int64(stmt, 1);
+    if (expires_at > 0 && expires_at <= now)
+      continue;
+    g_autoptr(GError) invalid = NULL;
+    GhMessage *message = gh_message_new_from_rumor(self->account,
+      (const gchar *)sqlite3_column_text(stmt, 0), &invalid);
+    if (!message || g_strcmp0(gh_message_get_room_id(message), room_id) != 0) {
+      g_warning("Groundhog skipped a stored message that failed verification: %s",
+                invalid ? invalid->message : "it belongs to another room");
+      g_clear_object(&message);
+      continue;
+    }
+    gh_message_set_expires_at(message, expires_at);
+    gh_message_set_seq(message, (guint64)MAX(sqlite3_column_int64(stmt, 2), 0));
+    g_ptr_array_add(messages, message);
+  }
+  sqlite3_finalize(stmt);
+  gh_conversation_window_add_newer(conversation, messages, more);
+  if (out_loaded)
+    *out_loaded = messages->len;
+  return TRUE;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+gboolean
+gh_store_conversations_reset_latest(GhStoreConversations *self, GhConversation *conversation,
+                                    GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation), FALSE);
+  if (!check_open(self, error))
+    return FALSE;
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  if (!model || gh_conversation_store_lookup(model, room_id) != conversation) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
+                        "The conversation is not listed by the attached model");
+    return FALSE;
+  }
+  gint64 id = 0;
+  gboolean found = FALSE;
+  if (!lookup_room(self->store, room_id, &found, &id, error))
+    return FALSE;
+  if (!found) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND, "No such conversation");
+    return FALSE;
+  }
+  guint listed = 0;
+  return restore_room(self, model, id, room_id, NULL, GH_CONVERSATION_WINDOW_OPEN,
+                      TRUE, &listed, error);
 }
 
 /* ---- Drafts and forget ---------------------------------------------------------------- */
@@ -1056,7 +1180,7 @@ refresh_room(GhStoreConversations *self, GhConversationStore *model, const gchar
   guint listed = 0;
   if (g_list_model_get_n_items(G_LIST_MODEL(conversation)) == 0 && has_older &&
       !restore_room(self, model, id, room_id, conversation, GH_STORE_CONVERSATIONS_PAGE_SIZE,
-                    &listed, error))
+                    FALSE, &listed, error))
     return FALSE;
   return TRUE;
 }
@@ -1413,7 +1537,7 @@ change_block(GhStoreConversations *self, const gchar *room_id, gboolean blocked,
     return TRUE;
   }
   guint listed = 0;
-  return restore_room(self, model, id, room_id, NULL, GH_STORE_CONVERSATIONS_PAGE_SIZE, &listed,
+  return restore_room(self, model, id, room_id, NULL, GH_STORE_CONVERSATIONS_PAGE_SIZE, FALSE, &listed,
                       error);
 }
 

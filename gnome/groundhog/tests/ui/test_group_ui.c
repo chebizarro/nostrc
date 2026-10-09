@@ -23,6 +23,7 @@
  * Waits iterate the main context; their deadlines are failure bounds only. */
 #include "gh-conversation-list.h"
 #include "gh-conversation-row.h"
+#include "gh-conversation-private.h"
 
 #include "nostrc-test-gdk-frame.h"
 #include "gh-group-copy.h"
@@ -1001,13 +1002,14 @@ test_older_history(void)
   g_autoptr(GhNip29Room) room = join_ref(&f, hist_ref, NULL);
   g_autofree gchar *room_id = g_strdup(gh_nip29_room_get_room_id(room));
   wait_join(room, GH_NIP29_JOIN_MEMBER);
-  wait_messages(f.model, room_id, 70);
   wait_read(room, GH_NIP29_READ_LIVE);
+  wait_messages(f.model, room_id, GH_CONVERSATION_WINDOW_OPEN);
   g_clear_object(&room);
   relay.hold_eose = TRUE; /* the relay sends nothing new after the restart */
   restart(&f);
   GhConversation *conversation = gh_conversation_store_lookup(f.model, room_id);
   g_assert_nonnull(conversation);
+  gh_conversation_window_set_active(conversation, TRUE);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
                    GH_STORE_NIP29_PAGE_SIZE);
   g_assert_true(gh_conversation_get_has_older(conversation));
@@ -1016,7 +1018,14 @@ test_older_history(void)
   g_assert_true(gh_nip29_service_load_older(f.service, conversation, GH_STORE_NIP29_PAGE_SIZE,
                                             &loaded, &error));
   g_assert_no_error(error);
-  g_assert_cmpuint(loaded, ==, 70 - GH_STORE_NIP29_PAGE_SIZE);
+  g_assert_cmpuint(loaded, ==, GH_STORE_NIP29_PAGE_SIZE);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   2 * GH_STORE_NIP29_PAGE_SIZE);
+  g_assert_true(gh_conversation_get_has_older(conversation));
+  g_assert_true(gh_nip29_service_load_older(f.service, conversation, GH_STORE_NIP29_PAGE_SIZE,
+                                            &loaded, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(loaded, ==, 70 - 2 * GH_STORE_NIP29_PAGE_SIZE);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==, 70);
   g_assert_false(gh_conversation_get_has_older(conversation));
 

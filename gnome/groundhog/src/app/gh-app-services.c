@@ -1989,13 +1989,49 @@ mls_ui_service(gpointer data)
 }
 #endif
 
-/* Private conversations' older pages, as gh_store_status_attach_history(). */
+/* Store-backed pages for private and encrypted-group rooms. Relay groups
+ * are dispatched by gh-group-ui.c. */
 static gboolean
 group_ui_load_older(GhConversation *conversation, GError **error, gpointer data)
 {
   GhAppServices *self = data;
+#if GROUNDHOG_HAVE_MLS_UI
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS) {
+    GhMlsService *service = mls_ui_service(self);
+    return service && gh_mls_service_load_older(service, conversation,
+                                                 GH_CONVERSATION_WINDOW_PAGE, NULL, error);
+  }
+#endif
   return gh_account_store_load_older(self->account_store, conversation,
-                                     GH_STORE_CONVERSATIONS_PAGE_SIZE, NULL, error);
+                                     GH_CONVERSATION_WINDOW_PAGE, NULL, error);
+}
+
+static gboolean
+group_ui_load_newer(GhConversation *conversation, GError **error, gpointer data)
+{
+  GhAppServices *self = data;
+#if GROUNDHOG_HAVE_MLS_UI
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS) {
+    GhMlsService *service = mls_ui_service(self);
+    return service && gh_mls_service_load_newer(service, conversation,
+                                                 GH_CONVERSATION_WINDOW_PAGE, NULL, error);
+  }
+#endif
+  return gh_account_store_load_newer(self->account_store, conversation,
+                                     GH_CONVERSATION_WINDOW_PAGE, NULL, error);
+}
+
+static gboolean
+group_ui_reset_latest(GhConversation *conversation, GError **error, gpointer data)
+{
+  GhAppServices *self = data;
+#if GROUNDHOG_HAVE_MLS_UI
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_MLS) {
+    GhMlsService *service = mls_ui_service(self);
+    return service && gh_mls_service_reset_latest(service, conversation, error);
+  }
+#endif
+  return gh_account_store_reset_latest(self->account_store, conversation, error);
 }
 #endif
 
@@ -2285,6 +2321,8 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .display_name = group_ui_name,
     .names_data = self,
     .load_older = group_ui_load_older,
+    .load_newer = group_ui_load_newer,
+    .reset_latest = group_ui_reset_latest,
     .load_older_data = self,
   };
   gh_group_ui_attach(window, &groups);

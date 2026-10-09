@@ -21,6 +21,8 @@ typedef struct {
   GhGroupNameFunc display_name;
   gpointer names_data;
   GhConversationListLoadOlder load_older;
+  GhConversationListLoadOlder load_newer;
+  GhConversationListLoadOlder reset_latest;
   gpointer load_older_data;
   GSimpleAction *join_action;
   GSimpleAction *new_action;
@@ -244,7 +246,7 @@ load_older(GhConversation *conversation, GError **error, gpointer data)
                           "No message storage is open");
       return FALSE;
     }
-    return gh_nip29_service_load_older(service, conversation, GH_STORE_NIP29_PAGE_SIZE, NULL,
+    return gh_nip29_service_load_older(service, conversation, GH_CONVERSATION_WINDOW_PAGE, NULL,
                                        error);
   }
   if (!ui->load_older) {
@@ -253,6 +255,39 @@ load_older(GhConversation *conversation, GError **error, gpointer data)
     return FALSE;
   }
   return ui->load_older(conversation, error, ui->load_older_data);
+}
+
+static gboolean
+load_newer(GhConversation *conversation, GError **error, gpointer data)
+{
+  GroupUi *ui = data;
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29) {
+    GhNip29Service *service = current(ui);
+    if (!service) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                          "No message storage is open");
+      return FALSE;
+    }
+    return gh_nip29_service_load_newer(service, conversation, GH_CONVERSATION_WINDOW_PAGE,
+                                       NULL, error);
+  }
+  return ui->load_newer && ui->load_newer(conversation, error, ui->load_older_data);
+}
+
+static gboolean
+reset_latest(GhConversation *conversation, GError **error, gpointer data)
+{
+  GroupUi *ui = data;
+  if (gh_conversation_get_backend(conversation) == GH_CONVERSATION_BACKEND_NIP29) {
+    GhNip29Service *service = current(ui);
+    if (!service) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                          "No message storage is open");
+      return FALSE;
+    }
+    return gh_nip29_service_reset_latest(service, conversation, error);
+  }
+  return ui->reset_latest && ui->reset_latest(conversation, error, ui->load_older_data);
 }
 
 /* ---- dialogs ------------------------------------------------------------------------------ */
@@ -365,6 +400,8 @@ gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config)
   ui->display_name = config->display_name;
   ui->names_data = config->names_data;
   ui->load_older = config->load_older;
+  ui->load_newer = config->load_newer;
+  ui->reset_latest = config->reset_latest;
   ui->load_older_data = config->load_older_data;
   g_object_set_data_full(G_OBJECT(window), GROUP_UI_DATA, ui, group_ui_free);
 
@@ -379,6 +416,7 @@ gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config)
     g_signal_connect_object(config->state_source, "changed", G_CALLBACK(on_state_changed),
                             window, G_CONNECT_SWAPPED);
   gh_conversation_list_set_history_source(window, load_older, ui, NULL);
+  gh_conversation_list_set_window_source(window, load_newer, reset_latest, ui, NULL);
   gh_send_ui_set_delegate(window, &group_delegate, ui);
   GhContentPage *content = gh_window_get_content(window);
   GtkWidget *view = content ? gh_content_page_get_view(content) : NULL;

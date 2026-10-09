@@ -246,16 +246,32 @@ reposition(GhConversationStore *self, GhConversation *conversation, guint old_po
   }
 }
 
-static void
-index_messages(GhConversationStore *self, GhConversation *conversation)
+static gboolean
+indexed_in_room(gpointer key, gpointer value, gpointer user_data)
 {
+  (void)key;
+  return value == user_data;
+}
+
+void
+gh_conversation_store_reindex_window(GhConversationStore *self,
+                                          GhConversation *conversation)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_STORE(self));
+  g_return_if_fail(GH_IS_CONVERSATION(conversation));
+  g_hash_table_foreach_remove(self->messages, indexed_in_room, conversation);
   guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
   for (guint i = 0; i < n; i++) {
     g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), i);
-    /* The key is owned by the message, which the conversation keeps. */
-    g_hash_table_insert(self->messages, (gpointer)gh_message_get_rumor_id(message),
+    g_hash_table_insert(self->messages, g_strdup(gh_message_get_rumor_id(message)),
                         conversation);
   }
+}
+
+static void
+index_messages(GhConversationStore *self, GhConversation *conversation)
+{
+  gh_conversation_store_reindex_window(self, conversation);
 }
 
 /* A durable delegate's unread count is authoritative (it also counts the
@@ -306,8 +322,33 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
     return GH_CONVERSATION_ADD_HIDDEN;
   /* Its place in the room's arrival order: the durable one, else ours. */
   gh_message_set_seq(message, commit.seq >= 0 ? (guint64)commit.seq : ++self->next_seq);
+  if (conversation && gh_conversation_get_has_newer(conversation) &&
+      gh_message_is_self(message) && wrap_id == NULL && delegate &&
+      delegate->reset_latest) {
+    g_autoptr(GError) reset_error = NULL;
+    if (delegate->reset_latest(delegate_data, conversation, &reset_error)) {
+      sync_unread(conversation, &commit);
+      g_signal_emit(self, signals[SIGNAL_MESSAGE_ADDED], 0, conversation, message);
+      g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
+      return GH_CONVERSATION_ADD_NEW;
+    }
+    g_warning("Groundhog could not show the latest page after sending: %s",
+              reset_error ? reset_error->message : "no message storage is available");
+  }
   if (conversation && gh_conversation_is_older_history(conversation, message)) {
     gh_conversation_add_older_history(conversation, message, wrap_id != NULL);
+    sync_unread(conversation, &commit);
+    g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
+    return GH_CONVERSATION_ADD_NEW;
+  }
+  gint64 edge_at = 0;
+  const gchar *edge_id = NULL;
+  if (conversation && gh_conversation_get_has_newer(conversation) &&
+      gh_conversation_get_newer_cursor(conversation, &edge_at, &edge_id) &&
+      (gh_message_get_created_at(message) > edge_at ||
+       (gh_message_get_created_at(message) == edge_at &&
+        g_strcmp0(gh_message_get_rumor_id(message), edge_id) > 0))) {
+    gh_conversation_add_newer_history(conversation, message, wrap_id != NULL);
     sync_unread(conversation, &commit);
     g_signal_emit(self, signals[SIGNAL_MESSAGE_COMMITTED], 0, message);
     return GH_CONVERSATION_ADD_NEW;
@@ -321,6 +362,8 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
   } else {
     g_ptr_array_find(self->conversations, conversation, &old_position);
   }
+  if (delegate && delegate->reset_latest)
+    gh_conversation_window_enable(conversation);
   /* The room updates (and notifies) while the store still lists it where it
    * was; only then does it move to its new position. */
   if (!gh_conversation_insert(conversation, message, wrap_id != NULL)) {
@@ -330,7 +373,7 @@ gh_conversation_store_admit(GhConversationStore *self, GhMessage *message,
     return GH_CONVERSATION_ADD_REJECTED;
   }
   sync_unread(conversation, &commit);
-  g_hash_table_insert(self->messages, (gpointer)rumor_id, conversation);
+  g_hash_table_insert(self->messages, g_strdup(rumor_id), conversation);
   if (created)
     list_new(self, conversation);
   else
@@ -621,7 +664,6 @@ gh_conversation_store_remove_message(GhConversationStore *self, const gchar *rum
   guint old_position = 0;
   if (!conversation || !g_ptr_array_find(self->conversations, conversation, &old_position))
     return FALSE;
-  /* The key belongs to the message, which the room is about to release. */
   g_autofree gchar *id = g_strdup(rumor_id);
   g_hash_table_remove(self->messages, id);
   /* As on insert: the room notifies where it is listed, then moves. */
@@ -740,5 +782,5 @@ gh_conversation_store_init(GhConversationStore *self)
 {
   self->conversations = g_ptr_array_new_with_free_func(g_object_unref);
   self->rooms = g_hash_table_new(g_str_hash, g_str_equal);
-  self->messages = g_hash_table_new(g_str_hash, g_str_equal);
+  self->messages = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 }

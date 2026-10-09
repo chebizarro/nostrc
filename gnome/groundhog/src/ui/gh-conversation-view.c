@@ -1,4 +1,5 @@
 #include "gh-conversation-view.h"
+#include "gh-conversation-private.h"
 #include "gh-link-policy.h"
 #include "gh-message-row.h"
 #include "gh-timeline-row.h"
@@ -691,11 +692,18 @@ struct _GhConversationView {
   gboolean near_top;     /* within a page of the top of the listed history */
   guint open_target;     /* the first unread message's position */
   guint new_below;
+  guint seen_newer_arrivals;
   gboolean loading_older;
   gboolean older_failed; /* the last load failed: retried only on request */
   GhConversationViewLoadOlder load_older;
   gpointer load_older_data;
   GDestroyNotify load_older_destroy;
+  GhConversationViewWindowNavigate navigate_window;
+  gpointer navigate_window_data;
+  GhConversationViewLoadTarget load_target;
+  gpointer load_target_data;
+  gboolean loading_newer;
+  gboolean newer_failed;
 
   /* Day changes */
   guint midnight_source;
@@ -866,7 +874,9 @@ n_visible(GhConversationView *self)
 static void
 update_jump(GhConversationView *self)
 {
-  gboolean shown = !self->sticky && n_visible(self) > 0;
+  gboolean shown = (!self->sticky ||
+                    (self->conversation && gh_conversation_get_has_newer(self->conversation))) &&
+                   n_visible(self) > 0;
   gtk_widget_set_visible(GTK_WIDGET(self->jump_button), shown);
   gtk_widget_set_visible(GTK_WIDGET(self->jump_count), self->new_below > 0);
   g_autofree gchar *count = g_strdup_printf("%u", self->new_below);
@@ -882,10 +892,21 @@ update_jump(GhConversationView *self)
 }
 
 static void
+on_newer_arrivals(GhConversationView *self)
+{
+  guint arrivals = self->conversation
+    ? gh_conversation_get_newer_arrivals(self->conversation) : 0;
+  if (arrivals > self->seen_newer_arrivals)
+    self->new_below += arrivals - self->seen_newer_arrivals;
+  self->seen_newer_arrivals = arrivals;
+  update_jump(self);
+}
+
+static void
 set_sticky(GhConversationView *self, gboolean sticky)
 {
   self->sticky = sticky;
-  if (sticky)
+  if (sticky && (!self->conversation || !gh_conversation_get_has_newer(self->conversation)))
     self->new_below = 0;
   update_jump(self);
 }
@@ -997,6 +1018,22 @@ maybe_load_older(GhConversationView *self)
   request_older(self, FALSE);
 }
 
+static void
+maybe_load_newer(GhConversationView *self)
+{
+  if (!self->conversation || !self->navigate_window || self->loading_newer ||
+      self->newer_failed || !gh_conversation_get_has_newer(self->conversation) ||
+      self->open_scroll != OPEN_NONE)
+    return;
+  GtkAdjustment *adj = vadjustment(self);
+  gdouble page = gtk_adjustment_get_page_size(adj);
+  if (page <= 0 || distance_to_bottom(self) > page / 4)
+    return;
+  self->loading_newer = TRUE;
+  self->navigate_window(self, self->conversation, GH_CONVERSATION_WINDOW_NEWER,
+                        self->navigate_window_data);
+}
+
 static gboolean
 pin_to_latest(gpointer data)
 {
@@ -1093,6 +1130,7 @@ on_adjustment_changed(GhConversationView *self)
     queue_pin(self);
   sync_near_top(self);
   maybe_load_older(self);
+  maybe_load_newer(self);
 }
 
 static void
@@ -1105,6 +1143,7 @@ on_value_changed(GhConversationView *self)
     set_sticky(self, at_bottom);
   sync_near_top(self);
   maybe_load_older(self);
+  maybe_load_newer(self);
 }
 
 void
@@ -1226,7 +1265,7 @@ on_timeline_changed(GhConversationView *self, guint position, guint removed, gui
                     GListModel *timeline)
 {
   if (added == 0 || position + added != g_list_model_get_n_items(timeline) ||
-      self->open_scroll != OPEN_NONE)
+      self->open_scroll != OPEN_NONE || self->loading_newer)
     return;
   guint incoming = 0, messages = 0;
   g_autoptr(GhTimelineItem) last_incoming = NULL;
@@ -1313,6 +1352,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     g_signal_handlers_disconnect_by_data(self->timeline, self);
   gtk_list_view_set_model(self->message_list, NULL);
   g_clear_object(&self->timeline);
+  if (self->conversation)
+    gh_conversation_window_set_active(self->conversation, FALSE);
   g_clear_handle_id(&self->midnight_source, g_source_remove);
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
@@ -1325,7 +1366,10 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
     gtk_widget_set_visible(self->loading_box, FALSE);
   }
   self->older_failed = FALSE;
+  self->loading_newer = FALSE;
+  self->newer_failed = FALSE;
   self->new_below = 0;
+  self->seen_newer_arrivals = 0;
   self->open_scroll = OPEN_NONE;
   g_set_object(&self->conversation, conversation);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -1336,6 +1380,7 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
 #endif
 
   if (conversation) {
+    gh_conversation_window_set_active(conversation, TRUE);
     self->timeline = timeline_new(G_LIST_MODEL(conversation), is_multi_party(conversation),
                                   self->reactions);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -1352,6 +1397,10 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::has-older", G_CALLBACK(update_older),
                             self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::has-newer", G_CALLBACK(update_jump),
+                            self, G_CONNECT_SWAPPED);
+    g_signal_connect_object(conversation, "notify::newer-arrivals",
+                            G_CALLBACK(on_newer_arrivals), self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::history-partial", G_CALLBACK(update_older),
                             self, G_CONNECT_SWAPPED);
     g_signal_connect_object(conversation, "notify::is-request", G_CALLBACK(on_request_changed),
@@ -1482,6 +1531,42 @@ gh_conversation_view_get_loading_older(GhConversationView *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
   return self->loading_older;
+}
+
+void
+gh_conversation_view_set_window_loader(GhConversationView *self,
+                                       GhConversationViewWindowNavigate navigate,
+                                       gpointer user_data)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->navigate_window = navigate;
+  self->navigate_window_data = user_data;
+  update_jump(self);
+}
+
+void
+gh_conversation_view_finish_window_navigation(GhConversationView *self,
+                                              GhConversationWindowNavigation navigation,
+                                              gboolean success)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->loading_newer = FALSE;
+  if (!success) {
+    self->newer_failed = TRUE;
+    announce(self, _("Couldn't load newer messages"),
+             GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+  } else if (navigation == GH_CONVERSATION_WINDOW_LATEST) {
+    self->newer_failed = FALSE;
+    gh_conversation_view_scroll_to_latest(self);
+  }
+  update_jump(self);
+}
+
+gboolean
+gh_conversation_view_get_loading_newer(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->loading_newer;
 }
 
 /* ---- delivery details ---------------------------------------------------------------- */
@@ -2235,6 +2320,34 @@ action_react(GtkWidget *widget, const char *name, GVariant *parameter)
   self->react_func(self->conversation, message, emoji, add, self->react_data);
 }
 
+gboolean
+gh_conversation_view_scroll_to_message(GhConversationView *self, const gchar *rumor_id)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  if (!self->conversation || !gh_conversation_lookup_message(self->conversation, rumor_id))
+    return FALSE;
+  guint n = n_visible(self);
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhTimelineItem) item = g_list_model_get_item(G_LIST_MODEL(self->timeline), i);
+    GhMessage *message = gh_timeline_item_get_message(item);
+    if (message && g_strcmp0(gh_message_get_rumor_id(message), rumor_id) == 0) {
+      gtk_list_view_scroll_to(self->message_list, i, GTK_LIST_SCROLL_SELECT, NULL);
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
+void
+gh_conversation_view_set_target_loader(GhConversationView *self,
+                                       GhConversationViewLoadTarget load_target,
+                                       gpointer user_data)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->load_target = load_target;
+  self->load_target_data = user_data;
+}
+
 /* nostrc-zjkv: scroll to the message being replied to. */
 static void
 action_scroll_to_reply(GtkWidget *widget, const char *name, GVariant *parameter)
@@ -2244,24 +2357,12 @@ action_scroll_to_reply(GtkWidget *widget, const char *name, GVariant *parameter)
   if (!self->conversation)
     return;
   const gchar *reply_id = g_variant_get_string(parameter, NULL);
-  GhMessage *target = gh_conversation_lookup_message(self->conversation, reply_id);
-  if (!target) {
-    show_toast(self, _("Original message not loaded"));
+  if (gh_conversation_view_scroll_to_message(self, reply_id))
     return;
-  }
-  /* Find its position in the visible timeline (GhTimelineItems). */
-  guint n = n_visible(self);
-  for (guint i = 0; i < n; i++) {
-    g_autoptr(GhTimelineItem) item =
-        GH_TIMELINE_ITEM(g_list_model_get_item(G_LIST_MODEL(self->timeline), i));
-    GhMessage *msg = gh_timeline_item_get_message(item);
-    if (!msg)
-      continue;
-    if (g_strcmp0(gh_message_get_rumor_id(msg), reply_id) == 0) {
-      gtk_list_view_scroll_to(self->message_list, i, GTK_LIST_SCROLL_SELECT, NULL);
-      return;
-    }
-  }
+  if (self->load_target)
+    self->load_target(self, self->conversation, reply_id, self->load_target_data);
+  else
+    show_toast(self, _("Original message unavailable"));
 }
 
 static void
@@ -2269,7 +2370,15 @@ action_jump(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  gh_conversation_view_scroll_to_latest(GH_CONVERSATION_VIEW(widget));
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  if (self->conversation && gh_conversation_get_has_newer(self->conversation) &&
+      self->navigate_window) {
+    self->loading_newer = TRUE;
+    self->navigate_window(self, self->conversation, GH_CONVERSATION_WINDOW_LATEST,
+                          self->navigate_window_data);
+  } else {
+    gh_conversation_view_scroll_to_latest(self);
+  }
 }
 
 static void

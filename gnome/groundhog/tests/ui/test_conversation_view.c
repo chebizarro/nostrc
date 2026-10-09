@@ -23,6 +23,7 @@
 
 #include "nostrc-test-gdk-frame.h"
 #include "gh-conversation-private.h"
+#include "gh-conversation-window.h"
 #include "gh-preferences-dialog.h"
 #include "blossom-fixture.h"
 #include "gh-conversation-row.h"
@@ -1768,6 +1769,10 @@ test_open_timing(Fixture *f, gconstpointer data)
     gh_conversation_mark_read(b);
     g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a)), ==, size);
     g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b)), ==, size);
+    /* The store-backed opener presents only its newest window, not all
+     * seeded messages. The in-memory fixture enables that policy explicitly. */
+    gh_conversation_window_enable(a);
+    gh_conversation_window_enable(b);
     for (guint sample = 0; sample < warmups + pairs; sample++) {
       gboolean warmup = sample < warmups;
       GhWindow *window = gh_window_new(NULL);
@@ -2134,6 +2139,151 @@ topmost_on_screen(GhConversationView *view, GPtrArray *messages, gdouble *y)
     }
   }
   return NULL;
+}
+
+static void
+assert_window_bound(GListModel *model, guint position, guint removed, guint added,
+                    gpointer data)
+{
+  (void)position;
+  (void)removed;
+  (void)added;
+  (void)data;
+  g_assert_cmpuint(g_list_model_get_n_items(model), <=, GH_CONVERSATION_WINDOW_MAX);
+}
+
+/* Traverse 1,000 stored messages in both directions without retaining the
+ * whole history. The fixture array stands in for the encrypted store; the
+ * view sees only the GhConversation window. */
+static void
+test_window_long_scroll(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  const guint to_a[] = { 1, 0 };
+  gint64 base = noon_today() - 100000;
+  g_autoptr(GPtrArray) all = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GPtrArray) page = g_ptr_array_new_with_free_func(g_object_unref);
+  gboolean seen_older[1000] = { FALSE };
+  gboolean seen_newer[1000] = { FALSE };
+  for (guint i = 0; i < 1000; i++) {
+    g_autofree gchar *body = g_strdup_printf("stored window message %u", i);
+    g_ptr_array_add(all, rumor(2, to_a, base + i * 60, body, NULL));
+  }
+  for (guint i = 970; i < 1000; i++) {
+    g_ptr_array_add(page, g_object_ref(g_ptr_array_index(all, i)));
+    seen_older[i] = TRUE;
+  }
+  GhMessage *floor = g_ptr_array_index(all, 970);
+  const gchar *room_id = gh_message_get_room_id(floor);
+  GhConversationState state = {
+    .accepted = TRUE,
+    .has_older = TRUE,
+    .floor_created_at = gh_message_get_created_at(floor),
+    .floor_id = gh_message_get_rumor_id(floor),
+  };
+  GhConversation *conversation = gh_conversation_store_restore(f->store, room_id, page, &state);
+  gh_conversation_window_enable(conversation);
+  g_signal_connect(conversation, "items-changed", G_CALLBACK(assert_window_bound), NULL);
+  show(f, conversation, 480, 300);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), ==,
+                   GH_CONVERSATION_WINDOW_OPEN);
+  GtkAdjustment *adj = vadjustment(f->view);
+  gtk_adjustment_set_value(adj, gtk_adjustment_get_page_size(adj) / 4);
+  wait_frames(GTK_WIDGET(f->view));
+  gdouble before_y = 0;
+  GhMessage *anchor = topmost_on_screen(f->view, page, &before_y);
+  g_assert_nonnull(anchor);
+  for (guint end = 970; end > 0;) {
+    guint start = end > GH_CONVERSATION_WINDOW_PAGE ? end - GH_CONVERSATION_WINDOW_PAGE : 0;
+    g_ptr_array_set_size(page, 0);
+    for (guint i = start; i < end; i++) {
+      g_assert_false(seen_older[i]);
+      seen_older[i] = TRUE;
+      g_ptr_array_add(page, g_object_ref(g_ptr_array_index(all, i)));
+    }
+    floor = g_ptr_array_index(all, start);
+    state.has_older = start > 0;
+    state.floor_created_at = gh_message_get_created_at(floor);
+    state.floor_id = gh_message_get_rumor_id(floor);
+    g_assert_true(gh_conversation_store_restore(f->store, room_id, page, &state) == conversation);
+    g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(conversation)), <=,
+                     GH_CONVERSATION_WINDOW_MAX);
+    if (end == 970) {
+      wait_frames(GTK_WIDGET(f->view));
+      GhMessageRow *row = row_for(f->view, anchor);
+      graphene_rect_t bounds;
+      g_assert_nonnull(row);
+      g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(row),
+        view_child(f->view, "scroller"), &bounds));
+      g_assert_cmpfloat(fabs(bounds.origin.y - before_y), <=, 1);
+    }
+    end = start;
+  }
+  for (guint i = 0; i < 1000; i++)
+    g_assert_true(seen_older[i]);
+  g_assert_true(gh_conversation_get_has_newer(conversation));
+  /* The oldest window is contiguous. Every adjacent newer page advances
+   * exactly once, including across each far-end trim. */
+  guint cursor = 0;
+  for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(conversation)); i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), i);
+    guint index = (guint)((gh_message_get_created_at(message) - base) / 60);
+    seen_newer[index] = TRUE;
+    cursor = index;
+  }
+  gboolean checked_append_anchor = FALSE;
+  while (cursor < 999) {
+    guint start = cursor + 1;
+    guint end = MIN(start + GH_CONVERSATION_WINDOW_PAGE, 1000);
+    g_ptr_array_set_size(page, 0);
+    for (guint i = start; i < end; i++) {
+      g_assert_false(seen_newer[i]);
+      seen_newer[i] = TRUE;
+      g_ptr_array_add(page, g_object_ref(g_ptr_array_index(all, i)));
+    }
+    g_autoptr(GPtrArray) visible_before = NULL;
+    GhMessage *append_anchor = NULL;
+    gdouble append_y = 0;
+    if (!checked_append_anchor &&
+        g_list_model_get_n_items(G_LIST_MODEL(conversation)) + page->len >
+          GH_CONVERSATION_WINDOW_MAX) {
+      visible_before = g_ptr_array_new_with_free_func(g_object_unref);
+      guint count = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+      for (guint i = 0; i < count; i++)
+        g_ptr_array_add(visible_before,
+          g_list_model_get_item(G_LIST_MODEL(conversation), i));
+      wait_frames(GTK_WIDGET(f->view));
+      gdouble view_page = gtk_adjustment_get_page_size(adj);
+      gtk_adjustment_set_value(adj,
+        MAX(0, gtk_adjustment_get_upper(adj) - view_page * 1.1));
+      wait_frames(GTK_WIDGET(f->view));
+      append_anchor = topmost_on_screen(f->view, visible_before, &append_y);
+      g_assert_nonnull(append_anchor);
+    }
+    gh_conversation_window_add_newer(conversation, page, end < 1000);
+    if (append_anchor) {
+      wait_frames(GTK_WIDGET(f->view));
+      GhMessageRow *row = row_for(f->view, append_anchor);
+      graphene_rect_t bounds;
+      g_assert_nonnull(row);
+      g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(row),
+        view_child(f->view, "scroller"), &bounds));
+      g_assert_cmpfloat(fabs(bounds.origin.y - append_y), <=, 1);
+      checked_append_anchor = TRUE;
+    }
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(conversation));
+    g_assert_cmpuint(n, <=, GH_CONVERSATION_WINDOW_MAX);
+    for (guint i = 1; i < n; i++) {
+      g_autoptr(GhMessage) left = g_list_model_get_item(G_LIST_MODEL(conversation), i - 1);
+      g_autoptr(GhMessage) right = g_list_model_get_item(G_LIST_MODEL(conversation), i);
+      g_assert_cmpint(gh_message_compare(left, right), <, 0);
+    }
+    cursor = end - 1;
+  }
+  for (guint i = 0; i < 1000; i++)
+    g_assert_true(seen_newer[i]);
+  g_assert_false(gh_conversation_get_has_newer(conversation));
+  g_assert_true(checked_append_anchor);
 }
 
 /* "Earlier Messages" shows only within a page of the top of what is listed
@@ -3179,6 +3329,7 @@ main(int argc, char **argv)
   ADD("opens-at-first-unread", test_opens_at_first_unread);
   ADD("load-older", test_load_older);
   ADD("earlier-button-near-top", test_earlier_button_near_top);
+  ADD("window-long-scroll", test_window_long_scroll);
   ADD("earlier-messages", test_earlier_messages);
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);

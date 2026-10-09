@@ -16,6 +16,7 @@
 #include "gh-reaction-store.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
+#include "gh-conversation-private.h"
 #include "gh-inbox-resolver.h"
 #include "gh-nip17-inbox.h"
 #include "gh-nip04-inbox.h"
@@ -1943,11 +1944,14 @@ test_restart_pages_history(void)
   stack_up(&f);
   g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
   gint64 start = g_get_real_time() / G_USEC_PER_SEC - 100000;
-  for (guint i = 0; i < HISTORY_READ; i++)
-    admit_from_peer(&f, start + i * 60, i);
+  admit_from_peer(&f, start, 0);
   GhConversation *room = history_room(&f);
+  gh_conversation_window_set_active(room, TRUE);
+  for (guint i = 1; i < HISTORY_READ; i++)
+    admit_from_peer(&f, start + i * 60, i);
   gh_conversation_accept(room);
   gh_conversation_mark_read(room);
+  gh_conversation_window_set_active(room, FALSE);
   for (guint i = HISTORY_READ; i < HISTORY_READ + HISTORY_UNREAD; i++)
     admit_from_peer(&f, start + i * 60, i);
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, HISTORY_UNREAD);
@@ -1984,12 +1988,13 @@ test_restart_pages_history(void)
   GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW(
     gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "scroller"));
   gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(scroller), 0);
-  ListedWait two_pages = { room, view, 2 * PAGE };
+  ListedWait two_pages = { room, view, PAGE + GH_CONVERSATION_WINDOW_PAGE };
   gh_test_spin_until(listed_and_idle, &two_pages);
   /* GTK 4.14 updates the list's scroll anchor on the next layout frame. */
   gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
   g_assert_false(gh_conversation_view_get_older_failed(view));
-  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==,
+                   HISTORY_UNREAD - PAGE - GH_CONVERSATION_WINDOW_PAGE);
   g_assert_true(gh_conversation_get_has_older(room));
   GtkWidget *older = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(view),
                                                               GH_TYPE_CONVERSATION_VIEW,
@@ -2004,11 +2009,25 @@ test_restart_pages_history(void)
   gh_test_spin_until(widget_shown, older);
   AdwButtonContent *content = ADW_BUTTON_CONTENT(
     gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "older_content"));
-  g_assert_cmpstr(adw_button_content_get_label(content), ==, "Earlier Messages");
-  /* "Earlier Messages" lists the rest, and then offers nothing more. */
+  g_autofree gchar *older_label = g_strdup_printf("%u Unread Earlier Messages",
+    HISTORY_UNREAD - PAGE - GH_CONVERSATION_WINDOW_PAGE);
+  g_assert_cmpstr(adw_button_content_get_label(content), ==, older_label);
+  /* The button lists one more 25-message page. Remaining stored history
+   * continues to be available in further pages, never all at once. */
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "conversation.load-older", NULL));
-  ListedWait everything = { room, view, HISTORY_READ + HISTORY_UNREAD };
-  gh_test_spin_until(listed_and_idle, &everything);
+  ListedWait third_page = { room, view, PAGE + 2 * GH_CONVERSATION_WINDOW_PAGE };
+  gh_test_spin_until(listed_and_idle, &third_page);
+  g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
+  g_autoptr(GError) paging_error = NULL;
+  while (gh_conversation_get_has_older(room)) {
+    guint loaded = 0;
+    g_assert_true(gh_account_store_load_older(f.store, room,
+      GH_CONVERSATION_WINDOW_PAGE, &loaded, &paging_error));
+    g_assert_no_error(paging_error);
+    g_assert_cmpuint(loaded, >, 0);
+  }
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==,
+                   HISTORY_READ + HISTORY_UNREAD);
   g_assert_false(gh_conversation_get_has_older(room));
   g_assert_false(gtk_widget_get_visible(older));
   window_down(window);

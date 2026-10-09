@@ -154,6 +154,32 @@ gboolean gh_conversation_view_get_loading_older(GhConversationView *self);
 /* The last load failed (until a new load or conversation). */
 gboolean gh_conversation_view_get_older_failed(GhConversationView *self);
 
+typedef enum {
+  GH_CONVERSATION_WINDOW_NEWER,
+  GH_CONVERSATION_WINDOW_LATEST
+} GhConversationWindowNavigation;
+typedef void (*GhConversationViewWindowNavigate)(GhConversationView *view,
+                                                  GhConversation *conversation,
+                                                  GhConversationWindowNavigation navigation,
+                                                  gpointer user_data);
+void gh_conversation_view_set_window_loader(GhConversationView *self,
+                                            GhConversationViewWindowNavigate navigate,
+                                            gpointer user_data);
+void gh_conversation_view_finish_window_navigation(GhConversationView *self,
+                                                   GhConversationWindowNavigation navigation,
+                                                   gboolean success);
+gboolean gh_conversation_view_get_loading_newer(GhConversationView *self);
+/* A reply target outside the window is loaded from the store on demand. */
+typedef void (*GhConversationViewLoadTarget)(GhConversationView *view,
+                                             GhConversation *conversation,
+                                             const gchar *rumor_id,
+                                             gpointer user_data);
+void gh_conversation_view_set_target_loader(GhConversationView *self,
+                                            GhConversationViewLoadTarget load_target,
+                                            gpointer user_data);
+gboolean gh_conversation_view_scroll_to_message(GhConversationView *self,
+                                                const gchar *rumor_id);
+
 /* Per-relay outcomes of an own message for its delivery details, e.g. from
  * GhOutboxItem (gh-outbox.h). NULL: none known. */
 typedef GhDeliveryReport *(*GhConversationViewDeliveryReport)(GhMessage *message,

@@ -2,6 +2,7 @@
 #define GH_STORE_MLS_H
 
 #include "gh-conversation-store.h"
+#include "gh-conversation-window.h"
 #include "gh-store.h"
 
 G_BEGIN_DECLS
@@ -40,7 +41,7 @@ G_BEGIN_DECLS
  * gh_store_close(). Afterwards every call fails with GH_STORE_ERROR_STATE.
  */
 
-#define GH_STORE_MLS_PAGE_SIZE 50
+#define GH_STORE_MLS_PAGE_SIZE GH_CONVERSATION_WINDOW_OPEN
 
 /* Creates (accepted) or updates the conversation of the group
  * group_id_hex; title NULL keeps the stored one. *out_conversation_id
@@ -62,6 +63,10 @@ gboolean gh_store_mls_attach(GhStoreMls *self, GhConversationStore *model, guint
  * *out_loaded (nullable) is how many. Nothing older is success with 0. */
 gboolean gh_store_mls_load_older(GhStoreMls *self, GhConversation *conversation, guint limit,
                                  guint *out_loaded, GError **error);
+gboolean gh_store_mls_load_newer(GhStoreMls *self, GhConversation *conversation, guint limit,
+                                 guint *out_loaded, GError **error);
+gboolean gh_store_mls_reset_latest(GhStoreMls *self, GhConversation *conversation,
+                                   GError **error);
 /* Detaches from the model and the store. Idempotent. */
 void gh_store_mls_close(GhStoreMls *self);
 

@@ -39,6 +39,17 @@ typedef struct {
   GDestroyNotify load_older_destroy;
   guint load_idle;
   GhConversation *loading; /* the room whose older page load_idle lists */
+  GhConversationListLoadOlder load_newer;
+  GhConversationListLoadOlder reset_latest;
+  gpointer window_data;
+  GDestroyNotify window_destroy;
+  guint navigate_idle;
+  GhConversation *navigating;
+  GhConversationWindowNavigation navigation;
+  guint target_idle;
+  GhConversation *target_room;
+  gchar *target_id;
+  gboolean target_started;
   /* An encrypted group's member count (gh_conversation_list_set_member_count_func()). */
   GhConversationListMemberCount member_count;
   gpointer member_count_data;
@@ -50,7 +61,14 @@ list_free(gpointer data)
 {
   GhConversationList *list = data;
   g_clear_handle_id(&list->load_idle, g_source_remove);
+  g_clear_handle_id(&list->navigate_idle, g_source_remove);
+  g_clear_handle_id(&list->target_idle, g_source_remove);
+  g_clear_object(&list->target_room);
+  g_clear_pointer(&list->target_id, g_free);
   g_clear_object(&list->loading);
+  g_clear_object(&list->navigating);
+  if (list->window_destroy)
+    list->window_destroy(list->window_data);
   if (list->load_older_destroy)
     list->load_older_destroy(list->load_older_data);
   if (list->member_count_destroy)
@@ -328,6 +346,7 @@ on_selected(GhWindow *window)
   GhConversation *conversation = GH_IS_CONVERSATION(selected) ? selected : NULL;
   if (conversation == list->shown)
     return;
+  g_autoptr(GhConversation) previous = list->shown ? g_object_ref(list->shown) : NULL;
   g_set_object(&list->shown, conversation);
   /* A message request opens in the Message Requests page (charter §7.9,
    * G18): its npub, count and first message as plain text, with Accept,
@@ -337,6 +356,12 @@ on_selected(GhWindow *window)
   gh_requests_view_set_request(list->requests_view, request ? conversation : NULL);
   /* Before marking it read: the unread count decides where the view opens. */
   gh_conversation_view_set_conversation(list->view, request ? NULL : conversation);
+  if (previous && gh_conversation_get_has_newer(previous) && list->reset_latest) {
+    g_autoptr(GError) error = NULL;
+    if (!list->reset_latest(previous, &error, list->window_data))
+      g_message("Groundhog could not reset an inactive conversation: %s",
+                error ? error->message : "no message storage is available");
+  }
   if (request)
     gtk_stack_set_visible_child_name(gh_content_page_get_stack(list->content), "requests");
   else
@@ -404,6 +429,118 @@ on_load_older(GhConversationView *view, GhConversation *conversation, gpointer d
     list->load_idle = g_idle_add(run_load_older, list);
 }
 
+static gboolean
+run_window_navigation(gpointer data)
+{
+  GhConversationList *list = data;
+  list->navigate_idle = 0;
+  g_autoptr(GhConversation) conversation = g_steal_pointer(&list->navigating);
+  if (!conversation || conversation != gh_conversation_view_get_conversation(list->view) ||
+      !gh_conversation_view_get_loading_newer(list->view))
+    return G_SOURCE_REMOVE;
+  GhConversationListLoadOlder loader = list->navigation == GH_CONVERSATION_WINDOW_LATEST
+    ? list->reset_latest : list->load_newer;
+  g_autoptr(GError) error = NULL;
+  gboolean success = loader && loader(conversation, &error, list->window_data);
+  if (!success)
+    g_message("Groundhog could not navigate the message window: %s",
+              error ? error->message : "no message storage is available");
+  gh_conversation_view_finish_window_navigation(list->view, list->navigation, success);
+  if (success && conversation == list->shown)
+    mark_read_if_visible(list->window, list);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_window_navigation(GhConversationView *view, GhConversation *conversation,
+                     GhConversationWindowNavigation navigation, gpointer data)
+{
+  (void)view;
+  GhConversationList *list = data;
+  g_set_object(&list->navigating, conversation);
+  list->navigation = navigation;
+  if (!list->navigate_idle)
+    list->navigate_idle = g_idle_add(run_window_navigation, list);
+}
+
+static gboolean
+run_load_target(gpointer data)
+{
+  GhConversationList *list = data;
+  list->target_idle = 0;
+  GhConversation *conversation = list->target_room;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *before = NULL;
+  g_autoptr(GhMessage) first = NULL;
+  g_autoptr(GhMessage) next = NULL;
+  if (!conversation || conversation != gh_conversation_view_get_conversation(list->view))
+    goto done;
+  if (!list->target_started) {
+    list->target_started = TRUE;
+    if (!list->reset_latest ||
+        !list->reset_latest(conversation, &error, list->window_data))
+      goto fail;
+  }
+  if (gh_conversation_view_scroll_to_message(list->view, list->target_id))
+    goto done;
+  if (!gh_conversation_get_has_older(conversation) || !list->load_older)
+    goto done;
+  first = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+  if (first)
+    before = g_strdup(gh_message_get_rumor_id(first));
+  if (!list->load_older(conversation, &error, list->load_older_data))
+    goto fail;
+  if (gh_conversation_view_scroll_to_message(list->view, list->target_id))
+    goto done;
+  next = g_list_model_get_item(G_LIST_MODEL(conversation), 0);
+  if (!next || g_strcmp0(before, gh_message_get_rumor_id(next)) == 0)
+    goto done; /* no local page advanced; a relay request may still be pending */
+  list->target_idle = g_idle_add(run_load_target, list);
+  return G_SOURCE_REMOVE;
+fail:
+  g_message("Groundhog could not load a reply target: %s",
+            error ? error->message : "no message storage is available");
+done:
+  g_clear_object(&list->target_room);
+  g_clear_pointer(&list->target_id, g_free);
+  return G_SOURCE_REMOVE;
+}
+
+static void
+on_load_target(GhConversationView *view, GhConversation *conversation,
+               const gchar *rumor_id, gpointer data)
+{
+  (void)view;
+  GhConversationList *list = data;
+  g_set_object(&list->target_room, conversation);
+  g_free(list->target_id);
+  list->target_id = g_strdup(rumor_id);
+  list->target_started = FALSE;
+  if (!list->target_idle)
+    list->target_idle = g_idle_add(run_load_target, list);
+}
+
+void
+gh_conversation_list_set_window_source(GhWindow *window,
+                                       GhConversationListLoadOlder load_newer,
+                                       GhConversationListLoadOlder reset_latest,
+                                       gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_WINDOW(window));
+  GhConversationList *list = list_of(window);
+  g_return_if_fail(list != NULL);
+  if (list->window_destroy)
+    list->window_destroy(list->window_data);
+  list->load_newer = load_newer;
+  list->reset_latest = reset_latest;
+  list->window_data = user_data;
+  list->window_destroy = destroy;
+  gh_conversation_view_set_window_loader(list->view,
+    load_newer && reset_latest ? on_window_navigation : NULL, list);
+  gh_conversation_view_set_target_loader(list->view,
+    list->load_older && reset_latest ? on_load_target : NULL, list);
+}
+
 void
 gh_conversation_list_set_picture_consent(GhWindow *window, gconstpointer backend, gpointer data)
 {
@@ -443,6 +580,8 @@ gh_conversation_list_set_history_source(GhWindow *window, GhConversationListLoad
   list->load_older_destroy = destroy;
   gh_conversation_view_set_history_loader(list->view, load_older ? on_load_older : NULL, list,
                                           NULL);
+  gh_conversation_view_set_target_loader(list->view,
+    load_older && list->reset_latest ? on_load_target : NULL, list);
 }
 
 void

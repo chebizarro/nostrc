@@ -313,8 +313,12 @@ void gh_nip29_service_set_role_policy(GhNip29Service *self, const gchar *relay_u
 
 /* Lists up to limit (1 to 1000) older stored messages of a group room of the
  * model; see gh_store_nip29_load_older(). */
-gboolean gh_nip29_service_load_older(GhNip29Service *self, GhConversation *conversation,
-                                     guint limit, guint *out_loaded, GError **error);
+gboolean gh_nip29_service_load_older(GhNip29Service *self, GhConversation *conversation, guint limit,
+                                     guint *out_loaded, GError **error);
+gboolean gh_nip29_service_load_newer(GhNip29Service *self, GhConversation *conversation, guint limit,
+                                     guint *out_loaded, GError **error);
+gboolean gh_nip29_service_reset_latest(GhNip29Service *self, GhConversation *conversation,
+                                       GError **error);
 
 /* Forgets a group that is not joined (NONE, DENIED, CLOSED, NOT_SENT, LEFT or
  * REMOVED): its record, its conversation (a tombstone keeps backfill out,
