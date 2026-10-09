@@ -4,7 +4,7 @@ using Adw 1;
 template $GhIssueDialog : Adw.Dialog {
   title: _("Report an Issue");
   content-width: 520;
-  content-height: 640;
+  content-height: 720;
   Adw.ToolbarView {
     [top] Adw.HeaderBar {}
     ScrolledWindow {
@@ -35,6 +35,28 @@ template $GhIssueDialog : Adw.Dialog {
               bottom-margin: 8;
               left-margin: 8;
               right-margin: 8;
+            }
+          }
+          $GnNip34IssueFields issue_fields {}
+          Box {
+            orientation: vertical;
+            spacing: 6;
+            CheckButton diagnostics_check {
+              label: _("Include Local Diagnostics");
+            }
+            Label {
+              label: _("Off for every new report. When checked, the exact text below is added to the public issue: daily counts of typed app events (component, event and result) from this device. It never contains messages, keys, contacts, identifiers, relay or website addresses, or file paths. Nothing is collected unless diagnostics are enabled in Preferences.");
+              wrap: true;
+              xalign: 0;
+              styles ["dim-label"]
+            }
+            Label diagnostics_preview {
+              visible: false;
+              wrap: true;
+              wrap-mode: word_char;
+              xalign: 0;
+              selectable: true;
+              styles ["monospace"]
             }
           }
           Adw.PreferencesGroup {

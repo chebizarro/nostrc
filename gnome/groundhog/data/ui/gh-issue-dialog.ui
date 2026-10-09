@@ -9,7 +9,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="GhIssueDialog" parent="AdwDialog">
     <property name="title" translatable="yes">Report an Issue</property>
     <property name="content-width">520</property>
-    <property name="content-height">640</property>
+    <property name="content-height">720</property>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
@@ -61,6 +61,42 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="bottom-margin">8</property>
                             <property name="left-margin">8</property>
                             <property name="right-margin">8</property>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GnNip34IssueFields" id="issue_fields"></object>
+                    </child>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">6</property>
+                        <child>
+                          <object class="GtkCheckButton" id="diagnostics_check">
+                            <property name="label" translatable="yes">Include Local Diagnostics</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel">
+                            <property name="label" translatable="yes">Off for every new report. When checked, the exact text below is added to the public issue: daily counts of typed app events (component, event and result) from this device. It never contains messages, keys, contacts, identifiers, relay or website addresses, or file paths. Nothing is collected unless diagnostics are enabled in Preferences.</property>
+                            <property name="wrap">true</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="dim-label"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="diagnostics_preview">
+                            <property name="visible">false</property>
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">2</property>
+                            <property name="xalign">0</property>
+                            <property name="selectable">true</property>
+                            <style>
+                              <class name="monospace"/>
+                            </style>
                           </object>
                         </child>
                       </object>

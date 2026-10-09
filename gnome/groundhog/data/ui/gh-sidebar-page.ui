@@ -297,6 +297,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         <attribute name="action">win.show-help-overlay</attribute>
       </item>
       <item>
+        <attribute name="label" translatable="yes">_Report an Issue…</attribute>
+        <attribute name="action">app.report-issue</attribute>
+        <attribute name="hidden-when">action-missing</attribute>
+      </item>
+      <item>
         <attribute name="label" translatable="yes">_About Groundhog</attribute>
         <attribute name="action">app.about</attribute>
       </item>

@@ -3329,7 +3329,8 @@ foreach(_gdk_frame_test
 endforeach()
 
 # NIP-34 reports share gnostr's libnip34 builder; no new protocol implementation.
-if (TARGET groundhog-inbox-setup)
+# The structured fields come from the portable nostr-gtk issue-fields widget.
+if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   if (NOT TARGET nip34)
     # Groundhog links nip34 statically; its headers and archive are not part
     # of an app install, so a release build leaves its install rules out.
@@ -3342,10 +3343,22 @@ if (TARGET groundhog-inbox-setup)
   endif()
   add_library(groundhog-issue STATIC src/ui/gh-issue-dialog.c)
   target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-  target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup nip34 PkgConfig::GROUNDHOG_DEPS)
+  target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup nip34 groundhog-diagnostics
+    NostrGtk::Portable PkgConfig::GROUNDHOG_DEPS)
   target_compile_options(groundhog-issue PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-issue)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ISSUE=1)
+  # libnostr-gtk-portable is shared. Like libnostr-json (see
+  # NostrcPrivateJsonLib.cmake), an app-only install carries a private copy
+  # beside the binary's RUNPATH so Groundhog starts without nostr-gtk installed.
+  if (NOT APPLE AND NOT WIN32)
+    install(FILES $<TARGET_FILE:nostr_gtk_portable>
+            DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog
+            RENAME $<TARGET_SONAME_FILE_NAME:nostr_gtk_portable>)
+    file(RELATIVE_PATH _gh_portable_rel "${CMAKE_INSTALL_FULL_BINDIR}"
+         "${CMAKE_INSTALL_FULL_LIBDIR}/groundhog")
+    set_property(TARGET groundhog APPEND PROPERTY INSTALL_RPATH "\$ORIGIN/${_gh_portable_rel}")
+  endif()
 endif()
 
 if (TARGET test-groundhog-about AND TARGET groundhog-issue AND TARGET groundhog-new-message)

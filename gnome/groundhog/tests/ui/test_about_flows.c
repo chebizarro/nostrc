@@ -1,12 +1,14 @@
 #include "gh-about-dialog.h"
 #include "gh-new-message-dialog.h"
 #include "gh-issue-dialog.h"
+#include "gh-diagnostics.h"
 #include "gh-conversation-list.h"
 #include "gh-test-signer.h"
 #include "gh-recipient.h"
 #include <libsoup/soup.h>
 #include <json-glib/json-glib.h>
 #include <nip34.h>
+#include <glib/gstdio.h>
 
 #define OWNER "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400"
 #define OWNER_URI "nostr:npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv"
@@ -206,6 +208,119 @@ tag_is(NostrEvent *event, const char *name, const char *value)
   g_error("Missing %s=%s tag", name, value);
 }
 
+#define COMMIT40 "ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+#define COMMIT64 "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+#define DIAG "Groundhog local diagnostics (schema 1; daily counts only)\n" \
+             "day\tcomponent\tevent\tresult\tcount\n"
+
+static GnNip34IssueFieldsSnapshot *
+fields_new(const char *steps, const char *labels, const char *commits, const char *urls)
+{
+  GnNip34IssueFieldsSnapshot *fields = g_new0(GnNip34IssueFieldsSnapshot, 1);
+  fields->steps = g_strdup(steps);
+  fields->expected = g_strdup("It opens.");
+  fields->actual = g_strdup("It crashes.");
+  fields->labels = g_strdup(labels);
+  fields->related_commits = g_strdup(commits);
+  fields->attachment_urls = g_strdup(urls);
+  return fields;
+}
+
+static void
+draft_rejected(const char *title, const char *description,
+               const GnNip34IssueFieldsSnapshot *fields, const char *diagnostics)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhIssueDraft) draft = gh_issue_draft_new(title, description, fields, diagnostics, &error);
+  g_assert_null(draft);
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+}
+
+static const char *const RICH_BODY =
+  "Crash on open.\n\n## Steps to Reproduce\n\n1. Open\n2. Click"
+  "\n\n## Expected Result\n\nIt opens.\n\n## Actual Result\n\nIt crashes."
+  "\n\n## Attachments\n\n- https://example.org/shot.png\n- http://example.net/log.txt"
+  "\n\n## Related commits\n\n- `abcdef0123456789abcdef0123456789abcdef01`\n- `" COMMIT64 "`";
+
+static void
+test_issue_draft(void)
+{
+  g_autoptr(GnNip34IssueFieldsSnapshot) fields = fields_new(
+    "\n1. Open\n2. Click\n", " ui, crash ,bug,, ui",
+    COMMIT40 ", " COMMIT64 "\nabcdef0123456789abcdef0123456789abcdef01",
+    "https://example.org/shot.png, http://example.net/log.txt https://example.org/shot.png");
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhIssueDraft) draft = gh_issue_draft_new("  A title ", "  Crash on open.  \n", fields, DIAG, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(draft->title, ==, "A title");
+  g_autofree char *expected = g_strconcat(RICH_BODY, "\n\n## Local diagnostics\n\n```text\n", DIAG, "```", NULL);
+  g_assert_cmpstr(draft->body, ==, expected);
+  const char *labels[] = { "bug", "groundhog", "ui", "crash", NULL };
+  g_assert_true(g_strv_equal((const char *const *)draft->labels, labels));
+
+  /* The unsigned event carries the assembled body; commits are body text, never e tags. */
+  g_autofree char *pk = gh_test_pub(1);
+  g_autofree char *json = gh_issue_draft_to_unsigned_json(draft, pk);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_kind(event), ==, NIP34_KIND_ISSUE);
+  g_assert_cmpstr(nostr_event_get_content(event), ==, expected);
+  tag_is(event, "l", "ui");
+  tag_is(event, "t", "crash");
+  const NostrTags *tags = nostr_event_get_tags(event);
+  for (gsize i = 0; i < nostr_tags_size(tags); i++)
+    g_assert_cmpstr(nostr_tag_get(nostr_tags_get(tags, i), 0), !=, "e");
+  g_assert_cmpuint(nostr_tags_size(tags), ==, 13);
+  nostr_event_free(event);
+
+  /* Same input, same canonical draft; any edit differs. */
+  g_autoptr(GhIssueDraft) again = gh_issue_draft_new("A title", "Crash on open.", fields, DIAG, NULL);
+  g_assert_true(gh_issue_draft_equal(draft, again));
+  g_autoptr(GhIssueDraft) without = gh_issue_draft_new("A title", "Crash on open.", fields, NULL, NULL);
+  g_assert_false(gh_issue_draft_equal(draft, without));
+  g_assert_null(strstr(without->body, "diagnostics"));
+
+  /* Plain report: description only, built-in labels. */
+  g_autoptr(GhIssueDraft) plain = gh_issue_draft_new("T", "Body", NULL, NULL, NULL);
+  g_assert_cmpstr(plain->body, ==, "Body");
+  const char *builtin[] = { "bug", "groundhog", NULL };
+  g_assert_true(g_strv_equal((const char *const *)plain->labels, builtin));
+
+  draft_rejected("", "Body", NULL, NULL);
+  draft_rejected("T", " \n ", NULL, NULL);
+  g_autofree char *title640 = g_strnfill(640, 't');
+  g_autofree char *title641 = g_strnfill(641, 't');
+  g_autoptr(GhIssueDraft) long_title = gh_issue_draft_new(title640, "Body", NULL, NULL, NULL);
+  g_assert_nonnull(long_title);
+  draft_rejected(title641, "Body", NULL, NULL);
+
+  g_autoptr(GnNip34IssueFieldsSnapshot) spaced = fields_new(NULL, "two words", NULL, NULL);
+  draft_rejected("T", "Body", spaced, NULL);
+  g_autoptr(GnNip34IssueFieldsSnapshot) many = fields_new(NULL,
+    "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q", NULL, NULL);
+  draft_rejected("T", "Body", many, NULL);
+  g_autoptr(GnNip34IssueFieldsSnapshot) short_commit = fields_new(NULL, NULL, "abc1234", NULL);
+  draft_rejected("T", "Body", short_commit, NULL);
+  g_autoptr(GnNip34IssueFieldsSnapshot) file_url = fields_new(NULL, NULL, NULL, "file:///home/me/log.txt");
+  draft_rejected("T", "Body", file_url, NULL);
+  g_autoptr(GnNip34IssueFieldsSnapshot) credentials = fields_new(NULL, NULL, NULL, "https://me:pw@example.org/x");
+  draft_rejected("T", "Body", credentials, NULL);
+  g_autofree char *diag8001 = g_strnfill(8001, 'd');
+  draft_rejected("T", "Body", NULL, diag8001);
+
+  /* The assembled body is limited, not its parts, and nothing is trimmed. */
+  g_autofree char *body16000 = g_strnfill(16000, 'b');
+  g_autoptr(GhIssueDraft) full = gh_issue_draft_new("T", body16000, NULL, NULL, NULL);
+  g_assert_cmpuint(strlen(full->body), ==, 16000);
+  g_autofree char *body16001 = g_strnfill(16001, 'b');
+  draft_rejected("T", body16001, NULL, NULL);
+  g_autofree char *body15000 = g_strnfill(15000, 'b');
+  g_autofree char *diag1000 = g_strnfill(1000, 'd');
+  g_autoptr(GhIssueDraft) fits = gh_issue_draft_new("T", body15000, NULL, NULL, NULL);
+  g_assert_nonnull(fits);
+  draft_rejected("T", body15000, NULL, diag1000);
+}
+
 static gboolean held(gpointer data) { return ((GhTestSigner *)data)->held->len == 1; }
 
 static void
@@ -223,6 +338,26 @@ test_issue_consent(gconstpointer data)
   g_settings_set_string(settings, "signer-method", "auto");
   g_autoptr(GhAccountController) accounts = gh_account_controller_new_full(settings, bus.client, identities, NULL);
   gh_test_spin_until(active, accounts);
+  /* Mode 3: structured fields plus the opt-in local diagnostics appendix. */
+  g_autofree char *state = NULL;
+  GhDiagnostics *diagnostics = NULL;
+  g_autofree char *snapshot = NULL;
+  if (mode == 3) {
+    state = g_dir_make_tmp("groundhog-issue-diagnostics-XXXXXX", NULL);
+    g_settings_set_boolean(settings, "diagnostics-enabled", TRUE);
+    diagnostics = gh_diagnostics_new(settings, state);
+    gh_diagnostics_record(diagnostics, GH_DIAGNOSTIC_COMPONENT_RELAY,
+                          GH_DIAGNOSTIC_EVENT_CONNECT_FAILED, GH_DIAGNOSTIC_RESULT_RETRY);
+    gh_diagnostics_set_default(diagnostics);
+    snapshot = gh_diagnostics_snapshot(diagnostics);
+    g_assert_nonnull(strstr(snapshot, "relay\tconnect_failed\tretry\t1\n"));
+  }
+  const char *body = mode == 3 ? "Crash on open." : "The exact body.\nNo diagnostics.";
+  g_autoptr(GnNip34IssueFieldsSnapshot) fields = fields_new(
+    "1. Open\n2. Click", "ui, crash", COMMIT40 " " COMMIT64,
+    "https://example.org/shot.png http://example.net/log.txt");
+  g_autofree char *rich = mode == 3
+    ? g_strconcat(RICH_BODY, "\n\n## Local diagnostics\n\n```text\n", snapshot, "```", NULL) : NULL;
 
   Relay relay = {0};
   g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
@@ -242,7 +377,19 @@ test_issue_consent(gconstpointer data)
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
   gtk_editable_set_text(GTK_EDITABLE(child(dialog, "title_row")), "<Test title>");
   gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(child(dialog, "body_view"))),
-                           "The exact body.\nNo diagnostics.", -1);
+                           body, -1);
+  GtkCheckButton *include = GTK_CHECK_BUTTON(child(dialog, "diagnostics_check"));
+  GtkWidget *appendix = child(dialog, "diagnostics_preview");
+  /* Off for every new issue, even with collection enabled. */
+  g_assert_false(gtk_check_button_get_active(include));
+  g_assert_false(gtk_widget_get_visible(appendix));
+  g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(include)) == (mode == 3));
+  if (mode == 3) {
+    gn_nip34_issue_fields_set_snapshot(GN_NIP34_ISSUE_FIELDS(child(dialog, "issue_fields")), fields);
+    gtk_check_button_set_active(include, TRUE);
+    g_assert_true(gtk_widget_get_visible(appendix));
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(appendix)), ==, snapshot);
+  }
   g_signal_emit_by_name(child(dialog, "review_button"), "clicked");
   AdwDialog *alert = adw_window_get_visible_dialog(ADW_WINDOW(window));
   g_assert_true(ADW_IS_ALERT_DIALOG(alert));
@@ -251,7 +398,12 @@ test_issue_consent(gconstpointer data)
   GtkWidget *label = GTK_IS_VIEWPORT(viewport) ? gtk_viewport_get_child(GTK_VIEWPORT(viewport)) : viewport;
   const char *preview = gtk_label_get_text(GTK_LABEL(label));
   g_assert_nonnull(strstr(preview, "<Test title>"));
-  g_assert_nonnull(strstr(preview, "The exact body.\nNo diagnostics."));
+  g_assert_nonnull(strstr(preview, mode == 3 ? rich : body));
+  if (mode == 3) {
+    g_assert_nonnull(strstr(preview, "l: ui, " NIP34_ISSUE_LABEL_NAMESPACE "\n"));
+    g_assert_nonnull(strstr(preview, "t: crash\n"));
+    g_assert_nonnull(strstr(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(alert)), "local diagnostics"));
+  }
   g_assert_nonnull(strstr(preview, url));
   g_assert_nonnull(strstr(preview, pk));
   g_assert_nonnull(strstr(preview, "30617:" OWNER ":nostrc"));
@@ -273,6 +425,21 @@ test_issue_consent(gconstpointer data)
   }
   if (mode == 2)
     signer.hold = TRUE;
+  if (mode == 3) {
+    /* An edit after Review invalidates it: nothing is signed or sent. */
+    g_autoptr(GnNip34IssueFieldsSnapshot) edited = fields_new("1. Open", "ui, crash", NULL, NULL);
+    gn_nip34_issue_fields_set_snapshot(GN_NIP34_ISSUE_FIELDS(child(dialog, "issue_fields")), edited);
+    g_signal_emit_by_name(alert, "response", "publish");
+    adw_dialog_force_close(alert);
+    drain();
+    g_assert_cmpuint(signer.calls, ==, 0);
+    g_assert_cmpuint(relay.connections, ==, 0);
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(dialog, "status"))), "changed after review"));
+    gn_nip34_issue_fields_set_snapshot(GN_NIP34_ISSUE_FIELDS(child(dialog, "issue_fields")), fields);
+    g_signal_emit_by_name(child(dialog, "review_button"), "clicked");
+    alert = adw_window_get_visible_dialog(ADW_WINDOW(window));
+    g_assert_true(ADW_IS_ALERT_DIALOG(alert));
+  }
   g_signal_emit_by_name(alert, "response", "publish");
   adw_dialog_force_close(alert);
   if (mode == 1) {
@@ -297,7 +464,7 @@ test_issue_consent(gconstpointer data)
   g_assert_cmpuint(relay.events, ==, 1);
   g_assert_cmpint(nostr_event_get_kind(relay.event), ==, NIP34_KIND_ISSUE);
   g_assert_cmpstr(nostr_event_get_pubkey(relay.event), ==, pk);
-  g_assert_cmpstr(nostr_event_get_content(relay.event), ==, "The exact body.\nNo diagnostics.");
+  g_assert_cmpstr(nostr_event_get_content(relay.event), ==, mode == 3 ? rich : body);
   tag_is(relay.event, "a", "30617:" OWNER ":nostrc");
   tag_is(relay.event, "p", OWNER);
   tag_is(relay.event, "subject", "<Test title>");
@@ -307,7 +474,11 @@ test_issue_consent(gconstpointer data)
   tag_is(relay.event, "l", "bug");
   tag_is(relay.event, "l", "groundhog");
   tag_is(relay.event, "alt", "git repository issue");
-  g_assert_cmpuint(nostr_tags_size(nostr_event_get_tags(relay.event)), ==, 9);
+  if (mode == 3) {
+    tag_is(relay.event, "l", "ui");
+    tag_is(relay.event, "t", "crash");
+  }
+  g_assert_cmpuint(nostr_tags_size(nostr_event_get_tags(relay.event)), ==, mode == 3 ? 13 : 9);
   gtk_window_destroy(window);
 cleanup:
   drain();
@@ -324,6 +495,17 @@ cleanup:
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   gh_test_signer_down(&bus, &signer);
   gh_test_bus_down(&bus);
+  if (diagnostics) {
+    gh_diagnostics_set_default(NULL);
+    g_assert_true(gh_diagnostics_clear(diagnostics, NULL));
+    gh_diagnostics_free(diagnostics);
+    g_settings_reset(settings, "diagnostics-enabled");
+    g_autofree char *dir = g_build_filename(state, "groundhog", "diagnostics", NULL);
+    g_autofree char *parent = g_build_filename(state, "groundhog", NULL);
+    g_rmdir(dir);
+    g_rmdir(parent);
+    g_assert_cmpint(g_rmdir(state), ==, 0);
+  }
 }
 
 void
@@ -335,4 +517,6 @@ gh_test_about_flows_register(void)
   g_test_add_data_func("/groundhog/about/issue-consent", GINT_TO_POINTER(0), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-account-changed", GINT_TO_POINTER(1), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-close-signing", GINT_TO_POINTER(2), test_issue_consent);
+  g_test_add_data_func("/groundhog/about/issue-fields-diagnostics", GINT_TO_POINTER(3), test_issue_consent);
+  g_test_add_func("/groundhog/about/issue-draft", test_issue_draft);
 }
