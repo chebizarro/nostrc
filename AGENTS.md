@@ -19,7 +19,7 @@ Install git hooks before starting work:
 scripts/install-hooks.sh
 ```
 
-This installs the pre-push hook that enforces build verification.
+This installs the fast pre-push hook (static checks, no build; CI builds and tests).
 
 ---
 
@@ -92,57 +92,36 @@ Before pushing ANY commits, you MUST complete these checks:
 
 ### 1. Build Verification
 
-The pre-push hook enforces this automatically, but you should verify locally:
+Build and test what you touched before pushing:
 
 ```bash
-# Clean build
 rm -rf _build && cmake -B _build && cmake --build _build
 ```
 
 **If build fails, DO NOT PUSH. Fix the issue first.**
 
-The hook validates each pushed commit in a temporary worktree. It first runs
-the commit's static checks, among them `scripts/check-unsequenced-args.py`: no
-call may modify a variable in one argument (`g_steal_pointer(&task)`,
-`g_bytes_get_data(b, &size)`, `i++`) and use it in another, because argument
-order is unspecified and x86_64 GCC evaluates right to left. Then the macOS
-(host) build and full CTest run, and in parallel a Linux stage
-(`scripts/linux-gate.sh`): a GCC build of every default target plus Groundhog in
-an Ubuntu 24.04 container, then a smoke CTest subset. It catches glibc/GCC-only
-breaks (a POSIX function hidden by `-std=c11`, archive symbol clashes Apple's
-linker accepts) that a macOS build cannot. It needs Docker; without it the
-push is blocked. On a machine that cannot run Docker, set
-`NOSTRC_SKIP_LINUX_GATE=1` (the skip is announced on every push).
-`NOSTRC_GATE_AMD64=1` runs the Linux stage as linux/amd64 under emulation,
-where x86_64 GCC's right-to-left argument evaluation exposes unsequenced-argument
-bugs at run time (slow). Run the Linux stage alone with
-`scripts/linux-gate.sh <clean checkout>`.
+The pre-push hook (`scripts/pre-push`) is fast (seconds, no build). For each
+pushed commit it runs `git diff --check` over the pushed range and, on the
+pushed tree in a temporary worktree, the static checks CI would otherwise
+report late: `scripts/check-unsequenced-args.py` (no call may modify a variable
+in one argument and use it in another; x86_64 GCC evaluates arguments right to
+left), `scripts/check-gui-test-gdk-frame.py`, `scripts/check-linux-ci-packages.py`
+and `gnome/groundhog/tests/check_privacy.py`. `NOSTRC_SKIP_PRE_PUSH=1` skips
+them (announced). Full builds and tests run in CI, scoped per component by
+workflow path filters.
 
-A third stage, in parallel with the other two, runs hosted CI's
-`groundhog-sanitizers` job (ASAN+UBSAN+LSan) in the same container
-(`scripts/linux-gate.sh --sanitizers`). Its configure flags, env (of the
-workflow, the job and each step), test list, sanitizer options,
-`gnome/groundhog/tests/lsan.supp` and "every test registered, none skipped"
-checks are read from the candidate's `groundhog-ci.yml` at run time
-(`scripts/sanitizer-gate-ci.py`), so the gate and CI cannot drift apart; a job
-shape the reader cannot reproduce fails the push rather than run weaker. It runs
-only when the pushed range touches `SANITIZER_PATHS` in
-`scripts/sanitizer-gate-ci.py` (every input of the job's build, which the gate
-and the job itself check against ninja's graph, plus the workflow, the image and
-the gate), or when git cannot compute the range; otherwise the hook says it was
-skipped and why. It builds incrementally in its own volume
-(`nostrc-linux-gate-asan-<arch>`) and runs the tests at the job's own
-parallelism, alone: after the macOS build, with no Linux build of any gate and
-no smoke test run beside them (locks in the volume `nostrc-linux-gate-tests`).
-Under a build's load its ASAN tests time out and lose exit races into leak
-reports CI does not see. A test that fails with a sanitizer report (a leak, UB,
-a memory error) blocks the push with its whole output and is never rerun; any
-other failure is rerun once, as in the smoke run. Leaks in Groundhog are fixed,
-not suppressed; `lsan.supp` is only for leaks in other libraries that Groundhog
-cannot free, each naming its bead, and none may cover an allocation Groundhog
-owns. `NOSTRC_SKIP_SANITIZER_GATE=1` skips this stage alone, with a loud banner;
-a leak pushed past it turns `groundhog-sanitizers` red on master (nostrc-kdxe).
-Run the stage alone with `scripts/linux-gate.sh --sanitizers <clean checkout>`.
+The former full gate is kept as an explicit opt-in, `scripts/full-gate.sh`
+(run it for a push with `NOSTRC_FULL_GATE=1 git push`): the macOS build and
+full CTest run, in parallel a Linux stage (`scripts/linux-gate.sh`: GCC build
+of every default target plus Groundhog in an Ubuntu 24.04 container, then a
+smoke CTest subset; needs Docker, `NOSTRC_SKIP_LINUX_GATE=1` skips it,
+`NOSTRC_GATE_AMD64=1` runs it under amd64 emulation), and a sanitizer stage
+(`scripts/linux-gate.sh --sanitizers`) that reproduces `groundhog-ci.yml`'s
+`groundhog-sanitizers` job as read by `scripts/sanitizer-gate-ci.py`, only
+when the range touches its `SANITIZER_PATHS` (`NOSTRC_SKIP_SANITIZER_GATE=1`
+skips it). Use it before pushing risky glibc/GCC-sensitive or leak-sensitive
+Groundhog changes. Leaks in Groundhog are fixed, not suppressed; `lsan.supp`
+is only for leaks in other libraries, each naming its bead.
 
 ### 2. Unit Tests
 
@@ -236,7 +215,7 @@ Violations of the pre-push requirements will result in:
 2. **Skipped peer review**: Commit flagged for post-hoc review, pattern noted
 3. **Repeated violations**: Escalation to Mayor
 
-The pre-push hook blocks pushes that fail build verification. Peer review is enforced by process - agents are expected to follow the workflow.
+The pre-push hook blocks pushes that fail its static checks; CI (path-scoped per component) verifies builds and tests. Peer review is enforced by process - agents are expected to follow the workflow.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
@@ -305,8 +284,8 @@ restored by hand.
   `-DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`
   and run against a throwaway Secret Service on a private bus; they never
   store test keys in the login keychain.
-- `scripts/check-macos-keychain.sh` (read-only) runs in the pre-push hook
-  before and after the tests and blocks the push if the configuration is not
+- `scripts/check-macos-keychain.sh` (read-only) runs in the opt-in full gate
+  (`NOSTRC_FULL_GATE=1`, `scripts/full-gate.sh`) before and after the tests and blocks the push if the configuration is not
   the login keychain. If it fails, **stop and tell the owner**; only the
   machine's owner repairs it. Never choose "Reset To Defaults" in a keychain
   dialog.

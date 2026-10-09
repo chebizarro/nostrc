@@ -1,12 +1,22 @@
 name: Static checks
 
-# Repository-wide checks that need no build. The pre-push gate
-# (scripts/pre-push) runs the same scripts before every push.
+# Repository-wide checks that need no build. The fast pre-push hook
+# (scripts/pre-push) runs the cheap ones before every push.
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.beads/**'
+      - 'LICENSE'
   pull_request:
     branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.beads/**'
+      - 'LICENSE'
   workflow_dispatch:
 
 jobs:
@@ -28,8 +38,11 @@ jobs:
       - name: Local Linux image mirrors the CI package lists
         run: python3 scripts/check-linux-ci-packages.py --self-test
 
-      - name: Pre-push gate behaviour
+      - name: Pre-push hook behaviour
         run: bash scripts/test-pre-push.sh
+
+      - name: Opt-in full gate behaviour
+        run: bash scripts/test-full-gate.sh
 
       - name: Linux gate smoke run keeps and counts reruns
         # nostrc-16yi: a rerun that passes still prints the first failure.
