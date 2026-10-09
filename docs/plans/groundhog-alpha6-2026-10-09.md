@@ -44,10 +44,10 @@ Investigation evidence with file:line references is kept in **Appendix A**; this
 | D1 | i18n/l10n/a11y machinery | gettext wired before UI; POT from C/blp/desktop/metainfo; catalog build/install path proven in every package with a pseudo-locale test catalog; RTL fixes verified with `GTK_DEBUG`-forced RTL; a11y matrix passed; no translated catalogs required | `src/main.c`, `po/**`, CMake, packaging, `.blp` alignment fixes | after UI copy settles (B2, C1, C2) | L |
 | A5 | Sliding message window | Model bounded at 120; open loads 30; trim/page both directions with anchoring; Jump to latest; probe p50 better than alpha 5; long-scroll test | `gh-conversation.{h,c}`, `gh-conversation-view.c`, `gh-conversation-list.c`, `gh-group-ui.c`, store page APIs | A4 (history seam) | L |
 | F1 | Agents: settings page, activity rows, stream finals | AI Agents page with prompts; kinds 1201/1202 render as activity rows; kind 9 finals as messages; 1200 hidden; malformed hidden | new `gh-agents-page.*`, `gh-agent-event-row.*`, `gh-mls-service.c`, timeline item types, prefs | B2 (Markdown) | M |
-| F2 | Agents: live streaming (spike first) | 0x8006 receive advertised; provisional streaming bubble reconciled with final; disabled in Tor mode | libmarmot QUIC or MDK binding, new `gh-agent-stream.*` | F1 | L |
+| F2 | ~~Agents: live streaming~~ **deferred (out of scope for alpha 6)** | 0x8006 receive advertised; provisional streaming bubble reconciled with final; disabled in Tor mode | libmarmot QUIC or MDK binding, new `gh-agent-stream.*` | F1 | L |
 | E1 | Release | All gates in §6 and the verification matrix | packaging, changelogs | all | S |
 
-Parallel lanes: A (regressions, then A5) ∥ B1 (library) ∥ C1 (tray) ∥ F2 spike; then B2 and C2; D1 last; each lane in its own worktree, merged to master locally and pushed once through the pre-push gate.
+Parallel lanes: A (regressions, then A5) ∥ B1 (library) ∥ C1 (tray); then B2 and C2; D1 last; each lane in its own worktree, merged to master locally and pushed once through the pre-push gate.
 
 ## 2. Current-state analysis and regression diagnosis
 
@@ -189,7 +189,7 @@ Anchoring keeps the visible row fixed across prepend/append/trim (same mechanism
 
 **Groundhog scope.**
 - **F1 — Agents settings + activity rows + finals (alpha 6).** Preferences gains an *AI Agents* page mirroring iOS: per-connector copyable setup prompt with the active account’s npub (connector list and prompt text kept in a data file; docs links added to `check_privacy.py` EXCEPTIONS), a “Start chat with agent” field (npub/QR → existing Marmot DM creation) and a trust warning (“connect only an agent you run and trust; it can read the chats you add it to”). Marmot receive path (`src/mls/gh-mls-service.c:2797` inner-event dispatch) admits kinds **1201/1202** as timeline *activity items* (new `GhTimelineItem` type rendered by a small `GhAgentEventRow`: icon by `event_type`/operation, bounded text, optional status; never a bubble, never in sidebar previews or unread counts) and treats kind **9 with complete stream tags** as an ordinary message (incomplete tags → ordinary chat, as iOS); kind **1200** is stored but hidden (debug mode shows it). Validation: unknown/oversized/malformed JSON hidden; inner pubkey must equal the authenticated sender (already enforced by libmarmot). Agent messages get Markdown via §3.1.
-- **F2 — Live streaming (spike, may slip).** Advertise component 0x8006 (receive role) in Groundhog KeyPackages and implement a stream watcher: on kind 1200, open the QUIC broker connection, render a provisional bubble with a “Streaming…” indicator, replace on checkpoint, drop on failure, reconcile with the kind-9 final (final is authoritative; compare `stream-hash` when available). Requires a QUIC client in libmarmot (C) or a binding to MDK’s Rust stream code, must honour network mode (Tor: QUIC/UDP is not proxied → **disable streaming in Tor mode** and show finals only), and needs broker/transport tests. Start with a time-boxed spike to choose the QUIC stack; if it does not fit alpha 6, F1 still delivers usable agents (final answers + activity rows).
+- **F2 — Live streaming — OUT OF SCOPE for alpha 6 (owner decision 2026-10-09).** Advertise component 0x8006 (receive role) in Groundhog KeyPackages and implement a stream watcher: on kind 1200, open the QUIC broker connection, render a provisional bubble with a “Streaming…” indicator, replace on checkpoint, drop on failure, reconcile with the kind-9 final (final is authoritative; compare `stream-hash` when available). Requires a QUIC client in libmarmot (C) or a binding to MDK’s Rust stream code, must honour network mode (Tor: QUIC/UDP is not proxied → **disable streaming in Tor mode** and show finals only), and needs broker/transport tests. Start with a time-boxed spike to choose the QUIC stack; if it does not fit alpha 6, F1 still delivers usable agents (final answers + activity rows).
 - **Out of scope:** an agent directory, per-group agent permissions (iOS has none; membership is the consent), slash-command UI.
 
 ## 4. File-by-file impact
@@ -271,7 +271,7 @@ A phase is complete only when its tests run against the code path shipped by Gro
 
 ## 7. Open questions
 Resolved 2026-10-09: machinery only for translations; Portuguese is `pt_BR`; Groundhog also authors reposts and quotes.
-- Agents live streaming (F2) depends on a C QUIC client in libmarmot; decide after the F2 spike whether it ships in alpha 6 or the next release.
+- Agents live streaming (F2) is out of scope for alpha 6 (owner decision 2026-10-09).
 
 ## Appendix A — Investigation evidence (file:line) (paths relative to gnome/groundhog/ unless noted)
 
