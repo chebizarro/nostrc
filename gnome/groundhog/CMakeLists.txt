@@ -1372,6 +1372,10 @@ endif()
 # conversation UI (G11 block), and the GTK-free link policy (PD-3, PT-3) is a
 # library of its own, tested without a display.
 pkg_check_modules(GROUNDHOG_LINK_POLICY_DEPS REQUIRED IMPORTED_TARGET glib-2.0>=2.66)
+# Markdown and Nostr references come from the portable nostr-gtk library.
+if (NOT TARGET NostrGtk::Portable)
+  message(FATAL_ERROR "Groundhog needs the portable nostr-gtk library: configure with -DBUILD_NOSTR_GTK=ON")
+endif()
 add_library(groundhog-link-policy STATIC src/ui/gh-link-policy.c)
 target_include_directories(groundhog-link-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS

@@ -50,7 +50,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
             -DBUILD_TESTING=ON -DBUILD_GROUNDHOG=ON -DBUILD_MDK011_INTEROP=ON \
-            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=OFF \
+            -DBUILD_NOSTR_GOBJECT=ON -DBUILD_NOSTR_GTK=ON \
             -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF
 
       - name: Build the matrix test
