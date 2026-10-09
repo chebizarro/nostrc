@@ -1,6 +1,11 @@
 #include "gh-conversation-view.h"
 #include "gh-conversation-private.h"
 #include "gh-link-policy.h"
+#include "gh-display-name.h"
+#include "gh-shell.h"
+#include "gh-window.h"
+#include "gh-composer.h"
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include "gh-message-row.h"
 #include "gh-timeline-row.h"
 #include "gh-conversation-row.h"
@@ -19,6 +24,10 @@
 /* Settings keys (charter §7.11), owned by the schema. */
 #define LINK_PREVIEWS_KEY "link-previews"
 #define NETWORK_MODE_KEY "network-mode"
+#define RENDER_CACHE_MAX_ITEMS 256u
+#define RENDER_CACHE_MAX_BYTES (2u * 1024u * 1024u)
+#define RENDER_WORKER_THRESHOLD 4096u
+#define RENDER_PREWARM_ITEMS 40u
 
 /* ---- GhTimelineItem --------------------------------------------------------------- */
 
@@ -634,6 +643,7 @@ typedef struct {
   gchar *sender;
   gchar *title;
   gchar *description;
+  gchar *image_url;
   GhWebKind kind;
   GdkTexture *texture;
 } Preview;
@@ -648,6 +658,7 @@ preview_free(Preview *preview)
   g_free(preview->title);
   g_clear_object(&preview->texture);
   g_free(preview->description);
+  g_free(preview->image_url);
   g_free(preview);
 }
 
@@ -729,6 +740,16 @@ struct _GhConversationView {
   gpointer fetch_data;
   GDestroyNotify fetch_destroy;
 
+  /* Immutable message bodies are formatted once per account/name generation.
+   * The queue owns recency order, the hash owns entries. Worker results never
+   * hold a row; they notify only the current generation on the main context. */
+  GHashTable *render_cache;
+  GQueue render_lru;
+  gsize render_bytes;
+  gchar *render_account;
+  guint64 render_generation;
+  GCancellable *render_cancel;
+
   /* W26 slice B: reactions */
   GhReactionStore *reactions;
   GhConversationViewReactFunc react_func;
@@ -751,7 +772,7 @@ enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_COPY_TEXT,
-       SIGNAL_PREVIEW_CHANGED, N_SIGNALS };
+       SIGNAL_PREVIEW_CHANGED, SIGNAL_RENDER_CHANGED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -1208,6 +1229,278 @@ schedule_midnight(GhConversationView *self)
                                                 on_midnight, self);
 }
 
+typedef struct {
+  gchar *id;
+  gchar *markup;
+  gchar *reference_uri;
+  gchar *reference_label;
+  gchar *preview_uri;
+  gsize bytes;
+  gboolean pending;
+} RenderEntry;
+
+typedef struct {
+  gchar *id;
+  gchar *account;
+  gchar *body;
+  guint64 generation;
+} RenderJob;
+
+typedef struct {
+  GnMarkdownDocument *document;
+  gchar *preview_uri;
+} RenderResult;
+
+static void
+render_result_free(RenderResult *result)
+{
+  if (!result) return;
+  gn_markdown_document_free(result->document);
+  g_free(result->preview_uri);
+  g_free(result);
+}
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(RenderResult, render_result_free)
+
+static void
+render_entry_free(RenderEntry *entry)
+{
+  g_free(entry->id);
+  g_free(entry->markup);
+  g_free(entry->reference_uri);
+  g_free(entry->reference_label);
+  g_free(entry->preview_uri);
+  g_free(entry);
+}
+
+static void
+render_job_free(RenderJob *job)
+{
+  g_free(job->id);
+  g_free(job->account);
+  g_free(job->body);
+  g_free(job);
+}
+
+static void
+render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *document,
+                               const gchar *body)
+{
+  g_clear_pointer(&entry->reference_uri, g_free);
+  g_clear_pointer(&entry->reference_label, g_free);
+  g_autoptr(GnNostrRepostDescriptor) repost = NULL;
+  if (body && body[0] == '{' &&
+      strlen(body) <= GN_MARKDOWN_MAX_INPUT_BYTES)
+    repost = gn_nostr_repost_descriptor_parse(body, FALSE);
+  const GnNostrReference *reference = repost ? repost->target : NULL;
+  g_autoptr(GnNostrReference) parsed = NULL;
+  if (!reference && document) {
+    for (guint i = 0; i < document->tokens->len; i++) {
+      const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
+      if (token->kind != GN_MARKDOWN_NOSTR_REFERENCE &&
+          !(token->kind == GN_MARKDOWN_LINK && token->target &&
+            g_str_has_prefix(token->target, "nostr:")))
+        continue;
+      parsed = gn_nostr_reference_parse(token->target);
+      if (parsed && (parsed->type == GN_NOSTR_REFERENCE_EVENT ||
+                     parsed->type == GN_NOSTR_REFERENCE_ADDRESS)) {
+        reference = parsed;
+        break;
+      }
+      g_clear_pointer(&parsed, gn_nostr_reference_free);
+    }
+  }
+  if (!reference) return;
+  entry->reference_uri = g_strdup(reference->uri);
+  g_autofree gchar *short_id = reference->id
+    ? g_utf8_substring(reference->id, 0, MIN(12, g_utf8_strlen(reference->id, -1)))
+    : g_strdup("");
+  entry->reference_label = g_strdup_printf(
+    repost ? (repost->quote ? _("Quoted Nostr note: %s") : _("Reposted Nostr note: %s"))
+           : reference->type == GN_NOSTR_REFERENCE_ADDRESS
+             ? _("Nostr address: %s") : _("Nostr note: %s"), short_id);
+}
+
+static gsize
+render_entry_size(RenderEntry *entry)
+{
+  return strlen(entry->markup) +
+         (entry->reference_uri ? strlen(entry->reference_uri) : 0) +
+         (entry->reference_label ? strlen(entry->reference_label) : 0) +
+         (entry->preview_uri ? strlen(entry->preview_uri) : 0);
+}
+
+static void
+render_cache_reset(GhConversationView *self)
+{
+  self->render_generation++;
+  if (self->render_cancel)
+    g_cancellable_cancel(self->render_cancel);
+  g_clear_object(&self->render_cancel);
+  self->render_cancel = g_cancellable_new();
+  g_queue_clear(&self->render_lru);
+  g_hash_table_remove_all(self->render_cache);
+  self->render_bytes = 0;
+}
+
+static void
+render_cache_trim(GhConversationView *self)
+{
+  while (g_hash_table_size(self->render_cache) > RENDER_CACHE_MAX_ITEMS ||
+         self->render_bytes > RENDER_CACHE_MAX_BYTES) {
+    RenderEntry *oldest = g_queue_pop_head(&self->render_lru);
+    if (!oldest) break;
+    self->render_bytes -= oldest->bytes;
+    g_hash_table_remove(self->render_cache, oldest->id);
+  }
+}
+
+static void
+render_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *cancel)
+{
+  (void)source;
+  RenderJob *job = task_data;
+  if (g_cancellable_is_cancelled(cancel)) {
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "render cancelled");
+    return;
+  }
+  RenderResult *result = g_new0(RenderResult, 1);
+  result->document = gn_markdown_parse(job->body, -1);
+  result->preview_uri = gh_link_policy_dup_preview_uri(job->body);
+  g_task_return_pointer(task, result, (GDestroyNotify)render_result_free);
+}
+
+static void
+render_worker_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)data;
+  GhConversationView *self = GH_CONVERSATION_VIEW(source);
+  GTask *task = G_TASK(result);
+  RenderJob *job = g_task_get_task_data(task);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(RenderResult) rendered = g_task_propagate_pointer(task, &error);
+  if (!rendered || !rendered->document ||
+      job->generation != self->render_generation ||
+      g_strcmp0(job->account, self->render_account) != 0)
+    return;
+  RenderEntry *entry = g_hash_table_lookup(self->render_cache, job->id);
+  if (!entry || !entry->pending)
+    return;
+  self->render_bytes -= entry->bytes;
+  if (!rendered->document->truncated) {
+    g_autofree gchar *markup = gh_link_policy_format_markdown(rendered->document, job->account);
+    g_free(entry->markup);
+    entry->markup = g_steal_pointer(&markup);
+    render_entry_collect_reference(entry, rendered->document, job->body);
+  }
+  g_free(entry->preview_uri);
+  entry->preview_uri = g_steal_pointer(&rendered->preview_uri);
+  entry->bytes = render_entry_size(entry);
+  self->render_bytes += entry->bytes;
+  /* A budgeted parser must not silently drop message text. The full escaped
+   * fallback stays visible when its input or token limit was reached. */
+  entry->pending = FALSE;
+  render_cache_trim(self);
+  g_signal_emit(self, signals[SIGNAL_RENDER_CHANGED], 0, job->id);
+}
+
+static RenderEntry *
+render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager)
+{
+  const gchar *id = gh_message_get_rumor_id(message);
+  if (!id || !self->render_account ||
+      g_strcmp0(self->render_account, gh_message_get_account(message)) != 0)
+    return NULL;
+  RenderEntry *entry = g_hash_table_lookup(self->render_cache, id);
+  if (entry) {
+    g_queue_remove(&self->render_lru, entry);
+    g_queue_push_tail(&self->render_lru, entry);
+    return entry;
+  }
+  const gchar *body = gh_message_get_content(message);
+  g_autofree gchar *valid = g_utf8_make_valid(body ? body : "", -1);
+  entry = g_new0(RenderEntry, 1);
+  entry->id = g_strdup(id);
+  entry->markup = g_markup_escape_text(valid, -1);
+  if (eager && strlen(body ? body : "") <= RENDER_WORKER_THRESHOLD) {
+    g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(body, -1);
+    entry->preview_uri = gh_link_policy_dup_preview_uri(body);
+    if (!document->truncated) {
+      g_autofree gchar *formatted = gh_link_policy_format_markdown(document,
+                                                                   self->render_account);
+      g_free(entry->markup);
+      entry->markup = g_steal_pointer(&formatted);
+      render_entry_collect_reference(entry, document, body);
+    }
+  } else {
+    /* The portable parser rejects oversized input. Do not copy or queue it;
+     * the escaped body above remains selectable in full. */
+    entry->pending = strlen(body ? body : "") <= GN_MARKDOWN_MAX_INPUT_BYTES;
+  }
+  entry->bytes = render_entry_size(entry);
+  g_hash_table_insert(self->render_cache, g_strdup(id), entry);
+  g_queue_push_tail(&self->render_lru, entry);
+  self->render_bytes += entry->bytes;
+  if (entry->pending) {
+    RenderJob *job = g_new0(RenderJob, 1);
+    job->id = g_strdup(id);
+    job->account = g_strdup(self->render_account);
+    job->body = g_strdup(body ? body : "");
+    job->generation = self->render_generation;
+    GTask *task = g_task_new(self, self->render_cancel, render_worker_done, NULL);
+    g_task_set_task_data(task, job, (GDestroyNotify)render_job_free);
+    g_task_run_in_thread(task, render_worker);
+    g_object_unref(task);
+  }
+  render_cache_trim(self);
+  return g_hash_table_lookup(self->render_cache, id);
+}
+
+const gchar *
+gh_conversation_view_get_render_markup(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), "");
+  g_return_val_if_fail(GH_IS_MESSAGE(message), "");
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry ? entry->markup : NULL;
+}
+
+gboolean
+gh_conversation_view_get_reference(GhConversationView *self, GhMessage *message,
+                                   const gchar **uri, const gchar **label)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), FALSE);
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  if (uri) *uri = entry ? entry->reference_uri : NULL;
+  if (label) *label = entry ? entry->reference_label : NULL;
+  return entry && entry->reference_uri != NULL;
+}
+
+const gchar *
+gh_conversation_view_get_preview_uri(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry ? entry->preview_uri : NULL;
+}
+
+static void
+on_render_name_changed(GhConversationView *self, const gchar *pubkey)
+{
+  (void)pubkey;
+  render_cache_reset(self);
+  if (!self->conversation) return;
+  GListModel *model = G_LIST_MODEL(self->conversation);
+  guint n = g_list_model_get_n_items(model);
+  for (guint i = n > RENDER_PREWARM_ITEMS ? n - RENDER_PREWARM_ITEMS : 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(model, i);
+    render_cache_ensure(self, message, TRUE);
+    g_signal_emit(self, signals[SIGNAL_RENDER_CHANGED], 0,
+                  gh_message_get_rumor_id(message));
+  }
+}
+
 /* ---- messages of the shown conversation ---------------------------------------------- */
 
 /* A send failure is announced assertively (charter §7.6, §7.14). */
@@ -1253,6 +1546,10 @@ on_conversation_changed(GhConversationView *self, guint position, guint removed,
     g_autoptr(GhMessage) message = g_list_model_get_item(model, i);
     g_signal_handlers_disconnect_by_data(message, self);
     watch_message(self, message);
+    /* Only the opening viewport and nearby rows are warm. Historic pages
+     * outside it render on a worker if a row is actually requested. */
+    if (i + RENDER_PREWARM_ITEMS >= position + added)
+      render_cache_ensure(self, message, TRUE);
   }
   update_older(self);
 }
@@ -1372,6 +1669,12 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   self->seen_newer_arrivals = 0;
   self->open_scroll = OPEN_NONE;
   g_set_object(&self->conversation, conversation);
+  const gchar *account = conversation ? gh_conversation_get_account(conversation) : NULL;
+  if (g_strcmp0(self->render_account, account) != 0) {
+    render_cache_reset(self);
+    g_free(self->render_account);
+    self->render_account = g_strdup(account);
+  }
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
   if (open_probe_view == self && open_probe.entry_us && open_probe.trace) {
     open_probe.cleanup_end_us = g_get_monotonic_time();
@@ -1751,6 +2054,8 @@ on_web_fetched(GObject *source, GAsyncResult *answer, gpointer data)
         g_free(preview->description);
         preview->title = g_steal_pointer(&result->title);
         preview->description = g_steal_pointer(&result->description);
+        g_free(preview->image_url);
+        preview->image_url = g_steal_pointer(&result->image_url);
         g_set_object(&preview->texture, result->texture);
       }
       set_preview_state(self, closure->rumor_id, result ? GH_LINK_PREVIEW_LOADED : GH_LINK_PREVIEW_FAILED);
@@ -1832,6 +2137,7 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
   const gchar *message_id = rumor_id;
   if (g_str_has_prefix(rumor_id, "image:")) { kind = GH_WEB_IMAGE; message_id += 6; }
   if (g_str_has_prefix(rumor_id, "picture:")) { kind = GH_WEB_PICTURE; message_id += 8; }
+  if (g_str_has_prefix(rumor_id, "og-image:")) { kind = GH_WEB_OG_IMAGE; message_id += 9; }
   GhMessage *message = self->conversation
                          ? gh_conversation_lookup_message(self->conversation, message_id)
                          : NULL;
@@ -1842,9 +2148,13 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
   if (!message || !gh_conversation_view_get_previews_available(self))
     return;
   if (kind != GH_WEB_PREVIEW && !self->web) return;
+  Preview *metadata = kind == GH_WEB_OG_IMAGE ? preview_for(self, message_id) : NULL;
   g_autofree gchar *uri = kind == GH_WEB_PICTURE
     ? gh_conversation_view_dup_picture_uri(self, message)
-    : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
+    : kind == GH_WEB_OG_IMAGE
+      ? g_strdup(metadata && metadata->state == GH_LINK_PREVIEW_LOADED
+                   ? metadata->image_url : NULL)
+      : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
   if (!uri)
     return;
   Preview *preview = preview_for(self, rumor_id);
@@ -1865,7 +2175,8 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
   g_autofree gchar *host = gh_link_policy_dup_host(preview->uri);
   g_autofree gchar *body = consent_body(self, host);
   adw_alert_dialog_set_heading(self->preview_dialog, kind == GH_WEB_PREVIEW
-    ? _("Show Link Preview?") : kind == GH_WEB_IMAGE ? _("Load Image?") : _("Load Profile Picture?"));
+    ? _("Show Link Preview?") : kind == GH_WEB_PICTURE
+      ? _("Load Profile Picture?") : _("Load Image?"));
   adw_alert_dialog_set_response_label(self->preview_dialog, "preview-show", _("_Allow"));
   adw_alert_dialog_set_body(self->preview_dialog, body);
   gtk_check_button_set_active(self->preview_dont_ask, FALSE);
@@ -1918,6 +2229,15 @@ gh_conversation_view_get_link_preview(GhConversationView *self, GhMessage *messa
   if (description)
     *description = preview ? preview->description : NULL;
   return preview ? preview->state : GH_LINK_PREVIEW_NONE;
+}
+
+const gchar *
+gh_conversation_view_get_og_image_uri(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  Preview *preview = preview_for(self, gh_message_get_rumor_id(message));
+  return preview && preview->state == GH_LINK_PREVIEW_LOADED ? preview->image_url : NULL;
 }
 
 void
@@ -2070,8 +2390,9 @@ GdkTexture *
 gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *message,
                                       GhWebKind kind, GhLinkPreviewState *state)
 {
-  g_autofree gchar *id = g_strconcat(kind == GH_WEB_IMAGE ? "image:" : "picture:",
-                                    gh_message_get_rumor_id(message), NULL);
+  const gchar *prefix = kind == GH_WEB_IMAGE ? "image:"
+                        : kind == GH_WEB_OG_IMAGE ? "og-image:" : "picture:";
+  g_autofree gchar *id = g_strconcat(prefix, gh_message_get_rumor_id(message), NULL);
   Preview *preview = preview_for(self, id);
   *state = preview ? preview->state : GH_LINK_PREVIEW_NONE;
   return preview ? preview->texture : NULL;
@@ -2105,7 +2426,8 @@ void
 gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhWebKind kind)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
-  if (!message || !self->web || !self->conversation || kind == GH_WEB_PREVIEW ||
+  if (!message || !self->web || !self->conversation ||
+      kind == GH_WEB_PREVIEW || kind == GH_WEB_OG_IMAGE ||
       gh_message_get_withdrawn(message) || gh_conversation_get_is_request(self->conversation))
     return;
   g_autofree gchar *id = g_strconcat(kind == GH_WEB_IMAGE ? "image:" : "picture:",
@@ -2287,6 +2609,80 @@ action_show_preview(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   (void)name;
   show_preview(GH_CONVERSATION_VIEW(widget), g_variant_get_string(parameter, NULL));
+}
+
+static gchar *
+visible_text_from_markup(const gchar *markup)
+{
+  /* GtkLabel understands the link markup that plain Pango rejects. This is
+   * only called on an explicit Copy action, never on a list bind. */
+  GtkWidget *label = gtk_label_new(NULL);
+  g_object_ref_sink(label);
+  gtk_label_set_markup(GTK_LABEL(label), markup);
+  gchar *text = g_strdup(gtk_label_get_text(GTK_LABEL(label)));
+  g_object_unref(label);
+  return text;
+}
+
+static void
+action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  if (!self->conversation) return;
+  const gchar *id = g_variant_get_string(parameter, NULL);
+  GhMessage *message = gh_conversation_lookup_message(self->conversation, id);
+  if (!message ||
+      g_strcmp0(gh_message_get_account(message),
+                gh_conversation_get_account(self->conversation)) != 0 ||
+      gh_message_get_withdrawn(message) ||
+      gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_VOTE_KIND ||
+      (gh_message_get_expires_at(message) > 0 &&
+       gh_message_get_expires_at(message) <= g_get_real_time() / G_USEC_PER_SEC))
+    return;
+  g_autofree gchar *text = NULL;
+  if (gh_message_get_kind(message) == GH_NIP17_FILE_KIND) {
+    g_autoptr(GhNip17File) file = gh_message_dup_file(message);
+    if (!file) return;
+    text = g_strdup(file->url);
+  } else if (gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_KIND) {
+    text = gh_message_dup_display_text(message);
+  } else {
+    const gchar *markup = gh_conversation_view_get_render_markup(self, message);
+    text = markup ? visible_text_from_markup(markup) : NULL;
+    if (!text)
+      text = gh_message_dup_display_text(message);
+  }
+  if (!text) return;
+  g_signal_emit(self, signals[SIGNAL_COPY_TEXT], 0, text);
+  show_toast(self, _("Copied"));
+  announce(self, _("Copied"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+static void
+action_share_reference(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  if (!self->conversation) return;
+  const gchar *id = g_variant_get_string(parameter, NULL);
+  GhMessage *message = gh_conversation_lookup_message(self->conversation, id);
+  if (!message || gh_message_get_withdrawn(message) ||
+      (gh_message_get_expires_at(message) > 0 &&
+       gh_message_get_expires_at(message) <= g_get_real_time() / G_USEC_PER_SEC) ||
+      g_strcmp0(gh_message_get_account(message),
+                gh_conversation_get_account(self->conversation)) != 0)
+    return;
+  const gchar *uri = NULL;
+  if (!gh_conversation_view_get_reference(self, message, &uri, NULL)) return;
+  GhWindow *window = GH_WINDOW(gtk_widget_get_ancestor(widget, GH_TYPE_WINDOW));
+  GhContentPage *content = window ? gh_window_get_content(window) : NULL;
+  GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
+  if (!composer) return;
+  gh_composer_insert_text(composer, uri);
+  gtk_widget_grab_focus(GTK_WIDGET(composer));
+  announce(self, _("Reference added to chat draft"),
+           GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 }
 
 static void
@@ -2578,6 +2974,15 @@ gh_conversation_view_enrich_row(GhConversationView *self, GhMessageRow *row)
 }
 
 static void
+gh_conversation_view_unroot(GtkWidget *widget)
+{
+  /* A worker owns a view reference until its result is delivered, so disposal
+   * alone is too late to cancel work when a window closes. */
+  render_cache_reset(GH_CONVERSATION_VIEW(widget));
+  GTK_WIDGET_CLASS(gh_conversation_view_parent_class)->unroot(widget);
+}
+
+static void
 gh_conversation_view_dispose(GObject *object)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(object);
@@ -2601,6 +3006,9 @@ gh_conversation_view_dispose(GObject *object)
   g_clear_object(&self->picture_source);
   g_clear_object(&self->settings);
   g_clear_object(&self->reactions);
+  if (self->render_cancel)
+    g_cancellable_cancel(self->render_cancel);
+  g_clear_object(&self->render_cancel);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_CONVERSATION_VIEW);
   G_OBJECT_CLASS(gh_conversation_view_parent_class)->dispose(object);
 }
@@ -2611,6 +3019,9 @@ gh_conversation_view_finalize(GObject *object)
   GhConversationView *self = GH_CONVERSATION_VIEW(object);
   g_hash_table_unref(self->previews);
   g_hash_table_unref(self->allowed_senders);
+  g_queue_clear(&self->render_lru);
+  g_hash_table_unref(self->render_cache);
+  g_free(self->render_account);
   g_free(self->pending_link);
   g_free(self->pending_preview);
   g_free(self->last_announcement);
@@ -2630,6 +3041,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   object_class->dispose = gh_conversation_view_dispose;
   object_class->finalize = gh_conversation_view_finalize;
   widget_class->grab_focus = gh_conversation_view_grab_focus;
+  widget_class->unroot = gh_conversation_view_unroot;
 
   props[PROP_CONVERSATION] = g_param_spec_object("conversation", NULL, NULL,
     GH_TYPE_CONVERSATION, G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
@@ -2650,6 +3062,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_SIGNAL_RUN_LAST, G_CALLBACK(gh_conversation_view_real_copy_text), NULL, NULL, NULL,
     G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_PREVIEW_CHANGED] = g_signal_new("preview-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_RENDER_CHANGED] = g_signal_new("render-changed", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 
   /* The templates name these types; they resolve by name. */
@@ -2680,6 +3094,10 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_install_action(widget_class, "conversation.show-preview", "s",
                                   action_show_preview);
   gtk_widget_class_install_action(widget_class, "conversation.retry-message", "s", action_retry);
+  gtk_widget_class_install_action(widget_class, "conversation.copy-message", "s",
+                                  action_copy_message);
+  gtk_widget_class_install_action(widget_class, "conversation.share-reference", "s",
+                                  action_share_reference);
   gtk_widget_class_install_action(widget_class, "conversation.scroll-to-reply", "s",
                                   action_scroll_to_reply);
   gtk_widget_class_install_action(widget_class, "conversation.react", "(ssb)", action_react);
@@ -2699,6 +3117,12 @@ gh_conversation_view_init(GhConversationView *self)
   self->previews = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                          (GDestroyNotify)preview_free);
   self->allowed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->render_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                               (GDestroyNotify)render_entry_free);
+  g_queue_init(&self->render_lru);
+  self->render_cancel = g_cancellable_new();
+  g_signal_connect_object(gh_display_name_get_notifier(), "changed",
+                          G_CALLBACK(on_render_name_changed), self, G_CONNECT_SWAPPED);
   g_autoptr(GtkListItemFactory) headers = gtk_builder_list_item_factory_new_from_resource(
     NULL, "/org/nostr/Groundhog/ui/gh-day-separator.ui");
   gtk_list_view_set_header_factory(self->message_list, headers);

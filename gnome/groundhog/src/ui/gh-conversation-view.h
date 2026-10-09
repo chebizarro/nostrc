@@ -128,6 +128,16 @@ gboolean gh_conversation_view_get_compact(GhConversationView *self);
 GListModel *gh_conversation_view_get_timeline(GhConversationView *self);
 GtkListView *gh_conversation_view_get_message_list(GhConversationView *self);
 
+/* Borrowed, escaped markup for the current account's immutable message.
+ * A cache miss schedules rendering; list-row bind never parses Markdown. */
+const gchar *gh_conversation_view_get_render_markup(GhConversationView *self,
+                                                     GhMessage *message);
+/* Borrowed offline NIP-21/NIP-18 descriptor from the render cache; no relay lookup. */
+gboolean gh_conversation_view_get_reference(GhConversationView *self, GhMessage *message,
+                                           const gchar **uri, const gchar **label);
+const gchar *gh_conversation_view_get_preview_uri(GhConversationView *self,
+                                                GhMessage *message);
+
 /* Scrolls to the newest message and sticks there. */
 void gh_conversation_view_scroll_to_latest(GhConversationView *self);
 /* Whether the newest message is on screen (the view sticks to it). */
@@ -247,6 +257,10 @@ GhLinkPreviewState gh_conversation_view_get_link_preview(GhConversationView *sel
                                                          GhMessage *message,
                                                          const gchar **title,
                                                          const gchar **description);
+/* Metadata-only URL from a consented page preview; artwork needs a separate
+ * explicit image request through conversation.show-preview. */
+const gchar *gh_conversation_view_get_og_image_uri(GhConversationView *self,
+                                                   GhMessage *message);
 
 /* Charter §7.15 state 11: the banner "@name hasn't set up private messaging
  * yet" (NULL hides it). */

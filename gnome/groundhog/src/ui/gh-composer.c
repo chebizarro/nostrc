@@ -1098,6 +1098,25 @@ gh_composer_set_text(GhComposer *self, const gchar *text)
 }
 
 void
+gh_composer_insert_text(GhComposer *self, const gchar *text)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  if (!text || !*text) return;
+  GtkTextIter at;
+  gtk_text_buffer_get_iter_at_mark(self->buffer, &at,
+                                   gtk_text_buffer_get_insert(self->buffer));
+  GtkTextIter before = at;
+  gboolean prefix = gtk_text_iter_backward_char(&before) &&
+                    !g_unichar_isspace(gtk_text_iter_get_char(&before));
+  gboolean suffix = !gtk_text_iter_is_end(&at) &&
+                    g_unichar_isalnum(gtk_text_iter_get_char(&at));
+  g_autofree gchar *inserted = g_strdup_printf("%s%s%s", prefix ? " " : "", text,
+                                               suffix ? " " : "");
+  gtk_text_buffer_insert_at_cursor(self->buffer, inserted, -1);
+  gtk_widget_grab_focus(GTK_WIDGET(self->text_view));
+}
+
+void
 gh_composer_flush_draft(GhComposer *self)
 {
   g_return_if_fail(GH_IS_COMPOSER(self));

@@ -8,6 +8,8 @@
 #include "gh-conversation-view.h"
 #include "gh-delivery-indicator.h"
 #include "gh-link-policy.h"
+#include <nostr-gtk-1.0/gn-og-preview-card.h>
+#include <nostr-gtk-1.0/gn-media-viewer.h>
 
 #ifdef GROUNDHOG_HAVE_VOICE
 #include "gh-voice-bubble.h"
@@ -43,19 +45,25 @@ struct _GhMessageRow {
   GhReactionBar *reaction_bar; /* on the meta line, only while there are reactions */
   GhReactionSummary *reaction_summary; /* owned even while the bar is absent */
   GtkButton *react_button;
+  GtkButton *copy_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
+  GtkBox *reference_box;
+  GtkLabel *reference_label;
+  GtkButton *reference_copy_button;
+  GtkButton *share_reference_button;
   GtkButton *preview_button;
   GtkButton *image_button;
-  GtkButton *picture_button;
   GtkPicture *remote_image;
   GtkWidget *bubble_line;
   GtkWidget *legacy_box;
   AdwAvatar *avatar;
+  GtkPopover *avatar_menu;
   GtkBox *web_box;
   GtkLabel *web_error;
   GtkLabel *preview_title;
   GtkLabel *preview_text;
+  GnOgPreviewCard *og_card;
   GtkBox *meta_box;
   GtkBox *status_box;
   GtkImage *timer_icon;
@@ -294,6 +302,13 @@ update_avatar(GhMessageRow *self)
   const gchar *sender = gh_message_get_sender(self->message);
   g_autofree gchar *name = sender ? gh_display_name_for(sender) : NULL;
   adw_avatar_set_text(self->avatar, name);
+  g_autofree gchar *accessible = g_strdup_printf(_("Profile picture of %s"),
+                                                  name ? name : _("sender"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->avatar),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, accessible,
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                 _("Open the picture menu with right-click, long press, or Menu key"),
+                                 -1);
   GdkTexture *texture = NULL;
   if (self->view && sender) {
     GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
@@ -447,7 +462,6 @@ clear_web_controls(GhMessageRow *self)
 {
   while (gtk_widget_get_first_child(GTK_WIDGET(self->web_box)))
     gtk_box_remove(self->web_box, gtk_widget_get_first_child(GTK_WIDGET(self->web_box)));
-  self->picture_button = NULL;
   self->image_button = NULL;
   self->remote_image = NULL;
   self->web_error = NULL;
@@ -474,6 +488,7 @@ clear_preview_controls(GhMessageRow *self)
   self->preview_button = NULL;
   self->preview_title = NULL;
   self->preview_text = NULL;
+  self->og_card = NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->preview_box), FALSE);
 }
 
@@ -511,6 +526,35 @@ ensure_preview_controls(GhMessageRow *self)
 }
 
 static void
+on_remote_image_pressed(GtkGestureClick *gesture, gint n_press, gdouble x,
+                        gdouble y, GhMessageRow *self)
+{
+  (void)gesture; (void)n_press; (void)x; (void)y;
+  if (!self->view || !self->message || !self->preview_uri) return;
+  GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+  GdkTexture *texture = gh_conversation_view_get_web_texture(self->view, self->message,
+                                                               GH_WEB_IMAGE, &state);
+  if (state != GH_LINK_PREVIEW_LOADED || !texture) return;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GnMediaViewer *viewer = gn_media_viewer_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
+  const gchar *urls[] = { self->preview_uri, NULL };
+  gn_media_viewer_set_gallery(viewer, urls, 0);
+  gn_media_viewer_set_texture(viewer, 0, texture);
+  gtk_window_present(GTK_WINDOW(viewer));
+}
+
+static gboolean
+on_remote_image_key(GtkEventControllerKey *controller, guint keyval, guint keycode,
+                    GdkModifierType state, GhMessageRow *self)
+{
+  (void)controller; (void)keycode; (void)state;
+  if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_space)
+    return FALSE;
+  on_remote_image_pressed(NULL, 1, 0, 0, self);
+  return TRUE;
+}
+
+static void
 update_web_images(GhMessageRow *self)
 {
   gboolean available = self->message && self->view &&
@@ -525,38 +569,17 @@ update_web_images(GhMessageRow *self)
     if (picture) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_PICTURE);
   }
   GhLinkPreviewState image_state = GH_LINK_PREVIEW_NONE;
-  GhLinkPreviewState picture_state = GH_LINK_PREVIEW_NONE;
   GdkTexture *texture = available
     ? gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_IMAGE,
                                            &image_state) : NULL;
-  if (available)
-    gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_PICTURE,
-                                         &picture_state);
   gboolean has_image = available && self->preview_uri;
-  gboolean has_picture = picture && self->run_start &&
-    !gh_message_is_self(self->message);
   gboolean ask_image = has_image &&
     image_state != GH_LINK_PREVIEW_LOADED && image_state != GH_LINK_PREVIEW_LOADING;
-  gboolean ask_picture = has_picture &&
-    picture_state != GH_LINK_PREVIEW_LOADED && picture_state != GH_LINK_PREVIEW_LOADING;
   gboolean failed = image_state == GH_LINK_PREVIEW_FAILED;
-  if (!has_image && !has_picture && !texture && !failed) {
+  if (!has_image && !texture && !failed) {
     clear_web_controls(self);
     update_avatar(self);
     return;
-  }
-  if (ask_picture && !self->picture_button)
-    self->picture_button = new_web_button(self, "picture_button", _("Load Profile Picture"));
-  if (has_picture && self->picture_button) {
-    g_autofree gchar *id = g_strconcat("picture:", gh_message_get_rumor_id(self->message), NULL);
-    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->picture_button), "s", id);
-    gtk_widget_set_visible(GTK_WIDGET(self->picture_button), ask_picture);
-    gtk_widget_set_sensitive(GTK_WIDGET(self->picture_button),
-                             picture_state == GH_LINK_PREVIEW_NONE ||
-                             picture_state == GH_LINK_PREVIEW_FAILED);
-  } else if (!has_picture && self->picture_button) {
-    gtk_box_remove(self->web_box, GTK_WIDGET(self->picture_button));
-    self->picture_button = NULL;
   }
   if (ask_image && !self->image_button)
     self->image_button = new_web_button(self, "image_button", _("Load Linked Image"));
@@ -580,7 +603,15 @@ update_web_images(GhMessageRow *self)
       gtk_widget_set_size_request(GTK_WIDGET(self->remote_image), -1, 180);
       gtk_accessible_update_property(GTK_ACCESSIBLE(self->remote_image),
                                      GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                     _("Image linked in this message"), -1);
+                                     _("Open image viewer for linked image"), -1);
+      gtk_widget_set_focusable(GTK_WIDGET(self->remote_image), TRUE);
+      GtkGesture *open = gtk_gesture_click_new();
+      gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(open), GDK_BUTTON_PRIMARY);
+      g_signal_connect(open, "pressed", G_CALLBACK(on_remote_image_pressed), self);
+      gtk_widget_add_controller(GTK_WIDGET(self->remote_image), GTK_EVENT_CONTROLLER(open));
+      GtkEventController *keys = gtk_event_controller_key_new();
+      g_signal_connect(keys, "key-pressed", G_CALLBACK(on_remote_image_key), self);
+      gtk_widget_add_controller(GTK_WIDGET(self->remote_image), keys);
       gtk_box_append(self->web_box, GTK_WIDGET(self->remote_image));
     }
     gtk_picture_set_paintable(self->remote_image, GDK_PAINTABLE(texture));
@@ -603,6 +634,18 @@ update_web_images(GhMessageRow *self)
     self->web_error = NULL;
   }
   update_avatar(self);
+}
+
+static void
+on_og_image_requested(GnOgPreviewCard *card, const gchar *url, GhMessageRow *self)
+{
+  (void)card;
+  if (!self->view || !self->message ||
+      g_strcmp0(url, gh_conversation_view_get_og_image_uri(self->view, self->message)) != 0)
+    return;
+  g_autofree gchar *target = g_strconcat("og-image:",
+                                         gh_message_get_rumor_id(self->message), NULL);
+  gtk_widget_activate_action(GTK_WIDGET(self), "conversation.show-preview", "s", target);
 }
 
 static void
@@ -660,6 +703,30 @@ update_preview(GhMessageRow *self)
   gtk_widget_set_visible(GTK_WIDGET(self->preview_title), has_title);
   gtk_label_set_text(self->preview_text, text ? text : "");
   gtk_widget_set_visible(GTK_WIDGET(self->preview_text), text && *text);
+  if (state == GH_LINK_PREVIEW_LOADED) {
+    if (!self->og_card) {
+      self->og_card = gn_og_preview_card_new();
+      gtk_widget_set_name(GTK_WIDGET(self->og_card), "og_card");
+      gtk_box_append(self->preview_box, GTK_WIDGET(self->og_card));
+      g_signal_connect(self->og_card, "image-load-requested",
+                       G_CALLBACK(on_og_image_requested), self);
+    }
+    if (g_strcmp0(gn_og_preview_card_get_url(self->og_card), self->preview_uri) != 0)
+      gn_og_preview_card_set_url(self->og_card, self->preview_uri);
+    g_autofree gchar *site = gh_link_policy_dup_host(self->preview_uri);
+    gn_og_preview_card_set_result(self->og_card, title, description, site,
+      gh_conversation_view_get_og_image_uri(self->view, self->message));
+    GhLinkPreviewState image_state = GH_LINK_PREVIEW_NONE;
+    GdkTexture *artwork = gh_conversation_view_get_web_texture(self->view, self->message,
+                                                                GH_WEB_OG_IMAGE, &image_state);
+    gn_og_preview_card_set_image_texture(self->og_card,
+      image_state == GH_LINK_PREVIEW_LOADED ? artwork : NULL);
+    gtk_widget_set_visible(GTK_WIDGET(self->preview_title), FALSE);
+    gtk_widget_set_visible(GTK_WIDGET(self->preview_text), FALSE);
+  } else if (self->og_card) {
+    gtk_box_remove(self->preview_box, GTK_WIDGET(self->og_card));
+    self->og_card = NULL;
+  }
   set_class(GTK_WIDGET(self->preview_box), "card", state == GH_LINK_PREVIEW_LOADED);
 }
 
@@ -733,6 +800,56 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
     gtk_box_remove(self->attachment_slot, GTK_WIDGET(self->attachment_note));
     self->attachment_note = NULL;
   }
+}
+
+static void
+update_reference(GhMessageRow *self)
+{
+  const gchar *uri = NULL;
+  const gchar *label = NULL;
+  gboolean visible = self->view && self->message && !self->undecryptable &&
+                     !gh_message_get_withdrawn(self->message) &&
+                     (gh_message_get_expires_at(self->message) == 0 ||
+                      gh_message_get_expires_at(self->message) >
+                        g_get_real_time() / G_USEC_PER_SEC) &&
+                     gh_conversation_view_get_reference(self->view, self->message,
+                                                         &uri, &label);
+  gtk_widget_set_visible(GTK_WIDGET(self->reference_box), visible);
+  if (!visible) return;
+  gtk_label_set_text(self->reference_label, label);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->reference_copy_button), "s", uri);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->share_reference_button), "s",
+                                   gh_message_get_rumor_id(self->message));
+}
+
+static void
+refresh_body_markup(GhMessageRow *self)
+{
+  if (!self->message || self->undecryptable || gh_message_get_withdrawn(self->message))
+    return;
+  const gchar *body = gh_message_get_content(self->message);
+  const gchar *cached = self->view
+    ? gh_conversation_view_get_render_markup(self->view, self->message) : NULL;
+  if (cached) {
+    gtk_label_set_markup(self->body_label, cached);
+  } else {
+    /* Even a body larger than the cache budget must remain visible. */
+    g_autofree gchar *valid = g_utf8_make_valid(body ? body : "", -1);
+    g_autofree gchar *plain = g_markup_escape_text(valid, -1);
+    gtk_label_set_markup(self->body_label, plain);
+  }
+}
+
+static void
+refresh_preview_uri(GhMessageRow *self)
+{
+  g_clear_pointer(&self->preview_uri, g_free);
+  if (!self->view || !self->message || self->undecryptable ||
+      gh_message_get_withdrawn(self->message) ||
+      !gtk_widget_get_visible(GTK_WIDGET(self->body_label)))
+    return;
+  self->preview_uri = g_strdup(gh_conversation_view_get_preview_uri(self->view,
+                                                                     self->message));
 }
 
 static void
@@ -896,10 +1013,8 @@ update_all(GhMessageRow *self)
     } else if (file) {
       gtk_label_set_text(self->body_label, file);
     } else {
-      g_autofree gchar *markup = gh_link_policy_to_mention_markup(
-        gh_message_get_content(message), gh_message_get_account(message));
-      gtk_label_set_markup(self->body_label, markup);
-      self->preview_uri = gh_link_policy_dup_preview_uri(gh_message_get_content(message));
+      refresh_body_markup(self);
+      refresh_preview_uri(self);
     }
     g_autofree gchar *sender = gh_message_row_sender_name(message);
     gtk_label_set_text(self->sender_label, sender);
@@ -912,11 +1027,28 @@ update_all(GhMessageRow *self)
     const gchar *rumor = gh_message_get_rumor_id(message);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", rumor);
   }
+  gboolean can_copy = message && !self->undecryptable && !withdrawn &&
+    gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND &&
+    (gh_message_get_expires_at(message) == 0 ||
+     gh_message_get_expires_at(message) > g_get_real_time() / G_USEC_PER_SEC);
+  gtk_widget_set_visible(GTK_WIDGET(self->copy_button), can_copy);
+  if (can_copy) {
+    gboolean link = gh_message_get_kind(message) == GH_NIP17_FILE_KIND;
+    const gchar *label = link ? _("Copy Link") : _("Copy message");
+    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s",
+                                     gh_message_get_rumor_id(message));
+    gtk_widget_set_tooltip_text(GTK_WIDGET(self->copy_button),
+      link ? _("Copy Link. The clipboard may be visible to other applications.")
+           : _("Copy message. The clipboard may be visible to other applications."));
+    gtk_accessible_update_property(GTK_ACCESSIBLE(self->copy_button),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
+  }
   gh_delivery_indicator_set_message(self->delivery, message);
   update_runs(self);
   update_expiry(self);
   update_meta(self);
   update_preview(self);
+  update_reference(self);
   update_summary(self);
 }
 
@@ -990,6 +1122,72 @@ on_long_pressed(GtkGestureLongPress *gesture, gdouble x, gdouble y, GhMessageRow
   gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
 }
 
+static gboolean
+avatar_picture_action_available(GhMessageRow *self)
+{
+  if (!self->message || !self->view || !self->run_end ||
+      gh_message_is_self(self->message) || self->undecryptable ||
+      gh_message_get_withdrawn(self->message))
+    return FALSE;
+  g_autofree gchar *uri = gh_conversation_view_dup_picture_uri(self->view, self->message);
+  if (!uri) return FALSE;
+  GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+  gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_PICTURE, &state);
+  return state == GH_LINK_PREVIEW_NONE || state == GH_LINK_PREVIEW_FAILED;
+}
+
+static void
+show_avatar_menu(GhMessageRow *self)
+{
+  if (!avatar_picture_action_available(self)) return;
+  if (!self->avatar_menu) {
+    self->avatar_menu = GTK_POPOVER(gtk_popover_new());
+    gtk_widget_set_name(GTK_WIDGET(self->avatar_menu), "avatar_menu");
+    gtk_widget_set_parent(GTK_WIDGET(self->avatar_menu), GTK_WIDGET(self->avatar));
+    GtkWidget *button = gtk_button_new_with_label(_("Load Profile Picture"));
+    gtk_widget_set_name(button, "picture_menu_button");
+    gtk_widget_add_css_class(button, "flat");
+    g_signal_connect_swapped(button, "clicked", G_CALLBACK(gtk_popover_popdown),
+                             self->avatar_menu);
+    gtk_popover_set_child(self->avatar_menu, button);
+  }
+  GtkWidget *button = gtk_popover_get_child(self->avatar_menu);
+  g_autofree gchar *target = g_strconcat("picture:",
+                                         gh_message_get_rumor_id(self->message), NULL);
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(button), "s", target);
+  gtk_actionable_set_action_name(GTK_ACTIONABLE(button), "conversation.show-preview");
+  gtk_popover_popup(self->avatar_menu);
+}
+
+static void
+on_avatar_secondary_pressed(GtkGestureClick *gesture, gint n_press,
+                            gdouble x, gdouble y, GhMessageRow *self)
+{
+  (void)n_press; (void)x; (void)y;
+  show_avatar_menu(self);
+  gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static void
+on_avatar_long_pressed(GtkGestureLongPress *gesture, gdouble x, gdouble y,
+                       GhMessageRow *self)
+{
+  (void)x; (void)y;
+  show_avatar_menu(self);
+  gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+}
+
+static gboolean
+on_avatar_key_pressed(GtkEventControllerKey *controller, guint keyval,
+                      guint keycode, GdkModifierType state, GhMessageRow *self)
+{
+  (void)controller; (void)keycode;
+  if (keyval != GDK_KEY_Menu && !(keyval == GDK_KEY_F10 && (state & GDK_SHIFT_MASK)))
+    return FALSE;
+  show_avatar_menu(self);
+  return TRUE;
+}
+
 /* ---- links and the enclosing view ------------------------------------------------ */
 
 /* Every click on a link goes through the view's policy; GTK's default
@@ -1009,6 +1207,19 @@ on_preview_changed(GhMessageRow *self, const gchar *rumor_id)
   if (self->message) update_preview(self);
 }
 
+/* A worker completed for this immutable message. Recycled rows reject IDs
+ * from a previous binding, so a late result cannot paint another message. */
+static void
+on_render_changed(GhMessageRow *self, const gchar *id)
+{
+  if (self->message && g_strcmp0(gh_message_get_rumor_id(self->message), id) == 0) {
+    refresh_body_markup(self);
+    refresh_preview_uri(self);
+    update_preview(self);
+    update_reference(self);
+  }
+}
+
 /* A name arrived (W33): the sender line, avatar and summary follow. */
 static void
 on_display_name_changed(GhMessageRow *self, const gchar *pubkey)
@@ -1021,9 +1232,7 @@ on_display_name_changed(GhMessageRow *self, const gchar *pubkey)
   }
   g_auto(GStrv) mentions = gh_message_extract_mentions(gh_message_get_content(self->message));
   if (mentions && g_strv_contains((const gchar *const *)mentions, pubkey)) {
-    g_autofree gchar *markup = gh_link_policy_to_mention_markup(
-      gh_message_get_content(self->message), gh_message_get_account(self->message));
-    gtk_label_set_markup(self->body_label, markup);
+    refresh_body_markup(self);
   }
 }
 
@@ -1048,15 +1257,23 @@ gh_message_row_root(GtkWidget *widget)
                           G_CALLBACK(on_display_name_changed), self, G_CONNECT_SWAPPED);
   g_signal_connect_object(view, "preview-changed", G_CALLBACK(on_preview_changed), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(view, "render-changed", G_CALLBACK(on_render_changed), self,
+                          G_CONNECT_SWAPPED);
+  refresh_body_markup(self);
+  refresh_preview_uri(self);
   update_preview(self);
+  update_reference(self);
 }
 
 static void
 gh_message_row_unroot(GtkWidget *widget)
 {
   GhMessageRow *self = GH_MESSAGE_ROW(widget);
+  if (self->avatar_menu)
+    gtk_popover_popdown(self->avatar_menu);
   if (self->view) {
     g_signal_handlers_disconnect_by_func(self->view, on_preview_changed, self);
+    g_signal_handlers_disconnect_by_func(self->view, on_render_changed, self);
     g_clear_pointer(&self->compact_binding, g_binding_unbind);
     self->view = NULL;
   }
@@ -1078,6 +1295,8 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
   g_return_if_fail(!message || GH_IS_MESSAGE(message));
   if (self->message == message)
     return;
+  if (self->avatar_menu)
+    gtk_popover_popdown(self->avatar_menu);
   if (self->message) {
     g_signal_handlers_disconnect_by_data(self->message, self);
     clear_web_controls(self);
@@ -1299,6 +1518,10 @@ gh_message_row_dispose(GObject *object)
     gtk_widget_unparent(GTK_WIDGET(self->picker));
     self->picker = NULL;
   }
+  if (self->avatar_menu) {
+    gtk_widget_unparent(GTK_WIDGET(self->avatar_menu));
+    self->avatar_menu = NULL;
+  }
   if (self->reply_button) {
     gtk_widget_unparent(GTK_WIDGET(self->reply_button));
     self->reply_button = NULL;
@@ -1320,6 +1543,13 @@ gh_message_row_finalize(GObject *object)
   g_free(self->preview_uri);
   g_free(self->summary);
   G_OBJECT_CLASS(gh_message_row_parent_class)->finalize(object);
+}
+
+static void
+action_avatar_menu(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name; (void)parameter;
+  show_avatar_menu(GH_MESSAGE_ROW(widget));
 }
 
 static void
@@ -1373,6 +1603,8 @@ gh_message_row_class_init(GhMessageRowClass *klass)
    * the message row shows its picker. */
   gtk_widget_class_install_action(widget_class, "conversation.add-reaction", NULL,
                                   action_add_reaction);
+  gtk_widget_class_install_action(widget_class, "message.avatar-menu", NULL,
+                                  action_avatar_menu);
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
   g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
@@ -1387,7 +1619,12 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_box);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_copy_button);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, share_reference_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
@@ -1416,6 +1653,10 @@ gh_message_row_init(GhMessageRow *self)
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
+  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", "");
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->reference_copy_button),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                 _("Copy Nostr address"), -1);
   self->run_start = TRUE;
   /* Right-click and long-press on the bubble show the reaction picker. */
   GtkGesture *click = gtk_gesture_click_new();
@@ -1426,6 +1667,18 @@ gh_message_row_init(GhMessageRow *self)
   gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(hold), TRUE);
   g_signal_connect(hold, "pressed", G_CALLBACK(on_long_pressed), self);
   gtk_widget_add_controller(GTK_WIDGET(self->bubble), GTK_EVENT_CONTROLLER(hold));
+  gtk_widget_set_focusable(GTK_WIDGET(self->avatar), TRUE);
+  GtkGesture *avatar_click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(avatar_click), GDK_BUTTON_SECONDARY);
+  g_signal_connect(avatar_click, "pressed", G_CALLBACK(on_avatar_secondary_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->avatar), GTK_EVENT_CONTROLLER(avatar_click));
+  GtkGesture *avatar_hold = gtk_gesture_long_press_new();
+  gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(avatar_hold), TRUE);
+  g_signal_connect(avatar_hold, "pressed", G_CALLBACK(on_avatar_long_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->avatar), GTK_EVENT_CONTROLLER(avatar_hold));
+  GtkEventController *avatar_keys = gtk_event_controller_key_new();
+  g_signal_connect(avatar_keys, "key-pressed", G_CALLBACK(on_avatar_key_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->avatar), avatar_keys);
   self->run_end = TRUE;
   self->summary = g_strdup("");
   g_signal_connect_swapped(self->body_label, "activate-link", G_CALLBACK(on_activate_link),

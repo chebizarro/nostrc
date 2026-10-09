@@ -375,6 +375,89 @@ gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_pubkey)
   return g_string_free(out, FALSE);
 }
 
+static void
+append_markdown_inline(GString *out, const gchar *text, guint style,
+                       const gchar *account_pubkey, gboolean linkify)
+{
+  g_autofree gchar *inner = linkify
+    ? gh_link_policy_to_mention_markup(text, account_pubkey)
+    : g_markup_escape_text(text ? text : "", -1);
+  if (style & GN_MARKDOWN_STYLE_STRONG)
+    g_string_append(out, "<b>");
+  if (style & GN_MARKDOWN_STYLE_EMPHASIS)
+    g_string_append(out, "<i>");
+  g_string_append(out, inner);
+  if (style & GN_MARKDOWN_STYLE_EMPHASIS)
+    g_string_append(out, "</i>");
+  if (style & GN_MARKDOWN_STYLE_STRONG)
+    g_string_append(out, "</b>");
+}
+
+gchar *
+gh_link_policy_format_markdown(const GnMarkdownDocument *document,
+                                       const gchar *account_pubkey)
+{
+  if (!document || !document->tokens)
+    return g_strdup("");
+  GString *out = g_string_sized_new(document->source ? strlen(document->source) + 64 : 64);
+  for (guint i = 0; i < document->tokens->len; i++) {
+    const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
+    const gchar *value = token->text ? token->text : "";
+    switch (token->kind) {
+    case GN_MARKDOWN_TEXT:
+      append_markdown_inline(out, value, token->style, account_pubkey, TRUE);
+      break;
+    case GN_MARKDOWN_CODE:
+      g_string_append(out, "<tt>");
+      append_markdown_inline(out, value, 0, account_pubkey, FALSE);
+      g_string_append(out, "</tt>");
+      break;
+    case GN_MARKDOWN_LINK:
+      /* A label can say anything, so it must never disguise the destination. */
+      append_markdown_inline(out, value, token->style, account_pubkey, FALSE);
+      g_string_append(out, " (");
+      append_markdown_inline(out, token->target, 0, account_pubkey, TRUE);
+      g_string_append_c(out, ')');
+      break;
+    case GN_MARKDOWN_RAW_URL:
+    case GN_MARKDOWN_NOSTR_REFERENCE:
+      append_markdown_inline(out, value, token->style, account_pubkey, TRUE);
+      break;
+    case GN_MARKDOWN_HEADING:
+      g_string_append(out, "<b>");
+      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      g_string_append(out, "</b>");
+      break;
+    case GN_MARKDOWN_LIST_ITEM:
+      g_string_append(out, token->ordered ? "1. " : "• ");
+      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      break;
+    case GN_MARKDOWN_QUOTE:
+      g_string_append(out, "│ ");
+      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      break;
+    case GN_MARKDOWN_SEPARATOR:
+      g_string_append(out, "────────");
+      break;
+    case GN_MARKDOWN_LINE_BREAK:
+      g_string_append_c(out, '\n');
+      break;
+    }
+  }
+  return g_string_free(out, FALSE);
+}
+
+gchar *
+gh_link_policy_to_markdown_markup(const gchar *text, const gchar *account_pubkey)
+{
+  g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(text, -1);
+  if (document->truncated) {
+    g_autofree gchar *valid = g_utf8_make_valid(text ? text : "", -1);
+    return g_markup_escape_text(valid, -1);
+  }
+  return gh_link_policy_format_markdown(document, account_pubkey);
+}
+
 /* Parses uri as exactly one web link, as the scanner would have found it. */
 static gboolean
 parse_whole_web_link(const gchar *uri, WebAddress *web)

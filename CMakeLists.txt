@@ -401,6 +401,10 @@ endif()
 
 # GObject wrapper option is declared early so the testkit guard below can see it.
 option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
+# Groundhog and nostr_gtk_portable must use one runtime GObject type registry.
+# Keep the ordinary static/shared policy for builds without Groundhog.
+option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
+set(NOSTR_GOBJECT_BUILD_SHARED ${BUILD_GROUNDHOG})
 
 # Shared test infrastructure (testkit) — must come before libraries that use it.
 # The testkit hard-depends on nostr-gobject headers (storage_ndb.h), so skip it
@@ -477,8 +481,7 @@ if (ENABLE_NOSTRDB_DEMO)
   endif()
 endif()
 
-# Standalone Groundhog GTK4/libadwaita shell; opt-in so default builds need no new GUI dependency.
-option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
+
 if (BUILD_GROUNDHOG)
   add_subdirectory(gnome/groundhog)
 else()

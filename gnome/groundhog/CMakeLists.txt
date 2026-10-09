@@ -1308,7 +1308,7 @@ pkg_check_modules(GROUNDHOG_LINK_POLICY_DEPS REQUIRED IMPORTED_TARGET glib-2.0>=
 add_library(groundhog-link-policy STATIC src/ui/gh-link-policy.c)
 target_include_directories(groundhog-link-policy PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-link-policy PUBLIC PkgConfig::GROUNDHOG_LINK_POLICY_DEPS
-                      groundhog-conversations groundhog-diagnostics)
+                      groundhog-conversations groundhog-diagnostics NostrGtk::Portable)
 target_compile_options(groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
 if (BUILD_TESTING)
   add_executable(test-groundhog-link-policy tests/ui/test_link_policy.c)
@@ -1316,6 +1316,16 @@ if (BUILD_TESTING)
   target_compile_options(test-groundhog-link-policy PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-link-policy COMMAND test-groundhog-link-policy)
   set_tests_properties(groundhog-link-policy PROPERTIES TIMEOUT 20
+    ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+  add_executable(test-groundhog-portable-singleton
+    tests/ui/test_portable_singleton.c)
+  target_link_libraries(test-groundhog-portable-singleton PRIVATE
+    NostrGtk::Portable nostr_gobject ${CMAKE_DL_LIBS})
+  target_compile_definitions(test-groundhog-portable-singleton PRIVATE
+    PORTABLE_LIBRARY_PATH="$<TARGET_FILE:nostr_gtk_portable>")
+  target_compile_options(test-groundhog-portable-singleton PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME groundhog-portable-singleton COMMAND test-groundhog-portable-singleton)
+  set_tests_properties(groundhog-portable-singleton PROPERTIES TIMEOUT 20
     ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
 
   # Tests that include nostrc-test-gdk-frame.h but do not link nostrc-test-bus
@@ -3348,16 +3358,22 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   target_compile_options(groundhog-issue PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-issue)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ISSUE=1)
-  # libnostr-gtk-portable is shared. Like libnostr-json (see
-  # NostrcPrivateJsonLib.cmake), an app-only install carries a private copy
-  # beside the binary's RUNPATH so Groundhog starts without nostr-gtk installed.
+  # Groundhog and portable must resolve GObject types from one DSO. Bundle
+  # both versioned libraries privately; target installation preserves SONAME
+  # links, unlike copying one build artifact by filename.
+  get_target_property(_gh_gobject_type nostr_gobject TYPE)
+  if (NOT _gh_gobject_type STREQUAL "SHARED_LIBRARY")
+    message(FATAL_ERROR "Groundhog and nostr_gtk_portable require shared nostr_gobject")
+  endif()
   if (NOT APPLE AND NOT WIN32)
-    install(FILES $<TARGET_FILE:nostr_gtk_portable>
-            DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog
-            RENAME $<TARGET_SONAME_FILE_NAME:nostr_gtk_portable>)
+    install(TARGETS nostr_gtk_portable nostr_gobject
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog)
     file(RELATIVE_PATH _gh_portable_rel "${CMAKE_INSTALL_FULL_BINDIR}"
          "${CMAKE_INSTALL_FULL_LIBDIR}/groundhog")
-    set_property(TARGET groundhog APPEND PROPERTY INSTALL_RPATH "\$ORIGIN/${_gh_portable_rel}")
+    set_property(TARGET groundhog APPEND PROPERTY INSTALL_RPATH
+                 "\$ORIGIN/${_gh_portable_rel}")
+    set_property(TARGET nostr_gtk_portable nostr_gobject APPEND PROPERTY INSTALL_RPATH
+                 "\$ORIGIN")
   endif()
 endif()
 

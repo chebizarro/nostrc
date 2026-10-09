@@ -15,7 +15,7 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GOBJECT_MAJOR_VERSION 2)
 set(NOSTR_GOBJECT_MINOR_VERSION 2)
-set(NOSTR_GOBJECT_MICRO_VERSION 1)
+set(NOSTR_GOBJECT_MICRO_VERSION 2)
 declare_component_version(NOSTR_GOBJECT
   ${NOSTR_GOBJECT_MAJOR_VERSION}
   ${NOSTR_GOBJECT_MINOR_VERSION}
@@ -164,7 +164,11 @@ set(NOSTR_GOBJECT_HEADERS
 )
 
 # ── Library target ───────────────────────────────────────────────────
-add_library(nostr_gobject ${NOSTR_GOBJECT_SOURCES})
+if(NOSTR_GOBJECT_BUILD_SHARED)
+  add_library(nostr_gobject SHARED ${NOSTR_GOBJECT_SOURCES})
+else()
+  add_library(nostr_gobject ${NOSTR_GOBJECT_SOURCES})
+endif()
 
 # Enable main-thread NDB transaction violation detection for test builds.
 # This adds lightweight instrumentation to storage_ndb_begin_query() that
@@ -200,14 +204,10 @@ target_include_directories(nostr_gobject
     ${NSYNC_INCLUDE_DIR}
 )
 
-# Determine link visibility: PUBLIC for static builds (deps must propagate),
-# PRIVATE for shared builds (library handles its own linking).
-get_target_property(_gobject_lib_type nostr_gobject TYPE)
-if(_gobject_lib_type STREQUAL "STATIC_LIBRARY")
-  set(_LINK_VIS PUBLIC)
-else()
-  set(_LINK_VIS PRIVATE)
-endif()
+# In the monorepo, consumers also include libnostr/NIP headers via this target.
+# Preserve that compile interface when Groundhog selects the shared runtime;
+# the shared DSO still owns the only copy of its GObject type symbols.
+set(_LINK_VIS PUBLIC)
 
 # Core GLib/GObject/GIO always PUBLIC (consumers need these headers)
 target_link_libraries(nostr_gobject
@@ -217,7 +217,7 @@ target_link_libraries(nostr_gobject
     PkgConfig::GIO2
 )
 
-# Implementation dependencies: PUBLIC for static, PRIVATE for shared
+# Implementation libraries also expose legacy include paths to in-tree consumers.
 target_link_libraries(nostr_gobject
   ${_LINK_VIS}
     libnostr
