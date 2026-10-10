@@ -168,6 +168,8 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-markdown.h
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-nostr-reference-resolver.h
+  include/nostr-gtk-1.0/gn-nostr-reference-card.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -186,6 +188,8 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-markdown.h
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-nostr-reference-resolver.h
+  include/nostr-gtk-1.0/gn-nostr-reference-card.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -202,6 +206,8 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-markdown.c
   src/gn-markdown-pango.c
   src/gn-nostr-reference.c
+  src/gn-nostr-reference-resolver.c
+  src/gn-nostr-reference-card.c
   src/gn-og-preview-card.c
   src/gn-og-metadata.c
   src/gn-og-preview-provider.c

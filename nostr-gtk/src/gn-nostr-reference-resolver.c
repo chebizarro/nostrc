@@ -1,6 +1,7 @@
 /* GnNostrReferenceResolver (nostrc-8xfib.6): see the header for the
  * local-only / explicit-fetch contract. */
 #include <nostr-gtk-1.0/gn-nostr-reference-resolver.h>
+#include "gn-portable-i18n-private.h"
 
 G_DEFINE_INTERFACE(GnNostrReferenceResolver, gn_nostr_reference_resolver, G_TYPE_OBJECT)
 
@@ -51,7 +52,7 @@ gn_nostr_reference_resolver_fetch_async(GnNostrReferenceResolver *self,
     g_task_report_new_error(self, callback, user_data,
                             gn_nostr_reference_resolver_fetch_async,
                             G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
-                            "This resolver cannot fetch notes");
+                            _("This resolver cannot fetch notes"));
     return;
   }
   iface->fetch_async(self, reference, cancellable, callback, user_data);

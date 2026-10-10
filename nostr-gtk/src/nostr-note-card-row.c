@@ -216,8 +216,7 @@ struct _NostrGtkNoteCardRow {
   GtkWidget *zap_indicator_box; /* "⚡ X zapped Y Z sats" header */
   GtkWidget *zap_indicator_label;
   /* NIP-18 Quote state */
-  gchar *quoted_event_id;
-  GtkWidget *quote_embed_box;  /* Container for quoted note preview */
+  GtkWidget *reference_card;  /* GnNostrReferenceCard: quoted note (nostrc-8xfib.6) */
   /* NIP-14 Subject tag */
   GtkWidget *subject_label;  /* Subject heading for email-like subject lines */
   /* NIP-36 Sensitive content state */
@@ -611,7 +610,6 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
     g_clear_pointer(&self->zap_sender_pubkey, g_free);
     g_clear_pointer(&self->zap_recipient_pubkey, g_free);
     g_clear_pointer(&self->zap_target_event_id, g_free);
-    g_clear_pointer(&self->quoted_event_id, g_free);
     g_clear_pointer(&self->content_warning_reason, g_free);
 
     gtk_widget_remove_css_class(GTK_WIDGET(self), "repost");
@@ -634,8 +632,10 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
       gtk_widget_set_visible(self->repost_indicator_box, FALSE);
     if (self->zap_indicator_box && GTK_IS_WIDGET(self->zap_indicator_box))
       gtk_widget_set_visible(self->zap_indicator_box, FALSE);
-    if (self->quote_embed_box && GTK_IS_WIDGET(self->quote_embed_box))
-      gtk_widget_set_visible(self->quote_embed_box, FALSE);
+    /* Cancels any explicit fetch and hides the card. */
+    if (self->reference_card)
+      gn_nostr_reference_card_set_reference(GN_NOSTR_REFERENCE_CARD(self->reference_card),
+                                            NULL, GN_NOSTR_REFERENCE_CARD_ROLE_MENTION, NULL);
     if (self->sensitive_content_overlay && GTK_IS_WIDGET(self->sensitive_content_overlay))
       gtk_widget_set_visible(self->sensitive_content_overlay, FALSE);
     if (self->subject_label && GTK_IS_WIDGET(self->subject_label))
@@ -745,7 +745,7 @@ static void nostr_gtk_note_card_row_dispose(GObject *obj) {
   self->reply_count_box = NULL; self->reply_count_label = NULL;
   /* NIP-18 repost widgets */
   self->repost_indicator_box = NULL; self->repost_indicator_label = NULL;
-  self->lbl_repost_count = NULL; self->quote_embed_box = NULL;
+  self->lbl_repost_count = NULL; self->reference_card = NULL;
   /* NIP-14 subject widget */
   self->subject_label = NULL;
   /* NIP-36 sensitive content widgets */
@@ -791,7 +791,6 @@ static void nostr_gtk_note_card_row_finalize(GObject *obj) {
   /* NIP-18 repost state cleanup */
   g_clear_pointer(&self->reposter_pubkey, g_free);
   g_clear_pointer(&self->reposter_display_name, g_free);
-  g_clear_pointer(&self->quoted_event_id, g_free);
   /* NIP-57 zap receipt state cleanup */
   g_clear_pointer(&self->zap_sender_pubkey, g_free);
   g_clear_pointer(&self->zap_recipient_pubkey, g_free);
@@ -6029,71 +6028,54 @@ void nostr_gtk_note_card_row_set_is_zap_receipt(NostrGtkNoteCardRow *self, gbool
   }
 }
 
-/* NIP-18 Quote Reposts: Set quote post info to display the quoted note inline */
+/* NIP-18 quotes (nostrc-8xfib.6): the quoted note is a GnNostrReferenceCard
+ * placed after embed_box (a GtkFrame owned by note embeds), created on first
+ * use so plain notes pay nothing. */
+static GnNostrReferenceCard *ensure_reference_card(NostrGtkNoteCardRow *self) {
+  if (self->reference_card) return GN_NOSTR_REFERENCE_CARD(self->reference_card);
+  if (!self->embed_box || !GTK_IS_WIDGET(self->embed_box)) return NULL;
+  GtkWidget *parent = gtk_widget_get_parent(self->embed_box);
+  if (!parent) return NULL;
+  self->reference_card = gn_nostr_reference_card_new();
+  gtk_widget_add_css_class(self->reference_card, "quote-embed");
+  gtk_widget_add_css_class(self->reference_card, "card");
+  gtk_widget_set_margin_top(self->reference_card, 8);
+  gtk_widget_set_margin_bottom(self->reference_card, 8);
+  gtk_widget_set_margin_start(self->reference_card, 8);
+  gtk_widget_set_margin_end(self->reference_card, 8);
+  gtk_widget_insert_after(self->reference_card, parent, self->embed_box);
+  return GN_NOSTR_REFERENCE_CARD(self->reference_card);
+}
+
+void nostr_gtk_note_card_row_set_reference(NostrGtkNoteCardRow *self,
+                                           const GnNostrRepostDescriptor *descriptor,
+                                           GnNostrReferenceResolver *resolver) {
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  if (!descriptor && !self->reference_card) return;
+  GnNostrReferenceCard *card = ensure_reference_card(self);
+  if (!card) return;
+  gn_nostr_reference_card_set_resolver(card, resolver);
+  gn_nostr_reference_card_set_descriptor(card, descriptor);
+}
+
+GnNostrReferenceCard *nostr_gtk_note_card_row_get_reference_card(NostrGtkNoteCardRow *self) {
+  g_return_val_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self), NULL);
+  return self->reference_card ? GN_NOSTR_REFERENCE_CARD(self->reference_card) : NULL;
+}
+
+/* Deprecated wrapper: a precomputed preview on the reference card. */
 void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
                                           const char *quoted_event_id_hex,
                                           const char *quoted_content,
                                           const char *quoted_author_name) {
-  if (!NOSTR_GTK_IS_NOTE_CARD_ROW(self)) return;
-
-  g_clear_pointer(&self->quoted_event_id, g_free);
-  self->quoted_event_id = g_strdup(quoted_event_id_hex);
-
-  /* Create quote embed box if it doesn't exist */
-  if (!self->quote_embed_box && self->embed_box && GTK_IS_WIDGET(self->embed_box)) {
-    self->quote_embed_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_widget_add_css_class(self->quote_embed_box, "quote-embed");
-    gtk_widget_add_css_class(self->quote_embed_box, "card");
-    gtk_widget_set_margin_top(self->quote_embed_box, 8);
-    gtk_widget_set_margin_bottom(self->quote_embed_box, 8);
-
-    /* Container padding */
-    gtk_widget_set_margin_start(self->quote_embed_box, 8);
-    gtk_widget_set_margin_end(self->quote_embed_box, 8);
-
-    /* Author label */
-    GtkWidget *author_label = gtk_label_new(NULL);
-    gtk_widget_add_css_class(author_label, "caption");
-    gtk_widget_add_css_class(author_label, "dim-label");
-    gtk_label_set_xalign(GTK_LABEL(author_label), 0);
-    g_object_set_data(G_OBJECT(self->quote_embed_box), "author-label", author_label);
-    gtk_box_append(GTK_BOX(self->quote_embed_box), author_label);
-
-    /* Content label */
-    GtkWidget *content_label = gtk_label_new(NULL);
-    gtk_label_set_wrap(GTK_LABEL(content_label), TRUE);
-    gtk_label_set_wrap_mode(GTK_LABEL(content_label), PANGO_WRAP_WORD_CHAR);
-    gtk_label_set_xalign(GTK_LABEL(content_label), 0);
-    gtk_label_set_max_width_chars(GTK_LABEL(content_label), 60);
-    gtk_label_set_ellipsize(GTK_LABEL(content_label), PANGO_ELLIPSIZE_END);
-    gtk_label_set_lines(GTK_LABEL(content_label), 3);
-    g_object_set_data(G_OBJECT(self->quote_embed_box), "content-label", content_label);
-    gtk_box_append(GTK_BOX(self->quote_embed_box), content_label);
-
-    /* Add to embed_box */
-    gtk_box_append(GTK_BOX(self->embed_box), self->quote_embed_box);
-  }
-
-  /* Update content */
-  if (GTK_IS_WIDGET(self->quote_embed_box)) {
-    GtkWidget *author_label = g_object_get_data(G_OBJECT(self->quote_embed_box), "author-label");
-    GtkWidget *content_label = g_object_get_data(G_OBJECT(self->quote_embed_box), "content-label");
-
-    if (GTK_IS_LABEL(author_label)) {
-      const char *author = quoted_author_name && *quoted_author_name
-                           ? quoted_author_name : "Unknown";
-      g_autofree gchar *author_text = g_strdup_printf("Quoting %s", author);
-      gtk_label_set_text(GTK_LABEL(author_label), author_text);
-    }
-
-    if (GTK_IS_LABEL(content_label)) {
-      gtk_label_set_text(GTK_LABEL(content_label),
-                         quoted_content && *quoted_content ? quoted_content : "(content unavailable)");
-    }
-
-    gtk_widget_set_visible(self->quote_embed_box, TRUE);
-    gtk_widget_set_visible(self->embed_box, TRUE);
-  }
+  g_return_if_fail(NOSTR_GTK_IS_NOTE_CARD_ROW(self));
+  g_autofree gchar *uri = gn_nostr_reference_build_event(quoted_event_id_hex, NULL, -1, NULL);
+  g_autoptr(GnNostrReference) reference = uri ? gn_nostr_reference_parse(uri) : NULL;
+  GnNostrReferenceCard *card = ensure_reference_card(self);
+  if (!card) return;
+  gn_nostr_reference_card_set_resolver(card, NULL);
+  gn_nostr_reference_card_set_reference(card, reference, GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE, NULL);
+  gn_nostr_reference_card_set_preview(card, quoted_author_name, quoted_content);
 }
 
 /* NIP-36: Set content-warning for sensitive/NSFW content */
