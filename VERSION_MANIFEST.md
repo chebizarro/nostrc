@@ -14,7 +14,7 @@ files already declare a version.
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.2.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
-| nostr-gtk | `nostr-gtk/` | 1.1.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
+| nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| Markdown port (nostrc-8xfib.2): one Pango emitter for portable Markdown, gn-markdown-pango.h (full/summary modes, heading/glyph/table flags, visible-character cap, host link hook, plain-text and first-image queries); gnostr markdown_pango and the Groundhog formatter body removed. | nostr-gtk | 1.2.0 | MINOR from 1.1.1: additive public API; options struct carries reserved padding for growth. |
 | Provisioner-authenticated `signetctl writer-acquire` and disposable loopback Signet/Bahia interop harness. | signet | 0.5.0 | MINOR from 0.4.0: additive CLI command; fixture is test-only. |
 | Bahia SBOM DSSE review follow-up: validate the optional Go `time.Time` RFC3339Nano timestamp and prove duplicate keys in subject objects, including escaped-equivalent names, are rejected. | signet | 0.4.0 | No further bump: correctness hardening folded into unreleased 0.4.0 capability. |
 | Bahia SBOM DSSE review hardening: reject duplicate JSON members recursively and require exact `allow_methods` opt-in rather than inherited wildcard/default allow. | signet | 0.4.0 | No further bump: security correction folded into unreleased 0.4.0 capability; no new public surface. |

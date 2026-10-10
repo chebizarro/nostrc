@@ -668,7 +668,6 @@ if (BUILD_TESTING)
     src/ui/og-preview-widget.c
     src/util/custom_emoji.c
     src/util/imeta.c
-    src/util/markdown_pango.c
     src/util/nip03_opentimestamps.c
     src/util/nip21_uri.c
     src/util/nip32_labels.c
@@ -1192,17 +1191,6 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-startup-live-eose PROPERTIES
     TIMEOUT 30
     LABELS "startup;eose;unit;gnostr")
-
-  add_executable(gnostr-test-markdown-portable-compat
-    tests/test_markdown_portable_compat.c src/util/markdown_pango.c)
-  target_include_directories(gnostr-test-markdown-portable-compat PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_ROOT}/nostr-gtk/include)
-  target_link_libraries(gnostr-test-markdown-portable-compat PRIVATE
-    nostr_gtk_portable PkgConfig::GLIB)
-  add_test(NAME gnostr-test-markdown-portable-compat
-    COMMAND gnostr-test-markdown-portable-compat)
-  set_tests_properties(gnostr-test-markdown-portable-compat PROPERTIES
-    LABELS "markdown;gnostr;unit")
 
   add_executable(gnostr-test-image-viewer-remote-media
     tests/test_image_viewer_remote_media.c

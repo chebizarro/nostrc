@@ -19,6 +19,7 @@
 /* Widget headers */
 #include "content_renderer.h"
 #include "gn-markdown.h"
+#include "gn-markdown-pango.h"
 #include "gn-nostr-reference.h"
 #include "gn-og-preview-card.h"
 #include "gn-media-viewer.h"

@@ -8,7 +8,7 @@
 #define G_LOG_DOMAIN "gnostr-article-composer"
 
 #include "gnostr-article-composer.h"
-#include "../util/markdown_pango.h"
+#include <nostr-gtk-1.0/gn-markdown-pango.h>
 #include <nostr-gtk-1.0/content_renderer.h>
 #include <adwaita.h>
 #include <glib/gi18n.h>
@@ -89,7 +89,7 @@ static void on_preview_toggled(GtkToggleButton *btn, gpointer user_data) {
     char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
 
     if (text && *text) {
-      char *pango = markdown_to_pango(text, 0);
+      char *pango = gn_markdown_pango_from_text(text, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID });
       if (pango) {
         /* nostrc-csaf: Use safe markup setter for consistency - users may paste
          * relay content into the composer which could contain malformed markup */
