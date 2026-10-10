@@ -5,6 +5,8 @@
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include <nostr-gtk-1.0/gn-media-viewer.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
+static GBytes *two_frame_gif(void);
 #include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
 #include <string.h>
 #include "nostrc-test-gdk-frame.h"
@@ -244,6 +246,19 @@ static void widgets(void) {
   g_assert_false(gn_media_viewer_navigate(viewer, 1));
   gn_media_viewer_set_zoom(viewer, 2.0);
   g_assert_cmpfloat(gn_media_viewer_get_zoom(viewer), ==, 2.0);
+  /* nostrc-p15n5.5/.8: any paintable; an animation travels on its texture. */
+  g_assert_null(gn_media_viewer_get_paintable(viewer));
+  g_autoptr(GBytes) gif = two_frame_gif();
+  g_autoptr(GnAnimatedImage) anim = gn_animated_image_new_from_bytes(gif, 64, NULL);
+  g_assert_nonnull(anim);
+  g_autoptr(GdkTexture) still = g_object_ref(gn_animated_image_get_current_texture(anim));
+  gn_animated_image_set_for_texture(still, anim);
+  gn_media_viewer_set_texture(viewer, 1, still);
+  g_assert_true(gn_media_viewer_get_paintable(viewer) == GDK_PAINTABLE(anim));
+  gn_media_viewer_set_paintable(viewer, 1, GDK_PAINTABLE(still));
+  g_assert_true(gn_media_viewer_get_paintable(viewer) == GDK_PAINTABLE(still));
+  gn_media_viewer_request_load(viewer);
+  g_assert_cmpuint(viewer_loads, ==, 1); /* loaded: nothing to ask */
   gtk_window_destroy(GTK_WINDOW(viewer));
 
   GnNip34IssueFields *fields = gn_nip34_issue_fields_new();
@@ -256,6 +271,84 @@ static void widgets(void) {
   g_object_ref_sink(fields);
   g_object_unref(fields);
 }
+/* 2x1, red/blue then blue/red, 100 ms per frame. */
+static GBytes *two_frame_gif(void) {
+  static const guint8 gif[] = {
+    'G','I','F','8','9','a', 2,0, 1,0, 0x80, 0, 0,
+    0xFF,0,0, 0,0,0xFF,
+    0x21,0xF9,4, 0,10,0, 0,0,
+    0x2C, 0,0,0,0, 2,0,1,0, 0, 2, 2, 0x44,0x0A, 0,
+    0x21,0xF9,4, 0,10,0, 0,0,
+    0x2C, 0,0,0,0, 2,0,1,0, 0, 2, 2, 0x0C,0x0A, 0,
+    0x3B };
+  return g_bytes_new_static(gif, sizeof gif);
+}
+static guint8 first_red(GnAnimatedImage *anim) {
+  guint8 px[8];
+  gdk_texture_download(gn_animated_image_get_current_texture(anim), px, 8);
+  /* cairo ARGB32 in memory order B,G,R,A on little endian */
+  return px[2];
+}
+static void animated(void) {
+  g_autoptr(GBytes) gif = two_frame_gif();
+  guint w = 0, h = 0;
+  g_assert_true(gn_animated_image_probe(gif, &w, &h));
+  g_assert_cmpuint(w, ==, 2);
+  g_assert_cmpuint(h, ==, 1);
+  g_autoptr(GBytes) png = g_bytes_new_static("\x89PNG\r\n\x1a\n....", 12);
+  g_assert_false(gn_animated_image_probe(png, NULL, NULL));
+  g_autoptr(GError) error = NULL;
+  g_assert_null(gn_animated_image_new_from_bytes(png, 64, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error(&error);
+  /* The header's screen size is refused before anything is decoded. */
+  g_assert_null(gn_animated_image_new_from_bytes(gif, 1, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
+  g_clear_error(&error);
+  /* One frame is a still image: the caller's texture path shows it. */
+  gsize len = 0;
+  const guint8 *d = g_bytes_get_data(gif, &len);
+  g_autofree guint8 *still = g_memdup2(d, 43);
+  still[42] = 0x3B;
+  g_autoptr(GBytes) one = g_bytes_new(still, 43);
+  g_assert_null(gn_animated_image_new_from_bytes(one, 64, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED);
+  g_clear_error(&error);
+  /* Garbage after a valid header never crashes. */
+  g_autofree guint8 *junk = g_memdup2(d, len);
+  for (gsize i = 19; i < len; i++) junk[i] = (guint8)(i * 37);
+  g_autoptr(GBytes) damaged = g_bytes_new(junk, len);
+  g_autoptr(GnAnimatedImage) none = gn_animated_image_new_from_bytes(damaged, 64, NULL);
+  g_assert_null(none);
+
+  g_autoptr(GnAnimatedImage) anim = gn_animated_image_new_from_bytes(gif, 64, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(gn_animated_image_get_n_frames(anim), ==, 2);
+  g_assert_cmpint(gdk_paintable_get_intrinsic_width(GDK_PAINTABLE(anim)), ==, 2);
+  g_assert_cmpuint(first_red(anim), ==, 0xFF);
+  gn_animated_image_advance(anim);
+  g_assert_cmpuint(gn_animated_image_get_frame(anim), ==, 1);
+  g_assert_cmpuint(first_red(anim), ==, 0);
+  /* Plays only while a widget showing it is mapped. */
+  GtkWidget *picture = gtk_picture_new_for_paintable(GDK_PAINTABLE(anim));
+  g_object_ref_sink(picture);
+  gn_animated_image_attach(picture, GDK_PAINTABLE(anim));
+  g_assert_false(gn_animated_image_get_playing(anim));
+  GtkWidget *window = gtk_window_new();
+  gtk_window_set_child(GTK_WINDOW(window), picture);
+  gtk_window_present(GTK_WINDOW(window));
+  while (!gtk_widget_get_mapped(picture)) g_main_context_iteration(NULL, TRUE);
+  g_assert_true(gn_animated_image_get_playing(anim));
+  gn_animated_image_attach(picture, NULL);
+  g_assert_false(gn_animated_image_get_playing(anim));
+  gn_animated_image_attach(picture, GDK_PAINTABLE(anim));
+  g_assert_true(gn_animated_image_get_playing(anim));
+  /* Taken off screen (a recycled row): paused. */
+  gtk_window_set_child(GTK_WINDOW(window), NULL);
+  g_assert_false(gn_animated_image_get_playing(anim));
+  gtk_window_destroy(GTK_WINDOW(window));
+  g_object_unref(picture);
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
@@ -263,5 +356,6 @@ int main(int argc, char **argv) {
   g_test_add_func("/portable/markdown-gfm", markdown_gfm);
   g_test_add_func("/portable/references", references);
   g_test_add_func("/portable/widgets", widgets);
+  g_test_add_func("/portable/animated-gif", animated);
   return g_test_run();
 }
