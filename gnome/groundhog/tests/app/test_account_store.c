@@ -20,6 +20,7 @@
 #include "gh-inbox-resolver.h"
 #include "gh-nip17-inbox.h"
 #include "gh-nip04-inbox.h"
+#include "gh-nip46-session-private.h"
 #include "gh-status.h"
 #include "gh-signer.h"
 #include "gh-inbox-status.h"
@@ -297,6 +298,7 @@ remote_session(const gchar *active_npub, gpointer data)
     f->bunker.signer_pubkey, relays, &bunker_scope_transport, NULL,
     &bunker_publish_transport, NULL, &f->bunker, &error);
   g_assert_no_error(error);
+  gh_nip46_session_set_test_windows(session, 50, 100, 10);
   return session;
 }
 
@@ -915,10 +917,13 @@ test_remote_cache_gate_and_offline_restart(void)
   g_autofree gchar *title = NULL;
   g_object_get(status, "banner-title", &title, NULL);
   g_assert_cmpstr(title, ==, "Decrypting 1 message with your signer");
-  BunkerPublishWait waiting = { &f.bunker, 4 };
-  gh_test_spin_until(bunker_published, &waiting);
-  BunkerHandle *publish = bunker_last_publish(&f.bunker);
-  gh_relay_publish_failed(publish->publish, publish->url, "offline");
+  /* The decrypt request and its bounded reconnect retries all fail. */
+  for (guint attempt = 0; attempt <= 3; attempt++) {
+    BunkerPublishWait waiting = { &f.bunker, 4 + attempt };
+    gh_test_spin_until(bunker_published, &waiting);
+    BunkerHandle *publish = bunker_last_publish(&f.bunker);
+    gh_relay_publish_failed(publish->publish, publish->url, "offline");
+  }
   gh_test_run_until_idle();
   g_assert_cmpuint(gh_dm_inbox_get_locked(f.inbox), ==, 1);
   gh_relay_scope_eose(req->scope, INBOX_A);

@@ -35,6 +35,17 @@ char *nostr_nip46_response_build_err(const char *id, const char *error_msg);
 int   nostr_nip46_response_parse(const char *json, NostrNip46Response *out);
 void  nostr_nip46_response_free(NostrNip46Response *res);
 
+/* Classify a response's free-form `error` string (there is no wire-level
+ * error code): PROTOCOL for a malformed or unsupported request (retrying the
+ * same payload will not help), otherwise DENIED (a policy refusal, and the
+ * safe default for unknown text). Case-insensitive keyword table shared by
+ * the libnostr pool client and Groundhog (nostrc-8hc9, nostrc-8xfib.1). */
+typedef enum {
+    NOSTR_NIP46_ERROR_CLASS_DENIED = 0,
+    NOSTR_NIP46_ERROR_CLASS_PROTOCOL
+} NostrNip46ErrorClass;
+NostrNip46ErrorClass nostr_nip46_error_classify(const char *error_text);
+
 #ifdef __cplusplus
 }
 #endif
