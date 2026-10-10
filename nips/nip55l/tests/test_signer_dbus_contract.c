@@ -283,8 +283,45 @@ static void watcher_kill(void) {}
 /* The fixture that is up, if any. */
 static Ctx *live_ctx;
 
+/* Removes @path and everything below it, best effort. Symlinks are removed,
+ * not followed. */
+static void rm_tree(const char *path) {
+  GStatBuf st;
+  if (g_lstat(path, &st) != 0) return;
+  if (S_ISDIR(st.st_mode)) {
+    GDir *d = g_dir_open(path, 0, NULL);
+    const char *name;
+    while (d && (name = g_dir_read_name(d))) {
+      char *child = g_build_filename(path, name, NULL);
+      rm_tree(child);
+      g_free(child);
+    }
+    if (d) g_dir_close(d);
+  }
+  (void)g_remove(path);
+}
+
+/* Temporary directories made outside a fixture's tmpdir (the approval UI's
+ * service dir, the NIP-5F socket dir). Removed with the fixture's tmpdir at
+ * exit when a CHECK fails, so no run leaves anything in $TMPDIR or /tmp
+ * (nostrc-1hvq8). */
+static char *exit_dirs[4];
+
+static void remove_at_exit(const char *dir) {
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (!exit_dirs[i]) { exit_dirs[i] = g_strdup(dir); return; }
+  CHECK(!"exit_dirs full");
+}
+
+/* Removes @dir now and forgets it. */
+static void remove_dir_now(const char *dir) {
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (exit_dirs[i] && strcmp(exit_dirs[i], dir) == 0) g_clear_pointer(&exit_dirs[i], g_free);
+  rm_tree(dir);
+}
+
 /* A failed CHECK exits with the fixture up. Stop the daemon and the private
- * bus then, or they outlive the test: GTestDBus's dbus-daemon shares this
+ * bus then and remove the temporary directories, or they outlive the test: GTestDBus's dbus-daemon shares this
  * process's stdout and stderr, so ctest keeps reading until its timeout (the
  * "Timeout" of nostrc-oauv). The watcher that should kill it does not work on
  * macOS (watcher_kill()). */
@@ -297,7 +334,10 @@ static void teardown_at_exit(void) {
     if (ctx->secrets) g_subprocess_force_exit(ctx->secrets);
     if (ctx->bus) g_dbus_connection_set_exit_on_close(ctx->bus, FALSE);
     if (ctx->tbus) g_test_dbus_stop(ctx->tbus);
+    if (ctx->tmpdir) rm_tree(ctx->tmpdir);
   }
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (exit_dirs[i]) remove_dir_now(exit_dirs[i]);
   watcher_kill();
 }
 
@@ -371,6 +411,13 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   const char *tmp_base = g_get_tmp_dir();
   ctx->tmpdir = g_build_filename(tmp_base, "nip55l_dbus_contractXXXXXX", NULL);
   CHECK(mkdtemp(ctx->tmpdir) != NULL);
+  /* From here a failed CHECK tears down what is up and removes tmpdir. */
+  static gboolean at_exit_registered;
+  if (!at_exit_registered) {
+    CHECK(atexit(teardown_at_exit) == 0);
+    at_exit_registered = TRUE;
+  }
+  live_ctx = ctx;
 
   char *xdg_cfg = g_build_filename(ctx->tmpdir, "config", NULL);
   char *xdg_data = g_build_filename(ctx->tmpdir, "data", NULL);
@@ -417,15 +464,9 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
 
   /* Private session bus. g_test_dbus_up sets DBUS_SESSION_BUS_ADDRESS in
    * this process's env, which g_subprocess_new inherits. */
-  static gboolean at_exit_registered;
-  if (!at_exit_registered) {
-    CHECK(atexit(teardown_at_exit) == 0);
-    at_exit_registered = TRUE;
-  }
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   if (approval_ui_service_dir) g_test_dbus_add_service_dir(ctx->tbus, approval_ui_service_dir);
   g_test_dbus_up(ctx->tbus);
-  live_ctx = ctx;
 
   /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
@@ -549,12 +590,7 @@ static void ctx_teardown(Ctx *ctx) {
   }
   g_clear_object(&ctx->keyring);
   if (ctx->tmpdir) {
-    /* Best-effort recursive cleanup; a leftover tmpdir is a hygiene issue,
-     * not a test failure. */
-    char *cmd = g_strdup_printf("rm -rf '%s'", ctx->tmpdir);
-    int rc = system(cmd);
-    (void)rc;
-    g_free(cmd);
+    rm_tree(ctx->tmpdir);
     g_free(ctx->tmpdir);
   }
   free(ctx->sk_hex);
@@ -1679,6 +1715,7 @@ static void nip5f_pre_daemon(Ctx *ctx, gpointer data) {
   /* Short path: sun_path is 104 bytes on macOS, and $TMPDIR is long there. */
   s->dir = g_strdup("/tmp/n5fXXXXXX");
   CHECK(mkdtemp(s->dir) != NULL);
+  remove_at_exit(s->dir);
   s->path = g_build_filename(s->dir, "s.sock", NULL);
   char *ep = g_strconcat("unix:", s->path, NULL);
   g_setenv("NOSTR_SIGNER_ENDPOINT", ep, TRUE);
@@ -3036,6 +3073,7 @@ static char *write_approval_ui_service(void) {
   GError *err = NULL;
   char *dir = g_dir_make_tmp("nip55l_approval_ui_XXXXXX", &err);
   CHECK(dir != NULL);
+  remove_at_exit(dir);
   char *exe = self_exe();
   char *body = g_strdup_printf("[D-BUS Service]\nName=%s\nExec=%s --approval-ui\n", APPROVER_NAME, exe);
   char *path = g_build_filename(dir, APPROVER_NAME ".service", NULL);
@@ -3131,6 +3169,7 @@ int main(int argc, char **argv) {
     approval_ui_service_dir = NULL;
     test_summon_approval_ui(&ctx);
     ctx_teardown(&ctx);
+    remove_dir_now(dir);
     g_free(dir);
     g_print("PASS approval UI started on demand and answered from ListPendingRequests\n");
   }
@@ -3196,8 +3235,7 @@ int main(int argc, char **argv) {
     gboolean attested = ctx.attested;
     ctx_teardown(&ctx);
     g_unsetenv("NOSTR_SIGNER_ENDPOINT");
-    g_unlink(sock.path);
-    g_rmdir(sock.dir);
+    remove_dir_now(sock.dir);
     g_free(sock.path); g_free(sock.dir);
     g_print("PASS nip5f gating (peer-credential principal%s, prompt + remember, ListGrants/"
             "RevokeGrant, deny, grants "
