@@ -37,6 +37,7 @@
 #include "gh-agent-event-row.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
+#include "gh-link-policy.h"
 #include <nostr-gtk-1.0/gn-animated-image.h>
 #include <nostr-gtk-1.0/gn-media-viewer.h>
 #include "gh-reaction-store.h"
@@ -1557,39 +1558,53 @@ github_page(gsize body_padding)
   return g_string_free_to_bytes(page);
 }
 
+static gboolean
+link_policy_image(const char *url, gpointer data)
+{
+  (void)data;
+  return gh_link_policy_can_preview(url);
+}
+
+/* Groundhog's preview parse: nostr-gtk's parser under the link policy. */
+static GnOgMetadata *
+parse_page(GBytes *page, GError **error)
+{
+  return gn_og_metadata_parse_html(page, "https://github.com/chebizarro/nostrc", link_policy_image,
+                                   NULL, error);
+}
+
 static void
 test_web_preview_github_fixture(void)
 {
   g_autoptr(GBytes) page = github_page(0);
   g_autoptr(GError) error = NULL;
-  g_autoptr(GhWebResult) result = gh_web_result_parse_html(page, &error);
+  g_autoptr(GnOgMetadata) result = parse_page(page, &error);
   g_assert_no_error(error);
-  g_assert_cmpstr(result->title, ==, "nostrc/docs/proposals/55L.md at "
+  g_assert_cmpstr(gn_og_metadata_get_title(result), ==, "nostrc/docs/proposals/55L.md at "
                   "3251ba66dfa1d994109269690a1839ae7a1fd712 \xc2\xb7 chebizarro/nostrc");
-  g_assert_cmpstr(result->description, ==, "A C library for the Nostr protocol. Contribute to "
+  g_assert_cmpstr(gn_og_metadata_get_description(result), ==, "A C library for the Nostr protocol. Contribute to "
                   "chebizarro/nostrc development by creating an account on GitHub.");
-  g_assert_cmpstr(result->site_name, ==, "GitHub");
-  g_assert_true(g_str_has_prefix(result->image_url, "https://opengraph.githubassets.com/"));
-  g_assert_null(result->texture);
+  g_assert_cmpstr(gn_og_metadata_get_site_name(result), ==, "GitHub");
+  g_assert_true(g_str_has_prefix(gn_og_metadata_get_image_url(result), "https://opengraph.githubassets.com/"));
   /* Only the first 256 KiB of a long page are read: a page cut mid-body
    * still yields its head. */
   g_autoptr(GBytes) whole = github_page(400 * 1024);
   g_assert_cmpuint(g_bytes_get_size(whole), >, 256 * 1024);
   g_autoptr(GBytes) cut = g_bytes_new_from_bytes(whole, 0, 256 * 1024 - 7);
-  g_autoptr(GhWebResult) partial = gh_web_result_parse_html(cut, &error);
+  g_autoptr(GnOgMetadata) partial = parse_page(cut, &error);
   g_assert_no_error(error);
-  g_assert_cmpstr(partial->site_name, ==, "GitHub");
-  g_assert_cmpstr(partial->title, ==, result->title);
+  g_assert_cmpstr(gn_og_metadata_get_site_name(partial), ==, "GitHub");
+  g_assert_cmpstr(gn_og_metadata_get_title(partial), ==, gn_og_metadata_get_title(result));
   /* og: wins over twitter: and <title>, whatever the order. */
   const gchar *mixed = "<html><head><meta property='og:title' content='OG'>"
     "<title>Plain</title><meta name='twitter:title' content='TW'>"
     "<meta name='description' content='plain d'></head></html>";
   g_autoptr(GBytes) mixed_bytes = g_bytes_new_static(mixed, strlen(mixed));
-  g_autoptr(GhWebResult) ranked = gh_web_result_parse_html(mixed_bytes, &error);
+  g_autoptr(GnOgMetadata) ranked = parse_page(mixed_bytes, &error);
   g_assert_no_error(error);
-  g_assert_cmpstr(ranked->title, ==, "OG");
-  g_assert_cmpstr(ranked->description, ==, "plain d");
-  g_assert_null(ranked->site_name);
+  g_assert_cmpstr(gn_og_metadata_get_title(ranked), ==, "OG");
+  g_assert_cmpstr(gn_og_metadata_get_description(ranked), ==, "plain d");
+  g_assert_null(gn_og_metadata_get_site_name(ranked));
 }
 
 /* The real page, only with GROUNDHOG_TEST_LIVE_NET set (it reaches GitHub):

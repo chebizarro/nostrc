@@ -35,6 +35,19 @@ else
   test('nostr-gtk:portable', portable_test, env: test_env)
 endif
 
+# nostrc-8xfib.3: shared OG parser and provider-driven preview card.
+og_metadata_test = executable('test_og_metadata', 'test_og_metadata.c',
+  dependencies: [nostr_gtk_portable_dep, gtk_dep, glib_dep])
+test('nostr-gtk:og-metadata', og_metadata_test, env: test_env)
+og_card_test = executable('test_og_preview_card', 'test_og_preview_card.c',
+  dependencies: [nostr_gtk_portable_dep, gtk_dep, glib_dep],
+  include_directories: [include_directories('../../tests/common')])
+if xvfb_run.found()
+  test('nostr-gtk:og-preview-card', xvfb_run, args: ['-a', og_card_test], env: test_env)
+else
+  test('nostr-gtk:og-preview-card', og_card_test, env: test_env)
+endif
+
 # ── Recycling stress test ────────────────────────────────────────────
 test_recycle = executable(
   'test_listview_recycle_stress',
