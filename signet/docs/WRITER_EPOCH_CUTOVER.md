@@ -102,12 +102,17 @@ identities regardless of their caller.
 Bahia SBOM attestations use the additional NIP-46 method
 `sign_bahia_sbom_dsse` with exactly
 `["<standard-base64 exact statement JSON>", "<decimal epoch>"]`. Its string
-result is standard base64 of a 64-byte BIP-340 Schnorr signature. Policy must
-explicitly allow this method. Signet accepts only a UTF-8 in-toto Statement/v1
+result is standard base64 of a 64-byte BIP-340 Schnorr signature. The identity
+policy must list the literal `sign_bahia_sbom_dsse` in `allow_methods`;
+`allow_methods = "*"` and `default = "allow"` alone do **not** opt in to this
+capability. All other client/method deny policy still applies. Signet accepts
+only a UTF-8 in-toto Statement/v1
 with one artifact subject and nonempty subject digest (with Bahia's SHA-256/Git
 length-and-hex validation), SPDX or CycloneDX
 predicate type matching its format, a SHA-256 SBOM digest, and a supported
-location type/URI. It rejects malformed/non-SBOM statements, noncanonical
+location type/URI. Nested generator, timestamp, and NTIA fields must match
+Bahia's typed statement shape; duplicate JSON keys are rejected at every depth
+before signing the unchanged input bytes. It rejects malformed/non-SBOM statements, noncanonical
 base64, payloads over 64 KiB, missing epoch, stale/wrong owner, expired or
 revoked lease, and DB failure. There is no no-epoch path. The authenticated
 NIP-46 client pubkey, not a request parameter, is the owner.

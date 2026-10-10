@@ -839,6 +839,44 @@ static void test_fenced_sbom_dsse_signature(void) {
   CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
       (const uint8_t *)escaped_nul, strlen(escaped_nul), &signature) != 0);
   CHECK(signature == NULL);
+  char *duplicate_root = g_strdup_printf("%.*s,\"_type\":\"https://in-toto.io/Statement/v1\"}",
+      (int)strlen(statement) - 1, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)duplicate_root, strlen(duplicate_root), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(duplicate_root);
+  char *duplicate_nested = g_strdup_printf("%.*s,\"generator\":{\"id\":\"a\",\"id\":\"b\"}}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)duplicate_nested, strlen(duplicate_nested), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(duplicate_nested);
+  char *bad_timestamp = g_strdup_printf("%.*s,\"timestamp\":123}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)bad_timestamp, strlen(bad_timestamp), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(bad_timestamp);
+  char *full_predicate = g_strdup_printf(
+      "%.*s,\"generator\":{\"id\":\"syft\",\"version\":\"1\"},"
+      "\"timestamp\":\"2026-10-09T00:00:00Z\","
+      "\"ntia\":{\"hasSupplierName\":true,\"hasComponentName\":true,"
+      "\"hasComponentVersion\":true,\"hasUniqueID\":true,"
+      "\"hasRelationship\":true,\"hasAuthor\":true,"
+      "\"hasTimestamp\":true,\"isCompliant\":true}}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)full_predicate, strlen(full_predicate), &signature) == 0);
+  CHECK(signature != NULL);
+  g_free(signature);
+  signature = NULL;
+  g_free(full_predicate);
+  char *bad_ntia = g_strdup_printf("%.*s,\"ntia\":{\"isCompliant\":true}}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)bad_ntia, strlen(bad_ntia), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(bad_ntia);
   CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, 0,
       (const uint8_t *)statement, strlen(statement), &signature) != 0);
   CHECK(signature == NULL);

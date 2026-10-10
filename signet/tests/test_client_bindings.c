@@ -575,6 +575,21 @@ static void test_fenced_nip46_sbom_dsse_contract(void) {
       "{\"id\":\"dsse\",\"method\":\"sign_bahia_sbom_dsse\",\"params\":[\"%s\",\"1\"]}",
       encoded);
   (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
+                 "dsse-wildcard-denied", now);
+  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "policy_denied");
+  CHECK(g_file_set_contents(f.policy_path,
+      "[identity.stew]\nallow_clients = \"*\"\ndefault = \"allow\"\n",
+      -1, NULL));
+  CHECK(signet_policy_store_reload(f.ps, now) == 0);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
+                 "dsse-default-denied", now);
+  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "policy_denied");
+  CHECK(g_file_set_contents(f.policy_path,
+      "[identity.stew]\nallow_clients = \"*\"\n"
+      "allow_methods = \"*, sign_bahia_sbom_dsse\"\ndefault = \"allow\"\n",
+      -1, NULL));
+  CHECK(signet_policy_store_reload(f.ps, now) == 0);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
                  "dsse-current", now);
   n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "ok", "ok");
   char *no_epoch = g_strdup_printf(

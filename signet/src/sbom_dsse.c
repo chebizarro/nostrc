@@ -23,6 +23,18 @@ static const char *string_member(JsonObject *obj, const char *name) {
   return value && *value ? value : NULL;
 }
 
+static bool has_string_member(JsonObject *obj, const char *name) {
+  JsonNode *node = json_object_get_member(obj, name);
+  return node && JSON_NODE_HOLDS_VALUE(node) &&
+      json_node_get_value_type(node) == G_TYPE_STRING;
+}
+
+static bool has_boolean_member(JsonObject *obj, const char *name) {
+  JsonNode *node = json_object_get_member(obj, name);
+  return node && JSON_NODE_HOLDS_VALUE(node) &&
+      json_node_get_value_type(node) == G_TYPE_BOOLEAN;
+}
+
 static JsonObject *object_member(JsonObject *obj, const char *name) {
   JsonNode *node = json_object_get_member(obj, name);
   return node && JSON_NODE_HOLDS_OBJECT(node) ? json_node_get_object(node) : NULL;
@@ -48,6 +60,24 @@ static bool only_members(JsonObject *object, const char *const *allowed) {
   return valid;
 }
 
+typedef struct {
+  GHashTable *names_by_object;
+  bool duplicate;
+} UniqueMembers;
+
+static void check_unique_member(JsonParser *parser, JsonObject *object,
+                                const gchar *name, gpointer user_data) {
+  (void)parser;
+  UniqueMembers *state = user_data;
+  GHashTable *names = g_hash_table_lookup(state->names_by_object, object);
+  if (!names) {
+    names = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_hash_table_insert(state->names_by_object, object, names);
+  }
+  if (g_hash_table_contains(names, name)) state->duplicate = true;
+  else g_hash_table_add(names, g_strdup(name));
+}
+
 static bool valid_sbom_statement(const uint8_t *payload, size_t length) {
   if (!payload || length == 0 || length > SBOM_MAX_PAYLOAD ||
       memchr(payload, 0, length) || !g_utf8_validate((const char *)payload, length, NULL))
@@ -60,10 +90,17 @@ static bool valid_sbom_statement(const uint8_t *payload, size_t length) {
 
   JsonParser *parser = json_parser_new();
   if (!parser) return false;
+  UniqueMembers unique = {
+      .names_by_object = g_hash_table_new_full(g_direct_hash, g_direct_equal,
+                                               NULL, (GDestroyNotify)g_hash_table_unref)
+  };
+  g_signal_connect(parser, "object-member", G_CALLBACK(check_unique_member), &unique);
+  json_parser_set_strict(parser, TRUE);
   GError *error = NULL;
   bool valid = false;
   if (!json_parser_load_from_data(parser, (const char *)payload, length, &error))
     goto done;
+  if (unique.duplicate) goto done;
   JsonNode *root = json_parser_get_root(parser);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) goto done;
   JsonObject *statement = json_node_get_object(root);
@@ -89,7 +126,7 @@ static bool valid_sbom_statement(const uint8_t *payload, size_t length) {
   JsonObject *subject = json_node_get_object(subject_node);
   static const char *const subject_fields[] = {"name", "digest", NULL};
   if (json_object_get_size(subject) != 2 ||
-      !only_members(subject, subject_fields) || !string_member(subject, "name")) goto done;
+      !only_members(subject, subject_fields) || !has_string_member(subject, "name")) goto done;
   JsonObject *subject_digest = object_member(subject, "digest");
   if (!subject_digest || json_object_get_size(subject_digest) != 1) goto done;
   GList *digest_names = json_object_get_members(subject_digest);
@@ -119,15 +156,41 @@ static bool valid_sbom_statement(const uint8_t *payload, size_t length) {
   if (!location || !string_member(location, "uri")) goto done;
   static const char *const location_fields[] = {"type", "uri", "mediaType", NULL};
   if (!only_members(location, location_fields)) goto done;
+  if (json_object_has_member(location, "mediaType") &&
+      !has_string_member(location, "mediaType")) goto done;
   const char *location_type = string_member(location, "type");
   if (!location_type ||
       (strcmp(location_type, "blossom") != 0 &&
        strcmp(location_type, "oci-referrer") != 0 &&
        strcmp(location_type, "package-backend") != 0)) goto done;
+  if (json_object_has_member(predicate, "generator")) {
+    JsonObject *generator = object_member(predicate, "generator");
+    static const char *const generator_fields[] = {"id", "version", "pubkey", NULL};
+    if (!generator || !only_members(generator, generator_fields) ||
+        !has_string_member(generator, "id") ||
+        (json_object_has_member(generator, "version") &&
+         !has_string_member(generator, "version")) ||
+        (json_object_has_member(generator, "pubkey") &&
+         !has_string_member(generator, "pubkey"))) goto done;
+  }
+  if (json_object_has_member(predicate, "timestamp") &&
+      !has_string_member(predicate, "timestamp")) goto done;
+  if (json_object_has_member(predicate, "ntia")) {
+    JsonObject *ntia = object_member(predicate, "ntia");
+    static const char *const ntia_fields[] = {
+        "hasSupplierName", "hasComponentName", "hasComponentVersion",
+        "hasUniqueID", "hasRelationship", "hasAuthor", "hasTimestamp",
+        "isCompliant", NULL};
+    if (!ntia || json_object_get_size(ntia) != 8 ||
+        !only_members(ntia, ntia_fields)) goto done;
+    for (size_t i = 0; ntia_fields[i]; ++i)
+      if (!has_boolean_member(ntia, ntia_fields[i])) goto done;
+  }
   valid = true;
 done:
   if (error) g_error_free(error);
   g_object_unref(parser);
+  g_hash_table_unref(unique.names_by_object);
   return valid;
 }
 
