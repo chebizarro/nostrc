@@ -34,7 +34,9 @@ int nostr_nip55l_get_public_key(char **out_npub);
  * decrypt would use for the same selector (empty = the active identity).
  * This is the canonical identity the daemon's ACL is keyed on: the selector
  * itself may be empty, a key_id, an npub or even a secret key. NOT_FOUND /
- * INVALID_KEY when no key matches. Caller frees *out_npub with free(). */
+ * INVALID_KEY when no key matches (no Secret Service at all counts as an
+ * empty store); BACKEND when the key store is there but cannot be read.
+ * Caller frees *out_npub with free(). */
 int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
 /* Normalise an identity selector supplied by another process (the D-Bus
  * daemon's callers, nostrc-a4w5). The in-process resolver also accepts a
@@ -48,6 +50,8 @@ int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
  *                  stored one whose key has exactly this npub; else
  *                  NOSTR_SIGNER_ERROR_NOT_FOUND
  *   otherwise   -> a key_id / label, resolved as before
+ * A key store that cannot be read is NOSTR_SIGNER_ERROR_BACKEND, never
+ * NOT_FOUND: the store may hold the identity (nostrc-f6l29).
  * On success *out_selector is the selector to pass to the other calls and
  * *out_npub the npub it resolves to; free both with free(). */
 int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, char **out_npub);

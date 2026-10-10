@@ -94,6 +94,22 @@ static char *bin_to_hex(const uint8_t *buf, size_t len){
   out[len*2]='\0'; return out;
 }
 
+/* The key in the daemon's environment (NOSTR_SIGNER_SECKEY_HEX, else
+ * NOSTR_SIGNER_NSEC) as 64-hex: 0, NOT_FOUND when there is none, INVALID_KEY
+ * for an nsec that does not decode. */
+static int env_seckey_hex(char **out_sk_hex){
+  *out_sk_hex = NULL;
+  const char *hex = getenv("NOSTR_SIGNER_SECKEY_HEX");
+  if (hex && is_hex_64(hex)) { *out_sk_hex = strdup(hex); return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND; }
+  const char *nsec = getenv("NOSTR_SIGNER_NSEC");
+  if (!nsec || strncmp(nsec, "nsec1", 5) != 0) return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  uint8_t sk[32];
+  if (nostr_nip19_decode_nsec(nsec, sk) != 0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  *out_sk_hex = bin_to_hex(sk, 32);
+  secure_wipe(sk, sizeof sk);
+  return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+}
+
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <gio/gio.h>
 /* Grotto's chosen identity (GSettings org.nostr.Grotto default-identity),
@@ -132,21 +148,126 @@ static SecretService *signer_secret_service(GError **error){
   return service;
 }
 
-/* As signer_secret_service() for the key resolver, which reads a missing or
- * unusable Secret Service as "no stored key". */
-static SecretService *resolver_secret_service(void){
-  GError *err = NULL;
-  SecretService *service = signer_secret_service(&err);
-  if (!service) {
-    g_debug("nip55l: no usable Secret Service: %s", err ? err->message : "unknown error");
-    g_clear_error(&err);
+/* --- Key store reads (nostrc-sjyl3, nostrc-f6l29) ---------------------------
+ *
+ * Each returns 0; NOSTR_SIGNER_ERROR_NOT_FOUND when the store holds no such
+ * identity, or there is no Secret Service on the bus at all (a headless
+ * deployment with only an environment key); NOSTR_SIGNER_ERROR_BACKEND when
+ * a Secret Service is there but cannot be read. A store that fails is not a
+ * store without the key: the daemon answers Error.Internal for it, not
+ * Error.NoKeyConfigured, as ListIdentities does. */
+
+/* No Secret Service on the bus at all (nothing owns or activates
+ * org.freedesktop.secrets), as opposed to one that fails. */
+static gboolean secret_service_absent(const GError *e){
+  return e && (g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+               g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER));
+}
+
+static int store_error_rc(const char *what, const GError *e){
+  if (secret_service_absent(e)) {
+    g_debug("nip55l: no Secret Service: %s", e->message);
+    return NOSTR_SIGNER_ERROR_NOT_FOUND;
   }
-  return service;
+  g_message("nip55l: key store %s: %s", what, e ? e->message : "unknown error");
+  return NOSTR_SIGNER_ERROR_BACKEND;
+}
+
+static int store_service(SecretService **out_service){
+  GError *e = NULL;
+  *out_service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &e);
+  if (*out_service) return 0;
+  int rc = store_error_rc("unavailable", e);
+  g_clear_error(&e);
+  return rc;
+}
+
+/* The identity items matching @attrs (empty: all), in *out_items (NULL when
+ * none). The search loads no secrets and so needs no session: a store that
+ * refuses sessions still says which identities it holds. */
+static int store_search(SecretService *service, GHashTable *attrs, GList **out_items){
+  GError *e = NULL;
+  *out_items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
+                                          SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK, NULL, &e);
+  if (!e) return 0;
+  g_list_free_full(*out_items, g_object_unref);
+  *out_items = NULL;
+  int rc = store_error_rc("search failed", e);
+  g_clear_error(&e);
+  return rc;
+}
+
+/* Secret text (64-hex or nsec1) → lowercase 64-hex; NULL if neither. */
+static char *secret_text_to_sk_hex(const char *sec){
+  if (!sec) return NULL;
+  if (is_hex_64(sec)) {
+    char *hex = strdup(sec);
+    for (char *p = hex; p && *p; p++) *p = (char)g_ascii_tolower(*p);
+    return hex;
+  }
+  if (strncmp(sec, "nsec1", 5) == 0) {
+    uint8_t sk[32];
+    if (nostr_nip19_decode_nsec(sec, sk) != 0) return NULL;
+    char *hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
+    return hex;
+  }
+  return NULL;
+}
+
+/* The secret key of @item, as 64-hex. The session is opened first, with an
+ * error to report into (signer_secret_service(), nostrc-poc10). INVALID_KEY
+ * when the secret is not a key. */
+static int store_item_sk_hex(SecretService *service, SecretItem *item, char **out_sk_hex){
+  GError *e = NULL;
+  if (!secret_service_ensure_session_sync(service, NULL, &e) ||
+      !secret_item_load_secret_sync(item, NULL, &e)) {
+    int rc = store_error_rc("secret unreadable", e);
+    g_clear_error(&e);
+    return rc == NOSTR_SIGNER_ERROR_NOT_FOUND ? NOSTR_SIGNER_ERROR_BACKEND : rc;
+  }
+  SecretValue *sv = secret_item_get_secret(item);
+  if (!sv) return NOSTR_SIGNER_ERROR_BACKEND;
+  *out_sk_hex = secret_text_to_sk_hex(secret_value_get_text(sv));
+  secret_value_unref(sv);
+  return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
+}
+
+/* The secret key of the first identity item matching @attrs. */
+static int store_first_sk_hex(GHashTable *attrs, char **out_sk_hex){
+  SecretService *service = NULL;
+  int rc = store_service(&service);
+  if (rc != 0) return rc;
+  GList *items = NULL;
+  rc = store_search(service, attrs, &items);
+  if (rc == 0)
+    rc = items ? store_item_sk_hex(service, SECRET_ITEM(items->data), out_sk_hex)
+               : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  return rc;
+}
+
+/* The secret key of the first identity item whose @attr is @value. */
+static int store_lookup_sk_hex(const char *attr, const char *value, char **out_sk_hex){
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, (gpointer)attr, (gpointer)value);
+  int rc = store_first_sk_hex(attrs, out_sk_hex);
+  g_hash_table_unref(attrs);
+  return rc;
+}
+
+/* The secret key of the first identity item linked to this login user. */
+static int store_owned_sk_hex(char **out_sk_hex){
+  gchar uid_buf[32];
+  g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+  return store_lookup_sk_hex("owner_uid", uid_buf, out_sk_hex);
 }
 #endif
 
-/* Forward declaration */
+/* Forward declarations */
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex);
+static char *env_identity_npub(void);
 
 /* Secure resolver: yields a 32-byte private key in a nostr_secure_buf.
  * Internally leverages resolve_seckey_hex for selection, then converts to binary
@@ -177,7 +298,9 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
  * - 64-hex seckey
  * - nsec1... bech32
  * - env NOSTR_SIGNER_SECKEY_HEX or NOSTR_SIGNER_NSEC (fallbacks)
- * On success, returns newly allocated 64-hex in *out_sk_hex.
+ * On success, returns newly allocated 64-hex in *out_sk_hex. NOT_FOUND /
+ * INVALID_KEY when no key matches; BACKEND when the key store cannot be read
+ * (see "Key store reads").
  */
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_sk_hex=NULL;
@@ -196,15 +319,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   }
   const char *cand = current_user;
   if (!cand || !*cand) {
-    cand = getenv("NOSTR_SIGNER_SECKEY_HEX");
-    if (cand && is_hex_64(cand)) { *out_sk_hex = strdup(cand); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
-    const char *nsec = getenv("NOSTR_SIGNER_NSEC");
-    if (nsec && strncmp(nsec, "nsec1", 5)==0) {
-      uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-      *out_sk_hex = bin_to_hex(sk, 32);
-      secure_wipe(sk, sizeof sk);
-      return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
-    }
+    int rc_env = env_seckey_hex(out_sk_hex);
+    if (rc_env != NOSTR_SIGNER_ERROR_NOT_FOUND) return rc_env;
     /* The keyring: the identity linked to this login user, else the one
      * Grotto has chosen (its default-identity setting), else the only one
      * stored. A key created in Grotto's setup is not linked to the user,
@@ -216,55 +332,27 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
      * found" once the in-memory copy from StoreKey was gone. */
 #ifdef NIP55L_HAVE_LIBSECRET
     {
-      SecretService *service = resolver_secret_service();
-      if (service) {
-        SecretItem *item = NULL;
-        GError *gerr = NULL;
-        gchar uid_buf[32];
-        g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
-        g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
-        GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
-                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr);
-        g_hash_table_unref(attrs);
-        g_clear_error(&gerr);
-        if (items)
-          item = SECRET_ITEM(g_object_ref(items->data)); /* the first for this uid */
-        g_list_free_full(items, g_object_unref);
-        if (!item) {
+      int rc_s = store_owned_sk_hex(out_sk_hex);
+      if (rc_s == NOSTR_SIGNER_ERROR_NOT_FOUND) {
+        SecretService *service = NULL;
+        rc_s = store_service(&service);
+        if (rc_s == 0) {
           g_autofree gchar *chosen = grotto_default_identity();
           GHashTable *all = g_hash_table_new(g_str_hash, g_str_equal);
           if (chosen && *chosen)
             g_hash_table_insert(all, (gpointer)"npub", chosen);
-          items = secret_service_search_sync(service, &gnostr_secret_schema, all,
-                                             SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr);
+          GList *items = NULL;
+          rc_s = store_search(service, all, &items);
           g_hash_table_unref(all);
-          g_clear_error(&gerr);
-          if (items && (chosen && *chosen ? TRUE : g_list_length(items) == 1))
-            item = SECRET_ITEM(g_object_ref(items->data));
+          if (rc_s == 0)
+            rc_s = items && (chosen && *chosen ? TRUE : g_list_length(items) == 1)
+                     ? store_item_sk_hex(service, SECRET_ITEM(items->data), out_sk_hex)
+                     : NOSTR_SIGNER_ERROR_NOT_FOUND;
           g_list_free_full(items, g_object_unref);
-        }
-        if (item) {
-          SecretValue *sv = secret_item_get_secret(item);
-          const gchar *sec = sv ? secret_value_get_text(sv) : NULL;
-          int rc_l = NOSTR_SIGNER_ERROR_NOT_FOUND;
-          if (sec) {
-            if (is_hex_64(sec)) { *out_sk_hex = strdup(sec); rc_l = *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
-            else if (strncmp(sec, "nsec1", 5)==0) {
-              uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(sec, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
-              if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
-              secure_wipe(sk, sizeof sk);
-            } else {
-              rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
-            }
-          }
-          if (sv) secret_value_unref(sv);
-          g_object_unref(item);
           g_object_unref(service);
-          return rc_l;
         }
-        g_object_unref(service);
       }
+      return rc_s;
     }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
     /* macOS Keychain: find any identity item in this user's keychain */
@@ -307,84 +395,28 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     secure_wipe(sk, sizeof sk);
     return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
   }
+  /* An npub selects exactly that identity, never another key: the
+   * environment key's, else a stored one (nostrc-a4w5). */
+  const int sel_is_npub = strncmp(cand, "npub1", 5) == 0;
+  if (sel_is_npub) {
+    char *env_npub = env_identity_npub();
+    const int is_env = env_npub && strcmp(env_npub, cand) == 0;
+    free(env_npub);
+    if (is_env) return env_seckey_hex(out_sk_hex);
+  }
 #ifdef NIP55L_HAVE_LIBSECRET
   /* Treat current_user as identity selector: key_id or npub */
   {
-    int rc_l = NOSTR_SIGNER_ERROR_NOT_FOUND;
-    GError *gerr = NULL;
-    /* Try lookup by key_id */
-    gchar *secret = secret_password_lookup_sync(&gnostr_secret_schema, NULL, &gerr,
-                                                "key_id", cand,
-                                                NULL);
-    if (gerr) { g_error_free(gerr); gerr = NULL; }
-    if (!secret) {
-      /* Try lookup by npub */
-      secret = secret_password_lookup_sync(&gnostr_secret_schema, NULL, &gerr,
-                                           "npub", cand,
-                                           NULL);
-      if (gerr) { g_error_free(gerr); gerr = NULL; }
-    }
-    if (secret) {
-      if (is_hex_64(secret)) {
-        *out_sk_hex = strdup(secret);
-        rc_l = *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
-      } else if (strncmp(secret, "nsec1", 5)==0) {
-        uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(secret, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
-        if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
-      } else {
-        rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
-      }
-      secret_password_free(secret);
-      return rc_l;
-    }
-    /* Fallback: search by current owner_uid if selector lookup failed */
-    {
-      SecretService *service = resolver_secret_service();
-      if (service) {
-        GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
-        gchar uid_buf[32];
-        g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-        g_hash_table_insert(attrs, (gpointer)"owner_uid", (gpointer)uid_buf);
-        GError *gerr2 = NULL;
-        GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
-                                                  SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK | SECRET_SEARCH_LOAD_SECRETS, NULL, &gerr2);
-        g_hash_table_unref(attrs);
-        if (gerr2) { g_error_free(gerr2); gerr2 = NULL; }
-        SecretItem *item = NULL;
-        if (items) item = SECRET_ITEM(g_object_ref(items->data));
-        if (items) g_list_free_full(items, g_object_unref);
-        if (item) {
-          SecretValue *sv = secret_item_get_secret(item);
-          const gchar *sec = sv ? secret_value_get_text(sv) : NULL;
-          if (sec) {
-            if (is_hex_64(sec)) { *out_sk_hex = strdup(sec); rc_l = *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
-            else if (strncmp(sec, "nsec1", 5)==0) {
-              uint8_t sk[32]; rc_l = (nostr_nip19_decode_nsec(sec, sk)==0) ? 0 : NOSTR_SIGNER_ERROR_INVALID_KEY;
-              if (rc_l==0) { *out_sk_hex = bin_to_hex(sk, 32); if (!*out_sk_hex) rc_l = NOSTR_SIGNER_ERROR_BACKEND; }
-            } else {
-              rc_l = NOSTR_SIGNER_ERROR_INVALID_KEY;
-            }
-          }
-          if (sv) secret_value_unref(sv);
-          g_object_unref(item);
-          g_object_unref(service);
-          return rc_l;
-        }
-        g_object_unref(service);
-      }
-    }
-    /* Final fallback: environment variables */
-    {
-      const char *ehex = getenv("NOSTR_SIGNER_SECKEY_HEX");
-      if (ehex && is_hex_64(ehex)) { *out_sk_hex = strdup(ehex); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
-      const char *nsec = getenv("NOSTR_SIGNER_NSEC");
-      if (nsec && strncmp(nsec, "nsec1", 5)==0) {
-        uint8_t sk[32]; if (nostr_nip19_decode_nsec(nsec, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-        *out_sk_hex = bin_to_hex(sk, 32);
-        secure_wipe(sk, sizeof sk);
-        return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
-      }
-    }
+    int rc_l = store_lookup_sk_hex("key_id", cand, out_sk_hex);
+    if (rc_l == NOSTR_SIGNER_ERROR_NOT_FOUND)
+      rc_l = store_lookup_sk_hex("npub", cand, out_sk_hex);
+    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND || sel_is_npub) return rc_l;
+    /* A key_id or label naming no item: this user's identity, else the
+     * environment key. */
+    rc_l = store_owned_sk_hex(out_sk_hex);
+    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND) return rc_l;
+    rc_l = env_seckey_hex(out_sk_hex);
+    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND) return rc_l;
   }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
   /* Treat current_user as identity selector when provided */
@@ -502,7 +534,9 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
   }
   free(np);
   free(want);
-  return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  /* No such identity (or the lookup's fallback found another key), or the
+   * key store could not say: BACKEND, not NOT_FOUND (nostrc-f6l29). */
+  return rc == 0 ? NOSTR_SIGNER_ERROR_NOT_FOUND : rc;
 }
 
 int nostr_nip55l_get_public_key(char **out_npub){
@@ -1161,40 +1195,13 @@ int nostr_nip55l_clear_key(const char *identity){
  * holds (nostrc-sic82). */
 static char *env_identity_npub(void){
   char *sk_hex = NULL;
-  const char *hex = getenv("NOSTR_SIGNER_SECKEY_HEX");
-  const char *nsec = getenv("NOSTR_SIGNER_NSEC");
-  if (hex && is_hex_64(hex)) {
-    sk_hex = strdup(hex);
-  } else if (nsec && strncmp(nsec, "nsec1", 5) == 0) {
-    uint8_t sk[32];
-    if (nostr_nip19_decode_nsec(nsec, sk) == 0) sk_hex = bin_to_hex(sk, 32);
-    secure_wipe(sk, sizeof sk);
-  }
-  if (!sk_hex) return NULL;
+  if (env_seckey_hex(&sk_hex) != 0 || !sk_hex) return NULL;
   char *npub = NULL;
   if (sk_hex_to_npub(sk_hex, &npub) != 0) npub = NULL;
   secure_wipe(sk_hex, strlen(sk_hex));
   free(sk_hex);
   return npub;
 }
-
-#ifdef NIP55L_HAVE_LIBSECRET
-/* No Secret Service on the bus at all (nothing owns or activates
- * org.freedesktop.secrets), as opposed to one that fails. */
-static gboolean secret_service_absent(const GError *e){
-  return e && (g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
-               g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER));
-}
-
-static int store_error_rc(const char *what, const GError *e){
-  if (secret_service_absent(e)) {
-    g_debug("nip55l: ListIdentities: no Secret Service: %s", e->message);
-    return NOSTR_SIGNER_ERROR_NOT_FOUND;
-  }
-  g_message("nip55l: ListIdentities: Secret Service %s: %s", what, e ? e->message : "unknown error");
-  return NOSTR_SIGNER_ERROR_BACKEND;
-}
-#endif
 
 /* The npubs in the key store. 0 on success (possibly none);
  * NOSTR_SIGNER_ERROR_NOT_FOUND when there is no key store (none compiled in,
@@ -1488,24 +1495,6 @@ static GList *search_legacy(SecretService *service, const SecretSchema *schema,
                                             flags | SECRET_SEARCH_ALL, NULL, error);
   g_hash_table_unref(attrs);
   return items;
-}
-
-/* Secret text (64-hex or nsec1) → lowercase 64-hex; NULL if neither. */
-static char *secret_text_to_sk_hex(const char *sec){
-  if (!sec) return NULL;
-  if (is_hex_64(sec)) {
-    char *hex = strdup(sec);
-    for (char *p = hex; p && *p; p++) *p = (char)g_ascii_tolower(*p);
-    return hex;
-  }
-  if (strncmp(sec, "nsec1", 5) == 0) {
-    uint8_t sk[32];
-    if (nostr_nip19_decode_nsec(sec, sk) != 0) return NULL;
-    char *hex = bin_to_hex(sk, 32);
-    secure_wipe(sk, sizeof sk);
-    return hex;
-  }
-  return NULL;
 }
 
 static char *npub_from_sk_hex(const char *sk_hex){

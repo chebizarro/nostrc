@@ -2635,7 +2635,9 @@ static void run_phase3(void) {
  * implements only what the daemon calls. MODE "plain" refuses the
  * dh-ietf1024-sha256-aes128-cbc-pkcs7 session algorithm with NotSupported
  * and accepts "plain" (a plain-only provider, which crashed libsecret
- * 0.21.8 inside the daemon); MODE "none" refuses every session.
+ * 0.21.8 inside the daemon); MODE "none" refuses every session but can be
+ * searched; MODE "fail" answers every Service method with an error (a store
+ * that is up but cannot be read).
  * ------------------------------------------------------------------------- */
 
 #define FSS_NAME       "org.freedesktop.secrets"
@@ -2672,6 +2674,7 @@ typedef struct Fss Fss;
 typedef struct { Fss *fss; char *path; GHashTable *attrs; char *secret; } FssItem;
 struct Fss {
   gboolean plain_ok;
+  gboolean fail_all;
   GPtrArray *items;      /* FssItem* */
   GHashTable *sessions;  /* open session paths */
   guint next_session;
@@ -2707,6 +2710,11 @@ static void fss_service_call(GDBusConnection *c, const gchar *sender, const gcha
                              GDBusMethodInvocation *inv, gpointer ud) {
   (void)sender; (void)path; (void)iface;
   Fss *f = ud;
+  if (f->fail_all) {
+    g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.Failed",
+                                               "key store unavailable");
+    return;
+  }
   if (g_strcmp0(method, "OpenSession") == 0) {
     const char *alg = NULL;
     g_variant_get(params, "(&sv)", &alg, NULL);
@@ -2827,6 +2835,7 @@ static int fake_secret_service(int argc, char **argv) {
   if (argc < 2 || !addr) { g_printerr("fake-secret-service: usage/bus\n"); return 1; }
   Fss f = { 0 };
   f.plain_ok = g_strcmp0(argv[1], "plain") == 0;
+  f.fail_all = g_strcmp0(argv[1], "fail") == 0;
   f.items = g_ptr_array_new();
   f.sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   f.node = g_dbus_node_info_new_for_xml(fss_xml, &err);
@@ -2939,6 +2948,52 @@ static char *sign_with(Ctx *ctx, const char *selector, GError **err) {
   return pk;
 }
 
+/* Grants for every identity-taking kind the store checks use: a selector
+ * that resolves is served at once, never parked for approval. */
+#define IDENTITY_GRANTS \
+  "[event]\n@P|*=allow\n[nip44_encrypt]\n@P|*=allow\n" \
+  "[nip44_conversation_key]\n@P|*=allow\n[get_public_key]\n@P|*=allow\n"
+
+/* SignEvent with @selector signs as @want_pk_hex. */
+static void expect_signs_as(Ctx *ctx, const char *selector, const char *want_pk_hex) {
+  GError *err = NULL;
+  char *pk = sign_with(ctx, selector, &err);
+  if (!pk) g_printerr("SignEvent(\"%s\"): %s\n", selector, err ? err->message : "?");
+  CHECK(pk && g_strcmp0(pk, want_pk_hex) == 0);
+  g_free(pk);
+}
+
+/* SignEvent, NIP44Encrypt and NIP44DeriveConversationKey with @selector all
+ * fail with @want (nostrc-f6l29: NoKeyConfigured only when the signer holds
+ * no such identity, Internal when its key store cannot be read). */
+static void expect_identity_error(Ctx *ctx, const char *selector, const char *want) {
+  GError *err = NULL;
+  char *pk = sign_with(ctx, selector, &err);
+  if (pk) g_printerr("SignEvent(\"%s\") signed as %s, expected %s\n", selector, pk, want);
+  CHECK(pk == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+  GVariant *r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", ctx->pk_hex, selector), "(s)", &err);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+  r = call(ctx->bus, "NIP44DeriveConversationKey",
+           g_variant_new("(sss)", ctx->pk_hex, selector, "contract-test"), "(s)", &err);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+}
+
+/* GetPublicKey (the active identity) fails with @want. */
+static void expect_get_public_key_error(Ctx *ctx, const char *want) {
+  GError *err = NULL;
+  GVariant *r = call(ctx->bus, "GetPublicKey", NULL, "(s)", &err);
+  if (r) g_printerr("GetPublicKey answered, expected %s\n", want);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+}
+
 static void run_identity_store_phase(void) {
   GError *err = NULL;
   TestKey stored, other;
@@ -2975,56 +3030,90 @@ static void run_identity_store_phase(void) {
     ctx_teardown(&ctx);
   }
 
-  /* A Secret Service that refuses every session: no secret can be read, and
-   * every lookup fails with a typed error instead of a crash. Listing needs
-   * no secrets; the environment key still signs. */
+  /* A Secret Service that refuses every session: it can be searched (and
+   * listed) but no secret can be read. A key it does not hold is
+   * NoKeyConfigured, as ListIdentities shows; a key it holds cannot be read,
+   * which is Internal, not NoKeyConfigured (nostrc-f6l29). The environment
+   * key still signs. */
   {
     FakeSecrets fs = { "none", stored.sk_hex };
     Ctx ctx;
-    ctx_setup_full(&ctx, FALSE, FALSE, "[event]\n@P|*=allow\n", &TRUST_UI,
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
-    char *pk = sign_with(&ctx, other.pk_hex, &err);
-    CHECK(pk == NULL);
-    expect_remote_error(err, ERR_NO_KEY);
-    g_clear_error(&err);
-    pk = sign_with(&ctx, stored.npub, &err);
-    CHECK(pk == NULL && err != NULL);
-    {
-      gchar *remote = g_dbus_error_get_remote_error(err);
-      if (!remote || !g_str_has_prefix(remote, "org.nostr.Signer.Error."))
-        g_printerr("SignEvent(stored, no session) = %s\n", err->message);
-      CHECK(remote && g_str_has_prefix(remote, "org.nostr.Signer.Error."));
-      g_free(remote);
-    }
-    g_clear_error(&err);
-    pk = sign_with(&ctx, "", &err);
-    CHECK(pk && g_strcmp0(pk, ctx.pk_hex) == 0);
-    g_free(pk);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.npub, ERR_NO_KEY);
+    expect_identity_error(&ctx, stored.pk_hex, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
     gchar **ids = list_identities(&ctx, &err);
     CHECK(ids && g_strv_length(ids) == 2);
     g_strfreev(ids);
+    /* No environment key: the active identity is a stored one, unreadable. */
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "", ERR_INTERNAL);
+    expect_get_public_key_error(&ctx, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
     ctx_teardown(&ctx);
   }
 
-  /* No Secret Service on the bus and no environment key (nostrc-sjyl3): the
-   * signer cannot tell which identities it holds, so ListIdentities fails
-   * instead of answering an empty list. */
+  /* A Secret Service that fails every call: the signer cannot tell which
+   * identities it holds. ListIdentities fails, and so does every selector
+   * other than the environment key's, with Internal (nostrc-f6l29). */
+  {
+    FakeSecrets fs = { "fail", stored.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    gchar **ids = list_identities(&ctx, &err);
+    CHECK(ids == NULL);
+    expect_remote_error(err, ERR_INTERNAL);
+    g_clear_error(&err);
+    expect_identity_error(&ctx, stored.pk_hex, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_identity_error(&ctx, other.pk_hex, ERR_INTERNAL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "", ERR_INTERNAL);
+    expect_get_public_key_error(&ctx, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    ctx_teardown(&ctx);
+  }
+
+  /* No Secret Service on the bus (headless env-key deployments): the
+   * environment key is the signer's identity and any other key is
+   * NoKeyConfigured. With no environment key either, the signer holds no key:
+   * selectors and GetPublicKey answer NoKeyConfigured, while ListIdentities
+   * fails (nostrc-sjyl3: it cannot tell an empty store from no store). */
   {
     Ctx ctx;
-    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI, NULL, NULL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.npub, ERR_NO_KEY);
     respawn_daemon(&ctx, FALSE);
     gchar **ids = list_identities(&ctx, &err);
     if (ids) g_printerr("ListIdentities with no key store answered %u identities\n", g_strv_length(ids));
     CHECK(ids == NULL);
     expect_remote_error(err, ERR_INTERNAL);
     g_clear_error(&err);
+    expect_identity_error(&ctx, "", ERR_NO_KEY);
+    expect_get_public_key_error(&ctx, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
     ctx_teardown(&ctx);
   }
 
   test_key_free(&stored);
   test_key_free(&other);
-  g_print("PASS identity store (plain-only and session-refusing Secret Service, "
-          "environment key listed once, ListIdentities fails without a key store)\n");
+  g_print("PASS identity store (plain-only, session-refusing and failing Secret Service, "
+          "no Secret Service; environment key listed once; unreadable store is Internal, "
+          "unheld key NoKeyConfigured)\n");
 }
 #endif /* NIP55L_TEST_HAVE_LIBSECRET */
 
