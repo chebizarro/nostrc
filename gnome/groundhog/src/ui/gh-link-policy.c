@@ -386,11 +386,160 @@ append_markdown_inline(GString *out, const gchar *text, guint style,
     g_string_append(out, "<b>");
   if (style & GN_MARKDOWN_STYLE_EMPHASIS)
     g_string_append(out, "<i>");
+  if (style & GN_MARKDOWN_STYLE_STRIKETHROUGH)
+    g_string_append(out, "<s>");
   g_string_append(out, inner);
+  if (style & GN_MARKDOWN_STYLE_STRIKETHROUGH)
+    g_string_append(out, "</s>");
   if (style & GN_MARKDOWN_STYLE_EMPHASIS)
     g_string_append(out, "</i>");
   if (style & GN_MARKDOWN_STYLE_STRONG)
     g_string_append(out, "</b>");
+}
+
+/* An inline token (text, code, link, image, address); FALSE for others. */
+static gboolean
+format_inline_token(GString *out, const GnMarkdownToken *token, const gchar *account_pubkey)
+{
+  const gchar *value = token->text ? token->text : "";
+  switch (token->kind) {
+  case GN_MARKDOWN_TEXT:
+  case GN_MARKDOWN_RAW_URL:
+  case GN_MARKDOWN_NOSTR_REFERENCE:
+    append_markdown_inline(out, value, token->style, account_pubkey, TRUE);
+    return TRUE;
+  case GN_MARKDOWN_CODE:
+    g_string_append(out, "<tt>");
+    append_markdown_inline(out, value, 0, account_pubkey, FALSE);
+    g_string_append(out, "</tt>");
+    return TRUE;
+  case GN_MARKDOWN_LINK:
+  case GN_MARKDOWN_IMAGE:
+    /* A label can say anything, so it must never disguise the destination;
+     * an image is never fetched: its description and address are shown. */
+    append_markdown_inline(out, value, token->style, account_pubkey, FALSE);
+    g_string_append(out, " (");
+    append_markdown_inline(out, token->target, 0, account_pubkey, TRUE);
+    g_string_append_c(out, ')');
+    return TRUE;
+  default:
+    return FALSE;
+  }
+}
+
+/* The inline Markdown of a block (heading, list item, quote, table cell). */
+static void
+append_block_inline(GString *out, const gchar *text, const gchar *account_pubkey)
+{
+  g_autoptr(GnMarkdownDocument) inline_doc = gn_markdown_parse_inline(text, -1);
+  for (guint i = 0; i < inline_doc->tokens->len; i++)
+    format_inline_token(out, g_ptr_array_index(inline_doc->tokens, i), account_pubkey);
+}
+
+/* Display columns of the text this markup shows (tags dropped, an entity
+ * one character): a wide character takes two, a combining one none. */
+static guint
+markup_columns(const gchar *markup)
+{
+  guint columns = 0;
+  for (const gchar *p = markup; *p;) {
+    if (*p == '<') {
+      const gchar *close = strchr(p, '>');
+      if (!close)
+        break;
+      p = close + 1;
+      continue;
+    }
+    if (*p == '&') {
+      const gchar *semi = strchr(p, ';');
+      columns++;
+      p = semi ? semi + 1 : p + 1;
+      continue;
+    }
+    gunichar c = g_utf8_get_char(p);
+    columns += g_unichar_iszerowidth(c) ? 0 : g_unichar_iswide(c) ? 2 : 1;
+    p = g_utf8_next_char(p);
+  }
+  return columns;
+}
+
+static void
+append_spaces(GString *out, guint count)
+{
+  for (guint i = 0; i < count; i++)
+    g_string_append_c(out, ' ');
+}
+
+/* A GFM table as an aligned monospace grid: the label wraps, so a grid of
+ * widgets would need the row to build them per message; this keeps the
+ * one-label bubble, its render cache and its open cost. Cells keep their
+ * inline formatting and the literal-address rule. Returns the index of the
+ * first token after the table. */
+static guint
+format_table(GString *out, const GnMarkdownDocument *document, guint start,
+             const gchar *account_pubkey)
+{
+  const GnMarkdownToken *first = g_ptr_array_index(document->tokens, start);
+  guint columns = MAX(first->columns, 1);
+  g_autoptr(GPtrArray) cells = g_ptr_array_new_with_free_func(g_free);
+  g_autofree guint *widths = g_new0(guint, columns);
+  g_autofree guint *aligns = g_new0(guint, columns);
+  gboolean header = first->ordered;
+  guint i = start;
+  while (i < document->tokens->len) {
+    const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
+    if (token->kind == GN_MARKDOWN_LINE_BREAK && i + 1 < document->tokens->len) {
+      const GnMarkdownToken *after = g_ptr_array_index(document->tokens, i + 1);
+      if (after->kind == GN_MARKDOWN_TABLE_CELL && after->level == 0 &&
+          after->columns == columns && !after->ordered) {
+        i++;
+        continue;
+      }
+    }
+    if (token->kind != GN_MARKDOWN_TABLE_CELL || token->columns != columns ||
+        (i > start && token->ordered && token->level == 0))
+      break;
+    GString *cell = g_string_new(NULL);
+    append_block_inline(cell, token->text ? token->text : "", account_pubkey);
+    guint column = MIN(token->level, columns - 1);
+    widths[column] = MAX(widths[column], markup_columns(cell->str));
+    aligns[column] = token->align;
+    g_ptr_array_add(cells, g_string_free(cell, FALSE));
+    i++;
+  }
+  guint rows = cells->len / columns;
+  g_string_append(out, "<tt>");
+  for (guint r = 0; r < rows; r++) {
+    if (r)
+      g_string_append_c(out, '\n');
+    for (guint c = 0; c < columns; c++) {
+      const gchar *cell = g_ptr_array_index(cells, r * columns + c);
+      guint pad = widths[c] - markup_columns(cell);
+      guint before = aligns[c] == GN_MARKDOWN_ALIGN_RIGHT ? pad
+                   : aligns[c] == GN_MARKDOWN_ALIGN_CENTER ? pad / 2 : 0;
+      if (c)
+        g_string_append(out, " │ ");
+      append_spaces(out, before);
+      if (header && r == 0)
+        g_string_append(out, "<b>");
+      g_string_append(out, cell);
+      if (header && r == 0)
+        g_string_append(out, "</b>");
+      if (c + 1 < columns)
+        append_spaces(out, pad - before);
+    }
+    if (header && r == 0) {
+      g_string_append_c(out, '\n');
+      for (guint c = 0; c < columns; c++) {
+        if (c)
+          g_string_append(out, "─┼─");
+        for (guint k = 0; k < widths[c]; k++)
+          g_string_append(out, "─");
+      }
+    }
+  }
+  g_string_append(out, "</tt>");
+  return i;
 }
 
 gchar *
@@ -400,47 +549,45 @@ gh_link_policy_format_markdown(const GnMarkdownDocument *document,
   if (!document || !document->tokens)
     return g_strdup("");
   GString *out = g_string_sized_new(document->source ? strlen(document->source) + 64 : 64);
-  for (guint i = 0; i < document->tokens->len; i++) {
+  for (guint i = 0; i < document->tokens->len;) {
     const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
     const gchar *value = token->text ? token->text : "";
+    if (token->kind == GN_MARKDOWN_TABLE_CELL) {
+      i = format_table(out, document, i, account_pubkey);
+      continue;
+    }
+    i++;
+    if (format_inline_token(out, token, account_pubkey))
+      continue;
     switch (token->kind) {
-    case GN_MARKDOWN_TEXT:
-      append_markdown_inline(out, value, token->style, account_pubkey, TRUE);
-      break;
-    case GN_MARKDOWN_CODE:
-      g_string_append(out, "<tt>");
-      append_markdown_inline(out, value, 0, account_pubkey, FALSE);
-      g_string_append(out, "</tt>");
-      break;
-    case GN_MARKDOWN_LINK:
-      /* A label can say anything, so it must never disguise the destination. */
-      append_markdown_inline(out, value, token->style, account_pubkey, FALSE);
-      g_string_append(out, " (");
-      append_markdown_inline(out, token->target, 0, account_pubkey, TRUE);
-      g_string_append_c(out, ')');
-      break;
-    case GN_MARKDOWN_RAW_URL:
-    case GN_MARKDOWN_NOSTR_REFERENCE:
-      append_markdown_inline(out, value, token->style, account_pubkey, TRUE);
-      break;
     case GN_MARKDOWN_HEADING:
       g_string_append(out, "<b>");
-      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      append_block_inline(out, value, account_pubkey);
       g_string_append(out, "</b>");
       break;
     case GN_MARKDOWN_LIST_ITEM:
-      g_string_append(out, token->ordered ? "1. " : "• ");
-      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      append_spaces(out, 2 * token->indent);
+      if (token->task == GN_MARKDOWN_TASK_DONE)
+        g_string_append(out, "☑ ");
+      else if (token->task == GN_MARKDOWN_TASK_OPEN)
+        g_string_append(out, "☐ ");
+      else if (token->ordered)
+        g_string_append_printf(out, "%u. ", token->level);
+      else
+        g_string_append(out, token->indent ? "◦ " : "• ");
+      append_block_inline(out, value, account_pubkey);
       break;
     case GN_MARKDOWN_QUOTE:
       g_string_append(out, "│ ");
-      append_markdown_inline(out, value, 0, account_pubkey, TRUE);
+      append_block_inline(out, value, account_pubkey);
       break;
     case GN_MARKDOWN_SEPARATOR:
       g_string_append(out, "────────");
       break;
     case GN_MARKDOWN_LINE_BREAK:
       g_string_append_c(out, '\n');
+      break;
+    default:
       break;
     }
   }

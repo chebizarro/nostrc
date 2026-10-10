@@ -9,6 +9,100 @@
 #include <string.h>
 #include "nostrc-test-gdk-frame.h"
 
+static GnMarkdownToken *nth_kind(GnMarkdownDocument *doc, GnMarkdownTokenKind kind, guint nth) {
+  for (guint i = 0; i < doc->tokens->len; i++) {
+    GnMarkdownToken *t = g_ptr_array_index(doc->tokens, i);
+    if (t->kind == kind && nth-- == 0) return t;
+  }
+  return NULL;
+}
+
+/* GFM blocks and inlines (nostrc-p15n5.1). */
+static void markdown_gfm(void) {
+  g_autoptr(GnMarkdownDocument) table = gn_markdown_parse(
+    "| Name | Qty | Note |\n|:-----|----:|:---:|\n| a | 1 | **x** |\n| b \\| c | 22 |\nafter", -1);
+  GnMarkdownToken *h0 = nth_kind(table, GN_MARKDOWN_TABLE_CELL, 0);
+  g_assert_nonnull(h0);
+  g_assert_cmpstr(h0->text, ==, "Name");
+  g_assert_true(h0->ordered);
+  g_assert_cmpuint(h0->columns, ==, 3);
+  g_assert_cmpuint(h0->align, ==, GN_MARKDOWN_ALIGN_LEFT);
+  g_assert_cmpuint(nth_kind(table, GN_MARKDOWN_TABLE_CELL, 1)->align, ==, GN_MARKDOWN_ALIGN_RIGHT);
+  g_assert_cmpuint(nth_kind(table, GN_MARKDOWN_TABLE_CELL, 2)->align, ==, GN_MARKDOWN_ALIGN_CENTER);
+  GnMarkdownToken *body = nth_kind(table, GN_MARKDOWN_TABLE_CELL, 5);
+  g_assert_cmpstr(body->text, ==, "**x**");
+  g_assert_false(body->ordered);
+  g_assert_cmpuint(body->level, ==, 2);
+  /* An escaped pipe stays in its cell; a short row is padded. */
+  g_assert_cmpstr(nth_kind(table, GN_MARKDOWN_TABLE_CELL, 6)->text, ==, "b \\| c");
+  g_assert_cmpstr(nth_kind(table, GN_MARKDOWN_TABLE_CELL, 8)->text, ==, "");
+  g_assert_null(nth_kind(table, GN_MARKDOWN_TABLE_CELL, 9));
+  g_assert_cmpstr(nth_kind(table, GN_MARKDOWN_TEXT, 0)->text, ==, "after");
+  /* The delimiter row is not text, and no line break stands for it. */
+  guint breaks = 0;
+  for (guint i = 0; i < table->tokens->len; i++)
+    breaks += ((GnMarkdownToken *)g_ptr_array_index(table->tokens, i))->kind == GN_MARKDOWN_LINE_BREAK;
+  g_assert_cmpuint(breaks, ==, 3);
+
+  /* A pipe without a delimiter row is just text. */
+  g_autoptr(GnMarkdownDocument) plain = gn_markdown_parse("a | b\nc | d", -1);
+  g_assert_null(nth_kind(plain, GN_MARKDOWN_TABLE_CELL, 0));
+
+  g_autoptr(GnMarkdownDocument) lists = gn_markdown_parse(
+    "- [ ] open\n- [x] done\n  - nested\n3. third\n4) fourth", -1);
+  GnMarkdownToken *open = nth_kind(lists, GN_MARKDOWN_LIST_ITEM, 0);
+  g_assert_cmpuint(open->task, ==, GN_MARKDOWN_TASK_OPEN);
+  g_assert_cmpstr(open->text, ==, "open");
+  g_assert_cmpuint(nth_kind(lists, GN_MARKDOWN_LIST_ITEM, 1)->task, ==, GN_MARKDOWN_TASK_DONE);
+  GnMarkdownToken *nested = nth_kind(lists, GN_MARKDOWN_LIST_ITEM, 2);
+  g_assert_cmpuint(nested->indent, ==, 1);
+  g_assert_cmpstr(nested->text, ==, "nested");
+  GnMarkdownToken *third = nth_kind(lists, GN_MARKDOWN_LIST_ITEM, 3);
+  g_assert_true(third->ordered);
+  g_assert_cmpuint(third->level, ==, 3);
+  g_assert_cmpuint(nth_kind(lists, GN_MARKDOWN_LIST_ITEM, 4)->level, ==, 4);
+
+  g_autoptr(GnMarkdownDocument) inl = gn_markdown_parse(
+    "~~gone~~ snake_case_name 2 * 3 * 4 \\*lit\\* <https://a.example/x> ![cat](https://img.example/c.png)", -1);
+  GnMarkdownToken *strike = nth_kind(inl, GN_MARKDOWN_TEXT, 0);
+  g_assert_cmpstr(strike->text, ==, "gone");
+  g_assert_true(strike->style & GN_MARKDOWN_STYLE_STRIKETHROUGH);
+  for (guint i = 0; i < inl->tokens->len; i++) {
+    GnMarkdownToken *t = g_ptr_array_index(inl->tokens, i);
+    /* Intraword "_" and spaced "*" are literal. */
+    g_assert_false(t->style & (GN_MARKDOWN_STYLE_EMPHASIS | GN_MARKDOWN_STYLE_STRONG));
+  }
+  GString *joined = g_string_new(NULL);
+  for (guint i = 0; i < inl->tokens->len; i++) {
+    GnMarkdownToken *t = g_ptr_array_index(inl->tokens, i);
+    if (t->kind == GN_MARKDOWN_TEXT) g_string_append(joined, t->text);
+  }
+  g_assert_nonnull(strstr(joined->str, "snake_case_name 2 * 3 * 4 *lit* "));
+  g_assert_null(strstr(joined->str, "<"));
+  g_string_free(joined, TRUE);
+  GnMarkdownToken *autolink = nth_kind(inl, GN_MARKDOWN_RAW_URL, 0);
+  g_assert_cmpstr(autolink->target, ==, "https://a.example/x");
+  GnMarkdownToken *image = nth_kind(inl, GN_MARKDOWN_IMAGE, 0);
+  g_assert_cmpstr(image->text, ==, "cat");
+  g_assert_cmpstr(image->target, ==, "https://img.example/c.png");
+
+  g_autoptr(GnMarkdownDocument) fence = gn_markdown_parse("~~~\n| a | b |\n|---|---|\n~~~", -1);
+  g_assert_null(nth_kind(fence, GN_MARKDOWN_TABLE_CELL, 0));
+  g_assert_cmpstr(nth_kind(fence, GN_MARKDOWN_CODE, 0)->text, ==, "| a | b |");
+
+  g_autoptr(GnMarkdownDocument) only = gn_markdown_parse_inline("# not a heading *em*", -1);
+  g_assert_cmpint(((GnMarkdownToken *)g_ptr_array_index(only->tokens, 0))->kind, ==, GN_MARKDOWN_TEXT);
+  g_assert_true(nth_kind(only, GN_MARKDOWN_TEXT, 1)->style & GN_MARKDOWN_STYLE_EMPHASIS);
+
+  /* Hostile tables stay within the token budget. */
+  GString *wide = g_string_new(NULL);
+  for (guint r = 0; r < 4000; r++)
+    g_string_append(wide, r == 1 ? "|-|-|-|-|-|-|-|-|-|-|\n" : "|a|b|c|d|e|f|g|h|i|j|\n");
+  g_autoptr(GnMarkdownDocument) big = gn_markdown_parse(wide->str, -1);
+  g_assert_cmpuint(big->tokens->len, <=, GN_MARKDOWN_MAX_TOKENS);
+  g_string_free(wide, TRUE);
+}
+
 static void markdown(void) {
   g_autoptr(GnMarkdownDocument) doc = gn_markdown_parse("# Hi\n**bold** [label](https://example.org) `code`", -1);
   g_assert_nonnull(doc);
@@ -166,6 +260,7 @@ int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/portable/markdown", markdown);
+  g_test_add_func("/portable/markdown-gfm", markdown_gfm);
   g_test_add_func("/portable/references", references);
   g_test_add_func("/portable/widgets", widgets);
   return g_test_run();
