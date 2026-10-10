@@ -453,6 +453,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
   /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
+  size_t plain_len = 0;
   char *dec_err = NULL;
   bool dec_ok = false;
   {
@@ -463,16 +464,18 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       size_t pt_len = 0;
       int rc = nostr_nip44_decrypt_v2(sk, pk, ciphertext, &pt, &pt_len);
       signet_memzero(sk, 32);
-      if (rc == 0 && pt && pt_len > 0) {
-        /* NIP-44 returns raw bytes; NUL-terminate for JSON parsing. */
+      if (rc == 0 && pt && pt_len > 0 && pt_len <= 64u * 1024u &&
+          memchr(pt, '\0', pt_len) == NULL) {
+        /* Verify the complete decrypted byte span before C-string parsing. */
         plain = (char *)malloc(pt_len + 1);
         if (plain) {
           memcpy(plain, pt, pt_len);
           plain[pt_len] = '\0';
+          plain_len = pt_len;
           dec_ok = true;
         }
-        free(pt);
       }
+      if (pt) { signet_memzero(pt, pt_len); free(pt); }
     } else {
       dec_err = g_strdup("invalid key hex");
     }
@@ -800,20 +803,35 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "nip44_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt_b64") == 0 ||
                strcmp(method, "nip44_decrypt_b64") == 0) {
-      if (!req.params || req.n_params < 2) {
-        err_str = g_strdup("crypto method requires [pubkey, input]");
+      bool is_nip44 = g_str_has_prefix(method, "nip44_");
+      int64_t crypto_epoch = 0;
+      if (!req.params || req.n_params < 2 ||
+          (is_nip44 && req.n_params > 3) ||
+          (is_nip44 && req.n_params == 3 &&
+           !signet_parse_writer_epoch(req.params[2], &crypto_epoch))) {
+        err_str = g_strdup("crypto method requires [pubkey, input, epoch?]");
         status = "error";
         code = "invalid_params";
-      } else if (signet_key_store_crypt_legacy(s->keys, session_agent_id,
-                                                method, req.params[0],
-                                                req.params[1], &result) != 0) {
-        err_str = g_strdup("crypto operation denied or failed");
-        status = "error";
-        code = "crypto_failed";
       } else {
-        result_is_json = false;
-        status = "ok";
-        code = "ok";
+        int crypto_rc = is_nip44 && req.n_params == 3
+            ? signet_key_store_crypt_nip44(s->keys, session_agent_id,
+                client_pubkey_hex, crypto_epoch, method, req.params[0],
+                req.params[1], &result)
+            : signet_key_store_crypt_legacy(s->keys, session_agent_id,
+                method, req.params[0], req.params[1], &result);
+        if (crypto_rc == -2) {
+          err_str = g_strdup("NIP-44 plaintext is not NUL-free UTF-8; use nip44_decrypt_b64 for binary data");
+          status = "error";
+          code = "invalid_plaintext";
+        } else if (crypto_rc != 0) {
+          err_str = g_strdup("crypto operation denied or failed");
+          status = "error";
+          code = "crypto_failed";
+        } else {
+          result_is_json = false;
+          status = "ok";
+          code = "ok";
+        }
       }
 
     } else if (strcmp(method, "webauthn_get_info") == 0 ||
@@ -959,7 +977,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   }
 
   /* Cleanup — wipe sensitive material */
-  if (plain) { signet_memzero(plain, strlen(plain)); free(plain); }
+  if (plain) { signet_memzero(plain, plain_len); free(plain); }
   if (resp_json) { signet_memzero(resp_json, strlen(resp_json)); free(resp_json); }
   if (enc_resp) { free(enc_resp); }
   free(enc_err);

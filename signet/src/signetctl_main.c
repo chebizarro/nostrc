@@ -36,7 +36,7 @@
 
 #include <secure_buf.h>
 
-#define SIGNETCTL_VERSION "0.2.0"
+#define SIGNETCTL_VERSION "0.3.0"
 #define SIGNETCTL_TIMEOUT_SEC 10
 #define SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT 64
 

@@ -196,6 +196,7 @@ typedef struct {
   SignetNip46Server *srv;
   char *db_path;
   char *policy_path;
+  char *audit_path;
   char bunker_sk_hex[65];
   char bunker_pk_hex[65];
   char stew_sk_hex[65];
@@ -233,8 +234,10 @@ static void n46_setup(N46Fixture *f) {
     CHECK(g_file_set_contents(f->policy_path, policy, -1, NULL));
   }
 
-  SignetAuditLoggerConfig alc = { .path = NULL, .to_stdout = false, .flush_each_write = false };
+  f->audit_path = make_temp_path("/tmp/signet-test-n46audit-XXXXXX.log");
+  SignetAuditLoggerConfig alc = { .path = f->audit_path, .to_stdout = false, .flush_each_write = true };
   f->audit = signet_audit_logger_new(&alc);
+  CHECK(f->audit != NULL);
 
   SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
   f->ks = signet_key_store_new(f->audit, &kcfg);
@@ -263,10 +266,13 @@ static void n46_teardown(N46Fixture *f) {
   signet_policy_engine_free(f->pe);
   signet_policy_store_free(f->ps);
   signet_key_store_free(f->ks);
+  signet_audit_logger_free(f->audit);
   unlink(f->db_path);
   g_free(f->db_path);
   unlink(f->policy_path);
   g_free(f->policy_path);
+  unlink(f->audit_path);
+  g_free(f->audit_path);
   sodium_memzero(f->bunker_sk_hex, sizeof(f->bunker_sk_hex));
   sodium_memzero(f->stew_sk_hex, sizeof(f->stew_sk_hex));
   sodium_memzero(f->client_sk_hex, sizeof(f->client_sk_hex));
@@ -275,14 +281,15 @@ static void n46_teardown(N46Fixture *f) {
 /* Send one NIP-46 request from `client_sk/pk` and report whether it was
  * ALLOWED, judged by the auth_ok metrics counter delta (the server publishes
  * responses via relays, which are absent here). */
-static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk,
-                     const char *request_json, const char *event_id, int64_t now) {
+static bool n46_send_bytes(N46Fixture *f, const char *client_sk, const char *client_pk,
+                           const uint8_t *request, size_t request_len,
+                           const char *event_id, int64_t now) {
   uint8_t sk[32], pk[32];
   CHECK(hex_to_bytes(client_sk, sk, 32) == 0);
   CHECK(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
   char *cipher = NULL;
-  CHECK(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)request_json,
-                                strlen(request_json), &cipher) == 0 && cipher);
+  CHECK(nostr_nip44_encrypt_v2(sk, pk, request,
+                                request_len, &cipher) == 0 && cipher);
   sodium_memzero(sk, sizeof(sk));
 
   gint ok_before = g_atomic_int_get(&g_signet_metrics.auth_ok);
@@ -290,6 +297,12 @@ static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk
                                          client_pk, cipher, now, event_id, now);
   free(cipher);
   return g_atomic_int_get(&g_signet_metrics.auth_ok) > ok_before;
+}
+
+static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk,
+                     const char *request_json, const char *event_id, int64_t now) {
+  return n46_send_bytes(f, client_sk, client_pk,
+      (const uint8_t *)request_json, strlen(request_json), event_id, now);
 }
 
 static bool n46_connect(N46Fixture *f, const char *client_sk, const char *client_pk,
@@ -321,6 +334,169 @@ static char *n46_read_binding(N46Fixture *f, const char *client_pk, int64_t now)
   int rc = signet_store_lookup_client_binding(st, client_pk, now, &agent, NULL);
   if (rc != 0) return NULL;
   return agent;
+}
+
+static void n46_expect_last_audit(N46Fixture *f, const char *method,
+                                  const char *status, const char *code) {
+  char *content = NULL;
+  CHECK(g_file_get_contents(f->audit_path, &content, NULL, NULL));
+  char **lines = g_strsplit(content, "\n", -1);
+  const char *last = NULL;
+  for (size_t i = 0; lines[i]; i++)
+    if (lines[i][0]) last = lines[i];
+  CHECK(last != NULL);
+  char *m = g_strdup_printf("\"method\":\"%s\"", method);
+  char *st = g_strdup_printf("\"status\":\"%s\"", status);
+  char *cd = g_strdup_printf("\"code\":\"%s\"", code);
+  CHECK(strstr(last, m) != NULL);
+  CHECK(strstr(last, st) != NULL);
+  CHECK(strstr(last, cd) != NULL);
+  g_free(m);
+  g_free(st);
+  g_free(cd);
+  g_strfreev(lines);
+  g_free(content);
+}
+
+static void test_fenced_nip46_nip44_contract(void) {
+  N46Fixture f;
+  n46_setup(&f);
+  int64_t now = (int64_t)time(NULL);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
+                    "one-time-secret", "crypto-connect", now));
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(f.ks, "stew", f.client_pk_hex,
+                                        300, &epoch, &expiry) == 0);
+  CHECK(epoch == 1);
+  char *req = g_strdup_printf(
+      "{\"id\":\"legacy\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-legacy", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "crypto_failed");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"current\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\",\"1\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-current", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "ok", "ok");
+  char *escaped_nul = g_strdup_printf(
+      "{\"id\":\"escaped-nul\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\\u0000hidden\",\"1\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+                 escaped_nul, "crypto-escaped-nul", now);
+  n46_expect_last_audit(&f, "unknown", "error", "invalid_request");
+  g_free(escaped_nul);
+  const char hidden[] = "\0hidden";
+  GByteArray *literal_nul = g_byte_array_new();
+  g_byte_array_append(literal_nul, (const uint8_t *)req, strlen(req));
+  g_byte_array_append(literal_nul, (const uint8_t *)hidden, sizeof(hidden) - 1);
+  (void)n46_send_bytes(&f, f.client_sk_hex, f.client_pk_hex,
+                       literal_nul->data, literal_nul->len,
+                       "crypto-literal-nul", now);
+  n46_expect_last_audit(&f, "unknown", "error", "decrypt_failed");
+  g_byte_array_unref(literal_nul);
+  char other_sk[65], other_pk[65];
+  gen_keypair_hex(other_sk, other_pk);
+  CHECK(signet_store_bind_client(signet_key_store_get_store(f.ks),
+      "stew", f.stew_pk_hex, other_pk, NULL, now) == 0);
+  (void)n46_send(&f, other_sk, other_pk, req, "crypto-wrong-owner", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "crypto_failed");
+  sodium_memzero(other_sk, sizeof(other_sk));
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"wrong\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\",\"2\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-wrong", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "crypto_failed");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"malformed\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\",\"01x\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-malformed", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "invalid_params");
+  g_free(req);
+  char *encoded = g_base64_encode((const guchar *)"\0\xff\x80", 3);
+  req = g_strdup_printf(
+      "{\"id\":\"binary\",\"method\":\"nip44_encrypt_b64\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, encoded);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-binary", now);
+  n46_expect_last_audit(&f, "nip44_encrypt_b64", "ok", "ok");
+  g_free(req);
+  g_free(encoded);
+  char *ciphertext = NULL;
+  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex, epoch,
+      "nip44_encrypt", f.stew_pk_hex, "unseal", &ciphertext) == 0);
+  req = g_strdup_printf(
+      "{\"id\":\"decrypt\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-decrypt", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "ok", "ok");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"decrypt-legacy\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-decrypt-legacy", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "error", "crypto_failed");
+  g_free(req);
+  g_free(ciphertext);
+  char *binary = g_base64_encode((const guchar *)"\0\xff\x80", 3);
+  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex, epoch,
+      "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
+  req = g_strdup_printf(
+      "{\"id\":\"binary-text\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-binary-text", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "error", "invalid_plaintext");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"binary-decrypt\",\"method\":\"nip44_decrypt_b64\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-binary-decrypt", now);
+  n46_expect_last_audit(&f, "nip44_decrypt_b64", "ok", "ok");
+  g_free(req);
+  g_free(ciphertext);
+  g_free(binary);
+  const uint8_t invalid_utf8[] = {0xff, 0xfe, 0x80};
+  binary = g_base64_encode(invalid_utf8, sizeof(invalid_utf8));
+  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex, epoch,
+      "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
+  req = g_strdup_printf(
+      "{\"id\":\"invalid-utf8\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-invalid-utf8", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "error", "invalid_plaintext");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"invalid-utf8-b64\",\"method\":\"nip44_decrypt_b64\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-invalid-utf8-b64", now);
+  n46_expect_last_audit(&f, "nip44_decrypt_b64", "ok", "ok");
+  g_free(req);
+  g_free(ciphertext);
+  g_free(binary);
+  signet_nip46_server_free(f.srv);
+  n46_new_server(&f);
+  req = g_strdup_printf(
+      "{\"id\":\"restart\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"after restart\",\"1\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-restart", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "ok", "ok");
+  g_free(req);
+  int64_t revoked = 0;
+  CHECK(signet_key_store_writer_revoke(f.ks, "stew", &revoked) == 0);
+  req = g_strdup_printf(
+      "{\"id\":\"revoked\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\",\"1\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-revoked", now);
+  n46_expect_last_audit(&f, "nip44_encrypt", "error", "crypto_failed");
+  g_free(req);
+  n46_teardown(&f);
+  printf("test_fenced_nip46_nip44_contract: PASS\n");
 }
 
 static void test_fenced_nip46_signing_contract(void) {
@@ -597,6 +773,7 @@ int main(void) {
   test_rotation_invalidates_binding();
   test_reprovision_does_not_resurrect_binding();
   test_fenced_nip46_signing_contract();
+  test_fenced_nip46_nip44_contract();
 
   printf("All client binding tests passed.\n");
   return 0;
