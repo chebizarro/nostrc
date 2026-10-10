@@ -1545,6 +1545,16 @@ on_account_relays_changed(GhOnboardingView *self)
 }
 
 static void
+account_add_remote_activated(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  /* The shared "no identities" / "store unavailable" pages offer a remote
+   * signer too: Grotto is not required to sign in. */
+  gtk_widget_activate_action(GTK_WIDGET(data), "onboarding.add-remote-signer", NULL);
+}
+
+static void
 account_refresh_activated(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
   (void)action;
@@ -1665,6 +1675,9 @@ gh_onboarding_view_new(const GhInboxSetupConfig *config)
   g_autoptr(GSimpleAction) refresh = g_simple_action_new("refresh", NULL);
   g_signal_connect(refresh, "activate", G_CALLBACK(account_refresh_activated), self);
   g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(refresh));
+  g_autoptr(GSimpleAction) add_remote = g_simple_action_new("add-remote", NULL);
+  g_signal_connect(add_remote, "activate", G_CALLBACK(account_add_remote_activated), self);
+  g_action_map_add_action(G_ACTION_MAP(group), G_ACTION(add_remote));
   gtk_widget_insert_action_group(GTK_WIDGET(self), "account", G_ACTION_GROUP(group));
 
   g_signal_connect_object(self->config.accounts, "changed", G_CALLBACK(on_accounts_changed), self,

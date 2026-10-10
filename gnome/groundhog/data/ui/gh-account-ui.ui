@@ -17,38 +17,72 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <object class="AdwStatusPage" id="account_store_unavailable">
     <property name="icon-name">dialog-warning-symbolic</property>
     <property name="title" translatable="yes">Account Store Unavailable</property>
-    <property name="description" translatable="yes">Groundhog could not read the signer's identity list. Unlock the keyring or start the Nostr signer, then try again.</property>
+    <property name="description" translatable="yes">Groundhog could not read Grotto's identity list. Unlock the keyring or start Grotto and try again, or sign in with a remote signer (NIP-46) such as Amber or a bunker.</property>
     <style>
       <class name="groundhog-shell-status"/>
     </style>
     <property name="child">
-      <object class="GtkButton" id="account_store_unavailable_retry">
-        <property name="label" translatable="yes">_Try Again</property>
-        <property name="use-underline">true</property>
+      <object class="GtkBox">
+        <property name="orientation">1</property>
+        <property name="spacing">12</property>
         <property name="halign">3</property>
-        <property name="action-name">account.refresh</property>
-        <style>
-          <class name="pill"/>
-        </style>
+        <child>
+          <object class="GtkButton" id="account_store_unavailable_remote">
+            <property name="label" translatable="yes">Add _Remote Signer…</property>
+            <property name="use-underline">true</property>
+            <property name="action-name">account.add-remote</property>
+            <style>
+              <class name="pill"/>
+              <class name="suggested-action"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="account_store_unavailable_retry">
+            <property name="label" translatable="yes">_Try Again</property>
+            <property name="use-underline">true</property>
+            <property name="action-name">account.refresh</property>
+            <style>
+              <class name="pill"/>
+            </style>
+          </object>
+        </child>
       </object>
     </property>
   </object>
   <object class="AdwStatusPage" id="account_none">
     <property name="icon-name">avatar-default-symbolic</property>
     <property name="title" translatable="yes">No Nostr Identities</property>
-    <property name="description" translatable="yes">Add or import a key with the Nostr signer, then refresh. Groundhog never stores or reads private keys.</property>
+    <property name="description" translatable="yes">Sign in with a remote signer (NIP-46) such as Amber or a bunker, or add a key to Grotto and refresh. Groundhog never stores or reads private keys.</property>
     <style>
       <class name="groundhog-shell-status"/>
     </style>
     <property name="child">
-      <object class="GtkButton" id="account_none_refresh">
-        <property name="label" translatable="yes">_Refresh</property>
-        <property name="use-underline">true</property>
+      <object class="GtkBox">
+        <property name="orientation">1</property>
+        <property name="spacing">12</property>
         <property name="halign">3</property>
-        <property name="action-name">account.refresh</property>
-        <style>
-          <class name="pill"/>
-        </style>
+        <child>
+          <object class="GtkButton" id="account_none_remote">
+            <property name="label" translatable="yes">Add _Remote Signer…</property>
+            <property name="use-underline">true</property>
+            <property name="action-name">account.add-remote</property>
+            <style>
+              <class name="pill"/>
+              <class name="suggested-action"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="account_none_refresh">
+            <property name="label" translatable="yes">_Refresh</property>
+            <property name="use-underline">true</property>
+            <property name="action-name">account.refresh</property>
+            <style>
+              <class name="pill"/>
+            </style>
+          </object>
+        </child>
       </object>
     </property>
   </object>

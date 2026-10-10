@@ -311,6 +311,30 @@ pair_store_clear(PairStore *store)
   g_strfreev(store->relays);
 }
 
+static GtkButton *
+find_button(GtkWidget *widget, const gchar *label)
+{
+  if (GTK_IS_BUTTON(widget) && g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label) == 0)
+    return GTK_BUTTON(widget);
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkButton *found = find_button(child, label);
+    if (found) return found;
+  }
+  return NULL;
+}
+
+/* Clicks the alert's own response button, as a user does: AdwAlertDialog
+ * then closes itself before it emits "response" (emitting "response"
+ * directly hid nostrc-p15n5.3). */
+static void
+click_response(AdwAlertDialog *alert, const gchar *label)
+{
+  GtkButton *button = find_button(GTK_WIDGET(alert), label);
+  g_assert_nonnull(button);
+  g_signal_emit_by_name(button, "clicked");
+}
+
 static void
 wait_for_confirmation(AdwAlertDialog **alert)
 {
@@ -422,8 +446,15 @@ test_bunker_save_order(gconstpointer data)
   g_assert_cmpuint(store.save_calls, ==, 0);
   g_autofree gchar *current = g_settings_get_string(settings, "current-npub");
   g_assert_cmpstr(current, ==, "");
-  g_signal_emit_by_name(alert, "response", "save");
+  click_response(alert, "Save Remote Signer");
   g_object_unref(alert);
+  GtkLabel *details = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"));
+  GtkWidget *cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "cancel_button"));
+  /* Progress shows on the bunker tab, and Cancel stays available. */
+  g_assert_nonnull(strstr(gtk_label_get_text(details), "Saving"));
+  g_assert_true(gtk_widget_get_visible(cancel));
   gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(5, deadline, &expired);
   while (store.save_calls == 0 && !expired) g_main_context_iteration(NULL, TRUE);
@@ -473,6 +504,8 @@ test_bunker_save_order(gconstpointer data)
     GPtrArray *identities = gh_account_controller_get_identities(accounts);
     g_assert_true(!identities || identities->len == 0);
     g_assert_nonnull(strstr(gtk_label_get_text(error), "rejected save"));
+    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(gtk_widget_get_template_child(
+      GTK_WIDGET(dialog), GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"))), ==, "Not saved.");
   }
   if (!expired) g_source_remove(timer);
   if (fail_save) adw_dialog_close(ADW_DIALOG(dialog));

@@ -696,6 +696,13 @@ gh_account_controller_new_full(GSettings *settings, GDBusConnection *bus,
                                                            list_data, NULL);
 }
 
+GhNip46CredentialStore *
+gh_account_controller_get_credentials(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), NULL);
+  return self->credentials;
+}
+
 GhAccountController *
 gh_account_controller_new_with_credentials(GSettings *settings,
                                     GDBusConnection *bus,

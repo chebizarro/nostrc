@@ -68,6 +68,10 @@ GhAccountController *gh_account_controller_new_full_with_remote_list(GSettings *
                                            GDBusConnection *bus, GhAccountListFunc grotto_list,
                                            gpointer grotto_data, GhAccountListFunc remote_list,
                                            gpointer remote_data);
+/* The credential store whose listing feeds the remote identities, or NULL for
+ * the remote-list test seam. Pairing must save into this same store so the
+ * new identity is listed and selectable. */
+GhNip46CredentialStore *gh_account_controller_get_credentials(GhAccountController *self);
 /* Only for fake remote-list tests; set before selecting a remote account. */
 void gh_account_controller_set_session_factory_for_test(GhAccountController *self,
                                            GhAccountSessionFactory factory,

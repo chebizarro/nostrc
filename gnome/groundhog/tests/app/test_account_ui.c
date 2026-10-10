@@ -175,6 +175,16 @@ assert_account_widgets(GhWindow *window)
       g_assert_null(button);
       continue;
     }
+    if (GTK_IS_BOX(button)) {
+      /* No identities / store unavailable: Add Remote Signer… first, then
+       * the page's own action (nostrc-p15n5.3). */
+      GtkWidget *remote = gtk_widget_get_first_child(button);
+      g_assert_true(GTK_IS_BUTTON(remote));
+      g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(remote)), ==, "Add _Remote Signer…");
+      g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(remote)), ==,
+                      "account.add-remote");
+      button = gtk_widget_get_next_sibling(remote);
+    }
     g_assert_true(GTK_IS_BUTTON(button));
     g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, pages[i].action_label);
     g_assert_true(gtk_button_get_use_underline(GTK_BUTTON(button)));
@@ -241,8 +251,14 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_cmpstr(adw_window_title_get_subtitle(title), ==, "");
 
   GtkWidget *visible = gtk_stack_get_child_by_name(stack, "account-none");
-  GtkWidget *action = adw_status_page_get_child(ADW_STATUS_PAGE(visible));
+  GtkWidget *action = find_action(visible, "account.refresh");
   g_assert_true(GTK_IS_BUTTON(action));
+  /* Without identities, and when the store is unavailable, the page offers a
+   * remote signer (nostrc-p15n5.3). */
+  GtkWidget *remote = find_action(visible, "account.add-remote");
+  g_assert_true(GTK_IS_BUTTON(remote));
+  g_assert_true(GTK_IS_BUTTON(find_action(
+    gtk_stack_get_child_by_name(stack, "account-store-unavailable"), "account.add-remote")));
   /* Reaching an actionable empty state must hand keyboard/screen-reader
    * focus straight to its named focus target, its Refresh button. */
   g_assert_true(gtk_window_get_focus(GTK_WINDOW(window)) == action);
@@ -281,6 +297,14 @@ test_focus_and_announce_only_on_transition(void)
   g_assert_true(focus == GTK_WIDGET(account_button) ||
                 gtk_widget_is_ancestor(focus, GTK_WIDGET(account_button)));
   g_assert_cmpuint(gh_account_ui_get_announcements(window), ==, announced);
+
+  /* In the main window, the page's remote signer button opens the pair
+   * dialog. */
+  g_assert_null(find_pair_dialog(GTK_WIDGET(window)));
+  g_signal_emit_by_name(remote, "clicked");
+  GhNip46PairDialog *pair = find_pair_dialog(GTK_WIDGET(window));
+  g_assert_nonnull(pair);
+  adw_dialog_close(ADW_DIALOG(pair));
 
   /* Destroying the window drops gh-account-ui's own controller reference
    * (see account_ui_free); only after that do we drop ours and wait for

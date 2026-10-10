@@ -676,7 +676,10 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
   ui->title = gh_sidebar_page_get_window_title(sidebar);
   ui->stack = gh_sidebar_page_get_stack(sidebar);
   ui->toasts = gh_window_get_toasts(window);
-  ui->credentials = gh_nip46_credential_store_new();
+  /* Pair and remove through the store the controller lists, so a saved
+   * remote signer is the identity the controller then selects. */
+  GhNip46CredentialStore *listed = gh_account_controller_get_credentials(controller);
+  ui->credentials = listed ? g_object_ref(listed) : gh_nip46_credential_store_new();
   g_object_set_data_full(G_OBJECT(window), "groundhog-account-ui", ui, account_ui_free);
 
   for (guint i = 0; i < G_N_ELEMENTS(account_pages); i++) {
