@@ -235,6 +235,7 @@ static char *self_principal(void) {
 typedef struct {
   GTestDBus  *tbus;
   GSubprocess *keyring;  /* phase 3 only: gnome-keyring-daemon on tbus */
+  GSubprocess *secrets;  /* identity phase only: this executable as a fake Secret Service */
   GSubprocess *daemon;
   GDBusConnection *bus;
   char *tmpdir;
@@ -293,6 +294,7 @@ static void teardown_at_exit(void) {
   if (ctx) {
     if (ctx->daemon) g_subprocess_force_exit(ctx->daemon);
     if (ctx->keyring) g_subprocess_force_exit(ctx->keyring);
+    if (ctx->secrets) g_subprocess_force_exit(ctx->secrets);
     if (ctx->bus) g_dbus_connection_set_exit_on_close(ctx->bus, FALSE);
     if (ctx->tbus) g_test_dbus_stop(ctx->tbus);
   }
@@ -516,6 +518,11 @@ static void ctx_teardown(Ctx *ctx) {
   if (ctx->keyring) {
     g_subprocess_force_exit(ctx->keyring);
     (void)g_subprocess_wait(ctx->keyring, NULL, NULL);
+  }
+  if (ctx->secrets) {
+    g_subprocess_force_exit(ctx->secrets);
+    (void)g_subprocess_wait(ctx->secrets, NULL, NULL);
+    g_clear_object(&ctx->secrets);
   }
   if (ctx->bus) g_object_unref(ctx->bus);
   if (ctx->tbus) {
@@ -743,6 +750,16 @@ static void expect_remote_error(GError *err, const char *name) {
     g_printerr("expected %s, got %s (%s)\n", name, remote ? remote : "(none)", err->message);
   CHECK(g_strcmp0(remote, name) == 0);
   g_free(remote);
+}
+
+/* ListIdentities: the npubs, or NULL with *err set. */
+static gchar **list_identities(Ctx *ctx, GError **err) {
+  GVariant *r = call(ctx->bus, "ListIdentities", NULL, "(as)", err);
+  if (!r) return NULL;
+  gchar **ids = NULL;
+  g_variant_get(r, "(^as)", &ids);
+  g_variant_unref(r);
+  return ids;
 }
 
 /* ---- approval round-trips ------------------------------------------------ */
@@ -2014,6 +2031,24 @@ static void test_selector_not_key_material(Ctx *ctx) {
   free(onpub); free(onsec); free(osk); free(opk);
 }
 
+/* The environment key is an identity the signer holds (nostrc-sic82): its
+ * hex and npub select it (test_selector_not_key_material), so ListIdentities
+ * lists it, here with no key store on the bus. Skipped on a Keychain build,
+ * whose store is the developer's login keychain. */
+static void test_list_identities_env_key(Ctx *ctx) {
+#if defined(__APPLE__) && !defined(NIP55L_TEST_HAVE_LIBSECRET)
+  (void)ctx;
+  g_printerr("SKIP: ListIdentities with an environment key: the Keychain is the login keychain\n");
+#else
+  GError *err = NULL;
+  gchar **ids = list_identities(ctx, &err);
+  if (!ids) { g_printerr("ListIdentities (environment key): %s\n", err ? err->message : "?"); exit(1); }
+  CHECK(g_strv_length(ids) == 1);
+  CHECK(g_strcmp0(ids[0], ctx->npub) == 0);
+  g_strfreev(ids);
+#endif
+}
+
 static void test_get_relays_paths(Ctx *ctx, gboolean expect_ok) {
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "GetRelays", NULL, "(s)", &err);
@@ -2552,6 +2587,407 @@ static void run_phase3(void) {
   g_print("PASS phase 3 (real keyring: legacy migration incl. gnostr client keystore "
           "past a v1 marker, unified StoreKey, marker)\n");
 }
+
+/* ---------------------------------------------------------------------------
+ * Identity store phase: ListIdentities and selectors against the key store
+ * (nostrc-sic82, nostrc-sjyl3, nostrc-poc10)
+ *
+ * `--fake-secret-service MODE SK_HEX...` runs this executable as a minimal
+ * org.freedesktop.secrets on the test bus, holding each key as an
+ * org.gnostr.Signer/identity item of this user, as StoreKey writes it. It
+ * implements only what the daemon calls. MODE "plain" refuses the
+ * dh-ietf1024-sha256-aes128-cbc-pkcs7 session algorithm with NotSupported
+ * and accepts "plain" (a plain-only provider, which crashed libsecret
+ * 0.21.8 inside the daemon); MODE "none" refuses every session.
+ * ------------------------------------------------------------------------- */
+
+#define FSS_NAME       "org.freedesktop.secrets"
+#define FSS_PATH       "/org/freedesktop/secrets"
+#define FSS_COLLECTION FSS_PATH "/collection/fake"
+#define ERR_INTERNAL   "org.nostr.Signer.Error.Internal"
+#define ERR_NO_KEY     "org.nostr.Signer.Error.NoKeyConfigured"
+
+static const char fss_xml[] =
+  "<node>"
+  " <interface name='org.freedesktop.Secret.Service'>"
+  "  <method name='OpenSession'><arg type='s' direction='in'/><arg type='v' direction='in'/>"
+  "   <arg type='v' direction='out'/><arg type='o' direction='out'/></method>"
+  "  <method name='SearchItems'><arg type='a{ss}' direction='in'/>"
+  "   <arg type='ao' direction='out'/><arg type='ao' direction='out'/></method>"
+  "  <method name='Unlock'><arg type='ao' direction='in'/>"
+  "   <arg type='ao' direction='out'/><arg type='o' direction='out'/></method>"
+  "  <method name='GetSecrets'><arg type='ao' direction='in'/><arg type='o' direction='in'/>"
+  "   <arg type='a{o(oayays)}' direction='out'/></method>"
+  "  <property name='Collections' type='ao' access='read'/>"
+  " </interface>"
+  " <interface name='org.freedesktop.Secret.Item'>"
+  "  <method name='GetSecret'><arg type='o' direction='in'/><arg type='(oayays)' direction='out'/></method>"
+  "  <property name='Locked' type='b' access='read'/>"
+  "  <property name='Attributes' type='a{ss}' access='read'/>"
+  "  <property name='Label' type='s' access='read'/>"
+  "  <property name='Created' type='t' access='read'/>"
+  "  <property name='Modified' type='t' access='read'/>"
+  " </interface>"
+  " <interface name='org.freedesktop.Secret.Session'><method name='Close'/></interface>"
+  "</node>";
+
+typedef struct Fss Fss;
+typedef struct { Fss *fss; char *path; GHashTable *attrs; char *secret; } FssItem;
+struct Fss {
+  gboolean plain_ok;
+  GPtrArray *items;      /* FssItem* */
+  GHashTable *sessions;  /* open session paths */
+  guint next_session;
+  GDBusNodeInfo *node;
+  GDBusConnection *bus;
+};
+
+static GVariant *fss_secret(const FssItem *it, const char *session) {
+  return g_variant_new("(o@ay@ays)", session,
+                       g_variant_new_array(G_VARIANT_TYPE_BYTE, NULL, 0),
+                       g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, it->secret, strlen(it->secret), 1),
+                       "text/plain");
+}
+
+static FssItem *fss_find(Fss *f, const char *path) {
+  for (guint i = 0; i < f->items->len; i++) {
+    FssItem *it = g_ptr_array_index(f->items, i);
+    if (strcmp(it->path, path) == 0) return it;
+  }
+  return NULL;
+}
+
+static void fss_session_call(GDBusConnection *c, const gchar *sender, const gchar *path,
+                             const gchar *iface, const gchar *method, GVariant *params,
+                             GDBusMethodInvocation *inv, gpointer ud) {
+  (void)c; (void)sender; (void)iface; (void)method; (void)params;
+  g_hash_table_remove(((Fss *)ud)->sessions, path);
+  g_dbus_method_invocation_return_value(inv, NULL);
+}
+
+static void fss_service_call(GDBusConnection *c, const gchar *sender, const gchar *path,
+                             const gchar *iface, const gchar *method, GVariant *params,
+                             GDBusMethodInvocation *inv, gpointer ud) {
+  (void)sender; (void)path; (void)iface;
+  Fss *f = ud;
+  if (g_strcmp0(method, "OpenSession") == 0) {
+    const char *alg = NULL;
+    g_variant_get(params, "(&sv)", &alg, NULL);
+    if (!f->plain_ok || g_strcmp0(alg, "plain") != 0) {
+      g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.NotSupported",
+                                                 "session algorithm not supported");
+      return;
+    }
+    char *sp = g_strdup_printf(FSS_PATH "/session/s%u", ++f->next_session);
+    static const GDBusInterfaceVTable vt = { fss_session_call, NULL, NULL, { 0 } };
+    g_dbus_connection_register_object(c, sp,
+        g_dbus_node_info_lookup_interface(f->node, "org.freedesktop.Secret.Session"),
+        &vt, f, NULL, NULL);
+    g_hash_table_add(f->sessions, g_strdup(sp));
+    g_dbus_method_invocation_return_value(inv,
+        g_variant_new("(@vo)", g_variant_new_variant(g_variant_new_string("")), sp));
+    g_free(sp);
+  } else if (g_strcmp0(method, "SearchItems") == 0) {
+    GVariant *want = g_variant_get_child_value(params, 0);
+    GVariantBuilder found, locked;
+    g_variant_builder_init(&found, G_VARIANT_TYPE("ao"));
+    g_variant_builder_init(&locked, G_VARIANT_TYPE("ao"));
+    for (guint i = 0; i < f->items->len; i++) {
+      FssItem *it = g_ptr_array_index(f->items, i);
+      gboolean match = TRUE;
+      GVariantIter iter;
+      const char *k, *v;
+      g_variant_iter_init(&iter, want);
+      while (match && g_variant_iter_next(&iter, "{&s&s}", &k, &v))
+        match = g_strcmp0(g_hash_table_lookup(it->attrs, k), v) == 0;
+      if (match) g_variant_builder_add(&found, "o", it->path);
+    }
+    g_variant_unref(want);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(aoao)", &found, &locked));
+  } else if (g_strcmp0(method, "Unlock") == 0) {
+    GVariant *objs = g_variant_get_child_value(params, 0);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(@aoo)", objs, "/"));
+  } else if (g_strcmp0(method, "GetSecrets") == 0) {
+    GVariantIter *paths = NULL;
+    const char *session = NULL, *p = NULL;
+    g_variant_get(params, "(ao&o)", &paths, &session);
+    if (!g_hash_table_contains(f->sessions, session)) {
+      g_variant_iter_free(paths);
+      g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.Secret.Error.NoSession",
+                                                 "no such session");
+      return;
+    }
+    GVariantBuilder out;
+    g_variant_builder_init(&out, G_VARIANT_TYPE("a{o(oayays)}"));
+    while (g_variant_iter_next(paths, "&o", &p)) {
+      FssItem *it = fss_find(f, p);
+      if (it) g_variant_builder_add(&out, "{o@(oayays)}", it->path, fss_secret(it, session));
+    }
+    g_variant_iter_free(paths);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(a{o(oayays)})", &out));
+  } else {
+    g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod", method);
+  }
+}
+
+static GVariant *fss_service_prop(GDBusConnection *c, const gchar *sender, const gchar *path,
+                                  const gchar *iface, const gchar *prop, GError **error, gpointer ud) {
+  (void)c; (void)sender; (void)path; (void)iface; (void)error; (void)ud;
+  if (g_strcmp0(prop, "Collections") == 0) {
+    const gchar *cols[] = { FSS_COLLECTION, NULL };
+    return g_variant_new_objv(cols, -1);
+  }
+  return NULL;
+}
+
+static void fss_item_call(GDBusConnection *c, const gchar *sender, const gchar *path,
+                          const gchar *iface, const gchar *method, GVariant *params,
+                          GDBusMethodInvocation *inv, gpointer ud) {
+  (void)c; (void)sender; (void)path; (void)iface;
+  FssItem *it = ud;
+  const char *session = NULL;
+  if (g_strcmp0(method, "GetSecret") != 0) {
+    g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod", method);
+    return;
+  }
+  g_variant_get(params, "(&o)", &session);
+  if (!g_hash_table_contains(it->fss->sessions, session)) {
+    g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.Secret.Error.NoSession",
+                                               "no such session");
+    return;
+  }
+  g_dbus_method_invocation_return_value(inv, g_variant_new("(@(oayays))", fss_secret(it, session)));
+}
+
+static GVariant *fss_item_prop(GDBusConnection *c, const gchar *sender, const gchar *path,
+                               const gchar *iface, const gchar *prop, GError **error, gpointer ud) {
+  (void)c; (void)sender; (void)path; (void)iface; (void)error;
+  FssItem *it = ud;
+  if (g_strcmp0(prop, "Locked") == 0) return g_variant_new_boolean(FALSE);
+  if (g_strcmp0(prop, "Label") == 0) return g_variant_new_string("Gnostr Identity Key");
+  if (g_strcmp0(prop, "Created") == 0 || g_strcmp0(prop, "Modified") == 0)
+    return g_variant_new_uint64(1700000000);
+  if (g_strcmp0(prop, "Attributes") == 0) {
+    GVariantBuilder b;
+    g_variant_builder_init(&b, G_VARIANT_TYPE("a{ss}"));
+    GHashTableIter iter;
+    gpointer k, v;
+    g_hash_table_iter_init(&iter, it->attrs);
+    while (g_hash_table_iter_next(&iter, &k, &v)) g_variant_builder_add(&b, "{ss}", k, v);
+    return g_variant_builder_end(&b);
+  }
+  return NULL;
+}
+
+static void fss_on_closed(GDBusConnection *c, gboolean vanished, GError *e, gpointer loop) {
+  (void)c; (void)vanished; (void)e;
+  g_main_loop_quit(loop);
+}
+
+static int fake_secret_service(int argc, char **argv) {
+  GError *err = NULL;
+  const char *addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+  if (argc < 2 || !addr) { g_printerr("fake-secret-service: usage/bus\n"); return 1; }
+  Fss f = { 0 };
+  f.plain_ok = g_strcmp0(argv[1], "plain") == 0;
+  f.items = g_ptr_array_new();
+  f.sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  f.node = g_dbus_node_info_new_for_xml(fss_xml, &err);
+  if (!f.node) { g_printerr("fake-secret-service: xml: %s\n", err->message); return 1; }
+  f.bus = g_dbus_connection_new_for_address_sync(addr,
+      G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+      NULL, NULL, &err);
+  if (!f.bus) { g_printerr("fake-secret-service: connect: %s\n", err->message); return 1; }
+
+  static const GDBusInterfaceVTable service_vt = { fss_service_call, fss_service_prop, NULL, { 0 } };
+  static const GDBusInterfaceVTable item_vt = { fss_item_call, fss_item_prop, NULL, { 0 } };
+  if (!g_dbus_connection_register_object(f.bus, FSS_PATH,
+          g_dbus_node_info_lookup_interface(f.node, "org.freedesktop.Secret.Service"),
+          &service_vt, &f, NULL, &err)) {
+    g_printerr("fake-secret-service: register: %s\n", err->message);
+    return 1;
+  }
+  gchar uid_buf[32];
+  g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
+  for (int i = 2; i < argc; i++) {
+    char *pk_hex = nostr_key_get_public(argv[i]);
+    uint8_t pk[32];
+    char *npub = NULL;
+    if (!pk_hex || !nostr_hex2bin(pk, pk_hex, 32) || nostr_nip19_encode_npub(pk, &npub) != 0) {
+      g_printerr("fake-secret-service: bad key #%d\n", i);
+      return 1;
+    }
+    FssItem *it = g_new0(FssItem, 1);
+    it->fss = &f;
+    it->path = g_strdup_printf(FSS_COLLECTION "/i%d", i - 1);
+    it->secret = g_strdup(argv[i]);
+    it->attrs = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+    g_hash_table_insert(it->attrs, (gpointer)"xdg:schema", g_strdup(GNOSTR_SECRET_SCHEMA_NAME));
+    g_hash_table_insert(it->attrs, (gpointer)"key_id", g_strdup(npub));
+    g_hash_table_insert(it->attrs, (gpointer)"npub", g_strdup(npub));
+    g_hash_table_insert(it->attrs, (gpointer)"owner_uid", g_strdup(uid_buf));
+    g_hash_table_insert(it->attrs, (gpointer)"hardware", g_strdup("false"));
+    g_hash_table_insert(it->attrs, (gpointer)"curve", g_strdup("secp256k1"));
+    g_hash_table_insert(it->attrs, (gpointer)"origin", g_strdup("software"));
+    g_hash_table_insert(it->attrs, (gpointer)"label", g_strdup(""));
+    g_ptr_array_add(f.items, it);
+    if (!g_dbus_connection_register_object(f.bus, it->path,
+            g_dbus_node_info_lookup_interface(f.node, "org.freedesktop.Secret.Item"),
+            &item_vt, it, NULL, &err)) {
+      g_printerr("fake-secret-service: register item: %s\n", err->message);
+      return 1;
+    }
+    free(pk_hex);
+    free(npub);
+  }
+  /* Objects first, then the name: a client that sees the name finds them. */
+  GVariant *r = g_dbus_connection_call_sync(f.bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+      "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", FSS_NAME, 4u),
+      G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+  if (!r) { g_printerr("fake-secret-service: RequestName: %s\n", err->message); return 1; }
+  g_variant_unref(r);
+  GMainLoop *loop = g_main_loop_new(NULL, FALSE);
+  g_signal_connect(f.bus, "closed", G_CALLBACK(fss_on_closed), loop);
+  g_main_loop_run(loop);
+  return 0;
+}
+
+typedef struct { const char *mode; const char *stored_sk; } FakeSecrets;
+
+/* Pre-daemon hook: the fake Secret Service holding a stored key and a copy
+ * of the fixture's environment key. */
+static void fake_secrets_pre_daemon(Ctx *ctx, gpointer data) {
+  const FakeSecrets *fs = data;
+  GError *err = NULL;
+  char *exe = self_exe();
+  ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
+                                  "--fake-secret-service", fs->mode, fs->stored_sk, ctx->sk_hex, NULL);
+  g_free(exe);
+  if (!ctx->secrets) { g_printerr("spawn fake secret service: %s\n", err ? err->message : "?"); exit(1); }
+  wait_for_named(ctx->bus, FSS_NAME, 20);
+}
+
+/* Restart the daemon, with or without the fixture's environment key. */
+static void respawn_daemon(Ctx *ctx, gboolean env_key) {
+  GError *err = NULL;
+  g_subprocess_force_exit(ctx->daemon);
+  (void)g_subprocess_wait(ctx->daemon, NULL, NULL);
+  g_clear_object(&ctx->daemon);
+  wait_for_vanished(ctx->bus, BUS_NAME, 20);
+  if (!env_key) g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  ctx->daemon = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE |
+                                 (g_getenv("NIP55L_TEST_DAEMON_LOG") ? 0 : G_SUBPROCESS_FLAGS_STDERR_SILENCE),
+                                 &err, NIP55L_DAEMON_PATH, NULL);
+  g_setenv("NOSTR_SIGNER_SECKEY_HEX", ctx->sk_hex, TRUE);
+  if (!ctx->daemon) { g_printerr("respawn daemon: %s\n", err ? err->message : "?"); exit(1); }
+  wait_for_name(ctx->bus, 20);
+}
+
+/* SignEvent(kind 1) with @selector: the signed event's pubkey, or NULL with
+ * *err set. */
+static char *sign_with(Ctx *ctx, const char *selector, GError **err) {
+  GVariant *r = call(ctx->bus, "SignEvent",
+                     g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"id\"}",
+                                   selector, "contract-test"), "(s)", err);
+  if (!r) return NULL;
+  const char *js = NULL;
+  g_variant_get(r, "(&s)", &js);
+  NostrEvent *ev = nostr_event_new();
+  CHECK(nostr_event_deserialize_signed(ev, js, NULL) == NOSTR_EVENT_VALIDATION_OK);
+  CHECK(nostr_event_validate(ev, NULL) == NOSTR_EVENT_VALIDATION_OK);
+  char *pk = g_strdup(nostr_event_get_pubkey(ev));
+  nostr_event_free(ev);
+  g_variant_unref(r);
+  return pk;
+}
+
+static void run_identity_store_phase(void) {
+  GError *err = NULL;
+  TestKey stored, other;
+  test_key_new(&stored);
+  test_key_new(&other);
+
+  /* A plain-only Secret Service (nostrc-poc10). The stored key and a copy
+   * of the environment key are listed once each; an unknown selector is
+   * refused (it crashed the daemon in libsecret's session fallback); the
+   * stored key signs by selector over the plain session. */
+  {
+    FakeSecrets fs = { "plain", stored.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, "[event]\n@P|*=allow\n", &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    gchar **ids = list_identities(&ctx, &err);
+    if (!ids) { g_printerr("ListIdentities (plain store): %s\n", err ? err->message : "?"); exit(1); }
+    CHECK(g_strv_length(ids) == 2);
+    CHECK(g_strv_contains((const gchar *const *)ids, ctx.npub));
+    CHECK(g_strv_contains((const gchar *const *)ids, stored.npub));
+    g_strfreev(ids);
+
+    char *pk = sign_with(&ctx, other.pk_hex, &err);
+    CHECK(pk == NULL);
+    expect_remote_error(err, ERR_NO_KEY);
+    g_clear_error(&err);
+    pk = sign_with(&ctx, stored.pk_hex, &err);
+    if (!pk) { g_printerr("SignEvent(stored, plain session): %s\n", err ? err->message : "?"); exit(1); }
+    CHECK(g_strcmp0(pk, stored.pk_hex) == 0);
+    g_free(pk);
+    pk = sign_with(&ctx, stored.npub, &err);
+    CHECK(pk && g_strcmp0(pk, stored.pk_hex) == 0);
+    g_free(pk);
+    ctx_teardown(&ctx);
+  }
+
+  /* A Secret Service that refuses every session: no secret can be read, and
+   * every lookup fails with a typed error instead of a crash. Listing needs
+   * no secrets; the environment key still signs. */
+  {
+    FakeSecrets fs = { "none", stored.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, "[event]\n@P|*=allow\n", &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    char *pk = sign_with(&ctx, other.pk_hex, &err);
+    CHECK(pk == NULL);
+    expect_remote_error(err, ERR_NO_KEY);
+    g_clear_error(&err);
+    pk = sign_with(&ctx, stored.npub, &err);
+    CHECK(pk == NULL && err != NULL);
+    {
+      gchar *remote = g_dbus_error_get_remote_error(err);
+      if (!remote || !g_str_has_prefix(remote, "org.nostr.Signer.Error."))
+        g_printerr("SignEvent(stored, no session) = %s\n", err->message);
+      CHECK(remote && g_str_has_prefix(remote, "org.nostr.Signer.Error."));
+      g_free(remote);
+    }
+    g_clear_error(&err);
+    pk = sign_with(&ctx, "", &err);
+    CHECK(pk && g_strcmp0(pk, ctx.pk_hex) == 0);
+    g_free(pk);
+    gchar **ids = list_identities(&ctx, &err);
+    CHECK(ids && g_strv_length(ids) == 2);
+    g_strfreev(ids);
+    ctx_teardown(&ctx);
+  }
+
+  /* No Secret Service on the bus and no environment key (nostrc-sjyl3): the
+   * signer cannot tell which identities it holds, so ListIdentities fails
+   * instead of answering an empty list. */
+  {
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    respawn_daemon(&ctx, FALSE);
+    gchar **ids = list_identities(&ctx, &err);
+    if (ids) g_printerr("ListIdentities with no key store answered %u identities\n", g_strv_length(ids));
+    CHECK(ids == NULL);
+    expect_remote_error(err, ERR_INTERNAL);
+    g_clear_error(&err);
+    ctx_teardown(&ctx);
+  }
+
+  test_key_free(&stored);
+  test_key_free(&other);
+  g_print("PASS identity store (plain-only and session-refusing Secret Service, "
+          "environment key listed once, ListIdentities fails without a key store)\n");
+}
 #endif /* NIP55L_TEST_HAVE_LIBSECRET */
 
 /* ---------------------------------------------------------------------------
@@ -2633,6 +3069,10 @@ static void test_summon_approval_ui(Ctx *ctx) {
 
 int main(int argc, char **argv) {
   if (argc > 1 && g_strcmp0(argv[1], "--approval-ui") == 0) return approval_ui_helper();
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+  if (argc > 1 && g_strcmp0(argv[1], "--fake-secret-service") == 0)
+    return fake_secret_service(argc - 1, argv + 1);
+#endif
   /* First fixture: mutations disabled, relays absent. Exercises the read
    * lanes plus GetRelays=NotFound plus StoreKey=PermissionDenied. */
   {
@@ -2649,6 +3089,7 @@ int main(int argc, char **argv) {
     test_nip44_b64_roundtrip(&ctx);
     test_nip44_derive_conversation_key(&ctx);
     test_selector_not_key_material(&ctx);
+    test_list_identities_env_key(&ctx);
     test_get_relays_paths(&ctx, /*expect_ok=*/FALSE);
     ctx_teardown(&ctx);
     g_print("PASS phase 1 (no mutations, no relays.conf)\n");
@@ -2804,9 +3245,10 @@ int main(int argc, char **argv) {
   }
 
 #ifdef NIP55L_TEST_HAVE_LIBSECRET
+  run_identity_store_phase();
   run_phase3();
 #else
-  g_print("SKIP phase 3: built without libsecret\n");
+  g_print("SKIP identity store phase and phase 3: built without libsecret\n");
 #endif
 
   g_print("test_nip55l_dbus_contract: PASS\n");
