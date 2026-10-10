@@ -221,6 +221,31 @@ teardown(Fixture *f)
   g_free(f->dir);
 }
 
+static gboolean
+count_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
+{
+  (void)widget;
+  (void)clock;
+  return ++*(guint *)data < 2 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+
+/* An AdwDialog opens its sheet on the second frame after it is mapped, and
+ * closing it before then does nothing: the sheet is not open, so it never
+ * emits "closing" and the dialog stays in the window.  A user can only answer
+ * a dialog that is on screen, so wait for those two frames.  A non-blocking
+ * drain() does not wait for the frame clock (libadwaita 1.5 under Xvfb gets no
+ * frame during it; macOS happened to). */
+static void
+wait_presented(AdwDialog *dialog)
+{
+  while (!gtk_widget_get_mapped(GTK_WIDGET(dialog)))
+    g_main_context_iteration(NULL, TRUE);
+  guint ticks = 0;
+  gtk_widget_add_tick_callback(GTK_WIDGET(dialog), count_tick, &ticks, NULL);
+  while (ticks < 2)
+    g_main_context_iteration(NULL, TRUE);
+}
+
 static AdwAlertDialog *
 alert(Fixture *f)
 {
@@ -228,6 +253,7 @@ alert(Fixture *f)
   if (!ADW_IS_ALERT_DIALOG(dialog))
     g_error("no consent prompt; status: %s",
             gtk_label_get_text(GTK_LABEL(find(GTK_WIDGET(f->view), "status"))));
+  wait_presented(dialog);
   return ADW_ALERT_DIALOG(dialog);
 }
 
@@ -481,7 +507,12 @@ main(int argc, char **argv)
   gtk_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   adw_init();
-  g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
+  /* No cursor blink: wait_presented() runs the main loop blocking, and with
+   * one Xvfb shared by parallel tests GTK 4.14's blink timeout can fire while
+   * another test's window holds X focus, which it reports as a warning
+   * ("GtkText - did not receive a focus-out event"). */
+  g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE,
+               "gtk-cursor-blink", FALSE, NULL);
   g_test_add_func("/nostr-gtk/nip34-issue-view/no-calls-before-consent", test_no_calls_before_consent);
   g_test_add_func("/nostr-gtk/nip34-issue-view/edit-after-review", test_edit_after_review);
   g_test_add_func("/nostr-gtk/nip34-issue-view/pubkey-change", test_pubkey_change);
