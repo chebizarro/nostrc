@@ -6,7 +6,7 @@
 
 #include "gnostr-wiki-card.h"
 #include "gnostr-avatar-cache.h"
-#include "../util/markdown_pango.h"
+#include <nostr-gtk-1.0/gn-markdown-pango.h>
 #include <nostr-gtk-1.0/content_renderer.h>
 #include "../util/nip54_wiki.h"
 #include <nostr-gtk-1.0/gnostr-nip05.h>
@@ -394,7 +394,7 @@ static void update_content_view(GnostrWikiCard *self) {
   if (self->is_expanded && self->content_markdown && *self->content_markdown) {
     /* Show full rendered content */
     if (GTK_IS_WIDGET(self->content_expander)) {
-      gchar *pango_content = markdown_to_pango(self->content_markdown, 0);
+      gchar *pango_content = gn_markdown_pango_from_text(self->content_markdown, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID });
       if (GTK_IS_LABEL(self->full_content_label)) {
         /* nostrc-csaf: Use safe markup setter for relay-sourced wiki content */
         gnostr_safe_set_markup(GTK_LABEL(self->full_content_label), pango_content);
@@ -824,7 +824,7 @@ void gnostr_wiki_card_set_article(GnostrWikiCard *self,
   /* Set summary with markdown conversion */
   if (GTK_IS_LABEL(self->lbl_summary)) {
     if (summary && *summary) {
-      gchar *pango_summary = markdown_to_pango_summary(summary, MAX_SUMMARY_LENGTH);
+      gchar *pango_summary = gn_markdown_pango_from_text(summary, &(GnMarkdownPangoOptions){ .mode = GN_MARKDOWN_PANGO_SUMMARY, .max_chars = MAX_SUMMARY_LENGTH });
       /* nostrc-csaf: Use safe markup setter for markdown-converted relay content */
       gnostr_safe_set_markup(GTK_LABEL(self->lbl_summary), pango_summary);
       gtk_widget_set_visible(self->lbl_summary, TRUE);

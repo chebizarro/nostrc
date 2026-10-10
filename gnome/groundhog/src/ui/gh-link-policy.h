@@ -3,6 +3,7 @@
 
 #include <glib.h>
 #include <nostr-gtk-1.0/gn-markdown.h>
+#include <nostr-gtk-1.0/gn-markdown-pango.h>
 
 G_BEGIN_DECLS
 

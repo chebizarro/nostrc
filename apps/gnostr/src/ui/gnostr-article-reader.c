@@ -12,7 +12,7 @@
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include "../util/nip23.h"
-#include "../util/markdown_pango.h"
+#include <nostr-gtk-1.0/gn-markdown-pango.h>
 #include "../util/utils.h"
 #include <nostr-gtk-1.0/content_renderer.h>
 
@@ -550,7 +550,7 @@ static void render_article_json(GnostrArticleReader *self, const char *event_id_
 
   /* Markdown content */
   if (content && *content) {
-    char *pango = markdown_to_pango(content, 0);
+    char *pango = gn_markdown_pango_from_text(content, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID });
     if (pango) {
       /* nostrc-csaf: Use safe markup setter for relay-sourced content */
       gnostr_safe_set_markup(GTK_LABEL(self->lbl_content), pango);

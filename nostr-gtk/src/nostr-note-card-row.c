@@ -31,7 +31,7 @@
 #include "nip48_proxy.h"
 #include "nip03_opentimestamps.h"
 #include "nip73_external_ids.h"
-#include "markdown_pango.h"
+#include "gn-markdown-pango.h"
 #include "nip21_uri.h"
 #include "content_renderer.h"
 #include "note-card-binding-ctx.h"
@@ -6646,7 +6646,7 @@ void nostr_gtk_note_card_row_set_article_mode(NostrGtkNoteCardRow *self,
    * which is false during factory binding, causing content to be silently skipped. */
   if (self->content_label && GTK_IS_LABEL(self->content_label)) {
     if (summary && *summary) {
-      gchar *pango_summary = markdown_to_pango_summary(summary, 300);
+      gchar *pango_summary = gn_markdown_pango_from_text(summary, &(GnMarkdownPangoOptions){ .mode = GN_MARKDOWN_PANGO_SUMMARY, .max_chars = 300 });
       /* nostrc-csaf: Use safe markup setter for markdown-converted content */
       gnostr_safe_set_markup(GTK_LABEL(self->content_label), pango_summary);
       g_free(pango_summary);
