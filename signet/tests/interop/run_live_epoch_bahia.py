@@ -19,10 +19,11 @@ import tempfile
 import time
 
 LIVE_TEST = "TestLiveSignetEpochNIP44AndSBOMDSSE"
+APP_TEST = "TestLiveAssistantWrappedStartupHistoricalReads"
 
 
-def run(argv, *, env=None, cwd=None):
-    result = subprocess.run(argv, env=env, cwd=cwd, text=True, capture_output=True)
+def run(argv, *, env=None, cwd=None, input_text=None):
+    result = subprocess.run(argv, env=env, cwd=cwd, input=input_text, text=True, capture_output=True)
     if result.returncode:
         raise RuntimeError(f"{Path(argv[0]).name} failed (exit {result.returncode}); private output withheld")
     return result.stdout
@@ -47,7 +48,7 @@ def pubkey(secret):
     return value
 
 
-def require_live_test_pass(output):
+def require_live_test_pass(output, named_test=LIVE_TEST):
     """Reject an empty, skipped, or substituted Go test despite process exit 0."""
     state = "absent"
     for line in output.splitlines():
@@ -55,7 +56,7 @@ def require_live_test_pass(output):
             event = json.loads(line)
         except json.JSONDecodeError as exc:
             raise RuntimeError("go test did not emit complete JSON events") from exc
-        if not isinstance(event, dict) or event.get("Test") != LIVE_TEST:
+        if not isinstance(event, dict) or event.get("Test") != named_test:
             continue
         action = event.get("Action")
         if action == "run":
@@ -90,8 +91,8 @@ def wait_tcp(port, process, label):
     raise RuntimeError(f"{label} did not listen on loopback")
 
 
-def management(ctl, config, env, *args):
-    output = run([str(ctl), "-c", str(config), *args], env=env)
+def management(ctl, config, env, *args, input_text=None):
+    output = run([str(ctl), "-c", str(config), *args], env=env, input_text=input_text)
     marker = "Reply received:\n"
     if marker not in output:
         raise RuntimeError("management acknowledgement missing")
@@ -117,8 +118,8 @@ def main():
     repo = Path(__file__).resolve().parents[3]
     build = args.build_dir.resolve()
     bahia = args.bahia.resolve()
-    if not (bahia / "internal/adapters/signet/epoch_interop_integration_test.go").is_file():
-        raise RuntimeError("Bahia checkout lacks the opt-in Signet interop test")
+    if not (bahia / "internal/adapters/signet/epoch_interop_integration_test.go").is_file() or not (bahia / "internal/app/assistant_wrapped_live_integration_test.go").is_file():
+        raise RuntimeError("Bahia checkout lacks the opt-in Signet interop tests")
     if len(args.bahia_commit) != 40 or any(ch not in "0123456789abcdef" for ch in args.bahia_commit):
         raise RuntimeError("--bahia-commit must be a full lowercase commit SHA")
     if run(["git", "-C", str(bahia), "rev-parse", "HEAD"]).strip() != args.bahia_commit:
@@ -200,11 +201,18 @@ def main():
                         time.sleep(0.2)
                 else:
                     raise RuntimeError("signetd did not answer authenticated management status")
-                provision = management(ctl, config, env, "provision", "interop")
-                service_pk = provision.get("pubkey")
-                bunker_uri = provision.get("bunker_uri")
+                service_sk = secrets.token_hex(32)
+                service_pk = pubkey(service_sk)
+                adopted = run([str(ctl), "-c", str(config), "adopt-existing", "interop",
+                               "--sec", "-", "--expected-pubkey", service_pk],
+                              env=env, input_text=service_sk + "\n")
+                fields = dict(line.split(": ", 1) for line in adopted.splitlines()
+                              if ": " in line and line.split(": ", 1)[0] in ("pubkey", "bunker_uri"))
+                if fields.get("pubkey") != service_pk:
+                    raise RuntimeError("synthetic adopted pubkey mismatch")
+                bunker_uri = fields.get("bunker_uri")
                 if not isinstance(service_pk, str) or len(service_pk) != 64 or not isinstance(bunker_uri, str):
-                    raise RuntimeError("provision reply lacked public identity or pairing URI")
+                    raise RuntimeError("adoption reply lacked public identity or pairing URI")
                 if relay_url not in bunker_uri and "127.0.0.1" not in bunker_uri:
                     raise RuntimeError("pairing URI does not point at private loopback relay")
                 lease = None
@@ -232,7 +240,16 @@ def main():
                     location = f" at test line {locations[0]}" if locations else ""
                     raise RuntimeError(f"Bahia live NIP-46 interop test failed{location}; private output withheld")
                 require_live_test_pass(result.stdout)
-                print("PASS: Bahia live authenticated NIP-46 epoch NIP-44 and DSSE interop on disposable loopback Signet")
+                app_binary = root / "bahia-app.test"
+                run(["go", "test", "-c", "-tags", "signetinterop", "-o", str(app_binary),
+                     "./internal/app"], cwd=bahia, env=test_env)
+                app = subprocess.run([str(app_binary), "-test.run", f"^{APP_TEST}$", "-test.v"],
+                    cwd=bahia, env=test_env, input=service_sk + "\n", text=True, capture_output=True)
+                if app.returncode or f"=== RUN   {APP_TEST}" not in app.stdout or f"--- PASS: {APP_TEST}" not in app.stdout:
+                    locations = re.findall(r"assistant_wrapped_live_integration_test\.go:(\d+)", app.stdout + app.stderr)
+                    location = f" at test line {locations[0]}" if locations else ""
+                    raise RuntimeError(f"Bahia live assistant startup test failed{location}; private output withheld")
+                print("PASS: Bahia live authenticated NIP-46 epoch interop and wrapped assistant startup on disposable loopback Signet")
         finally:
             for process in reversed(processes):
                 process.terminate()
