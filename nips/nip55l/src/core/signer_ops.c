@@ -405,18 +405,14 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     if (is_env) return env_seckey_hex(out_sk_hex);
   }
 #ifdef NIP55L_HAVE_LIBSECRET
-  /* Treat current_user as identity selector: key_id or npub */
+  /* An explicit key_id, npub or label must name a stored identity exactly. */
   {
     int rc_l = store_lookup_sk_hex("key_id", cand, out_sk_hex);
     if (rc_l == NOSTR_SIGNER_ERROR_NOT_FOUND)
       rc_l = store_lookup_sk_hex("npub", cand, out_sk_hex);
-    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND || sel_is_npub) return rc_l;
-    /* A key_id or label naming no item: this user's identity, else the
-     * environment key. */
-    rc_l = store_owned_sk_hex(out_sk_hex);
-    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND) return rc_l;
-    rc_l = env_seckey_hex(out_sk_hex);
-    if (rc_l != NOSTR_SIGNER_ERROR_NOT_FOUND) return rc_l;
+    if (rc_l == NOSTR_SIGNER_ERROR_NOT_FOUND && !sel_is_npub)
+      rc_l = store_lookup_sk_hex("label", cand, out_sk_hex);
+    return rc_l;
   }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
   /* Treat current_user as identity selector when provided */
@@ -463,7 +459,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     if (q) CFRelease(q);
   }
 #endif
-  return NOSTR_SIGNER_ERROR_INVALID_KEY;
+  return NOSTR_SIGNER_ERROR_NOT_FOUND;
 }
 
 static int sk_hex_to_npub(const char *sk_hex, char **out_npub){
@@ -502,7 +498,7 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
     if (nostr_nip19_encode_npub(pk, &want) != 0 || !want) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   }
   if (!want) {
-    /* "" or a key_id / label: resolved as before. */
+    /* "" selects the active identity; a key_id or label selects only its match. */
     char *np = NULL;
     int rc = nostr_nip55l_resolve_npub(selector, &np);
     if (rc != 0 || !np) { free(np); return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND; }
