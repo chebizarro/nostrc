@@ -403,6 +403,17 @@ endif()
 if(NOT WIN32)
   include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
   nostrc_install_private_json(grotto ${APP_SIGNER_BIN} grotto-daemon)
+  # With Groundhog in the same build nostr_gobject is shared; Grotto links it,
+  # so it ships a private copy beside libnostr-json (same RUNPATH).
+  if (NOT APPLE AND TARGET nostr_gobject)
+    get_target_property(_grotto_gobject_type nostr_gobject TYPE)
+    if (_grotto_gobject_type STREQUAL "SHARED_LIBRARY")
+      install(TARGETS nostr_gobject
+              LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/grotto NAMELINK_SKIP
+              COMPONENT grotto)
+      set_property(TARGET nostr_gobject APPEND PROPERTY INSTALL_RPATH "\$ORIGIN")
+    endif()
+  endif()
 endif()
 
 # GSettings schema

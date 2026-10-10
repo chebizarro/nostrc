@@ -149,7 +149,7 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Groundhog.d
 desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Grotto.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Groundhog.metainfo.xml
 
-%files -f groundhog.lang -f nostr-gtk.lang
+%files -f groundhog.lang
 %license LICENSE gnome/groundhog/data/icons/COPYING
 %{_bindir}/groundhog
 %dir %{_libdir}/groundhog
@@ -168,6 +168,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_bindir}/grotto-daemon
 %dir %{_libdir}/grotto
 %{_libdir}/grotto/libnostr-json.so.1
+%{_libdir}/grotto/libnostr-gobject-1.0.so.2*
 %{_datadir}/applications/org.nostr.Grotto.desktop
 %{_datadir}/dbus-1/services/org.nostr.Grotto.service
 %{_datadir}/dbus-1/services/org.nostr.Signer.service

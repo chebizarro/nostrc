@@ -3464,7 +3464,7 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   endif()
   if (NOT APPLE AND NOT WIN32)
     install(TARGETS nostr_gtk_portable nostr_gobject
-            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog)
+            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/groundhog NAMELINK_SKIP)
     # The bundled portable widgets bring their "nostr-gtk" catalogs along;
     # packages install only this directory, so ship them from here.
     get_property(_gh_ngtk_locale GLOBAL PROPERTY NOSTRC_LOCALE_BUILD_DIR_nostr-gtk)
