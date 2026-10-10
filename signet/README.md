@@ -179,7 +179,7 @@ export SIGNET_BUNKER_NSEC_FILE="/run/secrets/signet-bunker-nsec"
 ./builddir/signetd -c signet.conf
 ```
 
-Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC_FILE` are **required**. Signet refuses to start without them. In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
+Both `SIGNET_DB_KEY` and `SIGNET_BUNKER_NSEC_FILE` are **required** for a deployment. Without `SIGNET_DB_KEY` signetd starts in cache-only mode: nothing is persisted, and agents and NIP-46 client pairings last only until the process exits (see "Cache-only mode" in [INTEGRATION.md](INTEGRATION.md)). In production, also set `SIGNET_REQUIRE_ENCRYPTED_DB=true` so startup fails unless SQLCipher verification succeeds.
 
 ### Docker
 

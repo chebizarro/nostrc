@@ -342,6 +342,32 @@ durably records the binding `client_pubkey → agent_id` (table
 
 CLI: `signetctl list-clients <agent_id>`, `signetctl revoke-client <client_pubkey>`.
 
+#### Cache-only mode (no persistent store)
+
+Without `SIGNET_DB_KEY` (or with an empty `[store] db_path`) the key store
+runs cache-only: agents, their pending connect secrets and client bindings
+live in the `signetd` process and nothing is written to disk. NIP-46 pairing
+follows the same rules as above for the life of that process:
+
+- `agent/provision` and `agent/adopt-existing` keep only the SHA-256 of the
+  agent's one-time `connect_secret` in memory; the first `connect` that
+  presents it consumes it and binds the client key in one critical section.
+- A bound client reconnects with no secret or its own spent secret; another
+  client's secret, an arbitrary wrong secret and unknown clients get
+  `auth_failed`, and requests from unbound clients get `not_connected`.
+- Bindings are pinned to the exact in-memory identity they were made
+  against: `agent/revoke`, `agent/rotate-key`, or revoking and re-adopting
+  the same `agent_id` (even with the same key) all invalidate them.
+- **Nothing survives a restart.** A restarted cache-only signer holds no
+  agents, secrets or bindings; agents must be provisioned or adopted again
+  and every client must pair with the new secret. A reconnect without one
+  fails `auth_failed` with a message naming the cache-only signer.
+  `agent/reissue-connect`, `agent/list-clients`, `agent/revoke-client`, the
+  deny list and writer fences need the persistent store and are unavailable.
+
+Cache-only mode is for tests and development; deploy with the persistent
+store.
+
 ## Bootstrap Flow
 
 For automated fleet provisioning:
