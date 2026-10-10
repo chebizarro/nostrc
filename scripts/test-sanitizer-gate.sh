@@ -204,6 +204,7 @@ affected() {  # affected EXPECTED(run|skip) PATH...
 for path in gnome/groundhog/src/mls/gh-mls-service.c gnome/groundhog/tests/lsan.supp \
     libnostr/src/event.c nostr-gobject/src/nostr_relay.c libmarmot/src/mls/x.c \
     marmot-gobject/src/y.c libgo/fiber/sched/z.c nips/nip44/src/core/a.c \
+    nostr-gtk/src/w.c \
     tests/test_connection_recv_drain.c tests/CMakeLists.txt \
     .github/workflows/groundhog-ci.yml \
     CMakeLists.txt NipOptions.cmake cmake/NostrcTestBus.cmake cmake/GnTest.cmake \
@@ -214,7 +215,7 @@ for path in gnome/groundhog/src/mls/gh-mls-service.c gnome/groundhog/tests/lsan.
     tools/CMakeLists.txt scripts/linux-gate.sh scripts/sanitizer-gate-ci.py; do
     affected run "$path"
 done
-for path in docs/plans/x.md README.md AGENTS.md apps/gnostr/src/main.c nostr-gtk/src/w.c \
+for path in docs/plans/x.md README.md AGENTS.md apps/gnostr/src/main.c \
     gnome/nostr-homed/src/a.c gnome/libnostr-publish/src/p.c libnostr-extra/a.c \
     libgobject/x.c nipsy/x.c Testing/tests/t.c apps/gnostr/tests/t.c \
     .github/workflows/groundhog-ci.yml.bak .github/workflows/static-checks.yml \
@@ -262,8 +263,8 @@ if EXTRA_INPUT=../docs/new-input.cmake check_inputs > "$tmp/out" 2>&1; then
     fail "an input outside SANITIZER_BUILD_PATHS passed"
 fi
 grep -q '^  docs/new-input.cmake$' "$tmp/out" || fail "the uncovered input is not named: $(cat "$tmp/out")"
-if EXTRA_INPUT=../nostr-gtk/src/w.c check_inputs > /dev/null 2>&1; then
-    fail "nostr-gtk (not in the list) passed"
+if EXTRA_INPUT=../gnome/nostr-homed/src/w.c check_inputs > /dev/null 2>&1; then
+    fail "gnome/nostr-homed (not in the list) passed"
 fi
 echo 'ok: the input list against ninja'
 
