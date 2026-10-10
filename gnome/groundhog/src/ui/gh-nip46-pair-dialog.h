@@ -35,14 +35,17 @@ typedef struct {
   gpointer test_save_data;
 } GhNip46PairConfig;
 
-/* Emits "confirmation-presented" with the AdwAlertDialog after the remote
- * account key is verified and before any credential is stored. */
+/* Emits "confirmation-presented" with the inline confirmation page (a
+ * GtkWidget holding the "Save Remote Signer" button) after the remote
+ * account key is verified and before anything is saved or activated. Save
+ * makes the account active on the live session at once
+ * (gh_account_controller_adopt_remote()) and stores the credential alongside;
+ * the dialog closes once the keyring confirms the write. */
 GhNip46PairDialog *gh_nip46_pair_dialog_new(const GhNip46PairConfig *config);
 /* For UI tests: never returns the sensitive URI or the transport secret. */
 gboolean gh_nip46_pair_dialog_qr_is_visible(GhNip46PairDialog *self);
 
-/* Test seams: shorten the 15 s selection deadline; read the status text. */
-void gh_nip46_pair_dialog_set_select_timeout_for_test(GhNip46PairDialog *self, guint ms);
+/* Test seam: read the status text. */
 const gchar *gh_nip46_pair_dialog_get_status_for_test(GhNip46PairDialog *self);
 
 G_END_DECLS

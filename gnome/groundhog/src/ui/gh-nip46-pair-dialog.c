@@ -14,14 +14,14 @@ static const gchar * const amber_relays[] = {
   "wss://nrs.primal.net", "wss://relay.nip46.com", NULL
 };
 
+/* SAVING: the account is already active on the live session; only the
+ * keyring write is outstanding (nostrc-8xfib.1). */
 typedef enum { PAIR_EDITING, PAIR_WAITING, PAIR_CONFIRMING, PAIR_SAVING,
-               PAIR_SELECTING, PAIR_COMPLETE } PairState;
+               PAIR_COMPLETE } PairState;
 
 /* A keyring that waits on an unlock prompt nobody sees must not hold the
- * dialog forever; selection only waits for the controller's re-listing. */
+ * dialog forever. */
 #define SAVE_TIMEOUT_SECONDS 60
-#define SELECT_TIMEOUT_MS 15000
-#define SELECT_WAIT_HINT_MS 3000
 
 struct _GhNip46PairDialog {
   AdwDialog parent_instance;
@@ -39,6 +39,11 @@ struct _GhNip46PairDialog {
   GtkButton *connect_button;
   GtkLabel *error_label;
   GtkButton *cancel_button;
+  GtkWidget *confirm_box;
+  GtkLabel *confirm_heading;
+  GtkLabel *confirm_body;
+  GtkButton *confirm_cancel_button;
+  GtkButton *confirm_save_button;
 
   GhAccountController *accounts;
   GSettings *settings;
@@ -60,12 +65,10 @@ struct _GhNip46PairDialog {
   gchar **relays;
   gchar *user_pubkey;
   gchar *pending_npub;
+  gchar *connected_text;
   GhNip46AuthUrl *auth_prompt;
   PairState state;
   gboolean closing;
-  guint select_timeout;
-  guint select_hint;
-  guint select_timeout_ms;
   guint save_timeout;
   GCancellable *save_cancel; /* identifies the save in flight */
 };
@@ -79,7 +82,7 @@ static const gchar *
 state_name(PairState state)
 {
   static const gchar *const names[] = { "EDITING", "WAITING", "CONFIRMING", "SAVING",
-                                        "SELECTING", "COMPLETE" };
+                                        "COMPLETE" };
   return state < G_N_ELEMENTS(names) ? names[state] : "?";
 }
 
@@ -126,6 +129,14 @@ clear_sensitive_fields(GhNip46PairDialog *self)
 }
 
 static void
+show_confirmation(GhNip46PairDialog *self, gboolean visible)
+{
+  gtk_widget_set_visible(self->confirm_box, visible);
+  gtk_widget_set_visible(GTK_WIDGET(self->mode_stack), !visible);
+  gtk_widget_set_visible(GTK_WIDGET(self->mode_switcher), !visible);
+}
+
+static void
 stop_attempt(GhNip46PairDialog *self)
 {
   if (self->attempt_cancel) g_cancellable_cancel(self->attempt_cancel);
@@ -139,6 +150,7 @@ stop_attempt(GhNip46PairDialog *self)
   gtk_widget_set_visible(GTK_WIDGET(self->qr_picture), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->copy_button), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->connect_button), FALSE);
+  show_confirmation(self, FALSE);
 }
 
 static void
@@ -294,81 +306,6 @@ npub_for_hex(const gchar *hex)
 #define WAITING_FOR_STORE N_("Unlock your keyring — Groundhog is waiting for it")
 #endif
 
-static void
-stop_selecting_timers(GhNip46PairDialog *self)
-{
-  g_clear_handle_id(&self->select_timeout, g_source_remove);
-  g_clear_handle_id(&self->select_hint, g_source_remove);
-}
-
-static void selection_changed(GhAccountController *accounts, gpointer data);
-
-static gboolean
-selection_hint(gpointer data)
-{
-  GhNip46PairDialog *self = data;
-  self->select_hint = 0;
-  if (!self->closing && self->state == PAIR_SELECTING &&
-      gh_account_controller_is_listing(self->accounts))
-    show_status(self, _(WAITING_FOR_STORE));
-  return G_SOURCE_REMOVE;
-}
-
-static gboolean
-selection_timed_out(gpointer data)
-{
-  GhNip46PairDialog *self = data;
-  self->select_timeout = 0;
-  g_clear_handle_id(&self->select_hint, g_source_remove);
-  if (!self->closing && self->state == PAIR_SELECTING) {
-    gboolean listing = gh_account_controller_is_listing(self->accounts);
-    g_message("nip46-pair: selecting %s timed out after %u ms (%s)",
-              self->pending_npub ? self->pending_npub : "?", self->select_timeout_ms,
-              listing ? "account listing still pending" : "account not listed");
-    set_state(self, PAIR_COMPLETE);
-    if (listing) {
-#ifdef __APPLE__
-      show_status(self, _("Saved, but the Keychain did not answer. Allow Groundhog in the macOS prompt, then choose the account in the switcher."));
-#else
-      show_status(self, _("Saved, but the keyring did not answer. Unlock your keyring, then choose the account in the switcher."));
-#endif
-    } else {
-      show_status(self, _("Saved, but the new account was not found. Refresh accounts in the switcher to select it."));
-    }
-    show_error(self, _("The signer was saved, but its account could not be selected yet."));
-    gtk_button_set_label(self->cancel_button, _("Close"));
-  }
-  return G_SOURCE_REMOVE;
-}
-
-static void
-selection_changed(GhAccountController *accounts, gpointer data)
-{
-  GhNip46PairDialog *self = data;
-  if (self->closing || self->state != PAIR_SELECTING || self->accounts != accounts ||
-      !self->pending_npub) return;
-  g_autoptr(GError) error = NULL;
-  /* Selecting emits "changed" again: leave SELECTING first. */
-  set_state(self, PAIR_COMPLETE);
-  if (gh_account_controller_select_backend(accounts, GH_SIGNER_BACKEND_NIP46,
-                                           self->pending_npub, &error)) {
-    g_debug("nip46-pair: selected %s", self->pending_npub);
-    stop_selecting_timers(self);
-    const gchar *name = self->display_name && self->name_source && self->user_pubkey ?
-      self->display_name(self->name_source, self->user_pubkey) : NULL;
-    g_autofree gchar *short_npub = g_strdup_printf("%.16s…", self->pending_npub);
-    g_autofree gchar *done = g_strdup_printf(_("Connected as %s"),
-                                             name && *name ? name : short_npub);
-    show_status(self, done);
-    if (gtk_widget_get_root(GTK_WIDGET(self)))
-      adw_dialog_close(ADW_DIALOG(self));
-  } else {
-    set_state(self, PAIR_SELECTING);
-    g_debug("nip46-pair: %s not selectable yet: %s", self->pending_npub,
-            error ? error->message : "?");
-  }
-}
-
 static const gchar *
 save_error_message(const GError *error)
 {
@@ -381,18 +318,26 @@ save_error_message(const GError *error)
   return error ? error->message : _("Could not save the remote signer.");
 }
 
+/* The account is active for this run but the keyring did not keep it. */
+static void
+save_failed(GhNip46PairDialog *self, const gchar *message)
+{
+  set_state(self, PAIR_COMPLETE);
+  show_status(self, self->connected_text ? self->connected_text : _("Connected"));
+  g_autofree gchar *text = g_strdup_printf(
+    _("Connected for now, but not saved: %s Pair again after restarting Groundhog."),
+    message);
+  show_error(self, text);
+  gtk_button_set_label(self->cancel_button, _("Close"));
+}
+
 static void
 save_abandoned(GhNip46PairDialog *self, const gchar *message)
 {
   g_clear_handle_id(&self->save_timeout, g_source_remove);
   if (self->save_cancel) g_cancellable_cancel(self->save_cancel);
   g_clear_object(&self->save_cancel);
-  stop_attempt(self);
-  set_state(self, PAIR_EDITING);
-  show_status(self, _("Not saved."));
-  show_error(self, message);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->regenerate_button), TRUE);
+  save_failed(self, message);
 }
 
 static gboolean
@@ -421,29 +366,20 @@ stored(GObject *source, GAsyncResult *result, gpointer data)
                      self->state == PAIR_SAVING;
   if (!current) {
     /* Cancelled, timed out or closed while the keyring was busy: a write that
-     * still landed must be listed, but this dialog no longer acts on it. */
+     * still landed is reconciled by a background listing. */
     if (saved) gh_account_controller_refresh(self->accounts);
   } else {
     g_clear_handle_id(&self->save_timeout, g_source_remove);
     g_clear_object(&self->save_cancel);
-    stop_attempt(self);
     if (!saved) {
-      set_state(self, PAIR_EDITING);
-      show_status(self, _("Not saved."));
-      show_error(self, save_error_message(error));
-      gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
-      gtk_widget_set_sensitive(GTK_WIDGET(self->regenerate_button), TRUE);
+      save_failed(self, save_error_message(error));
     } else {
-      set_state(self, PAIR_SELECTING);
-      show_status(self, _("Saved. Adding your account…"));
-      g_debug("nip46-pair: refreshing accounts to select %s", self->pending_npub);
-      self->select_timeout = g_timeout_add(self->select_timeout_ms,
-                                           selection_timed_out, self);
-      self->select_hint = g_timeout_add(MIN(SELECT_WAIT_HINT_MS, self->select_timeout_ms / 2),
-                                        selection_hint, self);
+      set_state(self, PAIR_COMPLETE);
+      show_status(self, self->connected_text ? self->connected_text : _("Connected"));
+      /* Reconcile the listing in the background; the account is already active. */
       gh_account_controller_refresh(self->accounts);
-      /* Already listed (e.g. a replacement credential): select now. */
-      selection_changed(self->accounts, self);
+      if (gtk_widget_get_root(GTK_WIDGET(self)))
+        adw_dialog_close(ADW_DIALOG(self));
     }
   }
   g_object_unref(call->cancel);
@@ -451,68 +387,70 @@ stored(GObject *source, GAsyncResult *result, gpointer data)
   g_free(call);
 }
 
-static gboolean
-confirm_dismissed(gpointer data)
-{
-  GhNip46PairDialog *self = data;
-  if (!self->closing && self->state == PAIR_CONFIRMING) {
-    g_debug("nip46-pair: confirmation dismissed");
-    stop_attempt(self);
-    set_state(self, PAIR_EDITING);
-    gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
-    show_status(self, _("Pairing cancelled. Connect again to retry."));
-  }
-  return G_SOURCE_REMOVE;
-}
-
 static void
-confirm_closed(AdwDialog *alert, gpointer data)
+on_confirm_back(GtkButton *button, gpointer data)
 {
-  (void)alert;
+  (void)button;
   GhNip46PairDialog *self = data;
   if (self->closing || self->state != PAIR_CONFIRMING) return;
-  /* AdwAlertDialog closes itself (emitting "closed", later "unmap") before
-   * it emits "response". Acting on "closed" here discarded the attempt
-   * before "Save" was seen, so Save did nothing (nostrc-p15n5.3). Act on a
-   * dismissal only once any response has run. */
-  g_debug("nip46-pair: confirmation closed; waiting for its response");
-  g_idle_add_full(G_PRIORITY_DEFAULT, confirm_dismissed, g_object_ref(self), g_object_unref);
+  g_debug("nip46-pair: confirmation declined");
+  stop_attempt(self);
+  set_state(self, PAIR_EDITING);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), TRUE);
+  show_status(self, _("Pairing cancelled. Connect again to retry."));
 }
 
+/* Save: the live session becomes the active account at once (as gnostr
+ * hands its session to the signer service); the keyring write runs
+ * alongside and only decides whether the pairing survives a restart. */
 static void
-confirm_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
+on_confirm_save(GtkButton *button, gpointer data)
 {
+  (void)button;
   GhNip46PairDialog *self = data;
-  if (self->closing || self->state != PAIR_CONFIRMING) return;
-  (void)alert;
-  g_debug("nip46-pair: confirmation response '%s'", response);
-  if (!g_str_equal(response, "save")) {
-    confirm_dismissed(self);
-    return;
-  }
+  if (self->closing || self->state != PAIR_CONFIRMING || !self->session) return;
+  g_debug("nip46-pair: confirmation saved");
   g_autofree gchar *secret = gh_nip46_session_dup_client_secret(self->session);
   g_autoptr(GError) error = NULL;
   g_autoptr(GhNip46Credential) credential = gh_nip46_credential_new(
     self->user_pubkey, gh_nip46_session_get_remote_pubkey(self->session),
     secret, (const gchar *const *)self->relays, &error);
   wipe_free(&secret);
-  if (!credential) {
+  if (!credential || !self->pending_npub) {
     stop_attempt(self);
     set_state(self, PAIR_EDITING);
     show_error(self, error ? error->message : _("Could not prepare the remote signer."));
     return;
   }
+  /* Hand over the session: the dialog lets go of it without cancelling. */
+  g_autoptr(GhNip46Session) live = g_steal_pointer(&self->session);
+  g_signal_handlers_disconnect_by_data(live, self);
+  gh_nip46_session_set_auth_url_handler(live, NULL, NULL);
+  if (!gh_account_controller_adopt_remote(self->accounts, self->pending_npub, live, &error)) {
+    gh_nip46_session_cancel(live);
+    stop_attempt(self);
+    set_state(self, PAIR_EDITING);
+    show_error(self, error ? error->message : _("Could not use the remote signer."));
+    return;
+  }
+  g_debug("nip46-pair: %s is active on the paired session", self->pending_npub);
+  show_confirmation(self, FALSE);
   set_state(self, PAIR_SAVING);
   gtk_widget_set_sensitive(GTK_WIDGET(self->mode_switcher), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->connect_button), FALSE);
   gtk_widget_set_sensitive(GTK_WIDGET(self->regenerate_button), FALSE);
   show_error(self, NULL);
+  const gchar *name = self->display_name && self->name_source && self->user_pubkey ?
+    self->display_name(self->name_source, self->user_pubkey) : NULL;
+  g_autofree gchar *short_npub = g_strdup_printf("%.16s\u2026", self->pending_npub);
+  g_free(self->connected_text);
+  self->connected_text = g_strdup_printf(_("Connected as %s"),
+                                         name && *name ? name : short_npub);
 #ifdef __APPLE__
-  show_status(self, _("Saving to your Keychain… If macOS asks for permission, allow it."));
+  show_status(self, _("Connected. Saving to your Keychain\u2026 If macOS asks for permission, allow it."));
 #else
-  show_status(self, _("Saving to your keyring… If your system asks you to unlock the keyring, enter your password."));
+  show_status(self, _("Connected. Saving to your keyring\u2026 If your system asks you to unlock the keyring, enter your password."));
 #endif
-  /* Cancel stays available: the keyring can wait on a prompt indefinitely. */
   self->save_cancel = g_cancellable_new();
   self->save_timeout = g_timeout_add_seconds(SAVE_TIMEOUT_SECONDS, save_timed_out, self);
   SaveCall *call = g_new0(SaveCall, 1);
@@ -577,18 +515,48 @@ pair_finished(GObject *source, GAsyncResult *result, gpointer data)
     _("Confirm this is the account shown by your new signer. Saving replaces the previous remote signer connection, but keeps encrypted messages. Account: %s. Pairing relays: %s.") :
     _("Confirm this is the account shown by your signer. Account: %s. Pairing relays: %s. The signer may ask you to approve actions later."),
     self->pending_npub ? self->pending_npub : self->user_pubkey, joined);
-  AdwDialog *alert = adw_alert_dialog_new(heading, body);
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", _("Cancel"),
-                                 "save", _("Save Remote Signer"), NULL);
-  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
-  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
-  g_signal_connect_object(alert, "response", G_CALLBACK(confirm_response), self, 0);
-  /* Older libadwaita can unmap a dismissed alert without either signal. */
-  g_signal_connect_object(alert, "closed", G_CALLBACK(confirm_closed), self, 0);
-  g_signal_connect_object(alert, "unmap", G_CALLBACK(confirm_closed), self, 0);
-  adw_dialog_present(alert, GTK_WIDGET(self));
-  g_signal_emit(self, signals[SIGNAL_CONFIRMATION_PRESENTED], 0, alert);
+  /* Inline, on this dialog: no nested alert whose closed/response ordering
+   * can drop the Save (nostrc-p15n5.3, nostrc-8xfib.1). */
+  gtk_label_set_text(self->confirm_heading, heading);
+  gtk_label_set_text(self->confirm_body, body);
+  show_confirmation(self, TRUE);
+  gtk_widget_grab_focus(GTK_WIDGET(self->confirm_save_button));
+  g_signal_emit(self, signals[SIGNAL_CONFIRMATION_PRESENTED], 0, self->confirm_box);
   g_object_unref(self);
+}
+
+static void
+on_pair_progress(GhNip46Session *session, gint stage, const gchar *detail, gpointer data)
+{
+  GhNip46PairDialog *self = data;
+  if (self->closing || self->session != session || self->state != PAIR_WAITING) return;
+  gboolean qr = self->uri != NULL;
+  g_autofree gchar *text = NULL;
+  switch ((GhNip46PairStage)stage) {
+  case GH_NIP46_PAIR_STAGE_LISTENING:
+    if (!qr) text = g_strdup(_("Contacting your signer\u2026"));
+    break;
+  case GH_NIP46_PAIR_STAGE_DELIVERED:
+    text = g_strdup(qr ? _("Signer found. Confirming your account\u2026") :
+                         _("Request delivered. Approve the connection in your signer\u2026"));
+    break;
+  case GH_NIP46_PAIR_STAGE_RELAYS_SLOW: {
+    g_autofree gchar *joined = self->relays ? g_strjoinv(", ", self->relays) : g_strdup("");
+    text = g_strdup_printf(_("Still trying to reach the signer relays (%s)\u2026"), joined);
+    break;
+  }
+  case GH_NIP46_PAIR_STAGE_NO_ANSWER:
+    text = g_strdup(_("No answer from your signer yet. Check that it is online and approve the request."));
+    break;
+  case GH_NIP46_PAIR_STAGE_IGNORED_REPLY:
+    text = g_strdup_printf(_("Waiting for your signer\u2026 (%s)"), detail ? detail : "");
+    break;
+  default:
+    break;
+  }
+  if (!text) return;
+  if (qr) gtk_label_set_text(self->qr_status, text);
+  else show_status(self, text);
 }
 
 static void
@@ -607,14 +575,16 @@ start_pair(GhNip46PairDialog *self, GhNip46Session *session, gchar **relays,
     gtk_editable_set_text(GTK_EDITABLE(self->uri_row), "");
     gtk_widget_set_sensitive(GTK_WIDGET(self->copy_button), FALSE);
     gtk_label_set_text(self->qr_status, _("Connecting to pairing relays…"));
+    g_signal_connect(session, "listening", G_CALLBACK(on_ready), self);
     g_signal_connect(session, "ready", G_CALLBACK(on_ready), self);
     g_signal_connect(session, "offline", G_CALLBACK(on_offline), self);
   } else {
     gtk_widget_set_sensitive(GTK_WIDGET(self->connect_button), FALSE);
   }
+  g_signal_connect(session, "pair-progress", G_CALLBACK(on_pair_progress), self);
   gh_nip46_session_set_auth_url_handler(session, on_auth_url, self);
   gh_nip46_session_pair_async(session, self->attempt_cancel, pair_finished, g_object_ref(self));
-  if (uri && gh_nip46_session_is_ready(session)) on_ready(session, self);
+  if (uri && gh_nip46_session_is_listening(session)) on_ready(session, self);
 }
 
 static void
@@ -712,7 +682,7 @@ on_mode_changed(GtkStack *stack, GParamSpec *pspec, gpointer data)
 {
   (void)pspec;
   GhNip46PairDialog *self = data;
-  if (self->closing || self->state == PAIR_SAVING || self->state == PAIR_SELECTING ||
+  if (self->closing || self->state == PAIR_SAVING ||
       self->state == PAIR_CONFIRMING || self->state == PAIR_COMPLETE) return;
   stop_attempt(self);
   set_state(self, PAIR_EDITING);
@@ -726,7 +696,7 @@ on_regenerate(GtkButton *button, gpointer data)
 {
   (void)button;
   GhNip46PairDialog *self = data;
-  if (self->state == PAIR_SAVING || self->state == PAIR_SELECTING) return;
+  if (self->state == PAIR_SAVING || self->state == PAIR_COMPLETE) return;
   stop_attempt(self);
   set_state(self, PAIR_EDITING);
   start_qr(self);
@@ -775,10 +745,8 @@ on_cancel(GtkButton *button, gpointer data)
 {
   (void)button;
   GhNip46PairDialog *self = data;
-  if (self->state == PAIR_SAVING) {
-    g_debug("nip46-pair: credential save cancelled by the user");
-    save_abandoned(self, _("Saving was cancelled."));
-  }
+  /* While SAVING the account is already active: closing leaves the keyring
+   * write running; its outcome is reconciled by a background listing. */
   adw_dialog_close(ADW_DIALOG(self));
 }
 
@@ -789,9 +757,7 @@ on_closed(AdwDialog *dialog, gpointer data)
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(dialog);
   self->closing = TRUE;
   g_debug("nip46-pair: dialog closed in state %s", state_name(self->state));
-  stop_selecting_timers(self);
   g_clear_handle_id(&self->save_timeout, g_source_remove);
-  if (self->save_cancel) g_cancellable_cancel(self->save_cancel);
   g_clear_object(&self->save_cancel);
   stop_attempt(self);
   if (self->auth_prompt) gh_nip46_auth_url_clear(self->auth_prompt);
@@ -803,7 +769,6 @@ unroot(GtkWidget *widget)
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(widget);
   if (self->state != PAIR_SAVING) {
     self->closing = TRUE;
-    stop_selecting_timers(self);
     stop_attempt(self);
   }
   GTK_WIDGET_CLASS(gh_nip46_pair_dialog_parent_class)->unroot(widget);
@@ -814,7 +779,6 @@ dispose(GObject *object)
 {
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(object);
   self->closing = TRUE;
-  stop_selecting_timers(self);
   g_clear_handle_id(&self->save_timeout, g_source_remove);
   g_clear_object(&self->save_cancel);
   stop_attempt(self);
@@ -824,6 +788,7 @@ dispose(GObject *object)
   g_clear_object(&self->auth_prompt);
   g_clear_object(&self->name_source);
   g_clear_pointer(&self->pending_npub, g_free);
+  g_clear_pointer(&self->connected_text, g_free);
   G_OBJECT_CLASS(gh_nip46_pair_dialog_parent_class)->dispose(object);
 }
 
@@ -840,11 +805,12 @@ gh_nip46_pair_dialog_class_init(GhNip46PairDialogClass *klass)
   BIND(mode_switcher); BIND(mode_stack); BIND(qr_status); BIND(qr_picture);
   BIND(uri_row); BIND(relay_row); BIND(copy_button); BIND(regenerate_button);
   BIND(bunker_row); BIND(paste_button); BIND(bunker_details); BIND(connect_button);
-  BIND(error_label); BIND(cancel_button);
+  BIND(error_label); BIND(cancel_button); BIND(confirm_box); BIND(confirm_heading);
+  BIND(confirm_body); BIND(confirm_cancel_button); BIND(confirm_save_button);
 #undef BIND
   signals[SIGNAL_CONFIRMATION_PRESENTED] = g_signal_new("confirmation-presented",
     G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
-    G_TYPE_NONE, 1, ADW_TYPE_ALERT_DIALOG);
+    G_TYPE_NONE, 1, GTK_TYPE_WIDGET);
 }
 
 static void
@@ -852,7 +818,6 @@ gh_nip46_pair_dialog_init(GhNip46PairDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   set_state(self, PAIR_EDITING);
-  self->select_timeout_ms = SELECT_TIMEOUT_MS;
   g_autofree gchar *joined = g_strjoinv(", ", (gchar **)amber_relays);
   gtk_editable_set_text(GTK_EDITABLE(self->relay_row), joined);
   gtk_widget_set_sensitive(GTK_WIDGET(self->copy_button), FALSE);
@@ -864,6 +829,8 @@ gh_nip46_pair_dialog_init(GhNip46PairDialog *self)
   g_signal_connect(self->copy_button, "clicked", G_CALLBACK(on_copy), self);
   g_signal_connect(self->paste_button, "clicked", G_CALLBACK(on_paste), self);
   g_signal_connect(self->cancel_button, "clicked", G_CALLBACK(on_cancel), self);
+  g_signal_connect(self->confirm_cancel_button, "clicked", G_CALLBACK(on_confirm_back), self);
+  g_signal_connect(self->confirm_save_button, "clicked", G_CALLBACK(on_confirm_save), self);
   g_signal_connect(self, "closed", G_CALLBACK(on_closed), NULL);
 }
 
@@ -906,7 +873,6 @@ gh_nip46_pair_dialog_new(const GhNip46PairConfig *config)
   self->transport_data = config->transport_data;
   self->test_save = config->test_save;
   self->test_save_data = config->test_save_data;
-  g_signal_connect_object(self->accounts, "changed", G_CALLBACK(selection_changed), self, 0);
   start_qr(self);
   return self;
 }
@@ -916,13 +882,6 @@ gh_nip46_pair_dialog_qr_is_visible(GhNip46PairDialog *self)
 {
   g_return_val_if_fail(GH_IS_NIP46_PAIR_DIALOG(self), FALSE);
   return gtk_widget_get_visible(GTK_WIDGET(self->qr_picture));
-}
-
-void
-gh_nip46_pair_dialog_set_select_timeout_for_test(GhNip46PairDialog *self, guint ms)
-{
-  g_return_if_fail(GH_IS_NIP46_PAIR_DIALOG(self));
-  self->select_timeout_ms = MAX(ms, 2);
 }
 
 const gchar *

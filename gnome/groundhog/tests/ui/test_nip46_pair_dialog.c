@@ -147,11 +147,20 @@ qr_scope_open(GhRelayScope *scope, const gchar *url, const NostrFilters *filters
 static const GhRelayTransport qr_scope_transport = { qr_scope_open, bunker_close };
 
 static void
-capture_confirmation(GhNip46PairDialog *dialog, AdwAlertDialog *alert, gpointer data)
+capture_confirmation(GhNip46PairDialog *dialog, GtkWidget *page, gpointer data)
 {
   (void)dialog;
-  AdwAlertDialog **result = data;
-  *result = g_object_ref(alert);
+  GtkWidget **result = data;
+  *result = g_object_ref(page);
+}
+
+static void click_response(GtkWidget *alert, const gchar *label);
+
+static void
+mark_closed(AdwDialog *dialog, gpointer data)
+{
+  (void)dialog;
+  *(gboolean *)data = TRUE;
 }
 
 static gboolean
@@ -187,7 +196,7 @@ test_confirmation_cancel_discards_attempt(void)
     .publish_transport = &bunker_publish_transport, .transport_data = &bunker };
   GtkWidget *window = gtk_window_new();
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
-  AdwAlertDialog *alert = NULL;
+  GtkWidget *alert = NULL;
   g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
   adw_dialog_present(ADW_DIALOG(dialog), window);
   AdwEntryRow *uri_row = ADW_ENTRY_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog),
@@ -230,7 +239,10 @@ test_confirmation_cancel_discards_attempt(void)
   g_source_remove(timer);
   g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
   g_assert_cmpstr(selected, ==, "");
-  g_assert_true(adw_dialog_close(ADW_DIALOG(alert)));
+  /* The confirmation is inline on the pair dialog: "Back" declines it. */
+  g_assert_true(gtk_widget_get_visible(alert));
+  click_response(alert, "Back");
+  g_assert_false(gtk_widget_get_visible(alert));
   expired = FALSE;
   timer = g_timeout_add_seconds(5, deadline, &expired);
   while (!bunker_scopes_closed(&bunker) && !expired)
@@ -333,19 +345,17 @@ find_button(GtkWidget *widget, const gchar *label)
   return NULL;
 }
 
-/* Clicks the alert's own response button, as a user does: AdwAlertDialog
- * then closes itself before it emits "response" (emitting "response"
- * directly hid nostrc-p15n5.3). */
+/* Clicks a real button of the inline confirmation page, as a user does. */
 static void
-click_response(AdwAlertDialog *alert, const gchar *label)
+click_response(GtkWidget *alert, const gchar *label)
 {
-  GtkButton *button = find_button(GTK_WIDGET(alert), label);
+  GtkButton *button = find_button(alert, label);
   g_assert_nonnull(button);
   g_signal_emit_by_name(button, "clicked");
 }
 
 static void
-wait_for_confirmation(AdwAlertDialog **alert)
+wait_for_confirmation(GtkWidget **alert)
 {
   gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(5, deadline, &expired);
@@ -404,7 +414,7 @@ test_bunker_save_order(gconstpointer data)
   GtkWidget *window = gtk_window_new();
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
   g_object_ref_sink(dialog);
-  AdwAlertDialog *alert = NULL;
+  GtkWidget *alert = NULL;
   g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
   adw_dialog_present(ADW_DIALOG(dialog), window);
   GtkStack *stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(dialog),
@@ -457,6 +467,16 @@ test_bunker_save_order(gconstpointer data)
   g_assert_cmpstr(current, ==, "");
   click_response(alert, "Save Remote Signer");
   g_object_unref(alert);
+  /* nostrc-8xfib.1: Save makes the account active at once on the live
+   * session, before the keyring answers: no re-listing, no reconnect. */
+  g_autofree gchar *expected_npub = npub_for_pubkey(bunker.user_pubkey);
+  g_clear_pointer(&current, g_free);
+  current = g_settings_get_string(settings, "current-npub");
+  g_assert_cmpstr(current, ==, expected_npub);
+  g_assert_cmpint(gh_account_controller_get_state(accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
+  g_assert_cmpint(gh_account_controller_get_active_backend(accounts), ==, GH_SIGNER_BACKEND_NIP46);
+  g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==, GH_REMOTE_SIGNER_READY);
+  g_assert_cmpuint(bunker.publishes->len, ==, 2);
   GtkLabel *details = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
     GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"));
   GtkWidget *cancel = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(dialog),
@@ -508,13 +528,15 @@ test_bunker_save_order(gconstpointer data)
   } else {
     drain();
     g_assert_null(store.npub);
+    /* The account stays usable for this run; the user is told it was not
+     * kept and why. */
     g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
-    g_assert_cmpstr(selected, ==, "");
-    GPtrArray *identities = gh_account_controller_get_identities(accounts);
-    g_assert_true(!identities || identities->len == 0);
+    g_assert_cmpstr(selected, ==, expected_npub);
+    g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==, GH_REMOTE_SIGNER_READY);
     g_assert_nonnull(strstr(gtk_label_get_text(error), "rejected save"));
-    g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(gtk_widget_get_template_child(
-      GTK_WIDGET(dialog), GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"))), ==, "Not saved.");
+    g_assert_nonnull(strstr(gtk_label_get_text(error), "not saved"));
+    g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(gtk_widget_get_template_child(
+      GTK_WIDGET(dialog), GH_TYPE_NIP46_PAIR_DIALOG, "bunker_details"))), "Connected as"));
   }
   if (!expired) g_source_remove(timer);
   if (fail_save) adw_dialog_close(ADW_DIALOG(dialog));
@@ -647,7 +669,7 @@ test_hidden_auth_notification_revoked(void)
 
 /* Drives the bunker tab through connect and get_public_key, then confirms. */
 static void
-pair_via_bunker(GhNip46PairDialog *dialog, TestBunker *bunker, AdwAlertDialog **alert)
+pair_via_bunker(GhNip46PairDialog *dialog, TestBunker *bunker, GtkWidget **alert)
 {
   GtkStack *stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(dialog),
     GH_TYPE_NIP46_PAIR_DIALOG, "mode_stack"));
@@ -771,10 +793,21 @@ wait_until_lock_text(GhAccountController *accounts, const gchar *needle)
   return !expired;
 }
 
-/* The owner run: Grotto is absent, the remote credential is saved to the
- * Keychain, and reading it back waits on a prompt. Listing must still merge
- * the remote identity, the dialog must select it, and the remote signer must
- * report it is waiting, then give up, without hanging anything. */
+static gboolean
+lookups_parked(PromptBackend *backend, guint count)
+{
+  g_mutex_lock(&backend->lock);
+  gboolean parked = backend->secret_reads >= count;
+  g_mutex_unlock(&backend->lock);
+  return parked;
+}
+
+/* The owner run: Grotto is absent and the remote credential is saved to the
+ * Keychain, where reading it back waits on a prompt. Save makes the account
+ * active on the live session without reading the secret back (no second
+ * lookup, nostrc-8xfib.1); an unrelated refresh does not rebuild it. After
+ * a restart the read is parked: the account reports it is waiting, then
+ * gives up; the explicit Unlock retries interactively. */
 static void
 test_grotto_fails_remote_selected_lookup_waits(void)
 {
@@ -797,50 +830,69 @@ test_grotto_fails_remote_selected_lookup_waits(void)
   GtkWidget *window = gtk_window_new();
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
   g_object_ref_sink(dialog);
-  AdwAlertDialog *alert = NULL;
+  GtkWidget *alert = NULL;
+  gboolean closed = FALSE;
   g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
+  g_signal_connect(dialog, "closed", G_CALLBACK(mark_closed), &closed);
   adw_dialog_present(ADW_DIALOG(dialog), window);
   pair_via_bunker(dialog, &bunker, &alert);
 
   g_autofree gchar *npub = npub_for_pubkey(bunker.user_pubkey);
-  gboolean expired = FALSE;
-  guint timer = g_timeout_add_seconds(5, deadline, &expired);
-  while (!expired) {
-    g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
-    if (g_strcmp0(selected, npub) == 0) break;
-    g_main_context_iteration(NULL, TRUE);
-  }
-  g_assert_false(expired);
-  g_source_remove(timer);
+  g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
+  g_assert_cmpstr(selected, ==, npub);
   g_assert_cmpint(gh_account_controller_get_state(accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
   g_assert_cmpint(gh_account_controller_get_active_backend(accounts), ==, GH_SIGNER_BACKEND_NIP46);
-
-  /* The secret read is parked: the account shows a waiting state, then gives
-   * up with a specific message. */
-  g_assert_true(wait_until_lock_text(accounts, WAITING_TEXT));
-  g_autofree gchar *limits = gh_account_controller_describe_limits(accounts, TRUE);
-  g_assert_nonnull(strstr(limits, "Read-only: "));
-  g_assert_true(wait_until_lock_text(accounts, GAVE_UP_TEXT));
-  g_mutex_lock(&backend.lock);
-  g_assert_cmpuint(backend.secret_reads, ==, 1);
-  g_mutex_unlock(&backend.lock);
-  /* Listing again does not touch the secret and still completes. */
+  g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==, GH_REMOTE_SIGNER_READY);
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!closed && !expired) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
+  guint64 generation = gh_account_controller_get_generation(accounts);
+  /* Listing again does not touch the secret, completes without Grotto, and
+   * leaves the working session alone. */
   gh_account_controller_refresh(accounts);
-  expired = FALSE;
-  timer = g_timeout_add_seconds(5, deadline, &expired);
   while (gh_account_controller_is_listing(accounts) && !expired)
     g_main_context_iteration(NULL, TRUE);
   g_assert_false(expired);
   g_source_remove(timer);
-
+  g_assert_cmpuint(gh_account_controller_get_generation(accounts), ==, generation);
+  g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==, GH_REMOTE_SIGNER_READY);
+  g_assert_cmpuint(gh_account_controller_get_credential_lookups_for_test(accounts), ==, 0);
+  g_assert_cmpuint(bunker.publishes->len, ==, 2);
   g_mutex_lock(&backend.lock);
-  backend.release = TRUE;
-  g_cond_broadcast(&backend.cond);
+  g_assert_cmpuint(backend.secret_reads, ==, 0);
   g_mutex_unlock(&backend.lock);
   gtk_window_destroy(GTK_WINDOW(window));
   drain();
   g_object_unref(dialog);
   g_clear_object(&accounts);
+
+  /* Restart: the credential read is parked behind a prompt. */
+  accounts = gh_account_controller_new_full_with_credentials(settings, NULL,
+    grotto_unavailable, NULL, store);
+  gh_account_controller_set_credential_timeouts_for_test(accounts, 50, 400);
+  g_assert_true(wait_until_lock_text(accounts, WAITING_TEXT));
+  g_autofree gchar *limits = gh_account_controller_describe_limits(accounts, TRUE);
+  g_assert_nonnull(strstr(limits, "Read-only: "));
+  g_assert_true(wait_until_lock_text(accounts, GAVE_UP_TEXT));
+  g_assert_true(lookups_parked(&backend, 1));
+  /* Unlock retries the read (interactively) once. */
+  g_assert_true(gh_account_controller_unlock_remote(accounts));
+  g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==,
+                  GH_REMOTE_SIGNER_LOADING_CREDENTIAL);
+  g_assert_cmpuint(gh_account_controller_get_credential_lookups_for_test(accounts), ==, 2);
+  expired = FALSE;
+  timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!lookups_parked(&backend, 2) && !expired) g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
+  g_source_remove(timer);
+  g_clear_object(&accounts);
+
+  g_mutex_lock(&backend.lock);
+  backend.release = TRUE;
+  g_cond_broadcast(&backend.cond);
+  g_mutex_unlock(&backend.lock);
+  drain();
   g_object_unref(store);
   bunker_clear(&bunker);
   g_settings_set_string(settings, "current-npub", "");
@@ -853,9 +905,9 @@ typedef struct {
   gboolean release;
 } BlockedList;
 
-/* A remote listing stuck behind a prompt nobody answers. */
+/* A listing stuck behind a prompt or a D-Bus call nobody answers. */
 static GPtrArray *
-blocked_remote_list(gpointer data, GError **error)
+blocked_list(gpointer data, GError **error)
 {
   (void)error;
   BlockedList *blocked = data;
@@ -865,13 +917,17 @@ blocked_remote_list(gpointer data, GError **error)
   return g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
 }
 
+/* Neither a hung Grotto listing nor a hung keyring listing holds up a
+ * paired remote account: Save activates it and the dialog closes once the
+ * credential is stored. */
 static void
-test_selection_timeout_message(void)
+test_blocked_listings_do_not_gate_remote(void)
 {
-  static BlockedList blocked;
-  blocked = (BlockedList){0};
-  g_mutex_init(&blocked.lock);
-  g_cond_init(&blocked.cond);
+  static BlockedList grotto, remote;
+  grotto = (BlockedList){0};
+  remote = (BlockedList){0};
+  g_mutex_init(&grotto.lock); g_cond_init(&grotto.cond);
+  g_mutex_init(&remote.lock); g_cond_init(&remote.cond);
   PairStore store = {0};
   g_mutex_init(&store.lock);
   TestBunker bunker;
@@ -880,7 +936,7 @@ test_selection_timeout_message(void)
   g_settings_set_string(settings, "current-npub", "");
   g_settings_set_string(settings, "current-backend", "grotto");
   g_autoptr(GhAccountController) accounts = gh_account_controller_new_full_with_remote_list(
-    settings, NULL, grotto_unavailable, NULL, blocked_remote_list, &blocked);
+    settings, NULL, blocked_list, &grotto, blocked_list, &remote);
   GhNip46PairConfig config = { .accounts = accounts, .settings = settings,
     .scope_transport = &qr_scope_transport,
     .publish_transport = &bunker_publish_transport, .transport_data = &bunker,
@@ -888,35 +944,26 @@ test_selection_timeout_message(void)
   GtkWidget *window = gtk_window_new();
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
   g_object_ref_sink(dialog);
-  gh_nip46_pair_dialog_set_select_timeout_for_test(dialog, 400);
-  AdwAlertDialog *alert = NULL;
+  GtkWidget *alert = NULL;
+  gboolean closed = FALSE;
   g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
+  g_signal_connect(dialog, "closed", G_CALLBACK(mark_closed), &closed);
   adw_dialog_present(ADW_DIALOG(dialog), window);
   pair_via_bunker(dialog, &bunker, &alert);
-
-  gboolean expired = FALSE, saw_waiting = FALSE;
+  g_assert_true(gh_account_controller_is_listing(accounts));
+  g_assert_cmpint(gh_account_controller_get_state(accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
+  g_assert_cmpint(gh_account_controller_get_remote_state(accounts), ==, GH_REMOTE_SIGNER_READY);
+  gboolean expired = FALSE;
   guint timer = g_timeout_add_seconds(5, deadline, &expired);
-  while (!expired) {
-    const gchar *status = gh_nip46_pair_dialog_get_status_for_test(dialog);
-    if (strstr(status, WAITING_TEXT)) saw_waiting = TRUE;
-    if (strstr(status, "did not answer")) break;
-    g_main_context_iteration(NULL, TRUE);
-  }
+  while (!closed && !expired) g_main_context_iteration(NULL, TRUE);
   g_assert_false(expired);
   g_source_remove(timer);
-  g_assert_true(saw_waiting);
-  GtkLabel *error = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
-    GH_TYPE_NIP46_PAIR_DIALOG, "error_label"));
-  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(error)));
-  GtkButton *cancel = GTK_BUTTON(gtk_widget_get_template_child(GTK_WIDGET(dialog),
-    GH_TYPE_NIP46_PAIR_DIALOG, "cancel_button"));
-  g_assert_cmpstr(gtk_button_get_label(cancel), ==, "Close");
+  g_assert_nonnull(strstr(gh_nip46_pair_dialog_get_status_for_test(dialog), "Connected as"));
 
-  g_mutex_lock(&blocked.lock);
-  blocked.release = TRUE;
-  g_cond_broadcast(&blocked.cond);
-  g_mutex_unlock(&blocked.lock);
-  adw_dialog_close(ADW_DIALOG(dialog));
+  g_mutex_lock(&remote.lock); remote.release = TRUE; g_cond_broadcast(&remote.cond);
+  g_mutex_unlock(&remote.lock);
+  g_mutex_lock(&grotto.lock); grotto.release = TRUE; g_cond_broadcast(&grotto.cond);
+  g_mutex_unlock(&grotto.lock);
   gtk_window_destroy(GTK_WINDOW(window));
   drain();
   g_object_unref(dialog);
@@ -949,7 +996,7 @@ main(int argc, char **argv)
                   test_hidden_auth_notification_revoked);
   g_test_add_func("/groundhog/nip46/pair-dialog/grotto-fails-remote-selected-lookup-waits",
                   test_grotto_fails_remote_selected_lookup_waits);
-  g_test_add_func("/groundhog/nip46/pair-dialog/selection-timeout-message",
-                  test_selection_timeout_message);
+  g_test_add_func("/groundhog/nip46/pair-dialog/blocked-listings-do-not-gate-remote",
+                  test_blocked_listings_do_not_gate_remote);
   return g_test_run();
 }

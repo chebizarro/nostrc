@@ -374,7 +374,11 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
     g_task_return_pointer(task, list, (GDestroyNotify)g_ptr_array_unref);
     return;
   }
-  g_mutex_lock(&self->mutex);
+  /* Only mutations (read-modify-write) are serialised. A lookup parked on a
+   * prompt nobody answers must not block the explicit, interactive Unlock
+   * retry or a store (nostrc-8xfib.1): reads take no lock. */
+  gboolean locked_op = op->kind != OP_LOOKUP;
+  if (locked_op) g_mutex_lock(&self->mutex);
   GPtrArray *items = self->backend->search(self->backend, op->account,
                                             op->interactive, TRUE, cancellable, &error);
   if (!items) goto unlock_fail;
@@ -419,7 +423,6 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
     if (!existing) goto items_fail;
     if (op->kind == OP_LOOKUP) {
       g_ptr_array_unref(items);
-      g_mutex_unlock(&self->mutex);
       g_task_return_pointer(task, existing, (GDestroyNotify)gh_nip46_credential_free);
       return;
     }
@@ -445,7 +448,7 @@ mutate:
 items_fail:
   g_ptr_array_unref(items);
 unlock_fail:
-  g_mutex_unlock(&self->mutex);
+  if (locked_op) g_mutex_unlock(&self->mutex);
 fail:
   g_task_return_error(task, error);
 }
@@ -480,13 +483,20 @@ gh_nip46_credential_store_list_finish(GhNip46CredentialStore *self, GAsyncResult
   return g_task_propagate_pointer(G_TASK(r), e);
 }
 void
-gh_nip46_credential_store_lookup_async(GhNip46CredentialStore *self, const gchar *account,
-                                              GCancellable *c, GAsyncReadyCallback callback, gpointer data)
+gh_nip46_credential_store_lookup_full_async(GhNip46CredentialStore *self, const gchar *account,
+                                            gboolean interactive, GCancellable *c,
+                                            GAsyncReadyCallback callback, gpointer data)
 {
   g_return_if_fail(GH_IS_NIP46_CREDENTIAL_STORE(self));
   Operation *op = g_new0(Operation, 1);
-  op->kind = OP_LOOKUP; op->account = g_strdup(account);
+  op->kind = OP_LOOKUP; op->account = g_strdup(account); op->interactive = interactive;
   start(self, op, c, callback, data, gh_nip46_credential_store_lookup_async);
+}
+void
+gh_nip46_credential_store_lookup_async(GhNip46CredentialStore *self, const gchar *account,
+                                              GCancellable *c, GAsyncReadyCallback callback, gpointer data)
+{
+  gh_nip46_credential_store_lookup_full_async(self, account, FALSE, c, callback, data);
 }
 GhNip46Credential *
 gh_nip46_credential_store_lookup_finish(GhNip46CredentialStore *self, GAsyncResult *r, GError **e)
