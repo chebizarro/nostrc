@@ -84,29 +84,6 @@ template $GhConversationView: Adw.BreakpointBin {
       }
 
       [overlay]
-      // Shown only within a page of the top (gh-conversation-view.c).
-      Button older_button {
-        visible: false;
-        halign: center;
-        valign: start;
-        margin-top: 12;
-        margin-start: 18;
-        margin-end: 18;
-        action-name: "conversation.load-older";
-
-        styles [
-          "osd",
-          "pill",
-          "groundhog-older-button",
-        ]
-
-        child: Adw.ButtonContent older_content {
-          icon-name: "go-up-symbolic";
-          label: _("Earlier Messages");
-        };
-      }
-
-      [overlay]
       Button jump_button {
         visible: false;
         halign: end;

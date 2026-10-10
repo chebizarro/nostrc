@@ -1920,12 +1920,6 @@ listed_and_idle(gpointer data)
          !gh_conversation_view_get_loading_older(wait->view);
 }
 
-static gboolean
-widget_shown(gpointer data)
-{
-  return gtk_widget_get_visible(GTK_WIDGET(data));
-}
-
 #define HISTORY_READ   40 /* read in session 1 */
 #define HISTORY_UNREAD 80 /* then received: more than a page of each */
 #define PAGE           GH_STORE_CONVERSATIONS_PAGE_SIZE
@@ -1935,7 +1929,7 @@ widget_shown(gpointer data)
  * opening it reads only what is listed (the unloaded unread stay unread,
  * after another restart too, since no marker is written past them);
  * scrolling to the top lists the older page, which is then read and
- * written; "Earlier Messages" lists the rest. */
+ * written; reaching the top again lists the next. */
 static void
 test_restart_pages_history(void)
 {
@@ -1996,25 +1990,13 @@ test_restart_pages_history(void)
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==,
                    HISTORY_UNREAD - PAGE - GH_CONVERSATION_WINDOW_PAGE);
   g_assert_true(gh_conversation_get_has_older(room));
-  GtkWidget *older = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(view),
-                                                              GH_TYPE_CONVERSATION_VIEW,
-                                                              "older_button"));
   /* The reader stays where they were, now a page of older messages below
-   * the top: "Earlier Messages" shows only within a page of it
-   * (nostrc-l1kn6.1). */
+   * the top; reaching the top again lists one more 25-message page (there
+   * is no "Earlier Messages" button, nostrc-p15n5.2). Remaining stored
+   * history continues to be available in further pages, never all at once. */
   GtkAdjustment *adj = gtk_scrolled_window_get_vadjustment(scroller);
   g_assert_cmpfloat(gtk_adjustment_get_value(adj), >, gtk_adjustment_get_page_size(adj));
-  g_assert_false(gtk_widget_get_visible(older));
-  gtk_adjustment_set_value(adj, gtk_adjustment_get_page_size(adj) / 2);
-  gh_test_spin_until(widget_shown, older);
-  AdwButtonContent *content = ADW_BUTTON_CONTENT(
-    gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "older_content"));
-  g_autofree gchar *older_label = g_strdup_printf("%u Unread Earlier Messages",
-    HISTORY_UNREAD - PAGE - GH_CONVERSATION_WINDOW_PAGE);
-  g_assert_cmpstr(adw_button_content_get_label(content), ==, older_label);
-  /* The button lists one more 25-message page. Remaining stored history
-   * continues to be available in further pages, never all at once. */
-  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(view), "conversation.load-older", NULL));
+  gtk_adjustment_set_value(adj, 0);
   ListedWait third_page = { room, view, PAGE + 2 * GH_CONVERSATION_WINDOW_PAGE };
   gh_test_spin_until(listed_and_idle, &third_page);
   g_assert_cmpuint(gh_conversation_get_unread_count(room), ==, 0);
@@ -2029,7 +2011,6 @@ test_restart_pages_history(void)
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==,
                    HISTORY_READ + HISTORY_UNREAD);
   g_assert_false(gh_conversation_get_has_older(room));
-  g_assert_false(gtk_widget_get_visible(older));
   window_down(window);
   stack_down(&f);
 

@@ -73,28 +73,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child type="overlay">
-              <object class="GtkButton" id="older_button">
-                <property name="visible">false</property>
-                <property name="halign">3</property>
-                <property name="valign">1</property>
-                <property name="margin-top">12</property>
-                <property name="margin-start">18</property>
-                <property name="margin-end">18</property>
-                <property name="action-name">conversation.load-older</property>
-                <style>
-                  <class name="osd"/>
-                  <class name="pill"/>
-                  <class name="groundhog-older-button"/>
-                </style>
-                <property name="child">
-                  <object class="AdwButtonContent" id="older_content">
-                    <property name="icon-name">go-up-symbolic</property>
-                    <property name="label" translatable="yes">Earlier Messages</property>
-                  </object>
-                </property>
-              </object>
-            </child>
-            <child type="overlay">
               <object class="GtkButton" id="jump_button">
                 <property name="visible">false</property>
                 <property name="halign">2</property>

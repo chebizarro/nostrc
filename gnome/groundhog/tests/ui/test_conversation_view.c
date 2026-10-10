@@ -8,7 +8,7 @@
  * details for every GhMessageStatus, retry, links (open, confirm, refuse,
  * nostr: copy), previews behind consent and none without a fetcher, expiry,
  * scrolling (stick to the newest, "Jump to Latest", first unread), paging
- * older history and its "Earlier Messages" affordance (unread count,
+ * older history as the top is reached (no button, nostrc-p15n5.2; unread count,
  * failure without automatic retry),
  * announcements, compact width and the §7.15 states 11-13. Needs a display:
  * it self-skips (77) without one. Waits iterate the main context against a
@@ -2415,17 +2415,15 @@ test_window_long_scroll(Fixture *f, gconstpointer data)
   g_assert_true(checked_append_anchor);
 }
 
-/* "Earlier Messages" shows only within a page of the top of what is listed
- * (nostrc-l1kn6.1), not over the latest messages; clicking it lists the
- * older page above while the messages on screen stay where they are. */
-static void
-test_earlier_button_near_top(Fixture *f, gconstpointer data)
+/* Older history is listed only as the reader reaches the top of what is
+ * listed: there is no "Earlier Messages" button or action (nostrc-p15n5.2).
+ * Further down nothing is asked for; at the top the older page is listed
+ * above while the messages on screen stay where they are. */
+static GhConversation *
+older_fixture(Fixture *f, GPtrArray *older, GPtrArray *newest, GhConversationState *state)
 {
-  (void)data;
   gint64 t = noon_today();
   const guint to_a[] = { 1, 0 }, to_b[] = { 2, 0 };
-  g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
-  g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
   for (guint i = 0; i < 30; i++) {
     g_autofree gchar *text = g_strdup_printf("newest %u", i);
     g_ptr_array_add(newest, rumor(i % 2 ? 1 : 2, i % 2 ? to_b : to_a, t + i * 600, text, NULL));
@@ -2435,53 +2433,48 @@ test_earlier_button_near_top(Fixture *f, gconstpointer data)
     g_ptr_array_add(older, rumor(2, to_a, t - 36000 + i * 60, text, NULL));
   }
   GhMessage *floor = g_ptr_array_index(newest, 0);
-  const gchar *room_id = gh_message_get_room_id(floor);
-  GhConversationState state = {
+  *state = (GhConversationState){
     .accepted = TRUE,
     .has_older = TRUE,
     .floor_created_at = gh_message_get_created_at(floor),
     .floor_id = gh_message_get_rumor_id(floor),
   };
-  GhConversation *conversation = gh_conversation_store_restore(f->store, room_id, newest, &state);
+  return gh_conversation_store_restore(f->store, gh_message_get_room_id(floor), newest, state);
+}
+
+static void
+test_older_on_reaching_top(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
+  g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
+  GhConversationState state;
+  GhConversation *conversation = older_fixture(f, older, newest, &state);
+  const gchar *room_id = gh_message_get_room_id(g_ptr_array_index(newest, 0));
   show(f, conversation, 480, 300);
   gh_conversation_view_scroll_to_latest(f->view);
   spin_until(at_bottom, f->view);
   wait_frames(GTK_WIDGET(f->view));
   gh_conversation_view_set_history_loader(f->view, load_older, f, NULL);
-  GtkWidget *button = view_child(f->view, "older_button");
+  /* The button and its action are gone. */
+  g_assert_false(gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.load-older", NULL));
   GtkAdjustment *adj = vadjustment(f->view);
   gdouble page = gtk_adjustment_get_page_size(adj);
   g_assert_cmpfloat(gtk_adjustment_get_upper(adj), >, 3 * page);
 
-  /* At the latest messages: nothing about earlier ones covers them. */
-  g_assert_false(shown(button));
-
-  /* Within a page of the top: offered, not yet asked for. */
+  /* Within a page of the top but not at it: nothing asked yet. */
   gtk_adjustment_set_value(adj, page * 3 / 4);
   wait_frames(GTK_WIDGET(f->view));
-  g_assert_true(shown(button));
   g_assert_cmpuint(f->loads, ==, 0);
-  /* Clear of the scrollbar on the end edge, at the top. */
-  g_assert_cmpint(gtk_widget_get_valign(button), ==, GTK_ALIGN_START);
-  g_assert_cmpint(gtk_widget_get_halign(button), ==, GTK_ALIGN_CENTER);
-  g_assert_cmpint(gtk_widget_get_margin_end(button), >=, 18);
 
-  /* Further down again: gone. */
-  gtk_adjustment_set_value(adj, page * 2);
+  /* At the top: one request; the older page is listed above and the
+   * reader's place holds. */
+  gtk_adjustment_set_value(adj, page / 8);
   wait_frames(GTK_WIDGET(f->view));
-  g_assert_false(shown(button));
-  gtk_adjustment_set_value(adj, page / 2);
-  wait_frames(GTK_WIDGET(f->view));
-  g_assert_true(shown(button));
-
-  /* Clicked: the older page is listed above; the reader's place holds. */
   gdouble before_y = 0;
   GhMessage *anchor = topmost_on_screen(f->view, newest, &before_y);
   g_assert_nonnull(anchor);
-  gdouble before_value = gtk_adjustment_get_value(adj);
-  click(button);
   g_assert_cmpuint(f->loads, ==, 1);
-  g_assert_false(shown(button));
   g_assert_true(shown(view_child(f->view, "loading_box")));
   state.has_older = FALSE;
   g_assert_true(gh_conversation_store_restore(f->store, room_id, older, &state) == conversation);
@@ -2495,17 +2488,11 @@ test_earlier_button_near_top(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(row), view_child(f->view, "scroller"),
                                           &bounds));
   g_assert_cmpfloat(fabs(bounds.origin.y - before_y), <=, 1);
-  g_assert_cmpfloat(gtk_adjustment_get_value(adj), >, before_value);
-  g_assert_false(gh_conversation_view_get_at_latest(f->view));
-  /* Nothing older remains: neither offered nor asked for at the top. */
-  g_assert_false(shown(button));
+  /* Nothing older remains: not asked for at the top. */
   gtk_adjustment_set_value(adj, 0);
   wait_frames(GTK_WIDGET(f->view));
-  g_assert_false(shown(button));
   g_assert_cmpuint(f->loads, ==, 1);
 }
-
-/* ---- earlier messages (W13b review B1) ----------------------------------------------- */
 
 static void
 fail_older(GhConversationView *view, GhConversation *conversation, gpointer data)
@@ -2516,104 +2503,46 @@ fail_older(GhConversationView *view, GhConversation *conversation, gpointer data
   gh_conversation_view_fail_loading_older(view);
 }
 
-static gboolean
-older_failed(gpointer data)
-{
-  Fixture *f = data;
-  return f->loads >= 1 && gh_conversation_view_get_older_failed(f->view);
-}
-
-static gboolean
-loading_again(gpointer data)
-{
-  Fixture *f = data;
-  return f->loads == 3 && gh_conversation_view_get_loading_older(f->view);
-}
-
-static const char *
-older_label(Fixture *f)
-{
-  return adw_button_content_get_label(view_child(f->view, "older_content"));
-}
-
-/* Older history that is not listed is said, with how much of it is unread;
- * the button lists it as scrolling to the top does; a failure is said and
- * retried only from the button (scrolling would spin). */
+/* A failure is not retried while the reader stays at the top (that would
+ * spin); leaving the top and coming back asks again. */
 static void
-test_earlier_messages(Fixture *f, gconstpointer data)
+test_older_failure_retry(Fixture *f, gconstpointer data)
 {
   (void)data;
-  gint64 t = noon_today();
-  const guint to_a[] = { 1, 0 };
   g_autoptr(GPtrArray) older = g_ptr_array_new_with_free_func(g_object_unref);
   g_autoptr(GPtrArray) newest = g_ptr_array_new_with_free_func(g_object_unref);
-  for (guint i = 0; i < 3; i++) {
-    g_autofree gchar *old_text = g_strdup_printf("older %u", i);
-    g_autofree gchar *new_text = g_strdup_printf("newest %u", i);
-    g_ptr_array_add(older, rumor(2, to_a, t - 3600 + i * 60, old_text, NULL));
-    g_ptr_array_add(newest, rumor(2, to_a, t + i * 60, new_text, NULL));
-  }
-  GhMessage *floor = g_ptr_array_index(newest, 0);
-  /* Nothing read yet: the 3 listed messages and the 3 older ones. */
-  GhConversationState state = {
-    .accepted = TRUE,
-    .unread = 6,
-    .has_older = TRUE,
-    .floor_created_at = gh_message_get_created_at(floor),
-    .floor_id = gh_message_get_rumor_id(floor),
-  };
-  const gchar *room_id = gh_message_get_room_id(floor);
-  GhConversation *conversation = gh_conversation_store_restore(f->store, room_id, newest, &state);
-  g_assert_cmpuint(gh_conversation_get_unread_count(conversation), ==, 6);
-  guint first = 99;
-  g_assert_cmpuint(gh_conversation_get_listed_unread(conversation, &first), ==, 3);
-  g_assert_cmpuint(first, ==, 0);
-  GtkWidget *button = view_child(f->view, "older_button");
-
-  /* Without a loader it is said, not offered. */
-  gh_conversation_view_set_conversation(f->view, conversation);
-  g_assert_true(shown(button));
-  g_assert_false(gtk_widget_get_sensitive(button));
-  g_assert_cmpstr(older_label(f), ==, "Earlier Messages Can't Be Shown");
-  gh_conversation_view_set_conversation(f->view, NULL);
-  g_assert_false(shown(button));
-
-  /* A failing loader (no store): the view opens at the top, where the
-   * unread older messages are, asks once and says it couldn't. */
+  GhConversationState state;
+  GhConversation *conversation = older_fixture(f, older, newest, &state);
+  show(f, conversation, 480, 300);
+  gh_conversation_view_scroll_to_latest(f->view);
+  spin_until(at_bottom, f->view);
+  wait_frames(GTK_WIDGET(f->view));
   gh_conversation_view_set_history_loader(f->view, fail_older, f, NULL);
-  show(f, conversation, 600, 600);
-  spin_until(older_failed, f);
+  GtkAdjustment *adj = vadjustment(f->view);
+  gdouble page = gtk_adjustment_get_page_size(adj);
+
+  gtk_adjustment_set_value(adj, 0);
+  wait_frames(GTK_WIDGET(f->view));
   g_assert_cmpuint(f->loads, ==, 1);
-  g_assert_true(shown(button));
-  g_assert_false(shown(view_child(f->view, "loading_box")));
-  g_assert_cmpstr(older_label(f), ==, "Couldn't Load Earlier Messages");
-  gtk_adjustment_set_value(vadjustment(f->view), 1);
-  drain_idle();
-  gtk_adjustment_set_value(vadjustment(f->view), 0);
-  drain_idle();
-  g_assert_cmpuint(f->loads, ==, 1);
-  click(button);
-  g_assert_cmpuint(f->loads, ==, 2);
   g_assert_true(gh_conversation_view_get_older_failed(f->view));
-
-  /* A working loader: the button counts what is unread up there, and the
-   * view asks for it as it opens at the top. */
-  gh_conversation_view_set_history_loader(f->view, load_older, f, NULL);
-  gh_conversation_view_set_conversation(f->view, NULL);
-  gh_conversation_view_set_conversation(f->view, conversation);
-  g_assert_false(gh_conversation_view_get_older_failed(f->view));
-  g_assert_cmpstr(older_label(f), ==, "3 Unread Earlier Messages");
-  spin_until(loading_again, f);
-  g_assert_false(shown(button));
-  g_assert_true(shown(view_child(f->view, "loading_box")));
-
-  /* Listed: nothing older remains, so nothing is offered. */
-  state.has_older = FALSE;
-  g_assert_true(gh_conversation_store_restore(f->store, room_id, older, &state) == conversation);
-  gh_conversation_view_finish_loading_older(f->view);
-  g_assert_false(shown(button));
   g_assert_false(shown(view_child(f->view, "loading_box")));
-  g_assert_cmpuint(gh_conversation_get_listed_unread(conversation, NULL), ==, 6);
+  gtk_adjustment_set_value(adj, 1);
+  drain_idle();
+  gtk_adjustment_set_value(adj, 0);
+  drain_idle();
+  g_assert_cmpuint(f->loads, ==, 1);
+
+  /* Leaving the top and coming back tries again. */
+  gtk_adjustment_set_value(adj, page * 2);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_cmpuint(f->loads, ==, 1);
+  gtk_adjustment_set_value(adj, 0);
+  wait_frames(GTK_WIDGET(f->view));
+  g_assert_cmpuint(f->loads, ==, 2);
+
+  /* Another conversation (or none) starts afresh. */
+  gh_conversation_view_set_conversation(f->view, NULL);
+  g_assert_false(gh_conversation_view_get_older_failed(f->view));
 }
 
 /* ---- charter §7.15 states 11-13, compact width, keyboard --------------------------------- */
@@ -3541,9 +3470,9 @@ main(int argc, char **argv)
   ADD("scrolling", test_scrolling);
   ADD("opens-at-first-unread", test_opens_at_first_unread);
   ADD("load-older", test_load_older);
-  ADD("earlier-button-near-top", test_earlier_button_near_top);
+  ADD("older-on-reaching-top", test_older_on_reaching_top);
   ADD("window-long-scroll", test_window_long_scroll);
-  ADD("earlier-messages", test_earlier_messages);
+  ADD("older-failure-retry", test_older_failure_retry);
   ADD("states-11-13", test_states);
   ADD("compact-and-keyboard", test_compact_and_keyboard);
   ADD("wide-is-not-compact", test_wide_is_not_compact);
