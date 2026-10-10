@@ -44,10 +44,14 @@ typedef struct {
   GtkWidget *focus_targets[G_N_ELEMENTS(account_pages)];
   GtkMenuButton *primary;
   GtkWidget *choose_button;
+  /* The switcher's popover lives only while it is open: see
+   * discard_account_popover(). Its content (account_box) is kept. */
   GtkPopover *account_popover;
+  GtkWidget *account_box;
   GtkListBox *accounts_list;
   GtkWidget *open_anchor;
   guint open_idle;
+  guint discard_idle;
 #if GROUNDHOG_HAVE_INBOX
   GhPictureCache *picture_cache; /* borrowed from the window */
 #endif
@@ -70,6 +74,7 @@ typedef struct {
 
 static void names_gone(gpointer data, GObject *where_the_object_was);
 static void on_window_state_source(GtkWidget *window);
+static void discard_account_popover(GhAccountUi *ui);
 
 static void
 account_ui_free(gpointer data)
@@ -82,12 +87,8 @@ account_ui_free(gpointer data)
   g_clear_object(&ui->controller);
   g_clear_object(&ui->settings);
   g_clear_handle_id(&ui->open_idle, g_source_remove);
-  if (ui->account_popover) {
-    GtkWidget *popover = GTK_WIDGET(ui->account_popover);
-    if (gtk_widget_get_parent(popover))
-      gtk_widget_unparent(popover);
-    g_clear_object(&ui->account_popover);
-  }
+  discard_account_popover(ui);
+  g_clear_object(&ui->account_box);
   g_clear_object(&ui->select);
   g_clear_object(&ui->remove_remote);
   g_clear_object(&ui->credentials);
@@ -201,7 +202,8 @@ account_row_activated(GtkListBox *list, GtkListBoxRow *row, gpointer data)
   GhAccountUi *ui = data;
   (void)list;
   const gchar *target = g_object_get_data(G_OBJECT(row), "account-target");
-  gtk_popover_popdown(ui->account_popover);
+  if (ui->account_popover)
+    gtk_popover_popdown(ui->account_popover);
   g_action_change_state(G_ACTION(ui->select), g_variant_new_string(target));
 }
 
@@ -215,35 +217,69 @@ account_action_button(const gchar *label, const gchar *action)
   return button;
 }
 
+/* A popover is unrealized, its GdkSurface destroyed, when it is unparented.
+ * GTK 4.14 (Ubuntu 24.04) leaves the display's tooltip pointing at a popover
+ * that the pointer entered and lets go of it only when the popover is
+ * finalized: its hover timeout then fires on the unrealized popover and asks
+ * gdk_surface_get_device_position() about a NULL surface (later GTK calls
+ * gtk_tooltip_unset_surface() from gtk_popover_unmap()). So a
+ * popover never outlives its parent here: it is made on every opening and
+ * finalized when it closes or its anchor goes away; its content stays. */
+static void
+discard_account_popover(GhAccountUi *ui)
+{
+  g_clear_handle_id(&ui->discard_idle, g_source_remove);
+  if (!ui->account_popover)
+    return;
+  GtkPopover *popover = g_steal_pointer(&ui->account_popover);
+  g_signal_handlers_disconnect_by_data(popover, ui);
+  gtk_popover_popdown(popover);
+  gtk_popover_set_child(popover, NULL);
+  if (gtk_widget_get_parent(GTK_WIDGET(popover)))
+    gtk_widget_unparent(GTK_WIDGET(popover));
+  g_object_unref(popover);
+}
+
+static gboolean
+discard_account_popover_idle(gpointer data)
+{
+  GhAccountUi *ui = data;
+  ui->discard_idle = 0;
+  discard_account_popover(ui);
+  return G_SOURCE_REMOVE;
+}
+
+/* "closed" comes from inside the popover's own unmap and from the clicked
+ * handlers of its buttons: finalize it after, ahead of any tooltip timeout. */
 static void
 account_popover_closed(GtkPopover *popover, gpointer data)
 {
-  (void)data;
-  if (gtk_widget_get_parent(GTK_WIDGET(popover)))
-    gtk_widget_unparent(GTK_WIDGET(popover));
+  GhAccountUi *ui = data;
+  (void)popover;
+  if (!ui->discard_idle)
+    ui->discard_idle = g_idle_add_full(G_PRIORITY_HIGH, discard_account_popover_idle, ui, NULL);
 }
 
 static void
 account_anchor_unmapped(GtkWidget *anchor, gpointer data)
 {
   GhAccountUi *ui = data;
-  if (gtk_widget_get_parent(GTK_WIDGET(ui->account_popover)) == anchor) {
-    gtk_popover_popdown(ui->account_popover);
-    if (gtk_widget_get_parent(GTK_WIDGET(ui->account_popover)) == anchor)
-      gtk_widget_unparent(GTK_WIDGET(ui->account_popover));
-  }
+  if (ui->account_popover && gtk_widget_get_parent(GTK_WIDGET(ui->account_popover)) == anchor)
+    discard_account_popover(ui);
 }
 
 static void
-build_account_popover(GhAccountUi *ui)
+account_action_clicked(GtkButton *button, gpointer data)
 {
-  ui->account_popover = GTK_POPOVER(g_object_ref_sink(gtk_popover_new()));
-  gtk_popover_set_has_arrow(ui->account_popover, TRUE);
-  g_signal_connect(ui->account_popover, "closed", G_CALLBACK(account_popover_closed), ui);
-  g_signal_connect(ui->primary, "unmap", G_CALLBACK(account_anchor_unmapped), ui);
-  g_signal_connect(ui->primary, "destroy", G_CALLBACK(account_anchor_unmapped), ui);
-  g_signal_connect(ui->choose_button, "unmap", G_CALLBACK(account_anchor_unmapped), ui);
-  g_signal_connect(ui->choose_button, "destroy", G_CALLBACK(account_anchor_unmapped), ui);
+  GhAccountUi *ui = data;
+  (void)button;
+  if (ui->account_popover)
+    gtk_popover_popdown(ui->account_popover);
+}
+
+static void
+build_account_box(GhAccountUi *ui)
+{
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
   gtk_widget_set_size_request(box, 270, -1);
   gtk_widget_set_margin_top(box, 8);
@@ -274,13 +310,10 @@ build_account_popover(GhAccountUi *ui)
   /* GtkButton activates its GtkActionable in the clicked default handler.
    * Closing this popover first unparents it and removes the inherited account
    * action group, so these actions never run. Close only after activation. */
-  g_signal_connect_data(add, "clicked", G_CALLBACK(gtk_popover_popdown),
-                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
-  g_signal_connect_data(remove, "clicked", G_CALLBACK(gtk_popover_popdown),
-                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
-  g_signal_connect_data(refresh, "clicked", G_CALLBACK(gtk_popover_popdown),
-                        ui->account_popover, NULL, G_CONNECT_AFTER | G_CONNECT_SWAPPED);
-  gtk_popover_set_child(ui->account_popover, box);
+  g_signal_connect_after(add, "clicked", G_CALLBACK(account_action_clicked), ui);
+  g_signal_connect_after(remove, "clicked", G_CALLBACK(account_action_clicked), ui);
+  g_signal_connect_after(refresh, "clicked", G_CALLBACK(account_action_clicked), ui);
+  ui->account_box = g_object_ref_sink(box);
 }
 
 /* The account page for state; NULL when the account is active and the
@@ -399,11 +432,12 @@ open_account_popover(gpointer data)
 {
   GhAccountUi *ui = data;
   ui->open_idle = 0;
-  GtkWidget *popover = GTK_WIDGET(ui->account_popover);
-  if (gtk_widget_get_parent(popover) != ui->open_anchor) {
-    gtk_widget_unparent(popover);
-    gtk_widget_set_parent(popover, ui->open_anchor);
-  }
+  discard_account_popover(ui);
+  ui->account_popover = GTK_POPOVER(g_object_ref_sink(gtk_popover_new()));
+  gtk_popover_set_has_arrow(ui->account_popover, TRUE);
+  gtk_popover_set_child(ui->account_popover, ui->account_box);
+  g_signal_connect(ui->account_popover, "closed", G_CALLBACK(account_popover_closed), ui);
+  gtk_widget_set_parent(GTK_WIDGET(ui->account_popover), ui->open_anchor);
   gtk_popover_popup(ui->account_popover);
   return G_SOURCE_REMOVE;
 }
@@ -412,7 +446,8 @@ static void
 queue_account_popover(GhAccountUi *ui, GtkWidget *anchor)
 {
   g_clear_handle_id(&ui->open_idle, g_source_remove);
-  gtk_popover_popdown(ui->account_popover);
+  if (ui->account_popover)
+    gtk_popover_popdown(ui->account_popover);
   ui->open_anchor = anchor;
   ui->open_idle = g_idle_add(open_account_popover, ui);
 }
@@ -658,7 +693,11 @@ gh_account_ui_attach(GhWindow *window, GhAccountController *controller, GSetting
                          G_MENU_MODEL(gtk_builder_get_object(builder, "account_section")));
   ui->choose_button = GTK_WIDGET(gtk_builder_get_object(builder, "account_choose_button"));
   g_signal_connect(ui->choose_button, "clicked", G_CALLBACK(on_choose_account), ui);
-  build_account_popover(ui);
+  build_account_box(ui);
+  g_signal_connect(ui->primary, "unmap", G_CALLBACK(account_anchor_unmapped), ui);
+  g_signal_connect(ui->primary, "destroy", G_CALLBACK(account_anchor_unmapped), ui);
+  g_signal_connect(ui->choose_button, "unmap", G_CALLBACK(account_anchor_unmapped), ui);
+  g_signal_connect(ui->choose_button, "destroy", G_CALLBACK(account_anchor_unmapped), ui);
 
   g_autoptr(GSimpleActionGroup) group = g_simple_action_group_new();
   ui->select = g_simple_action_new_stateful("select", G_VARIANT_TYPE_STRING,

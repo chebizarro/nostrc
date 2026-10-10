@@ -405,11 +405,30 @@ test_header_title_fits(void)
       g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
       GtkWidget *add = find_action(GTK_WIDGET(switcher), "account.add-remote");
       g_assert_nonnull(add);
+      /* A closed switcher is finalized, not kept unparented and unrealized:
+       * GTK 4.14's tooltip hover timeout would then query the pointer on its
+       * destroyed surface (gdk_surface_get_device_position critical). */
+      gpointer gone = switcher;
+      g_object_add_weak_pointer(G_OBJECT(switcher), &gone);
       g_signal_emit_by_name(add, "clicked");
+      spin_until(is_null, &gone);
       GhNip46PairDialog *pair = find_pair_dialog(GTK_WIDGET(window));
       g_assert_nonnull(pair);
       spin_until(gh_test_dialog_shown, pair);
       adw_dialog_close(ADW_DIALOG(pair));
+      /* It opens again, with the same accounts. */
+      g_assert_true(gtk_widget_activate_action(GTK_WIDGET(window), "account.open", NULL));
+      while (g_main_context_iteration(NULL, FALSE))
+        ;
+      switcher = NULL;
+      for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(primary)); child;
+           child = gtk_widget_get_next_sibling(child))
+        if (GTK_IS_POPOVER(child) && !GTK_IS_POPOVER_MENU(child))
+          switcher = GTK_POPOVER(child);
+      g_assert_nonnull(switcher);
+      g_assert_true(gtk_widget_get_visible(GTK_WIDGET(switcher)));
+      g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
+      gtk_popover_popdown(switcher);
     }
     gtk_window_destroy(GTK_WINDOW(window));
   }
