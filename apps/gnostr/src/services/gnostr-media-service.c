@@ -1,4 +1,5 @@
 #include "gnostr-media-service.h"
+#include <nostr-gtk-1.0/gn-og-preview.h>
 
 #include <gdk-pixbuf/gdk-pixbuf.h>
 #include <glib/gstdio.h>
@@ -1565,96 +1566,6 @@ process_texture_body(PendingRequest *request)
   pending_unref(request);
 }
 
-static const char *
-ascii_strcasestr(const char *haystack, const char *needle)
-{
-  if (!haystack || !needle || !*needle)
-    return haystack;
-  gsize needle_len = strlen(needle);
-  for (const char *p = haystack; *p; p++) {
-    if (g_ascii_strncasecmp(p, needle, needle_len) == 0)
-      return p;
-  }
-  return NULL;
-}
-
-static char *
-html_attr_value(const char *tag_start, const char *tag_end, const char *name)
-{
-  const char *p = tag_start;
-  gsize name_len = strlen(name);
-  while (p && p < tag_end) {
-    p = ascii_strcasestr(p, name);
-    if (!p || p >= tag_end)
-      return NULL;
-    if ((p == tag_start || !g_ascii_isalnum(*(p - 1))) &&
-        p + name_len < tag_end &&
-        !g_ascii_isalnum(p[name_len]) && p[name_len] != '-') {
-      const char *q = p + name_len;
-      while (q < tag_end && g_ascii_isspace(*q))
-        q++;
-      if (q < tag_end && *q == '=') {
-        q++;
-        while (q < tag_end && g_ascii_isspace(*q))
-          q++;
-        if (q >= tag_end)
-          return NULL;
-        if (*q == '\'' || *q == '"') {
-          char quote = *q++;
-          const char *end = memchr(q, quote, tag_end - q);
-          return end ? g_strndup(q, end - q) : NULL;
-        }
-        const char *end = q;
-        while (end < tag_end && !g_ascii_isspace(*end) && *end != '>')
-          end++;
-        return g_strndup(q, end - q);
-      }
-    }
-    p += name_len;
-  }
-  return NULL;
-}
-
-static char *
-extract_meta_content(const char *html, const char *wanted)
-{
-  const char *p = html;
-  while ((p = ascii_strcasestr(p, "<meta")) != NULL) {
-    const char *end = strchr(p, '>');
-    if (!end)
-      break;
-    g_autofree char *property = html_attr_value(p, end, "property");
-    if (!property)
-      property = html_attr_value(p, end, "name");
-    if (property && g_ascii_strcasecmp(property, wanted) == 0)
-      return html_attr_value(p, end, "content");
-    p = end + 1;
-  }
-  return NULL;
-}
-
-static char *
-extract_html_title(const char *html)
-{
-  const char *start = ascii_strcasestr(html, "<title");
-  if (!start)
-    return NULL;
-  start = strchr(start, '>');
-  if (!start)
-    return NULL;
-  start++;
-  const char *end = ascii_strcasestr(start, "</title>");
-  if (!end)
-    return NULL;
-  char *title = g_strndup(start, end - start);
-  g_strstrip(title);
-  if (!*title) {
-    g_free(title);
-    return NULL;
-  }
-  return title;
-}
-
 typedef struct {
   GBytes *bytes;
   char *url;
@@ -1682,46 +1593,23 @@ parse_og_worker(GTask *task,
     return;
   }
 
-  gsize length = 0;
-  const char *raw = g_bytes_get_data(data->bytes, &length);
-  g_autofree char *html = g_strndup(raw, length);
-  GnostrOgMetadata *metadata = g_new0(GnostrOgMetadata, 1);
-  g_atomic_ref_count_init(&metadata->ref_count);
-  metadata->source_url = g_strdup(data->url);
-  metadata->title = extract_meta_content(html, "og:title");
-  if (!metadata->title)
-    metadata->title = extract_meta_content(html, "twitter:title");
-  if (!metadata->title)
-    metadata->title = extract_html_title(html);
-  metadata->description = extract_meta_content(html, "og:description");
-  if (!metadata->description)
-    metadata->description = extract_meta_content(html, "twitter:description");
-  if (!metadata->description)
-    metadata->description = extract_meta_content(html, "description");
-  metadata->image_url = extract_meta_content(html, "og:image");
-  if (!metadata->image_url)
-    metadata->image_url = extract_meta_content(html, "twitter:image");
-
-  if (metadata->image_url && *metadata->image_url) {
-    g_autoptr(GError) resolve_error = NULL;
-    char *absolute = g_uri_resolve_relative(data->url, metadata->image_url,
-                                            G_URI_FLAGS_PARSE_RELAXED,
-                                            &resolve_error);
-    if (absolute) {
-      g_free(metadata->image_url);
-      metadata->image_url = absolute;
-    }
-  }
-
-  if ((!metadata->title || !*metadata->title) &&
-      (!metadata->description || !*metadata->description) &&
-      (!metadata->image_url || !*metadata->image_url)) {
-    gnostr_og_metadata_unref(metadata);
+  /* nostrc-8xfib.3: nostr-gtk's shared <head> parser (libxml2, NONET,
+   * og: > twitter: > plain, bounded UTF-8; relative og:image resolved). */
+  g_autoptr(GError) parse_error = NULL;
+  g_autoptr(GnOgMetadata) parsed =
+      gn_og_metadata_parse_html(data->bytes, data->url, NULL, NULL, &parse_error);
+  if (!parsed) {
     g_task_return_new_error(task, GNOSTR_MEDIA_ERROR,
                             GNOSTR_MEDIA_ERROR_DECODE,
                             "Response contains no Open Graph metadata");
     return;
   }
+  GnostrOgMetadata *metadata = g_new0(GnostrOgMetadata, 1);
+  g_atomic_ref_count_init(&metadata->ref_count);
+  metadata->source_url = g_strdup(data->url);
+  metadata->title = g_strdup(gn_og_metadata_get_title(parsed));
+  metadata->description = g_strdup(gn_og_metadata_get_description(parsed));
+  metadata->image_url = g_strdup(gn_og_metadata_get_image_url(parsed));
   g_task_return_pointer(task, metadata,
                         (GDestroyNotify)gnostr_og_metadata_unref);
 }

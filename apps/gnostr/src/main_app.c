@@ -1,3 +1,4 @@
+#include "ui/gnostr-og-activate.h"
 #include <adwaita.h>
 #include <nostr-gtk-1.0/nostr-gtk.h>
 #include <glib/gstdio.h>
@@ -227,6 +228,8 @@ static gboolean on_initial_activate_idle(gpointer user_data);
 /* Runs in the primary instance only. */
 static void on_startup(GApplication *app, gpointer user_data) {
   (void)user_data;
+  /* nostrc-8xfib.3: note-card link previews use gnostr's provider/policy. */
+  gnostr_og_preview_install();
 #ifdef __APPLE__
   /* Queued here, not before g_application_run(): a second `gnostr …` that
    * only forwards to the running instance never initializes GTK, and
