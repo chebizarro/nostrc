@@ -86,7 +86,6 @@
     <file>ui/gh-requests-view.ui</file>
     <file>ui/gh-new-message-dialog.ui</file>
     <file>ui/gh-add-contact-dialog.ui</file>
-    <file>ui/gh-issue-dialog.ui</file>
     <file>ui/gh-new-message-row.ui</file>
     <file>ui/gh-recipient-chip.ui</file>
     <file>ui/gh-conversation-info-dialog.ui</file>

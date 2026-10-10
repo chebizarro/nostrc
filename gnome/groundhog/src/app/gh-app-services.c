@@ -3,7 +3,7 @@
 #include "gh-public-note-ui.h"
 #endif
 #if GROUNDHOG_HAVE_ISSUE
-#include "gh-issue-dialog.h"
+#include "gh-issue-adapters.h"
 #endif
 #include "gh-app-services.h"
 #include "gh-diagnostics.h"
@@ -1876,7 +1876,7 @@ on_report_issue(GSimpleAction *action, GVariant *parameter, gpointer data)
   GhAppServices *self = data;
   GtkWindow *window = gtk_application_get_active_window(self->app);
   if (window)
-    adw_dialog_present(ADW_DIALOG(gh_issue_dialog_new(self->accounts, self->settings)), GTK_WIDGET(window));
+    gn_nip34_issue_view_present(gh_issue_dialog_new(self->accounts, self->settings), GTK_WIDGET(window));
 }
 #endif
 

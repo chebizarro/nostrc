@@ -602,8 +602,8 @@ review(GnNip34IssueView *self)
     ? _("The uploaded files listed in the body are public.")
     : _("No files are uploaded.");
   g_autofree gchar *body = with_diagnostics
-    ? g_strdup_printf(_("This is not a private message. Anyone can read and copy this report and associate it with your public key. Deletion cannot be guaranteed. The %s shown in the body are included. %s"),
-                      self->diag_heading ? self->diag_heading : _("diagnostics"), uploads)
+    ? g_strdup_printf(_("This is not a private message. Anyone can read and copy this report and associate it with your public key. Deletion cannot be guaranteed. The “%s” section shown in the body is included. %s"),
+                      self->diag_heading ? self->diag_heading : _("Diagnostics"), uploads)
     : g_strdup_printf(_("This is not a private message. Anyone can read and copy this report and associate it with your public key. Deletion cannot be guaranteed. No logs or device details are added. %s"),
                       uploads);
   present_consent(self, _("Publish This Issue Publicly?"), body, preview, "publish",

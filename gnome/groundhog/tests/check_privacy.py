@@ -142,7 +142,8 @@ RULES = (
     "lookup-sources", "account-auth-purpose", "auth-policy", "account-auth-setter",
     "message-status", "log-ids",
     "relay-suggestions",
-    "app-id", "preference-consumers", "diagnostics-allowlist", "exceptions",
+    "app-id", "preference-consumers", "diagnostics-allowlist", "issue-services",
+    "exceptions",
 )
 # Rules whose findings EXCEPTIONS can never waive.
 UNWAIVABLE = {"gsettings-allowlist", "app-id", "message-status", "relay-suggestions",
@@ -929,13 +930,44 @@ def check_diagnostics(tree):
     return found
 
 
+# nostrc-8xfib.5: the portable NIP-34 issue form (nostr-gtk) takes injected
+# services. Outside src/net/ Groundhog passes no uploader and no repository
+# resolver (gn_nip34_issue_view_new(target, publisher, NULL, NULL)) and
+# implements neither interface: files and lookups would bypass GhNet's
+# network mode, Tor isolation and dispatcher.
+ISSUE_VIEW_NEW_RE = re.compile(r"\bgn_nip34_issue_view_new\s*\(([^;]*?)\)\s*;", re.S)
+ISSUE_SERVICE_IMPL_RE = re.compile(
+    r"\bGN_TYPE_ISSUE_(?:UPLOADER|REPO_RESOLVER)\b|\bGnIssue(?:Uploader|RepoResolver)Interface\b")
+
+
+def check_issue_services(tree):
+    rule = "issue-services"
+    found = []
+    for rel in tree.files("src", suffixes={".c", ".h"}):
+        if rel.startswith("src/net/"):
+            continue
+        _, _, code = tree.views(rel)
+        for m in ISSUE_VIEW_NEW_RE.finditer(code):
+            args = [a.strip() for a in m.group(1).split(",")]
+            if len(args) != 4 or args[2] != "NULL" or args[3] != "NULL":
+                found.append(Violation(rule, rel, line_of(code, m.start()),
+                                       "the issue form gets a resolver or uploader outside src/net/; "
+                                       "pass NULL, NULL or a GhNet adapter (charter: no fetch "
+                                       "or upload outside GhNet)", m.group()))
+        found += find_all(rule, rel, code, ISSUE_SERVICE_IMPL_RE,
+                          lambda s: f"{s}: an issue uploader or resolver must be a GhNet adapter "
+                                    "in src/net/")
+    return found
+
+
 def check(root, exceptions=None):
     """Return the violations in the Groundhog tree at `root`."""
     exceptions = EXCEPTIONS if exceptions is None else exceptions
     tree = Tree(root)
     raw = (check_url_literals(tree) + check_gsettings(tree) + check_blueprint(tree)
            + check_sources(tree) + check_message_status(tree) + check_relay_suggestions(tree)
-           + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree))
+           + check_app_id(tree) + check_preference_consumers(tree) + check_diagnostics(tree)
+           + check_issue_services(tree))
     used, found = set(), []
     for violation in raw:
         key = (violation.rule, violation.path, violation.match)
@@ -983,6 +1015,10 @@ def render_schema(keys=GSETTINGS):
 def clean_tree():
     """A minimal tree that passes every rule, with near misses each rule must ignore."""
     return {
+        "src/ui/gh-issue-adapters.c": (
+            "#include \"gh-issue-adapters.h\"\n"
+            "/* No GnIssueUploader here: Groundhog never uploads issue files. */\n"
+            "static void *v(void *t, void *p) { return gn_nip34_issue_view_new(t, p, NULL, NULL); }\n"),
         "src/main.c": (
             "#include <adwaita.h>\n"
             f'#define GROUNDHOG_APP_ID "{APP_ID}"\n'
@@ -1257,6 +1293,11 @@ MUTATIONS = [
       [replace("data/ui/gh-window.blp", "      Gtk.Spinner {}", "      Adw.Sidebar {}")]),
     M("blueprint-ui-class", {"blueprint-denylist"},
       [replace("data/ui/gh-window.ui", 'class="GtkSpinner"', 'class="AdwButtonRow"')]),
+    M("issue-uploader-passed", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "p, NULL, NULL)", "p, NULL, uploader)")]),
+    M("issue-uploader-impl", {"issue-services"},
+      [append("src/ui/gh-issue-adapters.c",
+              "static void i(GnIssueUploaderInterface *iface) { (void)iface; }\n")]),
     M("libsoup-include", {"libsoup-boundary"},
       [append("src/app/gh-fetch.c", "#include <libsoup/soup.h>\n")]),
     M("libsoup-api", {"libsoup-boundary"},
