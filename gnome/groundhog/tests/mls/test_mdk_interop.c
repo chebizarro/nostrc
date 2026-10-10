@@ -1190,6 +1190,10 @@ test_groundhog_leaves_mdk_admin(void)
   g_autofree gchar *dave_kp = mdk_fetch_key_package(&w, "carol", DAVE, &dave_view);
   g_assert_true(json_object_get_boolean_member(dave_view, "parsed"));
   guint64 before_add = gh_mls_group_get_epoch(ga);
+  /* Carol's Add Commit, then Alice's fresh Remove request for the new
+   * epoch. That request is published asynchronously after Alice applies
+   * the Commit, so wait for it on G before the first sync below. */
+  StoredCount after_add = { &w.g, w.g.stored->len + 2 };
   g_autoptr(JsonObject) added = mdk_call(&driver,
     "\"cmd\":\"add_members\",\"peer\":\"carol\",\"group\":\"%s\",\"key_packages\":[%s],"
     "\"welcome_relays\":[\"%s\"]", group, dave_kp, w.x.url);
@@ -1197,7 +1201,8 @@ test_groundhog_leaves_mdk_admin(void)
   assert_converged(ga, added);
   g_assert_true(gh_mls_group_get_leaving(ga));
   g_assert_cmpint(gh_mls_group_get_leave_failure(ga), ==, GH_MLS_LEAVE_FAILURE_NONE);
-  on_g.n = w.g.stored->len;
+  spin_until(stored_reached, &after_add, "Alice's Remove request after the Add");
+  on_g.n = after_add.n;
   guint rounds = 0;
   while (gh_mls_group_get_leaving(ga)) {
     g_assert_cmpuint(rounds, <, GH_MLS_SERVICE_LEAVE_REQUESTS);   /* bounded */

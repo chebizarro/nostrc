@@ -43,7 +43,9 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
-            desktop-file-utils appstream blueprint-compiler xvfb xauth gettext
+            desktop-file-utils appstream blueprint-compiler xvfb xauth gettext \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good
           docker version
 
       - name: Configure with the MDK 0.11 matrix
