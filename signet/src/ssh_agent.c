@@ -204,6 +204,35 @@ static int handle_request_identities(SignetSshAgent *sa, int client_fd,
   return rc;
 }
 
+typedef struct {
+  const uint8_t *requested_blob;
+  uint32_t requested_blob_len;
+  const uint8_t *data;
+  uint32_t data_len;
+  uint8_t signature[64];
+} SignetSshSignWork;
+
+static int ssh_sign_in_custody(const uint8_t secret_key[32], void *user_data) {
+  SignetSshSignWork *work = user_data;
+  uint8_t ed_sk[64], pk[32];
+  if (crypto_sign_ed25519_seed_keypair(pk, ed_sk, secret_key) != 0) return -1;
+  size_t blob_len = 0;
+  uint8_t *blob = build_ed25519_key_blob(pk, &blob_len);
+  int matches = blob && blob_len == work->requested_blob_len &&
+                memcmp(blob, work->requested_blob, blob_len) == 0;
+  g_free(blob);
+  sodium_memzero(pk, sizeof(pk));
+  if (!matches) {
+    sodium_memzero(ed_sk, sizeof(ed_sk));
+    return -1;
+  }
+  unsigned long long actual = 0;
+  int rc = crypto_sign_ed25519_detached(work->signature, &actual,
+                                        work->data, work->data_len, ed_sk);
+  sodium_memzero(ed_sk, sizeof(ed_sk));
+  return rc == 0 && actual == 64 ? 0 : -1;
+}
+
 static int handle_sign_request(SignetSshAgent *sa, int client_fd,
                                  const char *agent_id,
                                  const uint8_t *data, uint32_t data_len) {
@@ -225,46 +254,12 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
                                                      SIGNET_CAP_NOSTR_SIGN))
     return send_failure(client_fd);
 
-  /* Load agent key. */
-  SignetLoadedKey lk;
-  memset(&lk, 0, sizeof(lk));
-  if (!signet_key_store_load_agent_key(sa->keys, agent_id, &lk))
-    return send_failure(client_fd);
-
-  /* Sign with ed25519 using libsodium's seed-based key derivation. */
-  uint8_t ed_sk[64];
-  uint8_t pk[32];
-  if (crypto_sign_ed25519_seed_keypair(pk, ed_sk, lk.secret_key) != 0) {
-    signet_loaded_key_clear(&lk);
-    return send_failure(client_fd);
-  }
-  signet_loaded_key_clear(&lk);
-
-  /* Bind the signature to the requested identity: the client must have asked
-   * to sign with THIS agent's ed25519 key blob (the only identity we expose),
-   * not some other key. Previously the requested blob was skipped, so a sign
-   * request for any identity was served with the mapped agent's key. */
-  {
-    size_t agent_blob_len = 0;
-    uint8_t *agent_blob = build_ed25519_key_blob(pk, &agent_blob_len);
-    int blob_match = (agent_blob && agent_blob_len == kb_len &&
-                      memcmp(agent_blob, req_key_blob, kb_len) == 0);
-    g_free(agent_blob);
-    if (!blob_match) {
-      sodium_memzero(ed_sk, sizeof(ed_sk));
-      sodium_memzero(pk, sizeof(pk));
-      return send_failure(client_fd);
-    }
-  }
-
-  uint8_t sig[64];
-  unsigned long long sig_len_actual;
-  int sign_rc = crypto_sign_ed25519_detached(sig, &sig_len_actual,
-                                               sign_data, msg_len, ed_sk);
-  sodium_memzero(ed_sk, sizeof(ed_sk));
-  sodium_memzero(pk, sizeof(pk));
-
-  if (sign_rc != 0)
+  SignetSshSignWork work = {
+    .requested_blob = req_key_blob, .requested_blob_len = kb_len,
+    .data = sign_data, .data_len = msg_len
+  };
+  if (signet_key_store_with_signing_key(sa->keys, agent_id,
+      NULL, 0, ssh_sign_in_custody, &work) != 0)
     return send_failure(client_fd);
 
   /* Build signature blob:
@@ -275,7 +270,8 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
   put_u32(sp, SSH_ED25519_KEYTYPE_LEN); sp += 4;
   memcpy(sp, SSH_ED25519_KEYTYPE, SSH_ED25519_KEYTYPE_LEN); sp += SSH_ED25519_KEYTYPE_LEN;
   put_u32(sp, 64); sp += 4;
-  memcpy(sp, sig, 64);
+  memcpy(sp, work.signature, 64);
+  sodium_memzero(work.signature, sizeof(work.signature));
 
   /* Response: type(1) + sig_blob_len(4) + sig_blob */
   size_t resp_len = 1 + 4 + sig_blob_len;

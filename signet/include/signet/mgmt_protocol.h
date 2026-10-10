@@ -86,6 +86,9 @@ typedef enum {
   SIGNET_MGMT_OP_DELETE_CREDENTIAL,
   SIGNET_MGMT_OP_GRANT_PROVISIONER,
   SIGNET_MGMT_OP_REVOKE_PROVISIONER,
+  SIGNET_MGMT_OP_WRITER_ACQUIRE,
+  SIGNET_MGMT_OP_WRITER_RENEW,
+  SIGNET_MGMT_OP_WRITER_REVOKE,
 } SignetMgmtOp;
 
 /* Parsed management request from event content JSON. */
@@ -114,6 +117,9 @@ typedef struct {
   char *connect_secret;    /* adopt: optional fixed connect secret (owned) */
   char *client_pubkey;     /* revoke-client: target NIP-46 client pubkey (owned) */
   char *provisioner_pubkey; /* grant/revoke-provisioner target (owned) */
+  char *writer_pubkey;      /* writer lease owner, NIP-46 client pubkey */
+  int64_t writer_epoch;     /* renew: exact current epoch */
+  int64_t writer_ttl;       /* acquire/renew duration, max 3600 seconds */
 
   /* Generic credential lifecycle fields. payload_b64 is sensitive and is
    * accepted only inside the encrypted ContextVM request. */

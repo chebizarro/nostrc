@@ -79,6 +79,9 @@ const char *signet_mgmt_op_to_string(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "delete_credential";
     case SIGNET_MGMT_OP_GRANT_PROVISIONER: return "grant_provisioner";
     case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "revoke_provisioner";
+    case SIGNET_MGMT_OP_WRITER_ACQUIRE: return "writer_acquire";
+    case SIGNET_MGMT_OP_WRITER_RENEW: return "writer_renew";
+    case SIGNET_MGMT_OP_WRITER_REVOKE: return "writer_revoke";
     default:                             return "unknown";
   }
 }
@@ -113,6 +116,7 @@ void signet_mgmt_request_clear(SignetMgmtRequest *req) {
   g_free(req->expected_pubkey);
   g_free(req->client_pubkey);
   g_free(req->provisioner_pubkey);
+  g_free(req->writer_pubkey);
   g_free(req->credential_id);
   g_free(req->secret_type);
   g_free(req->label);
@@ -217,6 +221,14 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     const char *v = json_object_get_string_member(o, "provisioner_pubkey");
     if (v && v[0]) out_req->provisioner_pubkey = g_strdup(v);
   }
+  if (json_object_has_member(o, "writer_pubkey")) {
+    const char *v = json_object_get_string_member(o, "writer_pubkey");
+    if (v && v[0]) out_req->writer_pubkey = g_strdup(v);
+  }
+  if (json_object_has_member(o, "epoch"))
+    out_req->writer_epoch = json_object_get_int_member(o, "epoch");
+  if (json_object_has_member(o, "ttl_seconds"))
+    out_req->writer_ttl = json_object_get_int_member(o, "ttl_seconds");
   if (json_object_has_member(o, "credential_id")) {
     const char *v = json_object_get_string_member(o, "credential_id");
     if (v && v[0]) out_req->credential_id = g_strdup(v);
@@ -255,6 +267,10 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
                          out_req->op == SIGNET_MGMT_OP_CREATE_CREDENTIAL ||
                          out_req->op == SIGNET_MGMT_OP_IMPORT_CREDENTIAL ||
                          out_req->op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL);
+  needs_agent_id = needs_agent_id ||
+                   out_req->op == SIGNET_MGMT_OP_WRITER_ACQUIRE ||
+                   out_req->op == SIGNET_MGMT_OP_WRITER_RENEW ||
+                   out_req->op == SIGNET_MGMT_OP_WRITER_REVOKE;
 
   if (needs_agent_id && (!out_req->agent_id || !out_req->agent_id[0])) {
     if (out_error) *out_error = g_strdup("agent_id is required");
@@ -294,6 +310,21 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
         "grant/revoke provisioner requires a 64-hex provisioner_pubkey");
     signet_mgmt_request_clear(out_req);
     return -1;
+  }
+
+  if (out_req->op == SIGNET_MGMT_OP_WRITER_ACQUIRE ||
+      out_req->op == SIGNET_MGMT_OP_WRITER_RENEW) {
+    uint8_t checked[32];
+    if (!out_req->writer_pubkey ||
+        !signet_hex_to_bytes32(out_req->writer_pubkey, checked) ||
+        out_req->writer_ttl < 1 || out_req->writer_ttl > 3600 ||
+        (out_req->op == SIGNET_MGMT_OP_WRITER_RENEW &&
+         out_req->writer_epoch < 1)) {
+      if (out_error) *out_error = g_strdup(
+          "writer lease requires writer_pubkey (64 hex), ttl_seconds (1..3600), and epoch for renew");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
   }
 
   bool create_or_import =
@@ -731,6 +762,9 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (strcmp(method, "credential/delete") == 0) return SIGNET_MGMT_OP_DELETE_CREDENTIAL;
   if (strcmp(method, "config/grant-provisioner") == 0) return SIGNET_MGMT_OP_GRANT_PROVISIONER;
   if (strcmp(method, "config/revoke-provisioner") == 0) return SIGNET_MGMT_OP_REVOKE_PROVISIONER;
+  if (strcmp(method, "agent/writer-acquire") == 0) return SIGNET_MGMT_OP_WRITER_ACQUIRE;
+  if (strcmp(method, "agent/writer-renew") == 0) return SIGNET_MGMT_OP_WRITER_RENEW;
+  if (strcmp(method, "agent/writer-revoke") == 0) return SIGNET_MGMT_OP_WRITER_REVOKE;
   return SIGNET_MGMT_OP_UNKNOWN;
 }
 
@@ -806,6 +840,18 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetM
   if (po && json_object_has_member(po, "provisioner_pubkey")) {
     json_builder_set_member_name(b, "provisioner_pubkey");
     json_builder_add_string_value(b, json_object_get_string_member(po, "provisioner_pubkey"));
+  }
+  if (po && json_object_has_member(po, "writer_pubkey")) {
+    json_builder_set_member_name(b, "writer_pubkey");
+    json_builder_add_string_value(b, json_object_get_string_member(po, "writer_pubkey"));
+  }
+  if (po && json_object_has_member(po, "epoch")) {
+    json_builder_set_member_name(b, "epoch");
+    json_builder_add_int_value(b, json_object_get_int_member(po, "epoch"));
+  }
+  if (po && json_object_has_member(po, "ttl_seconds")) {
+    json_builder_set_member_name(b, "ttl_seconds");
+    json_builder_add_int_value(b, json_object_get_int_member(po, "ttl_seconds"));
   }
   if (po && json_object_has_member(po, "credential_id")) {
     json_builder_set_member_name(b, "credential_id");
@@ -962,6 +1008,9 @@ static const char *signet_mgmt_op_audit_name(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL:  return "credential_delete";
     case SIGNET_MGMT_OP_GRANT_PROVISIONER:  return "mgmt_grant_provisioner";
     case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "mgmt_revoke_provisioner";
+    case SIGNET_MGMT_OP_WRITER_ACQUIRE: return "writer_acquire";
+    case SIGNET_MGMT_OP_WRITER_RENEW: return "writer_renew";
+    case SIGNET_MGMT_OP_WRITER_REVOKE: return "writer_revoke";
     default:                                return NULL;
   }
 }
@@ -1343,6 +1392,51 @@ static int signet_mgmt_handler_handle_request_ex(
   char *audit_secret_id = NULL; /* affected credential id for chain audit */
 
   switch (req.op) {
+    case SIGNET_MGMT_OP_WRITER_ACQUIRE: {
+      int64_t epoch = 0, expires_at = 0;
+      if (signet_key_store_writer_acquire(h->keys, req.agent_id,
+          req.writer_pubkey, req.writer_ttl, &epoch, &expires_at) == 0) {
+        ok = true;
+        code = "writer_acquired";
+        message = g_strdup("writer lease acquired");
+        result = g_strdup_printf("{\"epoch\":%lld,\"expires_at\":%lld}",
+            (long long)epoch, (long long)expires_at);
+      } else {
+        code = "writer_acquire_failed";
+        message = g_strdup("writer lease acquisition failed");
+      }
+      break;
+    }
+    case SIGNET_MGMT_OP_WRITER_RENEW: {
+      int64_t expires_at = 0;
+      if (signet_key_store_writer_renew(h->keys, req.agent_id,
+          req.writer_pubkey, req.writer_epoch, req.writer_ttl,
+          &expires_at) == 0) {
+        ok = true;
+        code = "writer_renewed";
+        message = g_strdup("writer lease renewed");
+        result = g_strdup_printf("{\"epoch\":%lld,\"expires_at\":%lld}",
+            (long long)req.writer_epoch, (long long)expires_at);
+      } else {
+        code = "writer_stale";
+        message = g_strdup("writer lease stale, expired, or revoked");
+      }
+      break;
+    }
+    case SIGNET_MGMT_OP_WRITER_REVOKE: {
+      int64_t epoch = 0;
+      if (signet_key_store_writer_revoke(h->keys, req.agent_id,
+                                         &epoch) == 0) {
+        ok = true;
+        code = "writer_revoked";
+        message = g_strdup("writer lease revoked");
+        result = g_strdup_printf("{\"epoch\":%lld}", (long long)epoch);
+      } else {
+        code = "writer_revoke_failed";
+        message = g_strdup("writer lease revocation failed");
+      }
+      break;
+    }
     case SIGNET_MGMT_OP_PROVISION_AGENT: {
       char pubkey_hex[65];
       char *bunker_uri = NULL;

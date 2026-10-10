@@ -256,6 +256,7 @@ static const char *const SIGNET_CAP_ALWAYS_ALLOW = "__always_allow__";
 const char *signet_method_to_capability(const char *method) {
   if (!method) return NULL;
   if (strcmp(method, "sign_event") == 0)    return SIGNET_CAP_NOSTR_SIGN;
+  if (strcmp(method, "writer_renew") == 0) return SIGNET_CAP_NOSTR_SIGN;
   if (strcmp(method, "SignEvent") == 0)     return SIGNET_CAP_NOSTR_SIGN;
   if (strcmp(method, "get_public_key") == 0) return SIGNET_CAP_NOSTR_SIGN;
   if (strcmp(method, "GetPublicKey") == 0)  return SIGNET_CAP_NOSTR_SIGN;

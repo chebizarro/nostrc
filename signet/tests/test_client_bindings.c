@@ -39,9 +39,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 
 #include <glib.h>
 #include <sodium.h>
+#include <sqlite3.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
@@ -321,6 +323,56 @@ static char *n46_read_binding(N46Fixture *f, const char *client_pk, int64_t now)
   return agent;
 }
 
+static void test_fenced_nip46_signing_contract(void) {
+  N46Fixture f;
+  n46_setup(&f);
+  int64_t now = (int64_t)time(NULL);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
+                    "one-time-secret", "lease-connect", now));
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(f.ks, "stew", f.client_pk_hex, 300,
+                                        &epoch, &expiry) == 0);
+  CHECK(epoch == 1);
+  char *event = g_strdup_printf(
+      "{\\\"kind\\\":1,\\\"created_at\\\":%lld,\\\"tags\\\":[],\\\"content\\\":\\\"lease test\\\"}",
+      (long long)now);
+  char *legacy = g_strdup_printf(
+      "{\"id\":\"legacy\",\"method\":\"sign_event\",\"params\":[\"%s\"]}", event);
+  char *current = g_strdup_printf(
+      "{\"id\":\"current\",\"method\":\"sign_event\",\"params\":[\"%s\",\"1\"]}", event);
+  gint signed_before = g_atomic_int_get(&g_signet_metrics.sign_total);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, legacy,
+                 "lease-legacy", now);
+  CHECK(g_atomic_int_get(&g_signet_metrics.sign_total) == signed_before);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, current,
+                 "lease-current", now);
+  CHECK(g_atomic_int_get(&g_signet_metrics.sign_total) == signed_before + 1);
+  sqlite3 *db = signet_store_get_db(signet_key_store_get_store(f.ks));
+  CHECK(sqlite3_exec(db,
+      "UPDATE agent_writer_leases SET expires_at=strftime('%s','now')+1 WHERE agent_id='stew';",
+      NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+      "{\"id\":\"renew\",\"method\":\"writer_renew\",\"params\":[\"1\"]}",
+      "lease-renew", now));
+  sqlite3_stmt *lease = NULL;
+  CHECK(sqlite3_prepare_v2(db,
+      "SELECT expires_at FROM agent_writer_leases WHERE agent_id='stew';",
+      -1, &lease, NULL) == SQLITE_OK);
+  CHECK(sqlite3_step(lease) == SQLITE_ROW);
+  CHECK(sqlite3_column_int64(lease, 0) > now + 100);
+  sqlite3_finalize(lease);
+  int64_t next_epoch = 0;
+  CHECK(signet_key_store_writer_revoke(f.ks, "stew", &next_epoch) == 0);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, current,
+                 "lease-revoked", now);
+  CHECK(g_atomic_int_get(&g_signet_metrics.sign_total) == signed_before + 1);
+  g_free(event);
+  g_free(legacy);
+  g_free(current);
+  n46_teardown(&f);
+  printf("test_fenced_nip46_signing_contract: PASS\n");
+}
+
 /* 2 + 3 + 4 + 5: pairing persists; restarts and stale secrets reconnect. */
 static void test_pair_once_reconnect_freely(void) {
   N46Fixture f;
@@ -539,6 +591,7 @@ int main(void) {
   test_suspended_agent_binding_refused();
   test_rotation_invalidates_binding();
   test_reprovision_does_not_resurrect_binding();
+  test_fenced_nip46_signing_contract();
 
   printf("All client binding tests passed.\n");
   return 0;

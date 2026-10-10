@@ -9,7 +9,8 @@ Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographi
 - **NIP-46 Remote Signing** — Signs Nostr events on behalf of registered agents over relay-based NIP-46 sessions
 - **Persistent Client Pairing** — The one-time `connect_secret` is a pairing bootstrap: it is consumed atomically with a durable `client_pubkey → agent` binding, so bound clients reconnect across agent AND daemon restarts with no secret and no operator (identity-pinned; suspension/revocation take effect immediately)
 - **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols, including NIP-44 v2 `nip44_encrypt` / `nip44_decrypt` over NIP-46
-- **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for zero-latency signing (no disk read on the sign path)
+- **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for legacy non-signing key uses; signing now reads custody under a durable SQLite writer transaction
+- **Writer-Epoch Fence** — A same-pubkey service identity can be administratively transferred to a dedicated NIP-46 client; stale epochs and legacy no-epoch signing fail at custody. See [cutover contract](docs/WRITER_EPOCH_CUTOVER.md).
 - **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
 - **Per-Agent Key Rotation** — Rotate an agent's keypair without reprovisioning; old keys are wiped from cache and store
 

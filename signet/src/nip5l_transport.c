@@ -81,6 +81,17 @@ static int64_t signet_now_unix(void) {
   return (int64_t)time(NULL);
 }
 
+static int nip5l_sign_event_in_custody(const uint8_t secret_key[32],
+                                       void *user_data) {
+  NostrEvent *ev = user_data;
+  char sk_hex[65];
+  for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", secret_key[i]);
+  sk_hex[64] = '\0';
+  int rc = nostr_event_sign(ev, sk_hex);
+  sodium_memzero(sk_hex, sizeof(sk_hex));
+  return rc;
+}
+
 static char *nip5l_json_result_string(const char *value) {
   char *escaped = g_strescape(value ? value : "", NULL);
   char *resp = g_strdup_printf("{\"result\":\"%s\"}", escaped ? escaped : "");
@@ -240,21 +251,13 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       resp = g_strdup("{\"error\":\"missing event json\"}");
       free(event_json);
     } else {
-      SignetLoadedKey lk;
-      memset(&lk, 0, sizeof(lk));
-      if (!signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
-        resp = g_strdup("{\"error\":\"key not found\"}");
-      } else {
         NostrEvent *ev = nostr_event_new();
         if (!ev || nostr_event_deserialize(ev, event_json) != 0) {
           if (ev) nostr_event_free(ev);
           resp = g_strdup("{\"error\":\"invalid event json\"}");
         } else {
-          char sk_hex[65];
-          for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-          sk_hex[64] = '\0';
-          int src = nostr_event_sign(ev, sk_hex);
-          sodium_memzero(sk_hex, sizeof(sk_hex));
+          int src = signet_key_store_with_signing_key(ns->keys, cs->agent_id,
+              NULL, 0, nip5l_sign_event_in_custody, ev);
           if (src != 0) {
             resp = g_strdup("{\"error\":\"signing failed\"}");
           } else {
@@ -272,8 +275,6 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
           }
           nostr_event_free(ev);
         }
-        signet_loaded_key_clear(&lk);
-      }
       free(event_json);
     }
 

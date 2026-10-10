@@ -257,6 +257,47 @@ static void test_missing_event_id_fails_closed(void) {
   printf("test_missing_event_id_fails_closed: PASS\n");
 }
 
+static void test_writer_management_requires_provisioner(void) {
+  Fixture f;
+  fixture_setup(&f, false);
+  adopt_agent(&f, "service");
+  const char *owner =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *plain = g_strdup_printf(
+      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300}",
+      owner);
+  char *cipher = encrypt_to_bunker(&f, plain);
+  g_free(plain);
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, owner, cipher,
+      SIGNET_MGMT_OP_WRITER_ACQUIRE, "unauthorized", 1752380000) == -1);
+  CHECK(signet_store_writer_is_fenced(signet_key_store_get_store(f.ks),
+                                      "service") == 0);
+  char *intent = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"lease-1\",\"method\":\"agent/writer-acquire\","
+      "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300}}",
+      owner);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+                                          "acquire", 1752380000) == 0);
+  g_free(intent);
+  CHECK(signet_store_writer_is_fenced(signet_key_store_get_store(f.ks),
+                                      "service") == 1);
+  free(cipher);
+  plain = g_strdup_printf(
+      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300,\"epoch\":1}",
+      owner);
+  cipher = encrypt_to_bunker(&f, plain);
+  g_free(plain);
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+      SIGNET_MGMT_OP_WRITER_RENEW, "renew", 1752380000) == 0);
+  free(cipher);
+  cipher = encrypt_to_bunker(&f, "{\"agent_id\":\"service\"}");
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
+      SIGNET_MGMT_OP_WRITER_REVOKE, "revoke", 1752380000) == 0);
+  free(cipher);
+  fixture_teardown(&f);
+  printf("test_writer_management_requires_provisioner: PASS\n");
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -267,6 +308,7 @@ int main(void) {
   test_cache_rejects_duplicate();
   test_replayed_reissue_mints_once();
   test_missing_event_id_fails_closed();
+  test_writer_management_requires_provisioner();
 
   printf("All management replay tests passed.\n");
   return 0;

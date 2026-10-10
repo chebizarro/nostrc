@@ -38,6 +38,29 @@ extern "C" {
  */
 typedef struct SignetStore SignetStore;
 
+/* A writer lease is a durable per-agent fencing token. owner is the
+ * authenticated NIP-46 client pubkey (64 lowercase hex). Epochs are never
+ * reused, including after revoke. All operations return 0 on success. */
+int signet_store_writer_acquire(SignetStore *store, const char *agent_id,
+                                const char *owner, int64_t ttl_seconds,
+                                int64_t *out_epoch, int64_t *out_expires_at);
+int signet_store_writer_renew(SignetStore *store, const char *agent_id,
+                              const char *owner, int64_t epoch,
+                              int64_t ttl_seconds, int64_t *out_expires_at);
+int signet_store_writer_revoke(SignetStore *store, const char *agent_id,
+                               int64_t *out_epoch);
+
+/* Sign callback executes while the SQLite writer transaction holds the
+ * lease state fixed. It must not retain or expose the secret key. No callback
+ * is invoked on a stale, expired, revoked, or missing epoch for a fenced key.
+ * On non-fenced keys owner=NULL/epoch=0 retains legacy behavior. */
+typedef int (*SignetStoreSignFn)(const uint8_t secret_key[32], void *user_data);
+int signet_store_writer_sign(SignetStore *store, const char *agent_id,
+                             const char *owner, int64_t epoch,
+                             SignetStoreSignFn sign_fn, void *user_data);
+/* Returns 0 if unfenced, 1 if fenced, -1 on DB error (fail closed). */
+int signet_store_writer_is_fenced(SignetStore *store, const char *agent_id);
+
 /**
  * SignetStoreConfig:
  * @db_path: path to SQLCipher database file.

@@ -15,8 +15,10 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
    which Signet consumes while durably recording the client pairing (one transaction).
 
 3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet resolves the
-   client to its agent via the persistent binding, evaluates per-agent policy, signs from
-   the hot key cache, and returns the signed event.
+   client to its agent via the persistent binding, evaluates per-agent policy, signs
+   under the custody transaction, and returns the signed event. Identities that
+   have been writer-fenced require the authenticated owner's current epoch;
+   see [writer-epoch cutover](docs/WRITER_EPOCH_CUTOVER.md).
 
 4. **Restarts**: Bound clients reconnect autonomously — no fresh secret, no operator.
    Agent restarts, daemon restarts, or both: the persistent pairing survives (see

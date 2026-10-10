@@ -5,6 +5,7 @@
  */
 
 #include "signet/key_store.h"
+#include "signet/store.h"
 #include "signet/audit_logger.h"
 
 #include "test_check.h"
@@ -15,6 +16,7 @@
 
 #include <glib.h>
 #include <sodium.h>
+#include <sqlite3.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
@@ -248,6 +250,198 @@ static void test_provision_bunker_uri(void) {
   printf("test_provision_bunker_uri: PASS\n");
 }
 
+static int count_sign(const uint8_t secret_key[32], void *user_data) {
+  CHECK(secret_key != NULL);
+  int *count = user_data;
+  (*count)++;
+  return 0;
+}
+
+static int slow_sign_past_expiry(const uint8_t secret_key[32], void *user_data) {
+  CHECK(secret_key != NULL);
+  (void)user_data;
+  sleep(2);
+  return 0;
+}
+
+static void test_writer_fence_persists_and_fails_closed(void) {
+  static const char owner_a[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  static const char owner_b[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int count = 0;
+  CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
+                                          count_sign, &count) == 0);
+  int64_t epoch_a = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch_a, &expiry) == 0);
+  CHECK(epoch_a == 1 && expiry > 0);
+  SignetLoadedKey raw = {0};
+  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
+  CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_b, epoch_a,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_a,
+                                          count_sign, &count) == 0);
+  CHECK(count == 2);
+  CHECK(signet_key_store_writer_renew(ks, "service", owner_b, epoch_a,
+                                      300, &expiry) != 0);
+  CHECK(signet_key_store_writer_renew(ks, "service", owner_a, epoch_a,
+                                      300, &expiry) == 0);
+
+  signet_key_store_free(ks);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks != NULL);
+  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_a,
+                                          count_sign, &count) == 0);
+  int64_t epoch_b = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_b, 300,
+                                        &epoch_b, &expiry) == 0);
+  CHECK(epoch_b == epoch_a + 1);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_a,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_writer_renew(ks, "service", owner_a, epoch_a,
+                                      300, &expiry) != 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_b, epoch_b,
+                                          count_sign, &count) == 0);
+  int64_t revoked_epoch = 0;
+  CHECK(signet_key_store_writer_revoke(ks, "service", &revoked_epoch) == 0);
+  CHECK(revoked_epoch == epoch_b + 1);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_b, epoch_b,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
+                                          count_sign, &count) != 0);
+  int64_t epoch_c = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch_c, &expiry) == 0);
+  CHECK(epoch_c == revoked_epoch + 1);
+
+  sqlite3 *db = signet_store_get_db(signet_key_store_get_store(ks));
+  CHECK(sqlite3_exec(db,
+      "UPDATE agent_writer_leases SET expires_at=1 WHERE agent_id='service';",
+      NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_c,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_writer_renew(ks, "service", owner_a, epoch_c,
+                                      300, &expiry) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 1,
+                                        &epoch_c, &expiry) == 0);
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_c,
+                                          slow_sign_past_expiry, NULL) != 0);
+  CHECK(sqlite3_exec(db, "DROP TABLE agent_writer_leases;",
+                     NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
+                                          count_sign, &count) != 0);
+  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
+  signet_key_store_free(ks);
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks != NULL);
+  CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch_c, &expiry) != 0);
+  signet_key_store_free(ks);
+  unlink(path);
+  g_free(path);
+  printf("test_writer_fence_persists_and_fails_closed: PASS\n");
+}
+
+typedef struct {
+  SignetKeyStore *signer;
+  SignetKeyStore *transfer;
+  GMutex mu;
+  GCond cond;
+  bool signing;
+  bool release_sign;
+  int sign_rc;
+  int acquire_rc;
+  int64_t new_epoch;
+} WriterRace;
+
+static int held_sign(const uint8_t secret_key[32], void *user_data) {
+  WriterRace *race = user_data;
+  CHECK(secret_key != NULL);
+  g_mutex_lock(&race->mu);
+  race->signing = true;
+  g_cond_broadcast(&race->cond);
+  while (!race->release_sign) g_cond_wait(&race->cond, &race->mu);
+  g_mutex_unlock(&race->mu);
+  return 0;
+}
+
+static gpointer run_held_sign(gpointer user_data) {
+  WriterRace *race = user_data;
+  static const char owner[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  race->sign_rc = signet_key_store_with_signing_key(race->signer,
+      "service", owner, 1, held_sign, race);
+  return NULL;
+}
+
+static gpointer run_transfer(gpointer user_data) {
+  WriterRace *race = user_data;
+  static const char owner[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  int64_t expiry = 0;
+  race->acquire_rc = signet_key_store_writer_acquire(race->transfer,
+      "service", owner, 300, &race->new_epoch, &expiry);
+  return NULL;
+}
+
+static void test_writer_transfer_serializes_with_sign(void) {
+  static const char owner_a[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *path = NULL;
+  SignetKeyStore *first = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(first, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(first, "service", owner_a, 300,
+                                        &epoch, &expiry) == 0);
+  CHECK(epoch == 1);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  SignetKeyStore *second = signet_key_store_new(NULL, &cfg);
+  CHECK(second != NULL);
+  WriterRace race = {.signer = first, .transfer = second};
+  g_mutex_init(&race.mu);
+  g_cond_init(&race.cond);
+  GThread *sign_thread = g_thread_new("held-sign", run_held_sign, &race);
+  g_mutex_lock(&race.mu);
+  while (!race.signing) g_cond_wait(&race.cond, &race.mu);
+  g_mutex_unlock(&race.mu);
+  GThread *transfer_thread = g_thread_new("transfer", run_transfer, &race);
+  /* The callback is still inside the write transaction. Release it, then
+   * observe that transfer advances exactly one epoch and stales owner A. */
+  g_mutex_lock(&race.mu);
+  race.release_sign = true;
+  g_cond_broadcast(&race.cond);
+  g_mutex_unlock(&race.mu);
+  g_thread_join(sign_thread);
+  g_thread_join(transfer_thread);
+  CHECK(race.sign_rc == 0 && race.acquire_rc == 0);
+  CHECK(race.new_epoch == epoch + 1);
+  int count = 0;
+  CHECK(signet_key_store_with_signing_key(first, "service", owner_a, epoch,
+                                          count_sign, &count) != 0);
+  CHECK(count == 0);
+  g_cond_clear(&race.cond);
+  g_mutex_clear(&race.mu);
+  signet_key_store_free(second);
+  signet_key_store_free(first);
+  unlink(path);
+  g_free(path);
+  printf("test_writer_transfer_serializes_with_sign: PASS\n");
+}
+
 int main(void) {
   CHECK(sodium_init() >= 0);
 
@@ -258,6 +452,8 @@ int main(void) {
   test_rotate_agent();
   test_list_agents();
   test_provision_bunker_uri();
+  test_writer_fence_persists_and_fails_closed();
+  test_writer_transfer_serializes_with_sign();
 
   printf("All key store tests passed!\n");
   return 0;

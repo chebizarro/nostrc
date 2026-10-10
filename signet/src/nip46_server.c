@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -329,6 +330,32 @@ static char *signet_sign_event_json_with_seckey(const char *seckey_hex,
   }
 
   return signed_json; /* caller frees with free() */
+}
+
+typedef struct {
+  const char *event_json;
+  char *signed_json;
+} SignetCustodyEvent;
+
+static int signet_custody_sign_event(const uint8_t secret_key[32], void *user_data) {
+  SignetCustodyEvent *work = user_data;
+  char sk_hex[65];
+  signet_bytes32_to_hex(secret_key, sk_hex);
+  work->signed_json = signet_sign_event_json_with_seckey(sk_hex,
+                                                         work->event_json, NULL);
+  signet_memzero(sk_hex, sizeof(sk_hex));
+  return work->signed_json ? 0 : -1;
+}
+
+static bool signet_parse_writer_epoch(const char *text, int64_t *out_epoch) {
+  if (!text || !text[0] || !out_epoch) return false;
+  for (const char *p = text; *p; p++) if (*p < '0' || *p > '9') return false;
+  errno = 0;
+  char *end = NULL;
+  long long parsed = strtoll(text, &end, 10);
+  if (errno || !end || *end || parsed < 1) return false;
+  *out_epoch = (int64_t)parsed;
+  return true;
 }
 
 /* ------------- build + sign outer response event using NostrEvent --------- */
@@ -768,8 +795,54 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         code = "ok";
       }
 
-    } else if (strcmp(method, "sign_event") == 0 ||
-               strcmp(method, "nip04_encrypt") == 0 ||
+    } else if (strcmp(method, "sign_event") == 0) {
+      int64_t epoch = 0;
+      const char *owner = NULL;
+      if (!req.params || req.n_params < 1 || req.n_params > 2 ||
+          (req.n_params == 2 &&
+           !signet_parse_writer_epoch(req.params[1], &epoch))) {
+        err_str = g_strdup("sign_event requires [event_json, epoch?]");
+        status = "error";
+        code = "invalid_params";
+      } else {
+        if (req.n_params == 2) owner = client_pubkey_hex;
+        SignetCustodyEvent work = {.event_json = req.params[0]};
+        if (signet_key_store_with_signing_key(s->keys, session_agent_id,
+                                              owner, epoch,
+                                              signet_custody_sign_event,
+                                              &work) != 0) {
+          free(work.signed_json);
+          err_str = g_strdup("signing denied or failed");
+          status = "error";
+          code = "sign_failed";
+        } else {
+          result = work.signed_json;
+          result_is_json = false;
+          status = "ok";
+          code = "ok";
+          signet_nip46_publish_cas_audit(s->relays,
+              remote_signer_secret_key_hex, session_agent_id, now);
+        }
+      }
+    } else if (strcmp(method, "writer_renew") == 0) {
+      int64_t epoch = 0, expires_at = 0;
+      if (!req.params || req.n_params != 1 ||
+          !signet_parse_writer_epoch(req.params[0], &epoch)) {
+        err_str = g_strdup("writer_renew requires [epoch]");
+        status = "error";
+        code = "invalid_params";
+      } else if (signet_key_store_writer_renew(s->keys, session_agent_id,
+                   client_pubkey_hex, epoch, 300, &expires_at) != 0) {
+        err_str = g_strdup("writer lease stale, expired, or revoked");
+        status = "error";
+        code = "writer_stale";
+      } else {
+        result = g_strdup_printf("%lld", (long long)expires_at);
+        result_is_json = false;
+        status = "ok";
+        code = "ok";
+      }
+    } else if (strcmp(method, "nip04_encrypt") == 0 ||
                strcmp(method, "nip04_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt") == 0 ||
                strcmp(method, "nip44_decrypt") == 0 ||
@@ -786,29 +859,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         char agent_sk_hex[65];
         signet_bytes32_to_hex(agent_key.secret_key, agent_sk_hex);
 
-        if (strcmp(method, "sign_event") == 0) {
-          if (!req.params || req.n_params < 1) {
-            err_str = g_strdup("sign_event requires event JSON param");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            char *serr = NULL;
-            char *signed_evt = signet_sign_event_json_with_seckey(
-                agent_sk_hex, req.params[0], &serr);
-            if (!signed_evt) {
-              err_str = serr ? serr : g_strdup("sign_event failed");
-              status = "error";
-              code = "sign_failed";
-            } else {
-              result = signed_evt;
-              result_is_json = false;
-              status = "ok";
-              code = "ok";
-              signet_nip46_publish_cas_audit(s->relays, remote_signer_secret_key_hex, session_agent_id, now);
-              g_free(serr);
-            }
-          }
-        } else if (strcmp(method, "nip04_encrypt") == 0) {
+        if (strcmp(method, "nip04_encrypt") == 0) {
           if (!req.params || req.n_params < 2) {
             err_str = g_strdup("nip04_encrypt requires [pubkey, plaintext]");
             status = "error";

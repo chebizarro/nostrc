@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 #include <unistd.h>   /* link()/fsync() for crash-safe migration swap */
 #include <fcntl.h>    /* open() for fsync of file + parent directory */
 
@@ -419,10 +420,21 @@ static const char *SIGNET_SCHEMA_SQL =
   "  created_at INTEGER NOT NULL,"
   "  last_used INTEGER NOT NULL DEFAULT 0,"
   "  pubkey TEXT,"                                       /* x-only pubkey hex (adopt/collision checks) */
-  "  provenance TEXT NOT NULL DEFAULT 'provisioned'"     /* provisioned | adopted | rotated */
+  "  provenance TEXT NOT NULL DEFAULT 'provisioned',"    /* provisioned | adopted | rotated */
+  "  writer_fenced INTEGER NOT NULL DEFAULT 0"          /* durable marker if lease row is lost */
   ");"
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_connect_secret ON agents(connect_secret) WHERE connect_secret IS NOT NULL;"
   "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);"
+
+  /* Monotonic writer fence. Rows are tombstones and must never be deleted by
+   * lease revoke; a reused epoch would admit an old client. */
+  "CREATE TABLE IF NOT EXISTS agent_writer_leases ("
+  "  agent_id TEXT PRIMARY KEY NOT NULL,"
+  "  epoch INTEGER NOT NULL CHECK(epoch > 0),"
+  "  owner TEXT,"
+  "  expires_at INTEGER NOT NULL,"
+  "  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))"
+  ");"
 
   /* v2: extended secrets (multi-type credentials) */
   "CREATE TABLE IF NOT EXISTS secrets ("
@@ -731,6 +743,9 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
                      "ALTER TABLE agents ADD COLUMN provenance TEXT NOT NULL DEFAULT 'provisioned';",
                      NULL, NULL, NULL);
   (void)sqlite3_exec(store->db,
+                     "ALTER TABLE agents ADD COLUMN writer_fenced INTEGER NOT NULL DEFAULT 0;",
+                     NULL, NULL, NULL);
+  (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);",
                      NULL, NULL, NULL);
   /* v3.3: persistent NIP-46 client bindings (additive for older DBs). */
@@ -793,6 +808,13 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     g_critical("[signet] failed to enable WAL for '%s': %s",
                cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
     if (errmsg) sqlite3_free(errmsg);
+    signet_store_close(store);
+    return NULL;
+  }
+
+  /* Lease commits must survive a crash before an epoch is returned. */
+  if (sqlite3_exec(store->db, "PRAGMA synchronous=FULL;", NULL, NULL, NULL) != SQLITE_OK) {
+    g_critical("[signet] failed to require durable lease commits");
     signet_store_close(store);
     return NULL;
   }
@@ -2758,4 +2780,219 @@ void signet_store_free_agent_ids(char **ids, size_t count) {
   if (!ids) return;
   for (size_t i = 0; i < count; i++) g_free(ids[i]);
   free(ids);
+}
+
+/* Writer epochs are meaningful only for a single live database. Keep the
+ * connection mutex over the entire transaction (not merely each sqlite3
+ * call), because unrelated store users share this connection. SQLite's
+ * BEGIN IMMEDIATE also serializes other connections to this same database. */
+static bool writer_owner_valid(const char *owner) {
+  if (!owner || strlen(owner) != 64) return false;
+  for (size_t i = 0; i < 64; i++)
+    if (!g_ascii_isxdigit(owner[i])) return false;
+  return true;
+}
+
+static int writer_begin(SignetStore *store) {
+  if (!store || !store->open || !store->db) return -1;
+  sqlite3_mutex_enter(sqlite3_db_mutex(store->db));
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) {
+    sqlite3_mutex_leave(sqlite3_db_mutex(store->db));
+    return -1;
+  }
+  return 0;
+}
+
+static int writer_end(SignetStore *store, bool commit) {
+  int rc = sqlite3_exec(store->db, commit ? "COMMIT;" : "ROLLBACK;",
+                        NULL, NULL, NULL);
+  if (rc != SQLITE_OK && commit)
+    (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+  sqlite3_mutex_leave(sqlite3_db_mutex(store->db));
+  return rc == SQLITE_OK ? 0 : -1;
+}
+
+/* 0 = row, 1 = no row, -1 = DB failure. Call with connection mutex held. */
+static int writer_read(SignetStore *store, const char *agent_id,
+                       int64_t *epoch, char owner[65], int64_t *expiry,
+                       int *revoked) {
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(store->db,
+      "SELECT epoch,owner,expires_at,revoked FROM agent_writer_leases WHERE agent_id=?;",
+      -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(st, 1, agent_id, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(st);
+  if (rc == SQLITE_ROW) {
+    const unsigned char *text = sqlite3_column_text(st, 1);
+    *epoch = sqlite3_column_int64(st, 0);
+    *expiry = sqlite3_column_int64(st, 2);
+    *revoked = sqlite3_column_int(st, 3);
+    if (text && strlen((const char *)text) == 64)
+      memcpy(owner, text, 65);
+    else owner[0] = '\0';
+  }
+  sqlite3_finalize(st);
+  return rc == SQLITE_ROW ? 0 : (rc == SQLITE_DONE ? 1 : -1);
+}
+
+/* 0 = legacy, 1 = fenced, -1 = missing agent or DB failure. */
+static int writer_agent_marker(SignetStore *store, const char *agent_id) {
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(store->db,
+      "SELECT writer_fenced FROM agents WHERE agent_id=?;",
+      -1, &st, NULL) != SQLITE_OK) return -1;
+  sqlite3_bind_text(st, 1, agent_id, -1, SQLITE_TRANSIENT);
+  int rc = sqlite3_step(st);
+  int marker = rc == SQLITE_ROW ? sqlite3_column_int(st, 0) : -1;
+  sqlite3_finalize(st);
+  return marker == 0 || marker == 1 ? marker : -1;
+}
+
+int signet_store_writer_is_fenced(SignetStore *store, const char *agent_id) {
+  if (!store || !store->open || !agent_id) return -1;
+  sqlite3_mutex_enter(sqlite3_db_mutex(store->db));
+  int64_t epoch = 0, expiry = 0;
+  int revoked = 0;
+  char owner[65];
+  int rc = writer_read(store, agent_id, &epoch, owner, &expiry, &revoked);
+  int marker = writer_agent_marker(store, agent_id);
+  sqlite3_mutex_leave(sqlite3_db_mutex(store->db));
+  return rc < 0 || marker < 0 ? -1 : (rc == 0 || marker == 1 ? 1 : 0);
+}
+
+int signet_store_writer_acquire(SignetStore *store, const char *agent_id,
+                                const char *owner, int64_t ttl_seconds,
+                                int64_t *out_epoch, int64_t *out_expires_at) {
+  if (!agent_id || !writer_owner_valid(owner) || ttl_seconds < 1 ||
+      ttl_seconds > 3600 || !out_epoch || !out_expires_at || writer_begin(store)) return -1;
+  int result = -1;
+  int64_t epoch = 0, expiry = 0;
+  int revoked = 0;
+  char old_owner[65];
+  int rr = writer_read(store, agent_id, &epoch, old_owner, &expiry, &revoked);
+  if (rr < 0 || epoch == INT64_MAX) goto done;
+  int marker = writer_agent_marker(store, agent_id);
+  /* A recreated agent row may have marker=0 while its old lease tombstone
+   * still exists. Only a provisioner acquire may repair that state, and it
+   * must advance the persisted epoch rather than start again at one. */
+  if (marker < 0 || (rr == 1 && marker == 1)) goto done;
+  SignetAgentRecord agent = {0};
+  if (signet_store_get_agent(store, agent_id, &agent) != 0) goto done;
+  signet_agent_record_clear(&agent);
+  epoch++;
+  int64_t until = (int64_t)time(NULL) + ttl_seconds;
+  sqlite3_stmt *st = NULL;
+  const char *sql = rr == 0
+      ? "UPDATE agent_writer_leases SET epoch=?,owner=?,expires_at=?,revoked=0 WHERE agent_id=?;"
+      : "INSERT INTO agent_writer_leases(epoch,owner,expires_at,agent_id,revoked) VALUES(?,?,?,?,0);";
+  if (sqlite3_prepare_v2(store->db, sql, -1, &st, NULL) != SQLITE_OK) goto done;
+  sqlite3_bind_int64(st, 1, epoch);
+  sqlite3_bind_text(st, 2, owner, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int64(st, 3, until);
+  sqlite3_bind_text(st, 4, agent_id, -1, SQLITE_TRANSIENT);
+  int step = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (step != SQLITE_DONE) goto done;
+  if (sqlite3_prepare_v2(store->db,
+      "UPDATE agents SET writer_fenced=1 WHERE agent_id=?;",
+      -1, &st, NULL) != SQLITE_OK) goto done;
+  sqlite3_bind_text(st, 1, agent_id, -1, SQLITE_TRANSIENT);
+  step = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (step != SQLITE_DONE || sqlite3_changes(store->db) != 1) goto done;
+  result = 0;
+  *out_epoch = epoch;
+  *out_expires_at = until;
+done:
+  if (writer_end(store, result == 0) != 0) result = -1;
+  if (result != 0) { *out_epoch = 0; *out_expires_at = 0; }
+  return result;
+}
+
+int signet_store_writer_renew(SignetStore *store, const char *agent_id,
+                              const char *owner, int64_t epoch,
+                              int64_t ttl_seconds, int64_t *out_expires_at) {
+  if (!agent_id || !writer_owner_valid(owner) || epoch < 1 ||
+      ttl_seconds < 1 || ttl_seconds > 3600 || !out_expires_at || writer_begin(store)) return -1;
+  int result = -1;
+  int64_t current = 0, expiry = 0;
+  int revoked = 0;
+  char current_owner[65];
+  if (writer_read(store, agent_id, &current, current_owner, &expiry, &revoked) != 0 ||
+      writer_agent_marker(store, agent_id) != 1 ||
+      revoked || current != epoch || g_ascii_strcasecmp(owner, current_owner) != 0 ||
+      expiry <= (int64_t)time(NULL)) goto done;
+  int64_t until = (int64_t)time(NULL) + ttl_seconds;
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(store->db,
+      "UPDATE agent_writer_leases SET expires_at=? WHERE agent_id=?;",
+      -1, &st, NULL) != SQLITE_OK) goto done;
+  sqlite3_bind_int64(st, 1, until);
+  sqlite3_bind_text(st, 2, agent_id, -1, SQLITE_TRANSIENT);
+  int step = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (step != SQLITE_DONE) goto done;
+  *out_expires_at = until;
+  result = 0;
+done:
+  if (writer_end(store, result == 0) != 0) result = -1;
+  if (result != 0) *out_expires_at = 0;
+  return result;
+}
+
+int signet_store_writer_revoke(SignetStore *store, const char *agent_id,
+                               int64_t *out_epoch) {
+  if (!agent_id || !out_epoch || writer_begin(store)) return -1;
+  int result = -1;
+  int64_t epoch = 0, expiry = 0;
+  int revoked = 0;
+  char owner[65];
+  if (writer_read(store, agent_id, &epoch, owner, &expiry, &revoked) != 0 ||
+      writer_agent_marker(store, agent_id) != 1 ||
+      epoch == INT64_MAX) goto done;
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(store->db,
+      "UPDATE agent_writer_leases SET epoch=?,owner=NULL,expires_at=0,revoked=1 WHERE agent_id=?;",
+      -1, &st, NULL) != SQLITE_OK) goto done;
+  sqlite3_bind_int64(st, 1, epoch + 1);
+  sqlite3_bind_text(st, 2, agent_id, -1, SQLITE_TRANSIENT);
+  int step = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (step != SQLITE_DONE) goto done;
+  *out_epoch = epoch + 1;
+  result = 0;
+done:
+  if (writer_end(store, result == 0) != 0) result = -1;
+  if (result != 0) *out_epoch = 0;
+  return result;
+}
+
+int signet_store_writer_sign(SignetStore *store, const char *agent_id,
+                             const char *owner, int64_t epoch,
+                             SignetStoreSignFn sign_fn, void *user_data) {
+  if (!agent_id || !sign_fn || writer_begin(store)) return -1;
+  int result = -1;
+  int64_t current = 0, expiry = 0;
+  int revoked = 0;
+  char current_owner[65];
+  int rr = writer_read(store, agent_id, &current, current_owner, &expiry, &revoked);
+  if (rr < 0) goto done;
+  int marker = writer_agent_marker(store, agent_id);
+  if (marker < 0 || (marker == 1 && rr != 0) ||
+      (rr == 0 && marker != 1)) goto done;
+  if (rr == 0) {
+    if (!writer_owner_valid(owner) || epoch != current || revoked ||
+        expiry <= (int64_t)time(NULL) ||
+        g_ascii_strcasecmp(owner, current_owner) != 0) goto done;
+  } else if (owner || epoch != 0) goto done;
+  SignetAgentRecord agent = {0};
+  if (signet_store_get_agent(store, agent_id, &agent) != 0) goto done;
+  result = sign_fn(agent.secret_key, user_data);
+  signet_agent_record_clear(&agent);
+  /* A slow callback must not return a signature after its lease expired,
+   * even though no transfer can interleave with this transaction. */
+  if (rr == 0 && expiry <= (int64_t)time(NULL)) result = -1;
+done:
+  if (writer_end(store, result == 0) != 0) result = -1;
+  return result;
 }

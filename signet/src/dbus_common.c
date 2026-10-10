@@ -146,6 +146,15 @@ static void handle_get_public_key(const SignetDbusDispatchContext *ctx,
       g_variant_new("(s)", pubkey_hex));
 }
 
+static int sign_dbus_event(const uint8_t secret_key[32], void *user_data) {
+  NostrEvent *ev = user_data;
+  char sk_hex[65];
+  bytes_to_hex(secret_key, 32, sk_hex);
+  int rc = nostr_event_sign(ev, sk_hex);
+  sodium_memzero(sk_hex, sizeof(sk_hex));
+  return rc;
+}
+
 static void handle_sign_event(const SignetDbusDispatchContext *ctx,
                               const char *agent_id,
                               GVariant *parameters,
@@ -153,28 +162,16 @@ static void handle_sign_event(const SignetDbusDispatchContext *ctx,
   const char *event_json = NULL;
   g_variant_get(parameters, "(&s)", &event_json);
 
-  SignetLoadedKey lk;
-  memset(&lk, 0, sizeof(lk));
-  if (!signet_key_store_load_agent_key(ctx->keys, agent_id, &lk)) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotFound", "Agent key not found");
-    return;
-  }
-
   NostrEvent *ev = nostr_event_new();
   if (!ev || !nostr_event_deserialize_compact(ev, event_json, NULL)) {
     if (ev) nostr_event_free(ev);
-    signet_loaded_key_clear(&lk);
     g_dbus_method_invocation_return_dbus_error(
         invocation, "net.signet.Error.BadRequest", "Invalid event JSON");
     return;
   }
 
-  char sk_hex[65];
-  bytes_to_hex(lk.secret_key, 32, sk_hex);
-  int sign_rc = nostr_event_sign(ev, sk_hex);
-  sodium_memzero(sk_hex, sizeof(sk_hex));
-  signet_loaded_key_clear(&lk);
+  int sign_rc = signet_key_store_with_signing_key(ctx->keys, agent_id,
+                                                  NULL, 0, sign_dbus_event, ev);
 
   if (sign_rc != 0) {
     nostr_event_free(ev);

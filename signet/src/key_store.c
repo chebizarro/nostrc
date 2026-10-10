@@ -120,6 +120,11 @@ SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
     };
     ks->store = signet_store_open(&sc);
 
+    if (!ks->store) {
+      signet_key_store_free(ks);
+      return NULL;
+    }
+
     /* Load all agent keys into the hot cache. */
     if (ks->store) {
       char **ids = NULL;
@@ -174,7 +179,11 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
   g_mutex_lock(&ks->mu);
 
   SignetCacheEntry *entry = (SignetCacheEntry *)g_hash_table_lookup(ks->cache, agent_id);
-  if (!entry) {
+  /* A legacy raw-key borrow cannot authorize a fenced identity. Every
+   * cryptographic operation for such an identity must use the transaction-
+   * scoped custody callback instead. DB errors also fail closed. */
+  if (!entry || (ks->store &&
+      signet_store_writer_is_fenced(ks->store, agent_id) != 0)) {
     g_mutex_unlock(&ks->mu);
     return false;
   }
@@ -199,6 +208,57 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 
   g_mutex_unlock(&ks->mu);
   return true;
+}
+
+int signet_key_store_with_signing_key(SignetKeyStore *ks,
+                                      const char *agent_id,
+                                      const char *owner,
+                                      int64_t epoch,
+                                      SignetKeyStoreCustodyFn fn,
+                                      void *user_data) {
+  if (!ks || !agent_id || !fn) return -1;
+  g_mutex_lock(&ks->mu);
+  int rc = -1;
+  if (ks->store) {
+    rc = signet_store_writer_sign(ks->store, agent_id, owner, epoch,
+                                  fn, user_data);
+  } else if (!owner && epoch == 0) {
+    SignetCacheEntry *entry = g_hash_table_lookup(ks->cache, agent_id);
+    if (entry) rc = fn(entry->secret_key, user_data);
+  }
+  g_mutex_unlock(&ks->mu);
+  return rc;
+}
+
+int signet_key_store_writer_acquire(SignetKeyStore *ks, const char *agent_id,
+                                    const char *owner, int64_t ttl_seconds,
+                                    int64_t *out_epoch, int64_t *out_expires_at) {
+  if (!ks || !ks->store) return -1;
+  g_mutex_lock(&ks->mu);
+  int rc = signet_store_writer_acquire(ks->store, agent_id, owner,
+                                      ttl_seconds, out_epoch, out_expires_at);
+  g_mutex_unlock(&ks->mu);
+  return rc;
+}
+
+int signet_key_store_writer_renew(SignetKeyStore *ks, const char *agent_id,
+                                  const char *owner, int64_t epoch,
+                                  int64_t ttl_seconds, int64_t *out_expires_at) {
+  if (!ks || !ks->store) return -1;
+  g_mutex_lock(&ks->mu);
+  int rc = signet_store_writer_renew(ks->store, agent_id, owner, epoch,
+                                    ttl_seconds, out_expires_at);
+  g_mutex_unlock(&ks->mu);
+  return rc;
+}
+
+int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
+                                   int64_t *out_epoch) {
+  if (!ks || !ks->store) return -1;
+  g_mutex_lock(&ks->mu);
+  int rc = signet_store_writer_revoke(ks->store, agent_id, out_epoch);
+  g_mutex_unlock(&ks->mu);
+  return rc;
 }
 
 int signet_key_store_provision_agent(SignetKeyStore *ks,

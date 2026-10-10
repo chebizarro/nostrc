@@ -93,8 +93,9 @@ SignetKeyStore *signet_key_store_new(struct SignetAuditLogger *audit,
  */
 void signet_key_store_free(SignetKeyStore *ks);
 
-/* Load the custody key for an agent from the hot cache.
- * Returns true on success (key found), false if not found. */
+/* Legacy raw key borrow. Fails for any identity ever writer-fenced, including
+ * revoked/expired leases, and on backing-store errors. Never use for signing;
+ * use signet_key_store_with_signing_key instead. */
 /**
  * signet_key_store_load_agent_key:
  * @ks: (not nullable): a #SignetKeyStore
@@ -112,6 +113,26 @@ void signet_key_store_free(SignetKeyStore *ks);
 bool signet_key_store_load_agent_key(SignetKeyStore *ks,
                                      const char *agent_id,
                                      SignetLoadedKey *out_key);
+
+/* Execute a cryptographic operation under custody. For a fenced identity,
+ * owner must equal the authenticated NIP-46 client pubkey and epoch must be
+ * current. Legacy callers pass NULL/0 and are permitted only for identities
+ * that have never been fenced. The callback must not retain the key. */
+typedef int (*SignetKeyStoreCustodyFn)(const uint8_t secret_key[32], void *user_data);
+int signet_key_store_with_signing_key(SignetKeyStore *ks,
+                                      const char *agent_id,
+                                      const char *owner,
+                                      int64_t epoch,
+                                      SignetKeyStoreCustodyFn fn,
+                                      void *user_data);
+int signet_key_store_writer_acquire(SignetKeyStore *ks, const char *agent_id,
+                                    const char *owner, int64_t ttl_seconds,
+                                    int64_t *out_epoch, int64_t *out_expires_at);
+int signet_key_store_writer_renew(SignetKeyStore *ks, const char *agent_id,
+                                  const char *owner, int64_t epoch,
+                                  int64_t ttl_seconds, int64_t *out_expires_at);
+int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
+                                   int64_t *out_epoch);
 
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.
