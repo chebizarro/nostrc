@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha5 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha6 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha5
+%global upstream_version 0.12.0-alpha6
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.5.alpha5%{?dist}
+Release:        0.6.alpha6%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -149,11 +149,13 @@ desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Groundhog.d
 desktop-file-validate %{buildroot}%{_datadir}/applications/org.nostr.Grotto.desktop
 appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Groundhog.metainfo.xml
 
-%files -f groundhog.lang
+%files -f groundhog.lang -f nostr-gtk.lang
 %license LICENSE gnome/groundhog/data/icons/COPYING
 %{_bindir}/groundhog
 %dir %{_libdir}/groundhog
 %{_libdir}/groundhog/libnostr-json.so.1
+%{_libdir}/groundhog/libnostr-gobject-1.0.so.2*
+%{_libdir}/groundhog/libnostr-gtk-portable-1.0.so.1*
 %{_datadir}/applications/org.nostr.Groundhog.desktop
 %{_datadir}/dbus-1/services/org.nostr.Groundhog.service
 %{_datadir}/glib-2.0/schemas/org.nostr.Groundhog.gschema.xml
@@ -175,6 +177,23 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Sat Oct 10 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.6.alpha6
+- Fixes: reactions on every conversation type, full NIP-29 group
+  history, "Note to Self" title.
+- Much faster conversations: a sliding message window (newest 30, more
+  as you scroll, at most 120 in memory) opens long chats in ~40 ms.
+- Markdown messages, Nostr references (NIP-21), reposts and quotes
+  (NIP-18) with a public-post confirmation, link cards and a media
+  viewer that load only when asked, copy message, avatar menu for
+  profile pictures.
+- Tray menu: open/close window, accounts, launch on login,
+  preferences, update, report an issue.
+- Opt-in local diagnostics that can be attached to a NIP-34 issue after
+  preview; richer issue form.
+- AI Agents: setup page and agent activity rows in Marmot chats.
+- Translation machinery (catalogs come later), right-to-left text and
+  accessibility improvements.
+
 * Thu Oct 08 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.5.alpha5
 - Faster conversation opening: about half the time for long histories.
 - Polls: your own polls show immediately, options as radio buttons or

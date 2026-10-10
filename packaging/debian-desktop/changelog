@@ -1,3 +1,23 @@
+groundhog (0.12.0~alpha6-1) unstable; urgency=medium
+
+  * Fixes: reactions on every conversation type, full NIP-29 group
+    history, "Note to Self" title.
+  * Much faster conversations: a sliding message window (newest 30, more
+    as you scroll, at most 120 in memory) opens long chats in ~40 ms.
+  * Markdown messages, Nostr references (NIP-21), reposts and quotes
+    (NIP-18) with a public-post confirmation, link cards and a media
+    viewer that load only when asked, copy message, avatar menu for
+    profile pictures.
+  * Tray menu: open/close window, accounts, launch on login,
+    preferences, update, report an issue.
+  * Opt-in local diagnostics that can be attached to a NIP-34 issue after
+    preview; richer issue form.
+  * AI Agents: setup page and agent activity rows in Marmot chats.
+  * Translation machinery (catalogs come later), right-to-left text and
+    accessibility improvements.
+
+ -- Biz <chebizarro@protonmail.com>  Sat, 10 Oct 2026 12:00:00 +0000
+
 groundhog (0.12.0~alpha5-1) unstable; urgency=medium
 
   * Faster conversation opening: about half the time for long histories.
