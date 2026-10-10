@@ -163,9 +163,14 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
 int nostr_nip55l_store_key(const char *key, const char *identity);
 int nostr_nip55l_clear_key(const char *identity);
 
-/* List all stored identity npubs.
+/* npubs of every identity the signer holds: the key in the environment
+ * (NOSTR_SIGNER_SECKEY_HEX / NOSTR_SIGNER_NSEC) first, if set, then the
+ * stored ones, each npub once.
  * Caller frees each string with free() and the array with free().
- * Returns 0 on success; *out_count is the number of entries. */
+ * Returns 0 on success; *out_count is the number of entries.
+ * NOSTR_SIGNER_ERROR_BACKEND when the key store cannot be read;
+ * NOSTR_SIGNER_ERROR_NOT_FOUND when there is no key store (none built in, or
+ * no Secret Service on the bus) and no environment key. */
 int nostr_nip55l_list_identities(char ***out_npubs, int *out_count);
 
 /* Optional Unix owner metadata (no enforcement). Selector is key_id or npub. */

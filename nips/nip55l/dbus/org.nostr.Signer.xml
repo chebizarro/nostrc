@@ -22,7 +22,8 @@
          Error.NoApprovalAgent for the last two cases, and
          Error.IdentityChanged for the identity check below, instead (0.5.0).
          Identity binding: an npub or 64-hex selector names exactly that
-         stored identity or fails with Error.NoKeyConfigured before any
+         identity (one ListIdentities returns) or fails with
+         Error.NoKeyConfigured before any
          prompt; it never falls back to another key. An approved request
          runs only if its selector still resolves to the npub the user
          approved (the one in ApprovalRequested); if the active account
@@ -291,9 +292,13 @@
       <arg type="b" direction="out" name="ok" />
       <arg type="s" direction="out" name="npub" />
     </method>
-    <!-- ListIdentities (nip55l 0.6.0, additive): returns all stored identity
-         npubs as a string array. On macOS these come from Keychain; on Linux
-         from libsecret. No approval gating. -->
+    <!-- ListIdentities (nip55l 0.6.0, additive): returns the npubs of every
+         identity the signer holds, once each: the stored ones (libsecret on
+         Linux, the Keychain on macOS) and the key in the daemon's
+         environment (NOSTR_SIGNER_SECKEY_HEX / NOSTR_SIGNER_NSEC), if any.
+         No approval gating. Error.Internal (0.7.0) when the key store cannot
+         be read, or when there is no key store and no environment key; an
+         empty array means the signer holds no identity. -->
     <method name="ListIdentities">
       <arg type="as" direction="out" name="npubs" />
     </method>
