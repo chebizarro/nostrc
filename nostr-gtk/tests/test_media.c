@@ -197,6 +197,417 @@ decode_async(void)
   g_object_unref(result);
 }
 
+/* ---- a host source under test control ------------------------------------ */
+
+#include <nostr-gtk-1.0/gn-media-viewer.h>
+#include <nostr-gtk-1.0/gn-video-player.h>
+
+typedef struct {
+  GObject parent_instance;
+  GnMediaPolicy policy;
+  guint fetches, streams, adopted;
+  GPtrArray *pending; /* GTask */
+} FakeSource;
+typedef GObjectClass FakeSourceClass;
+static void fake_source_iface_init(GnMediaSourceInterface *iface);
+G_DEFINE_TYPE_WITH_CODE(FakeSource, fake_source, G_TYPE_OBJECT,
+                        G_IMPLEMENT_INTERFACE(GN_TYPE_MEDIA_SOURCE, fake_source_iface_init))
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(FakeSource, g_object_unref)
+
+static GnMediaPolicy
+fake_policy(GnMediaSource *source, const char *url, GnMediaKind kind)
+{
+  (void)url; (void)kind;
+  return ((FakeSource *)source)->policy;
+}
+
+static void
+fake_fetch_async(GnMediaSource *source, const char *url, GnMediaKind kind, gsize max_bytes,
+                 GCancellable *cancellable, GAsyncReadyCallback callback, gpointer data)
+{
+  (void)kind; (void)max_bytes;
+  FakeSource *self = (FakeSource *)source;
+  GTask *task = g_task_new(source, cancellable, callback, data);
+  g_task_set_task_data(task, g_strdup(url), g_free);
+  self->fetches++;
+  g_ptr_array_add(self->pending, task);
+}
+
+static GBytes *
+fake_fetch_finish(GnMediaSource *source, GAsyncResult *result, GError **error)
+{
+  (void)source;
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static GtkMediaStream *
+fake_open_stream(GnMediaSource *source, const char *url, GError **error)
+{
+  (void)url; (void)error;
+  ((FakeSource *)source)->streams++;
+  return gtk_media_file_new();
+}
+
+static void
+fake_adopt(GnMediaSource *source, GtkWidget *widget)
+{
+  (void)widget;
+  ((FakeSource *)source)->adopted++;
+}
+
+static void
+fake_source_iface_init(GnMediaSourceInterface *iface)
+{
+  iface->get_policy = fake_policy;
+  iface->fetch_async = fake_fetch_async;
+  iface->fetch_finish = fake_fetch_finish;
+  iface->open_stream = fake_open_stream;
+  iface->adopt = fake_adopt;
+}
+
+static void
+fake_source_finalize(GObject *object)
+{
+  g_ptr_array_unref(((FakeSource *)object)->pending);
+  G_OBJECT_CLASS(fake_source_parent_class)->finalize(object);
+}
+
+static void fake_source_class_init(FakeSourceClass *klass) { klass->finalize = fake_source_finalize; }
+static void fake_source_init(FakeSource *self) { self->pending = g_ptr_array_new_with_free_func(g_object_unref); }
+
+static FakeSource *
+fake_source_new(GnMediaPolicy policy)
+{
+  FakeSource *self = g_object_new(fake_source_get_type(), NULL);
+  self->policy = policy;
+  return self;
+}
+
+/* Answers the nth request with bytes (NULL: an error). */
+static GCancellable *
+fake_cancellable(FakeSource *self, guint nth)
+{
+  return g_task_get_cancellable(g_ptr_array_index(self->pending, nth));
+}
+
+static void
+fake_complete(FakeSource *self, guint nth, GBytes *bytes)
+{
+  GTask *task = g_ptr_array_index(self->pending, nth);
+  if (bytes) g_task_return_pointer(task, g_bytes_ref(bytes), (GDestroyNotify)g_bytes_unref);
+  else g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "HTTP 404");
+}
+
+static gboolean
+viewer_shows_something(gpointer data)
+{
+  return gn_media_viewer_get_paintable(data) != NULL || gn_media_viewer_get_message(data) != NULL;
+}
+
+static void
+spin_until(GSourceFunc done, gpointer data)
+{
+  gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+  while (!done(data) && g_get_monotonic_time() < deadline) g_main_context_iteration(NULL, FALSE);
+  g_assert_true(done(data));
+}
+
+static void
+spin_idle(void)
+{
+  for (int i = 0; i < 50; i++) g_main_context_iteration(NULL, FALSE);
+}
+
+/* The OSD button named name (tooltip), or NULL. */
+static GtkWidget *
+find_button(GtkWidget *root, const char *name)
+{
+  if (GTK_IS_BUTTON(root) && g_strcmp0(gtk_widget_get_tooltip_text(root), name) == 0) return root;
+  for (GtkWidget *c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_button(c, name);
+    if (found) return found;
+  }
+  return NULL;
+}
+
+static const char *two_urls[] = { "https://example.org/a.png", "https://example.org/b.png", NULL };
+
+static void
+viewer_ask_waits_for_load(void)
+{
+  g_autoptr(FakeSource) source = fake_source_new(GN_MEDIA_POLICY_ASK);
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gn_media_viewer_set_source(viewer, GN_MEDIA_SOURCE(source));
+  g_assert_cmpuint(source->adopted, ==, 1);
+  gn_media_viewer_set_gallery(viewer, two_urls, 0);
+  /* Shown, navigated: nothing fetched; Load is offered. */
+  g_assert_true(gn_media_viewer_get_load_offered(viewer));
+  g_assert_cmpstr(gn_media_viewer_get_message(viewer), ==, "Remote media is blocked");
+  g_assert_true(gn_media_viewer_navigate(viewer, 1));
+  g_assert_true(gn_media_viewer_navigate(viewer, -1));
+  g_assert_cmpuint(source->fetches, ==, 0);
+  /* The user asks: exactly one fetch, decoded off-thread, then shown. */
+  gn_media_viewer_request_load(viewer);
+  gn_media_viewer_request_load(viewer);
+  g_assert_cmpuint(source->fetches, ==, 1);
+  g_assert_true(gn_media_viewer_get_loading(viewer));
+  g_assert_false(gn_media_viewer_get_load_offered(viewer));
+  g_autoptr(GBytes) png = png_bytes(20, 10);
+  fake_complete(source, 0, png);
+  spin_until(viewer_shows_something, viewer);
+  g_assert_true(GDK_IS_TEXTURE(gn_media_viewer_get_paintable(viewer)));
+  g_assert_false(gn_media_viewer_get_loading(viewer));
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
+static void
+viewer_allow_loads_once_and_drops_late_results(void)
+{
+  g_autoptr(FakeSource) source = fake_source_new(GN_MEDIA_POLICY_ALLOW);
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gn_media_viewer_set_gallery(viewer, two_urls, 0);
+  g_assert_cmpuint(source->fetches, ==, 0); /* no source yet */
+  gn_media_viewer_set_source(viewer, GN_MEDIA_SOURCE(source));
+  g_assert_cmpuint(source->fetches, ==, 1);
+  g_assert_true(gn_media_viewer_get_loading(viewer));
+  /* Navigating cancels the first request and starts the second. */
+  g_assert_true(gn_media_viewer_navigate(viewer, 1));
+  g_assert_true(g_cancellable_is_cancelled(fake_cancellable(source, 0)));
+  g_assert_cmpuint(source->fetches, ==, 2);
+  /* The late first answer is dropped: slot 0 stays empty. */
+  g_autoptr(GBytes) png = png_bytes(4, 4);
+  fake_complete(source, 0, png);
+  spin_idle();
+  g_assert_null(gn_media_viewer_get_paintable(viewer));
+  g_assert_true(gn_media_viewer_get_loading(viewer));
+  /* An error for the shown slot says so, without Load. */
+  g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*cannot load*");
+  fake_complete(source, 1, NULL);
+  spin_until(viewer_shows_something, viewer);
+  g_test_assert_expected_messages();
+  g_assert_cmpstr(gn_media_viewer_get_message(viewer), ==, "Remote images unavailable");
+  g_assert_false(gn_media_viewer_get_load_offered(viewer));
+  /* Back to slot 0: a new request, cancelled when the viewer closes. */
+  g_assert_true(gn_media_viewer_navigate(viewer, -1));
+  g_assert_cmpuint(source->fetches, ==, 3);
+  GCancellable *pending = g_object_ref(fake_cancellable(source, 2));
+  gtk_window_destroy(GTK_WINDOW(viewer));
+  g_assert_true(g_cancellable_is_cancelled(pending));
+  g_object_unref(pending);
+}
+
+static void
+viewer_blocked_never_fetches(void)
+{
+  g_autoptr(FakeSource) source = fake_source_new(GN_MEDIA_POLICY_BLOCKED);
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gn_media_viewer_set_source(viewer, GN_MEDIA_SOURCE(source));
+  gn_media_viewer_set_gallery(viewer, two_urls, 0);
+  g_assert_false(gn_media_viewer_get_load_offered(viewer));
+  gn_media_viewer_request_load(viewer);
+  g_assert_cmpuint(source->fetches, ==, 0);
+  g_assert_nonnull(gn_media_viewer_get_message(viewer));
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
+/* Undecodable bytes (WebP without the fallback) end in a message. */
+static void
+viewer_refuses_unbounded_formats(void)
+{
+  g_autoptr(FakeSource) source = fake_source_new(GN_MEDIA_POLICY_ALLOW);
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gn_media_viewer_set_source(viewer, GN_MEDIA_SOURCE(source));
+  const char *one[] = { "https://example.org/x.webp", NULL };
+  gn_media_viewer_set_gallery(viewer, one, 0);
+  g_autoptr(GBytes) webp = webp_bytes();
+  g_test_expect_message(NULL, G_LOG_LEVEL_WARNING, "*cannot show*");
+  fake_complete(source, 0, webp);
+  spin_until(viewer_shows_something, viewer);
+  g_test_assert_expected_messages();
+  g_assert_null(gn_media_viewer_get_paintable(viewer));
+  g_assert_cmpstr(gn_media_viewer_get_message(viewer), ==, "This image cannot be shown");
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
+static gboolean
+on_save_requested(GnMediaViewer *viewer, guint index, const char *url, GdkPaintable *shown,
+                  gpointer data)
+{
+  (void)viewer;
+  guint *calls = data;
+  g_assert_cmpuint(index, ==, 0);
+  g_assert_cmpstr(url, ==, "https://example.org/a.png");
+  g_assert_true(GDK_IS_TEXTURE(shown));
+  (*calls)++;
+  return TRUE; /* no native dialog in tests */
+}
+
+static void
+on_link_copied(GnMediaViewer *viewer, const char *url, gpointer data)
+{
+  (void)viewer;
+  g_assert_cmpstr(url, ==, "https://example.org/a.png");
+  (*(guint *)data)++;
+}
+
+static GdkTexture *
+texture_of(int width, int height)
+{
+  g_autoptr(GBytes) png = png_bytes(width, height);
+  return gdk_texture_new_from_bytes(png, NULL);
+}
+
+static void
+viewer_zoom_save_copy(void)
+{
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gtk_window_set_default_size(GTK_WINDOW(viewer), 100, 100);
+  gn_media_viewer_set_gallery(viewer, two_urls, 0);
+  /* Fit never upscales: a small image shows at 100%. */
+  g_autoptr(GdkTexture) small = texture_of(10, 10);
+  gn_media_viewer_set_texture(viewer, 0, small);
+  g_assert_cmpfloat(gn_media_viewer_get_zoom(viewer), ==, 0);
+  g_assert_cmpfloat_with_epsilon(gn_media_viewer_get_shown_zoom(viewer), 1.0, 0.001);
+  /* A large one fits at its real scale, and Zoom In steps from there. */
+  g_autoptr(GdkTexture) large = texture_of(400, 200);
+  gn_media_viewer_set_texture(viewer, 0, large);
+  g_assert_cmpfloat_with_epsilon(gn_media_viewer_get_shown_zoom(viewer), 0.25, 0.001);
+  GtkWidget *zoom_in = find_button(GTK_WIDGET(viewer), "Zoom In");
+  g_assert_nonnull(zoom_in);
+  g_signal_emit_by_name(zoom_in, "clicked");
+  g_assert_cmpfloat_with_epsilon(gn_media_viewer_get_zoom(viewer), 0.5, 0.001);
+  gn_media_viewer_set_zoom(viewer, 50);
+  g_assert_cmpfloat(gn_media_viewer_get_zoom(viewer), ==, 10.0);
+  gn_media_viewer_set_zoom(viewer, 0.01);
+  g_assert_cmpfloat_with_epsilon(gn_media_viewer_get_zoom(viewer), 0.1, 0.001);
+
+  /* Every OSD button has a name (tooltip and accessible label). */
+  const char *names[] = { "Close", "Zoom In", "Zoom Out", "Fit", "Previous (Left)",
+                          "Next (Right)", "Save Image (Ctrl+S)", "Copy Link (Ctrl+C)" };
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++)
+    g_assert_nonnull(find_button(GTK_WIDGET(viewer), names[i]));
+
+  /* Save: the host may replace the dialog; nothing without an image. */
+  guint saves = 0, copies = 0;
+  g_signal_connect(viewer, "save-requested", G_CALLBACK(on_save_requested), &saves);
+  g_signal_connect(viewer, "link-copied", G_CALLBACK(on_link_copied), &copies);
+  GtkWidget *save = find_button(GTK_WIDGET(viewer), "Save Image (Ctrl+S)");
+  g_assert_true(gtk_widget_get_visible(save));
+  gn_media_viewer_save(viewer);
+  g_assert_cmpuint(saves, ==, 1);
+  gn_media_viewer_set_can_save(viewer, FALSE);
+  g_assert_false(gtk_widget_get_visible(save));
+  gn_media_viewer_save(viewer);
+  g_assert_cmpuint(saves, ==, 1);
+  gn_media_viewer_set_can_save(viewer, TRUE);
+
+  /* Copy link: web URLs only; the host hears about it. */
+  GtkWidget *copy = find_button(GTK_WIDGET(viewer), "Copy Link (Ctrl+C)");
+  g_assert_true(gtk_widget_get_visible(copy));
+  gn_media_viewer_copy_link(viewer);
+  g_assert_cmpuint(copies, ==, 1);
+  g_assert_true(gn_media_viewer_navigate(viewer, 1));
+  g_assert_false(gtk_widget_get_visible(save)); /* nothing loaded */
+  gn_media_viewer_save(viewer);
+  g_assert_cmpuint(saves, ==, 1);
+  const char *slots[] = { "attachment:abc/0", NULL };
+  gn_media_viewer_set_gallery(viewer, slots, 0);
+  g_assert_false(gtk_widget_get_visible(copy));
+  gn_media_viewer_copy_link(viewer);
+  g_assert_cmpuint(copies, ==, 1);
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
+/* ---- GnVideoPlayer ------------------------------------------------------- */
+
+static void
+on_video_load(GnVideoPlayer *player, const char *url, gpointer data)
+{
+  (void)player;
+  g_assert_cmpstr(url, ==, "https://example.org/v.mp4");
+  (*(guint *)data)++;
+}
+
+static void
+player_loads_only_with_consent(void)
+{
+  GnVideoPlayer *player = g_object_ref_sink(gn_video_player_new());
+  /* Built and bound: no stream (no GtkMediaFile) yet. */
+  g_assert_null(gn_video_player_get_stream(player));
+  guint asked = 0;
+  g_signal_connect(player, "load-requested", G_CALLBACK(on_video_load), &asked);
+  /* No source: only the signal; the URL never reaches a backend. */
+  gn_video_player_set_url(player, "https://example.org/v.mp4");
+  g_assert_null(gn_video_player_get_stream(player));
+  gn_video_player_request_load(player);
+  g_assert_cmpuint(asked, ==, 1);
+  g_assert_null(gn_video_player_get_stream(player));
+
+  /* ASK: opened through the source only after the Load action. */
+  g_autoptr(FakeSource) source = fake_source_new(GN_MEDIA_POLICY_ASK);
+  gn_video_player_set_source(player, GN_MEDIA_SOURCE(source));
+  g_assert_cmpuint(source->adopted, ==, 1);
+  gn_video_player_set_url(player, NULL);
+  gn_video_player_set_url(player, "https://example.org/v.mp4");
+  g_assert_cmpuint(source->streams, ==, 0);
+  gn_video_player_request_load(player);
+  g_assert_cmpuint(source->streams, ==, 1);
+  g_assert_nonnull(gn_video_player_get_stream(player));
+
+  /* BLOCKED: never, even when asked. */
+  source->policy = GN_MEDIA_POLICY_BLOCKED;
+  gn_video_player_set_url(player, NULL);
+  gn_video_player_set_url(player, "https://example.org/v.mp4");
+  gn_video_player_request_load(player);
+  g_assert_cmpuint(source->streams, ==, 1);
+  g_assert_null(gn_video_player_get_stream(player));
+
+  /* ALLOW: opened when the URL is set (the Gnostr default). */
+  source->policy = GN_MEDIA_POLICY_ALLOW;
+  gn_video_player_set_url(player, NULL);
+  gn_video_player_set_url(player, "https://example.org/v.mp4");
+  g_assert_cmpuint(source->streams, ==, 2);
+  g_object_unref(player);
+}
+
+static void
+player_host_stream_and_properties(void)
+{
+  GnVideoPlayer *player = g_object_ref_sink(gn_video_player_new());
+  g_autoptr(GtkMediaStream) stream = gtk_media_file_new();
+  gn_video_player_set_stream(player, stream);
+  g_assert_true(gn_video_player_get_stream(player) == stream);
+  gn_video_player_set_loop(player, TRUE);
+  g_assert_true(gtk_media_stream_get_loop(stream));
+  gn_video_player_set_muted(player, TRUE);
+  g_assert_true(gtk_media_stream_get_muted(stream));
+  gn_video_player_set_volume(player, 3.0);
+  g_assert_cmpfloat(gn_video_player_get_volume(player), ==, 1.0);
+  gboolean autoplay = FALSE;
+  g_object_set(player, "autoplay", TRUE, NULL);
+  g_object_get(player, "autoplay", &autoplay, NULL);
+  g_assert_true(autoplay);
+  /* A host stream is let go, not torn down. */
+  gn_video_player_set_stream(player, NULL);
+  g_assert_null(gn_video_player_get_stream(player));
+  g_assert_false(gtk_media_stream_get_playing(stream));
+  g_object_unref(player);
+}
+
+static void
+viewer_plays_streams_in_player(void)
+{
+  GnMediaViewer *viewer = gn_media_viewer_new(NULL);
+  gn_media_viewer_set_gallery(viewer, two_urls, 0);
+  g_autoptr(GtkMediaStream) stream = gtk_media_file_new();
+  gn_media_viewer_set_paintable(viewer, 0, GDK_PAINTABLE(stream));
+  g_assert_true(gn_media_viewer_get_paintable(viewer) == GDK_PAINTABLE(stream));
+  g_assert_false(gtk_widget_get_visible(find_button(GTK_WIDGET(viewer), "Save Image (Ctrl+S)")));
+  g_assert_true(gn_media_viewer_navigate(viewer, 1));
+  g_assert_false(gtk_media_stream_get_playing(stream));
+  gtk_window_destroy(GTK_WINDOW(viewer));
+}
+
 int
 main(int argc, char **argv)
 {
@@ -205,5 +616,13 @@ main(int argc, char **argv)
   g_test_add_func("/media/decode/sniff-probe", decode_sniff_and_probe);
   g_test_add_func("/media/decode/limits", decode_limits);
   g_test_add_func("/media/decode/async", decode_async);
+  g_test_add_func("/media/viewer/ask-waits-for-load", viewer_ask_waits_for_load);
+  g_test_add_func("/media/viewer/allow-loads-once-drops-late", viewer_allow_loads_once_and_drops_late_results);
+  g_test_add_func("/media/viewer/blocked-never-fetches", viewer_blocked_never_fetches);
+  g_test_add_func("/media/viewer/refuses-unbounded-formats", viewer_refuses_unbounded_formats);
+  g_test_add_func("/media/viewer/zoom-save-copy", viewer_zoom_save_copy);
+  g_test_add_func("/media/viewer/streams-in-player", viewer_plays_streams_in_player);
+  g_test_add_func("/media/player/consent", player_loads_only_with_consent);
+  g_test_add_func("/media/player/host-stream", player_host_stream_and_properties);
   return g_test_run();
 }

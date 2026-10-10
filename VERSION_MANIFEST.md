@@ -14,7 +14,7 @@ files already declare a version.
 | libnostr | `libnostr/` | 1.1.3 | Unreleased | — | `libnostr/CMakeLists.txt` |
 | libgo | `libgo/` | 0.1.3 | Unreleased | — | `libgo/CMakeLists.txt` |
 | nostr-gobject | `nostr-gobject/` | 2.2.2 | Unreleased | — | `nostr-gobject/CMakeLists.txt`, `nostr-gobject/meson.build` |
-| nostr-gtk | `nostr-gtk/` | 1.1.1 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
+| nostr-gtk | `nostr-gtk/` | 1.2.0 | Unreleased | — | `nostr-gtk/CMakeLists.txt`, `nostr-gtk/meson.build` |
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
@@ -44,6 +44,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 | Same-pubkey writer-epoch fencing (nostrc-4j37h): new authenticated management and NIP-46 methods, durable lease schema, and fenced signing semantics. | signet | 0.2.0 | MINOR from 0.1.1 for the additive public custody API and wire/storage contract; as a 0.x component, the incompatibility for newly fenced identities is called out in `signet/docs/WRITER_EPOCH_CUTOVER.md`. |
 | B2 public repost and quote authoring (nostrc-2yqk3): encrypted local public-note cache, explicit discovery, exact public-post review and relay publishing. | groundhog | 0.12.0 | No further bump: additive UI and internal store schema migration are folded into unreleased alpha 6; no installed Groundhog API changed. |
 | B2 Groundhog content UX (nostrc-gofet.7): safe cached Markdown, offline reference cards, consent-gated OG artwork/viewer, avatar menu and copy/share actions. | groundhog | 0.12.0 | No further bump: folded into unreleased alpha 6. |
+| Gnostr media port (nostrc-8xfib.4): Gnostr image viewer and video player moved into the portable library as GnMediaViewer (superset of the alpha-6 API: present, source, decode limits, loading/error/blocked states, paintable-for-generation, can-save, save/copy, save-requested and link-copied signals) and new GnVideoPlayer; new GnMediaSource interface and bounded gn_media_decode API. | nostr-gtk | 1.2.0 | MINOR from 1.1.1: additive public API in nostr-gtk-portable-1.0; no symbol removed (the alpha-6 GnMediaViewer calls keep their signatures and contracts). |
+| Same: GnostrMediaSource adapter; gnostr-image-viewer and gnostr-video-player removed (app-internal, never exported). | gnostr | 0.1.0 | No further bump: internal to the unreleased 0.1.0. |
 | B2 descriptor correction (nostrc-gofet.7): parsed NIP-18 repost and quote targets now carry a canonical NIP-21 URI and a kind-6 target is known to be kind 1. | nostr-gtk | 1.1.1 | PATCH: backward-compatible descriptor completion for offline cards and sharing. |
 | B1 portable core (nostrc-gofet.6): installed app-independent library and new Markdown, NIP-21/18, OG, viewer and issue-field APIs | nostr-gtk | 1.1.0 | MINOR from 1.0.1: additive public API and package target; legacy `nostr_gtk` symbols remain available. |
 | Same: Gnostr compatibility adapters and fixtures | gnostr | 0.1.0 | No further bump: changes are internal to the already-declared, unreleased 0.1.0; public APIs and wire/storage formats are unchanged. |

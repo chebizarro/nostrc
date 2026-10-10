@@ -21,6 +21,7 @@
  *    Clear.
  * Needs a display: it self-skips (77) without one. Waits iterate the main
  * context against a deadline; they never sleep. */
+#include <glib/gstdio.h>
 #include "gh-test-signer.h"
 #include "send-stack.h"
 
@@ -707,6 +708,14 @@ caption_pasted(gpointer data)
 {
   g_autofree gchar *text = gh_composer_dup_text(GH_COMPOSER(data));
   return g_strcmp0(text, "a caption") == 0;
+}
+
+/* Written out: the save replaces the file once all of it is there. */
+static gboolean
+file_saved(gpointer path)
+{
+  GStatBuf st;
+  return g_stat(path, &st) == 0 && st.st_size > 0;
 }
 
 static gboolean
@@ -1461,6 +1470,17 @@ test_card_download_and_save(void)
   g_assert_cmpmem(contents, length, g_bytes_get_data(png, NULL), g_bytes_get_size(png));
   g_assert_nonnull(strstr(gh_attachment_ui_get_last_toast(f.s.window),
                           "aren't protected by Groundhog"));
+  /* nostrc-8xfib.4: Save in the media viewer is the same Save As - the
+   * plaintext as received, never the viewer default re-encoded copy. */
+  g_assert_true(g_unlink(f.saved) == 0);
+  viewer = open_viewer(card);
+  gn_media_viewer_save(viewer);
+  gtk_window_destroy(GTK_WINDOW(viewer));
+  gh_test_spin_until(file_saved, f.saved);
+  g_assert_cmpuint(f.save_asked, ==, 2);
+  g_autofree gchar *again = NULL;
+  g_assert_true(g_file_get_contents(f.saved, &again, &length, NULL));
+  g_assert_cmpmem(again, length, g_bytes_get_data(png, NULL), g_bytes_get_size(png));
   fixture_clear(&f);
 }
 

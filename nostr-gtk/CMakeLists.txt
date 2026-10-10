@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
-set(NOSTR_GTK_MINOR_VERSION 1)
-set(NOSTR_GTK_MICRO_VERSION 1)
+set(NOSTR_GTK_MINOR_VERSION 2)
+set(NOSTR_GTK_MICRO_VERSION 0)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}
@@ -524,6 +524,12 @@ if(BUILD_TESTING)
     LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2
   )
   target_include_directories(test_nostr_gtk_media PRIVATE ${PROJECT_ROOT}/tests/common)
+  add_test(NAME nostr_gtk_portable_media_lint
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME nostr_gtk_portable_media_lint_selftest
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py
+            --self-test)
 
   if (TARGET nostr-gtk-i18n)
   gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n
