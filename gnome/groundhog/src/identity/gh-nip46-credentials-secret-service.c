@@ -38,11 +38,38 @@ map_error(GError *source, gboolean connecting)
   return error;
 }
 
+static void
+on_session(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  (void)source;
+  *(GAsyncResult **)user_data = g_object_ref(result);
+}
+
+/* The shared Secret Service with its session open, or NULL with *error set.
+ * The session is opened through libsecret's asynchronous path, on a private
+ * main context, and never its synchronous one (nostrc-ep54q): in libsecret
+ * 0.21.8 _secret_session_open_sync() dereferences a NULL GError when the AES
+ * session is refused and it falls back to "plain" (as
+ * secret_service_search_sync(..., SECRET_SEARCH_LOAD_SECRETS, ...) passes
+ * one), and on any failure it releases its session with g_clear_object(),
+ * which is a CRITICAL and leaks the session and its key. The service keeps
+ * the session, so the synchronous calls below never open one themselves. */
 static SecretService *
 open_service(GCancellable *cancellable, GError **error)
 {
   GError *local = NULL;
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, cancellable, &local);
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, cancellable, &local);
+  if (service) {
+    GMainContext *context = g_main_context_new();
+    g_main_context_push_thread_default(context);
+    GAsyncResult *result = NULL;
+    secret_service_ensure_session(service, cancellable, on_session, &result);
+    while (!result) g_main_context_iteration(context, TRUE);
+    if (!secret_service_ensure_session_finish(service, result, &local)) g_clear_object(&service);
+    g_object_unref(result);
+    g_main_context_pop_thread_default(context);
+    g_main_context_unref(context);
+  }
   if (!service) *error = map_error(local, TRUE);
   return service;
 }

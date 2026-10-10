@@ -334,7 +334,8 @@ jobs:
         groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send
         groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire
         groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key
-        groundhog-store-key-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot
+        groundhog-store-key-keyring groundhog-secret-service-sessions
+        groundhog-store groundhog-store-sqlite groundhog-store-marmot
         groundhog-store-conversations groundhog-outbox groundhog-account-store
         groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup
         groundhog-expiry groundhog-auth-policy groundhog-contact-directory
