@@ -2,6 +2,8 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+> **Context recovery**: Run `gt prime` after compaction, clear, or a new session — it injects full Refinery/Gastown context. Check the mail queue with `gt mq list`; process the next item with `gt mq process`.
+
 ## Quick Reference
 
 ```bash
@@ -295,3 +297,21 @@ restored by hand.
 **NEVER add `relay.damus.io` (or `wss://relay.damus.io`) anywhere in this codebase** — not in code, defaults, configs, docs, examples, or tests. It has been deliberately purged due to unreliability. Do not reintroduce it under any circumstances, even as an example URL. Use `wss://nos.lol` or `wss://relay.nostr.band` instead.
 
 (The only remaining occurrences are in vendored `third_party/nostrdb/testdata/` fixtures, which contain signed events that cannot be modified without breaking signatures. Do not add new ones.)
+
+## Nostr Protocol Guidelines
+
+This project is Nostr-native — keep it event-driven, not request/response or polling:
+
+- Subscribe with `REQ` filters and react to `EVENT`/`EOSE`; never poll relays on a timer or close a subscription after an arbitrary delay.
+- Check every publish: don't ignore `OK`/`OK false`, `CLOSED` reasons, or `AUTH` (NIP-42) challenges — a successful websocket send is not a successful publish.
+- Backfill with `since`/`until`/`limit` and a clear catch-up → live boundary instead of sleeping and hoping for history.
+- Scope filters tightly (kinds/authors/tags) rather than pulling broad sets and filtering client-side.
+- Dedupe by `event.id` across relays/reconnects; handlers must be idempotent on replay.
+- Probe relay capabilities with NIP-11 instead of hardcoding single-relay assumptions; reconnect with backoff and re-issue subscriptions.
+- Before merging Nostr-touching changes, run a **Nostr Protocol Review** (the `nostr-protocol-smells` skill / `nostr-protocol-review` workflow) to catch polling, timeout-closes, ignored relay frames, and other protocol smells.
+
+## Git Worktree & Branch Hygiene
+
+- Once a feature branch's changes are merged into `main`/`master`, remove the worktree and delete the branch. Don't leave merged worktrees or stale branches lying around.
+- Before removing a worktree, run `git status` inside it to confirm there's nothing uncommitted you'd lose — commit, stash, or discard first.
+- Clean up with `git worktree remove <path>` and `git branch -d <branch>` (add `git push origin --delete <branch>` if the branch was pushed).
