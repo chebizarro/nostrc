@@ -21,6 +21,7 @@
 #include "gh-account-ui.h"
 #include "gh-inbox-status.h"
 #include "gh-onboarding-view.h"
+#include "gh-nip46-pair-dialog.h"
 #include "../app/gh-test-signer.h"
 #include "../app/gh-test-bunker.h"
 
@@ -828,6 +829,65 @@ test_read_only(Fixture *f, gconstpointer data)
   g_assert_cmpuint(connections(f), ==, 0);
 }
 
+static void
+collect_actions(GtkWidget *widget, const gchar *name, GPtrArray *out)
+{
+  if (GTK_IS_ACTIONABLE(widget) &&
+      g_strcmp0(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), name) == 0)
+    g_ptr_array_add(out, widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c))
+    collect_actions(c, name, out);
+}
+
+static GhNip46PairDialog *
+find_pair_dialog(GtkWidget *widget)
+{
+  if (GH_IS_NIP46_PAIR_DIALOG(widget))
+    return GH_NIP46_PAIR_DIALOG(widget);
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GhNip46PairDialog *found = find_pair_dialog(c);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static gboolean
+pair_dialog_shown(gpointer data)
+{
+  GhNip46PairDialog *dialog = find_pair_dialog(GTK_WIDGET(((Fixture *)data)->window));
+  return dialog != NULL;
+}
+
+/* The shared "No Nostr Identities" and "Account Store Unavailable" pages
+ * offer a remote signer, so a NIP-46 bunker works without Grotto; in
+ * onboarding the button opens the pair dialog. (nostrc-p15n5.3) */
+static void
+test_no_identity_pages_offer_remote_signer(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  act(f, "onboarding.start");
+  g_autoptr(GPtrArray) buttons = g_ptr_array_new();
+  collect_actions(GTK_WIDGET(f->view), "account.add-remote", buttons);
+  g_assert_cmpuint(buttons->len, ==, 2);
+  for (guint i = 0; i < buttons->len; i++) {
+    GtkWidget *button = g_ptr_array_index(buttons, i);
+    GtkWidget *page = gtk_widget_get_ancestor(button, ADW_TYPE_STATUS_PAGE);
+    g_assert_nonnull(page);
+    const gchar *title = adw_status_page_get_title(ADW_STATUS_PAGE(page));
+    g_assert_true(g_str_equal(title, "No Nostr Identities") ||
+                  g_str_equal(title, "Account Store Unavailable"));
+    g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, "Add _Remote Signer…");
+  }
+  g_assert_null(find_pair_dialog(GTK_WIDGET(f->window)));
+  g_assert_true(gtk_widget_activate_action(g_ptr_array_index(buttons, 0),
+                                           "account.add-remote", NULL));
+  gh_test_spin_until(pair_dialog_shown, f);
+  adw_dialog_close(ADW_DIALOG(find_pair_dialog(GTK_WIDGET(f->window))));
+  for (guint i = 0; i < 100 && g_main_context_pending(NULL); i++)
+    g_main_context_iteration(NULL, FALSE);
+}
+
 static gboolean
 banner_is_no_relays(gpointer data)
 {
@@ -1447,6 +1507,7 @@ main(int argc, char **argv)
              fixture_teardown)
   ADD("first-run-publishes", test_first_run_publishes, NULL);
   ADD("read-only", test_read_only, NULL);
+  ADD("no-identity-pages-offer-remote-signer", test_no_identity_pages_offer_remote_signer, NULL);
   ADD("set-up-later", test_set_up_later, NULL);
   ADD("cancel-while-signing", test_cancel_while_signing, NULL);
   ADD("signer-denied", test_signer_denied, NULL);

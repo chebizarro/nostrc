@@ -3540,5 +3540,23 @@ if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
     add_test(NAME groundhog-nip46-pair-dialog COMMAND test-groundhog-nip46-pair-dialog)
     set_tests_properties(groundhog-nip46-pair-dialog PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # The pair dialog end to end: real nak bunker, real credential store
+    # (temporary Keychain / private Secret Service). (nostrc-p15n5.3)
+    if (TARGET PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      add_executable(test-groundhog-nip46-pair-nak tests/ui/test_nip46_pair_nak.c)
+      target_include_directories(test-groundhog-nip46-pair-nak PRIVATE
+        ${CMAKE_SOURCE_DIR}/tests/common ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+      target_link_libraries(test-groundhog-nip46-pair-nak PRIVATE
+        groundhog-nip46-pair-dialog groundhog-account groundhog-nip46-credentials
+        PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      if (NOT APPLE)
+        target_link_libraries(test-groundhog-nip46-pair-nak PRIVATE nostrc-test-bus)
+      endif()
+      target_compile_options(test-groundhog-nip46-pair-nak PRIVATE -Wall -Wextra -Werror)
+      add_dependencies(test-groundhog-nip46-pair-nak groundhog-test-schemas)
+      add_test(NAME groundhog-nip46-pair-nak COMMAND test-groundhog-nip46-pair-nak)
+      set_tests_properties(groundhog-nip46-pair-nak PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals;G_MESSAGES_DEBUG=all")
+    endif()
   endif()
 endif()

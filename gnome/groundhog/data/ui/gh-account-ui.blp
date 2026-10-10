@@ -19,42 +19,74 @@ Adw.StatusPage account_discovering {
 Adw.StatusPage account_store_unavailable {
   icon-name: "dialog-warning-symbolic";
   title: _("Account Store Unavailable");
-  description: _("Groundhog could not read the signer's identity list. Unlock the keyring or start the Nostr signer, then try again.");
+  description: _("Groundhog could not read Grotto's identity list. Unlock the keyring or start Grotto and try again, or sign in with a remote signer (NIP-46) such as Amber or a bunker.");
 
   styles [
     "groundhog-shell-status",
   ]
 
-  child: Button account_store_unavailable_retry {
-    label: _("_Try Again");
-    use-underline: true;
+  child: Box {
+    orientation: vertical;
+    spacing: 12;
     halign: center;
-    action-name: "account.refresh";
 
-    styles [
-      "pill",
-    ]
+    Button account_store_unavailable_remote {
+      label: _("Add _Remote Signer…");
+      use-underline: true;
+      action-name: "account.add-remote";
+
+      styles [
+        "pill",
+        "suggested-action",
+      ]
+    }
+
+    Button account_store_unavailable_retry {
+      label: _("_Try Again");
+      use-underline: true;
+      action-name: "account.refresh";
+
+      styles [
+        "pill",
+      ]
+    }
   };
 }
 
 Adw.StatusPage account_none {
   icon-name: "avatar-default-symbolic";
   title: _("No Nostr Identities");
-  description: _("Add or import a key with the Nostr signer, then refresh. Groundhog never stores or reads private keys.");
+  description: _("Sign in with a remote signer (NIP-46) such as Amber or a bunker, or add a key to Grotto and refresh. Groundhog never stores or reads private keys.");
 
   styles [
     "groundhog-shell-status",
   ]
 
-  child: Button account_none_refresh {
-    label: _("_Refresh");
-    use-underline: true;
+  child: Box {
+    orientation: vertical;
+    spacing: 12;
     halign: center;
-    action-name: "account.refresh";
 
-    styles [
-      "pill",
-    ]
+    Button account_none_remote {
+      label: _("Add _Remote Signer…");
+      use-underline: true;
+      action-name: "account.add-remote";
+
+      styles [
+        "pill",
+        "suggested-action",
+      ]
+    }
+
+    Button account_none_refresh {
+      label: _("_Refresh");
+      use-underline: true;
+      action-name: "account.refresh";
+
+      styles [
+        "pill",
+      ]
+    }
   };
 }
 
