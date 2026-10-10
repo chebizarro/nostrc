@@ -2211,6 +2211,19 @@ reaction_arrived(gpointer data)
   return summary && gh_reaction_summary_get_total_count(summary) > 0;
 }
 
+typedef struct {
+  WireRelay *relay;
+  const gchar *before_id;  /* the newest stored 445 before the send, or NULL */
+} NewStored445;
+
+static gboolean
+new_stored_445(gpointer data)
+{
+  NewStored445 *ns = data;
+  WireStored *last = last_stored_445(ns->relay);
+  return last && g_strcmp0(last->id, ns->before_id) != 0;
+}
+
 static void
 test_white_noise_reactions(void)
 {
@@ -2286,12 +2299,22 @@ test_white_noise_reactions(void)
   g_assert_cmpuint(gh_reaction_summary_get_total_count(summary), ==, 1);
 
   /* Groundhog reacts to Carol's message → MDK sees it via sync. */
+  WireStored *before = last_stored_445(&w.g);
+  g_autofree gchar *before_id = before ? g_strdup(before->id) : NULL;
   {
     g_autoptr(GError) error = NULL;
     g_assert_true(gh_mls_service_send_reaction(alice->service, ga,
       carol_msg_id, hex[CAROL], "9", "+", &error));
     g_assert_no_error(error);
   }
+  /* send_reaction publishes fire-and-forget; on this relay the first
+   * attempt is refused auth-required and retried after AUTH, while the
+   * driver sync REQ runs concurrently with the main loop (run
+   * 38039901196: the sync answered inputs [] just after the retried
+   * publish).  Wait until the group relay stores a new kind 445 (the
+   * reaction) before Carol syncs. */
+  NewStored445 ns = { &w.g, before_id };
+  spin_until(new_stored_445, &ns, "the reaction stored on the group relay");
   {
     g_autoptr(JsonObject) synced = mdk_sync("carol", group);
     g_assert_true(synced_reaction(synced, hex[ALICE], "+"));
