@@ -17,9 +17,11 @@ data/ui/gh-conversation-row.blp
 data/ui/gh-conversation-view.blp
 data/ui/gh-create-poll-dialog.blp
 data/ui/gh-delivery-details.blp
+data/ui/gh-delivery-indicator.blp
 data/ui/gh-group-info-dialog.blp
 data/ui/gh-group-join-dialog.blp
 data/ui/gh-group-member-row.blp
+data/ui/gh-message-reference.blp
 data/ui/gh-message-row.blp
 data/ui/gh-mls-group-info-dialog.blp
 data/ui/gh-mls-invite-row.blp

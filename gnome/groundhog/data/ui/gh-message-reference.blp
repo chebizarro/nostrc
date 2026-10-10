@@ -1,0 +1,62 @@
+using Gtk 4.0;
+
+// A message's parsed NIP-21/NIP-18 reference (charter §7.4), never fetched
+// while the row binds. gh-message-row.c builds this only for a message that
+// carries a reference and inserts it after the bubble (nostrc-boq9.5); most
+// rows never need it.
+Box reference_box {
+  visible: false;
+  orientation: vertical;
+  spacing: 4;
+  styles ["card", "groundhog-reference"]
+
+  // The shared NIP-18/NIP-21 card (nostr-gtk): local lookup only; its
+  // Find on Relays asks for consent before any relay is contacted.
+  $GnNostrReferenceCard reference_card {
+    hexpand: true;
+  }
+
+  Button reference_copy_button {
+    icon-name: "edit-copy-symbolic";
+    tooltip-text: _("Copy Nostr address");
+    halign: start;
+    action-name: "conversation.open-link";
+    action-target: "''";
+    styles ["flat"]
+  }
+
+  Button share_reference_button {
+    label: _("Share in Chat");
+    halign: start;
+    action-name: "conversation.share-reference";
+    action-target: "''";
+    styles ["flat"]
+  }
+
+  Box public_actions {
+    spacing: 6;
+    visible: false;
+    Button repost_reference_button {
+      label: _("Repost");
+      action-name: "conversation.repost-reference";
+
+      accessibility {
+        description: _("Opens a preview before anything is published publicly");
+      }
+
+      action-target: "''";
+      styles ["flat"]
+    }
+    Button quote_reference_button {
+      label: _("Quote…");
+      action-name: "conversation.quote-reference";
+
+      accessibility {
+        description: _("Opens a preview before anything is published publicly");
+      }
+
+      action-target: "''";
+      styles ["flat"]
+    }
+  }
+}
