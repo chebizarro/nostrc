@@ -604,11 +604,15 @@ static gboolean is_hex64(const char *s){
   return TRUE;
 }
 
-/* Complete every call of @p with an approval failure (reply_approval_error). */
+/* Complete every parked call. Backend failures are not approval failures and
+ * must remain Internal even for clients without typed approval errors. */
 static void pending_fail(Pending *p, const char *typed_name, const char *msg){
   for (guint i = 0; i < p->calls->len; i++) {
     Call *c = g_ptr_array_index(p->calls, i);
-    reply_approval_error(&c->reply, typed_name, msg);
+    if (g_strcmp0(typed_name, ORG_NOSTR_SIGNER_ERR_INTERNAL) == 0)
+      reply_error(&c->reply, typed_name, msg);
+    else
+      reply_approval_error(&c->reply, typed_name, msg);
   }
   g_ptr_array_set_size(p->calls, 0);
 }
@@ -934,14 +938,19 @@ static gboolean handle_approve_request(NostrSigner *object, GDBusMethodInvocatio
     /* The approved identity is the one the user saw; if the selector now
      * resolves elsewhere (active account switched), do not use the new key. */
     Call *first = g_ptr_array_index(p->calls, 0);
+    int resolve_rc = 0;
     gboolean same = TRUE;
     if (p->npub) {
       char *now_npub = NULL;
-      same = nostr_nip55l_resolve_npub(first->selector, &now_npub) == 0 && now_npub &&
-             strcmp(now_npub, p->npub) == 0;
+      resolve_rc = nostr_nip55l_resolve_npub(first->selector, &now_npub);
+      same = resolve_rc == 0 && now_npub && strcmp(now_npub, p->npub) == 0;
+      if (resolve_rc == 0 && !now_npub) resolve_rc = NOSTR_SIGNER_ERROR_BACKEND;
       free(now_npub);
     }
-    if (!same) {
+    if (resolve_rc != 0 && resolve_rc != NOSTR_SIGNER_ERROR_NOT_FOUND) {
+      pending_fail(p, ORG_NOSTR_SIGNER_ERR_INTERNAL, "key lookup failed while awaiting approval");
+      ok = FALSE;
+    } else if (!same) {
       pending_fail(p, ORG_NOSTR_SIGNER_ERR_IDENTITY_CHANGED, "the identity changed while awaiting approval");
       ok = FALSE;
     } else {

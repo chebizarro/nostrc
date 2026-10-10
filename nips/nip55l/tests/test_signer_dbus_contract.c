@@ -2652,6 +2652,7 @@ static void run_phase3(void) {
 static const char fss_xml[] =
   "<node>"
   " <interface name='org.freedesktop.Secret.Service'>"
+  "  <method name='TestSetFailure'><arg type='b' direction='in'/></method>"
   "  <method name='OpenSession'><arg type='s' direction='in'/><arg type='v' direction='in'/>"
   "   <arg type='v' direction='out'/><arg type='o' direction='out'/></method>"
   "  <method name='SearchItems'><arg type='a{ss}' direction='in'/>"
@@ -2713,6 +2714,11 @@ static void fss_service_call(GDBusConnection *c, const gchar *sender, const gcha
                              GDBusMethodInvocation *inv, gpointer ud) {
   (void)sender; (void)path; (void)iface;
   Fss *f = ud;
+  if (g_strcmp0(method, "TestSetFailure") == 0) {
+    g_variant_get(params, "(b)", &f->fail_all);
+    g_dbus_method_invocation_return_value(inv, NULL);
+    return;
+  }
   if (f->fail_all) {
     g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.Failed",
                                                "key store unavailable");
@@ -2878,7 +2884,8 @@ static int fake_secret_service(int argc, char **argv) {
     g_hash_table_insert(it->attrs, (gpointer)"hardware", g_strdup("false"));
     g_hash_table_insert(it->attrs, (gpointer)"curve", g_strdup("secp256k1"));
     g_hash_table_insert(it->attrs, (gpointer)"origin", g_strdup("software"));
-    g_hash_table_insert(it->attrs, (gpointer)"label", g_strdup(""));
+    g_hash_table_insert(it->attrs, (gpointer)"label",
+                        g_strdup(i < 4 ? "Stored Label" : ""));
     g_ptr_array_add(f.items, it);
     if (!g_dbus_connection_register_object(f.bus, it->path,
             g_dbus_node_info_lookup_interface(f.node, "org.freedesktop.Secret.Item"),
@@ -2909,9 +2916,13 @@ static void fake_secrets_pre_daemon(Ctx *ctx, gpointer data) {
   const FakeSecrets *fs = data;
   GError *err = NULL;
   char *exe = self_exe();
-  ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
-                                  "--fake-secret-service", fs->mode, fs->stored_sk, fs->stored_sk,
-                                  ctx->sk_hex, NULL);
+  if (fs->stored_sk)
+    ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
+                                    "--fake-secret-service", fs->mode, fs->stored_sk,
+                                    fs->stored_sk, ctx->sk_hex, NULL);
+  else
+    ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
+                                    "--fake-secret-service", fs->mode, NULL);
   g_free(exe);
   if (!ctx->secrets) { g_printerr("spawn fake secret service: %s\n", err ? err->message : "?"); exit(1); }
   wait_for_named(ctx->bus, FSS_NAME, 20);
@@ -3010,7 +3021,7 @@ static void run_identity_store_phase(void) {
   {
     FakeSecrets fs = { "plain", stored.sk_hex };
     Ctx ctx;
-    ctx_setup_full(&ctx, FALSE, FALSE, "[event]\n@P|*=allow\n", &TRUST_UI,
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
     gchar **ids = list_identities(&ctx, &err);
     if (!ids) { g_printerr("ListIdentities (plain store): %s\n", err ? err->message : "?"); exit(1); }
@@ -3030,6 +3041,59 @@ static void run_identity_store_phase(void) {
     pk = sign_with(&ctx, stored.npub, &err);
     CHECK(pk && g_strcmp0(pk, stored.pk_hex) == 0);
     g_free(pk);
+    expect_identity_error(&ctx, "unknown label", ERR_NO_KEY);
+    expect_signs_as(&ctx, "Stored Label", stored.pk_hex);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "unknown label", ERR_NO_KEY);
+    expect_signs_as(&ctx, "Stored Label", stored.pk_hex);
+    expect_signs_as(&ctx, "", stored.pk_hex);
+    ctx_teardown(&ctx);
+  }
+
+  /* An unknown label must not pick the environment key even if the store is
+   * empty. Empty selector still means the active identity. */
+  {
+    FakeSecrets fs = { "plain", NULL };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    expect_identity_error(&ctx, "unknown label", ERR_NO_KEY);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "unknown label", ERR_NO_KEY);
+    expect_identity_error(&ctx, "", ERR_NO_KEY);
+    ctx_teardown(&ctx);
+  }
+
+  /* Fail the readable store after ApprovalRequested but before approval.
+   * This is a backend outage, not an identity change or approval denial. */
+  {
+    FakeSecrets fs = { "plain", stored.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    Watch w;
+    watch_start(&ctx, &w);
+    watch_call(&ctx, &w, "SignEvent",
+               g_variant_new("(sss)", "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"id\"}",
+                             stored.npub, "contract-test"));
+    watch_wait_request(&w, 1);
+    CHECK(g_strcmp0(w.a.identity, stored.npub) == 0);
+    GVariant *r = g_dbus_connection_call_sync(ctx.bus, FSS_NAME, FSS_PATH,
+        "org.freedesktop.Secret.Service", "TestSetFailure", g_variant_new("(b)", TRUE),
+        G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+    CHECK(r != NULL); g_variant_unref(r);
+    r = approve_call(&ctx, w.a.req_id, TRUE, FALSE, &err);
+    CHECK(r != NULL);
+    gboolean approved = TRUE;
+    g_variant_get(r, "(b)", &approved);
+    CHECK(!approved);
+    g_variant_unref(r);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->pdata[0] == NULL);
+    expect_remote_error(w.a.errors->pdata[0], ERR_INTERNAL);
+    watch_stop(&ctx, &w);
     ctx_teardown(&ctx);
   }
 
