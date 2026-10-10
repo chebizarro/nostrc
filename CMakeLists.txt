@@ -488,7 +488,14 @@ endif()
 # option must already have its default value on a fresh configure.
 option(BUILD_APPS "Build application binaries under apps/" ON)
 option(BUILD_NOSTR_GTK "Build nostr-gtk widget library (requires GTK4 + libadwaita)" ON)
-if (BUILD_NOSTR_GTK)
+# nostr_gtk_portable is a shared library, so its link must resolve the nostrdb
+# symbols that content_renderer.c and nostr_gobject's storage_ndb.c reference;
+# they come only from nostrdb_storage. Static nostr_gobject consumers without
+# nostrdb (the Windows signer build, WITH_NOSTRDB=OFF) never pull those
+# objects, but a DLL/dylib/ELF library built from them cannot link.
+if (BUILD_NOSTR_GTK AND NOT TARGET nostrdb_storage)
+  message(STATUS "nostr-gtk: not built; it needs the nostrdb storage component (WITH_NOSTRDB=ON)")
+elseif (BUILD_NOSTR_GTK)
   add_subdirectory(nostr-gtk)
 endif()
 
