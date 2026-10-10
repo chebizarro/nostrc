@@ -178,13 +178,28 @@ newest_key_package(WireRelay *relay, guint key, gchar **ref, gchar **d, gchar **
   newest_key_package_of(relay, key, kp_format, ref, d, json);
 }
 
-/* Whether any frame a client sent the relay mentions text. */
+/* Whether `text` names the kind `kind`: as a JSON number (a filter's
+ * "kinds", an event's "kind") or a string starting with it (an "a"/"k" tag,
+ * "30443:<pubkey>:<d>"). A bare substring search also matches inside random
+ * hex and base64 -- an AUTH event's id or sig, a challenge's pointer -- once
+ * in a few thousand runs, so the digits must not touch other alphanumerics. */
 static gboolean
-inbound_mentions(WireRelay *relay, const gchar *text)
+mentions_kind(const gchar *text, const gchar *kind)
+{
+  gsize len = strlen(kind);
+  for (const gchar *at = strstr(text, kind); at; at = strstr(at + 1, kind))
+    if ((at == text || !g_ascii_isalnum(at[-1])) && !g_ascii_isalnum(at[len]))
+      return TRUE;
+  return FALSE;
+}
+
+/* Whether any frame a client sent the relay mentions the kind. */
+static gboolean
+inbound_mentions(WireRelay *relay, const gchar *kind)
 {
   for (guint i = 0; i < relay->frames->len; i++) {
     WireFrame *frame = g_ptr_array_index(relay->frames, i);
-    if (frame->inbound && strstr(frame->text, text))
+    if (frame->inbound && mentions_kind(frame->text, kind))
       return TRUE;
   }
   return FALSE;
@@ -198,7 +213,7 @@ key_package_reqs(WireRelay *relay, guint key)
   for (guint i = 0; i < relay->frames->len; i++) {
     WireFrame *frame = g_ptr_array_index(relay->frames, i);
     if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
-        strstr(frame->text, "30443") && strstr(frame->text, hex[key]))
+        mentions_kind(frame->text, "30443") && strstr(frame->text, hex[key]))
       n++;
   }
   return n;
