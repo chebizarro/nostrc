@@ -45,7 +45,8 @@ jobs:
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             desktop-file-utils appstream blueprint-compiler xvfb xauth gettext \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
           docker version
 
       - name: Configure with the MDK 0.11 matrix
