@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 
 #include "../src/services/gnostr-media-service.h"
+#include "../src/services/gnostr-og-provider.h"
 
 static SoupSession *test_session;
 static char *test_disk_root;
@@ -774,6 +775,54 @@ test_og_metadata_is_shared_and_ttl_cached(void)
 }
 
 static void
+provider_metadata_ready(GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  GnOgMetadata **out = user_data;
+  g_autoptr(GError) error = NULL;
+  *out = gn_og_preview_provider_load_metadata_finish(GN_OG_PREVIEW_PROVIDER(source), result,
+                                                     &error);
+  g_assert_no_error(error);
+}
+
+/* nostrc-8xfib.3: the card's provider adapter serves the service's cached,
+ * shared-parser metadata as GnOgMetadata. */
+static void
+test_og_provider_adapter(void)
+{
+  g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
+  OgFixture fixture = { 0 };
+  soup_server_add_handler(server, "/adapter", server_og_handler, &fixture, NULL);
+  g_assert_true(soup_server_listen_local(server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, NULL));
+  GSList *uris = soup_server_get_uris(server);
+  g_autofree char *base = g_uri_to_string(uris->data);
+  g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
+  g_autofree char *url = g_strconcat(base, "adapter", NULL);
+
+  GnostrMediaServiceConfig config;
+  gnostr_media_service_config_init(&config);
+  g_autoptr(GnostrMediaService) service = new_test_service(&config);
+  g_autoptr(GnostrOgProvider) provider = gnostr_og_provider_new(service);
+  for (int i = 0; i < 2; i++) {
+    GnOgMetadata *metadata = NULL;
+    gn_og_preview_provider_load_metadata_async(GN_OG_PREVIEW_PROVIDER(provider), url, NULL,
+                                               provider_metadata_ready, &metadata);
+    gint64 deadline = g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+    while (!metadata && g_get_monotonic_time() < deadline)
+      g_main_context_iteration(NULL, TRUE);
+    g_assert_nonnull(metadata);
+    g_assert_cmpstr(gn_og_metadata_get_title(metadata), ==, "Shared title");
+    g_assert_cmpstr(gn_og_metadata_get_description(metadata), ==, "Shared description");
+    g_assert_true(g_str_has_suffix(gn_og_metadata_get_image_url(metadata), "/poster.png"));
+    g_assert_true(g_str_has_prefix(gn_og_metadata_get_image_url(metadata), "http://127.0.0.1"));
+    gn_og_metadata_unref(metadata);
+  }
+  /* The second request is a cache hit. */
+  g_assert_cmpuint(fixture.server_requests, ==, 1);
+  wait_for_disk_jobs(service);
+  soup_server_disconnect(server);
+}
+
+static void
 test_og_metadata_persists_with_ttl(void)
 {
   g_autoptr(SoupServer) server = soup_server_new(NULL, NULL);
@@ -1135,6 +1184,7 @@ main(int argc, char **argv)
                   test_disk_executor_bounds_and_coalesces);
   g_test_add_func("/media-service/og/shared-ttl-cache",
                   test_og_metadata_is_shared_and_ttl_cached);
+  g_test_add_func("/media-service/og/provider-adapter", test_og_provider_adapter);
   g_test_add_func("/media-service/og/persisted-ttl",
                   test_og_metadata_persists_with_ttl);
   g_test_add_func("/media-service/account/eviction",

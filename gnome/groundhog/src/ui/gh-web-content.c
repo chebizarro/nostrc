@@ -1,7 +1,7 @@
 #include "gh-web-content.h"
 #include "gh-metadata-strip.h"
 #include "gh-link-policy.h"
-#include <libxml/HTMLparser.h>
+#include <nostr-gtk-1.0/gn-og-preview.h>
 #include <nostr-gtk-1.0/gn-animated-image.h>
 #include <string.h>
 
@@ -34,98 +34,30 @@ gh_web_result_free(GhWebResult *result)
   g_free(result);
 }
 
-static gchar *
-bounded_text(const xmlChar *text)
+/* nostrc-8xfib.3: the <head> parser is nostr-gtk's shared one; the
+ * og:image address passes Groundhog's link policy. */
+static gboolean
+image_policy(const char *image_url, gpointer data)
 {
-  if (!text) return NULL;
-  g_autofree gchar *valid = g_utf8_make_valid((const gchar *)text, -1);
-  return g_utf8_substring(valid, 0, MIN(g_utf8_strlen(valid, -1), 512));
-}
-
-/* Precedence among the head's names for one field: og: wins over twitter:,
- * which wins over the plain HTML one, whatever the document order. */
-static void
-take_field(gchar **dest, guint *rank, guint new_rank, const xmlChar *value)
-{
-  if (!value || (*dest && new_rank <= *rank)) return;
-  g_autofree gchar *text = bounded_text(value);
-  g_strstrip(text);
-  if (!*text) return;
-  g_free(*dest);
-  *dest = g_steal_pointer(&text);
-  *rank = new_rank;
-}
-
-GhWebResult *
-gh_web_result_parse_html(GBytes *bytes, GError **error)
-{
-  g_return_val_if_fail(bytes != NULL, NULL);
-  g_autoptr(GhWebResult) result = g_new0(GhWebResult, 1);
-  guint title_rank = 0, description_rank = 0, site_rank = 0;
-  gsize size = 0;
-  const gchar *body = g_bytes_get_data(bytes, &size);
-  /* HTML parsing never runs scripts, resolves entities, or loads any linked
-   * resource. Only head text is retained; og:image is deliberately not
-   * fetched. The page may be cut short (only its first bytes are read):
-   * the parser recovers, and the head is what matters. */
-  htmlDocPtr doc = size ? htmlReadMemory(body, (int)MIN(size, (gsize)G_MAXINT), NULL, NULL,
-                                         HTML_PARSE_NONET | HTML_PARSE_NOERROR |
-                                         HTML_PARSE_NOWARNING | HTML_PARSE_RECOVER)
-                        : NULL;
-  if (doc) {
-    xmlNode *html = xmlDocGetRootElement(doc);
-    for (xmlNode *head = html ? html->children : NULL; head; head = head->next) {
-      if (head->type != XML_ELEMENT_NODE || xmlStrcasecmp(head->name, BAD_CAST "head")) continue;
-      for (xmlNode *node = head->children; node; node = node->next) {
-        if (node->type != XML_ELEMENT_NODE) continue;
-        if (!xmlStrcasecmp(node->name, BAD_CAST "title")) {
-          xmlChar *value = xmlNodeGetContent(node);
-          take_field(&result->title, &title_rank, 1, value);
-          xmlFree(value);
-        } else if (!xmlStrcasecmp(node->name, BAD_CAST "meta")) {
-          xmlChar *property = xmlGetProp(node, BAD_CAST "property");
-          if (!property) property = xmlGetProp(node, BAD_CAST "name");
-          xmlChar *value = xmlGetProp(node, BAD_CAST "content");
-          if (property && value) {
-            const xmlChar *p = property;
-            if (!xmlStrcasecmp(p, BAD_CAST "og:image")) {
-              g_autofree gchar *candidate = bounded_text(value);
-              if (candidate) g_strstrip(candidate);
-              if (candidate && gh_link_policy_can_preview(candidate)) {
-                g_free(result->image_url);
-                result->image_url = g_steal_pointer(&candidate);
-              }
-            } else if (!xmlStrcasecmp(p, BAD_CAST "og:title")) {
-              take_field(&result->title, &title_rank, 3, value);
-            } else if (!xmlStrcasecmp(p, BAD_CAST "twitter:title")) {
-              take_field(&result->title, &title_rank, 2, value);
-            } else if (!xmlStrcasecmp(p, BAD_CAST "og:description")) {
-              take_field(&result->description, &description_rank, 3, value);
-            } else if (!xmlStrcasecmp(p, BAD_CAST "twitter:description")) {
-              take_field(&result->description, &description_rank, 2, value);
-            } else if (!xmlStrcasecmp(p, BAD_CAST "description")) {
-              take_field(&result->description, &description_rank, 1, value);
-            } else if (!xmlStrcasecmp(p, BAD_CAST "og:site_name")) {
-              take_field(&result->site_name, &site_rank, 3, value);
-            }
-          }
-          xmlFree(property);
-          xmlFree(value);
-        }
-      }
-      break;
-    }
-    xmlFreeDoc(doc);
-  }
-  if (!result->title && !result->description) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "No preview text in this page");
-    return NULL;
-  }
-  return g_steal_pointer(&result);
+  (void)data;
+  return gh_link_policy_can_preview(image_url);
 }
 
 static GhWebResult *
-parse_result(GBytes *bytes, GhWebKind kind, GError **error)
+parse_preview(GBytes *bytes, const gchar *uri, GError **error)
+{
+  g_autoptr(GnOgMetadata) metadata = gn_og_metadata_parse_html(bytes, uri, image_policy, NULL, error);
+  if (!metadata) return NULL;
+  GhWebResult *result = g_new0(GhWebResult, 1);
+  result->title = g_strdup(gn_og_metadata_get_title(metadata));
+  result->description = g_strdup(gn_og_metadata_get_description(metadata));
+  result->site_name = g_strdup(gn_og_metadata_get_site_name(metadata));
+  result->image_url = g_strdup(gn_og_metadata_get_image_url(metadata));
+  return result;
+}
+
+static GhWebResult *
+parse_result(GBytes *bytes, GhWebKind kind, const gchar *uri, GError **error)
 {
   g_autoptr(GhWebResult) result = g_new0(GhWebResult, 1);
   if (kind != GH_WEB_PREVIEW) {
@@ -159,7 +91,20 @@ parse_result(GBytes *bytes, GhWebKind kind, GError **error)
     if (animation) gn_animated_image_set_for_texture(result->texture, animation);
     return g_steal_pointer(&result);
   }
-  return gh_web_result_parse_html(bytes, error);
+  return parse_preview(bytes, uri, error);
+}
+
+typedef struct {
+  GhWebKind kind;
+  gchar *uri;
+} LoadData;
+
+static void
+load_data_free(gpointer data)
+{
+  LoadData *load = data;
+  g_free(load->uri);
+  g_free(load);
 }
 
 static void
@@ -174,7 +119,8 @@ loaded(GObject *source, GAsyncResult *answer, gpointer data)
     : gh_net_http_get_finish(self->http, answer, &error);
   if (!bytes) { g_task_return_error(task, g_steal_pointer(&error)); return; }
   if (g_task_return_error_if_cancelled(task)) return;
-  GhWebResult *result = parse_result(bytes, GPOINTER_TO_UINT(g_task_get_task_data(task)), &error);
+  LoadData *load = g_task_get_task_data(task);
+  GhWebResult *result = parse_result(bytes, load->kind, load->uri, &error);
   if (result) g_task_return_pointer(task, result, (GDestroyNotify)gh_web_result_free);
   else g_task_return_error(task, g_steal_pointer(&error));
 }
@@ -184,7 +130,10 @@ gh_web_content_load_async(GhWebContent *self, const gchar *uri, GhWebKind kind,
                            GCancellable *cancel, GAsyncReadyCallback callback, gpointer data)
 {
   GTask *task = g_task_new(self, cancel, callback, data);
-  g_task_set_task_data(task, GUINT_TO_POINTER(kind), NULL);
+  LoadData *load = g_new0(LoadData, 1);
+  load->kind = kind;
+  load->uri = g_strdup(uri);
+  g_task_set_task_data(task, load, load_data_free);
   /* Pictures up to 6 MiB (W33: several common profile pictures are 2.5-3
    * MiB); still decoded only within the 4096 px bound. */
   gsize limit = kind == GH_WEB_PREVIEW ? 256 * 1024 : 6 * 1024 * 1024;

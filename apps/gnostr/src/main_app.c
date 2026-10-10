@@ -1,3 +1,6 @@
+#include "ui/gnostr-og-activate.h"
+
+#include "services/gnostr-media-source.h"
 #include <adwaita.h>
 #include <nostr-gtk-1.0/nostr-gtk.h>
 #include <glib/gstdio.h>
@@ -227,6 +230,8 @@ static gboolean on_initial_activate_idle(gpointer user_data);
 /* Runs in the primary instance only. */
 static void on_startup(GApplication *app, gpointer user_data) {
   (void)user_data;
+  /* nostrc-8xfib.3: note-card link previews use gnostr's provider/policy. */
+  gnostr_og_preview_install();
 #ifdef __APPLE__
   /* Queued here, not before g_application_run(): a second `gnostr …` that
    * only forwards to the running instance never initializes GTK, and
@@ -509,6 +514,10 @@ int main(int argc, char **argv) {
 
     /* Initialize nostr-gtk widget library AFTER storage is ready (nostrc-lx33 fix) */
     nostr_gtk_init();
+
+    /* nostrc-8xfib.4: nostr-gtk media widgets (viewer, video player) load
+     * through Gnostr policy, shared session and settings. */
+    gnostr_media_source_install();
 
     /* nostrc-reb8: Inject shared SoupSession into library NIP-05 module.
      * Must happen after nostr_gtk_init() and before any widget triggers

@@ -5,8 +5,8 @@
 /* App-specific UI widgets — temporary cross-includes until fully decoupled */
 #include "gnostr-profile-edit.h"
 #include "gnostr-status-dialog.h"
-#include "gnostr-image-viewer.h"
-#include "gnostr-video-player.h"
+#include <nostr-gtk-1.0/gn-media-viewer.h>
+#include <nostr-gtk-1.0/gn-video-player.h>
 #include "nostr-note-card-row.h"
 #include "note-card-factory.h"
 #include "gnostr-highlight-card.h"
@@ -697,6 +697,18 @@ static void on_inspect_json_clicked(GtkButton *btn, gpointer user_data) {
   gtk_window_present(GTK_WINDOW(dialog));
 }
 
+/* nostrc-8xfib.4: nostr-gtk media viewer loading through the host media
+ * source (Gnostr: auto-load when remote media is allowed, else Load). */
+static void
+present_media_viewer(GtkWindow *parent, const char *const *urls, guint index)
+{
+  GnMediaViewer *viewer = gn_media_viewer_new(parent);
+  gn_media_viewer_set_gallery(viewer, urls, index);
+  GnMediaSource *source = gn_media_source_get_default();
+  if (source) gn_media_viewer_set_source(viewer, source);
+  gn_media_viewer_present(viewer);
+}
+
 static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
   NostrGtkProfilePane *self = NOSTR_GTK_PROFILE_PANE(user_data);
   (void)btn;
@@ -707,9 +719,8 @@ static void on_avatar_clicked(GtkButton *btn, gpointer user_data) {
   /* Open avatar image in image viewer */
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
   GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
-  gnostr_image_viewer_set_image_url(viewer, self->current_avatar_url);
-  gnostr_image_viewer_present(viewer);
+  const char *single[] = { self->current_avatar_url, NULL };
+  present_media_viewer(parent, single, 0);
 }
 
 /* Callback when profile is saved from edit dialog */
@@ -3648,9 +3659,11 @@ static void on_media_item_activated(GtkGridView *grid_view, guint position, gpoi
     gtk_window_set_modal(GTK_WINDOW(win), TRUE);
     if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
 
-    GnostrVideoPlayer *player = gnostr_video_player_new();
-    gnostr_video_player_set_autoplay(player, TRUE);
-    gnostr_video_player_set_uri(player, clicked->url);
+    GnVideoPlayer *player = gn_video_player_new();
+    GnMediaSource *source = gn_media_source_get_default();
+    if (source) gn_video_player_set_source(player, source);
+    gn_video_player_set_autoplay(player, TRUE);
+    gn_video_player_set_url(player, clicked->url);
     gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(player), TRUE);
     gtk_window_set_child(GTK_WINDOW(win), GTK_WIDGET(player));
@@ -3684,17 +3697,13 @@ static void on_media_item_activated(GtkGridView *grid_view, guint position, gpoi
   g_ptr_array_add(urls, NULL);  /* NULL-terminate */
 
   /* Create and present image viewer */
-  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
-
   if (urls->len > 2) {  /* >2 because of NULL terminator */
-    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata,
-                                    found_clicked ? image_position : 0);
+    present_media_viewer(parent, (const char * const *)urls->pdata,
+                         found_clicked ? image_position : 0);
   } else if (urls->len > 1) {
-    gnostr_image_viewer_set_image_url(viewer, clicked->url);
+    const char *single[] = { clicked->url, NULL };
+    present_media_viewer(parent, single, 0);
   }
-
-  if (urls->len > 1)  /* have at least one image URL + NULL */
-    gnostr_image_viewer_present(viewer);
 
   g_ptr_array_free(urls, TRUE);
   g_object_unref(clicked);

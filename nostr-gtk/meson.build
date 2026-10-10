@@ -18,6 +18,7 @@ gtk4_dep    = dependency('gtk4',        version: '>= 4.6')
 adw_dep     = dependency('libadwaita-1', version: '>= 1.2')
 json_glib_dep = dependency('json-glib-1.0', required: true)
 soup3_dep   = dependency('libsoup-3.0', required: false)
+libxml2_dep = dependency('libxml-2.0') # shared Open Graph parser (nostrc-8xfib.3)
 
 # nostr-gobject-1.0 (sibling library, pre-built)
 cmake_build_dir = meson.current_source_dir() / '..' / 'build'
@@ -115,9 +116,17 @@ nostr_gtk_portable_sources = files(
   'src/gn-markdown-pango.c',
   'src/gn-nostr-reference.c',
   'src/gn-og-preview-card.c',
+  'src/gn-og-metadata.c',
+  'src/gn-og-preview-provider.c',
   'src/gn-media-viewer.c',
   'src/gn-animated-image.c',
+  'src/gn-media-source.c',
+  'src/gn-media-decode.c',
+  'src/gn-video-player.c',
   'src/gn-nip34-issue-fields.c',
+  'src/gn-nip34-issue.c',
+  'src/gn-nip34-issue-iface.c',
+  'src/gn-nip34-issue-view.c',
   'src/gn-portable-i18n.c',
 )
 nostr_gtk_portable_headers = files(
@@ -127,9 +136,16 @@ nostr_gtk_portable_headers = files(
   'include/nostr-gtk-1.0/gn-markdown-pango.h',
   'include/nostr-gtk-1.0/gn-nostr-reference.h',
   'include/nostr-gtk-1.0/gn-og-preview-card.h',
+  'include/nostr-gtk-1.0/gn-og-preview.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
+  'include/nostr-gtk-1.0/gn-media-source.h',
+  'include/nostr-gtk-1.0/gn-media-decode.h',
+  'include/nostr-gtk-1.0/gn-video-player.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-iface.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-view.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
@@ -150,9 +166,16 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gn-markdown-pango.h',
   'include/nostr-gtk-1.0/gn-nostr-reference.h',
   'include/nostr-gtk-1.0/gn-og-preview-card.h',
+  'include/nostr-gtk-1.0/gn-og-preview.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
+  'include/nostr-gtk-1.0/gn-media-source.h',
+  'include/nostr-gtk-1.0/gn-media-decode.h',
+  'include/nostr-gtk-1.0/gn-video-player.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-iface.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-view.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
@@ -170,6 +193,7 @@ nostr_gtk_repo_inc = include_directories(
   '../third_party/nostrdb/src',
   '../third_party/nostrdb/ccan',
   '../nips/nip19/include',
+  '../nips/nip34/include',
   '../nips/nip10/include',
   '../nips/nip25/include',
 )
@@ -217,13 +241,14 @@ nostrdb_vendored_lib = cc.find_library('nostrdb_vendored',
   dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
 nostrdb_lib = cc.find_library('nostrdb',
   dirs: [cmake_build_dir / 'libnostr'], required: true)
+nip34_lib = cc.find_library('nip34', dirs: [cmake_build_dir / 'nips/nip34'], required: true)
 nostr_lib = cc.find_library('nostr',
   dirs: [cmake_build_dir / 'libnostr'], required: true)
 nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
   nostr_gtk_portable_sources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep,
-                 json_glib_dep, nostr_gobject_dep, nip19_lib,
+                 json_glib_dep, libxml2_dep, nostr_gobject_dep, nip19_lib, nip34_lib,
                  nostrdb_storage_lib, nostrdb_vendored_lib, nostrdb_lib,
                  nostr_lib],
   link_args: nostr_gtk_link_args,
@@ -314,7 +339,7 @@ pkg.generate(nostr_gtk_portable_lib,
   name: 'nostr-gtk-portable-1.0',
   description: 'App-independent Nostr parsing and GTK widgets',
   requires: ['glib-2.0', 'gobject-2.0', 'gio-2.0', 'gtk4', 'libadwaita-1'],
-  requires_private: ['nostr-gobject-1.0'])
+  requires_private: ['nostr-gobject-1.0', 'libxml-2.0'])
 
 # ── Header installation ─────────────────────────────────────────────
 install_headers(nostr_gtk_headers, subdir: 'nostr-gtk-1.0')

@@ -1,4 +1,5 @@
 #include <nostr-gtk-1.0/gn-animated-image.h>
+#include "gn-media-decode-private.h"
 #include <string.h>
 
 /* nostrc-p15n5.8: a bounded GIF decoder (GIF87a/89a, LZW, local and global
@@ -138,8 +139,9 @@ interlaced_row(guint r, guint h)
   return h;
 }
 
+/* still: stop after the first frame and accept a single-frame GIF. */
 static gboolean
-decode(GnAnimatedImage *self, GBytes *bytes, guint max_dimension, GError **error)
+decode(GnAnimatedImage *self, GBytes *bytes, guint max_dimension, gboolean still, GError **error)
 {
   gsize len = 0;
   const guint8 *d = g_bytes_get_data(bytes, &len);
@@ -249,8 +251,9 @@ decode(GnAnimatedImage *self, GBytes *bytes, guint max_dimension, GError **error
     transparent = -1;
     disposal = 0;
     delay = 0;
-    if (!complete) break;
+    if (!complete || still) break;
   }
+  if (still && self->frames->len == 1) return TRUE;
   if (self->frames->len < 2) {
     g_set_error_literal(error, G_IO_ERROR,
                         self->frames->len ? G_IO_ERROR_NOT_SUPPORTED : G_IO_ERROR_INVALID_DATA,
@@ -450,8 +453,19 @@ gn_animated_image_new_from_bytes(GBytes *bytes, guint max_dimension, GError **er
 {
   g_return_val_if_fail(bytes != NULL, NULL);
   g_autoptr(GnAnimatedImage) self = g_object_new(GN_TYPE_ANIMATED_IMAGE, NULL);
-  if (!decode(self, bytes, max_dimension ? max_dimension : 4096, error)) return NULL;
+  if (!decode(self, bytes, max_dimension ? max_dimension : 4096, FALSE, error)) return NULL;
   return g_steal_pointer(&self);
+}
+
+/* nostrc-8xfib.4: the first frame of any GIF with the same bounded decoder,
+ * so a still GIF never needs gdk-pixbuf (gn-media-decode.c). */
+GdkTexture *
+gn_animated_image_decode_first_frame(GBytes *bytes, guint max_dimension, GError **error)
+{
+  g_return_val_if_fail(bytes != NULL, NULL);
+  g_autoptr(GnAnimatedImage) self = g_object_new(GN_TYPE_ANIMATED_IMAGE, NULL);
+  if (!decode(self, bytes, max_dimension ? max_dimension : 4096, TRUE, error)) return NULL;
+  return g_object_ref(g_ptr_array_index(self->frames, 0));
 }
 
 guint

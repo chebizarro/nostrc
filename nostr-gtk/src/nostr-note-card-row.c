@@ -2,10 +2,9 @@
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 
 /* Child widgets (implementations provided by app at link time) */
-#include "og-preview-widget.h"
 #include "gnostr-label-guard.h"
-#include "gnostr-image-viewer.h"
-#include "gnostr-video-player.h"
+#include <nostr-gtk-1.0/gn-media-viewer.h>
+#include <nostr-gtk-1.0/gn-video-player.h>
 #include <nostr-gtk-1.0/gnostr-note-embed.h>
 #include "gnostr-avatar-cache.h"
 
@@ -166,7 +165,7 @@ struct _NostrGtkNoteCardRow {
   char *parent_pubkey;
   gint64 created_at;
   guint timestamp_timer_id;
-  OgPreviewWidget *og_preview;
+  GnOgPreviewCard *og_preview;
   /* NIP-21 embedded note widget */
   GnostrNoteEmbed *note_embed;
   /* NIP-05 verification state */
@@ -256,7 +255,7 @@ struct _NostrGtkNoteCardRow {
   gchar *video_title;                 /* Video title from "title" tag */
   gint64 video_duration;              /* Duration in seconds */
   gboolean video_is_vertical;         /* TRUE for vertical video (kind 34236) */
-  GtkWidget *video_player;            /* GnostrVideoPlayer widget */
+  GtkWidget *video_player;            /* GnVideoPlayer widget */
   GtkWidget *video_overlay;           /* Overlay container for thumbnail + play button */
   GtkWidget *video_thumb_picture;     /* Thumbnail image */
   GtkWidget *video_play_overlay_btn;  /* Play button overlay on thumbnail */
@@ -374,6 +373,28 @@ enum {
 };
 static guint signals[N_SIGNALS];
 
+/* nostrc-8xfib.3: link previews are nostr-gtk's GnOgPreviewCard; the
+ * application configures each one (provider, auto-load, activation). */
+static NostrGtkLinkPreviewSetupFunc link_preview_setup;
+static gpointer link_preview_setup_data;
+
+void
+nostr_gtk_note_card_row_set_link_preview_setup(NostrGtkLinkPreviewSetupFunc func,
+                                               gpointer user_data)
+{
+  link_preview_setup = func;
+  link_preview_setup_data = user_data;
+}
+
+static GnOgPreviewCard *
+new_link_preview(const char *url)
+{
+  GnOgPreviewCard *card = gn_og_preview_card_new();
+  if (link_preview_setup)
+    link_preview_setup(card, url, link_preview_setup_data);
+  return card;
+}
+
 static void reset_rich_frame_pool(NostrGtkNoteCardRow *self,
                                   gboolean drop_frames);
 
@@ -382,8 +403,8 @@ quiesce_rich_label_widget_tree(GtkWidget *widget)
 {
   if (!widget) return;
 
-  if (OG_IS_PREVIEW_WIDGET(widget)) {
-    og_preview_widget_prepare_for_unbind(OG_PREVIEW_WIDGET(widget));
+  if (GN_IS_OG_PREVIEW_CARD(widget)) {
+    gn_og_preview_card_prepare_for_unbind(GN_OG_PREVIEW_CARD(widget));
     return;
   }
   if (GNOSTR_IS_NOTE_EMBED(widget)) {
@@ -401,8 +422,8 @@ static void
 quiesce_media_widget_tree(GtkWidget *widget)
 {
   if (!widget) return;
-  if (GNOSTR_IS_VIDEO_PLAYER(widget))
-    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(widget));
+  if (GN_IS_VIDEO_PLAYER(widget))
+    gn_video_player_stop(GN_VIDEO_PLAYER(widget));
   if (GTK_IS_PICTURE(widget))
     gtk_picture_set_paintable(GTK_PICTURE(widget), NULL);
   else if (GTK_IS_IMAGE(widget))
@@ -522,8 +543,8 @@ nostr_gtk_note_card_row_quiesce(NostrGtkNoteCardRow *self,
   self->media_widgets_created = FALSE;
 
   /* Stop video players before child widgets are disposed. */
-  if (self->video_player && GNOSTR_IS_VIDEO_PLAYER(self->video_player)) {
-    gnostr_video_player_stop(GNOSTR_VIDEO_PLAYER(self->video_player));
+  if (self->video_player && GN_IS_VIDEO_PLAYER(self->video_player)) {
+    gn_video_player_stop(GN_VIDEO_PLAYER(self->video_player));
   }
   self->video_player = NULL;
 
@@ -1979,7 +2000,7 @@ nostr_gtk_note_card_row_maybe_emit_measured_geometry(NostrGtkNoteCardRow *self,
  * their intrinsic pixel dimensions as natural size (often 1200+ px for images).
  * Without clamping, the GtkListView grows to accommodate the largest natural
  * width, making the timeline fill the entire screen.  Same pattern as
- * og_preview_widget_measure (nostrc-14wu). */
+ * gnostr's former OG preview widget measure (nostrc-14wu). */
 typedef struct {
   GtkLayoutManager parent_instance;
 } NostrGtkNoteCardLayout;
@@ -3451,6 +3472,35 @@ static GtkWidget *create_image_container(const char *url, int height, const char
 }
 
 /* Image click handler - opens full-size image viewer with gallery support */
+
+/* nostrc-8xfib.4: nostr-gtk video player loading through the host media
+ * source (Gnostr: its remote-media policy and video settings). */
+static GnVideoPlayer *
+card_video_player_new(void)
+{
+  GnVideoPlayer *player = gn_video_player_new();
+  GnMediaSource *source = gn_media_source_get_default();
+  if (source) gn_video_player_set_source(player, source);
+  return player;
+}
+
+/* nostrc-8xfib.4: nostr-gtk media viewer over the clicked image. The
+ * texture the card already shows is used at once (hq-snq39: no second
+ * download for it); other slots load through the host media source (Gnostr
+ * installs one: auto-load when remote media is allowed, else Load). */
+static void
+open_media_viewer(GtkWidget *pic, const char *const *urls, guint index)
+{
+  GtkRoot *root = gtk_widget_get_root(pic);
+  GnMediaViewer *viewer = gn_media_viewer_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
+  gn_media_viewer_set_gallery(viewer, urls, index);
+  GdkPaintable *shown = gtk_picture_get_paintable(GTK_PICTURE(pic));
+  if (GDK_IS_TEXTURE(shown)) gn_media_viewer_set_texture(viewer, index, GDK_TEXTURE(shown));
+  GnMediaSource *source = gn_media_source_get_default();
+  if (source) gn_media_viewer_set_source(viewer, source);
+  gn_media_viewer_present(viewer);
+}
+
 static void on_media_image_clicked(GtkGestureClick *gesture,
                                     int n_press,
                                     double x, double y,
@@ -3516,18 +3566,8 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
 
   if (!media_box || !GTK_IS_BOX(media_box)) {
     /* Fallback: single image mode */
-    GtkRoot *root = gtk_widget_get_root(pic);
-    GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-    GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
-    /* hq-snq39: Use already-loaded texture if available to avoid re-download */
-    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
-    if (paintable && GDK_IS_TEXTURE(paintable)) {
-      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(paintable));
-      gnostr_image_viewer_set_url_hint(viewer, clicked_url);
-    } else {
-      gnostr_image_viewer_set_image_url(viewer, clicked_url);
-    }
-    gnostr_image_viewer_present(viewer);
+    const char *single[] = { clicked_url, NULL };
+    open_media_viewer(pic, single, 0);
     return;
   }
 
@@ -3560,33 +3600,12 @@ static void on_media_image_clicked(GtkGestureClick *gesture,
   }
   g_ptr_array_add(urls, NULL);  /* NULL terminate */
 
-  /* Get parent window */
-  GtkRoot *root = gtk_widget_get_root(pic);
-  GtkWindow *parent = GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL;
-
-  /* Create and show the image viewer with gallery */
-  GnostrImageViewer *viewer = gnostr_image_viewer_new(parent);
   if (urls->len > 2) {  /* More than just clicked + NULL terminator */
-    gnostr_image_viewer_set_gallery(viewer, (const char * const *)urls->pdata, clicked_index);
-    /* hq-snq39: Override initial image with already-loaded texture to avoid
-     * re-downloading. set_gallery starts an HTTP fetch for the current image,
-     * but we already have the decoded texture from the timeline. Cancel the
-     * redundant fetch and display the texture immediately. */
-    GdkPaintable *gallery_paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
-    if (gallery_paintable && GDK_IS_TEXTURE(gallery_paintable)) {
-      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(gallery_paintable));
-    }
+    open_media_viewer(pic, (const char * const *)urls->pdata, clicked_index);
   } else {
-    /* hq-snq39: Use already-loaded texture if available to avoid re-download */
-    GdkPaintable *paintable = gtk_picture_get_paintable(GTK_PICTURE(pic));
-    if (paintable && GDK_IS_TEXTURE(paintable)) {
-      gnostr_image_viewer_set_texture(viewer, GDK_TEXTURE(paintable));
-      gnostr_image_viewer_set_url_hint(viewer, clicked_url);
-    } else {
-      gnostr_image_viewer_set_image_url(viewer, clicked_url);
-    }
+    const char *single[] = { clicked_url, NULL };
+    open_media_viewer(pic, single, 0);
   }
-  gnostr_image_viewer_present(viewer);
 
   g_ptr_array_free(urls, TRUE);
 }
@@ -3683,7 +3702,7 @@ static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
       gtk_box_append(GTK_BOX(self->media_box), container);
       gtk_widget_set_visible(self->media_box, TRUE);
     } else {
-      GnostrVideoPlayer *player = gnostr_video_player_new();
+      GnVideoPlayer *player = card_video_player_new();
       gtk_widget_add_css_class(GTK_WIDGET(player), "note-media-video");
       /* Cap width to 608 to prevent horizontal expansion (nostrc-lx32) */
       int w = item->width > 0 && item->width < 608 ? item->width : 608;
@@ -3693,7 +3712,7 @@ static void realize_pending_media_widgets(NostrGtkNoteCardRow *self) {
       }
       gtk_widget_set_hexpand(GTK_WIDGET(player), FALSE);
       gtk_widget_set_vexpand(GTK_WIDGET(player), FALSE);
-      gnostr_video_player_set_uri(player, item->url);
+      gn_video_player_set_url(player, item->url);
       gtk_box_append(GTK_BOX(self->media_box), GTK_WIDGET(player));
       gtk_widget_set_visible(self->media_box, TRUE);
     }
@@ -3852,10 +3871,10 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
     if (render->first_og_url) {
-      self->og_preview = og_preview_widget_new();
+      self->og_preview = new_link_preview(render->first_og_url);
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
-      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
+      gn_og_preview_card_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
 }
@@ -4097,15 +4116,15 @@ on_rich_video_play_clicked(GtkButton *button, gpointer user_data)
     activation_binding_ctx =
         note_card_binding_context_ref(ctx->binding_ctx);
     activation_binding_id = ctx->binding_id;
-    GnostrVideoPlayer *player = gnostr_video_player_new();
-    gnostr_video_player_set_autoplay(player, FALSE);
-    gnostr_video_player_set_uri(player, ctx->video_url);
+    GnVideoPlayer *player = card_video_player_new();
+    gn_video_player_set_autoplay(player, FALSE);
+    gn_video_player_set_url(player, ctx->video_url);
     gtk_widget_set_hexpand(GTK_WIDGET(player), TRUE);
     gtk_widget_set_vexpand(GTK_WIDGET(player), TRUE);
     gint row_height_before_activation =
         gtk_widget_get_height(GTK_WIDGET(self));
     fixed_rich_frame_set_child(frame, GTK_WIDGET(player));
-    gnostr_video_player_play(player);
+    gn_video_player_play(player);
 #ifndef G_DISABLE_ASSERT
     if (row_height_before_activation > 0) {
       GeometryInvariantCtx *assert_ctx =
@@ -4380,12 +4399,12 @@ start_rich_slot_realization(gpointer user_data)
                                fixed->reserved_height);
       break;
     case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW: {
-      OgPreviewWidget *preview = og_preview_widget_new();
+      GnOgPreviewCard *preview = new_link_preview(descriptor->url);
       gtk_widget_set_hexpand(GTK_WIDGET(preview), TRUE);
       gtk_widget_set_vexpand(GTK_WIDGET(preview), TRUE);
       fixed_rich_frame_set_child(frame, GTK_WIDGET(preview));
       self->og_preview = preview;
-      og_preview_widget_set_url_with_cancellable(
+      gn_og_preview_card_set_url_with_cancellable(
         preview, descriptor->url, self->async_cancellable);
       break;
     }
@@ -4771,10 +4790,10 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
     if (render->first_og_url && remote_media_loading_enabled()) {
-      self->og_preview = og_preview_widget_new();
+      self->og_preview = new_link_preview(render->first_og_url);
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
-      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
+      gn_og_preview_card_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
 }
@@ -5209,11 +5228,11 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
         }
       }
       if (url_start) {
-        self->og_preview = og_preview_widget_new();
+        self->og_preview = new_link_preview(url_start);
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
         /* Use parent's cancellable for lifecycle management */
-        og_preview_widget_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
+        gn_og_preview_card_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
       }
       if (tokens) g_strfreev(tokens);
     }
@@ -6747,7 +6766,7 @@ static void video_show_player(NostrGtkNoteCardRow *self) {
 
   /* Show and start the video player */
   gtk_widget_set_visible(self->video_player, TRUE);
-  gnostr_video_player_set_uri(GNOSTR_VIDEO_PLAYER(self->video_player), self->video_url);
+  gn_video_player_set_url(GN_VIDEO_PLAYER(self->video_player), self->video_url);
 
   self->video_player_shown = TRUE;
   g_debug("NIP-71: Playing video: %s", self->video_url);
@@ -7037,7 +7056,7 @@ void nostr_gtk_note_card_row_set_video_mode(NostrGtkNoteCardRow *self,
 
   /* Create video player (hidden initially) */
   if (!self->video_player) {
-    self->video_player = GTK_WIDGET(gnostr_video_player_new());
+    self->video_player = GTK_WIDGET(card_video_player_new());
     int player_height = is_vertical ? 400 : 300;
     /* Constrain width to 608 (card - margins) to prevent window expansion */
     gtk_widget_set_size_request(self->video_player, 608, player_height);
