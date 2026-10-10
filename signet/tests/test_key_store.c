@@ -851,12 +851,57 @@ static void test_fenced_sbom_dsse_signature(void) {
       (const uint8_t *)duplicate_nested, strlen(duplicate_nested), &signature) != 0);
   CHECK(signature == NULL);
   g_free(duplicate_nested);
+  const char *name_field = "\"name\":\"artifact\",";
+  char *name_at = strstr(statement, name_field);
+  CHECK(name_at != NULL);
+  char *duplicate_subject = g_strdup_printf("%.*s\"name\":\"artifact\",%s",
+      (int)(name_at - statement), statement, name_at);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)duplicate_subject, strlen(duplicate_subject), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(duplicate_subject);
+  char *escaped_equivalent = g_strdup_printf("%.*s\"n\\u0061me\":\"artifact\",%s",
+      (int)(name_at - statement), statement, name_at);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)escaped_equivalent, strlen(escaped_equivalent), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(escaped_equivalent);
   char *bad_timestamp = g_strdup_printf("%.*s,\"timestamp\":123}}",
       (int)strlen(statement) - 2, statement);
   CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
       (const uint8_t *)bad_timestamp, strlen(bad_timestamp), &signature) != 0);
   CHECK(signature == NULL);
   g_free(bad_timestamp);
+  const char *invalid_times[] = {
+      "yesterday", "2025-02-29T12:00:00Z", "2026-10-09T12:00:00",
+      "2026-10-09T12:00:00.1234567890Z", "2026-10-09T25:00:00Z",
+      "2026-10-09T12:00:00+25:00", NULL};
+  for (size_t i = 0; invalid_times[i]; ++i) {
+    char *bad_time = g_strdup_printf("%.*s,\"timestamp\":\"%s\"}}",
+        (int)strlen(statement) - 2, statement, invalid_times[i]);
+    CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+        (const uint8_t *)bad_time, strlen(bad_time), &signature) != 0);
+    CHECK(signature == NULL);
+    g_free(bad_time);
+  }
+  char *offset_time = g_strdup_printf(
+      "%.*s,\"timestamp\":\"2024-02-29T12:34:56.123456789-07:00\"}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)offset_time, strlen(offset_time), &signature) == 0);
+  CHECK(signature != NULL);
+  g_free(signature);
+  signature = NULL;
+  g_free(offset_time);
+  char *zero_year = g_strdup_printf(
+      "%.*s,\"timestamp\":\"0000-01-01T00:00:00Z\"}}",
+      (int)strlen(statement) - 2, statement);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)zero_year, strlen(zero_year), &signature) == 0);
+  CHECK(signature != NULL);
+  g_free(signature);
+  signature = NULL;
+  g_free(zero_year);
   char *full_predicate = g_strdup_printf(
       "%.*s,\"generator\":{\"id\":\"syft\",\"version\":\"1\"},"
       "\"timestamp\":\"2026-10-09T00:00:00Z\","

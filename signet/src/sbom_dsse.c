@@ -47,6 +47,53 @@ static bool hex_digest(const char *text, size_t length) {
   return true;
 }
 
+static bool digits(const char *text, size_t count) {
+  for (size_t i = 0; i < count; ++i)
+    if (!g_ascii_isdigit(text[i])) return false;
+  return true;
+}
+
+/* Bahia serializes time.Time as RFC3339Nano. Keep the accepted wire form
+ * bounded to that shape; a merely string-typed timestamp is not enough. */
+static bool valid_bahia_timestamp(const char *text) {
+  if (!text) return false;
+  size_t length = strlen(text);
+  if (length < 20 || length > 35 ||
+      !digits(text, 4) || text[4] != '-' ||
+      !digits(text + 5, 2) || text[7] != '-' ||
+      !digits(text + 8, 2) || text[10] != 'T' ||
+      !digits(text + 11, 2) || text[13] != ':' ||
+      !digits(text + 14, 2) || text[16] != ':' ||
+      !digits(text + 17, 2)) return false;
+  int year = 1000 * (text[0] - '0') + 100 * (text[1] - '0') +
+             10 * (text[2] - '0') + (text[3] - '0');
+  int month = 10 * (text[5] - '0') + (text[6] - '0');
+  int day = 10 * (text[8] - '0') + (text[9] - '0');
+  int hour = 10 * (text[11] - '0') + (text[12] - '0');
+  int minute = 10 * (text[14] - '0') + (text[15] - '0');
+  int second = 10 * (text[17] - '0') + (text[18] - '0');
+  static const int days_in_month[] =
+      {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (month < 1 || month > 12) return false;
+  bool leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+  int max_day = days_in_month[month] + (month == 2 && leap ? 1 : 0);
+  if (day < 1 || day > max_day ||
+      hour > 23 || minute > 59 || second > 59) return false;
+  size_t pos = 19;
+  if (pos < length && text[pos] == '.') {
+    size_t fraction_start = ++pos;
+    while (pos < length && g_ascii_isdigit(text[pos])) ++pos;
+    if (pos == fraction_start || pos - fraction_start > 9) return false;
+  }
+  if (pos + 1 == length && text[pos] == 'Z') return true;
+  if (pos + 6 != length || (text[pos] != '+' && text[pos] != '-') ||
+      !digits(text + pos + 1, 2) || text[pos + 3] != ':' ||
+      !digits(text + pos + 4, 2)) return false;
+  int offset_hour = 10 * (text[pos + 1] - '0') + (text[pos + 2] - '0');
+  int offset_minute = 10 * (text[pos + 4] - '0') + (text[pos + 5] - '0');
+  return offset_hour <= 23 && offset_minute <= 59;
+}
+
 static bool only_members(JsonObject *object, const char *const *allowed) {
   GList *members = json_object_get_members(object);
   bool valid = true;
@@ -174,7 +221,7 @@ static bool valid_sbom_statement(const uint8_t *payload, size_t length) {
          !has_string_member(generator, "pubkey"))) goto done;
   }
   if (json_object_has_member(predicate, "timestamp") &&
-      !has_string_member(predicate, "timestamp")) goto done;
+      !valid_bahia_timestamp(string_member(predicate, "timestamp"))) goto done;
   if (json_object_has_member(predicate, "ntia")) {
     JsonObject *ntia = object_member(predicate, "ntia");
     static const char *const ntia_fields[] = {

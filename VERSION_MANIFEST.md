@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| Bahia SBOM DSSE review follow-up: validate the optional Go `time.Time` RFC3339Nano timestamp and prove duplicate keys in subject objects, including escaped-equivalent names, are rejected. | signet | 0.4.0 | No further bump: correctness hardening folded into unreleased 0.4.0 capability. |
 | Bahia SBOM DSSE review hardening: reject duplicate JSON members recursively and require exact `allow_methods` opt-in rather than inherited wildcard/default allow. | signet | 0.4.0 | No further bump: security correction folded into unreleased 0.4.0 capability; no new public surface. |
 | Bahia SBOM DSSE custody signing: optional NIP-46 `sign_bahia_sbom_dsse` method and installed typed custody API; Signet validates Bahia SBOM statement JSON and computes fixed-type DSSE PAE and SHA-256 before BIP-340 signing, with no caller digest. | signet | 0.4.0 | MINOR from 0.3.0 for additive public custody and wire capability; no change to never-fenced identities. |
 | NIP-46 decoded-NUL request/response hardening (nostrc-4j37h.1): reject Jansson strings that cannot be represented without truncation as C strings. | NIP-46 client/provider | Unversioned | No bump possible until this component has an authoritative version source (see component table); security correctness fix, no API signature change. |

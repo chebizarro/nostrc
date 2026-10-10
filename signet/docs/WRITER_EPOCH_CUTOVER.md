@@ -111,7 +111,8 @@ with one artifact subject and nonempty subject digest (with Bahia's SHA-256/Git
 length-and-hex validation), SPDX or CycloneDX
 predicate type matching its format, a SHA-256 SBOM digest, and a supported
 location type/URI. Nested generator, timestamp, and NTIA fields must match
-Bahia's typed statement shape; duplicate JSON keys are rejected at every depth
+Bahia's typed statement shape, including an RFC3339Nano timestamp when present;
+duplicate JSON keys are rejected at every depth
 before signing the unchanged input bytes. It rejects malformed/non-SBOM statements, noncanonical
 base64, payloads over 64 KiB, missing epoch, stale/wrong owner, expired or
 revoked lease, and DB failure. There is no no-epoch path. The authenticated
