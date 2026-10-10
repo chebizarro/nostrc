@@ -163,7 +163,8 @@ jobs:
             test-groundhog-nip46-wire test-groundhog-nip46-credentials-keyring \
             test-groundhog-account-backends test-groundhog-account-remote-switch \
             test-groundhog-nip46-pair-dialog test-groundhog-remote-feature-matrix \
-            test-groundhog-mls-remote test-groundhog-two-instance-remote-acceptance
+            test-groundhog-mls-remote test-groundhog-two-instance-remote-acceptance \
+            gnome/groundhog/all
 
       - name: GTK bind performance regression gate (serial, no retry)
         run: |
