@@ -203,6 +203,36 @@ static int test_request_free_null(void) {
     return 0;
 }
 
+static int test_request_rejects_embedded_nul(void) {
+    const char *bad[] = {
+        "{\"id\":\"safe\\u0000hidden\",\"method\":\"ping\",\"params\":[]}",
+        "{\"id\":\"safe\",\"method\":\"ping\\u0000hidden\",\"params\":[]}",
+        "{\"id\":\"safe\",\"method\":\"nip44_encrypt\",\"params\":[\"peer\",\"secret\\u0000hidden\"]}"
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        NostrNip46Request req = {0};
+        TEST_ASSERT(nostr_nip46_request_parse(bad[i], &req) != 0,
+                    "decoded NUL must reject entire request");
+        TEST_ASSERT(req.id == NULL && req.method == NULL && req.params == NULL,
+                    "failed parse must clear partial output");
+    }
+    return 0;
+}
+
+static int test_response_rejects_embedded_nul(void) {
+    const char *bad[] = {
+        "{\"id\":\"safe\\u0000hidden\",\"result\":\"ok\"}",
+        "{\"id\":\"safe\",\"result\":\"ok\\u0000hidden\"}",
+        "{\"id\":\"safe\",\"error\":\"error\\u0000hidden\"}"
+    };
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        NostrNip46Response resp = {0};
+        TEST_ASSERT(nostr_nip46_response_parse(bad[i], &resp) != 0,
+                    "decoded NUL must reject entire response");
+    }
+    return 0;
+}
+
 /* --- Response Building Tests --- */
 
 static int test_response_build_ok_string(void) {
@@ -400,6 +430,7 @@ int main(void) {
     RUN_TEST(test_request_parse_null_json);
     RUN_TEST(test_request_parse_null_output);
     RUN_TEST(test_request_free_null);
+    RUN_TEST(test_request_rejects_embedded_nul);
 
     /* Response building tests */
     RUN_TEST(test_response_build_ok_string);
@@ -417,6 +448,7 @@ int main(void) {
     RUN_TEST(test_response_parse_null_json);
     RUN_TEST(test_response_parse_null_output);
     RUN_TEST(test_response_free_null);
+    RUN_TEST(test_response_rejects_embedded_nul);
 
     /* ID preservation tests */
     RUN_TEST(test_request_id_preserved);

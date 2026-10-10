@@ -91,6 +91,9 @@ The client pubkey comes from the authenticated NIP-46 envelope, never from a
 request parameter. Signet checks owner, exact epoch, expiry and observed clock
 inside the same SQLCipher write transaction as NIP-44 crypto; failed/stale/
 expired/revoked or uncommitted operations return no ciphertext or plaintext.
+Signet rejects decoded NULs in NIP-46 request identifiers, methods and
+parameters, and literal NULs in the decrypted request byte span. This avoids
+silently shortening a text operation before the custody check.
 Legacy two-param NIP-44 calls remain available only to never-fenced
 identities. NIP-04 has no epoch-bearing contract and stays denied for fenced
 identities. D-Bus and NIP-5L NIP-44 remain legacy-only and reject fenced

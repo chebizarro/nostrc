@@ -34,6 +34,8 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| NIP-46 decoded-NUL request/response hardening (nostrc-4j37h.1): reject Jansson strings that cannot be represented without truncation as C strings. | NIP-46 client/provider | Unversioned | No bump possible until this component has an authoritative version source (see component table); security correctness fix, no API signature change. |
+| Same: reject literal NUL bytes in decrypted NIP-46 request spans before C-string parsing. | signet | 0.3.0 | No further bump: security correction folded into the unreleased 0.3.0 fenced NIP-44 capability. |
 | Fenced NIP-44 custody (nostrc-4j37h.1): NIP-46 owner/epoch-bearing encrypt/decrypt and binary-safe methods without exporting the service nsec. | signet | 0.3.0 | MINOR from 0.2.0 for the additive installed custody API and optional NIP-46 wire capability. Legacy no-epoch calls remain for never-fenced identities; fenced NIP-04 and D-Bus/NIP-5L remain denied. |
 | Same-pubkey writer-epoch fencing (nostrc-4j37h): new authenticated management and NIP-46 methods, durable lease schema, and fenced signing semantics. | signet | 0.2.0 | MINOR from 0.1.1 for the additive public custody API and wire/storage contract; as a 0.x component, the incompatibility for newly fenced identities is called out in `signet/docs/WRITER_EPOCH_CUTOVER.md`. |
 | B2 public repost and quote authoring (nostrc-2yqk3): encrypted local public-note cache, explicit discovery, exact public-post review and relay publishing. | groundhog | 0.12.0 | No further bump: additive UI and internal store schema migration are folded into unreleased alpha 6; no installed Groundhog API changed. |

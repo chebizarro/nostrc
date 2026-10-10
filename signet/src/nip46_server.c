@@ -453,6 +453,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
   /* 2) Decrypt request content (NIP-44 v2) */
   char *plain = NULL;
+  size_t plain_len = 0;
   char *dec_err = NULL;
   bool dec_ok = false;
   {
@@ -463,16 +464,18 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       size_t pt_len = 0;
       int rc = nostr_nip44_decrypt_v2(sk, pk, ciphertext, &pt, &pt_len);
       signet_memzero(sk, 32);
-      if (rc == 0 && pt && pt_len > 0) {
-        /* NIP-44 returns raw bytes; NUL-terminate for JSON parsing. */
+      if (rc == 0 && pt && pt_len > 0 && pt_len <= 64u * 1024u &&
+          memchr(pt, '\0', pt_len) == NULL) {
+        /* Verify the complete decrypted byte span before C-string parsing. */
         plain = (char *)malloc(pt_len + 1);
         if (plain) {
           memcpy(plain, pt, pt_len);
           plain[pt_len] = '\0';
+          plain_len = pt_len;
           dec_ok = true;
         }
-        free(pt);
       }
+      if (pt) { signet_memzero(pt, pt_len); free(pt); }
     } else {
       dec_err = g_strdup("invalid key hex");
     }
@@ -974,7 +977,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   }
 
   /* Cleanup — wipe sensitive material */
-  if (plain) { signet_memzero(plain, strlen(plain)); free(plain); }
+  if (plain) { signet_memzero(plain, plain_len); free(plain); }
   if (resp_json) { signet_memzero(resp_json, strlen(resp_json)); free(resp_json); }
   if (enc_resp) { free(enc_resp); }
   free(enc_err);

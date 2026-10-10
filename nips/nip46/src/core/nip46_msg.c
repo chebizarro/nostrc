@@ -9,6 +9,17 @@
 #define METHOD_MAX 128u
 #define PARAM_MAX 64u
 
+/* Jansson strings may contain a decoded U+0000 even though this API returns
+ * C strings. Never let strdup/strlen silently turn an authenticated request
+ * or response into a different prefix value. */
+static int c_string_safe(json_t *value, size_t max, int require_nonempty) {
+    if (!json_is_string(value)) return 0;
+    size_t len = json_string_length(value);
+    const char *bytes = json_string_value(value);
+    return bytes && len <= max && (!require_nonempty || len > 0) &&
+           memchr(bytes, '\0', len) == NULL;
+}
+
 static json_t *load_object(const char *text) {
     if (!text || strlen(text) > MESSAGE_MAX) return NULL;
     json_error_t error;
@@ -77,9 +88,8 @@ int nostr_nip46_request_parse(const char *text, NostrNip46Request *out) {
     json_t *id = json_object_get(root, "id");
     json_t *method = json_object_get(root, "method");
     json_t *params = json_object_get(root, "params");
-    if (!json_is_string(id) || !json_is_string(method) || !json_is_array(params) ||
-        !*json_string_value(id) || strlen(json_string_value(id)) > ID_MAX ||
-        !*json_string_value(method) || strlen(json_string_value(method)) > METHOD_MAX ||
+    if (!c_string_safe(id, ID_MAX, 1) ||
+        !c_string_safe(method, METHOD_MAX, 1) || !json_is_array(params) ||
         json_array_size(params) > PARAM_MAX) goto fail;
     out->id = strdup(json_string_value(id));
     out->method = strdup(json_string_value(method));
@@ -91,6 +101,8 @@ int nostr_nip46_request_parse(const char *text, NostrNip46Request *out) {
     }
     for (size_t i = 0; i < out->n_params; i++) {
         json_t *item = json_array_get(params, i);
+        if (json_is_string(item) && !c_string_safe(item, MESSAGE_MAX, 0))
+            goto fail;
         out->params[i] = json_is_string(item)
             ? strdup(json_string_value(item)) : dump_compact(item);
         if (!out->params[i]) goto fail;
@@ -149,9 +161,9 @@ int nostr_nip46_response_parse(const char *text, NostrNip46Response *out) {
     json_t *id = json_object_get(root, "id");
     json_t *result = json_object_get(root, "result");
     json_t *error = json_object_get(root, "error");
-    if (!json_is_string(id) || !*json_string_value(id) ||
-        strlen(json_string_value(id)) > ID_MAX || (!result && !error) ||
-        (error && !json_is_string(error))) goto fail;
+    if (!c_string_safe(id, ID_MAX, 1) || (!result && !error) ||
+        (json_is_string(result) && !c_string_safe(result, MESSAGE_MAX, 0)) ||
+        (error && !c_string_safe(error, MESSAGE_MAX, 0))) goto fail;
     out->id = strdup(json_string_value(id));
     if (result) out->result = json_is_string(result)
         ? strdup(json_string_value(result)) : dump_compact(result);

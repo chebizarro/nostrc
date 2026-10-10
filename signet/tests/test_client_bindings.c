@@ -281,14 +281,15 @@ static void n46_teardown(N46Fixture *f) {
 /* Send one NIP-46 request from `client_sk/pk` and report whether it was
  * ALLOWED, judged by the auth_ok metrics counter delta (the server publishes
  * responses via relays, which are absent here). */
-static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk,
-                     const char *request_json, const char *event_id, int64_t now) {
+static bool n46_send_bytes(N46Fixture *f, const char *client_sk, const char *client_pk,
+                           const uint8_t *request, size_t request_len,
+                           const char *event_id, int64_t now) {
   uint8_t sk[32], pk[32];
   CHECK(hex_to_bytes(client_sk, sk, 32) == 0);
   CHECK(hex_to_bytes(f->bunker_pk_hex, pk, 32) == 0);
   char *cipher = NULL;
-  CHECK(nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)request_json,
-                                strlen(request_json), &cipher) == 0 && cipher);
+  CHECK(nostr_nip44_encrypt_v2(sk, pk, request,
+                                request_len, &cipher) == 0 && cipher);
   sodium_memzero(sk, sizeof(sk));
 
   gint ok_before = g_atomic_int_get(&g_signet_metrics.auth_ok);
@@ -296,6 +297,12 @@ static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk
                                          client_pk, cipher, now, event_id, now);
   free(cipher);
   return g_atomic_int_get(&g_signet_metrics.auth_ok) > ok_before;
+}
+
+static bool n46_send(N46Fixture *f, const char *client_sk, const char *client_pk,
+                     const char *request_json, const char *event_id, int64_t now) {
+  return n46_send_bytes(f, client_sk, client_pk,
+      (const uint8_t *)request_json, strlen(request_json), event_id, now);
 }
 
 static bool n46_connect(N46Fixture *f, const char *client_sk, const char *client_pk,
@@ -372,6 +379,22 @@ static void test_fenced_nip46_nip44_contract(void) {
       f.stew_pk_hex);
   (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "crypto-current", now);
   n46_expect_last_audit(&f, "nip44_encrypt", "ok", "ok");
+  char *escaped_nul = g_strdup_printf(
+      "{\"id\":\"escaped-nul\",\"method\":\"nip44_encrypt\",\"params\":[\"%s\",\"secret\\u0000hidden\",\"1\"]}",
+      f.stew_pk_hex);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex,
+                 escaped_nul, "crypto-escaped-nul", now);
+  n46_expect_last_audit(&f, "unknown", "error", "invalid_request");
+  g_free(escaped_nul);
+  const char hidden[] = "\0hidden";
+  GByteArray *literal_nul = g_byte_array_new();
+  g_byte_array_append(literal_nul, (const uint8_t *)req, strlen(req));
+  g_byte_array_append(literal_nul, (const uint8_t *)hidden, sizeof(hidden) - 1);
+  (void)n46_send_bytes(&f, f.client_sk_hex, f.client_pk_hex,
+                       literal_nul->data, literal_nul->len,
+                       "crypto-literal-nul", now);
+  n46_expect_last_audit(&f, "unknown", "error", "decrypt_failed");
+  g_byte_array_unref(literal_nul);
   char other_sk[65], other_pk[65];
   gen_keypair_hex(other_sk, other_pk);
   CHECK(signet_store_bind_client(signet_key_store_get_store(f.ks),
