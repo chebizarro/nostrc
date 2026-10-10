@@ -788,6 +788,8 @@ static void expect_remote_error(GError *err, const char *name) {
   g_free(remote);
 }
 
+#if !defined(__APPLE__) || defined(NIP55L_TEST_HAVE_LIBSECRET)
+/* Every caller is compiled out on a Keychain build (-Wunused-function). */
 /* ListIdentities: the npubs, or NULL with *err set. */
 static gchar **list_identities(Ctx *ctx, GError **err) {
   GVariant *r = call(ctx->bus, "ListIdentities", NULL, "(as)", err);
@@ -797,6 +799,7 @@ static gchar **list_identities(Ctx *ctx, GError **err) {
   g_variant_unref(r);
   return ids;
 }
+#endif
 
 /* ---- approval round-trips ------------------------------------------------ */
 
