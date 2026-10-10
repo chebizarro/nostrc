@@ -3041,6 +3041,11 @@ static void run_identity_store_phase(void) {
   {
     FakeSecrets fs = { "none", stored.sk_hex };
     Ctx ctx;
+    /* Any libsecret CRITICAL in the daemon now aborts this contract run.
+     * In particular, refusing OpenSession must not enter libsecret 0.21.8's
+     * broken synchronous failure cleanup (nostrc-vcie8). */
+    char *old_debug = g_strdup(g_getenv("G_DEBUG"));
+    g_setenv("G_DEBUG", "fatal-criticals", TRUE);
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
     expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
@@ -3060,6 +3065,9 @@ static void run_identity_store_phase(void) {
     expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
     expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
     ctx_teardown(&ctx);
+    if (old_debug) g_setenv("G_DEBUG", old_debug, TRUE);
+    else g_unsetenv("G_DEBUG");
+    g_free(old_debug);
   }
 
   /* A Secret Service that fails every call: the signer cannot tell which

@@ -128,20 +128,32 @@ static gchar *grotto_default_identity(void){
   return npub;
 }
 
-/* The Secret Service with a session open, for a search that loads secrets;
- * NULL (and *error set) when there is none or it opens no session
- * (nostrc-poc10). secret_service_search_sync(..., SECRET_SEARCH_LOAD_SECRETS,
- * ...) in libsecret 0.21.8 opens the session itself with a NULL GError, and
- * its fallback from the dh-ietf1024-sha256-aes128-cbc-pkcs7 algorithm to
- * "plain" then reads that NULL: a Secret Service offering only plain
- * sessions, or refusing OpenSession, crashed the daemon on the first lookup
- * that loaded a secret, which any caller could reach with an unknown
- * selector. Opened here with an error to report into, the fallback works and
- * the searches reuse the session. */
+/* libsecret 0.21.8's synchronous session-open failure path g_clear_object()s
+ * a non-GObject SecretSession. Use its async path on a private context, as
+ * Groundhog does (nostrc-ep54q), before any synchronous secret load. */
+static void signer_session_ready(GObject *source, GAsyncResult *result, gpointer data){
+  (void)source;
+  *(GAsyncResult **)data = g_object_ref(result);
+}
+
+static gboolean signer_ensure_session(SecretService *service, GError **error){
+  GMainContext *context = g_main_context_new();
+  GAsyncResult *result = NULL;
+  g_main_context_push_thread_default(context);
+  secret_service_ensure_session(service, NULL, signer_session_ready, &result);
+  while (!result) g_main_context_iteration(context, TRUE);
+  gboolean ok = secret_service_ensure_session_finish(service, result, error);
+  g_object_unref(result);
+  g_main_context_pop_thread_default(context);
+  g_main_context_unref(context);
+  return ok;
+}
+
+/* The Secret Service with a session open, for a search that loads secrets. */
 static SecretService *signer_secret_service(GError **error){
   SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
   if (!service) return NULL;
-  if (!secret_service_ensure_session_sync(service, NULL, error)) {
+  if (!signer_ensure_session(service, error)) {
     g_object_unref(service);
     return NULL;
   }
@@ -215,12 +227,11 @@ static char *secret_text_to_sk_hex(const char *sec){
   return NULL;
 }
 
-/* The secret key of @item, as 64-hex. The session is opened first, with an
- * error to report into (signer_secret_service(), nostrc-poc10). INVALID_KEY
+/* The secret key of @item, as 64-hex. The session is opened first. INVALID_KEY
  * when the secret is not a key. */
 static int store_item_sk_hex(SecretService *service, SecretItem *item, char **out_sk_hex){
   GError *e = NULL;
-  if (!secret_service_ensure_session_sync(service, NULL, &e) ||
+  if (!signer_ensure_session(service, &e) ||
       !secret_item_load_secret_sync(item, NULL, &e)) {
     int rc = store_error_rc("secret unreadable", e);
     g_clear_error(&e);
@@ -1911,7 +1922,7 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
   if (rc != 0 || r.found == 0) goto done;
 
   /* The searches below load secrets: open the session first (nostrc-poc10). */
-  if (!secret_service_ensure_session_sync(service, NULL, &err)) {
+  if (!signer_ensure_session(service, &err)) {
     g_message("nip55l: keyring-migration: no Secret Service session: %s; will retry",
               err ? err->message : "unknown error");
     g_clear_error(&err);
