@@ -241,10 +241,16 @@ gh_voice_player_bus_callback(GstBus *bus G_GNUC_UNUSED, GstMessage *message,
   case GST_MESSAGE_ERROR: {
     GError *error = NULL;
     gst_message_parse_error(message, &error, NULL);
-    g_warning("GhVoicePlayer pipeline error: %s", error ? error->message : "(unknown)");
-    const gchar *user_error = error && error->domain == GST_STREAM_ERROR &&
+    gboolean missing_codec = error && error->domain == GST_STREAM_ERROR &&
       (error->code == GST_STREAM_ERROR_CODEC_NOT_FOUND ||
-       error->code == GST_STREAM_ERROR_TYPE_NOT_FOUND)
+       error->code == GST_STREAM_ERROR_TYPE_NOT_FOUND);
+    /* A missing GStreamer plug-in is a deployment condition, reported to
+     * the user through playback-error, not a programming error. */
+    if (missing_codec)
+      g_message("GhVoicePlayer: missing GStreamer plug-in: %s", error->message);
+    else
+      g_warning("GhVoicePlayer pipeline error: %s", error ? error->message : "(unknown)");
+    const gchar *user_error = missing_codec
       ? "Voice messages aren't available: missing audio support"
       : "Voice message couldn't be played";
     g_signal_emit(self, signals[SIGNAL_PLAYBACK_ERROR], 0, user_error);
