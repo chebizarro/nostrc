@@ -28,6 +28,7 @@ gh_web_result_free(GhWebResult *result)
   g_free(result->title);
   g_free(result->description);
   g_free(result->image_url);
+  g_free(result->site_name);
   g_clear_object(&result->texture);
   g_free(result);
 }
@@ -38,6 +39,88 @@ bounded_text(const xmlChar *text)
   if (!text) return NULL;
   g_autofree gchar *valid = g_utf8_make_valid((const gchar *)text, -1);
   return g_utf8_substring(valid, 0, MIN(g_utf8_strlen(valid, -1), 512));
+}
+
+/* Precedence among the head's names for one field: og: wins over twitter:,
+ * which wins over the plain HTML one, whatever the document order. */
+static void
+take_field(gchar **dest, guint *rank, guint new_rank, const xmlChar *value)
+{
+  if (!value || (*dest && new_rank <= *rank)) return;
+  g_autofree gchar *text = bounded_text(value);
+  g_strstrip(text);
+  if (!*text) return;
+  g_free(*dest);
+  *dest = g_steal_pointer(&text);
+  *rank = new_rank;
+}
+
+GhWebResult *
+gh_web_result_parse_html(GBytes *bytes, GError **error)
+{
+  g_return_val_if_fail(bytes != NULL, NULL);
+  g_autoptr(GhWebResult) result = g_new0(GhWebResult, 1);
+  guint title_rank = 0, description_rank = 0, site_rank = 0;
+  gsize size = 0;
+  const gchar *body = g_bytes_get_data(bytes, &size);
+  /* HTML parsing never runs scripts, resolves entities, or loads any linked
+   * resource. Only head text is retained; og:image is deliberately not
+   * fetched. The page may be cut short (only its first bytes are read):
+   * the parser recovers, and the head is what matters. */
+  htmlDocPtr doc = size ? htmlReadMemory(body, (int)MIN(size, (gsize)G_MAXINT), NULL, NULL,
+                                         HTML_PARSE_NONET | HTML_PARSE_NOERROR |
+                                         HTML_PARSE_NOWARNING | HTML_PARSE_RECOVER)
+                        : NULL;
+  if (doc) {
+    xmlNode *html = xmlDocGetRootElement(doc);
+    for (xmlNode *head = html ? html->children : NULL; head; head = head->next) {
+      if (head->type != XML_ELEMENT_NODE || xmlStrcasecmp(head->name, BAD_CAST "head")) continue;
+      for (xmlNode *node = head->children; node; node = node->next) {
+        if (node->type != XML_ELEMENT_NODE) continue;
+        if (!xmlStrcasecmp(node->name, BAD_CAST "title")) {
+          xmlChar *value = xmlNodeGetContent(node);
+          take_field(&result->title, &title_rank, 1, value);
+          xmlFree(value);
+        } else if (!xmlStrcasecmp(node->name, BAD_CAST "meta")) {
+          xmlChar *property = xmlGetProp(node, BAD_CAST "property");
+          if (!property) property = xmlGetProp(node, BAD_CAST "name");
+          xmlChar *value = xmlGetProp(node, BAD_CAST "content");
+          if (property && value) {
+            const xmlChar *p = property;
+            if (!xmlStrcasecmp(p, BAD_CAST "og:image")) {
+              g_autofree gchar *candidate = bounded_text(value);
+              if (candidate) g_strstrip(candidate);
+              if (candidate && gh_link_policy_can_preview(candidate)) {
+                g_free(result->image_url);
+                result->image_url = g_steal_pointer(&candidate);
+              }
+            } else if (!xmlStrcasecmp(p, BAD_CAST "og:title")) {
+              take_field(&result->title, &title_rank, 3, value);
+            } else if (!xmlStrcasecmp(p, BAD_CAST "twitter:title")) {
+              take_field(&result->title, &title_rank, 2, value);
+            } else if (!xmlStrcasecmp(p, BAD_CAST "og:description")) {
+              take_field(&result->description, &description_rank, 3, value);
+            } else if (!xmlStrcasecmp(p, BAD_CAST "twitter:description")) {
+              take_field(&result->description, &description_rank, 2, value);
+            } else if (!xmlStrcasecmp(p, BAD_CAST "description")) {
+              take_field(&result->description, &description_rank, 1, value);
+            } else if (!xmlStrcasecmp(p, BAD_CAST "og:site_name")) {
+              take_field(&result->site_name, &site_rank, 3, value);
+            }
+          }
+          xmlFree(property);
+          xmlFree(value);
+        }
+      }
+      break;
+    }
+    xmlFreeDoc(doc);
+  }
+  if (!result->title && !result->description) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "No preview text in this page");
+    return NULL;
+  }
+  return g_steal_pointer(&result);
 }
 
 static GhWebResult *
@@ -69,50 +152,7 @@ parse_result(GBytes *bytes, GhWebKind kind, GError **error)
     }
     return g_steal_pointer(&result);
   }
-  gsize size = 0;
-  const gchar *body = g_bytes_get_data(bytes, &size);
-  /* HTML parsing never runs scripts, resolves entities, or loads any linked
-   * resource. Only head text is retained; og:image is deliberately not fetched. */
-  htmlDocPtr doc = htmlReadMemory(body, (int)size, NULL, NULL,
-                                 HTML_PARSE_NONET | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
-  if (doc) {
-    xmlNode *html = xmlDocGetRootElement(doc);
-    for (xmlNode *head = html ? html->children : NULL; head; head = head->next) {
-      if (xmlStrcasecmp(head->name, BAD_CAST "head")) continue;
-      for (xmlNode *node = head->children; node; node = node->next) {
-        if (!xmlStrcasecmp(node->name, BAD_CAST "title") && !result->title) {
-          xmlChar *value = xmlNodeGetContent(node);
-          result->title = bounded_text(value);
-          xmlFree(value);
-        } else if (!xmlStrcasecmp(node->name, BAD_CAST "meta")) {
-          xmlChar *property = xmlGetProp(node, BAD_CAST "property");
-          if (!property) property = xmlGetProp(node, BAD_CAST "name");
-          xmlChar *value = xmlGetProp(node, BAD_CAST "content");
-          if (property && value && !xmlStrcasecmp(property, BAD_CAST "og:image")) {
-            g_autofree gchar *candidate = bounded_text(value);
-            if (candidate && gh_link_policy_can_preview(candidate)) {
-              g_free(result->image_url);
-              result->image_url = g_steal_pointer(&candidate);
-            }
-          }
-          gchar **dest = property && !xmlStrcasecmp(property, BAD_CAST "og:title")
-            ? &result->title : property && (!xmlStrcasecmp(property, BAD_CAST "og:description") ||
-                                            !xmlStrcasecmp(property, BAD_CAST "description"))
-            ? &result->description : NULL;
-          if (dest && value) { g_free(*dest); *dest = bounded_text(value); }
-          xmlFree(property);
-          xmlFree(value);
-        }
-      }
-      break;
-    }
-    xmlFreeDoc(doc);
-  }
-  if (!result->title && !result->description) {
-    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "No preview text in this page");
-    return NULL;
-  }
-  return g_steal_pointer(&result);
+  return gh_web_result_parse_html(bytes, error);
 }
 
 static void
@@ -143,9 +183,15 @@ gh_web_content_load_async(GhWebContent *self, const gchar *uri, GhWebKind kind,
   gsize limit = kind == GH_WEB_PREVIEW ? 256 * 1024 : 6 * 1024 * 1024;
   if (self->transport.get_async)
     self->transport.get_async(self->data, uri, limit, cancel, loaded, task);
+  else if (kind == GH_WEB_PREVIEW)
+    /* nostrc-p15n5.7: only the page's first 256 KiB are read, and that is
+     * not an error. Popular pages are larger (GitHub's ~400 KiB) and every
+     * preview of one failed with "larger than 262144 bytes"; the og: tags
+     * are in the head, at the start. */
+    gh_net_http_get_public_prefix_async(self->http, uri, "text/html,application/xhtml+xml",
+                                        limit, cancel, loaded, task);
   else
-    gh_net_http_get_public_async(self->http, uri,
-      kind == GH_WEB_PREVIEW ? "text/html" : "image/*", limit, cancel, loaded, task);
+    gh_net_http_get_public_async(self->http, uri, "image/*", limit, cancel, loaded, task);
 }
 
 GhWebResult *

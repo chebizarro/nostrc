@@ -162,11 +162,62 @@ static void widgets(void) {
   g_object_ref_sink(fields);
   g_object_unref(fields);
 }
+/* nostrc-p15n5.7: a loaded card shows title, description and site, and an
+ * explicit "Load image" action until artwork arrives; empty lines hide. */
+static GtkWidget *card_child(GtkWidget *card, const char *name) {
+  for (GtkWidget *c = gtk_widget_get_first_child(card); c; c = gtk_widget_get_next_sibling(c))
+    if (g_strcmp0(gtk_widget_get_name(c), name) == 0) return c;
+  g_assert_not_reached();
+  return NULL;
+}
+static void og_card_layout(void) {
+  if (!gtk_init_check()) { g_test_skip("GTK display unavailable"); return; }
+  GtkWidget *card = GTK_WIDGET(g_object_ref_sink(gn_og_preview_card_new()));
+  GnOgPreviewCard *og = GN_OG_PREVIEW_CARD(card);
+  gn_og_preview_card_set_url(og, "https://github.com/x");
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_title")));
+  g_assert_true(gtk_widget_get_visible(card_child(card, "og_load")));
+  gn_og_preview_card_set_result(og, "nostrc/docs/proposals/55L.md", "A C library",
+                                "GitHub", "https://opengraph.githubassets.com/a/b");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(card_child(card, "og_title"))), ==,
+                  "nostrc/docs/proposals/55L.md");
+  g_assert_true(gtk_widget_get_visible(card_child(card, "og_title")));
+  g_assert_true(gtk_label_get_wrap(GTK_LABEL(card_child(card, "og_title"))));
+  g_assert_true(gtk_widget_get_visible(card_child(card, "og_description")));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(card_child(card, "og_site"))), ==, "GitHub");
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_load")));
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_status")));
+  GtkWidget *load_image = card_child(card, "og_load_image");
+  g_assert_true(gtk_widget_get_visible(load_image));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(load_image)), ==, "Load image");
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_image")));
+  guint8 pixel[] = { 1, 2, 3, 255 };
+  g_autoptr(GBytes) bytes = g_bytes_new(pixel, sizeof pixel);
+  g_autoptr(GdkTexture) texture =
+    GDK_TEXTURE(gdk_memory_texture_new(1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4));
+  gn_og_preview_card_set_image_texture(og, texture);
+  g_assert_true(gtk_widget_get_visible(card_child(card, "og_image")));
+  g_assert_false(gtk_widget_get_visible(load_image));
+  /* Rebinding the same result keeps the artwork and offers no second load. */
+  gn_og_preview_card_set_result(og, "nostrc/docs/proposals/55L.md", "A C library",
+                                "GitHub", "https://opengraph.githubassets.com/a/b");
+  g_assert_true(gtk_widget_get_visible(card_child(card, "og_image")));
+  g_assert_false(gtk_widget_get_visible(load_image));
+  /* Description only, no image: no empty title line, no image action. */
+  gn_og_preview_card_set_result(og, NULL, "Only text", NULL, NULL);
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_title")));
+  g_assert_false(gtk_widget_get_visible(load_image));
+  g_assert_false(gtk_widget_get_visible(card_child(card, "og_image")));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(card_child(card, "og_site"))), ==,
+                  "https://github.com/x");
+  g_object_unref(card);
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/portable/markdown", markdown);
   g_test_add_func("/portable/references", references);
   g_test_add_func("/portable/widgets", widgets);
+  g_test_add_func("/portable/og-card-layout", og_card_layout);
   return g_test_run();
 }

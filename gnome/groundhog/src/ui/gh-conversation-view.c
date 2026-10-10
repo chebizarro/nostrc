@@ -662,6 +662,7 @@ typedef struct {
   gchar *title;
   gchar *description;
   gchar *image_url;
+  gchar *site_name;
   GhWebKind kind;
   GdkTexture *texture;
 } Preview;
@@ -677,6 +678,7 @@ preview_free(Preview *preview)
   g_clear_object(&preview->texture);
   g_free(preview->description);
   g_free(preview->image_url);
+  g_free(preview->site_name);
   g_free(preview);
 }
 
@@ -2132,6 +2134,8 @@ on_web_fetched(GObject *source, GAsyncResult *answer, gpointer data)
         preview->description = g_steal_pointer(&result->description);
         g_free(preview->image_url);
         preview->image_url = g_steal_pointer(&result->image_url);
+        g_free(preview->site_name);
+        preview->site_name = g_steal_pointer(&result->site_name);
         g_set_object(&preview->texture, result->texture);
       }
       set_preview_state(self, closure->rumor_id, result ? GH_LINK_PREVIEW_LOADED : GH_LINK_PREVIEW_FAILED);
@@ -2314,6 +2318,15 @@ gh_conversation_view_get_og_image_uri(GhConversationView *self, GhMessage *messa
   g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   Preview *preview = preview_for(self, gh_message_get_rumor_id(message));
   return preview && preview->state == GH_LINK_PREVIEW_LOADED ? preview->image_url : NULL;
+}
+
+const gchar *
+gh_conversation_view_get_link_preview_site(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  Preview *preview = preview_for(self, gh_message_get_rumor_id(message));
+  return preview && preview->state == GH_LINK_PREVIEW_LOADED ? preview->site_name : NULL;
 }
 
 void
