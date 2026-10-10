@@ -7,6 +7,7 @@
 
 #include "gh-web-content.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
+#include <nostr-gtk-1.0/gn-nostr-reference-card.h>
 
 G_BEGIN_DECLS
 
@@ -133,24 +134,23 @@ GtkListView *gh_conversation_view_get_message_list(GhConversationView *self);
  * A cache miss schedules rendering; list-row bind never parses Markdown. */
 const gchar *gh_conversation_view_get_render_markup(GhConversationView *self,
                                                      GhMessage *message);
-/* Borrowed offline NIP-21/NIP-18 descriptor from the render cache; no relay lookup. */
-gboolean gh_conversation_view_get_reference(GhConversationView *self, GhMessage *message,
-                                           const gchar **uri, const gchar **label);
 const gchar *gh_conversation_view_get_preview_uri(GhConversationView *self,
                                                 GhMessage *message);
-/* The descriptor was parsed off the row-bind path. The source must answer from
- * a verified local memory cache, without I/O or network access. NULL means
- * unresolved; the returned summary is owned by the caller. */
-typedef gchar *(*GhReferenceSummaryFunc)(const GnNostrReference *reference,
-                                         gpointer user_data);
-void gh_conversation_view_set_reference_source(GhConversationView *self,
-                                                GhReferenceSummaryFunc summary,
-                                                gpointer user_data,
-                                                GDestroyNotify destroy);
-gchar *gh_conversation_view_dup_reference_summary(GhConversationView *self, GhMessage *message);
-gboolean gh_conversation_view_has_public_note_reference(GhConversationView *self,
-                                                       GhMessage *message);
-gboolean gh_conversation_view_can_find_references(GhConversationView *self);
+/* Borrowed offline NIP-21/NIP-18 descriptor from the render cache, parsed
+ * off the row-bind path; no relay lookup. @role and @verified_original (a
+ * repost's embedded original that verified) feed GnNostrReferenceCard. */
+gboolean gh_conversation_view_get_reference(GhConversationView *self, GhMessage *message,
+                                           const gchar **uri);
+const GnNostrReference *gh_conversation_view_get_reference_target(GhConversationView *self,
+                                                                  GhMessage *message,
+                                                                  const gchar **uri,
+                                                                  GnNostrReferenceCardRole *role,
+                                                                  const gchar **verified_original);
+/* The resolver reference cards use: local lookup must answer from a verified
+ * memory cache without I/O; fetching only on an explicit Find on Relays. */
+void gh_conversation_view_set_reference_resolver(GhConversationView *self,
+                                                 GnNostrReferenceResolver *resolver);
+GnNostrReferenceResolver *gh_conversation_view_get_reference_resolver(GhConversationView *self);
 void gh_conversation_view_references_changed(GhConversationView *self);
 
 /* Scrolls to the newest message and sticks there. */

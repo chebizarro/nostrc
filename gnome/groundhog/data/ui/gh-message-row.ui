@@ -105,9 +105,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <class name="groundhog-reference"/>
         </style>
         <child>
-          <object class="GtkLabel" id="reference_label">
-            <property name="wrap">true</property>
-            <property name="xalign">0</property>
+          <object class="GnNostrReferenceCard" id="reference_card">
             <property name="hexpand">true</property>
           </object>
         </child>
@@ -128,17 +126,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="label" translatable="yes">Share in Chat</property>
             <property name="halign">1</property>
             <property name="action-name">conversation.share-reference</property>
-            <property name="action-target">''</property>
-            <style>
-              <class name="flat"/>
-            </style>
-          </object>
-        </child>
-        <child>
-          <object class="GtkButton" id="find_reference_button">
-            <property name="label" translatable="yes">Find on Relays…</property>
-            <property name="halign">1</property>
-            <property name="action-name">conversation.find-reference</property>
             <property name="action-target">''</property>
             <style>
               <class name="flat"/>

@@ -14,6 +14,7 @@
 
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
+#include <nostr-gtk-1.0/gn-nostr-reference-card.h>
 
 G_BEGIN_DECLS
 
@@ -365,6 +366,19 @@ void nostr_gtk_note_card_row_set_repost_info(NostrGtkNoteCardRow *self,
 void nostr_gtk_note_card_row_set_is_repost(NostrGtkNoteCardRow *self, gboolean is_repost);
 void nostr_gtk_note_card_row_set_repost_count(NostrGtkNoteCardRow *self, guint count);
 
+/* NIP-18 / NIP-21 (nostrc-8xfib.6): shows @descriptor's target in the row's
+ * GnNostrReferenceCard, resolved locally through @resolver (may be NULL).
+ * Binding never fetches; the application may call
+ * gn_nostr_reference_card_fetch() on nostr_gtk_note_card_row_get_reference_card()
+ * under its own policy. NULL @descriptor hides the card. */
+void nostr_gtk_note_card_row_set_reference(NostrGtkNoteCardRow *self,
+                                           const GnNostrRepostDescriptor *descriptor,
+                                           GnNostrReferenceResolver *resolver);
+/* The row's reference card, or NULL before set_reference(). */
+GnNostrReferenceCard *nostr_gtk_note_card_row_get_reference_card(NostrGtkNoteCardRow *self);
+
+/* Deprecated: a precomputed quote preview; use set_reference(). */
+G_DEPRECATED_FOR(nostr_gtk_note_card_row_set_reference)
 void nostr_gtk_note_card_row_set_quote_info(NostrGtkNoteCardRow *self,
                                          const char *quoted_event_id_hex,
                                          const char *quoted_content,

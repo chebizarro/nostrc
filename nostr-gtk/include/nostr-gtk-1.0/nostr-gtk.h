@@ -21,6 +21,8 @@
 #include "gn-markdown.h"
 #include "gn-markdown-pango.h"
 #include "gn-nostr-reference.h"
+#include "gn-nostr-reference-resolver.h"
+#include "gn-nostr-reference-card.h"
 #include "gn-og-preview.h"
 #include "gn-og-preview-card.h"
 #include "gn-media-viewer.h"

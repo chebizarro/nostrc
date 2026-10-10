@@ -52,10 +52,9 @@ struct _GhMessageRow {
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
   GtkBox *reference_box;
-  GtkLabel *reference_label;
+  GnNostrReferenceCard *reference_card;
   GtkButton *reference_copy_button;
   GtkButton *share_reference_button;
-  GtkButton *find_reference_button;
   GtkBox *public_actions;
   GtkButton *repost_reference_button;
   GtkButton *quote_reference_button;
@@ -816,34 +815,45 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
   }
 }
 
+/* Repost and Quote… need the note in the verified local cache (the
+ * card may also have resolved from a repost's embedded original). */
+static void
+update_public_actions(GhMessageRow *self)
+{
+  const GnNostrReference *reference = gn_nostr_reference_card_get_reference(self->reference_card);
+  GnNostrReferenceResolver *resolver = self->view
+    ? gh_conversation_view_get_reference_resolver(self->view) : NULL;
+  g_autofree gchar *local = reference && resolver &&
+    reference->type != GN_NOSTR_REFERENCE_PERSON &&
+    gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED
+      ? gn_nostr_reference_resolver_lookup_local(resolver, reference) : NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->public_actions), local != NULL);
+}
+
 static void
 update_reference(GhMessageRow *self)
 {
   const gchar *uri = NULL;
-  const gchar *label = NULL;
+  const gchar *original = NULL;
+  GnNostrReferenceCardRole role = GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
   gboolean visible = self->view && self->message && !self->undecryptable &&
                      !gh_message_get_withdrawn(self->message) &&
                      (gh_message_get_expires_at(self->message) == 0 ||
                       gh_message_get_expires_at(self->message) >
-                        g_get_real_time() / G_USEC_PER_SEC) &&
-                     gh_conversation_view_get_reference(self->view, self->message,
-                                                         &uri, &label);
-  gtk_widget_set_visible(GTK_WIDGET(self->reference_box), visible);
-  if (!visible) return;
-  g_autofree gchar *summary = gh_conversation_view_dup_reference_summary(self->view,
-                                                                           self->message);
-  g_autofree gchar *display = summary ? g_strdup_printf("%s\n%s", label, summary) : NULL;
-  gtk_label_set_text(self->reference_label, display ? display : label);
-  gh_bidi_label_follow_content(self->reference_label);
-  gboolean public_note = gh_conversation_view_has_public_note_reference(self->view,
-                                                                        self->message);
- gtk_widget_set_visible(GTK_WIDGET(self->find_reference_button),
-     public_note && !summary && gh_conversation_view_can_find_references(self->view));
- gtk_widget_set_visible(GTK_WIDGET(self->public_actions), public_note && summary != NULL);
+                        g_get_real_time() / G_USEC_PER_SEC);
+  const GnNostrReference *reference = visible
+    ? gh_conversation_view_get_reference_target(self->view, self->message, &uri, &role, &original)
+    : NULL;
+  gtk_widget_set_visible(GTK_WIDGET(self->reference_box), reference != NULL);
+  /* The card only consults the resolver's verified local cache here. */
+  gn_nostr_reference_card_set_resolver(self->reference_card, reference
+    ? gh_conversation_view_get_reference_resolver(self->view) : NULL);
+  gn_nostr_reference_card_set_reference(self->reference_card, reference, role, original);
+  update_public_actions(self);
+  if (!reference) return;
   const gchar *id = gh_message_get_rumor_id(self->message);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->reference_copy_button), "s", uri);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->share_reference_button), "s", id);
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->find_reference_button), "s", id);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->repost_reference_button), "s", id);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->quote_reference_button), "s", id);
 }
@@ -1641,6 +1651,7 @@ gh_message_row_class_init(GhMessageRowClass *klass)
                                   action_avatar_menu);
 
   g_type_ensure(GH_TYPE_DELIVERY_INDICATOR);
+  g_type_ensure(GN_TYPE_NOSTR_REFERENCE_CARD);
   g_type_ensure(GH_TYPE_ATTACHMENT_CARD);
 #ifdef GROUNDHOG_HAVE_VOICE
   g_type_ensure(GH_TYPE_VOICE_BUBBLE);
@@ -1656,10 +1667,9 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_box);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_card);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, share_reference_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, find_reference_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, public_actions);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, repost_reference_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, quote_reference_button);
@@ -1691,6 +1701,8 @@ gh_message_row_init(GhMessageRow *self)
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
+  g_signal_connect_swapped(self->reference_card, "notify::state",
+                           G_CALLBACK(update_public_actions), self);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", "");
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->reference_copy_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL,

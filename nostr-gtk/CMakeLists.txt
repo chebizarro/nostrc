@@ -168,6 +168,8 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-markdown.h
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-nostr-reference-resolver.h
+  include/nostr-gtk-1.0/gn-nostr-reference-card.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -186,6 +188,8 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-markdown.h
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
+  include/nostr-gtk-1.0/gn-nostr-reference-resolver.h
+  include/nostr-gtk-1.0/gn-nostr-reference-card.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -202,6 +206,8 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-markdown.c
   src/gn-markdown-pango.c
   src/gn-nostr-reference.c
+  src/gn-nostr-reference-resolver.c
+  src/gn-nostr-reference-card.c
   src/gn-og-preview-card.c
   src/gn-og-metadata.c
   src/gn-og-preview-provider.c
@@ -571,6 +577,12 @@ if(BUILD_TESTING)
     LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2)
   target_include_directories(test_nostr_gtk_og_preview_card PRIVATE ${PROJECT_ROOT}/tests/common)
   set_tests_properties(test_nostr_gtk_og_preview_card PROPERTIES SKIP_RETURN_CODE 77)
+
+  # nostrc-8xfib.6: resolver contract and reference card (fake resolver).
+  gn_add_gtest_xvfb(test_nostr_gtk_reference_card
+    SOURCES tests/test_reference_card.c
+    LIBS nostr_gtk_portable nip19 PkgConfig::GTK4 PkgConfig::GLIB2)
+  target_include_directories(test_nostr_gtk_reference_card PRIVATE ${PROJECT_ROOT}/tests/common)
 
   # nostrc-8xfib.4: bounded decode, injected media source, viewer and player.
   gn_add_gtest_xvfb(test_nostr_gtk_media

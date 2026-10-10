@@ -3,5 +3,7 @@ src/gn-media-viewer.c
 src/gn-nip34-issue-fields.c
 src/gn-nip34-issue-view.c
 src/gn-nip34-issue.c
+src/gn-nostr-reference-card.c
+src/gn-nostr-reference-resolver.c
 src/gn-og-preview-card.c
 src/gn-video-player.c

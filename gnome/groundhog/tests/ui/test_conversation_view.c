@@ -36,6 +36,7 @@
 #include "gh-message-row.h"
 #include "gh-agent-event-row.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
+#include <nostr-gtk-1.0/gn-nostr-reference-card.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include "gh-link-policy.h"
 #include <nostr-gtk-1.0/gn-animated-image.h>
@@ -982,11 +983,103 @@ test_markdown_copy_identity(Fixture *f, gconstpointer data)
   g_assert_null(f->copied);
 }
 
+/* nostrc-8xfib.6: the shared GnNostrReferenceCard over a test resolver. */
+#define REF_TEST_SK "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
+
+static char *
+signed_note(const char *content)
+{
+  NostrEvent *ev = nostr_event_new();
+  nostr_event_set_kind(ev, 1);
+  nostr_event_set_created_at(ev, 1700000000);
+  nostr_event_set_content(ev, content);
+  nostr_event_set_tags(ev, nostr_tags_new(0));
+  g_assert_cmpint(nostr_event_sign(ev, REF_TEST_SK), ==, 0);
+  char *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  return json;
+}
+
+#define TEST_TYPE_RESOLVER (test_resolver_get_type())
+G_DECLARE_FINAL_TYPE(TestResolver, test_resolver, TEST, RESOLVER, GObject)
+struct _TestResolver {
+  GObject parent_instance;
+  gchar *local_json;
+  guint fetches;
+  GTask *pending;
+};
+static void test_resolver_iface_init(GnNostrReferenceResolverInterface *iface);
+G_DEFINE_FINAL_TYPE_WITH_CODE(TestResolver, test_resolver, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(GN_TYPE_NOSTR_REFERENCE_RESOLVER, test_resolver_iface_init))
+static gchar *
+test_resolver_lookup(GnNostrReferenceResolver *r, const GnNostrReference *reference)
+{
+  (void)reference;
+  return g_strdup(TEST_RESOLVER(r)->local_json);
+}
+static gboolean
+test_resolver_can_fetch(GnNostrReferenceResolver *r)
+{
+  (void)r;
+  return TRUE;
+}
+static void
+test_resolver_fetch_async(GnNostrReferenceResolver *r, const GnNostrReference *reference,
+                          GCancellable *c, GAsyncReadyCallback cb, gpointer data)
+{
+  (void)reference;
+  TestResolver *self = TEST_RESOLVER(r);
+  self->fetches++;
+  g_clear_object(&self->pending);
+  self->pending = g_task_new(self, c, cb, data);
+}
+static gchar *
+test_resolver_fetch_finish(GnNostrReferenceResolver *r, GAsyncResult *res, GError **error)
+{
+  (void)r;
+  return g_task_propagate_pointer(G_TASK(res), error);
+}
+static void
+test_resolver_iface_init(GnNostrReferenceResolverInterface *iface)
+{
+  iface->lookup_local = test_resolver_lookup;
+  iface->can_fetch = test_resolver_can_fetch;
+  iface->fetch_async = test_resolver_fetch_async;
+  iface->fetch_finish = test_resolver_fetch_finish;
+}
+static void
+test_resolver_finalize(GObject *o)
+{
+  g_free(TEST_RESOLVER(o)->local_json);
+  g_clear_object(&TEST_RESOLVER(o)->pending);
+  G_OBJECT_CLASS(test_resolver_parent_class)->finalize(o);
+}
+static void test_resolver_class_init(TestResolverClass *k) { G_OBJECT_CLASS(k)->finalize = test_resolver_finalize; }
+static void test_resolver_init(TestResolver *self) { (void)self; }
+
+static GtkWidget *
+card_part(GhMessageRow *row, const char *name)
+{
+  GtkWidget *card = row_child(row, "reference_card");
+  for (GtkWidget *c = gtk_widget_get_first_child(card); c; c = gtk_widget_get_next_sibling(c))
+    if (g_strcmp0(gtk_widget_get_name(c), name) == 0) return c;
+  g_error("no %s in the reference card", name);
+}
+
+static GnNostrReferenceCardState
+card_state(GhMessageRow *row)
+{
+  return gn_nostr_reference_card_get_state(GN_NOSTR_REFERENCE_CARD(row_child(row, "reference_card")));
+}
+
 static void
 test_reference_card(Fixture *f, gconstpointer data)
 {
   (void)data;
-  const gchar *uri = "nostr:note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  g_autofree char *original = signed_note("the original note");
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(original, NULL);
+  g_assert_nonnull(info);
+  g_autofree gchar *uri = gn_nostr_reference_build_event(info->id, NULL, -1, NULL);
   GhMessage *message = add_dm(f->store, 2, 1, noon_today(), uri);
   g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
   g_assert_nonnull(reference);
@@ -995,25 +1088,61 @@ test_reference_card(Fixture *f, gconstpointer data)
   g_assert_nonnull(repost);
   GhMessage *repost_message = add_dm(f->store, 2, 1, noon_today() + 1, repost);
   g_assert_cmpstr(gh_message_get_content(repost_message), ==, repost);
-  g_autoptr(GnNostrRepostDescriptor) parsed_repost =
-    gn_nostr_repost_descriptor_parse(repost, FALSE);
-  g_assert_nonnull(parsed_repost);
+  /* A repost body embedding the signed original. */
+  g_autofree gchar *embedded = gn_nostr_build_repost_template(reference, original);
+  GhMessage *embedded_message = add_dm(f->store, 2, 1, noon_today() + 2, embedded);
   GhConversation *conversation = room_of(f->store, message);
   show(f, conversation, 700, 600);
+
   GhMessageRow *row = row_for(f->view, message);
   const gchar *cached_uri = NULL;
-  const gchar *label = NULL;
-  g_assert_true(gh_conversation_view_get_reference(f->view, message, &cached_uri, &label));
+  GnNostrReferenceCardRole role = GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE;
+  g_assert_nonnull(gh_conversation_view_get_reference_target(f->view, message, &cached_uri,
+                                                             &role, NULL));
   g_assert_cmpstr(cached_uri, ==, uri);
-  g_assert_nonnull(strstr(label, "Nostr note"));
+  g_assert_cmpint(role, ==, GN_NOSTR_REFERENCE_CARD_ROLE_MENTION);
   g_assert_true(shown(row_child(row, "reference_box")));
   g_assert_true(shown(row_child(row, "share_reference_button")));
-  const gchar *repost_label = NULL;
-  g_assert_true(gh_conversation_view_get_reference(f->view, repost_message,
-                                                     NULL, &repost_label));
-  g_assert_nonnull(strstr(repost_label, "Reposted Nostr note"));
-  g_assert_true(shown(row_child(row_for(f->view, repost_message), "reference_box")));
+  /* No resolver: an inert, translated summary; nothing to find with. */
+  g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
+  g_assert_nonnull(strstr(text_of(card_part(row, "reference-title")), "Nostr note"));
+  g_assert_false(shown(card_part(row, "reference-find")));
+  g_assert_false(shown(row_child(row, "public_actions")));
+
+  GhMessageRow *repost_row = row_for(f->view, repost_message);
+  g_assert_true(shown(row_child(repost_row, "reference_box")));
+  g_assert_nonnull(strstr(text_of(card_part(repost_row, "reference-title")), "Reposted Nostr note"));
+  /* The verified embedded original resolves without any resolver. */
+  const gchar *verified = NULL;
+  g_assert_nonnull(gh_conversation_view_get_reference_target(f->view, embedded_message, NULL,
+                                                             &role, &verified));
+  g_assert_cmpint(role, ==, GN_NOSTR_REFERENCE_CARD_ROLE_REPOST);
+  g_assert_cmpstr(verified, ==, original);
+  GhMessageRow *embedded_row = row_for(f->view, embedded_message);
+  g_assert_cmpint(card_state(embedded_row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
+  g_assert_cmpstr(text_of(card_part(embedded_row, "reference-content")), ==, "the original note");
+
+  /* A resolver that can fetch offers Find on Relays; binding never fetches. */
+  g_autoptr(TestResolver) resolver = g_object_new(TEST_TYPE_RESOLVER, NULL);
+  gh_conversation_view_set_reference_resolver(f->view, GN_NOSTR_REFERENCE_RESOLVER(resolver));
+  drain_idle();
+  row = row_for(f->view, message);
+  g_assert_true(shown(card_part(row, "reference-find")));
+  g_assert_cmpuint(resolver->fetches, ==, 0);
+  g_signal_emit_by_name(card_part(row, "reference-find"), "clicked");
+  g_assert_cmpuint(resolver->fetches, ==, 1);
+  g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_FETCHING);
+  /* The application caches what it found, then answers. */
+  resolver->local_json = g_strdup(original);
+  gh_conversation_view_references_changed(f->view);
+  g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_FETCHING);
+  g_task_return_pointer(resolver->pending, g_strdup(original), g_free);
+  drain_idle();
+  g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
+  g_assert_true(shown(row_child(row, "public_actions")));
+  g_assert_cmpuint(resolver->fetches, ==, 1);
   g_assert_cmpuint(f->fetches, ==, 0);
+  gh_conversation_view_set_reference_resolver(f->view, NULL);
 }
 
 static void
@@ -2143,6 +2272,10 @@ test_open_timing(Fixture *f, gconstpointer data)
   g_assert_true(!order_env || g_str_equal(order_env, "0") ||
                 g_str_equal(order_env, "1") || g_str_equal(order_env, "2"));
   guint order = order_env ? (guint)atoi(order_env) : 0;
+  gboolean reposts = g_strcmp0(g_getenv("GROUNDHOG_TEST_REPOSTS"), "1") == 0;
+  /* GROUNDHOG_TEST_VERIFY_CACHE=0 empties the verification cache before
+   * every open, as on a first open. */
+  gboolean verify_cache = g_strcmp0(g_getenv("GROUNDHOG_TEST_VERIFY_CACHE"), "0") != 0;
   for (guint k = 0; k < G_N_ELEMENTS(orders[0]); k++) {
     guint size = orders[order][k];
     g_autoptr(GhConversationStore) store = gh_conversation_store_new();
@@ -2162,6 +2295,18 @@ test_open_timing(Fixture *f, gconstpointer data)
       g_autofree char *b_text = g_strdup_printf("B message %u, _ordinary text_ with a few words to wrap %s%s", i,
                                                i % 20 == 0 ? nprofile : "",
                                                long_body ? long_body->str : "");
+      /* GROUNDHOG_TEST_REPOSTS=1 (nostrc-8xfib.6): every tenth A message is a
+       * repost embedding a signed original, verified when it renders. */
+      if (reposts && i % 10 == 5) {
+        g_autofree gchar *original_text = g_strdup_printf("original note %u", i);
+        g_autofree char *original = signed_note(original_text);
+        g_autoptr(GnNostrEventInfo) original_info = gn_nostr_event_parse(original, NULL);
+        g_autofree gchar *original_uri = gn_nostr_reference_build_event(original_info->id, NULL, -1, NULL);
+        g_autoptr(GnNostrReference) target = gn_nostr_reference_parse(original_uri);
+        target->kind = 1;
+        g_free(a_text);
+        a_text = gn_nostr_build_repost_template(target, original);
+      }
       GhMessage *a = add_dm(store, i % 2 ? 2 : 1, i % 2 ? 1 : 2,
                             base + 10000 + i * 60, a_text);
       GhMessage *b = add_dm(store, i % 2 ? 3 : 1, i % 2 ? 1 : 3,
@@ -2184,6 +2329,8 @@ test_open_timing(Fixture *f, gconstpointer data)
     gh_conversation_window_enable(b);
     for (guint sample = 0; sample < warmups + pairs; sample++) {
       gboolean warmup = sample < warmups;
+      if (!verify_cache)
+        gn_nostr_event_verify_cache_clear();
       GhWindow *window = gh_window_new(NULL);
       GhSidebarPage *sidebar = gh_window_get_sidebar(window);
       gh_conversation_list_attach(window, store, NULL);

@@ -37,6 +37,7 @@
 #include <libsoup/soup.h>
 #endif
 #include "gnostr-timeline-embed-private.h"
+#include "gnostr-reference-resolver-ndb.h"
 #include "gnostr-timeline-metadata-controller.h"
 #include "gnostr-timeline-action-relay.h"
 #include "gnostr-timeline-feed-controller.h"
@@ -406,6 +407,40 @@ static void on_item_notify_like_count(GObject *obj, GParamSpec *pspec, gpointer 
   guint like_count = 0;
   g_object_get(obj, "like-count", &like_count, NULL);
   nostr_gtk_note_card_row_set_like_count(row, like_count);
+}
+
+static gchar *format_timestamp(gint64 created_at);
+
+/* NIP-18 kind 6/16 (nostrc-8xfib.6): a repost's main content becomes the
+ * original note, from its verified embedded copy or NDB via the shared
+ * resolver; otherwise the row asks for an embed fetch (gnostr policy). */
+static void apply_repost_original(NostrGtkNoteCardRow *row,
+                                  const GnNostrRepostDescriptor *descriptor,
+                                  const char *root_id) {
+  if (!descriptor || !descriptor->target) return;
+  GnNostrReferenceResolver *resolver = gnostr_reference_resolver_ndb_get_default();
+  g_autoptr(GnNostrResolvedNote) note = descriptor->original_json
+    ? gn_nostr_resolved_note_new(descriptor->target, descriptor->original_json, resolver) : NULL;
+  if (!note) note = gn_nostr_reference_resolver_resolve_local(resolver, descriptor->target);
+  if (!note) {
+    if (descriptor->target->uri)
+      g_signal_emit_by_name(row, "request-embed", descriptor->target->uri);
+    return;
+  }
+  const GnNostrEventInfo *original = note->event;
+  nostr_gtk_note_card_row_set_content(row, original->content);
+  if (original->created_at > 0) {
+    g_autofree gchar *ts = format_timestamp(original->created_at);
+    nostr_gtk_note_card_row_set_timestamp(row, original->created_at, ts);
+  }
+  g_autofree gchar *name = gnostr_reference_resolver_ndb_profile_field(original->pubkey, "name");
+  g_autofree gchar *avatar = gnostr_reference_resolver_ndb_profile_field(original->pubkey, "picture");
+  g_autofree gchar *nip05 = gnostr_reference_resolver_ndb_profile_field(original->pubkey, "nip05");
+  if (note->author_name || name)
+    nostr_gtk_note_card_row_set_author(row, note->author_name ? note->author_name : name, name, avatar);
+  nostr_gtk_note_card_row_set_ids(row, original->id, root_id, original->pubkey);
+  if (nip05)
+    nostr_gtk_note_card_row_set_nip05(row, nip05, original->pubkey);
 }
 
 /* NIP-18: Notify handler for repost count changes */
@@ -1259,95 +1294,7 @@ bind_row_common(NostrGtkTimelineView *self,
               }
             }
           } else {
-            /* Try to fetch the original note from local storage */
-            char *orig_json = NULL;
-            int orig_len = 0;
-            if (storage_ndb_get_note_by_id_nontxn(reposted_id, &orig_json, &orig_len) == 0 && orig_json) {
-            /* Parse the original event to get author and content */
-            NostrEvent *orig_evt = nostr_event_new();
-            if (orig_evt && nostr_event_deserialize(orig_evt, orig_json) == 0) {
-              const char *orig_content = nostr_event_get_content(orig_evt);
-              const char *orig_pubkey = nostr_event_get_pubkey(orig_evt);
-              gint64 orig_created_at = (gint64)nostr_event_get_created_at(orig_evt);
-
-              /* Update the card with original note's content */
-              if (orig_content) {
-                nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), orig_content);
-              }
-
-              /* Update timestamp to original note's time */
-              if (orig_created_at > 0) {
-                time_t t = (time_t)orig_created_at;
-                struct tm *tm_info = localtime(&t);
-                char orig_ts_buf[64];
-                strftime(orig_ts_buf, sizeof(orig_ts_buf), "%Y-%m-%d %H:%M", tm_info);
-                nostr_gtk_note_card_row_set_timestamp(NOSTR_GTK_NOTE_CARD_ROW(row), orig_created_at, orig_ts_buf);
-              }
-
-              /* Try to get original author's profile */
-              if (orig_pubkey && strlen(orig_pubkey) == 64) {
-                void *txn = NULL;
-                if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
-                  unsigned char pk_bytes[32];
-                  if (gnostr_timeline_embed_hex32_from_string(orig_pubkey, pk_bytes)) {
-                    char *profile_json = NULL;
-                    int profile_len = 0;
-                    if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len, NULL) == 0 && profile_json) {
-                      /* Parse profile JSON to get display name */
-                      if (gnostr_json_is_valid(profile_json)) {
-                        /* Profile is stored as event - need to parse content */
-                        char *profile_content = NULL;
-                        profile_content = gnostr_json_get_string(profile_json, "content", NULL);
-                        if (profile_content) {
-                          if (gnostr_json_is_valid(profile_content)) {
-                            char *orig_name = NULL;
-                            char *orig_display = NULL;
-                            char *orig_avatar = NULL;
-                            char *orig_nip05_str = NULL;
-
-                            orig_display = gnostr_json_get_string(profile_content, "display_name", NULL);
-                            orig_name = gnostr_json_get_string(profile_content, "name", NULL);
-                            orig_avatar = gnostr_json_get_string(profile_content, "picture", NULL);
-                            orig_nip05_str = gnostr_json_get_string(profile_content, "nip05", NULL);
-
-                            /* Update author display with original author */
-                            nostr_gtk_note_card_row_set_author(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                             orig_display && *orig_display ? orig_display : orig_name,
-                                                             orig_name,
-                                                             orig_avatar);
-
-                            /* Update IDs to use original note's pubkey for actions */
-                            nostr_gtk_note_card_row_set_ids(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                          reposted_id, root_id, (char*)orig_pubkey);
-
-                            /* Update NIP-05 if available */
-                            if (orig_nip05_str && *orig_nip05_str) {
-                              nostr_gtk_note_card_row_set_nip05(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                              orig_nip05_str, orig_pubkey);
-                            }
-
-                            free(orig_name);
-                            free(orig_display);
-                            free(orig_avatar);
-                            free(orig_nip05_str);
-                          }
-                          free(profile_content);
-                        }
-                      }
-                    }
-                  }
-                  storage_ndb_end_query(txn);
-                }
-              }
-            }
-            if (orig_evt) nostr_event_free(orig_evt);
-            } else {
-              /* Original note not in local storage - request embed fetch */
-              /* nostrc-8xfib.6: a real NIP-19 note, not "note1" + hex. */
-              g_autofree gchar *nostr_uri = gn_nostr_reference_build_event(reposted_id, NULL, -1, NULL);
-              if (nostr_uri)
-                g_signal_emit_by_name(row, "request-embed", nostr_uri);
-            }
+            apply_repost_original(NOSTR_GTK_NOTE_CARD_ROW(row), nip18_descriptor, root_id);
           }
         }
       }
@@ -1370,81 +1317,36 @@ bind_row_common(NostrGtkTimelineView *self,
            : NULL);
       if (!quote_is_repost && quoted_id) {
         if (is_snapshot_row) {
-          if (snapshot_vm) {
-            GnostrTimelinePreviewState quote_state =
-              gnostr_timeline_item_view_model_get_quote_state(snapshot_vm);
-            const char *quoted_content = quote_state == GNOSTR_TIMELINE_PREVIEW_RESOLVED
-              ? gnostr_timeline_item_view_model_get_quoted_content(snapshot_vm)
-              : NULL;
-            const char *quoted_author = gnostr_timeline_item_view_model_get_quoted_display_name(snapshot_vm);
-            g_autofree char *quoted_fallback = NULL;
-            const char *quoted_pubkey = gnostr_timeline_item_view_model_get_quoted_pubkey(snapshot_vm);
-            if ((!quoted_author || !*quoted_author) && quoted_pubkey && strlen(quoted_pubkey) >= 8) {
-              quoted_fallback = g_strdup_printf("%.8s...", quoted_pubkey);
-              quoted_author = quoted_fallback;
+          /* Snapshot fast path: the view model already resolved the preview;
+           * no NDB lookup on bind. */
+          g_autofree gchar *quoted_uri = gn_nostr_reference_build_event(quoted_id, NULL, -1, NULL);
+          g_autoptr(GnNostrReference) quoted_ref = quoted_uri ? gn_nostr_reference_parse(quoted_uri) : NULL;
+          if (quoted_ref && snapshot_vm) {
+            GnNostrRepostDescriptor quote = { .target = quoted_ref, .quote = TRUE, .source_kind = 1 };
+            nostr_gtk_note_card_row_set_reference(NOSTR_GTK_NOTE_CARD_ROW(row), &quote, NULL);
+            if (gnostr_timeline_item_view_model_get_quote_state(snapshot_vm) ==
+                GNOSTR_TIMELINE_PREVIEW_RESOLVED) {
+              const char *quoted_author = gnostr_timeline_item_view_model_get_quoted_display_name(snapshot_vm);
+              g_autofree char *quoted_fallback = NULL;
+              const char *quoted_pubkey = gnostr_timeline_item_view_model_get_quoted_pubkey(snapshot_vm);
+              if ((!quoted_author || !*quoted_author) && quoted_pubkey && strlen(quoted_pubkey) >= 8) {
+                quoted_fallback = g_strdup_printf("%.8s...", quoted_pubkey);
+                quoted_author = quoted_fallback;
+              }
+              gn_nostr_reference_card_set_preview(
+                nostr_gtk_note_card_row_get_reference_card(NOSTR_GTK_NOTE_CARD_ROW(row)),
+                quoted_author, gnostr_timeline_item_view_model_get_quoted_content(snapshot_vm));
             }
-            nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                   quoted_id,
-                                                   quoted_content,
-                                                   quoted_author);
           }
         } else {
-          char *quoted_json = NULL;
-          int quoted_len = 0;
-          const char *quoted_content = NULL;
-          const char *quoted_author = NULL;
-
-          if (storage_ndb_get_note_by_id_nontxn(quoted_id, &quoted_json, &quoted_len) == 0 && quoted_json) {
-          NostrEvent *quoted_evt = nostr_event_new();
-          if (quoted_evt && nostr_event_deserialize(quoted_evt, quoted_json) == 0) {
-            quoted_content = nostr_event_get_content(quoted_evt);
-            const char *quoted_pk = nostr_event_get_pubkey(quoted_evt);
-
-            /* Try to get quoted author's display name from profile */
-            if (quoted_pk && strlen(quoted_pk) == 64) {
-              void *txn = NULL;
-              if (storage_ndb_begin_query(&txn, NULL) == 0 && txn) {
-                unsigned char pk_bytes[32];
-                if (gnostr_timeline_embed_hex32_from_string(quoted_pk, pk_bytes)) {
-                  char *profile_json = NULL;
-                  int profile_len = 0;
-                  if (storage_ndb_get_profile_by_pubkey(txn, pk_bytes, &profile_json, &profile_len, NULL) == 0 && profile_json) {
-                    if (gnostr_json_is_valid(profile_json)) {
-                      char *profile_content = gnostr_json_get_string(profile_json, "content", NULL);
-                      if (profile_content && gnostr_json_is_valid(profile_content)) {
-                        char *qname = gnostr_json_get_string(profile_content, "display_name", NULL);
-                        if (!qname || !*qname) {
-                          free(qname);
-                          qname = gnostr_json_get_string(profile_content, "name", NULL);
-                        }
-                        if (qname && *qname) {
-                          quoted_author = qname; /* owned — freed after set_quote_info call */
-                        } else {
-                          free(qname);
-                        }
-                        free(profile_content);
-                      }
-                    }
-                    free(profile_json);
-                  }
-                }
-                storage_ndb_end_query(txn);
-              }
-            }
-
-            nostr_gtk_note_card_row_set_quote_info(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                   quoted_id, quoted_content, quoted_author);
-            if (quoted_author) free((char *)quoted_author);
-          }
-          if (quoted_evt) nostr_event_free(quoted_evt);
-          free(quoted_json);
-          } else {
-            /* Quoted note not in local storage — request async fetch via embed mechanism */
-            /* nostrc-8xfib.6: a real NIP-19 note, not "note1" + hex. */
-            g_autofree gchar *nostr_uri = gn_nostr_reference_build_event(quoted_id, NULL, -1, NULL);
-            if (nostr_uri)
-              g_signal_emit_by_name(row, "request-embed", nostr_uri);
-          }
+          /* nostrc-8xfib.6: the shared card resolves through NDB; gnostr's
+           * policy stays eager, so an unresolved quote is fetched now. */
+          nostr_gtk_note_card_row_set_reference(NOSTR_GTK_NOTE_CARD_ROW(row), nip18_descriptor,
+                                                gnostr_reference_resolver_ndb_get_default());
+          GnNostrReferenceCard *card =
+            nostr_gtk_note_card_row_get_reference_card(NOSTR_GTK_NOTE_CARD_ROW(row));
+          if (card && gn_nostr_reference_card_get_state(card) == GN_NOSTR_REFERENCE_CARD_INERT)
+            gn_nostr_reference_card_fetch(card);
         }
       }
     }
