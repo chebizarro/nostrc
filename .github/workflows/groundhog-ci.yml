@@ -236,6 +236,18 @@ jobs:
               raise SystemExit('Missing Groundhog tests: ' + ', '.join(sorted(missing)))
           PY
 
+      - name: Install nak for the NIP-46 interop test
+        # groundhog-nip46-nak pairs Groundhog's NIP-46 session with a real
+        # `nak bunker`; without nak it skips, and this job allows no skips.
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Build nak
+        run: |
+          go install github.com/fiatjaf/nak@v0.19.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/nak" --version
       - name: Run all Groundhog tests under a controlled display
         run: |
           set -euo pipefail
