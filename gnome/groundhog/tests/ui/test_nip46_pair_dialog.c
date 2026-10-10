@@ -827,7 +827,13 @@ test_grotto_fails_remote_selected_lookup_waits(void)
   GhNip46PairConfig config = { .accounts = accounts, .settings = settings,
     .scope_transport = &qr_scope_transport,
     .publish_transport = &bunker_publish_transport, .transport_data = &bunker };
-  GtkWidget *window = gtk_window_new();
+  /* A shown AdwWindow, like the app's window: the dialog opens as a sheet
+   * and emits "closed" when it closes. Presented on a plain GtkWindow it
+   * becomes its own window instead, and libadwaita 1.5.0 (Ubuntu 24.04)
+   * never emits "closed" for that; on a hidden AdwWindow the sheet never
+   * opens, so closing it is a no-op. */
+  GtkWidget *window = adw_window_new();
+  gtk_window_present(GTK_WINDOW(window));
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
   g_object_ref_sink(dialog);
   GtkWidget *alert = NULL;
@@ -941,7 +947,9 @@ test_blocked_listings_do_not_gate_remote(void)
     .scope_transport = &qr_scope_transport,
     .publish_transport = &bunker_publish_transport, .transport_data = &bunker,
     .test_save = save_pair_for_test, .test_save_data = &store };
-  GtkWidget *window = gtk_window_new();
+  /* A shown AdwWindow so the dialog emits "closed"; see above. */
+  GtkWidget *window = adw_window_new();
+  gtk_window_present(GTK_WINDOW(window));
   GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
   g_object_ref_sink(dialog);
   GtkWidget *alert = NULL;
