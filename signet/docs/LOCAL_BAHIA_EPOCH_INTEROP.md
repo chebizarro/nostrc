@@ -19,7 +19,8 @@ cmake -S . -B _build -DBUILD_APPS=OFF -DWITH_NOSTRDB=OFF \
   -DLIBNOSTR_WITH_NOSTRDB=OFF -DSIGNET_ENABLE_PASSKEYS=OFF
 cmake --build _build --target signetd signetctl
 python3 signet/tests/interop/run_live_epoch_bahia.py \
-  --build-dir _build --bahia /absolute/path/to/bahia-worktree
+  --build-dir _build --bahia /absolute/path/to/bahia-worktree \
+  --bahia-commit <reviewed-full-40-character-Bahia-SHA>
 ```
 
 Prerequisites: `nak` with `nak serve`, Go, CMake, the Signet build dependencies,
@@ -28,9 +29,16 @@ and a Bahia checkout containing
 Signet commit is this worktree's committed HEAD. The runner rebuilds daemon
 and CLI from the worktree before execution. If the Bahia test pins an older
 commit, update that **on the Bahia branch**; do not forge the fixture commit.
+The runner refuses a dirty or differently committed Bahia checkout, so a
+green result cannot silently come from a different test revision.
 The test is not registered in default CTest because it depends on another
 repository and a local relay executable. It never prints the pairing URI or
 secret-bearing test output; on failure, raw logs are withheld.
+The private fixture pins both public keys separately: `expected_bunker_pubkey`
+matches the NIP-46 URI host, while `expected_service_pubkey` is the managed
+identity used for NIP-44 and DSSE. The runner accepts a Bahia pass only after
+`go test -json` emits exactly one Run and Pass for the named live test;
+an exit-zero no-test or skip is a failure.
 
 A passing local test proves only the tested synthetic NIP-46 epoch NIP-44 and
 SBOM DSSE operations through this daemon and relay. It is not a deployment,

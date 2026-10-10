@@ -18,6 +18,8 @@ import sys
 import tempfile
 import time
 
+LIVE_TEST = "TestLiveSignetEpochNIP44AndSBOMDSSE"
+
 
 def run(argv, *, env=None, cwd=None):
     result = subprocess.run(argv, env=env, cwd=cwd, text=True, capture_output=True)
@@ -35,10 +37,39 @@ def private_file(path, value):
 
 
 def pubkey(secret):
-    value = run(["nak", "key", "public", secret]).strip()
+    result = subprocess.run(["nak", "key", "public"], input=secret + "\n",
+                            text=True, capture_output=True)
+    if result.returncode:
+        raise RuntimeError("nak failed to derive synthetic public key; private output withheld")
+    value = result.stdout.strip()
     if len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
         raise RuntimeError("nak did not return a hex public key")
     return value
+
+
+def require_live_test_pass(output):
+    """Reject an empty, skipped, or substituted Go test despite process exit 0."""
+    state = "absent"
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("go test did not emit complete JSON events") from exc
+        if not isinstance(event, dict) or event.get("Test") != LIVE_TEST:
+            continue
+        action = event.get("Action")
+        if action == "run":
+            if state != "absent":
+                raise RuntimeError("named Bahia interop test ran more than once")
+            state = "running"
+        elif action == "pass":
+            if state != "running":
+                raise RuntimeError("named Bahia interop test passed without one Run event")
+            state = "passed"
+        elif action in ("skip", "fail"):
+            raise RuntimeError("named Bahia interop test was skipped or failed")
+    if state != "passed":
+        raise RuntimeError("named Bahia interop test did not emit Run and Pass events")
 
 
 def free_loopback_port():
@@ -80,12 +111,20 @@ def main():
                         help="prebuilt nostrc CMake tree for this Signet worktree")
     parser.add_argument("--bahia", type=Path, required=True,
                         help="Bahia checkout containing the opt-in signetinterop test")
+    parser.add_argument("--bahia-commit", required=True,
+                        help="reviewed full Bahia commit SHA expected at the test checkout")
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[3]
     build = args.build_dir.resolve()
     bahia = args.bahia.resolve()
     if not (bahia / "internal/adapters/signet/epoch_interop_integration_test.go").is_file():
         raise RuntimeError("Bahia checkout lacks the opt-in Signet interop test")
+    if len(args.bahia_commit) != 40 or any(ch not in "0123456789abcdef" for ch in args.bahia_commit):
+        raise RuntimeError("--bahia-commit must be a full lowercase commit SHA")
+    if run(["git", "-C", str(bahia), "rev-parse", "HEAD"]).strip() != args.bahia_commit:
+        raise RuntimeError("Bahia checkout is not at the pinned reviewed commit")
+    if run(["git", "-C", str(bahia), "status", "--porcelain"]).strip():
+        raise RuntimeError("Bahia checkout has uncommitted changes")
     for executable in ("nak", "go", "cmake"):
         if subprocess.run(["which", executable], capture_output=True).returncode:
             raise RuntimeError(f"{executable} is required")
@@ -179,18 +218,20 @@ def main():
                 private_file(fixture, json.dumps(dict(
                     disposable=True, signet_commit=commit, bunker_uri=bunker_uri,
                     owner_secret_key_hex=owner_sk, expected_service_pubkey=service_pk,
+                    expected_bunker_pubkey=bunker_pk,
                     epoch=lease["epoch"], expires_at=expiry.isoformat().replace("+00:00", "Z"))) + "\n")
                 test_env = env.copy()
                 test_env["BAHIA_SIGNET_INTEROP_CONFIG"] = str(fixture)
                 result = subprocess.run(["go", "test", "-tags", "signetinterop",
-                    "./internal/adapters/signet", "-run", "^TestLiveSignetEpochNIP44AndSBOMDSSE$",
-                    "-count=1", "-v"], cwd=bahia, env=test_env, text=True, capture_output=True)
+                    "./internal/adapters/signet", "-run", f"^{LIVE_TEST}$",
+                    "-count=1", "-json"], cwd=bahia, env=test_env, text=True, capture_output=True)
                 # The Go test may print errors containing its fixture URI. Do not echo raw logs.
                 if result.returncode:
                     locations = re.findall(r"epoch_interop_integration_test\.go:(\d+)",
                                            result.stdout + result.stderr)
                     location = f" at test line {locations[0]}" if locations else ""
                     raise RuntimeError(f"Bahia live NIP-46 interop test failed{location}; private output withheld")
+                require_live_test_pass(result.stdout)
                 print("PASS: Bahia live authenticated NIP-46 epoch NIP-44 and DSSE interop on disposable loopback Signet")
         finally:
             for process in reversed(processes):
