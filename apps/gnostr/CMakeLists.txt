@@ -665,7 +665,8 @@ if (BUILD_TESTING)
     src/ui/gnostr-avatar-cache.c
     src/ui/gnostr-image-viewer.c
     src/ui/gnostr-video-player.c
-    src/ui/og-preview-widget.c
+    src/services/gnostr-og-provider.c
+    src/ui/gnostr-og-activate.c
     src/util/custom_emoji.c
     src/util/imeta.c
     src/util/nip03_opentimestamps.c
@@ -1431,7 +1432,8 @@ if (BUILD_TESTING)
   if (SOUP3_FOUND)
     add_executable(gnostr-test-media-service
       tests/test_media_service.c
-      src/services/gnostr-media-service.c)
+      src/services/gnostr-media-service.c
+      src/services/gnostr-og-provider.c)
     target_compile_features(gnostr-test-media-service PRIVATE c_std_11)
     target_compile_definitions(gnostr-test-media-service PRIVATE
       HAVE_SOUP3=1
@@ -1442,7 +1444,7 @@ if (BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/src/util
       ${PROJECT_ROOT}/libnostr/include)
     target_link_libraries(gnostr-test-media-service PRIVATE
-      PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::GIO PkgConfig::SOUP3)
+      PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::GIO PkgConfig::SOUP3 nostr_gtk_portable)
     if (GSTREAMER_FOUND)
       target_link_libraries(gnostr-test-media-service PRIVATE PkgConfig::GSTREAMER)
       target_compile_definitions(gnostr-test-media-service PRIVATE

@@ -29,7 +29,7 @@ static void on_close_clicked(GtkButton *button, gpointer user_data) {
     webkit_web_view_load_uri(self->webview, "about:blank");
   }
 
-  /* Hide self — parent (OgPreviewWidget) will show OG card instead */
+  /* Hide self — parent (the link preview card) will show OG card instead */
   gtk_widget_set_visible(GTK_WIDGET(self), FALSE);
 }
 

@@ -2,7 +2,6 @@
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 
 /* Child widgets (implementations provided by app at link time) */
-#include "og-preview-widget.h"
 #include "gnostr-label-guard.h"
 #include "gnostr-image-viewer.h"
 #include "gnostr-video-player.h"
@@ -166,7 +165,7 @@ struct _NostrGtkNoteCardRow {
   char *parent_pubkey;
   gint64 created_at;
   guint timestamp_timer_id;
-  OgPreviewWidget *og_preview;
+  GnOgPreviewCard *og_preview;
   /* NIP-21 embedded note widget */
   GnostrNoteEmbed *note_embed;
   /* NIP-05 verification state */
@@ -374,6 +373,28 @@ enum {
 };
 static guint signals[N_SIGNALS];
 
+/* nostrc-8xfib.3: link previews are nostr-gtk's GnOgPreviewCard; the
+ * application configures each one (provider, auto-load, activation). */
+static NostrGtkLinkPreviewSetupFunc link_preview_setup;
+static gpointer link_preview_setup_data;
+
+void
+nostr_gtk_note_card_row_set_link_preview_setup(NostrGtkLinkPreviewSetupFunc func,
+                                               gpointer user_data)
+{
+  link_preview_setup = func;
+  link_preview_setup_data = user_data;
+}
+
+static GnOgPreviewCard *
+new_link_preview(const char *url)
+{
+  GnOgPreviewCard *card = gn_og_preview_card_new();
+  if (link_preview_setup)
+    link_preview_setup(card, url, link_preview_setup_data);
+  return card;
+}
+
 static void reset_rich_frame_pool(NostrGtkNoteCardRow *self,
                                   gboolean drop_frames);
 
@@ -382,8 +403,8 @@ quiesce_rich_label_widget_tree(GtkWidget *widget)
 {
   if (!widget) return;
 
-  if (OG_IS_PREVIEW_WIDGET(widget)) {
-    og_preview_widget_prepare_for_unbind(OG_PREVIEW_WIDGET(widget));
+  if (GN_IS_OG_PREVIEW_CARD(widget)) {
+    gn_og_preview_card_prepare_for_unbind(GN_OG_PREVIEW_CARD(widget));
     return;
   }
   if (GNOSTR_IS_NOTE_EMBED(widget)) {
@@ -1979,7 +2000,7 @@ nostr_gtk_note_card_row_maybe_emit_measured_geometry(NostrGtkNoteCardRow *self,
  * their intrinsic pixel dimensions as natural size (often 1200+ px for images).
  * Without clamping, the GtkListView grows to accommodate the largest natural
  * width, making the timeline fill the entire screen.  Same pattern as
- * og_preview_widget_measure (nostrc-14wu). */
+ * gnostr's former OG preview widget measure (nostrc-14wu). */
 typedef struct {
   GtkLayoutManager parent_instance;
 } NostrGtkNoteCardLayout;
@@ -3852,10 +3873,10 @@ void nostr_gtk_note_card_row_set_content_rendered(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
     if (render->first_og_url) {
-      self->og_preview = og_preview_widget_new();
+      self->og_preview = new_link_preview(render->first_og_url);
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
-      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
+      gn_og_preview_card_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
 }
@@ -4380,12 +4401,12 @@ start_rich_slot_realization(gpointer user_data)
                                fixed->reserved_height);
       break;
     case GN_CONTENT_DESCRIPTOR_LINK_PREVIEW: {
-      OgPreviewWidget *preview = og_preview_widget_new();
+      GnOgPreviewCard *preview = new_link_preview(descriptor->url);
       gtk_widget_set_hexpand(GTK_WIDGET(preview), TRUE);
       gtk_widget_set_vexpand(GTK_WIDGET(preview), TRUE);
       fixed_rich_frame_set_child(frame, GTK_WIDGET(preview));
       self->og_preview = preview;
-      og_preview_widget_set_url_with_cancellable(
+      gn_og_preview_card_set_url_with_cancellable(
         preview, descriptor->url, self->async_cancellable);
       break;
     }
@@ -4771,10 +4792,10 @@ void nostr_gtk_note_card_row_apply_deferred_content(NostrGtkNoteCardRow *self,
     gtk_widget_set_visible(self->og_preview_container, FALSE);
 
     if (render->first_og_url && remote_media_loading_enabled()) {
-      self->og_preview = og_preview_widget_new();
+      self->og_preview = new_link_preview(render->first_og_url);
       gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
       gtk_widget_set_visible(self->og_preview_container, TRUE);
-      og_preview_widget_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
+      gn_og_preview_card_set_url_with_cancellable(self->og_preview, render->first_og_url, self->async_cancellable);
     }
   }
 }
@@ -5209,11 +5230,11 @@ void nostr_gtk_note_card_row_set_content_with_imeta(NostrGtkNoteCardRow *self, c
         }
       }
       if (url_start) {
-        self->og_preview = og_preview_widget_new();
+        self->og_preview = new_link_preview(url_start);
         gtk_box_append(GTK_BOX(self->og_preview_container), GTK_WIDGET(self->og_preview));
         gtk_widget_set_visible(self->og_preview_container, TRUE);
         /* Use parent's cancellable for lifecycle management */
-        og_preview_widget_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
+        gn_og_preview_card_set_url_with_cancellable(self->og_preview, url_start, self->async_cancellable);
       }
       if (tokens) g_strfreev(tokens);
     }

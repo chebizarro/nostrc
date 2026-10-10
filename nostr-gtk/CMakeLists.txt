@@ -45,6 +45,8 @@ pkg_check_modules(GOBJECT2 REQUIRED IMPORTED_TARGET gobject-2.0>=2.70)
 pkg_check_modules(GIO2     REQUIRED IMPORTED_TARGET gio-2.0>=2.70)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(SOUP3    QUIET    IMPORTED_TARGET libsoup-3.0)
+# Shared Open Graph <head> parser (gn-og-metadata.c, nostrc-8xfib.3).
+pkg_check_modules(NOSTR_GTK_LIBXML2 REQUIRED IMPORTED_TARGET libxml-2.0)
 
 # ── Version header (configure from template) ─────────────────────────
 set(NOSTR_GTK_PUBLIC_VERSION_HEADER
@@ -155,6 +157,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
+  include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
@@ -168,6 +171,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
+  include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
@@ -179,6 +183,8 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-markdown-pango.c
   src/gn-nostr-reference.c
   src/gn-og-preview-card.c
+  src/gn-og-metadata.c
+  src/gn-og-preview-provider.c
   src/gn-media-viewer.c
   src/gn-animated-image.c
   src/gn-nip34-issue-fields.c
@@ -236,7 +242,7 @@ target_include_directories(nostr_gtk_portable PUBLIC
 target_link_libraries(nostr_gtk_portable PUBLIC
   PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2
   PkgConfig::GOBJECT2 PkgConfig::GIO2
-  PRIVATE nostr_gobject PkgConfig::JSON_GLIB)
+  PRIVATE nostr_gobject PkgConfig::JSON_GLIB PkgConfig::NOSTR_GTK_LIBXML2)
 # nip19 (and, through nostr_gobject, libnostr) are static archives its
 # executable already holds; see NOSTRC_ARCHIVES_FROM_EXECUTABLE.
 nostrc_link_archives(nostr_gtk_portable PRIVATE nip19)
@@ -459,7 +465,7 @@ Name: nostr-gtk-portable-1.0
 Description: App-independent Nostr parsing and GTK widgets
 Version: ${NOSTR_GTK_VERSION}
 Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1
-Requires.private: nostr-gobject-1.0
+Requires.private: nostr-gobject-1.0 libxml-2.0
 Libs: -L\${libdir} -lnostr-gtk-portable-1.0
 Libs.private: -lnip19 -lnostr
 Cflags: -I\${includedir}
@@ -516,6 +522,16 @@ if(BUILD_TESTING)
     SOURCES tests/test_markdown_pango.c
     LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2
   )
+
+  # nostrc-8xfib.3: shared OG parser (no display) and provider-driven card.
+  gn_add_gtest(test_nostr_gtk_og_metadata
+    SOURCES tests/test_og_metadata.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2)
+  gn_add_gtest_xvfb(test_nostr_gtk_og_preview_card
+    SOURCES tests/test_og_preview_card.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2)
+  target_include_directories(test_nostr_gtk_og_preview_card PRIVATE ${PROJECT_ROOT}/tests/common)
+  set_tests_properties(test_nostr_gtk_og_preview_card PROPERTIES SKIP_RETURN_CODE 77)
 
   if (TARGET nostr-gtk-i18n)
   gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n

@@ -13,6 +13,7 @@
  */
 
 #include <gtk/gtk.h>
+#include <nostr-gtk-1.0/gn-og-preview-card.h>
 
 G_BEGIN_DECLS
 
@@ -488,6 +489,21 @@ guint64 nostr_gtk_note_card_row_get_binding_id(NostrGtkNoteCardRow *self);
 typedef struct _NoteCardBindingContext NoteCardBindingContext;
 #endif
 NoteCardBindingContext *nostr_gtk_note_card_row_get_binding_ctx(NostrGtkNoteCardRow *self);
+
+/**
+ * NostrGtkLinkPreviewSetupFunc:
+ * @card: a new link-preview card, not yet given its URL
+ * @url: the link it will show
+ *
+ * Lets the application give a card its provider, layout, auto-load policy
+ * and activation handler before the row sets the URL (nostrc-8xfib.3).
+ * Without one, cards only offer an explicit, signal-only "Load preview".
+ * Since: 1.2
+ */
+typedef void (*NostrGtkLinkPreviewSetupFunc)(GnOgPreviewCard *card, const char *url,
+                                             gpointer user_data);
+void nostr_gtk_note_card_row_set_link_preview_setup(NostrGtkLinkPreviewSetupFunc func,
+                                                    gpointer user_data);
 
 G_END_DECLS
 #endif /* NOSTR_GTK_NOSTR_NOTE_CARD_ROW_H */
