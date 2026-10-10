@@ -26,6 +26,7 @@ static GtkWidget *text_row(GnNip34IssueFields *self, const char *label) {
   gtk_box_append(GTK_BOX(box), view);
   /* The title labels the field for assistive technologies (labelled-by). */
   gtk_label_set_mnemonic_widget(GTK_LABEL(gtk_widget_get_first_child(box)), view);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(view), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   return view;
 }
 static GtkWidget *entry_row(GnNip34IssueFields *self, const char *label) {
@@ -34,6 +35,7 @@ static GtkWidget *entry_row(GnNip34IssueFields *self, const char *label) {
   gtk_box_append(GTK_BOX(box), entry);
   /* The title labels the field for assistive technologies (labelled-by). */
   gtk_label_set_mnemonic_widget(GTK_LABEL(gtk_widget_get_first_child(box)), entry);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(entry), GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   return entry;
 }
 static void gn_nip34_issue_fields_init(GnNip34IssueFields *self) {
@@ -45,6 +47,7 @@ static void gn_nip34_issue_fields_init(GnNip34IssueFields *self) {
   self->labels = entry_row(self, _("Labels (comma-separated)"));
   self->commits = entry_row(self, _("Related commits"));
   self->attachments = entry_row(self, _("Attachment URLs (manual references only)"));
+  gtk_widget_set_name(self->labels, "labels_entry");
 }
 GnNip34IssueFields *gn_nip34_issue_fields_new(void) {
   return g_object_new(GN_TYPE_NIP34_ISSUE_FIELDS, NULL);
@@ -55,11 +58,16 @@ static gchar *text(GtkWidget *view) {
   gtk_text_buffer_get_bounds(buffer, &start, &end);
   return gtk_text_buffer_get_text(buffer, &start, &end, FALSE);
 }
-void gn_nip34_issue_fields_snapshot_free(GnNip34IssueFieldsSnapshot *s) {
-  if (!s) return;
-  g_free(s->steps); g_free(s->expected); g_free(s->actual);
-  g_free(s->labels); g_free(s->related_commits); g_free(s->attachment_urls);
-  g_free(s);
+void gn_nip34_issue_fields_add_label(GnNip34IssueFields *self, const char *label) {
+  g_return_if_fail(GN_IS_NIP34_ISSUE_FIELDS(self));
+  if (!label || !*label) return;
+  const char *current = gtk_editable_get_text(GTK_EDITABLE(self->labels));
+  g_auto(GStrv) parts = g_strsplit(current, ",", -1);
+  for (guint i = 0; parts[i]; i++)
+    if (g_str_equal(g_strstrip(parts[i]), label)) return;
+  g_autofree char *trimmed = g_strstrip(g_strdup(current));
+  g_autofree char *updated = *trimmed ? g_strdup_printf("%s, %s", trimmed, label) : g_strdup(label);
+  gtk_editable_set_text(GTK_EDITABLE(self->labels), updated);
 }
 GnNip34IssueFieldsSnapshot *gn_nip34_issue_fields_snapshot(GnNip34IssueFields *self) {
   g_return_val_if_fail(GN_IS_NIP34_ISSUE_FIELDS(self), NULL);

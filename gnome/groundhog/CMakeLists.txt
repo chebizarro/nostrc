@@ -44,7 +44,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
   gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
-  gh-add-contact-dialog gh-issue-dialog
+  gh-add-contact-dialog
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
@@ -3457,8 +3457,8 @@ foreach(_gdk_frame_test
   endif()
 endforeach()
 
-# NIP-34 reports share gnostr's libnip34 builder; no new protocol implementation.
-# The structured fields come from the portable nostr-gtk issue-fields widget.
+# NIP-34 reports use the portable nostr-gtk issue form shared with gnostr
+# (nostrc-8xfib.5); Groundhog supplies only its publisher adapter.
 if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   if (NOT TARGET nip34)
     # Groundhog links nip34 statically; its headers and archive are not part
@@ -3470,7 +3470,7 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
       add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
     endif()
   endif()
-  add_library(groundhog-issue STATIC src/ui/gh-issue-dialog.c)
+  add_library(groundhog-issue STATIC src/ui/gh-issue-adapters.c)
   target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
   target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup nip34 groundhog-diagnostics
     NostrGtk::Portable PkgConfig::GROUNDHOG_DEPS)

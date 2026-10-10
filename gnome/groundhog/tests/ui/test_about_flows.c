@@ -1,6 +1,7 @@
 #include "gh-about-dialog.h"
 #include "gh-new-message-dialog.h"
-#include "gh-issue-dialog.h"
+#include "gh-issue-adapters.h"
+#include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
 #include "gh-diagnostics.h"
 #include "gh-conversation-list.h"
 #include "gh-test-signer.h"
@@ -142,11 +143,24 @@ static gboolean active(gpointer data) {
 }
 
 static GtkWidget *
-child(GhIssueDialog *dialog, const char *name)
+find_named(GtkWidget *root, const char *name)
 {
-  GObject *object = gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_ISSUE_DIALOG, name);
-  g_assert_nonnull(object);
-  return GTK_WIDGET(object);
+  if (g_strcmp0(gtk_widget_get_name(root), name) == 0)
+    return root;
+  for (GtkWidget *c = gtk_widget_get_first_child(root); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = find_named(c, name);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static GtkWidget *
+child(GnNip34IssueView *dialog, const char *name)
+{
+  GtkWidget *widget = find_named(GTK_WIDGET(dialog), name);
+  g_assert_nonnull(widget);
+  return widget;
 }
 
 typedef struct {
@@ -226,100 +240,11 @@ fields_new(const char *steps, const char *labels, const char *commits, const cha
   return fields;
 }
 
-static void
-draft_rejected(const char *title, const char *description,
-               const GnNip34IssueFieldsSnapshot *fields, const char *diagnostics)
-{
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GhIssueDraft) draft = gh_issue_draft_new(title, description, fields, diagnostics, &error);
-  g_assert_null(draft);
-  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA);
-}
-
 static const char *const RICH_BODY =
   "Crash on open.\n\n## Steps to Reproduce\n\n1. Open\n2. Click"
   "\n\n## Expected Result\n\nIt opens.\n\n## Actual Result\n\nIt crashes."
   "\n\n## Attachments\n\n- https://example.org/shot.png\n- http://example.net/log.txt"
   "\n\n## Related commits\n\n- `abcdef0123456789abcdef0123456789abcdef01`\n- `" COMMIT64 "`";
-
-static void
-test_issue_draft(void)
-{
-  g_autoptr(GnNip34IssueFieldsSnapshot) fields = fields_new(
-    "\n1. Open\n2. Click\n", " ui, crash ,bug,, ui",
-    COMMIT40 ", " COMMIT64 "\nabcdef0123456789abcdef0123456789abcdef01",
-    "https://example.org/shot.png, http://example.net/log.txt https://example.org/shot.png");
-  g_autoptr(GError) error = NULL;
-  g_autoptr(GhIssueDraft) draft = gh_issue_draft_new("  A title ", "  Crash on open.  \n", fields, DIAG, &error);
-  g_assert_no_error(error);
-  g_assert_cmpstr(draft->title, ==, "A title");
-  g_autofree char *expected = g_strconcat(RICH_BODY, "\n\n## Local diagnostics\n\n```text\n", DIAG, "```", NULL);
-  g_assert_cmpstr(draft->body, ==, expected);
-  const char *labels[] = { "bug", "groundhog", "ui", "crash", NULL };
-  g_assert_true(g_strv_equal((const char *const *)draft->labels, labels));
-
-  /* The unsigned event carries the assembled body; commits are body text, never e tags. */
-  g_autofree char *pk = gh_test_pub(1);
-  g_autofree char *json = gh_issue_draft_to_unsigned_json(draft, pk);
-  NostrEvent *event = nostr_event_new();
-  g_assert_cmpint(nostr_event_deserialize_compact(event, json, NULL), ==, 1);
-  g_assert_cmpint(nostr_event_get_kind(event), ==, NIP34_KIND_ISSUE);
-  g_assert_cmpstr(nostr_event_get_content(event), ==, expected);
-  tag_is(event, "l", "ui");
-  tag_is(event, "t", "crash");
-  const NostrTags *tags = nostr_event_get_tags(event);
-  for (gsize i = 0; i < nostr_tags_size(tags); i++)
-    g_assert_cmpstr(nostr_tag_get(nostr_tags_get(tags, i), 0), !=, "e");
-  g_assert_cmpuint(nostr_tags_size(tags), ==, 13);
-  nostr_event_free(event);
-
-  /* Same input, same canonical draft; any edit differs. */
-  g_autoptr(GhIssueDraft) again = gh_issue_draft_new("A title", "Crash on open.", fields, DIAG, NULL);
-  g_assert_true(gh_issue_draft_equal(draft, again));
-  g_autoptr(GhIssueDraft) without = gh_issue_draft_new("A title", "Crash on open.", fields, NULL, NULL);
-  g_assert_false(gh_issue_draft_equal(draft, without));
-  g_assert_null(strstr(without->body, "diagnostics"));
-
-  /* Plain report: description only, built-in labels. */
-  g_autoptr(GhIssueDraft) plain = gh_issue_draft_new("T", "Body", NULL, NULL, NULL);
-  g_assert_cmpstr(plain->body, ==, "Body");
-  const char *builtin[] = { "bug", "groundhog", NULL };
-  g_assert_true(g_strv_equal((const char *const *)plain->labels, builtin));
-
-  draft_rejected("", "Body", NULL, NULL);
-  draft_rejected("T", " \n ", NULL, NULL);
-  g_autofree char *title640 = g_strnfill(640, 't');
-  g_autofree char *title641 = g_strnfill(641, 't');
-  g_autoptr(GhIssueDraft) long_title = gh_issue_draft_new(title640, "Body", NULL, NULL, NULL);
-  g_assert_nonnull(long_title);
-  draft_rejected(title641, "Body", NULL, NULL);
-
-  g_autoptr(GnNip34IssueFieldsSnapshot) spaced = fields_new(NULL, "two words", NULL, NULL);
-  draft_rejected("T", "Body", spaced, NULL);
-  g_autoptr(GnNip34IssueFieldsSnapshot) many = fields_new(NULL,
-    "a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q", NULL, NULL);
-  draft_rejected("T", "Body", many, NULL);
-  g_autoptr(GnNip34IssueFieldsSnapshot) short_commit = fields_new(NULL, NULL, "abc1234", NULL);
-  draft_rejected("T", "Body", short_commit, NULL);
-  g_autoptr(GnNip34IssueFieldsSnapshot) file_url = fields_new(NULL, NULL, NULL, "file:///home/me/log.txt");
-  draft_rejected("T", "Body", file_url, NULL);
-  g_autoptr(GnNip34IssueFieldsSnapshot) credentials = fields_new(NULL, NULL, NULL, "https://me:pw@example.org/x");
-  draft_rejected("T", "Body", credentials, NULL);
-  g_autofree char *diag8001 = g_strnfill(8001, 'd');
-  draft_rejected("T", "Body", NULL, diag8001);
-
-  /* The assembled body is limited, not its parts, and nothing is trimmed. */
-  g_autofree char *body16000 = g_strnfill(16000, 'b');
-  g_autoptr(GhIssueDraft) full = gh_issue_draft_new("T", body16000, NULL, NULL, NULL);
-  g_assert_cmpuint(strlen(full->body), ==, 16000);
-  g_autofree char *body16001 = g_strnfill(16001, 'b');
-  draft_rejected("T", body16001, NULL, NULL);
-  g_autofree char *body15000 = g_strnfill(15000, 'b');
-  g_autofree char *diag1000 = g_strnfill(1000, 'd');
-  g_autoptr(GhIssueDraft) fits = gh_issue_draft_new("T", body15000, NULL, NULL, NULL);
-  g_assert_nonnull(fits);
-  draft_rejected("T", body15000, NULL, diag1000);
-}
 
 static gboolean held(gpointer data) { return ((GhTestSigner *)data)->held->len == 1; }
 
@@ -373,8 +298,10 @@ test_issue_consent(gconstpointer data)
   g_settings_set_strv(settings, "discovery-relays", relays);
   GtkWindow *window = GTK_WINDOW(adw_window_new());
   gtk_window_present(window);
-  GhIssueDialog *dialog = gh_issue_dialog_new(accounts, settings);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
+  /* The factory returns the portable nostr-gtk form with Groundhog services. */
+  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings);
+  g_assert_true(GN_IS_NIP34_ISSUE_VIEW(dialog));
+  gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
   gtk_editable_set_text(GTK_EDITABLE(child(dialog, "title_row")), "<Test title>");
   gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(child(dialog, "body_view"))),
                            body, -1);
@@ -383,7 +310,8 @@ test_issue_consent(gconstpointer data)
   /* Off for every new issue, even with collection enabled. */
   g_assert_false(gtk_check_button_get_active(include));
   g_assert_false(gtk_widget_get_visible(appendix));
-  g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(include)) == (mode == 3));
+  /* Offered only when diagnostics collection is on. */
+  g_assert_true(gtk_widget_get_visible(gtk_widget_get_parent(GTK_WIDGET(include))) == (mode == 3));
   if (mode == 3) {
     gn_nip34_issue_fields_set_snapshot(GN_NIP34_ISSUE_FIELDS(child(dialog, "issue_fields")), fields);
     gtk_check_button_set_active(include, TRUE);
@@ -402,7 +330,7 @@ test_issue_consent(gconstpointer data)
   if (mode == 3) {
     g_assert_nonnull(strstr(preview, "l: ui, " NIP34_ISSUE_LABEL_NAMESPACE "\n"));
     g_assert_nonnull(strstr(preview, "t: crash\n"));
-    g_assert_nonnull(strstr(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(alert)), "local diagnostics"));
+    g_assert_nonnull(strstr(adw_alert_dialog_get_body(ADW_ALERT_DIALOG(alert)), "Local diagnostics"));
   }
   g_assert_nonnull(strstr(preview, url));
   g_assert_nonnull(strstr(preview, pk));
@@ -518,5 +446,4 @@ gh_test_about_flows_register(void)
   g_test_add_data_func("/groundhog/about/issue-account-changed", GINT_TO_POINTER(1), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-close-signing", GINT_TO_POINTER(2), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-fields-diagnostics", GINT_TO_POINTER(3), test_issue_consent);
-  g_test_add_func("/groundhog/about/issue-draft", test_issue_draft);
 }
