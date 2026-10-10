@@ -668,7 +668,6 @@ if (BUILD_TESTING)
     src/util/custom_emoji.c
     src/util/imeta.c
     src/util/nip03_opentimestamps.c
-    src/util/nip21_uri.c
     src/util/nip32_labels.c
     src/util/nip48_proxy.c
     src/util/nip71.c
@@ -958,7 +957,7 @@ if (BUILD_TESTING)
   target_compile_definitions(gnostr-test-nostr-target PRIVATE
     GNOSTR_DESKTOP_FILE="${CMAKE_CURRENT_SOURCE_DIR}/data/org.gnostr.gnostr.desktop")
   target_link_libraries(gnostr-test-nostr-target PRIVATE
-    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json nostrc-test-bus)
+    PkgConfig::GLIB PkgConfig::GIO nostr_gtk_portable nostr_gobject nostr_json nostrc-test-bus)
   _gnostr_apply_sanitizers(gnostr-test-nostr-target)
   add_test(NAME gnostr-test-nostr-target COMMAND gnostr-test-nostr-target)
   set_tests_properties(gnostr-test-nostr-target PROPERTIES

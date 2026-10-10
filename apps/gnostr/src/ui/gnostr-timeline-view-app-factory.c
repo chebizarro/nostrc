@@ -1343,8 +1343,10 @@ bind_row_common(NostrGtkTimelineView *self,
             if (orig_evt) nostr_event_free(orig_evt);
             } else {
               /* Original note not in local storage - request embed fetch */
-              g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", reposted_id);
-              g_signal_emit_by_name(row, "request-embed", nostr_uri);
+              /* nostrc-8xfib.6: a real NIP-19 note, not "note1" + hex. */
+              g_autofree gchar *nostr_uri = gn_nostr_reference_build_event(reposted_id, NULL, -1, NULL);
+              if (nostr_uri)
+                g_signal_emit_by_name(row, "request-embed", nostr_uri);
             }
           }
         }
@@ -1438,8 +1440,10 @@ bind_row_common(NostrGtkTimelineView *self,
           free(quoted_json);
           } else {
             /* Quoted note not in local storage — request async fetch via embed mechanism */
-            g_autofree gchar *nostr_uri = g_strdup_printf("nostr:note1%s", quoted_id);
-            g_signal_emit_by_name(row, "request-embed", nostr_uri);
+            /* nostrc-8xfib.6: a real NIP-19 note, not "note1" + hex. */
+            g_autofree gchar *nostr_uri = gn_nostr_reference_build_event(quoted_id, NULL, -1, NULL);
+            if (nostr_uri)
+              g_signal_emit_by_name(row, "request-embed", nostr_uri);
           }
         }
       }

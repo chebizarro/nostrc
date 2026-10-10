@@ -6,9 +6,7 @@
  */
 #include "gnostr-nostr-target.h"
 
-#include <nostr-gobject-1.0/nostr_nip19.h>
-#include <nostr-event.h>
-#include <nostr-tag.h>
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <string.h>
 
 G_DEFINE_QUARK(gnostr-nostr-target-error-quark, gnostr_nostr_target_error)
@@ -58,29 +56,6 @@ gnostr_nostr_declared_kinds(gsize *n_kinds)
 
 /* ---- URI parsing ----------------------------------------------------- */
 
-static gboolean
-is_hex64(const char *s)
-{
-  if (!s || strlen(s) != 64)
-    return FALSE;
-  for (const char *p = s; *p; p++)
-    if (!g_ascii_isxdigit(*p))
-      return FALSE;
-  return TRUE;
-}
-
-static char **
-relays_dup(GNostrNip19 *n19)
-{
-  const gchar *const *relays = gnostr_nip19_get_relays(n19);
-  GPtrArray *out = g_ptr_array_new();
-  for (gsize i = 0; relays && relays[i]; i++)
-    if (*relays[i])
-      g_ptr_array_add(out, g_strdup(relays[i]));
-  g_ptr_array_add(out, NULL);
-  return (char **)g_ptr_array_free(out, FALSE);
-}
-
 void
 gnostr_nostr_target_free(GnostrNostrTarget *target)
 {
@@ -93,6 +68,22 @@ gnostr_nostr_target_free(GnostrNostrTarget *target)
   g_free(target);
 }
 
+static GnostrNostrTargetError
+target_error_code(const GError *error)
+{
+  if (error && error->domain == GN_NOSTR_REFERENCE_ERROR) {
+    switch (error->code) {
+      case GN_NOSTR_REFERENCE_ERROR_REFUSED:     return GNOSTR_NOSTR_TARGET_ERROR_REFUSED;
+      case GN_NOSTR_REFERENCE_ERROR_UNSUPPORTED: return GNOSTR_NOSTR_TARGET_ERROR_UNSUPPORTED;
+      default: break;
+    }
+  }
+  return GNOSTR_NOSTR_TARGET_ERROR_INVALID;
+}
+
+/* The dispatcher / org.nostr.Handler1 boundary: accept web+nostr:, drop the
+ * query string and fragment, then decode with the shared nostr-gtk parser
+ * (gn_nostr_reference_parse_full), which owns the NIP-19 rules. */
 GnostrNostrTarget *
 gnostr_nostr_target_parse(const char *uri, GError **error)
 {
@@ -112,95 +103,48 @@ gnostr_nostr_target_parse(const char *uri, GError **error)
                 "Not a NIP-21 nostr: link");
     return NULL;
   }
+  g_autofree char *entity = g_strndup(bech32, strcspn(bech32, "?#"));
 
-  /* Bech32 is case-insensitive but must not be mixed-case; NIP-19
-   * entities are lowercase in practice. Stop at query/fragment. */
-  gsize len = strcspn(bech32, "?#");
-  g_autofree char *entity = g_ascii_strdown(bech32, (gssize)len);
-
-  if (g_str_has_prefix(entity, "nsec1") || g_str_has_prefix(entity, "ncryptsec1")) {
-    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_REFUSED,
-                "Refusing to open a private key link");
-    return NULL;
-  }
-
-  g_autoptr(GError) dec_err = NULL;
-  g_autoptr(GNostrNip19) n19 = gnostr_nip19_decode(entity, &dec_err);
-  if (!n19) {
-    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_INVALID,
-                "Invalid nostr: link: %s", dec_err ? dec_err->message : "cannot decode");
+  g_autoptr(GError) ref_error = NULL;
+  g_autoptr(GnNostrReference) ref = gn_nostr_reference_parse_full(entity, &ref_error);
+  if (!ref) {
+    GnostrNostrTargetError code = target_error_code(ref_error);
+    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, code, "%s",
+                code == GNOSTR_NOSTR_TARGET_ERROR_REFUSED ?
+                  "Refusing to open a private key link" :
+                code == GNOSTR_NOSTR_TARGET_ERROR_UNSUPPORTED ?
+                  "GNostr does not open this kind of nostr: link" :
+                  ref_error ? ref_error->message : "Invalid nostr: link");
     return NULL;
   }
 
   GnostrNostrTarget *t = g_new0(GnostrNostrTarget, 1);
-  t->kind = -1;
-  switch (gnostr_nip19_get_entity_type(n19)) {
-    case GNOSTR_BECH32_NPUB:
-    case GNOSTR_BECH32_NPROFILE:
+  switch (ref->type) {
+    case GN_NOSTR_REFERENCE_PERSON:
       t->type = GNOSTR_NOSTR_TARGET_PROFILE;
-      t->pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
+      t->pubkey_hex = g_strdup(ref->author);
       t->kind = 0;
       break;
-    case GNOSTR_BECH32_NOTE:
-    case GNOSTR_BECH32_NEVENT: {
+    case GN_NOSTR_REFERENCE_EVENT:
       t->type = GNOSTR_NOSTR_TARGET_EVENT;
-      t->event_id_hex = g_strdup(gnostr_nip19_get_event_id(n19));
-      const char *author = gnostr_nip19_get_author(n19);
-      if (is_hex64(author))
-        t->pubkey_hex = g_ascii_strdown(author, -1);
-      /* libnostr decodes a missing kind TLV as 0; profiles are linked as
-       * npub/nprofile, so a nevent "kind 0" means "kind unknown". */
-      int k = gnostr_nip19_get_kind(n19);
-      t->kind = k > 0 ? k : -1;
+      t->event_id_hex = g_strdup(ref->id);
+      t->pubkey_hex = g_strdup(ref->author);
+      t->kind = ref->kind;
       break;
-    }
-    case GNOSTR_BECH32_NADDR: {
+    case GN_NOSTR_REFERENCE_ADDRESS:
+    default:
       t->type = GNOSTR_NOSTR_TARGET_ADDRESS;
-      t->pubkey_hex = g_strdup(gnostr_nip19_get_pubkey(n19));
-      t->kind = gnostr_nip19_get_kind(n19);
-      const char *d = gnostr_nip19_get_identifier(n19);
-      t->d_tag = g_strdup(d ? d : "");
-      break;
-    }
-    case GNOSTR_BECH32_NRELAY:
-    default:
-      g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_UNSUPPORTED,
-                  "GNostr does not open this kind of nostr: link");
-      gnostr_nostr_target_free(t);
-      return NULL;
-  }
-  t->relays = relays_dup(n19);
-
-  gboolean ok;
-  switch (t->type) {
-    case GNOSTR_NOSTR_TARGET_PROFILE:
-      ok = is_hex64(t->pubkey_hex);
-      break;
-    case GNOSTR_NOSTR_TARGET_EVENT:
-      ok = is_hex64(t->event_id_hex);
-      break;
-    case GNOSTR_NOSTR_TARGET_ADDRESS:
-    default:
-      ok = is_hex64(t->pubkey_hex) && t->kind >= 0 && t->kind <= 65535;
+      t->pubkey_hex = g_strdup(ref->author);
+      t->kind = ref->kind;
+      t->d_tag = g_strdup(ref->id ? ref->id : "");
       break;
   }
-  if (!ok) {
-    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_INVALID,
-                "Invalid nostr: link: missing id or author");
-    gnostr_nostr_target_free(t);
-    return NULL;
-  }
-  /* Normalize hex to lowercase for comparisons. */
-  if (t->pubkey_hex) {
-    char *lower = g_ascii_strdown(t->pubkey_hex, -1);
-    g_free(t->pubkey_hex);
-    t->pubkey_hex = lower;
-  }
-  if (t->event_id_hex) {
-    char *lower = g_ascii_strdown(t->event_id_hex, -1);
-    g_free(t->event_id_hex);
-    t->event_id_hex = lower;
-  }
+  GPtrArray *relays = g_ptr_array_new();
+  for (gsize i = 0; ref->relay_hints && ref->relay_hints[i]; i++)
+    if (*ref->relay_hints[i])
+      g_ptr_array_add(relays, g_strdup(ref->relay_hints[i]));
+  g_ptr_array_add(relays, NULL);
+  t->relays = (char **)g_ptr_array_free(relays, FALSE);
   return t;
 }
 
@@ -217,55 +161,22 @@ gnostr_nostr_event_info_free(GnostrNostrEventInfo *info)
   g_free(info);
 }
 
-static char *
-first_d_tag(NostrEvent *ev)
-{
-  NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
-  gsize n = tags ? nostr_tags_size(tags) : 0;
-  for (gsize i = 0; i < n; i++) {
-    NostrTag *tag = nostr_tags_get(tags, i);
-    if (!tag || nostr_tag_size(tag) < 2)
-      continue;
-    const char *key = nostr_tag_get(tag, 0);
-    if (key && strcmp(key, "d") == 0) {
-      const char *v = nostr_tag_get(tag, 1);
-      return g_strdup(v ? v : "");
-    }
-  }
-  return NULL;
-}
-
 GnostrNostrEventInfo *
 gnostr_nostr_event_parse(const char *event_json, GError **error)
 {
-  if (!event_json || !*event_json) {
+  g_autoptr(GError) ref_error = NULL;
+  g_autoptr(GnNostrEventInfo) verified = gn_nostr_event_parse(event_json, &ref_error);
+  if (!verified) {
     g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_INVALID,
-                "Empty event");
-    return NULL;
-  }
-  NostrEvent *ev = nostr_event_new();
-  if (!ev) {
-    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_INVALID,
-                "Out of memory");
-    return NULL;
-  }
-  char id[65] = { 0 };
-  NostrEventValidationStatus st = nostr_event_deserialize_signed(ev, event_json, NULL);
-  if (st == NOSTR_EVENT_VALIDATION_OK)
-    st = nostr_event_validate(ev, id);
-  if (st != NOSTR_EVENT_VALIDATION_OK) {
-    g_set_error(error, GNOSTR_NOSTR_TARGET_ERROR, GNOSTR_NOSTR_TARGET_ERROR_INVALID,
-                "Invalid event: %s", nostr_event_validation_status_string(st));
-    nostr_event_free(ev);
+                "%s", ref_error ? ref_error->message : "Invalid event");
     return NULL;
   }
   GnostrNostrEventInfo *info = g_new0(GnostrNostrEventInfo, 1);
-  info->id_hex = g_ascii_strdown(id, -1);
-  info->pubkey_hex = g_ascii_strdown(nostr_event_get_pubkey(ev), -1);
-  info->kind = nostr_event_get_kind(ev);
-  info->created_at = nostr_event_get_created_at(ev);
-  info->d_tag = first_d_tag(ev);
-  nostr_event_free(ev);
+  info->id_hex = g_steal_pointer(&verified->id);
+  info->pubkey_hex = g_steal_pointer(&verified->pubkey);
+  info->kind = verified->kind;
+  info->created_at = verified->created_at;
+  info->d_tag = g_steal_pointer(&verified->d_tag);
   return info;
 }
 
@@ -274,23 +185,20 @@ gnostr_nostr_event_matches_target(const GnostrNostrEventInfo *info,
                                   const GnostrNostrTarget *target)
 {
   g_return_val_if_fail(info != NULL && target != NULL, FALSE);
-  switch (target->type) {
-    case GNOSTR_NOSTR_TARGET_EVENT:
-      if (g_strcmp0(info->id_hex, target->event_id_hex) != 0)
-        return FALSE;
-      if (target->kind >= 0 && info->kind != target->kind)
-        return FALSE;
-      if (target->pubkey_hex && g_strcmp0(info->pubkey_hex, target->pubkey_hex) != 0)
-        return FALSE;
-      return TRUE;
-    case GNOSTR_NOSTR_TARGET_ADDRESS:
-      return info->kind == target->kind &&
-             g_strcmp0(info->pubkey_hex, target->pubkey_hex) == 0 &&
-             g_strcmp0(info->d_tag ? info->d_tag : "", target->d_tag ? target->d_tag : "") == 0;
-    case GNOSTR_NOSTR_TARGET_PROFILE:
-    default:
-      return info->kind == 0 && g_strcmp0(info->pubkey_hex, target->pubkey_hex) == 0;
-  }
+  /* Matching rules live in nostr-gtk (gn_nostr_reference_matches_event_info). */
+  GnNostrReference ref = {
+    .type = target->type == GNOSTR_NOSTR_TARGET_EVENT ? GN_NOSTR_REFERENCE_EVENT :
+            target->type == GNOSTR_NOSTR_TARGET_ADDRESS ? GN_NOSTR_REFERENCE_ADDRESS :
+            GN_NOSTR_REFERENCE_PERSON,
+    .id = target->type == GNOSTR_NOSTR_TARGET_ADDRESS ? target->d_tag : target->event_id_hex,
+    .author = target->pubkey_hex,
+    .kind = target->kind,
+  };
+  GnNostrEventInfo ev = {
+    .id = info->id_hex, .pubkey = info->pubkey_hex, .kind = info->kind,
+    .created_at = info->created_at, .d_tag = info->d_tag,
+  };
+  return gn_nostr_reference_matches_event_info(&ref, &ev);
 }
 
 char *
