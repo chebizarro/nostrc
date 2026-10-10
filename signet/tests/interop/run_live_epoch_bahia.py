@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import socket
 import subprocess
@@ -85,13 +86,17 @@ def main():
     bahia = args.bahia.resolve()
     if not (bahia / "internal/adapters/signet/epoch_interop_integration_test.go").is_file():
         raise RuntimeError("Bahia checkout lacks the opt-in Signet interop test")
-    for executable in ("nak", "go"):
+    for executable in ("nak", "go", "cmake"):
         if subprocess.run(["which", executable], capture_output=True).returncode:
             raise RuntimeError(f"{executable} is required")
     daemon = build / "signet/signetd"
     ctl = build / "signet/signetctl"
+    cache = build / "CMakeCache.txt"
+    if not cache.is_file() or f"CMAKE_HOME_DIRECTORY:INTERNAL={repo}" not in cache.read_text():
+        raise RuntimeError("build directory must be configured from this exact Signet worktree")
+    run(["cmake", "--build", str(build), "--target", "signetd", "signetctl"])
     if not daemon.is_file() or not ctl.is_file():
-        raise RuntimeError("build signetd and signetctl from this worktree first")
+        raise RuntimeError("Signet daemon or management CLI was not built")
     commit = run(["git", "-C", str(repo), "rev-parse", "HEAD"]).strip()
     if run(["git", "-C", str(repo), "status", "--porcelain"]).strip():
         raise RuntimeError("commit Signet source before interop so the fixture identifies the exact build")
@@ -114,7 +119,7 @@ def main():
         private_file(policy,
             '[identity.interop]\n'
             'allow_clients = "*"\n'
-            'allow_methods = "get_public_key, nip44_encrypt, nip44_decrypt, '
+            'allow_methods = "connect, get_public_key, nip44_encrypt, nip44_decrypt, '
             'nip44_encrypt_b64, nip44_decrypt_b64, sign_bahia_sbom_dsse"\n'
             'allow_kinds = "*"\n'
             'default = "allow"\n')
@@ -182,7 +187,10 @@ def main():
                     "-count=1", "-v"], cwd=bahia, env=test_env, text=True, capture_output=True)
                 # The Go test may print errors containing its fixture URI. Do not echo raw logs.
                 if result.returncode:
-                    raise RuntimeError("Bahia live NIP-46 interop test failed; private output withheld")
+                    locations = re.findall(r"epoch_interop_integration_test\.go:(\d+)",
+                                           result.stdout + result.stderr)
+                    location = f" at test line {locations[0]}" if locations else ""
+                    raise RuntimeError(f"Bahia live NIP-46 interop test failed{location}; private output withheld")
                 print("PASS: Bahia live authenticated NIP-46 epoch NIP-44 and DSSE interop on disposable loopback Signet")
         finally:
             for process in reversed(processes):
