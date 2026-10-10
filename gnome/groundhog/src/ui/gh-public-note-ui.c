@@ -29,8 +29,11 @@ struct _GhPublicNoteUi {
   guint find_left;
   guint find_failed;
   guint find_deadline;
+  GTask *fetch_task;        /* the card's explicit Find on Relays, if any */
 };
-G_DEFINE_FINAL_TYPE(GhPublicNoteUi, gh_public_note_ui, G_TYPE_OBJECT)
+static void resolver_iface_init(GnNostrReferenceResolverInterface *iface);
+G_DEFINE_FINAL_TYPE_WITH_CODE(GhPublicNoteUi, gh_public_note_ui, G_TYPE_OBJECT,
+  G_IMPLEMENT_INTERFACE(GN_TYPE_NOSTR_REFERENCE_RESOLVER, resolver_iface_init))
 
 static gchar *
 address_key(gint kind, const gchar *pubkey, const gchar *dtag)
@@ -83,16 +86,6 @@ lookup(GhPublicNoteUi *self, const GnNostrReference *reference)
   return g_hash_table_lookup(self->by_address, key);
 }
 
-static gchar *
-summary(const GnNostrReference *reference, gpointer data)
-{
-  GhPublicNoteUi *self = data;
-  const GhPublicNote *note = lookup(self, reference);
-  if (!note) return NULL;
-  return g_strdup_printf(_("Public event by %.12s: %s"), note->pubkey,
-                         note->preview ? note->preview : "");
-}
-
 static void
 notice(GhPublicNoteUi *self, const gchar *title, const gchar *body)
 {
@@ -113,6 +106,19 @@ writable_store(GhPublicNoteUi *self)
     return NULL;
   GhStore *store = gh_account_store_get_store(self->store);
   return store && !gh_store_is_read_only(store) ? store : NULL;
+}
+
+/* Settles the card's pending fetch: @json on success, else @code
+ * (G_IO_ERROR_CANCELLED when nothing was asked of any relay). */
+static void
+complete_fetch(GhPublicNoteUi *self, const gchar *json, gint code, const gchar *message)
+{
+  g_autoptr(GTask) task = g_steal_pointer(&self->fetch_task);
+  if (!task || g_task_return_error_if_cancelled(task)) return;
+  if (json)
+    g_task_return_pointer(task, g_strdup(json), g_free);
+  else
+    g_task_return_new_error(task, G_IO_ERROR, code, "%s", message);
 }
 
 static void
@@ -137,6 +143,7 @@ reload(GhPublicNoteUi *self)
   guint64 generation = gh_account_controller_get_generation(self->accounts);
   if (self->generation != generation) {
     cancel_find(self);
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "The account changed");
     self->generation = generation;
     g_hash_table_remove_all(self->by_address);
     g_hash_table_remove_all(self->by_id);
@@ -144,7 +151,10 @@ reload(GhPublicNoteUi *self)
   /* An in-flight REQ belongs to the account's writable cache. Closing or
    * locking that store withdraws consent for the lookup, even if the account
    * generation itself has not changed. */
-  if (self->find_scope && !writable_store(self)) cancel_find(self);
+  if (self->find_scope && !writable_store(self)) {
+    cancel_find(self);
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "The message store was locked");
+  }
   GhAccountStoreState state = gh_account_store_get_state(self->store);
   if ((state != GH_ACCOUNT_STORE_OPEN && state != GH_ACCOUNT_STORE_EPHEMERAL &&
        state != GH_ACCOUNT_STORE_CORRUPT) ||
@@ -186,6 +196,7 @@ finish_find(GhPublicNoteUi *self, gboolean timed_out)
   if (!self->find_scope) return;
   if (!gh_account_controller_is_current(self->accounts, self->generation)) {
     cancel_find(self);
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "The account changed");
     return;
   }
   if (self->find_best) {
@@ -194,6 +205,7 @@ finish_find(GhPublicNoteUi *self, gboolean timed_out)
     if (store && gh_store_public_note_put(store, self->find_best, &error)) {
       GhPublicNote *note = g_steal_pointer(&self->find_best);
       cache_note(self, note);
+      complete_fetch(self, note->event_json, 0, NULL);
       const gboolean ephemeral = gh_account_store_get_state(self->store) == GH_ACCOUNT_STORE_EPHEMERAL;
       notice(self, _("Public Note Found"),
         ephemeral && (timed_out || self->find_failed)
@@ -203,14 +215,18 @@ finish_find(GhPublicNoteUi *self, gboolean timed_out)
           : timed_out || self->find_failed
             ? _("A signed event was saved locally. Some discovery relays did not answer; this may not be the newest addressable event.")
             : _("A matching signed public event was saved locally from the selected discovery relays."));
-    } else
+    } else {
+      complete_fetch(self, NULL, G_IO_ERROR_FAILED, "Could not save the public note");
       notice(self, _("Could Not Save Public Note"),
              error ? error->message : _("Unlock the encrypted message store, then try again."));
-  } else
+    }
+  } else {
+    complete_fetch(self, NULL, G_IO_ERROR_NOT_FOUND, "No matching signed event arrived");
     notice(self, _("Public Note Not Found"),
       timed_out || self->find_failed
         ? _("No matching signed event arrived; some discovery relays did not answer.")
         : _("The selected discovery relays had no matching signed event."));
+  }
   cancel_find(self);
 }
 
@@ -335,29 +351,35 @@ static void
 find_response(AdwAlertDialog *alert, const gchar *response, GhPublicNoteUi *self)
 {
   if (!g_str_equal(response, "find") ||
-      !gh_account_controller_is_current(self->accounts, self->generation)) return;
+      !gh_account_controller_is_current(self->accounts, self->generation)) {
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "Find on Relays was declined");
+    return;
+  }
   const gchar *uri = g_object_get_data(G_OBJECT(alert), "reference-uri");
   const gchar *const *urls = g_object_get_data(G_OBJECT(alert), "destinations");
   g_auto(GStrv) current = discovery_sources(self);
   if (urls && !g_strv_equal(urls, (const gchar *const *)current)) {
     notice(self, _("Discovery Relays Changed"),
       _("The configured destinations changed after confirmation opened. Review the new list before finding this note."));
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "Discovery relays changed");
     return;
   }
   if (uri && urls) start_find(self, uri, urls);
+  if (!self->find_scope)
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "No relay was contacted");
 }
 
-static void
+static gboolean
 confirm_find(GhPublicNoteUi *self, const gchar *uri)
 {
   g_auto(GStrv) urls = discovery_sources(self);
   if (!urls[0]) {
     notice(self, _("No Discovery Relays"),
       _("Configure discovery relays before finding this public note. No relay was contacted."));
-    return;
+    return FALSE;
   }
   g_autoptr(GhConversationView) view = g_weak_ref_get(&self->view);
-  if (!view) return;
+  if (!view) return FALSE;
   g_autofree gchar *destinations = g_strjoinv("\n", urls);
   g_autofree gchar *body = g_strdup_printf(
     _("Find this public note only on these configured discovery relays?\n\n%s\n\nThe relays will learn which public reference you requested. No relay hint in the message will be contacted."),
@@ -371,6 +393,7 @@ confirm_find(GhPublicNoteUi *self, const gchar *uri)
                          (GDestroyNotify)g_strfreev);
   g_signal_connect_object(alert, "response", G_CALLBACK(find_response), self, 0);
   adw_dialog_present(ADW_DIALOG(alert), GTK_WIDGET(view));
+  return TRUE;
 }
 
 static void
@@ -381,10 +404,6 @@ public_action(GhConversationView *view, const gchar *action, const gchar *uri,
   g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
   if (!reference || (reference->type != GN_NOSTR_REFERENCE_EVENT &&
                      reference->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
-  if (g_str_equal(action, "find")) {
-    if (!lookup(self, reference)) confirm_find(self, uri);
-    return;
-  }
   const GhPublicNote *note = lookup(self, reference);
   if (!note) return;
   AdwDialog *dialog = gh_public_post_dialog_new(self->accounts, self->relays, note,
@@ -392,11 +411,61 @@ public_action(GhConversationView *view, const gchar *action, const gchar *uri,
   if (dialog) adw_dialog_present(dialog, GTK_WIDGET(view));
 }
 
+/* GnNostrReferenceResolver (nostrc-8xfib.6): the shared reference card reads
+ * the verified public-note cache; its Find on Relays goes through the same
+ * confirmation and GhRelayScope/GhAuthPolicy search as before. */
+static gchar *
+resolver_lookup_local(GnNostrReferenceResolver *resolver, const GnNostrReference *reference)
+{
+  GhPublicNoteUi *self = (GhPublicNoteUi *)resolver;
+  const GhPublicNote *note = lookup(self, reference);
+  return note ? g_strdup(note->event_json) : NULL;
+}
+
+static gboolean
+resolver_can_fetch(GnNostrReferenceResolver *resolver)
+{
+  GhPublicNoteUi *self = (GhPublicNoteUi *)resolver;
+  return writable_store(self) != NULL;
+}
+
+static void
+resolver_fetch_async(GnNostrReferenceResolver *resolver, const GnNostrReference *reference,
+                     GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+{
+  GhPublicNoteUi *self = (GhPublicNoteUi *)resolver;
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, resolver_fetch_async);
+  /* One explicit search at a time: a newer request supersedes the old one. */
+  complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "Superseded");
+  self->fetch_task = task;
+  if (!gh_account_controller_is_current(self->accounts, self->generation) ||
+      !confirm_find(self, reference->uri))
+    complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "No relay was contacted");
+}
+
+static gchar *
+resolver_fetch_finish(GnNostrReferenceResolver *resolver, GAsyncResult *result, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, resolver), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+static void
+resolver_iface_init(GnNostrReferenceResolverInterface *iface)
+{
+  iface->lookup_local = resolver_lookup_local;
+  iface->can_fetch = resolver_can_fetch;
+  iface->fetch_async = resolver_fetch_async;
+  iface->fetch_finish = resolver_fetch_finish;
+}
+
 static void
 dispose(GObject *object)
 {
   GhPublicNoteUi *self = (GhPublicNoteUi *)object;
   cancel_find(self);
+  complete_fetch(self, NULL, G_IO_ERROR_CANCELLED, "Closed");
   g_clear_object(&self->accounts);
   g_clear_object(&self->store);
   g_clear_object(&self->relays);
@@ -453,6 +522,6 @@ gh_public_note_ui_attach(GhWindow *window, const GhPublicNoteUiConfig *config)
   g_signal_connect_object(self->store, "changed", G_CALLBACK(reload), self,
                           G_CONNECT_SWAPPED);
   reload(self);
-  gh_conversation_view_set_reference_source(view, summary, g_object_ref(self), g_object_unref);
+  gh_conversation_view_set_reference_resolver(view, GN_NOSTR_REFERENCE_RESOLVER(self));
   g_object_unref(self);
 }

@@ -117,9 +117,9 @@ template $GhMessageRow: Widget {
     spacing: 4;
     styles ["card", "groundhog-reference"]
 
-    Label reference_label {
-      wrap: true;
-      xalign: 0;
+    // The shared NIP-18/NIP-21 card (nostr-gtk): local lookup only; its
+    // Find on Relays asks for consent before any relay is contacted.
+    $GnNostrReferenceCard reference_card {
       hexpand: true;
     }
 
@@ -136,14 +136,6 @@ template $GhMessageRow: Widget {
       label: _("Share in Chat");
       halign: start;
       action-name: "conversation.share-reference";
-      action-target: "''";
-      styles ["flat"]
-    }
-
-    Button find_reference_button {
-      label: _("Find on Relays…");
-      halign: start;
-      action-name: "conversation.find-reference";
       action-target: "''";
       styles ["flat"]
     }

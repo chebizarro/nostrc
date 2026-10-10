@@ -6,6 +6,7 @@
 #include "gh-window.h"
 #include "gh-composer.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
+#include <nostr-gtk-1.0/gn-nostr-reference-card.h>
 #include "gh-message-row.h"
 #include "gh-timeline-row.h"
 #include "gh-conversation-row.h"
@@ -767,9 +768,7 @@ struct _GhConversationView {
   gchar *render_account;
   guint64 render_generation;
   GCancellable *render_cancel;
-  GhReferenceSummaryFunc reference_summary;
-  gpointer reference_data;
-  GDestroyNotify reference_destroy;
+  GnNostrReferenceResolver *reference_resolver;
 
   /* W26 slice B: reactions */
   GhReactionStore *reactions;
@@ -1187,8 +1186,9 @@ typedef struct {
   gchar *id;
   gchar *markup;
   gchar *reference_uri;
-  gchar *reference_label;
   GnNostrReference *reference_descriptor;
+  GnNostrReferenceCardRole reference_role;
+  gchar *reference_original; /* verified embedded original of a repost */
   gchar *preview_uri;
   gsize bytes;
   gboolean pending;
@@ -1222,8 +1222,8 @@ render_entry_free(RenderEntry *entry)
   g_free(entry->id);
   g_free(entry->markup);
   g_free(entry->reference_uri);
-  g_free(entry->reference_label);
   gn_nostr_reference_free(entry->reference_descriptor);
+  g_free(entry->reference_original);
   g_free(entry->preview_uri);
   g_free(entry);
 }
@@ -1242,8 +1242,9 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
                                const gchar *body)
 {
   g_clear_pointer(&entry->reference_uri, g_free);
-  g_clear_pointer(&entry->reference_label, g_free);
   g_clear_pointer(&entry->reference_descriptor, gn_nostr_reference_free);
+  g_clear_pointer(&entry->reference_original, g_free);
+  entry->reference_role = GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
   g_autoptr(GnNostrRepostDescriptor) repost = NULL;
   if (body && body[0] == '{' &&
       strlen(body) <= GN_MARKDOWN_MAX_INPUT_BYTES)
@@ -1269,15 +1270,13 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
   if (!reference) return;
   entry->reference_descriptor = repost ? g_steal_pointer(&repost->target)
                                        : g_steal_pointer(&parsed);
-  reference = entry->reference_descriptor;
-  entry->reference_uri = g_strdup(reference->uri);
-  g_autofree gchar *short_id = reference->id
-    ? g_utf8_substring(reference->id, 0, MIN(12, g_utf8_strlen(reference->id, -1)))
-    : g_strdup("");
-  entry->reference_label = g_strdup_printf(
-    repost ? (repost->quote ? _("Quoted Nostr note: %s") : _("Reposted Nostr note: %s"))
-           : reference->type == GN_NOSTR_REFERENCE_ADDRESS
-             ? _("Nostr address: %s") : _("Nostr note: %s"), short_id);
+  entry->reference_uri = g_strdup(entry->reference_descriptor->uri);
+  /* The shared card (nostrc-8xfib.6) words the summary from the role. */
+  if (repost) {
+    entry->reference_role = repost->quote ? GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE
+                                          : GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
+    entry->reference_original = g_steal_pointer(&repost->original_json);
+  }
 }
 
 static gsize
@@ -1285,7 +1284,7 @@ render_entry_size(RenderEntry *entry)
 {
   return strlen(entry->markup) +
          (entry->reference_uri ? strlen(entry->reference_uri) : 0) +
-         (entry->reference_label ? strlen(entry->reference_label) : 0) +
+         (entry->reference_original ? strlen(entry->reference_original) : 0) +
          (entry->preview_uri ? strlen(entry->preview_uri) : 0);
 }
 
@@ -1426,14 +1425,25 @@ gh_conversation_view_get_render_markup(GhConversationView *self, GhMessage *mess
 
 gboolean
 gh_conversation_view_get_reference(GhConversationView *self, GhMessage *message,
-                                   const gchar **uri, const gchar **label)
+                                   const gchar **uri)
 {
-  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
-  g_return_val_if_fail(GH_IS_MESSAGE(message), FALSE);
+  return gh_conversation_view_get_reference_target(self, message, uri, NULL, NULL) != NULL;
+}
+
+const GnNostrReference *
+gh_conversation_view_get_reference_target(GhConversationView *self, GhMessage *message,
+                                          const gchar **uri,
+                                          GnNostrReferenceCardRole *role,
+                                          const gchar **verified_original)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   RenderEntry *entry = render_cache_ensure(self, message, FALSE);
-  if (uri) *uri = entry ? entry->reference_uri : NULL;
-  if (label) *label = entry ? entry->reference_label : NULL;
-  return entry && entry->reference_uri != NULL;
+  gboolean found = entry && entry->reference_uri != NULL;
+  if (uri) *uri = found ? entry->reference_uri : NULL;
+  if (role) *role = found ? entry->reference_role : GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
+  if (verified_original) *verified_original = found ? entry->reference_original : NULL;
+  return found ? entry->reference_descriptor : NULL;
 }
 
 const gchar *
@@ -1446,45 +1456,20 @@ gh_conversation_view_get_preview_uri(GhConversationView *self, GhMessage *messag
 }
 
 void
-gh_conversation_view_set_reference_source(GhConversationView *self,
-                                           GhReferenceSummaryFunc summary,
-                                           gpointer user_data, GDestroyNotify destroy)
+gh_conversation_view_set_reference_resolver(GhConversationView *self,
+                                             GnNostrReferenceResolver *resolver)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
-  if (self->reference_destroy)
-    self->reference_destroy(self->reference_data);
-  self->reference_summary = summary;
-  self->reference_data = user_data;
-  self->reference_destroy = destroy;
-  gh_conversation_view_references_changed(self);
+  g_return_if_fail(!resolver || GN_IS_NOSTR_REFERENCE_RESOLVER(resolver));
+  if (g_set_object(&self->reference_resolver, resolver))
+    gh_conversation_view_references_changed(self);
 }
 
-gchar *
-gh_conversation_view_dup_reference_summary(GhConversationView *self, GhMessage *message)
+GnNostrReferenceResolver *
+gh_conversation_view_get_reference_resolver(GhConversationView *self)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
-  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
-  if (!self->reference_summary) return NULL;
-  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
-  return entry && entry->reference_descriptor
-    ? self->reference_summary(entry->reference_descriptor, self->reference_data) : NULL;
-}
-
-gboolean
-gh_conversation_view_has_public_note_reference(GhConversationView *self, GhMessage *message)
-{
-  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self) && GH_IS_MESSAGE(message), FALSE);
-  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
-  return entry && entry->reference_descriptor &&
-    (entry->reference_descriptor->type == GN_NOSTR_REFERENCE_EVENT ||
-     entry->reference_descriptor->type == GN_NOSTR_REFERENCE_ADDRESS);
-}
-
-gboolean
-gh_conversation_view_can_find_references(GhConversationView *self)
-{
-  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
-  return self->reference_summary != NULL;
+  return self->reference_resolver;
 }
 
 void
@@ -2684,7 +2669,7 @@ action_share_reference(GtkWidget *widget, const char *name, GVariant *parameter)
                 gh_conversation_get_account(self->conversation)) != 0)
     return;
   const gchar *uri = NULL;
-  if (!gh_conversation_view_get_reference(self, message, &uri, NULL)) return;
+  if (!gh_conversation_view_get_reference(self, message, &uri)) return;
   GhWindow *window = GH_WINDOW(gtk_widget_get_ancestor(widget, GH_TYPE_WINDOW));
   GhContentPage *content = window ? gh_window_get_content(window) : NULL;
   GhComposer *composer = content ? gh_content_page_get_composer(content) : NULL;
@@ -2699,7 +2684,7 @@ static void
 action_public_reference(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(widget);
-  if (!self->conversation || !self->reference_summary) return;
+  if (!self->conversation || !self->reference_resolver) return;
   const gchar *id = g_variant_get_string(parameter, NULL);
   GhMessage *message = gh_conversation_lookup_message(self->conversation, id);
   if (!message || gh_message_get_withdrawn(message) ||
@@ -2712,11 +2697,12 @@ action_public_reference(GtkWidget *widget, const char *name, GVariant *parameter
   if (!entry || !entry->reference_descriptor ||
       (entry->reference_descriptor->type != GN_NOSTR_REFERENCE_EVENT &&
        entry->reference_descriptor->type != GN_NOSTR_REFERENCE_ADDRESS)) return;
-  gboolean find = g_str_equal(name, "conversation.find-reference");
-  g_autofree gchar *summary = self->reference_summary(entry->reference_descriptor,
-                                                       self->reference_data);
-  if ((find && summary) || (!find && !summary)) return;
-  const gchar *operation = find ? "find" :
+  /* Repost and quote need the note locally; finding it is the card's
+   * explicit Find on Relays (nostrc-8xfib.6). */
+  g_autofree gchar *local = gn_nostr_reference_resolver_lookup_local(self->reference_resolver,
+                                                                     entry->reference_descriptor);
+  if (!local) return;
+  const gchar *operation =
     g_str_equal(name, "conversation.repost-reference") ? "repost" : "quote";
   g_signal_emit(self, signals[SIGNAL_PUBLIC_REFERENCE_ACTION], 0,
                 operation, entry->reference_descriptor->uri);
@@ -3028,7 +3014,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
-  gh_conversation_view_set_reference_source(self, NULL, NULL, NULL);
+  g_clear_object(&self->reference_resolver);
   if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);
   g_clear_object(&self->web);
   if (self->picture_source)
@@ -3129,8 +3115,6 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
                                   action_copy_message);
   gtk_widget_class_install_action(widget_class, "conversation.share-reference", "s",
                                   action_share_reference);
-  gtk_widget_class_install_action(widget_class, "conversation.find-reference", "s",
-                                  action_public_reference);
   gtk_widget_class_install_action(widget_class, "conversation.repost-reference", "s",
                                   action_public_reference);
   gtk_widget_class_install_action(widget_class, "conversation.quote-reference", "s",
