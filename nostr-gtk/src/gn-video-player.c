@@ -865,11 +865,10 @@ attach_stream(GnVideoPlayer *self, GtkMediaStream *stream, gboolean owned)
   gtk_media_stream_set_volume(stream, self->volume);
   /* LEGITIMATE TIMEOUT - Position slider update during playback (250ms).
    * nostrc-b0h: Audited - polling playback position is standard. Runs only
-   * while there is a stream (nostrc-8xfib.4: no timer per idle card). */
-  self->position_update_timer_id = g_timeout_add_full(G_PRIORITY_DEFAULT, 250,
-                                                       position_update_tick,
-                                                       g_object_ref(self),
-                                                       g_object_unref);
+   * while there is a stream (nostrc-8xfib.4: no timer per idle card) and
+   * holds no reference: a strong one kept every unparented player alive;
+   * dispose (via release_stream) removes it. */
+  self->position_update_timer_id = g_timeout_add(250, position_update_tick, self);
   if (gtk_media_stream_get_error(stream))
     on_media_error(stream, NULL, self);
   else if (gtk_media_stream_is_prepared(stream))

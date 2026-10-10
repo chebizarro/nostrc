@@ -215,11 +215,13 @@ update(GnMediaViewer *self)
 
   gtk_picture_set_paintable(GTK_PICTURE(self->picture), stream ? NULL : paintable);
   gn_animated_image_attach(self->picture, stream ? NULL : paintable);
-  gn_video_player_set_stream(GN_VIDEO_PLAYER(self->video),
-                             stream ? GTK_MEDIA_STREAM(paintable) : NULL);
+  GnVideoPlayer *player = GN_VIDEO_PLAYER(self->video);
+  gboolean new_stream = stream && gn_video_player_get_stream(player) != GTK_MEDIA_STREAM(paintable);
+  gn_video_player_set_stream(player, stream ? GTK_MEDIA_STREAM(paintable) : NULL);
   gtk_widget_set_visible(self->video, stream);
   gtk_widget_set_visible(self->scrolled_window, !stream);
-  if (stream && gtk_widget_get_mapped(GTK_WIDGET(self)))
+  /* A video starts when it is shown, not again on every refresh. */
+  if (new_stream && gtk_widget_get_mapped(GTK_WIDGET(self)))
     gtk_media_stream_play(GTK_MEDIA_STREAM(paintable));
 
   gboolean empty = count && !paintable;
