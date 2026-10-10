@@ -280,6 +280,79 @@ test_markdown_safe_links(void)
 }
 
 static void
+collect_text(GMarkupParseContext *context, const gchar *text, gsize len, gpointer data,
+             GError **error)
+{
+  (void)context;
+  (void)error;
+  g_string_append_len(data, text, len);
+}
+
+/* The text Pango would show for markup, or NULL if it is not well formed. */
+static gchar *
+markup_text(const gchar *markup)
+{
+  static const GMarkupParser parser = { .text = collect_text };
+  GString *text = g_string_new(NULL);
+  g_autofree gchar *wrapped = g_strconcat("<markup>", markup, "</markup>", NULL);
+  g_autoptr(GMarkupParseContext) context = g_markup_parse_context_new(&parser, 0, text, NULL);
+  if (!g_markup_parse_context_parse(context, wrapped, -1, NULL) ||
+      !g_markup_parse_context_end_parse(context, NULL)) {
+    g_string_free(text, TRUE);
+    return NULL;
+  }
+  return g_string_free(text, FALSE);
+}
+
+/* GFM tables render as an aligned monospace grid, cells keep inline
+ * formatting and the literal-address rule (nostrc-p15n5.1). */
+static void
+test_markdown_table(void)
+{
+  g_autofree gchar *markup = gh_link_policy_to_markdown_markup(
+    "| Item | Qty |\n|:--|--:|\n| **apple** | 3 |\n| [pear](https://evil.example) | 12 |\n| <b>x</b> |", NULL);
+  g_assert_true(g_str_has_prefix(markup, "<tt>"));
+  g_assert_true(g_str_has_suffix(markup, "</tt>"));
+  g_autofree gchar *text = markup_text(markup);
+  g_assert_nonnull(text);
+  g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+  g_assert_cmpuint(g_strv_length(lines), ==, 5);
+  /* Columns line up: every separator sits at the same column. */
+  glong column = g_utf8_pointer_to_offset(lines[0], strstr(lines[0], "│"));
+  for (guint i = 2; i < 5; i++)
+    g_assert_cmpint(g_utf8_pointer_to_offset(lines[i], strstr(lines[i], "│")), ==, column);
+  g_assert_nonnull(strstr(lines[1], "┼"));
+  g_assert_nonnull(strstr(lines[2], "apple"));
+  g_assert_nonnull(strstr(lines[2], "│   3"));   /* right-aligned */
+  g_assert_nonnull(strstr(lines[3], "pear (https://evil.example)"));
+  g_assert_nonnull(strstr(lines[4], "<b>x</b>")); /* no HTML passthrough */
+  g_assert_nonnull(strstr(markup, "<b>apple</b>"));
+  g_assert_null(strstr(markup, ">pear</a>"));
+}
+
+/* Inline formatting inside blocks, task lists, nested and numbered lists,
+ * strikethrough and images (shown as their address, never fetched). */
+static void
+test_markdown_gfm_blocks(void)
+{
+  g_autofree gchar *markup = gh_link_policy_to_markdown_markup(
+    "# A **b**\n- [ ] todo\n- [x] *done*\n  - inner\n3. three\n> quoted `code`\n"
+    "~~old~~ ![alt](https://img.example/a.png)", NULL);
+  g_autofree gchar *text = markup_text(markup);
+  g_assert_nonnull(text);
+  g_assert_nonnull(strstr(markup, "<b>A <b>b</b></b>"));
+  g_assert_nonnull(strstr(markup, "☐ todo"));
+  g_assert_nonnull(strstr(markup, "☑ <i>done</i>"));
+  g_assert_nonnull(strstr(markup, "\n  ◦ inner"));
+  g_assert_nonnull(strstr(markup, "3. three"));
+  g_assert_nonnull(strstr(markup, "│ quoted <tt>code</tt>"));
+  g_assert_nonnull(strstr(markup, "<s>old</s>"));
+  g_assert_nonnull(strstr(markup, "alt ("));
+  g_assert_nonnull(strstr(markup, "https://img.example/a.png"));
+  g_assert_null(strstr(markup, "<img"));
+}
+
+static void
 test_markdown_bounded_invalid_utf8(void)
 {
   const gchar invalid[] = { 'H', 'i', ' ', (gchar)0xff, 0 };
@@ -305,6 +378,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/link-policy/preview-eligibility", test_preview_eligibility);
   g_test_add_func("/groundhog/link-policy/mention-display-names", test_mention_display_names);
   g_test_add_func("/groundhog/link-policy/markdown-safe-links", test_markdown_safe_links);
+  g_test_add_func("/groundhog/link-policy/markdown-table", test_markdown_table);
+  g_test_add_func("/groundhog/link-policy/markdown-gfm-blocks", test_markdown_gfm_blocks);
   g_test_add_func("/groundhog/link-policy/markdown-bounded-invalid-utf8",
                   test_markdown_bounded_invalid_utf8);
   return g_test_run();

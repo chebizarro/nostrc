@@ -60,14 +60,12 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  *    "Jump to Latest" appears with the number of new messages below. Opening
  *    a conversation with unread messages brings the first of them into view,
  *    or the top when unread ones are still in its unloaded older history;
- *  - while the conversation has older history that is not listed and the
- *    reader is within a page of the top of what is, an "Earlier Messages"
- *    button at the top says so (with how many of them are unread) and, like
- *    reaching the top, asks the history loader for them
- *    (conversation.load-older); the messages on screen stay in place as the
- *    older ones are listed above them. "Loading earlier messages…" shows
- *    until it finishes, and a failure is shown and retried only from the
- *    button;
+ *  - while the conversation has older history that is not listed, reaching
+ *    the top of what is asks the history loader for it (the sliding window;
+ *    there is no button, nostrc-p15n5.2); the messages on screen stay in
+ *    place as the older ones are listed above them. "Loading earlier
+ *    messages…" shows until it finishes; after a failure it is asked for
+ *    again only once the reader has left the top and come back;
  *  - links follow gh-link-policy.h: https to an ASCII host opens through
  *    "open-uri" (default: GtkUriLauncher, i.e. the portal); http, IDN and
  *    user-name addresses first show the full address in a confirmation; a
@@ -82,7 +80,7 @@ gchar *gh_conversation_view_format_day(GDateTime *when, GDateTime *now);
  *    while the window is active.
  * Actions (widget actions of the view): conversation.open-link (s: URI),
  * conversation.show-preview (s: rumor id), conversation.retry-message
- * (s: rumor id), conversation.jump-to-latest, conversation.load-older and
+ * (s: rumor id), conversation.jump-to-latest and
  * conversation.unlock-messages. Signals: "retry-requested" (GhMessage) for
  * the outbox (G06/G13), "unlock-requested" for the inbox, "open-uri" (URI,
  * run last) whose default handler launches the URI, "copy-text" (text, run
@@ -163,11 +161,11 @@ gboolean gh_conversation_view_get_at_latest(GhConversationView *self);
 guint gh_conversation_view_get_new_below(GhConversationView *self);
 
 /* Older history (e.g. gh_store_conversations_load_older()): called when the
- * user reaches the top of a conversation that has older messages or clicks
- * "Earlier Messages", at most once until
+ * user reaches the top of a conversation that has older messages, at most
+ * once until
  * gh_conversation_view_finish_loading_older() (listed) or
- * gh_conversation_view_fail_loading_older() (not: said so, and tried again
- * only from the button). In the application gh_conversation_list_attach()
+ * gh_conversation_view_fail_loading_older() (not: announced, and tried again
+ * only after the reader leaves the top and returns). In the application gh_conversation_list_attach()
  * installs it (gh_conversation_list_set_history_source()). */
 typedef void (*GhConversationViewLoadOlder)(GhConversationView *view,
                                             GhConversation *conversation,

@@ -41,11 +41,11 @@ typedef gboolean (*GhConversationListLoadOlder)(GhConversation *conversation, GE
                                                 gpointer user_data);
 /* Where the shown conversation's older history comes from (charter §7.6;
  * W13b review B1), for a window gh_conversation_list_attach() bound. When
- * the view asks (scrolling near the top, or "Earlier Messages"), the page is
+ * the view asks (scrolling near the top), the page is
  * listed from an idle, the view finishes loading (or says it couldn't), and
  * the room is marked read again if it is on screen: what the page listed is
  * read, unread messages still unloaded stay unread. NULL removes it (the
- * view then says earlier messages can't be shown). user_data is released
+ * view then lists no older history). user_data is released
  * with destroy when replaced or with window. */
 /* Where the profile-picture cache keeps per-contact consent (the account's
  * encrypted store, through the app; NULL when no account is open). */
