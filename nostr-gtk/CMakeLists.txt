@@ -208,6 +208,14 @@ target_link_libraries(gn_content_parser
 set_target_properties(gn_content_parser PROPERTIES POSITION_INDEPENDENT_CODE ON)
 apply_sanitizers(gn_content_parser)
 
+# Standalone builds link installed libraries; the in-tree helper (root
+# CMakeLists.txt) only changes how sibling archives are linked.
+if(NOT COMMAND nostrc_link_archives)
+  function(nostrc_link_archives target scope)
+    target_link_libraries(${target} ${scope} ${ARGN})
+  endfunction()
+endif()
+
 # ── Portable library target ─────────────────────────────────────────
 add_library(nostr_gtk_portable SHARED ${NOSTR_GTK_PORTABLE_SOURCES}
   $<TARGET_OBJECTS:gn_content_parser>)
@@ -222,7 +230,17 @@ target_include_directories(nostr_gtk_portable PUBLIC
 target_link_libraries(nostr_gtk_portable PUBLIC
   PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2
   PkgConfig::GOBJECT2 PkgConfig::GIO2
-  PRIVATE nostr_gobject PkgConfig::JSON_GLIB nip19)
+  PRIVATE nostr_gobject PkgConfig::JSON_GLIB)
+# nip19 (and, through nostr_gobject, libnostr) are static archives its
+# executable already holds; see NOSTRC_ARCHIVES_FROM_EXECUTABLE.
+nostrc_link_archives(nostr_gtk_portable PRIVATE nip19)
+if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+  # A private dependency of a shared library is not on its consumers' link;
+  # an executable that links only this library still has to supply the
+  # archives both shared libraries leave undefined.
+  nostrc_link_archives(nostr_gtk_portable INTERFACE nip19
+    "$<LINK_ONLY:nostr_gobject>")
+endif()
 target_compile_definitions(nostr_gtk_portable PRIVATE
   NOSTR_GTK_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}"
   GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_6
