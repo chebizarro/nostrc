@@ -44,6 +44,7 @@ jobs:
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
             desktop-file-utils appstream blueprint-compiler xvfb xauth gettext \
+            dbus-bin at-spi2-core \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
@@ -64,7 +65,9 @@ jobs:
           MDK_DRIVER_LOG: warn
         run: |
           set -o pipefail
-          xvfb-run -a ctest --test-dir build -R '^groundhog-mdk011-interop' -V \
+          # A private session bus with the AT-SPI service (as groundhog-ci.yml):
+          # GTK warns fatally when it cannot reach org.a11y.Bus in the GUI case.
+          dbus-run-session -- xvfb-run -a ctest --test-dir build -R '^groundhog-mdk011-interop' -V \
             --output-junit "$PWD/mdk011-interop.junit.xml" 2>&1 | tee mdk011-interop.log
 
       - name: Matrix summary (expected failures are not green)
