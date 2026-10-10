@@ -1,5 +1,5 @@
 project('nostr-gtk', 'c',
-  version: '1.1.1',
+  version: '1.2.0',
   license: 'GPL-3.0-or-later',
   meson_version: '>= 1.2.0',
   default_options: [
@@ -117,6 +117,9 @@ nostr_gtk_portable_sources = files(
   'src/gn-media-viewer.c',
   'src/gn-animated-image.c',
   'src/gn-nip34-issue-fields.c',
+  'src/gn-nip34-issue.c',
+  'src/gn-nip34-issue-iface.c',
+  'src/gn-nip34-issue-view.c',
   'src/gn-portable-i18n.c',
 )
 nostr_gtk_portable_headers = files(
@@ -128,6 +131,9 @@ nostr_gtk_portable_headers = files(
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-iface.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-view.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
@@ -150,6 +156,9 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-iface.h',
+  'include/nostr-gtk-1.0/gn-nip34-issue-view.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
 
@@ -167,6 +176,7 @@ nostr_gtk_repo_inc = include_directories(
   '../third_party/nostrdb/src',
   '../third_party/nostrdb/ccan',
   '../nips/nip19/include',
+  '../nips/nip34/include',
   '../nips/nip10/include',
   '../nips/nip25/include',
 )
@@ -214,13 +224,14 @@ nostrdb_vendored_lib = cc.find_library('nostrdb_vendored',
   dirs: [cmake_build_dir / 'components/nostrdb'], required: true)
 nostrdb_lib = cc.find_library('nostrdb',
   dirs: [cmake_build_dir / 'libnostr'], required: true)
+nip34_lib = cc.find_library('nip34', dirs: [cmake_build_dir / 'nips/nip34'], required: true)
 nostr_lib = cc.find_library('nostr',
   dirs: [cmake_build_dir / 'libnostr'], required: true)
 nostr_gtk_portable_lib = library('nostr-gtk-portable-1.0',
   nostr_gtk_portable_sources,
   include_directories: [nostr_gtk_inc, nostr_gtk_pub_inc, nostr_gtk_repo_inc],
   dependencies: [glib_dep, gobject_dep, gio_dep, gtk4_dep, adw_dep,
-                 json_glib_dep, nostr_gobject_dep, nip19_lib,
+                 json_glib_dep, nostr_gobject_dep, nip19_lib, nip34_lib,
                  nostrdb_storage_lib, nostrdb_vendored_lib, nostrdb_lib,
                  nostr_lib],
   link_args: nostr_gtk_link_args,

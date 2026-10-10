@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
-set(NOSTR_GTK_MINOR_VERSION 1)
-set(NOSTR_GTK_MICRO_VERSION 1)
+set(NOSTR_GTK_MINOR_VERSION 2)
+set(NOSTR_GTK_MICRO_VERSION 0)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}
@@ -138,6 +138,18 @@ set(NOSTR_GTK_SOURCES
   ${GRESOURCE_C}
 )
 
+# NIP-34 issue reporting shared by gnostr and Groundhog (nostrc-8xfib.5).
+set(NOSTR_GTK_ISSUE_HEADERS
+  include/nostr-gtk-1.0/gn-nip34-issue.h
+  include/nostr-gtk-1.0/gn-nip34-issue-iface.h
+  include/nostr-gtk-1.0/gn-nip34-issue-view.h
+)
+set(NOSTR_GTK_ISSUE_MODEL_SOURCES
+  src/gn-nip34-issue.c
+  src/gn-nip34-issue-iface.c
+  src/gn-portable-i18n.c
+)
+
 set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk.h
   include/nostr-gtk-1.0/gnostr-thread-view.h
@@ -157,6 +169,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+  ${NOSTR_GTK_ISSUE_HEADERS}
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
 
@@ -169,6 +182,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
+  ${NOSTR_GTK_ISSUE_HEADERS}
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
 
@@ -179,7 +193,7 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-media-viewer.c
   src/gn-animated-image.c
   src/gn-nip34-issue-fields.c
-  src/gn-portable-i18n.c
+  src/gn-nip34-issue-view.c
 )
 
 # nostrc-gofet.10: portable widgets translate through their own "nostr-gtk"
@@ -219,9 +233,25 @@ if(NOT COMMAND nostrc_link_archives)
   endfunction()
 endif()
 
+# ── NIP-34 issue model (nostrc-8xfib.5) ─────────────────────────────
+# GTK-free object library: the bounded draft builder, target parsing and the
+# injected service interfaces, so the model tests need no display.
+if(NOT TARGET nip34)
+  add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
+endif()
+add_library(gn_issue_model OBJECT ${NOSTR_GTK_ISSUE_MODEL_SOURCES})
+target_include_directories(gn_issue_model
+  BEFORE PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(gn_issue_model PUBLIC PkgConfig::GLIB2 PkgConfig::GOBJECT2 PkgConfig::GIO2)
+nostrc_link_archives(gn_issue_model PUBLIC nip34)
+target_compile_definitions(gn_issue_model PRIVATE
+  NOSTR_GTK_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
+set_target_properties(gn_issue_model PROPERTIES POSITION_INDEPENDENT_CODE ON)
+apply_sanitizers(gn_issue_model)
+
 # ── Portable library target ─────────────────────────────────────────
 add_library(nostr_gtk_portable SHARED ${NOSTR_GTK_PORTABLE_SOURCES}
-  $<TARGET_OBJECTS:gn_content_parser>)
+  $<TARGET_OBJECTS:gn_content_parser> $<TARGET_OBJECTS:gn_issue_model>)
 set_target_properties(nostr_gtk_portable PROPERTIES
   OUTPUT_NAME nostr-gtk-portable-1.0
   VERSION ${NOSTR_GTK_VERSION}
@@ -236,12 +266,12 @@ target_link_libraries(nostr_gtk_portable PUBLIC
   PRIVATE nostr_gobject PkgConfig::JSON_GLIB)
 # nip19 (and, through nostr_gobject, libnostr) are static archives its
 # executable already holds; see NOSTRC_ARCHIVES_FROM_EXECUTABLE.
-nostrc_link_archives(nostr_gtk_portable PRIVATE nip19)
+nostrc_link_archives(nostr_gtk_portable PRIVATE nip19 nip34)
 if(NOSTRC_ARCHIVES_FROM_EXECUTABLE)
   # A private dependency of a shared library is not on its consumers' link;
   # an executable that links only this library still has to supply the
   # archives both shared libraries leave undefined.
-  nostrc_link_archives(nostr_gtk_portable INTERFACE nip19
+  nostrc_link_archives(nostr_gtk_portable INTERFACE nip19 nip34
     "$<LINK_ONLY:nostr_gobject>")
 endif()
 target_compile_definitions(nostr_gtk_portable PRIVATE
@@ -458,7 +488,7 @@ Version: ${NOSTR_GTK_VERSION}
 Requires: glib-2.0 gobject-2.0 gio-2.0 gtk4 libadwaita-1
 Requires.private: nostr-gobject-1.0
 Libs: -L\${libdir} -lnostr-gtk-portable-1.0
-Libs.private: -lnip19 -lnostr
+Libs.private: -lnip19 -lnip34 -lnostr
 Cflags: -I\${includedir}
 ")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/nostr-gtk-portable-1.0.pc"
@@ -521,7 +551,21 @@ if(BUILD_TESTING)
   add_test(NAME nostr_gtk_portable_potfiles
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/nostrc-check-potfiles.py
             ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES
-            ${NOSTR_GTK_PORTABLE_SOURCES})
+            ${NOSTR_GTK_PORTABLE_SOURCES} ${NOSTR_GTK_ISSUE_MODEL_SOURCES})
+
+  # NIP-34 issue model (nostrc-8xfib.5): GTK-free, no display.
+  gn_add_gtest(test_nostr_gtk_nip34_issue_model
+    SOURCES tests/test_nip34_issue_model.c
+    LIBS gn_issue_model PkgConfig::GLIB2 PkgConfig::GIO2)
+  target_compile_definitions(test_nostr_gtk_nip34_issue_model PRIVATE
+    NOSTR_GTK_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  # The shared issue form with mock services: consent before any call.
+  gn_add_gtest_xvfb(test_nostr_gtk_nip34_issue_view
+    SOURCES tests/test_nip34_issue_view.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::ADW PkgConfig::GLIB2)
+  target_include_directories(test_nostr_gtk_nip34_issue_view PRIVATE
+    ${PROJECT_ROOT}/tests/common ${CMAKE_SOURCE_DIR}/libnostr/include)
+  nostrc_link_archives(test_nostr_gtk_nip34_issue_view PRIVATE nip34)
 
   gn_add_gtest(test_nostr_gtk_content_parser
     SOURCES tests/test_content_parser.c
