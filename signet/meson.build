@@ -239,7 +239,6 @@ signet_core_sources = files(
   'src/audit_logger.c',
   'src/replay_cache.c',
   'src/key_store.c',
-  'src/sbom_dsse.c',
   'src/policy_store.c',
   'src/policy_engine.c',
   'src/relay_pool.c',

@@ -554,71 +554,6 @@ static void test_fenced_nip46_signing_contract(void) {
   printf("test_fenced_nip46_signing_contract: PASS\n");
 }
 
-static void test_fenced_nip46_sbom_dsse_contract(void) {
-  N46Fixture f;
-  n46_setup(&f);
-  int64_t now = (int64_t)time(NULL);
-  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
-                    "one-time-secret", "dsse-connect", now));
-  int64_t epoch = 0, expiry = 0;
-  CHECK(signet_key_store_writer_acquire(f.ks, "stew", f.client_pk_hex, 300,
-                                        &epoch, &expiry) == 0);
-  char *statement = g_strdup_printf(
-      "{\"_type\":\"https://in-toto.io/Statement/v1\","
-      "\"subject\":[{\"name\":\"artifact\",\"digest\":{\"sha256\":\"%064d\"}}],"
-      "\"predicateType\":\"https://spdx.dev/Document\","
-      "\"predicate\":{\"format\":\"spdx\",\"location\":{\"type\":\"blossom\","
-      "\"uri\":\"https://example.test/sbom\"},\"digest\":{\"sha256\":\"%064d\"}}}",
-      0, 0);
-  char *encoded = g_base64_encode((const guchar *)statement, strlen(statement));
-  char *request = g_strdup_printf(
-      "{\"id\":\"dsse\",\"method\":\"sign_bahia_sbom_dsse\",\"params\":[\"%s\",\"1\"]}",
-      encoded);
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
-                 "dsse-wildcard-denied", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "policy_denied");
-  CHECK(g_file_set_contents(f.policy_path,
-      "[identity.stew]\nallow_clients = \"*\"\ndefault = \"allow\"\n",
-      -1, NULL));
-  CHECK(signet_policy_store_reload(f.ps, now) == 0);
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
-                 "dsse-default-denied", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "policy_denied");
-  CHECK(g_file_set_contents(f.policy_path,
-      "[identity.stew]\nallow_clients = \"*\"\n"
-      "allow_methods = \"*, sign_bahia_sbom_dsse\"\ndefault = \"allow\"\n",
-      -1, NULL));
-  CHECK(signet_policy_store_reload(f.ps, now) == 0);
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
-                 "dsse-current", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "ok", "ok");
-  char *no_epoch = g_strdup_printf(
-      "{\"id\":\"dsse-no-epoch\",\"method\":\"sign_bahia_sbom_dsse\",\"params\":[\"%s\"]}",
-      encoded);
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, no_epoch,
-                 "dsse-no-epoch", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "invalid_params");
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex,
-      "{\"id\":\"dsse-invalid\",\"method\":\"sign_bahia_sbom_dsse\",\"params\":[\"YWJj\",\"1\"]}",
-      "dsse-invalid", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "sign_failed");
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex,
-      "{\"id\":\"dsse-b64\",\"method\":\"sign_bahia_sbom_dsse\",\"params\":[\"YWJj!!!!\",\"1\"]}",
-      "dsse-b64", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "sign_failed");
-  int64_t revoked = 0;
-  CHECK(signet_key_store_writer_revoke(f.ks, "stew", &revoked) == 0);
-  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, request,
-                 "dsse-revoked", now);
-  n46_expect_last_audit(&f, "sign_bahia_sbom_dsse", "error", "sign_failed");
-  g_free(request);
-  g_free(no_epoch);
-  g_free(encoded);
-  g_free(statement);
-  n46_teardown(&f);
-  printf("test_fenced_nip46_sbom_dsse_contract: PASS\n");
-}
-
 /* 2 + 3 + 4 + 5: pairing persists; restarts and stale secrets reconnect. */
 static void test_pair_once_reconnect_freely(void) {
   N46Fixture f;
@@ -838,7 +773,6 @@ int main(void) {
   test_rotation_invalidates_binding();
   test_reprovision_does_not_resurrect_binding();
   test_fenced_nip46_signing_contract();
-  test_fenced_nip46_sbom_dsse_contract();
   test_fenced_nip46_nip44_contract();
 
   printf("All client binding tests passed.\n");

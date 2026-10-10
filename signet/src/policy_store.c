@@ -250,15 +250,6 @@ static gboolean signet_list_match_string(GPtrArray *a, const char *value) {
   return FALSE;
 }
 
-static gboolean signet_list_has_exact_string(GPtrArray *a, const char *value) {
-  if (!a || !value) return FALSE;
-  for (guint i = 0; i < a->len; i++) {
-    const char *item = g_ptr_array_index(a, i);
-    if (item && strcmp(item, value) == 0) return TRUE;
-  }
-  return FALSE;
-}
-
 static gboolean signet_kinds_has_any(const SignetIdentityPolicy *p, gboolean allow) {
   if (!p) return FALSE;
   if (allow) return p->allow_kinds_any || (p->allow_kinds && p->allow_kinds->len > 0);
@@ -703,13 +694,7 @@ int signet_policy_store_get(SignetPolicyStore *ps,
   const gboolean kind_applicable = is_sign_event && (key->event_kind >= 0);
 
   /* Deny takes precedence (any matching deny dimension denies). */
-  if (strcmp(key->method, "sign_bahia_sbom_dsse") == 0 &&
-      !signet_list_has_exact_string(p->allow_methods, key->method)) {
-    /* A wildcard or default-allow was written before this privileged
-     * capability existed; neither grants it by accident. */
-    out_val->decision = SIGNET_POLICY_RULE_DENY;
-    out_val->reason_code = "policy.deny.dsse_opt_in_required";
-  } else if (signet_list_has_any_strings(p->deny_clients) && signet_list_match_string(p->deny_clients, client_canon)) {
+  if (signet_list_has_any_strings(p->deny_clients) && signet_list_match_string(p->deny_clients, client_canon)) {
     out_val->decision = SIGNET_POLICY_RULE_DENY;
     out_val->reason_code = "policy.deny.client";
   } else if (signet_list_has_any_strings(p->deny_methods) && signet_list_match_string(p->deny_methods, key->method)) {

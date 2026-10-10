@@ -151,18 +151,6 @@ int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
                                  const char *method, const char *peer_pubkey,
                                  const char *input, char **out_result);
 
-/* Sign only Bahia's in-toto SBOM statement as DSSE: validate the exact JSON
- * payload, hash DSSEv1 PAE with the fixed application/vnd.in-toto+json type,
- * and BIP-340 sign under the authenticated writer lease. The caller supplies
- * neither a digest nor a payload type. Returns a base64 64-byte signature;
- * *out_signature_b64 stays NULL on any validation, lease or commit failure. */
-int signet_key_store_sign_bahia_sbom_dsse(SignetKeyStore *ks,
-                                          const char *agent_id,
-                                          const char *owner, int64_t epoch,
-                                          const uint8_t *payload,
-                                          size_t payload_len,
-                                          char **out_signature_b64);
-
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.
  * out_pubkey_hex must be at least 65 bytes.
