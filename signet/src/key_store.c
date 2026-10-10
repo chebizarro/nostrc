@@ -58,7 +58,11 @@ typedef struct {
 static void signet_ephemeral_binding_free(gpointer p) {
   SignetEphemeralBinding *b = p;
   if (!b) return;
-  g_free(b->agent_id);
+  if (b->agent_id) {
+    sodium_memzero(b->agent_id, strlen(b->agent_id));
+    g_free(b->agent_id);
+  }
+  sodium_memzero(b, sizeof(*b));
   g_free(b);
 }
 
@@ -131,29 +135,61 @@ static bool signet_connect_secret_hash(const char *secret, char out[65]) {
   out[0] = '\0';
   if (!secret || !secret[0]) return false;
   char *h = g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
-  if (!h || strlen(h) != 64) {
+  bool ok = h && strlen(h) == 64;
+  if (ok) memcpy(out, h, 65);
+  if (h) {
+    sodium_memzero(h, strlen(h));
     g_free(h);
-    return false;
   }
-  memcpy(out, h, 65);
-  g_free(h);
-  return true;
+  return ok;
 }
 
-/* True when another hot-cache entry already holds @hash as its pending
- * connect secret (the cache-only analogue of the store's UNIQUE column).
- * Call with ks->mu held. */
-static bool signet_cache_secret_hash_in_use(SignetKeyStore *ks, const char *hash) {
+/* True when a hot-cache entry other than @self already holds @hash as its
+ * pending connect secret (the cache-only analogue of the store's UNIQUE
+ * column). Call with ks->mu held. */
+static bool signet_cache_secret_hash_in_use(SignetKeyStore *ks,
+                                            const SignetCacheEntry *self,
+                                            const char *hash) {
   GHashTableIter it;
   gpointer v;
   g_hash_table_iter_init(&it, ks->cache);
   while (g_hash_table_iter_next(&it, NULL, &v)) {
     const SignetCacheEntry *e = v;
-    if (e->connect_secret_hash[0] &&
+    if (e != self && e->connect_secret_hash[0] &&
         sodium_memcmp(e->connect_secret_hash, hash, 64) == 0)
       return true;
   }
   return false;
+}
+
+/* Cache-only: make @secret the pending one-time connect secret of @e (which
+ * may not be in the cache yet), replacing any earlier one. Fails when the
+ * digest cannot be computed or another agent holds the same pending secret.
+ * Call with ks->mu held. */
+static bool signet_cache_set_pending_secret(SignetKeyStore *ks, SignetCacheEntry *e,
+                                            const char *secret) {
+  char hash[65];
+  bool ok = signet_connect_secret_hash(secret, hash) &&
+            !signet_cache_secret_hash_in_use(ks, e, hash);
+  if (ok) memcpy(e->connect_secret_hash, hash, 65);
+  sodium_memzero(hash, sizeof(hash));
+  return ok;
+}
+
+/* Cache-only: drop every client binding of @agent_id. Called whenever the
+ * agent's hot-cache entry is removed or replaced, so stale bindings do not
+ * linger until their client is next looked up (lookup also re-checks the
+ * pinned generation). A no-op with a persistent store, whose bindings live in
+ * agent_clients. Call with ks->mu held. */
+static void signet_ephemeral_bindings_drop_agent(SignetKeyStore *ks, const char *agent_id) {
+  if (!ks->ephemeral_bindings || !agent_id) return;
+  GHashTableIter it;
+  gpointer v;
+  g_hash_table_iter_init(&it, ks->ephemeral_bindings);
+  while (g_hash_table_iter_next(&it, NULL, &v)) {
+    const SignetEphemeralBinding *b = v;
+    if (g_strcmp0(b->agent_id, agent_id) == 0) g_hash_table_iter_remove(&it);
+  }
 }
 
 SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
@@ -524,12 +560,12 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
     /* Cache-only: the hot cache is the only place the pending pairing
      * secret can live; keep its digest so the bunker URI handed out below
      * can actually pair. */
-    if (entry && !ks->store &&
-        !signet_connect_secret_hash(connect_secret, entry->connect_secret_hash)) {
+    if (entry && !ks->store && !signet_cache_set_pending_secret(ks, entry, connect_secret)) {
       signet_cache_entry_free(entry);
       entry = NULL;
     }
     if (entry) {
+      signet_ephemeral_bindings_drop_agent(ks, agent_id);
       g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
       rc = 0;
     } else {
@@ -684,14 +720,12 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
     SignetCacheEntry *entry = signet_cache_entry_new(secret_key, now);
     /* Cache-only: keep the pending pairing secret's digest on the entry,
      * unique across agents like the store's connect_secret column. */
-    if (entry && !ks->store) {
-      if (!signet_connect_secret_hash(connect_secret, entry->connect_secret_hash) ||
-          signet_cache_secret_hash_in_use(ks, entry->connect_secret_hash)) {
-        signet_cache_entry_free(entry);
-        entry = NULL;
-      }
+    if (entry && !ks->store && !signet_cache_set_pending_secret(ks, entry, connect_secret)) {
+      signet_cache_entry_free(entry);
+      entry = NULL;
     }
     if (entry) {
+      signet_ephemeral_bindings_drop_agent(ks, agent_id);
       g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
       rc = 0;
     } else {
@@ -794,6 +828,15 @@ SignetAdoptResult signet_key_store_restore_agent(SignetKeyStore *ks,
     if (rc != 0) goto done;
   }
 
+  /* Cache-only: like the store row, a restore keeps the agent's pending
+   * connect secret (if any); reissue-connect mints one otherwise. */
+  if (!ks->store) {
+    const SignetCacheEntry *prior = g_hash_table_lookup(ks->cache, agent_id);
+    if (prior)
+      memcpy(replacement->connect_secret_hash, prior->connect_secret_hash,
+             sizeof(replacement->connect_secret_hash));
+  }
+  signet_ephemeral_bindings_drop_agent(ks, agent_id);
   g_hash_table_replace(ks->cache, g_strdup(agent_id), replacement);
   replacement = NULL;
   g_strlcpy(out_pubkey_hex, pk_hex, 65);
@@ -894,6 +937,7 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
   g_mutex_lock(&ks->mu);
   if (ks->store) {
     g_mutex_unlock(&ks->mu);
+    sodium_memzero(hash, sizeof(hash));
     return -1;
   }
 
@@ -914,6 +958,7 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
   }
   if (!match) {
     g_mutex_unlock(&ks->mu);
+    sodium_memzero(hash, sizeof(hash));
     return 1;
   }
 
@@ -925,12 +970,21 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
 
   /* Consume and bind together: the secret is single-use, and a re-pair of an
    * already bound client key replaces its earlier binding. */
-  match->connect_secret_hash[0] = '\0';
+  sodium_memzero(match->connect_secret_hash, sizeof(match->connect_secret_hash));
   g_hash_table_replace(ks->ephemeral_bindings, g_strdup(client), b);
   g_mutex_unlock(&ks->mu);
+  sodium_memzero(hash, sizeof(hash));
 
   *out_agent_id = agent_copy;
   return 0;
+}
+
+unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks) {
+  if (!ks) return 0;
+  g_mutex_lock(&ks->mu);
+  unsigned int n = ks->ephemeral_bindings ? g_hash_table_size(ks->ephemeral_bindings) : 0;
+  g_mutex_unlock(&ks->mu);
+  return n;
 }
 
 int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
@@ -999,33 +1053,37 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
 
   g_mutex_lock(&ks->mu);
 
-  /* Reissue only makes sense with a persistent store — a cache-only key store
-   * has no connect_secret column to update. */
-  if (!ks->store) {
-    g_mutex_unlock(&ks->mu);
-    sodium_memzero(connect_secret, sizeof(connect_secret));
-    return -1;
-  }
+  /* The agent must exist. With a store, load the record so we can derive the
+   * identity pubkey even for legacy rows without a populated pubkey column;
+   * a cache-only key store holds agents only in the hot cache. */
+  SignetCacheEntry *cached = NULL;
+  if (ks->store) {
+    SignetAgentRecord rec;
+    memset(&rec, 0, sizeof(rec));
+    int grc = signet_store_get_agent(ks->store, agent_id, &rec);
+    if (grc != 0) {
+      g_mutex_unlock(&ks->mu);
+      sodium_memzero(connect_secret, sizeof(connect_secret));
+      return (grc > 0) ? 1 : -1;
+    }
 
-  /* The agent must exist. Load the record so we can derive the identity
-   * pubkey even for legacy rows without a populated pubkey column. */
-  SignetAgentRecord rec;
-  memset(&rec, 0, sizeof(rec));
-  int grc = signet_store_get_agent(ks->store, agent_id, &rec);
-  if (grc != 0) {
-    g_mutex_unlock(&ks->mu);
-    sodium_memzero(connect_secret, sizeof(connect_secret));
-    return (grc > 0) ? 1 : -1;
+    if (rec.secret_key && rec.secret_key_len == 32) {
+      char sk_hex[65];
+      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", rec.secret_key[i]);
+      sk_hex[64] = '\0';
+      pk_hex = nostr_key_get_public(sk_hex);
+      sodium_memzero(sk_hex, sizeof(sk_hex));
+    }
+    signet_agent_record_clear(&rec);
+  } else {
+    cached = g_hash_table_lookup(ks->cache, agent_id);
+    if (!cached) {
+      g_mutex_unlock(&ks->mu);
+      sodium_memzero(connect_secret, sizeof(connect_secret));
+      return 1;
+    }
+    pk_hex = strdup(cached->pubkey_hex);
   }
-
-  if (rec.secret_key && rec.secret_key_len == 32) {
-    char sk_hex[65];
-    for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", rec.secret_key[i]);
-    sk_hex[64] = '\0';
-    pk_hex = nostr_key_get_public(sk_hex);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
-  }
-  signet_agent_record_clear(&rec);
 
   if (!pk_hex || strlen(pk_hex) != 64) {
     g_mutex_unlock(&ks->mu);
@@ -1046,8 +1104,14 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
     return 2; /* identity mismatch */
   }
 
-  int64_t now = (int64_t)time(NULL);
-  rc = signet_store_reissue_connect_secret(ks->store, agent_id, connect_secret, now);
+  if (ks->store) {
+    int64_t now = (int64_t)time(NULL);
+    rc = signet_store_reissue_connect_secret(ks->store, agent_id, connect_secret, now);
+  } else {
+    /* Cache-only: replace the pending secret's digest in place. Existing
+     * bindings stay (as with the store), only the earlier secret dies. */
+    rc = signet_cache_set_pending_secret(ks, cached, connect_secret) ? 0 : -1;
+  }
 
   g_mutex_unlock(&ks->mu);
 
@@ -1088,6 +1152,7 @@ int signet_key_store_evict_agent(SignetKeyStore *ks, const char *agent_id) {
   if (!ks || !agent_id) return -1;
 
   g_mutex_lock(&ks->mu);
+  signet_ephemeral_bindings_drop_agent(ks, agent_id);
   gboolean found = g_hash_table_remove(ks->cache, agent_id);
   g_mutex_unlock(&ks->mu);
   return found ? 0 : 1;
@@ -1109,6 +1174,7 @@ int signet_key_store_revoke_agent(SignetKeyStore *ks, const char *agent_id) {
     }
   }
 
+  signet_ephemeral_bindings_drop_agent(ks, agent_id);
   gboolean found = g_hash_table_remove(ks->cache, agent_id);
   g_mutex_unlock(&ks->mu);
 
@@ -1181,9 +1247,11 @@ int signet_key_store_rotate_agent(SignetKeyStore *ks,
   }
 
   if (rc == 0 || !ks->store) {
-    /* Replace in hot cache. */
+    /* Replace in hot cache. Like the store row (connect_secret = NULL), the
+     * new entry has no pending secret: re-pairing takes reissue-connect. */
     SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
     if (entry) {
+      signet_ephemeral_bindings_drop_agent(ks, agent_id);
       g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
       rc = 0;
     } else {
