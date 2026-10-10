@@ -24,6 +24,7 @@
 
 #include <glib/gstdio.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #ifdef GROUNDHOG_TEST_WIRE
@@ -1474,10 +1475,23 @@ typedef struct {
   NostrcTestBus *daemon;
 } CrashEnv;
 
+/* The crash child is this binary run afresh (crash_run()), never a bare
+ * fork() of the test process: by then that process has threads (GLib's
+ * worker, started for the bus's supervisor), and a lock one of them held at
+ * fork() stays held in the child forever. Under ASAN that is the allocator's,
+ * so every thread the child starts (GDBus's among them) blocked in its first
+ * malloc and the child's bus connection timed out (nostrc CI run
+ * 38026375945). The child connects to the scenario's bus by its address. */
+#define CRASH_CHILD_ENV "GH_OUTBOX_CRASH_CHILD"
+#define CRASH_CUT_ENV   "GH_OUTBOX_CRASH_CUT"
+#define CRASH_DIR_ENV   "GH_OUTBOX_CRASH_DIR"
+
+static gchar *self_exe;
+
 static void
 crash_child_start(Fixture *f, CrashEnv *env)
 {
-  fixture_up(f, env->data_dir, env->daemon);
+  fixture_up(f, env->data_dir, NULL); /* shared_bus: the scenario's bus here */
   settle_own(f, ALICE_INBOX, NULL);
   fixture_outbox(f);
 }
@@ -1520,19 +1534,80 @@ ob3_child(gpointer data)
   gh_test_spin_until(never, NULL); /* killed after A's T-outcome */
 }
 
+static GDBusConnection *
+crash_child_connect(const gchar *address)
+{
+  GError *error = NULL;
+  GDBusConnection *connection = g_dbus_connection_new_for_address_sync(
+    address,
+    G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT | G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+    NULL, NULL, &error);
+  if (!connection)
+    g_error("crash child: cannot connect to %s: %s", address, error->message);
+  return connection; /* the child dies holding it */
+}
+
+typedef struct {
+  const gchar *name;
+  GhCrashScript script;
+} CrashChild;
+
+static const CrashChild crash_children[] = {
+  { "ob1", ob1_child },
+  { "ob-seal", ob_seal_child },
+  { "ob3", ob3_child },
+};
+
+/* main() of the crash child: arm the cut point, run the scenario. */
+static int
+crash_child_main(const gchar *name)
+{
+  const gchar *address = g_getenv("DBUS_SESSION_BUS_ADDRESS");
+  const gchar *cut_point = g_getenv(CRASH_CUT_ENV);
+  CrashEnv env = { .data_dir = (gchar *) g_getenv(CRASH_DIR_ENV) };
+  g_assert_nonnull(address);
+  g_assert_nonnull(cut_point);
+  g_assert_nonnull(env.data_dir);
+  shared_bus.client = crash_child_connect(address);
+  shared_bus.owner = crash_child_connect(address);
+  for (guint i = 0; i < G_N_ELEMENTS(crash_children); i++) {
+    if (strcmp(crash_children[i].name, name) == 0) {
+      gh_store_test_crash_at(cut_point, 1);
+      crash_children[i].script(&env);
+      _exit(0); /* returned: the cut point was never reached */
+    }
+  }
+  g_error("crash child: unknown scenario %s", name);
+}
+
 static void
-crash_run(CrashEnv *env, const gchar *cut_point, GhCrashScript child)
+crash_run(CrashEnv *env, const gchar *cut_point, const gchar *child)
 {
   env->data_dir = g_dir_make_tmp("groundhog-outbox-crash-XXXXXX", NULL);
   g_assert_nonnull(env->data_dir);
-  /* Not a session bus: nostrc_test_bus_up() would then connect, and no GDBus
-   * connection (or its worker thread) may exist before fork(). GhSigner
-   * finds the bus through DBUS_SESSION_BUS_ADDRESS, exported by hand. The
-   * child inherits the bus's lifeline, so its death leaves the bus up. */
+  /* Not a session bus: GhSigner finds it through DBUS_SESSION_BUS_ADDRESS,
+   * exported by hand (the child inherits it); the parent reconnects after. */
   env->daemon = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NOT_SESSION);
   nostrc_test_bus_up(env->daemon);
   g_setenv("DBUS_SESSION_BUS_ADDRESS", nostrc_test_bus_get_address(env->daemon), TRUE);
-  GhCrashOutcome outcome = gh_crash_harness_run(cut_point, 1, child, env);
+
+  gchar **envp = g_get_environ();
+  envp = g_environ_setenv(envp, CRASH_CHILD_ENV, child, TRUE);
+  envp = g_environ_setenv(envp, CRASH_CUT_ENV, cut_point, TRUE);
+  envp = g_environ_setenv(envp, CRASH_DIR_ENV, env->data_dir, TRUE);
+  const gchar *argv[] = { self_exe, NULL };
+  gint status = 0;
+  GError *error = NULL;
+  /* Test output stays the runner's: the child's stdout is dropped. */
+  if (!g_spawn_sync(NULL, (gchar **) argv, envp, G_SPAWN_STDOUT_TO_DEV_NULL, NULL, NULL, NULL,
+                    NULL, &status, &error))
+    g_error("crash child: cannot start %s: %s", self_exe, error->message);
+  g_strfreev(envp);
+  GhCrashOutcome outcome = GH_CRASH_FAILED;
+  if (WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL)
+    outcome = GH_CRASH_KILLED;
+  else if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+    outcome = GH_CRASH_COMPLETED;
   g_assert_cmpstr(gh_crash_outcome_to_string(outcome), ==,
                   gh_crash_outcome_to_string(GH_CRASH_KILLED));
 }
@@ -1572,7 +1647,7 @@ test_ob1_enqueue_durability(void)
 {
   CRASH_SUBPROCESS();
   CrashEnv env = { 0 };
-  crash_run(&env, "seal:after-commit", ob1_child); /* never reached: killed while held */
+  crash_run(&env, "seal:after-commit", "ob1"); /* never reached: killed while held */
   Fixture f;
   fixture_up(&f, env.data_dir, env.daemon);
   gint64 id = only_entry(&f);
@@ -1622,7 +1697,7 @@ test_ob2_no_reseal(void)
 {
   CRASH_SUBPROCESS();
   CrashEnv env = { 0 };
-  crash_run(&env, "seal:after-commit", ob_seal_child);
+  crash_run(&env, "seal:after-commit", "ob-seal");
   Fixture f;
   fixture_up(&f, env.data_dir, env.daemon);
   gint64 id = only_entry(&f);
@@ -1657,7 +1732,7 @@ test_ob3_resume_fanout(void)
 {
   CRASH_SUBPROCESS();
   CrashEnv env = { 0 };
-  crash_run(&env, "outcome:after-commit", ob3_child);
+  crash_run(&env, "outcome:after-commit", "ob3");
   Fixture f;
   fixture_up(&f, env.data_dir, env.daemon);
   gint64 id = only_entry(&f);
@@ -2782,7 +2857,11 @@ main(int argc, char **argv)
   hex_bob = gh_test_pub(KEY_BOB);
   npub_alice = gh_test_npub(KEY_ALICE);
   npub_bob = gh_test_npub(KEY_BOB);
-  /* A crash scenario's subprocess forks before any D-Bus use. */
+  self_exe = g_canonicalize_filename(argv[0], NULL);
+  const gchar *crash_child = g_getenv(CRASH_CHILD_ENV);
+  if (crash_child)
+    return crash_child_main(crash_child);
+  /* A crash scenario's subprocess uses its own bus (crash_run()). */
   if (!g_test_subprocess())
     gh_test_bus_up(&shared_bus);
 
