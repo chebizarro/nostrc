@@ -1326,10 +1326,14 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
     free(env_npub);
     return NOSTR_SIGNER_ERROR_BACKEND;
   }
+  /* Each npub once: the environment key may also be stored, and one key
+   * may have several items (a software copy beside a hardware enrolment). */
   int n = 0;
   if (env_npub) npubs[n++] = env_npub;
   for (int i = 0; i < n_stored; i++) {
-    if (env_npub && strcmp(stored[i], env_npub) == 0) { free(stored[i]); continue; }
+    int dup = 0;
+    for (int j = 0; j < n && !dup; j++) dup = strcmp(stored[i], npubs[j]) == 0;
+    if (dup) { free(stored[i]); continue; }
     npubs[n++] = stored[i];
   }
   free(stored);

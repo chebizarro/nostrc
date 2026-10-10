@@ -2854,14 +2854,15 @@ static int fake_secret_service(int argc, char **argv) {
 
 typedef struct { const char *mode; const char *stored_sk; } FakeSecrets;
 
-/* Pre-daemon hook: the fake Secret Service holding a stored key and a copy
- * of the fixture's environment key. */
+/* Pre-daemon hook: the fake Secret Service holding a stored key (twice, as
+ * a key with two items) and a copy of the fixture's environment key. */
 static void fake_secrets_pre_daemon(Ctx *ctx, gpointer data) {
   const FakeSecrets *fs = data;
   GError *err = NULL;
   char *exe = self_exe();
   ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
-                                  "--fake-secret-service", fs->mode, fs->stored_sk, ctx->sk_hex, NULL);
+                                  "--fake-secret-service", fs->mode, fs->stored_sk, fs->stored_sk,
+                                  ctx->sk_hex, NULL);
   g_free(exe);
   if (!ctx->secrets) { g_printerr("spawn fake secret service: %s\n", err ? err->message : "?"); exit(1); }
   wait_for_named(ctx->bus, FSS_NAME, 20);
@@ -2907,8 +2908,8 @@ static void run_identity_store_phase(void) {
   test_key_new(&stored);
   test_key_new(&other);
 
-  /* A plain-only Secret Service (nostrc-poc10). The stored key and a copy
-   * of the environment key are listed once each; an unknown selector is
+  /* A plain-only Secret Service (nostrc-poc10). The stored key (two items)
+   * and a copy of the environment key are listed once each; an unknown selector is
    * refused (it crashed the daemon in libsecret's session fallback); the
    * stored key signs by selector over the plain session. */
   {
