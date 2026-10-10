@@ -2,6 +2,7 @@
 #include "gh-identity.h"
 #include "gh-display-name.h"
 #include "gh-nip46-pair-dialog.h"
+#include "gh-unparent.h"
 #if GROUNDHOG_HAVE_INBOX
 #include "gh-conversation-list.h"
 #endif
@@ -233,6 +234,8 @@ discard_account_popover(GhAccountUi *ui)
     return;
   GtkPopover *popover = g_steal_pointer(&ui->account_popover);
   g_signal_handlers_disconnect_by_data(popover, ui);
+  /* Before popping down and emptying it: see gh-unparent.h. */
+  gh_widget_release_focus(GTK_WIDGET(popover));
   gtk_popover_popdown(popover);
   gtk_popover_set_child(popover, NULL);
   if (gtk_widget_get_parent(GTK_WIDGET(popover)))

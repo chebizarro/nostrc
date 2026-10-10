@@ -1,4 +1,5 @@
 #include "gh-message-row.h"
+#include "gh-unparent.h"
 #include "gh-conversation-open-probe-private.h"
 #include "gh-display-name.h"
 #include "gh-attachment-card.h"
@@ -1548,11 +1549,11 @@ gh_message_row_dispose(GObject *object)
   self->voice_bubble = NULL;
 #endif
   if (self->picker) {
-    gtk_widget_unparent(GTK_WIDGET(self->picker));
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->picker));
     self->picker = NULL;
   }
   if (self->avatar_menu) {
-    gtk_widget_unparent(GTK_WIDGET(self->avatar_menu));
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->avatar_menu));
     self->avatar_menu = NULL;
   }
   if (self->reply_button) {

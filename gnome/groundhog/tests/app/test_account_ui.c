@@ -379,6 +379,7 @@ test_header_title_fits(void)
     gtk_window_set_default_size(GTK_WINDOW(window), sizes[i].width, 400);
     gtk_window_present(GTK_WINDOW(window));
     Sized sized = { GTK_WIDGET(window), sizes[i].width };
+    gpointer open_switcher = NULL;
     spin_until(is_laid_out, &sized);
     while (g_main_context_iteration(NULL, FALSE))
       ;
@@ -428,9 +429,19 @@ test_header_title_fits(void)
       g_assert_nonnull(switcher);
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(switcher)));
       g_assert_nonnull(find_label(GTK_WIDGET(switcher), "Grotto"));
+      /* It holds the window's focus. Popped down and, within the same frame,
+       * unparented with the window: GTK 4.14 keeps a reference to a focused
+       * widget hidden and then removed before the next frame unless the
+       * focus leaves it first (gh-unparent.h). The leaked switcher was the
+       * unrealized popover the tooltip's hover timeout fired on in CI. */
+      GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(window));
+      g_assert_true(focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(switcher)));
+      open_switcher = switcher;
+      g_object_add_weak_pointer(G_OBJECT(switcher), &open_switcher);
       gtk_popover_popdown(switcher);
     }
     gtk_window_destroy(GTK_WINDOW(window));
+    g_assert_null(open_switcher);
   }
   g_object_set(gtk_settings_get_default(), "gtk-decoration-layout", "appmenu:close", NULL);
   g_settings_reset(settings, "current-npub");

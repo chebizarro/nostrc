@@ -1,4 +1,5 @@
 #include "gh-composer.h"
+#include "gh-unparent.h"
 #include "../app/gh-test-async-control.h"
 #include "gh-display-name.h"
 
@@ -886,7 +887,7 @@ gh_composer_dispose(GObject *object)
   self->buffer = NULL;
   g_clear_object(&self->clipboard);
   if (self->mention_popover) {
-    gtk_widget_unparent(GTK_WIDGET(self->mention_popover));
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->mention_popover));
     self->mention_popover = NULL;
     self->mention_list = NULL;
   }
