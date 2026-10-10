@@ -766,23 +766,8 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "blossom;unit;gnostr")
 
-  # Bug-report dialog assembly: labels/tags and reviewable content sections
-  add_executable(gnostr-test-bug-report-assembly
-    tests/test_bug_report_assembly.c
-    src/ui/gnostr-bug-report-assembly.c)
-  target_compile_features(gnostr-test-bug-report-assembly PRIVATE c_std_11)
-  target_include_directories(gnostr-test-bug-report-assembly PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${PROJECT_ROOT}/libnostr/include
-    ${PROJECT_ROOT}/nips/nip34/include)
-  target_link_libraries(gnostr-test-bug-report-assembly PRIVATE
-    PkgConfig::GLIB nip34 nostr)
-  _gnostr_apply_sanitizers(gnostr-test-bug-report-assembly)
-  add_test(NAME gnostr-test-nip34-bug-report-assembly
-    COMMAND gnostr-test-bug-report-assembly)
-  set_tests_properties(gnostr-test-nip34-bug-report-assembly PROPERTIES
-    TIMEOUT 30
-    LABELS "nip34;bug-report;dialog;unit;gnostr")
+  # The bug-report assembly test moved to nostr-gtk test_nip34_issue_model.c
+  # with the shared issue model (nostrc-8xfib.5).
 
   # Blossom settings (kind 10063) unit tests
   add_executable(gnostr-test-blossom-settings tests/test_blossom_settings.c)

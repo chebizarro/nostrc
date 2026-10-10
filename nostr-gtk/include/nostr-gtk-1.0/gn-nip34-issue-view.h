@@ -23,6 +23,7 @@
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/gn-nip34-issue.h>
 #include <nostr-gtk-1.0/gn-nip34-issue-iface.h>
+#include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
 
 G_BEGIN_DECLS
 
@@ -50,6 +51,8 @@ GnNip34IssueView *gn_nip34_issue_view_new(const GnIssueTarget *target,
 void gn_nip34_issue_view_set_pubkey(GnNip34IssueView *self, const gchar *pubkey_hex);
 const gchar *gn_nip34_issue_view_get_pubkey(GnNip34IssueView *self);
 const GnIssueTarget *gn_nip34_issue_view_get_target(GnNip34IssueView *self);
+/* The embedded structured-fields widget (e.g. to prefill labels). */
+GnNip34IssueFields *gn_nip34_issue_view_get_fields(GnNip34IssueView *self);
 void gn_nip34_issue_view_set_intro(GnNip34IssueView *self, const gchar *text);
 /* Labels always published first (not editable), e.g. "bug". */
 void gn_nip34_issue_view_set_required_labels(GnNip34IssueView *self, const gchar *const *labels);

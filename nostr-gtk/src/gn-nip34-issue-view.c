@@ -1192,6 +1192,13 @@ gn_nip34_issue_view_get_target(GnNip34IssueView *self)
   return self->target;
 }
 
+GnNip34IssueFields *
+gn_nip34_issue_view_get_fields(GnNip34IssueView *self)
+{
+  g_return_val_if_fail(GN_IS_NIP34_ISSUE_VIEW(self), NULL);
+  return self->fields;
+}
+
 void
 gn_nip34_issue_view_set_intro(GnNip34IssueView *self, const gchar *text)
 {
