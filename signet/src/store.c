@@ -726,54 +726,62 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     return store;
   }
 
-  /* An older writer-lease DB has no complete writer-key history. Its former
-   * owners cannot be reconstructed from the current row, so refuse upgrade
-   * rather than permitting a stale owner to be granted provisioner later. */
+  /* Inspect history and apply base schema in one write transaction. The
+   * pre-history check must happen BEFORE schema creation: otherwise a failed
+   * first start could leave an empty history table and pass on the second. */
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) != SQLITE_OK) {
+    signet_store_close(store);
+    return NULL;
+  }
   bool had_writer_key_history = false;
+  bool had_writer_lease_table = false;
   {
-    sqlite3_stmt *history = NULL;
+    sqlite3_stmt *tables = NULL;
     if (sqlite3_prepare_v2(store->db,
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='writer_client_keys';",
-        -1, &history, NULL) != SQLITE_OK) {
-      signet_store_close(store);
-      return NULL;
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('writer_client_keys','agent_writer_leases');",
+        -1, &tables, NULL) != SQLITE_OK) goto writer_schema_fail;
+    int step;
+    while ((step = sqlite3_step(tables)) == SQLITE_ROW) {
+      const char *name = (const char *)sqlite3_column_text(tables, 0);
+      if (name && strcmp(name, "writer_client_keys") == 0)
+        had_writer_key_history = true;
+      else if (name && strcmp(name, "agent_writer_leases") == 0)
+        had_writer_lease_table = true;
     }
-    int step = sqlite3_step(history);
-    had_writer_key_history = step == SQLITE_ROW;
-    sqlite3_finalize(history);
-    if (step != SQLITE_ROW && step != SQLITE_DONE) {
-      signet_store_close(store);
-      return NULL;
+    sqlite3_finalize(tables);
+    if (step != SQLITE_DONE) goto writer_schema_fail;
+  }
+  if (!had_writer_key_history && had_writer_lease_table) {
+    sqlite3_stmt *old_lease = NULL;
+    if (sqlite3_prepare_v2(store->db,
+        "SELECT 1 FROM agent_writer_leases LIMIT 1;",
+        -1, &old_lease, NULL) != SQLITE_OK) goto writer_schema_fail;
+    int step = sqlite3_step(old_lease);
+    sqlite3_finalize(old_lease);
+    if (step != SQLITE_DONE) {
+      g_critical("[signet] pre-history writer lease database cannot be upgraded safely; refusing open");
+      goto writer_schema_fail;
     }
   }
 
-  /* Create schema. */
   char *errmsg = NULL;
   rc = sqlite3_exec(store->db, SIGNET_SCHEMA_SQL, NULL, NULL, &errmsg);
   if (rc != SQLITE_OK) {
     g_critical("[signet] failed to apply base schema for '%s': %s",
                cfg->db_path, errmsg ? errmsg : sqlite3_errmsg(store->db));
     if (errmsg) sqlite3_free(errmsg);
-    signet_store_close(store);
-    return NULL;
+    goto writer_schema_fail;
   }
+  if (sqlite3_exec(store->db, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK)
+    goto writer_schema_fail;
+  goto writer_schema_done;
 
-  if (!had_writer_key_history) {
-    sqlite3_stmt *old_lease = NULL;
-    if (sqlite3_prepare_v2(store->db,
-        "SELECT 1 FROM agent_writer_leases LIMIT 1;",
-        -1, &old_lease, NULL) != SQLITE_OK) {
-      signet_store_close(store);
-      return NULL;
-    }
-    int step = sqlite3_step(old_lease);
-    sqlite3_finalize(old_lease);
-    if (step != SQLITE_DONE) {
-      g_critical("[signet] pre-history writer lease database cannot be upgraded safely; refusing open");
-      signet_store_close(store);
-      return NULL;
-    }
-  }
+writer_schema_fail:
+  (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+  signet_store_close(store);
+  return NULL;
+writer_schema_done:
 
   if (!signet_store_migrate_secret_lifecycle(store->db)) {
     g_critical("[signet] failed to apply credential lifecycle schema migration "

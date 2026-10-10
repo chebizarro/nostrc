@@ -324,6 +324,15 @@ static void test_pre_history_writer_db_fails_closed(void) {
   sqlite3_close(db);
   SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
   CHECK(signet_key_store_new(NULL, &cfg) == NULL);
+  CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+  sqlite3_stmt *history = NULL;
+  CHECK(sqlite3_prepare_v2(db,
+      "SELECT 1 FROM sqlite_master WHERE type='table' AND name='writer_client_keys';",
+      -1, &history, NULL) == SQLITE_OK);
+  CHECK(sqlite3_step(history) == SQLITE_DONE);
+  sqlite3_finalize(history);
+  sqlite3_close(db);
+  CHECK(signet_key_store_new(NULL, &cfg) == NULL);
   unlink(path);
   g_free(path);
   printf("test_pre_history_writer_db_fails_closed: PASS\n");
