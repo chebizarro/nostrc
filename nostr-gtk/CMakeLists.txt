@@ -578,6 +578,12 @@ if(BUILD_TESTING)
   target_include_directories(test_nostr_gtk_og_preview_card PRIVATE ${PROJECT_ROOT}/tests/common)
   set_tests_properties(test_nostr_gtk_og_preview_card PROPERTIES SKIP_RETURN_CODE 77)
 
+  # nostrc-8xfib.6: resolver contract and reference card (fake resolver).
+  gn_add_gtest_xvfb(test_nostr_gtk_reference_card
+    SOURCES tests/test_reference_card.c
+    LIBS nostr_gtk_portable nip19 PkgConfig::GTK4 PkgConfig::GLIB2)
+  target_include_directories(test_nostr_gtk_reference_card PRIVATE ${PROJECT_ROOT}/tests/common)
+
   # nostrc-8xfib.4: bounded decode, injected media source, viewer and player.
   gn_add_gtest_xvfb(test_nostr_gtk_media
     SOURCES tests/test_media.c
