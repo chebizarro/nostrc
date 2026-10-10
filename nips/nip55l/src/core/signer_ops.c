@@ -111,6 +111,38 @@ static gchar *grotto_default_identity(void){
   if (npub && !*npub) g_clear_pointer(&npub, g_free);
   return npub;
 }
+
+/* The Secret Service with a session open, for a search that loads secrets;
+ * NULL (and *error set) when there is none or it opens no session
+ * (nostrc-poc10). secret_service_search_sync(..., SECRET_SEARCH_LOAD_SECRETS,
+ * ...) in libsecret 0.21.8 opens the session itself with a NULL GError, and
+ * its fallback from the dh-ietf1024-sha256-aes128-cbc-pkcs7 algorithm to
+ * "plain" then reads that NULL: a Secret Service offering only plain
+ * sessions, or refusing OpenSession, crashed the daemon on the first lookup
+ * that loaded a secret, which any caller could reach with an unknown
+ * selector. Opened here with an error to report into, the fallback works and
+ * the searches reuse the session. */
+static SecretService *signer_secret_service(GError **error){
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
+  if (!service) return NULL;
+  if (!secret_service_ensure_session_sync(service, NULL, error)) {
+    g_object_unref(service);
+    return NULL;
+  }
+  return service;
+}
+
+/* As signer_secret_service() for the key resolver, which reads a missing or
+ * unusable Secret Service as "no stored key". */
+static SecretService *resolver_secret_service(void){
+  GError *err = NULL;
+  SecretService *service = signer_secret_service(&err);
+  if (!service) {
+    g_debug("nip55l: no usable Secret Service: %s", err ? err->message : "unknown error");
+    g_clear_error(&err);
+  }
+  return service;
+}
 #endif
 
 /* Forward declaration */
@@ -184,7 +216,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
      * found" once the in-memory copy from StoreKey was gone. */
 #ifdef NIP55L_HAVE_LIBSECRET
     {
-      SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
+      SecretService *service = resolver_secret_service();
       if (service) {
         SecretItem *item = NULL;
         GError *gerr = NULL;
@@ -307,7 +339,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     }
     /* Fallback: search by current owner_uid if selector lookup failed */
     {
-      SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
+      SecretService *service = resolver_secret_service();
       if (service) {
         GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
         gchar uid_buf[32];
@@ -1393,7 +1425,8 @@ static char *npub_from_sk_hex(const char *sk_hex){
 /* TRUE when a unified item for npub holds a working copy of that key: its
  * secret decodes to a private key whose npub is npub. Attributes alone are
  * not evidence — a half-written item must not justify deleting the only
- * good copy. Hardware references carry no private key and never match. */
+ * good copy. Hardware references carry no private key and never match.
+ * @service already has its session open (signer_secret_service()). */
 static gboolean unified_holds_same_key(SecretService *service, const char *npub){
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)npub);
@@ -1791,6 +1824,15 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
     g_list_free_full(items, g_object_unref);
   }
   if (rc != 0 || r.found == 0) goto done;
+
+  /* The searches below load secrets: open the session first (nostrc-poc10). */
+  if (!secret_service_ensure_session_sync(service, NULL, &err)) {
+    g_message("nip55l: keyring-migration: no Secret Service session: %s; will retry",
+              err ? err->message : "unknown error");
+    g_clear_error(&err);
+    rc = NOSTR_SIGNER_ERROR_BACKEND;
+    goto done;
+  }
 
   unsigned processed = 0;
   for (size_t i = 0; i < G_N_ELEMENTS(sources); i++) {
