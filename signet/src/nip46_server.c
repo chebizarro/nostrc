@@ -104,54 +104,6 @@ static void signet_bytes32_to_hex(const uint8_t in[32], char out_hex[65]) {
   out_hex[64] = '\0';
 }
 
-/* ---------------------------- binary-safe params ---------------------------
- *
- * NIP-46 carries params as JSON strings, so a plaintext that is not valid
- * UTF-8 cannot survive the transport: an encoder either rejects it or
- * substitutes U+FFFD, silently corrupting the bytes. The `_b64` method
- * variants (nip44_encrypt_b64 / nip44_decrypt_b64) move the *plaintext* side
- * of NIP-44 over base64 so a caller can encrypt or recover raw binary through
- * the bunker without the key ever leaving it. Protocols with fixed-width
- * binary payloads (Concord CORD-06 rekey blobs, for example) need this: the
- * width is the format signal, so a mangled byte is not a recoverable error.
- *
- * The decode is strict on purpose. GLib's base64 decoder silently skips
- * characters outside the alphabet, which would turn a typo into a shorter
- * plaintext rather than a failure, so the input is validated first and a
- * malformed param is rejected. */
-static bool signet_b64_valid(const char *s, size_t *out_len) {
-  if (!s) return false;
-  size_t len = strlen(s);
-  if (len == 0 || (len % 4) != 0) return false;
-  size_t pad = 0;
-  if (s[len - 1] == '=') pad = (s[len - 2] == '=') ? 2 : 1;
-  for (size_t i = 0; i < len - pad; i++) {
-    char c = s[i];
-    bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-              (c >= '0' && c <= '9') || c == '+' || c == '/';
-    if (!ok) return false;
-  }
-  if (out_len) *out_len = (len / 4) * 3 - pad;
-  return true;
-}
-
-/* Decodes a strictly-validated standard base64 param into freshly allocated
- * bytes. Returns NULL on any malformed input; the caller frees with g_free. */
-static guchar *signet_b64_decode_strict(const char *s, size_t *out_len) {
-  size_t expected = 0;
-  if (!signet_b64_valid(s, &expected)) return NULL;
-  gsize decoded_len = 0;
-  guchar *decoded = g_base64_decode(s, &decoded_len);
-  if (!decoded) return NULL;
-  if ((size_t)decoded_len != expected) {
-    signet_memzero(decoded, decoded_len);
-    g_free(decoded);
-    return NULL;
-  }
-  if (out_len) *out_len = (size_t)decoded_len;
-  return decoded;
-}
-
 /* ------------------------------ audit helper ------------------------------ */
 
 static void signet_audit_nip46(SignetAuditLogger *audit,
@@ -273,18 +225,12 @@ static void signet_nip46_publish_cas_audit(SignetRelayPool *relays,
 static bool signet_json_event_extract_kind(const char *event_json, int *out_kind) {
   if (out_kind) *out_kind = -1;
   if (!event_json || !out_kind) return false;
-
-  g_autoptr(JsonParser) p = json_parser_new();
-  if (!json_parser_load_from_data(p, event_json, -1, NULL)) return false;
-
-  JsonNode *root = json_parser_get_root(p);
-  if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return false;
-
-  JsonObject *o = json_node_get_object(root);
-  if (!o || !json_object_has_member(o, "kind")) return false;
-
-  *out_kind = (int)json_object_get_int_member(o, "kind");
-  return true;
+  NostrEvent *evt = nostr_event_new();
+  if (!evt) return false;
+  bool ok = nostr_event_deserialize_compact(evt, event_json, NULL);
+  if (ok) *out_kind = nostr_event_get_kind(evt);
+  nostr_event_free(evt);
+  return ok;
 }
 
 /* -------------------- sign event using libnostr NostrEvent --------------- */
@@ -545,9 +491,10 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
   /* Determine event_kind for policy checks (only meaningful for sign_event) */
   int event_kind = -1;
+  bool event_kind_ok = true;
   if (parse_ok && method && strcmp(method, "sign_event") == 0 &&
       req.params && req.n_params >= 1) {
-    (void)signet_json_event_extract_kind(req.params[0], &event_kind);
+    event_kind_ok = signet_json_event_extract_kind(req.params[0], &event_kind);
   }
 
   char *session_agent_id = NULL;
@@ -662,6 +609,11 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       }
 
       if (session_agent_id) policy_identity = session_agent_id;
+    }
+
+    if (!pre_err && !event_kind_ok) {
+      pre_code = "invalid_event_kind";
+      pre_err = g_strdup("sign_event has invalid or missing kind");
     }
 
     /* Suspension precedence: a deny-listed agent identity is refused BEFORE
@@ -848,210 +800,20 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "nip44_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt_b64") == 0 ||
                strcmp(method, "nip44_decrypt_b64") == 0) {
-      SignetLoadedKey agent_key;
-      memset(&agent_key, 0, sizeof(agent_key));
-      if (!signet_key_store_load_agent_key(s->keys, session_agent_id, &agent_key) ||
-          !agent_key.secret_key || agent_key.secret_key_len != 32) {
-        err_str = g_strdup("failed to load agent key");
+      if (!req.params || req.n_params < 2) {
+        err_str = g_strdup("crypto method requires [pubkey, input]");
         status = "error";
-        code = "invalid_key";
+        code = "invalid_params";
+      } else if (signet_key_store_crypt_legacy(s->keys, session_agent_id,
+                                                method, req.params[0],
+                                                req.params[1], &result) != 0) {
+        err_str = g_strdup("crypto operation denied or failed");
+        status = "error";
+        code = "crypto_failed";
       } else {
-        char agent_sk_hex[65];
-        signet_bytes32_to_hex(agent_key.secret_key, agent_sk_hex);
-
-        if (strcmp(method, "nip04_encrypt") == 0) {
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip04_encrypt requires [pubkey, plaintext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            char *ct = NULL;
-            char *eerr = NULL;
-            int rc = nostr_nip04_encrypt(req.params[1], req.params[0],
-                                         agent_sk_hex,
-                                         &ct, &eerr);
-            if (rc != 0) {
-              err_str = eerr ? eerr : g_strdup("encrypt failed");
-              status = "error";
-              code = "encrypt_failed";
-            } else {
-              result = ct;
-              result_is_json = false;
-              status = "ok";
-              code = "ok";
-              free(eerr);
-            }
-          }
-        } else if (strcmp(method, "nip04_decrypt") == 0) {
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip04_decrypt requires [pubkey, ciphertext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            char *pt = NULL;
-            char *derr = NULL;
-            int rc = nostr_nip04_decrypt(req.params[1], req.params[0],
-                                         agent_sk_hex,
-                                         &pt, &derr);
-            if (rc != 0) {
-              err_str = derr ? derr : g_strdup("decrypt failed");
-              status = "error";
-              code = "decrypt_failed";
-            } else {
-              result = pt;
-              result_is_json = false;
-              status = "ok";
-              code = "ok";
-              free(derr);
-            }
-          }
-        } else if (strcmp(method, "nip44_encrypt") == 0) {
-          /* NIP-44 v2 encrypt: params = [peer_pubkey_hex, plaintext]. */
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip44_encrypt requires [pubkey, plaintext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            uint8_t peer_pk[32];
-            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
-              err_str = g_strdup("invalid peer pubkey");
-              status = "error";
-              code = "invalid_params";
-            } else {
-              char *ct = NULL;
-              int rc = nostr_nip44_encrypt_v2(agent_key.secret_key, peer_pk,
-                                              (const uint8_t *)req.params[1],
-                                              strlen(req.params[1]), &ct);
-              signet_memzero(peer_pk, sizeof(peer_pk));
-              if (rc != 0 || !ct) {
-                err_str = g_strdup("encrypt failed");
-                status = "error";
-                code = "encrypt_failed";
-              } else {
-                result = g_strdup(ct);
-                result_is_json = false;
-                free(ct);
-                status = "ok";
-                code = "ok";
-              }
-            }
-          }
-        } else if (strcmp(method, "nip44_encrypt_b64") == 0) {
-          /* Binary-safe encrypt: params = [peer_pubkey_hex, base64(plaintext)].
-           * The plaintext is decoded here and encrypted as raw bytes, so a
-           * payload that is not valid UTF-8 survives the JSON transport. The
-           * result is an ordinary NIP-44 v2 payload, identical to what
-           * nip44_encrypt would return for the same bytes. */
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip44_encrypt_b64 requires [pubkey, base64 plaintext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            uint8_t peer_pk[32];
-            size_t pt_len = 0;
-            guchar *pt = NULL;
-            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
-              err_str = g_strdup("invalid peer pubkey");
-              status = "error";
-              code = "invalid_params";
-            } else if (!(pt = signet_b64_decode_strict(req.params[1], &pt_len))) {
-              signet_memzero(peer_pk, sizeof(peer_pk));
-              err_str = g_strdup("plaintext must be standard base64");
-              status = "error";
-              code = "invalid_params";
-            } else {
-              char *ct = NULL;
-              int rc = nostr_nip44_encrypt_v2(agent_key.secret_key, peer_pk,
-                                              (const uint8_t *)pt, pt_len, &ct);
-              signet_memzero(pt, pt_len);
-              g_free(pt);
-              signet_memzero(peer_pk, sizeof(peer_pk));
-              if (rc != 0 || !ct) {
-                err_str = g_strdup("encrypt failed");
-                status = "error";
-                code = "encrypt_failed";
-              } else {
-                result = g_strdup(ct);
-                result_is_json = false;
-                free(ct);
-                status = "ok";
-                code = "ok";
-              }
-            }
-          }
-
-        } else if (strcmp(method, "nip44_decrypt_b64") == 0) {
-          /* Binary-safe decrypt: params = [peer_pubkey_hex, ciphertext].
-           * Returns base64 of the recovered plaintext bytes, so a binary
-           * payload reaches the caller intact and its length is exact —
-           * nip44_decrypt would truncate at the first NUL and mangle any
-           * non-UTF-8 byte on the way out. */
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip44_decrypt_b64 requires [pubkey, ciphertext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            uint8_t peer_pk[32];
-            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
-              err_str = g_strdup("invalid peer pubkey");
-              status = "error";
-              code = "invalid_params";
-            } else {
-              uint8_t *pt = NULL;
-              size_t pt_len = 0;
-              int rc = nostr_nip44_decrypt_v2(agent_key.secret_key, peer_pk,
-                                              req.params[1], &pt, &pt_len);
-              signet_memzero(peer_pk, sizeof(peer_pk));
-              if (rc != 0 || !pt) {
-                err_str = g_strdup("decrypt failed");
-                status = "error";
-                code = "decrypt_failed";
-              } else {
-                result = g_base64_encode(pt, pt_len);
-                result_is_json = false;
-                signet_memzero(pt, pt_len);
-                free(pt);
-                status = "ok";
-                code = "ok";
-              }
-            }
-          }
-
-        } else { /* nip44_decrypt: params = [peer_pubkey_hex, ciphertext] */
-          if (!req.params || req.n_params < 2) {
-            err_str = g_strdup("nip44_decrypt requires [pubkey, ciphertext]");
-            status = "error";
-            code = "invalid_params";
-          } else {
-            uint8_t peer_pk[32];
-            if (!signet_hex_to_bytes32(req.params[0], peer_pk)) {
-              err_str = g_strdup("invalid peer pubkey");
-              status = "error";
-              code = "invalid_params";
-            } else {
-              uint8_t *pt = NULL;
-              size_t pt_len = 0;
-              int rc = nostr_nip44_decrypt_v2(agent_key.secret_key, peer_pk,
-                                              req.params[1], &pt, &pt_len);
-              signet_memzero(peer_pk, sizeof(peer_pk));
-              if (rc != 0 || !pt) {
-                err_str = g_strdup("decrypt failed");
-                status = "error";
-                code = "decrypt_failed";
-              } else {
-                result = g_strndup((const char *)pt, pt_len);
-                result_is_json = false;
-                signet_memzero(pt, pt_len);
-                free(pt);
-                status = "ok";
-                code = "ok";
-              }
-            }
-          }
-        }
-
-        signet_memzero(agent_sk_hex, sizeof(agent_sk_hex));
-        signet_loaded_key_clear(&agent_key);
+        result_is_json = false;
+        status = "ok";
+        code = "ok";
       }
 
     } else if (strcmp(method, "webauthn_get_info") == 0 ||

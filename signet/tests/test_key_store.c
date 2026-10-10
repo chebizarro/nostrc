@@ -5,6 +5,7 @@
  */
 
 #include "signet/key_store.h"
+#include "test_custody_key.h"
 #include "signet/store.h"
 #include "signet/audit_logger.h"
 
@@ -60,7 +61,7 @@ static void test_provision_and_load(void) {
   /* Load the key back. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  bool ok = signet_key_store_load_agent_key(ks, "agent-alpha", &lk);
+  bool ok = test_load_key_via_custody(ks, "agent-alpha", &lk);
   CHECK(ok);
   CHECK(lk.secret_key != NULL);
   CHECK(lk.secret_key_len == 32);
@@ -137,7 +138,7 @@ static void test_rotate_agent(void) {
   /* Capture old key. */
   SignetLoadedKey old_lk;
   memset(&old_lk, 0, sizeof(old_lk));
-  signet_key_store_load_agent_key(ks, "rotate-me", &old_lk);
+  test_load_key_via_custody(ks, "rotate-me", &old_lk);
   uint8_t old_sk[32];
   memcpy(old_sk, old_lk.secret_key, 32);
   signet_loaded_key_clear(&old_lk);
@@ -154,7 +155,7 @@ static void test_rotate_agent(void) {
   /* New key should be different. */
   SignetLoadedKey new_lk;
   memset(&new_lk, 0, sizeof(new_lk));
-  signet_key_store_load_agent_key(ks, "rotate-me", &new_lk);
+  test_load_key_via_custody(ks, "rotate-me", &new_lk);
   CHECK(memcmp(old_sk, new_lk.secret_key, 32) != 0);
   signet_loaded_key_clear(&new_lk);
 
@@ -274,6 +275,12 @@ static void test_writer_fence_persists_and_fails_closed(void) {
   char pubkey[65];
   CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
                                          pubkey, sizeof(pubkey), NULL) == 0);
+  SignetLoadedKey raw = {0};
+  CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
+  char *ciphertext = NULL;
+  CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
+      pubkey, "pre-fence", &ciphertext) == 0);
+  g_free(ciphertext);
   int count = 0;
   CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
                                           count_sign, &count) == 0);
@@ -281,8 +288,10 @@ static void test_writer_fence_persists_and_fails_closed(void) {
   CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
                                         &epoch_a, &expiry) == 0);
   CHECK(epoch_a == 1 && expiry > 0);
-  SignetLoadedKey raw = {0};
   CHECK(!signet_key_store_load_agent_key(ks, "service", &raw));
+  CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
+      pubkey, "denied", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
   CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,
                                           count_sign, &count) != 0);
   CHECK(signet_key_store_with_signing_key(ks, "service", owner_b, epoch_a,
@@ -336,6 +345,22 @@ static void test_writer_fence_persists_and_fails_closed(void) {
                                         &epoch_c, &expiry) == 0);
   CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_c,
                                           slow_sign_past_expiry, NULL) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch_c, &expiry) == 0);
+  CHECK(sqlite3_exec(db,
+      "UPDATE agent_writer_leases SET observed_at=strftime('%s','now')+3600 WHERE agent_id='service';",
+      NULL, NULL, NULL) == SQLITE_OK);
+  signet_key_store_free(ks);
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks != NULL);
+  db = signet_store_get_db(signet_key_store_get_store(ks));
+  CHECK(signet_key_store_with_signing_key(ks, "service", owner_a, epoch_c,
+                                          count_sign, &count) != 0);
+  CHECK(signet_key_store_writer_renew(ks, "service", owner_a, epoch_c,
+                                      300, &expiry) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_b, 300,
+                                        &epoch_c, &expiry) != 0);
+  CHECK(signet_key_store_writer_revoke(ks, "service", &revoked_epoch) == 0);
   CHECK(sqlite3_exec(db, "DROP TABLE agent_writer_leases;",
                      NULL, NULL, NULL) == SQLITE_OK);
   CHECK(signet_key_store_with_signing_key(ks, "service", NULL, 0,

@@ -12,6 +12,7 @@
  */
 
 #include "signet/key_store.h"
+#include "test_custody_key.h"
 #include "signet/store.h"
 #include "signet/store_secrets.h"
 #include "signet/audit_logger.h"
@@ -104,7 +105,7 @@ static void test_agent_key_signs_valid_event(void) {
 
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  CHECK(signet_key_store_load_agent_key(ks, "signer", &lk));
+  CHECK(test_load_key_via_custody(ks, "signer", &lk));
   CHECK(lk.secret_key && lk.secret_key_len == 32);
 
   char sk_hex[65];
@@ -147,9 +148,9 @@ static void test_nip44_roundtrip(void) {
 
   SignetLoadedKey ak, bk, ck;
   memset(&ak, 0, sizeof(ak)); memset(&bk, 0, sizeof(bk)); memset(&ck, 0, sizeof(ck));
-  CHECK(signet_key_store_load_agent_key(ks, "alice", &ak));
-  CHECK(signet_key_store_load_agent_key(ks, "bob", &bk));
-  CHECK(signet_key_store_load_agent_key(ks, "carol", &ck));
+  CHECK(test_load_key_via_custody(ks, "alice", &ak));
+  CHECK(test_load_key_via_custody(ks, "bob", &bk));
+  CHECK(test_load_key_via_custody(ks, "carol", &ck));
 
   uint8_t a_pk[32], b_pk[32];
   CHECK(hex_to_bytes(a_pub, a_pk, 32) == 0);

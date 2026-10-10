@@ -278,151 +278,27 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
       free(event_json);
     }
 
-  } else if (strcmp(method, "nip04_encrypt") == 0) {
-    char *plaintext = NULL, *peer_pk = NULL;
+  } else if (strcmp(method, "nip04_encrypt") == 0 ||
+             strcmp(method, "nip04_decrypt") == 0 ||
+             strcmp(method, "nip44_encrypt") == 0 ||
+             strcmp(method, "nip44_decrypt") == 0) {
+    char *peer_pk = NULL, *input = NULL, *result = NULL;
     nostr_json_get_array_string(line, "params", 0, &peer_pk);
-    nostr_json_get_array_string(line, "params", 1, &plaintext);
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!peer_pk || !plaintext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
-      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
+    nostr_json_get_array_string(line, "params", 1, &input);
+    if (!peer_pk || !input ||
+        signet_key_store_crypt_legacy(ns->keys, cs->agent_id, method,
+                                      peer_pk, input, &result) != 0) {
+      resp = g_strdup("{\"error\":\"crypto operation denied or failed\"}");
     } else {
-      char sk_hex[65];
-      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-      sk_hex[64] = '\0';
-      char *ct = NULL, *err_msg = NULL;
-      if (nostr_nip04_encrypt(plaintext, peer_pk, sk_hex, &ct, &err_msg) != 0) {
-        resp = nip5l_json_error_string(err_msg ? err_msg : "encrypt failed");
-        free(err_msg);
-      } else {
-        signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-            &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip04_encrypt",
-              .decision = "allow", .reason_code = "ok" },
-            "{\"transport\":\"nip5l\",\"algo\":\"nip04\"}");
-        resp = nip5l_json_result_string(ct);
-        free(ct);
-      }
-      sodium_memzero(sk_hex, sizeof(sk_hex));
-      signet_loaded_key_clear(&lk);
+      signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
+          &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = method,
+            .decision = "allow", .reason_code = "ok" },
+          "{\"transport\":\"nip5l\"}");
+      resp = nip5l_json_result_string(result);
     }
     free(peer_pk);
-    free(plaintext);
-
-  } else if (strcmp(method, "nip04_decrypt") == 0) {
-    char *ciphertext = NULL, *peer_pk = NULL;
-    nostr_json_get_array_string(line, "params", 0, &peer_pk);
-    nostr_json_get_array_string(line, "params", 1, &ciphertext);
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!peer_pk || !ciphertext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
-      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
-    } else {
-      char sk_hex[65];
-      for (int i = 0; i < 32; i++) sprintf(sk_hex + i * 2, "%02x", lk.secret_key[i]);
-      sk_hex[64] = '\0';
-      char *pt = NULL, *err_msg = NULL;
-      if (nostr_nip04_decrypt(ciphertext, peer_pk, sk_hex, &pt, &err_msg) != 0) {
-        resp = nip5l_json_error_string(err_msg ? err_msg : "decrypt failed");
-        free(err_msg);
-      } else {
-        signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-            &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip04_decrypt",
-              .decision = "allow", .reason_code = "ok" },
-            "{\"transport\":\"nip5l\",\"algo\":\"nip04\"}");
-        resp = nip5l_json_result_string(pt);
-        free(pt);
-      }
-      sodium_memzero(sk_hex, sizeof(sk_hex));
-      signet_loaded_key_clear(&lk);
-    }
-    free(peer_pk);
-    free(ciphertext);
-
-  } else if (strcmp(method, "nip44_encrypt") == 0) {
-    char *plaintext = NULL, *peer_pk_hex = NULL;
-    nostr_json_get_array_string(line, "params", 0, &peer_pk_hex);
-    nostr_json_get_array_string(line, "params", 1, &plaintext);
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!peer_pk_hex || !plaintext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
-      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
-    } else {
-      /* Decode hex peer pubkey to 32 bytes. */
-      uint8_t peer_pk[32];
-      bool pk_ok = (strlen(peer_pk_hex) == 64);
-      if (pk_ok) {
-        for (int i = 0; i < 32; i++) {
-          unsigned int byte;
-          if (sscanf(peer_pk_hex + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
-          peer_pk[i] = (uint8_t)byte;
-        }
-      }
-      if (!pk_ok) {
-        resp = g_strdup("{\"error\":\"invalid peer pubkey hex\"}");
-      } else {
-        char *ct = NULL;
-        if (nostr_nip44_encrypt_v2(lk.secret_key, peer_pk,
-                                   (const uint8_t *)plaintext, strlen(plaintext),
-                                   &ct) != 0) {
-          resp = g_strdup("{\"error\":\"nip44 encrypt failed\"}");
-        } else {
-          signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-              &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip44_encrypt",
-                .decision = "allow", .reason_code = "ok" },
-              "{\"transport\":\"nip5l\",\"algo\":\"nip44\"}");
-          resp = nip5l_json_result_string(ct);
-          free(ct);
-        }
-      }
-      signet_loaded_key_clear(&lk);
-    }
-    free(peer_pk_hex);
-    free(plaintext);
-
-  } else if (strcmp(method, "nip44_decrypt") == 0) {
-    char *ciphertext = NULL, *peer_pk_hex = NULL;
-    nostr_json_get_array_string(line, "params", 0, &peer_pk_hex);
-    nostr_json_get_array_string(line, "params", 1, &ciphertext);
-    SignetLoadedKey lk;
-    memset(&lk, 0, sizeof(lk));
-    if (!peer_pk_hex || !ciphertext || !signet_key_store_load_agent_key(ns->keys, cs->agent_id, &lk)) {
-      resp = g_strdup("{\"error\":\"missing params or key not found\"}");
-    } else {
-      /* Decode hex peer pubkey to 32 bytes. */
-      uint8_t peer_pk[32];
-      bool pk_ok = (strlen(peer_pk_hex) == 64);
-      if (pk_ok) {
-        for (int i = 0; i < 32; i++) {
-          unsigned int byte;
-          if (sscanf(peer_pk_hex + i * 2, "%2x", &byte) != 1) { pk_ok = false; break; }
-          peer_pk[i] = (uint8_t)byte;
-        }
-      }
-      if (!pk_ok) {
-        resp = g_strdup("{\"error\":\"invalid peer pubkey hex\"}");
-      } else {
-        uint8_t *raw_pt = NULL;
-        size_t raw_pt_len = 0;
-        if (nostr_nip44_decrypt_v2(lk.secret_key, peer_pk, ciphertext, &raw_pt, &raw_pt_len) != 0) {
-          resp = g_strdup("{\"error\":\"nip44 decrypt failed\"}");
-        } else {
-          /* NUL-terminate the decrypted bytes for JSON. */
-          char *pt_str = (char *)g_malloc(raw_pt_len + 1);
-          memcpy(pt_str, raw_pt, raw_pt_len);
-          pt_str[raw_pt_len] = '\0';
-          free(raw_pt);
-          signet_audit_log_common(ns->audit, SIGNET_AUDIT_EVENT_SIGN_REQUEST,
-              &(SignetAuditCommonFields){ .identity = cs->agent_id, .method = "nip44_decrypt",
-                .decision = "allow", .reason_code = "ok" },
-              "{\"transport\":\"nip5l\",\"algo\":\"nip44\"}");
-          resp = nip5l_json_result_string(pt_str);
-          g_free(pt_str);
-        }
-      }
-      signet_loaded_key_clear(&lk);
-    }
-    free(peer_pk_hex);
-    free(ciphertext);
+    free(input);
+    g_free(result);
 
   } else if (strcmp(method, "ping") == 0) {
     resp = g_strdup("{\"result\":\"pong\"}");

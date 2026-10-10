@@ -14,6 +14,7 @@
 #include "signet/store_leases.h"
 #include "signet/revocation.h"
 #include "signet/key_store.h"
+#include "test_custody_key.h"
 #include "signet/audit_logger.h"
 
 #include "test_check.h"
@@ -154,7 +155,7 @@ static void test_revoke_deny_precedence(void) {
 
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  CHECK(signet_key_store_load_agent_key(ks, "victim", &lk));
+  CHECK(test_load_key_via_custody(ks, "victim", &lk));
   signet_loaded_key_clear(&lk);
   CHECK(sqlite3_exec(sql_db, "DROP TRIGGER fail_agent_client_revoke;",
                       NULL, NULL, NULL) == SQLITE_OK);

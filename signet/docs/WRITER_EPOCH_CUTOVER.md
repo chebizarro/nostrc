@@ -10,7 +10,10 @@ returned `pubkey` with the service's established pubkey before proceeding.
 
 One active Signet daemon and one durable SQLCipher database are supported.
 The `agent_writer_leases` row and `agents.writer_fenced` marker live in that
-database. The marker never resets for the lifetime of an agent row. Epochs
+database. The lease also records the highest wall-clock time observed by
+acquire, renew, or sign. A backward clock step fails closed, including across
+restart, until time catches up; administrative revoke remains available. This
+detects observed rollback, not arbitrary clock tampering between operations. The marker never resets for the lifetime of an agent row. Epochs
 increase on every acquisition/transfer and revocation; renewals preserve the
 epoch. A DB writer transaction encloses validation, key decryption, signature
 creation, and commit. The signature is not returned if commit fails. A corrupt
@@ -58,9 +61,12 @@ provisioner-authenticated acquire, which advances the epoch.
 
 D-Bus, NIP-5L, and SSH-agent signing have no epoch-bearing contract and reject
 fenced identities. Their legacy operations remain available to identities
-that have never been fenced. Legacy raw-key borrows also reject fenced
-identities; all daemon signing paths now use the transaction-scoped custody
-operation. NIP-04/NIP-44 private-key encrypt/decrypt operations likewise
+that have never been fenced. Legacy raw-key borrows reject **all DB-backed identities**, including
+never-fenced ones: a copy issued before acquisition could otherwise bypass a
+later fence. All daemon signing and private-key crypto paths use the
+transaction-scoped custody operation. Before first acquisition, stop/quiesce
+old binaries and any previously issued raw-key borrowers; the new daemon
+cannot claw back a key they already copied. NIP-04/NIP-44 private-key encrypt/decrypt operations likewise
 reject fenced identities for now, even for the owner, rather than offering an
 unfenced bypass. A separate epoch-bearing data-crypto contract is required if
 the service needs these operations after cutover. There is no generic raw
@@ -81,6 +87,10 @@ digest/DSSE signing API in this change.
 3. Repeat the admission and negative proofs on **edge-01** only after stage-01
    passes. Rollback must revoke/transfer forward to a new epoch, never restore
    a stale DB or re-enable an unfenced old signer.
+
+The privileged low-level store/master-key API and DB administrator can still
+extract the secret; the fence is not protection against a compromised Signet
+process, administrator, or database key holder.
 
 A fence prevents **new stale signatures through this Signet custody path**. It
 cannot invalidate events signed before cutover, erase old outboxes, or prevent

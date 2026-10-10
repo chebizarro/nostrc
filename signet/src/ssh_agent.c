@@ -144,6 +144,13 @@ static uint8_t *build_ed25519_key_blob(const uint8_t *pk32, size_t *out_len) {
 
 /* ----------------------------- message handlers --------------------------- */
 
+static int ssh_derive_identity_in_custody(const uint8_t key[32], void *data) {
+  uint8_t expanded[64];
+  int rc = crypto_sign_ed25519_seed_keypair((uint8_t *)data, expanded, key);
+  sodium_memzero(expanded, sizeof(expanded));
+  return rc;
+}
+
 static int handle_request_identities(SignetSshAgent *sa, int client_fd,
                                       const char *agent_id) {
   /* List keys authorized for this agent. */
@@ -154,34 +161,24 @@ static int handle_request_identities(SignetSshAgent *sa, int client_fd,
 
   /* Build identities response. */
   /* For simplicity, expose only the agent's own key (not all fleet keys). */
-  SignetLoadedKey lk;
-  memset(&lk, 0, sizeof(lk));
-  bool found = signet_key_store_load_agent_key(sa->keys, agent_id, &lk);
+  uint8_t pk[32];
+  bool found = signet_key_store_with_signing_key(sa->keys, agent_id,
+      NULL, 0, ssh_derive_identity_in_custody, pk) == 0;
 
-  /* Free the list since we only use agent's own key. */
   for (size_t i = 0; i < count; i++) g_free(ids[i]);
   g_free(ids);
 
   if (!found) {
-    /* No key — return empty list. */
     uint8_t msg[5];
     msg[0] = SSH_AGENT_IDENTITIES_ANSWER;
     put_u32(msg + 1, 0);
     return send_msg(client_fd, msg, 5);
   }
 
-  /* Derive ed25519 keypair from 32-byte seed exactly as signing does. */
-  uint8_t pk[32], sk_expanded[64];
-  if (crypto_sign_ed25519_seed_keypair(pk, sk_expanded, lk.secret_key) != 0) {
-    signet_loaded_key_clear(&lk);
-    return send_failure(client_fd);
-  }
-  sodium_memzero(sk_expanded, sizeof(sk_expanded));
-  signet_loaded_key_clear(&lk);
-
   size_t blob_len = 0;
   uint8_t *blob = build_ed25519_key_blob(pk, &blob_len);
   sodium_memzero(pk, sizeof(pk));
+  if (!blob) return send_failure(client_fd);
 
   /* Comment: agent_id. */
   size_t comment_len = strlen(agent_id);

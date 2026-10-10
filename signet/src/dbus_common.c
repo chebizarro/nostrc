@@ -221,41 +221,12 @@ static void handle_encrypt(const SignetDbusDispatchContext *ctx,
   bool use_nip04 = false, use_nip44 = false;
   if (!parse_algorithm(algo, &use_nip04, &use_nip44, invocation)) return;
 
-  SignetLoadedKey lk;
-  memset(&lk, 0, sizeof(lk));
-  if (!signet_key_store_load_agent_key(ctx->keys, agent_id, &lk)) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotFound", "Agent key not found");
-    return;
-  }
-
   char *result_ct = NULL;
-  int rc = -1;
-
-  if (use_nip44) {
-    uint8_t peer_pk[32];
-    if (!hex_to_bytes32(peer_pubkey, peer_pk)) {
-      signet_loaded_key_clear(&lk);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
-      return;
-    }
-    rc = nostr_nip44_encrypt_v2(lk.secret_key, peer_pk,
-                                (const uint8_t *)plaintext, strlen(plaintext),
-                                &result_ct);
-  } else if (use_nip04) {
-    char sk_hex[65];
-    bytes_to_hex(lk.secret_key, 32, sk_hex);
-    char *err_msg = NULL;
-    rc = nostr_nip04_encrypt(plaintext, peer_pubkey, sk_hex, &result_ct, &err_msg);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
-    free(err_msg);
-  }
-  signet_loaded_key_clear(&lk);
-
-  if (rc != 0 || !result_ct) {
+  if (signet_key_store_crypt_legacy(ctx->keys, agent_id,
+          use_nip44 ? "nip44_encrypt" : "nip04_encrypt",
+          peer_pubkey, plaintext, &result_ct) != 0) {
     g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Encryption failed");
+        invocation, "net.signet.Error.Internal", "Encryption denied or failed");
     return;
   }
 
@@ -279,50 +250,12 @@ static void handle_decrypt(const SignetDbusDispatchContext *ctx,
   bool use_nip04 = false, use_nip44 = false;
   if (!parse_algorithm(algo, &use_nip04, &use_nip44, invocation)) return;
 
-  SignetLoadedKey lk;
-  memset(&lk, 0, sizeof(lk));
-  if (!signet_key_store_load_agent_key(ctx->keys, agent_id, &lk)) {
-    g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.NotFound", "Agent key not found");
-    return;
-  }
-
   char *result_pt = NULL;
-  int rc = -1;
-
-  if (use_nip44) {
-    uint8_t peer_pk[32];
-    if (!hex_to_bytes32(peer_pubkey, peer_pk)) {
-      signet_loaded_key_clear(&lk);
-      g_dbus_method_invocation_return_dbus_error(
-          invocation, "net.signet.Error.BadRequest", "Invalid peer pubkey hex");
-      return;
-    }
-    uint8_t *raw_pt = NULL;
-    size_t raw_pt_len = 0;
-    rc = nostr_nip44_decrypt_v2(lk.secret_key, peer_pk, ciphertext,
-                                &raw_pt, &raw_pt_len);
-    if (rc == 0 && raw_pt) {
-      result_pt = (char *)malloc(raw_pt_len + 1);
-      if (result_pt) {
-        memcpy(result_pt, raw_pt, raw_pt_len);
-        result_pt[raw_pt_len] = '\0';
-      }
-      free(raw_pt);
-    }
-  } else if (use_nip04) {
-    char sk_hex[65];
-    bytes_to_hex(lk.secret_key, 32, sk_hex);
-    char *err_msg = NULL;
-    rc = nostr_nip04_decrypt(ciphertext, peer_pubkey, sk_hex, &result_pt, &err_msg);
-    sodium_memzero(sk_hex, sizeof(sk_hex));
-    free(err_msg);
-  }
-  signet_loaded_key_clear(&lk);
-
-  if (rc != 0 || !result_pt) {
+  if (signet_key_store_crypt_legacy(ctx->keys, agent_id,
+          use_nip44 ? "nip44_decrypt" : "nip04_decrypt",
+          peer_pubkey, ciphertext, &result_pt) != 0) {
     g_dbus_method_invocation_return_dbus_error(
-        invocation, "net.signet.Error.Internal", "Decryption failed");
+        invocation, "net.signet.Error.Internal", "Decryption denied or failed");
     return;
   }
 

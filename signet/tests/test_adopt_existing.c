@@ -14,6 +14,7 @@
  */
 
 #include "signet/key_store.h"
+#include "test_custody_key.h"
 #include "signet/store.h"
 #include "signet/audit_logger.h"
 
@@ -266,7 +267,7 @@ static void test_adopted_agent_signs(void) {
   /* sign_event: load the key and produce a valid Schnorr signature. */
   SignetLoadedKey lk;
   memset(&lk, 0, sizeof(lk));
-  CHECK(signet_key_store_load_agent_key(ks, "signer", &lk));
+  CHECK(test_load_key_via_custody(ks, "signer", &lk));
   CHECK(lk.secret_key && lk.secret_key_len == 32);
   /* The loaded key must equal the secret we supplied. */
   CHECK(memcmp(lk.secret_key, sk_raw, 32) == 0);
@@ -423,7 +424,7 @@ static void test_restore_existing_preserves_client_binding(void) {
   signet_agent_meta_clear(&before_restore);
   SignetLoadedKey loaded;
   memset(&loaded, 0, sizeof(loaded));
-  CHECK(signet_key_store_load_agent_key(ks, "stew", &loaded));
+  CHECK(test_load_key_via_custody(ks, "stew", &loaded));
   char loaded_sk_hex[65];
   for (int i = 0; i < 32; i++)
     sprintf(loaded_sk_hex + i * 2, "%02x", loaded.secret_key[i]);

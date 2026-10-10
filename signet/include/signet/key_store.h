@@ -93,16 +93,16 @@ SignetKeyStore *signet_key_store_new(struct SignetAuditLogger *audit,
  */
 void signet_key_store_free(SignetKeyStore *ks);
 
-/* Legacy raw key borrow. Fails for any identity ever writer-fenced, including
- * revoked/expired leases, and on backing-store errors. Never use for signing;
- * use signet_key_store_with_signing_key instead. */
+/* Legacy raw key borrow exists only for cache-only test/development stores.
+ * Every persisted identity can be fenced later, so a raw copy must never be
+ * returned from a DB-backed key store. Use custody callbacks instead. */
 /**
  * signet_key_store_load_agent_key:
  * @ks: (not nullable): a #SignetKeyStore
  * @agent_id: (not nullable): agent identifier
  * @out_key: (out) (not nullable): return location for key
  *
- * Load the custody key for an agent from the hot cache. Returns true on success (key found), false if not found.
+ * Load a key only from a cache-only store. DB-backed stores always reject raw borrows.
  *
  * Thread safety: callers may share the object when the implementation serializes access internally; avoid mutating the same output storage concurrently.
  *
@@ -133,6 +133,13 @@ int signet_key_store_writer_renew(SignetKeyStore *ks, const char *agent_id,
                                   int64_t ttl_seconds, int64_t *out_expires_at);
 int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
                                    int64_t *out_epoch);
+
+/* Legacy NIP-04/NIP-44 crypto performed wholly inside custody. These
+ * operations are unavailable for writer-fenced identities until an
+ * owner/epoch-bearing data-crypto contract is introduced. */
+int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
+                                  const char *method, const char *peer_pubkey,
+                                  const char *input, char **out_result);
 
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.

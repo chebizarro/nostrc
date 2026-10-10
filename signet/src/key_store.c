@@ -24,6 +24,8 @@
 
 /* libnostr */
 #include <nostr-keys.h>
+#include <nostr/nip04.h>
+#include <nostr/nip44/nip44.h>
 #include <secure_buf.h>
 
 /* libsodium for mlock */
@@ -179,11 +181,9 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
   g_mutex_lock(&ks->mu);
 
   SignetCacheEntry *entry = (SignetCacheEntry *)g_hash_table_lookup(ks->cache, agent_id);
-  /* A legacy raw-key borrow cannot authorize a fenced identity. Every
-   * cryptographic operation for such an identity must use the transaction-
-   * scoped custody callback instead. DB errors also fail closed. */
-  if (!entry || (ks->store &&
-      signet_store_writer_is_fenced(ks->store, agent_id) != 0)) {
+  /* Persisted keys can become fenced at any time on another connection. A
+   * raw copy would outlive that transfer, so no persisted key may escape. */
+  if (!entry || ks->store) {
     g_mutex_unlock(&ks->mu);
     return false;
   }
@@ -259,6 +259,103 @@ int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
   int rc = signet_store_writer_revoke(ks->store, agent_id, out_epoch);
   g_mutex_unlock(&ks->mu);
   return rc;
+}
+
+typedef struct {
+  const char *method;
+  const char *peer;
+  const char *input;
+  char *result;
+} SignetLegacyCryptoWork;
+
+static bool signet_key_store_decode_peer(const char *hex, uint8_t out[32]) {
+  if (!hex || strlen(hex) != 64) return false;
+  for (int i = 0; i < 32; i++) {
+    int hi = g_ascii_xdigit_value(hex[i * 2]);
+    int lo = g_ascii_xdigit_value(hex[i * 2 + 1]);
+    if (hi < 0 || lo < 0) return false;
+    out[i] = (uint8_t)((hi << 4) | lo);
+  }
+  return true;
+}
+
+static int signet_key_store_crypto_callback(const uint8_t key[32], void *data) {
+  SignetLegacyCryptoWork *work = data;
+  const char *m = work->method;
+  if (strcmp(m, "nip04_encrypt") == 0 || strcmp(m, "nip04_decrypt") == 0) {
+    char sk_hex[65];
+    signet_secret_key_to_hex(key, sk_hex);
+    char *err = NULL;
+    int rc = strcmp(m, "nip04_encrypt") == 0
+        ? nostr_nip04_encrypt(work->input, work->peer, sk_hex,
+                             &work->result, &err)
+        : nostr_nip04_decrypt(work->input, work->peer, sk_hex,
+                             &work->result, &err);
+    sodium_memzero(sk_hex, sizeof(sk_hex));
+    free(err);
+    return rc == 0 && work->result ? 0 : -1;
+  }
+
+  uint8_t peer[32];
+  if (!signet_key_store_decode_peer(work->peer, peer)) return -1;
+  int rc = -1;
+  if (strcmp(m, "nip44_encrypt") == 0 ||
+      strcmp(m, "nip44_encrypt_b64") == 0) {
+    const uint8_t *plain = (const uint8_t *)work->input;
+    size_t plain_len = strlen(work->input);
+    guchar *decoded = NULL;
+    if (strcmp(m, "nip44_encrypt_b64") == 0) {
+      size_t encoded_len = plain_len;
+      if (!encoded_len || encoded_len % 4) goto done;
+      size_t pad = work->input[encoded_len - 1] == '='
+          ? (work->input[encoded_len - 2] == '=' ? 2 : 1) : 0;
+      for (size_t i = 0; i < encoded_len - pad; i++) {
+        char c = work->input[i];
+        if (!g_ascii_isalnum(c) && c != '+' && c != '/') goto done;
+      }
+      gsize decoded_len = 0;
+      decoded = g_base64_decode(work->input, &decoded_len);
+      if (!decoded || decoded_len != (encoded_len / 4) * 3 - pad) {
+        if (decoded) { sodium_memzero(decoded, decoded_len); g_free(decoded); }
+        goto done;
+      }
+      plain = decoded;
+      plain_len = decoded_len;
+    }
+    rc = nostr_nip44_encrypt_v2(key, peer, plain, plain_len,
+                                &work->result);
+    if (decoded) { sodium_memzero(decoded, plain_len); g_free(decoded); }
+  } else if (strcmp(m, "nip44_decrypt") == 0 ||
+             strcmp(m, "nip44_decrypt_b64") == 0) {
+    uint8_t *raw = NULL;
+    size_t raw_len = 0;
+    rc = nostr_nip44_decrypt_v2(key, peer, work->input, &raw, &raw_len);
+    if (rc == 0 && raw) {
+      work->result = strcmp(m, "nip44_decrypt_b64") == 0
+          ? g_base64_encode(raw, raw_len)
+          : g_strndup((const char *)raw, raw_len);
+    }
+    if (raw) { sodium_memzero(raw, raw_len); free(raw); }
+  }
+done:
+  sodium_memzero(peer, sizeof(peer));
+  return rc == 0 && work->result ? 0 : -1;
+}
+
+int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
+                                  const char *method, const char *peer_pubkey,
+                                  const char *input, char **out_result) {
+  if (out_result) *out_result = NULL;
+  if (!ks || !agent_id || !method || !peer_pubkey || !input || !out_result) return -1;
+  SignetLegacyCryptoWork work = {
+      .method = method, .peer = peer_pubkey, .input = input
+  };
+  int rc = signet_key_store_with_signing_key(ks, agent_id, NULL, 0,
+                                             signet_key_store_crypto_callback,
+                                             &work);
+  if (rc != 0) { free(work.result); return -1; }
+  *out_result = work.result;
+  return 0;
 }
 
 int signet_key_store_provision_agent(SignetKeyStore *ks,

@@ -7,6 +7,7 @@
 #include "signet/ssh_agent.h"
 #include "signet/audit_logger.h"
 #include "signet/key_store.h"
+#include "test_custody_key.h"
 #include "signet/store.h"
 #include "signet/store_secrets.h"
 
@@ -146,7 +147,7 @@ static gpointer signing_load_worker(gpointer data) {
     memset(&key, 0, sizeof(key));
     /* This is the NIP-46 signing hot path: load the custody key, which also
      * persists agents.last_used on the shared SQLCipher connection. */
-    if (!signet_key_store_load_agent_key(ctx->keys, "load-agent", &key)) {
+    if (!test_load_key_via_custody(ctx->keys, "load-agent", &key)) {
       g_atomic_int_inc(&ctx->failures);
       continue;
     }

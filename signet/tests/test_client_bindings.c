@@ -347,6 +347,11 @@ static void test_fenced_nip46_signing_contract(void) {
   (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, current,
                  "lease-current", now);
   CHECK(g_atomic_int_get(&g_signet_metrics.sign_total) == signed_before + 1);
+  const char *bad_kind =
+      "{\"id\":\"bad-kind\",\"method\":\"sign_event\",\"params\":[\"{\\\"kind\\\":1.5,\\\"created_at\\\":1,\\\"tags\\\":[],\\\"content\\\":\\\"x\\\"}\",\"1\"]}";
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, bad_kind,
+                 "lease-bad-kind", now);
+  CHECK(g_atomic_int_get(&g_signet_metrics.sign_total) == signed_before + 1);
   sqlite3 *db = signet_store_get_db(signet_key_store_get_store(f.ks));
   CHECK(sqlite3_exec(db,
       "UPDATE agent_writer_leases SET expires_at=strftime('%s','now')+1 WHERE agent_id='stew';",
