@@ -85,6 +85,19 @@ void gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar
                                   gsize max_bytes, GCancellable *cancellable,
                                   GAsyncReadyCallback callback, gpointer user_data);
 
+/* As gh_net_http_get_public_async(), but a longer answer is not an error:
+ * its first max_bytes are returned and the rest is never read. For web pages
+ * whose <head> is all that is wanted (link previews, nostrc-p15n5.7: GitHub's
+ * pages are ~400 KiB with og: tags in the first 32 KiB). */
+void gh_net_http_get_public_prefix_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                         gsize max_bytes, GCancellable *cancellable,
+                                         GAsyncReadyCallback callback, gpointer user_data);
+/* The prefix form of gh_net_http_get_accept_async() (no redirects, any
+ * address the mode allows); tests use it to stand in for the public one. */
+void gh_net_http_get_accept_prefix_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                         gsize max_bytes, GCancellable *cancellable,
+                                         GAsyncReadyCallback callback, gpointer user_data);
+
 /* Whether a download may reach address: FALSE for loopback, private,
  * link-local, CGNAT (100.64/10), 192.0.0/24, benchmarking (198.18/15),
  * "this network" (0/8), reserved (240/4), multicast and unspecified IPv4;

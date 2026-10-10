@@ -1291,6 +1291,7 @@ test_link_previews(Fixture *f, gconstpointer data)
   spin_until(state_is, &failed);
   g_assert_cmpstr(text_of(row_child(row, "preview_text")), ==, "The preview couldn't be loaded.");
   g_assert_true(shown(button));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(button)), ==, "Try Again");
   g_assert_true(gtk_widget_get_sensitive(button));
   spin_until(not_loading, f);
 }
@@ -1627,6 +1628,173 @@ test_link_image_viewer(Fixture *f, gconstpointer data)
     gh_conversation_view_enable_web_content(f->view, NULL, NULL);
   }
   g_settings_reset(f->settings, "load-remote-images");
+/* nostrc-p15n5.7: GitHub's page head (fixture captured from
+ * https://github.com/chebizarro/nostrc/blob/3251ba6.../docs/proposals/55L.md).
+ * The real page is ~385 KiB, past the 256 KiB preview cap, and every GitHub
+ * preview failed with "larger than 262144 bytes". */
+static GBytes *
+github_page(gsize body_padding)
+{
+  g_autofree gchar *path = g_build_filename(GH_TEST_FIXTURES, "github-blob-og.html", NULL);
+  gchar *head = NULL;
+  gsize length = 0;
+  g_assert_true(g_file_get_contents(path, &head, &length, NULL));
+  GString *page = g_string_new_len(head, (gssize)length);
+  g_free(head);
+  for (gsize i = 0; i < body_padding / 64; i++)
+    g_string_append(page, "<div class=\"blob-code\">padding padding padding padding</div>\n");
+  return g_string_free_to_bytes(page);
+}
+
+static void
+test_web_preview_github_fixture(void)
+{
+  g_autoptr(GBytes) page = github_page(0);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhWebResult) result = gh_web_result_parse_html(page, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(result->title, ==, "nostrc/docs/proposals/55L.md at "
+                  "3251ba66dfa1d994109269690a1839ae7a1fd712 \xc2\xb7 chebizarro/nostrc");
+  g_assert_cmpstr(result->description, ==, "A C library for the Nostr protocol. Contribute to "
+                  "chebizarro/nostrc development by creating an account on GitHub.");
+  g_assert_cmpstr(result->site_name, ==, "GitHub");
+  g_assert_true(g_str_has_prefix(result->image_url, "https://opengraph.githubassets.com/"));
+  g_assert_null(result->texture);
+  /* Only the first 256 KiB of a long page are read: a page cut mid-body
+   * still yields its head. */
+  g_autoptr(GBytes) whole = github_page(400 * 1024);
+  g_assert_cmpuint(g_bytes_get_size(whole), >, 256 * 1024);
+  g_autoptr(GBytes) cut = g_bytes_new_from_bytes(whole, 0, 256 * 1024 - 7);
+  g_autoptr(GhWebResult) partial = gh_web_result_parse_html(cut, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(partial->site_name, ==, "GitHub");
+  g_assert_cmpstr(partial->title, ==, result->title);
+  /* og: wins over twitter: and <title>, whatever the order. */
+  const gchar *mixed = "<html><head><meta property='og:title' content='OG'>"
+    "<title>Plain</title><meta name='twitter:title' content='TW'>"
+    "<meta name='description' content='plain d'></head></html>";
+  g_autoptr(GBytes) mixed_bytes = g_bytes_new_static(mixed, strlen(mixed));
+  g_autoptr(GhWebResult) ranked = gh_web_result_parse_html(mixed_bytes, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(ranked->title, ==, "OG");
+  g_assert_cmpstr(ranked->description, ==, "plain d");
+  g_assert_null(ranked->site_name);
+}
+
+/* The real page, only with GROUNDHOG_TEST_LIVE_NET set (it reaches GitHub):
+ * the production path, public address check, redirects and the prefix. */
+static void
+on_live_loaded(GObject *source, GAsyncResult *answer, gpointer data)
+{
+  GhWebResult **out = data;
+  g_autoptr(GError) error = NULL;
+  *out = gh_web_content_load_finish(GH_WEB_CONTENT(source), answer, &error);
+  g_assert_no_error(error);
+}
+static gboolean live_done(gpointer data) { return *(GhWebResult **)data != NULL; }
+
+static void
+test_web_preview_github_live(void)
+{
+  if (!g_getenv("GROUNDHOG_TEST_LIVE_NET")) {
+    g_test_skip("GROUNDHOG_TEST_LIVE_NET is not set");
+    return;
+  }
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_autoptr(GhWebContent) web = gh_web_content_new(settings, NULL, NULL);
+  GhWebResult *result = NULL;
+  gh_web_content_load_async(web, "https://github.com/chebizarro/nostrc/blob/"
+    "3251ba66dfa1d994109269690a1839ae7a1fd712/docs/proposals/55L.md", GH_WEB_PREVIEW, NULL,
+    on_live_loaded, &result);
+  spin_until(live_done, &result);
+  g_assert_true(g_str_has_prefix(result->title, "nostrc/docs/proposals/55L.md"));
+  g_assert_cmpstr(result->site_name, ==, "GitHub");
+  g_assert_nonnull(result->image_url);
+  gh_web_result_free(result);
+}
+
+static void
+web_local_prefix_get(gpointer data, const gchar *uri, gsize limit, GCancellable *cancel,
+                     GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_assert_true(g_str_has_prefix(uri, "https://127.0.0.1:"));
+  g_autofree gchar *local = g_strconcat("http://", uri + strlen("https://"), NULL);
+  gh_net_http_get_accept_prefix_async(data, local, "text/html", limit, cancel, callback,
+                                      user_data);
+}
+
+/* End to end: a GitHub-sized page through GhNetHttp shows a card with title,
+ * description, site and "Load image"; "Show Preview" goes away once the card
+ * is shown and stays away when the row is rebound (nostrc-p15n5.4). */
+static void
+test_web_preview_github_card(Fixture *f, G_GNUC_UNUSED gconstpointer data)
+{
+  g_settings_set_string(f->settings, "network-mode", "none");
+  BlossomFixture *server = blossom_fixture_new();
+  g_autoptr(GBytes) body = github_page(400 * 1024);
+  g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
+  blossom_fixture_put_blob(server, hash, body);
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s", blossom_fixture_port(server),
+                                          hash);
+  g_autofree gchar *content = g_strdup_printf("see %s", uri);
+  gint64 t = noon_today();
+  GhMessage *message = add_dm(f->store, 2, 1, t, content);
+  GhMessage *plain = add_dm(f->store, 2, 1, t + 60, "no link here");
+  GhConversation *conversation = room_of(f->store, message);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 700, 700);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(f->settings);
+  static const GhHttpTransport transport = { web_local_prefix_get, web_local_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, http);
+  GhMessageRow *row = row_for(f->view, message);
+  GtkWidget *button = row_child(row, "preview_button");
+  g_assert_true(shown(button));
+  click(button);
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  StateWait settled = { f, message, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &settled);
+  g_assert_cmpuint(blossom_fixture_count(server, "GET"), ==, 1);
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_true(g_str_has_prefix(text_of(row_child(row, "og_title")),
+                                 "nostrc/docs/proposals/55L.md"));
+  g_assert_true(g_str_has_prefix(text_of(row_child(row, "og_description")), "A C library"));
+  g_assert_cmpstr(text_of(row_child(row, "og_site")), ==, "GitHub \xc2\xb7 127.0.0.1");
+  g_assert_true(shown(row_child(row, "og_load_image")));
+  g_assert_false(shown(row_child(row, "og_load")));
+  g_assert_false(shown(row_child(row, "preview_button")));
+  /* Recycled to another message and back (no unroot/root on the way). */
+  gh_message_row_set_message(row, plain);
+  g_assert_false(shown(row_child(row, "preview_box")));
+  g_assert_false(shown(row_child(row, "preview_button")));
+  gh_message_row_set_message(row, message);
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_false(shown(row_child(row, "preview_button")));
+  g_assert_true(shown(row_child(row, "og_load_image")));
+  /* A preview-changed for every row keeps it so as well. */
+  g_signal_emit_by_name(f->view, "preview-changed", NULL);
+  g_assert_false(shown(row_child(row, "preview_button")));
+  g_assert_true(shown(row_child(row, "og_card")));
+  /* A rebind whose body is not its text (withdrawn) has no link: it must not
+   * keep the previous binding's and offer it again. */
+  g_autofree gchar *inner = g_strdup_printf(
+    "{\"kind\":9,\"pubkey\":\"%s\",\"created_at\":%" G_GINT64_FORMAT ","
+    "\"tags\":[],\"content\":\"gone\"}", hex[2], t + 120);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) withdrawn = gh_message_new_from_mls(hex[1], "0123456789abcdef", inner,
+                                                           &error);
+  g_assert_no_error(error);
+  gh_message_set_withdrawn(withdrawn, TRUE);
+  gh_message_row_set_message(row, withdrawn);
+  g_assert_false(shown(row_child(row, "preview_box")));
+  g_assert_false(shown(row_child(row, "og_card")));
+  gh_message_row_set_message(row, message);
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_false(shown(row_child(row, "preview_button")));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
   blossom_fixture_free(server);
 }
 
@@ -3577,6 +3745,11 @@ main(int argc, char **argv)
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
   ADD("link-image-viewer", test_link_image_viewer);
+  ADD("web-preview-github-card", test_web_preview_github_card);
+  g_test_add_func("/groundhog/conversation-view/web-preview-github-fixture",
+                  test_web_preview_github_fixture);
+  g_test_add_func("/groundhog/conversation-view/web-preview-github-live",
+                  test_web_preview_github_live);
   ADD("failed-picture-has-no-row-error", test_failed_picture_has_no_row_error);
   ADD("open-timing", test_open_timing);
   ADD("recycled-scroll-directions", test_recycled_scroll_directions);

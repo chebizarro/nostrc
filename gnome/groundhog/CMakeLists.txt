@@ -1430,7 +1430,8 @@ if (TARGET groundhog-conversation-ui)
     # the opt-in UI probe arms them.
     target_compile_definitions(groundhog-conversation-ui PRIVATE GROUNDHOG_CONVERSATION_OPEN_PROBE=1)
     add_executable(test-groundhog-conversation-view tests/ui/test_conversation_view.c)
-    target_compile_definitions(test-groundhog-conversation-view PRIVATE GROUNDHOG_CONVERSATION_OPEN_PROBE=1)
+    target_compile_definitions(test-groundhog-conversation-view PRIVATE GROUNDHOG_CONVERSATION_OPEN_PROBE=1
+      GH_TEST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/fixtures")
     target_link_libraries(test-groundhog-conversation-view PRIVATE groundhog-conversation-ui)
     target_compile_options(test-groundhog-conversation-view PRIVATE -Wall -Wextra -Werror)
     add_dependencies(test-groundhog-conversation-view groundhog-test-schemas)

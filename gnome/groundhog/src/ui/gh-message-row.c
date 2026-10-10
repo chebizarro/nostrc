@@ -692,7 +692,8 @@ update_preview(GhMessageRow *self)
     button = _("Loading Preview…");
     break;
   case GH_LINK_PREVIEW_FAILED:
-    button = _("Show Preview");
+    /* Not "Show Preview" again (nostrc-p15n5.4): the user already asked. */
+    button = _("Try Again");
     text = _("The preview couldn't be loaded.");
     break;
   case GH_LINK_PREVIEW_UNAVAILABLE:
@@ -722,7 +723,10 @@ update_preview(GhMessageRow *self)
     }
     if (g_strcmp0(gn_og_preview_card_get_url(self->og_card), self->preview_uri) != 0)
       gn_og_preview_card_set_url(self->og_card, self->preview_uri);
-    g_autofree gchar *site = gh_link_policy_dup_host(self->preview_uri);
+    const gchar *site_name = gh_conversation_view_get_link_preview_site(self->view, self->message);
+    g_autofree gchar *host = gh_link_policy_dup_host(self->preview_uri);
+    g_autofree gchar *site = site_name && host && g_ascii_strcasecmp(site_name, host) != 0
+      ? g_strdup_printf("%s · %s", site_name, host) : g_strdup(site_name ? site_name : host);
     gn_og_preview_card_set_result(self->og_card, title, description, site,
       gh_conversation_view_get_og_image_uri(self->view, self->message));
     GhLinkPreviewState image_state = GH_LINK_PREVIEW_NONE;

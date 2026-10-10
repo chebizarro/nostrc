@@ -276,6 +276,9 @@ GhLinkPreviewState gh_conversation_view_get_link_preview(GhConversationView *sel
  * explicit image request through conversation.show-preview. */
 const gchar *gh_conversation_view_get_og_image_uri(GhConversationView *self,
                                                    GhMessage *message);
+/* The loaded page's og:site_name (e.g. "GitHub"), or NULL. */
+const gchar *gh_conversation_view_get_link_preview_site(GhConversationView *self,
+                                                        GhMessage *message);
 
 /* Charter §7.15 state 11: the banner "@name hasn't set up private messaging
  * yet" (NULL hides it). */

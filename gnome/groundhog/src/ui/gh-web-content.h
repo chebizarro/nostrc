@@ -11,8 +11,13 @@ typedef struct {
   gchar *description;
   gchar *image_url; /* inert HTTPS og:image; never fetched with the page */
   GdkTexture *texture;
+  gchar *site_name; /* og:site_name, or NULL */
 } GhWebResult;
 void gh_web_result_free(GhWebResult *result);
+/* A page's preview text from its <head> (og:, then twitter:, then plain
+ * title/description; og:site_name; an https og:image address). The page may
+ * be truncated. Fails when there is neither a title nor a description. */
+GhWebResult *gh_web_result_parse_html(GBytes *bytes, GError **error);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhWebResult, gh_web_result_free)
 #define GH_TYPE_WEB_CONTENT (gh_web_content_get_type())
 G_DECLARE_FINAL_TYPE(GhWebContent, gh_web_content, GH, WEB_CONTENT, GObject)

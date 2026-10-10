@@ -36,6 +36,9 @@ typedef struct {
   gchar *uri;
   gchar *accept;
   gboolean public_only;
+  /* A page's head is enough (link previews, nostrc-p15n5.7): the first
+   * max_bytes are the answer, and the rest is never read. */
+  gboolean prefix;
 } Request;
 
 static void
@@ -491,6 +494,13 @@ on_read(GObject *source, GAsyncResult *result, gpointer data)
     g_task_return_error(task, request_error(request, error));
     return;
   }
+  /* A cut prefix: the rest of the body is dropped with the request's own
+   * connection (every public GET has one), not drained by the close. */
+  if (read > request->max_bytes && request->prefix) {
+    read = request->max_bytes;
+    if (request->own_session && request->session)
+      soup_session_abort(request->session);
+  }
   (void)g_input_stream_close(request->stream, NULL, NULL);
   if (read > request->max_bytes) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_MESSAGE_TOO_LARGE,
@@ -535,7 +545,7 @@ status_error(SoupMessage *message, guint status)
 
 static void request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
                                const gchar *accept, gsize max_bytes, gboolean public_only,
-                               guint redirects, GCancellable *cancellable,
+                               gboolean prefix, guint redirects, GCancellable *cancellable,
                                GAsyncReadyCallback callback, gpointer user_data);
 
 /* The next hop answered: its bytes (or error) are the original request's. */
@@ -589,7 +599,8 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
     }
     g_autofree gchar *next_uri = g_uri_to_string(next);
     request_start_hops(request->owner, NULL, next_uri, request->accept, request->max_bytes,
-                       request->public_only, request->redirects_left - 1, request->caller,
+                       request->public_only, request->prefix, request->redirects_left - 1,
+                       request->caller,
                        on_redirected, g_object_ref(task));
     return;
   }
@@ -607,7 +618,7 @@ on_sent(GObject *source, GAsyncResult *result, gpointer data)
   }
   goffset length = soup_message_headers_get_content_length(
     soup_message_get_response_headers(request->message));
-  if (length > 0 && (guint64)length > request->max_bytes) {
+  if (!request->prefix && length > 0 && (guint64)length > request->max_bytes) {
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_MESSAGE_TOO_LARGE,
                             "The server's answer is larger than %" G_GSIZE_FORMAT " bytes",
                             request->max_bytes);
@@ -638,14 +649,14 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
 {
   /* Redirects are never followed here: NIP-05 forbids it, and sends do not.
    * Only gh_net_http_get_public_async (web content) follows them. */
-  request_start_hops(self, send, uri, accept, max_bytes, public_only, 0, cancellable,
+  request_start_hops(self, send, uri, accept, max_bytes, public_only, FALSE, 0, cancellable,
                      callback, user_data);
 }
 
 static void
 request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
                    const gchar *accept, gsize max_bytes, gboolean public_only,
-                   guint redirects, GCancellable *cancellable,
+                   gboolean prefix, guint redirects, GCancellable *cancellable,
                    GAsyncReadyCallback callback, gpointer user_data)
 {
   g_autoptr(GTask) task = g_task_new(self, cancellable, callback, user_data);
@@ -682,6 +693,7 @@ request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *u
   request->uri = g_strdup(uri);
   request->accept = g_strdup(accept);
   request->public_only = public_only;
+  request->prefix = prefix;
   request->cancellable = g_cancellable_new();
   g_task_set_task_data(task, request, request_free);
   g_ptr_array_add(self->requests, request);
@@ -727,8 +739,32 @@ gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *acc
   g_return_if_fail(GH_IS_NET_HTTP(self));
   g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
   g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
-  request_start_hops(self, NULL, uri, accept, max_bytes, TRUE, GET_MAX_REDIRECTS, cancellable,
-                     callback, user_data);
+  request_start_hops(self, NULL, uri, accept, max_bytes, TRUE, FALSE, GET_MAX_REDIRECTS,
+                     cancellable, callback, user_data);
+}
+
+void
+gh_net_http_get_public_prefix_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                    gsize max_bytes, GCancellable *cancellable,
+                                    GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_NET_HTTP(self));
+  g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
+  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
+  request_start_hops(self, NULL, uri, accept, max_bytes, TRUE, TRUE, GET_MAX_REDIRECTS,
+                     cancellable, callback, user_data);
+}
+
+void
+gh_net_http_get_accept_prefix_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
+                                    gsize max_bytes, GCancellable *cancellable,
+                                    GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_NET_HTTP(self));
+  g_return_if_fail(uri != NULL && max_bytes > 0 && max_bytes < G_MAXSIZE);
+  g_return_if_fail(!accept || (*accept && !strpbrk(accept, "\r\n")));
+  request_start_hops(self, NULL, uri, accept, max_bytes, FALSE, TRUE, 0, cancellable, callback,
+                     user_data);
 }
 
 static gboolean
