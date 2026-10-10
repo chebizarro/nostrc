@@ -160,6 +160,9 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
+  include/nostr-gtk-1.0/gn-media-source.h
+  include/nostr-gtk-1.0/gn-media-decode.h
+  include/nostr-gtk-1.0/gn-video-player.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
@@ -174,6 +177,9 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-og-preview.h
   include/nostr-gtk-1.0/gn-media-viewer.h
   include/nostr-gtk-1.0/gn-animated-image.h
+  include/nostr-gtk-1.0/gn-media-source.h
+  include/nostr-gtk-1.0/gn-media-decode.h
+  include/nostr-gtk-1.0/gn-video-player.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
@@ -187,6 +193,9 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-og-preview-provider.c
   src/gn-media-viewer.c
   src/gn-animated-image.c
+  src/gn-media-source.c
+  src/gn-media-decode.c
+  src/gn-video-player.c
   src/gn-nip34-issue-fields.c
   src/gn-portable-i18n.c
 )
@@ -532,6 +541,19 @@ if(BUILD_TESTING)
     LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2)
   target_include_directories(test_nostr_gtk_og_preview_card PRIVATE ${PROJECT_ROOT}/tests/common)
   set_tests_properties(test_nostr_gtk_og_preview_card PROPERTIES SKIP_RETURN_CODE 77)
+
+  # nostrc-8xfib.4: bounded decode, injected media source, viewer and player.
+  gn_add_gtest_xvfb(test_nostr_gtk_media
+    SOURCES tests/test_media.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2
+  )
+  target_include_directories(test_nostr_gtk_media PRIVATE ${PROJECT_ROOT}/tests/common)
+  add_test(NAME nostr_gtk_portable_media_lint
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME nostr_gtk_portable_media_lint_selftest
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py
+            --self-test)
 
   if (TARGET nostr-gtk-i18n)
   gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n

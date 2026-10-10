@@ -446,6 +446,25 @@ file_mime(GhMessage *message, guint index, GhNip17File *file)
   return a ? a->media_type : NULL;
 }
 
+#define VIEWER_TRANSFERS "gh-attachment-viewer-transfers"
+
+static gboolean
+on_viewer_save(GnMediaViewer *viewer, guint index, const gchar *url, GdkPaintable *shown,
+               gpointer data)
+{
+  (void)url; (void)shown; (void)data;
+  GPtrArray *transfers = g_object_get_data(G_OBJECT(viewer), VIEWER_TRANSFERS);
+  GhAttachmentTransfer *transfer =
+    transfers && index < transfers->len ? g_ptr_array_index(transfers, index) : NULL;
+  Provider *provider = NULL;
+  for (GtkWindow *w = GTK_WINDOW(viewer); w && !provider; w = gtk_window_get_transient_for(w))
+    provider = g_object_get_data(G_OBJECT(w), PROVIDER_DATA);
+  if (transfer && provider &&
+      gh_attachment_transfer_get_state(transfer) == GH_ATTACHMENT_STATE_READY)
+    provider->vtable.save(transfer, GTK_WIDGET(viewer), provider->data);
+  return TRUE; /* Never the default re-encoding Save. */
+}
+
 GtkWindow *
 gh_attachment_card_open_viewer(GhAttachmentCard *self)
 {
@@ -458,6 +477,7 @@ gh_attachment_card_open_viewer(GhAttachmentCard *self)
   Provider *provider = find_provider(self);
   g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
   g_autoptr(GPtrArray) paintables = g_ptr_array_new_with_free_func(g_object_unref);
+  GPtrArray *transfers = g_ptr_array_new_with_free_func(g_object_unref);
   guint current = 0;
   guint n = gh_message_get_n_attachments(self->message);
   g_autoptr(GhNip17File) file = gh_message_dup_file(self->message);
@@ -466,17 +486,20 @@ gh_attachment_card_open_viewer(GhAttachmentCard *self)
   const gchar *id = gh_message_get_rumor_id(self->message);
   for (guint i = 0; i < n && i < 64; i++) {
     g_autoptr(GdkPaintable) paintable = NULL;
+    GhAttachmentTransfer *transfer = NULL;
     if (i == self->index) {
       paintable = g_object_ref(shown);
+      transfer = self->transfer;
       current = paintables->len;
     } else if (provider) {
-      GhAttachmentTransfer *transfer = provider->vtable.lookup_at
+      transfer = provider->vtable.lookup_at
         ? provider->vtable.lookup_at(self->message, i, provider->data)
         : NULL;
       paintable = viewer_paintable(transfer, file_mime(self->message, i, file));
     }
     if (!paintable)
       continue;
+    g_ptr_array_add(transfers, g_object_ref(transfer));
     /* Slot names only; the viewer never fetches them. */
     g_ptr_array_add(urls, g_strdup_printf("attachment:%s/%u", id ? id : "", i));
     g_ptr_array_add(paintables, g_steal_pointer(&paintable));
@@ -487,6 +510,11 @@ gh_attachment_card_open_viewer(GhAttachmentCard *self)
   gn_media_viewer_set_gallery(viewer, (const gchar *const *)urls->pdata, current);
   for (guint i = 0; i < paintables->len; i++)
     gn_media_viewer_set_paintable(viewer, i, g_ptr_array_index(paintables, i));
+  /* nostrc-8xfib.4: Save in the viewer is the provider Save As (the
+   * plaintext as received, through the portal), never a re-encoded copy. */
+  g_object_set_data_full(G_OBJECT(viewer), VIEWER_TRANSFERS, transfers,
+                         (GDestroyNotify)g_ptr_array_unref);
+  g_signal_connect(viewer, "save-requested", G_CALLBACK(on_viewer_save), NULL);
   gtk_window_present(GTK_WINDOW(viewer));
   return GTK_WINDOW(viewer);
 }

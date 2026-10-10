@@ -120,6 +120,9 @@ nostr_gtk_portable_sources = files(
   'src/gn-og-preview-provider.c',
   'src/gn-media-viewer.c',
   'src/gn-animated-image.c',
+  'src/gn-media-source.c',
+  'src/gn-media-decode.c',
+  'src/gn-video-player.c',
   'src/gn-nip34-issue-fields.c',
   'src/gn-portable-i18n.c',
 )
@@ -133,6 +136,9 @@ nostr_gtk_portable_headers = files(
   'include/nostr-gtk-1.0/gn-og-preview.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
+  'include/nostr-gtk-1.0/gn-media-source.h',
+  'include/nostr-gtk-1.0/gn-media-decode.h',
+  'include/nostr-gtk-1.0/gn-video-player.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
@@ -157,6 +163,9 @@ nostr_gtk_headers = files(
   'include/nostr-gtk-1.0/gn-og-preview.h',
   'include/nostr-gtk-1.0/gn-media-viewer.h',
   'include/nostr-gtk-1.0/gn-animated-image.h',
+  'include/nostr-gtk-1.0/gn-media-source.h',
+  'include/nostr-gtk-1.0/gn-media-decode.h',
+  'include/nostr-gtk-1.0/gn-video-player.h',
   'include/nostr-gtk-1.0/gn-nip34-issue-fields.h',
   'include/nostr-gtk-1.0/gn-portable-i18n.h',
 )
