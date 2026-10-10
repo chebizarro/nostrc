@@ -348,6 +348,24 @@ static void test_fenced_nip44_custody(void) {
       "nip44_decrypt_b64", pubkey, ciphertext, &plain) == 0);
   CHECK(strcmp(plain, encoded) == 0);
   g_free(plain);
+  plain = NULL;
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt", pubkey, ciphertext, &plain) == -2);
+  CHECK(plain == NULL);
+  g_free(encoded);
+  g_free(ciphertext);
+  ciphertext = NULL;
+  const uint8_t invalid_utf8[] = {0xff, 0xfe, 0x80};
+  encoded = g_base64_encode(invalid_utf8, sizeof(invalid_utf8));
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt_b64", pubkey, encoded, &ciphertext) == 0);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt", pubkey, ciphertext, &plain) == -2);
+  CHECK(plain == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt_b64", pubkey, ciphertext, &plain) == 0);
+  CHECK(strcmp(plain, encoded) == 0);
+  g_free(plain);
   g_free(encoded);
   g_free(ciphertext);
   ciphertext = NULL;

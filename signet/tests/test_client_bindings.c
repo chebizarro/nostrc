@@ -421,10 +421,37 @@ static void test_fenced_nip46_nip44_contract(void) {
   CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex, epoch,
       "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
   req = g_strdup_printf(
+      "{\"id\":\"binary-text\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-binary-text", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "error", "invalid_plaintext");
+  g_free(req);
+  req = g_strdup_printf(
       "{\"id\":\"binary-decrypt\",\"method\":\"nip44_decrypt_b64\",\"params\":[\"%s\",\"%s\",\"1\"]}",
       f.stew_pk_hex, ciphertext);
   (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
                  "crypto-binary-decrypt", now);
+  n46_expect_last_audit(&f, "nip44_decrypt_b64", "ok", "ok");
+  g_free(req);
+  g_free(ciphertext);
+  g_free(binary);
+  const uint8_t invalid_utf8[] = {0xff, 0xfe, 0x80};
+  binary = g_base64_encode(invalid_utf8, sizeof(invalid_utf8));
+  CHECK(signet_key_store_crypt_nip44(f.ks, "stew", f.client_pk_hex, epoch,
+      "nip44_encrypt_b64", f.stew_pk_hex, binary, &ciphertext) == 0);
+  req = g_strdup_printf(
+      "{\"id\":\"invalid-utf8\",\"method\":\"nip44_decrypt\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-invalid-utf8", now);
+  n46_expect_last_audit(&f, "nip44_decrypt", "error", "invalid_plaintext");
+  g_free(req);
+  req = g_strdup_printf(
+      "{\"id\":\"invalid-utf8-b64\",\"method\":\"nip44_decrypt_b64\",\"params\":[\"%s\",\"%s\",\"1\"]}",
+      f.stew_pk_hex, ciphertext);
+  (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req,
+                 "crypto-invalid-utf8-b64", now);
   n46_expect_last_audit(&f, "nip44_decrypt_b64", "ok", "ok");
   g_free(req);
   g_free(ciphertext);

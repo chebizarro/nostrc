@@ -84,7 +84,9 @@ cannot claw back a key they already copied.
 The authenticated NIP-46 lease owner may also use `nip44_encrypt`,
 `nip44_decrypt`, `nip44_encrypt_b64`, and `nip44_decrypt_b64` with params
 `[peer_pubkey, input, "<decimal epoch>"]`. The binary-safe variants encode
-or return the plaintext as standard base64; ordinary NIP-44 uses UTF-8 strings.
+or return the plaintext as standard base64; ordinary NIP-44 requires
+NUL-free valid UTF-8 and rejects binary plaintext with `invalid_plaintext`
+(use `nip44_decrypt_b64` instead).
 The client pubkey comes from the authenticated NIP-46 envelope, never from a
 request parameter. Signet checks owner, exact epoch, expiry and observed clock
 inside the same SQLCipher write transaction as NIP-44 crypto; failed/stale/

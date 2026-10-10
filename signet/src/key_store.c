@@ -334,10 +334,18 @@ static int signet_key_store_crypto_callback(const uint8_t key[32], void *data) {
     rc = nostr_nip44_decrypt_v2(key, peer, work->input, &raw, &raw_len);
     if (rc == 0 && raw) {
       bool binary_safe = strcmp(m, "nip44_decrypt_b64") == 0;
-      work->result = binary_safe
-          ? g_base64_encode(raw, raw_len)
-          : g_strndup((const char *)raw, raw_len);
-      if (work->result && !binary_safe) work->result_len = raw_len;
+      if (!binary_safe &&
+          (memchr(raw, '\0', raw_len) != NULL ||
+           !g_utf8_validate((const char *)raw, raw_len, NULL))) {
+        /* Text NIP-44 cannot represent binary plaintext without truncation or
+         * invalid JSON. The caller must use nip44_decrypt_b64 instead. */
+        rc = -2;
+      } else {
+        work->result = binary_safe
+            ? g_base64_encode(raw, raw_len)
+            : g_strndup((const char *)raw, raw_len);
+        if (work->result && !binary_safe) work->result_len = raw_len;
+      }
     }
     if (raw) { sodium_memzero(raw, raw_len); free(raw); }
   }
@@ -345,7 +353,7 @@ done:
   sodium_memzero(peer, sizeof(peer));
   if (rc == 0 && work->result && work->result_len == 0)
     work->result_len = strlen(work->result);
-  return rc == 0 && work->result ? 0 : -1;
+  return rc == -2 ? -2 : (rc == 0 && work->result ? 0 : -1);
 }
 
 static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
@@ -371,7 +379,7 @@ static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
       sodium_memzero(work.result, work.result_len);
       g_free(work.result);
     }
-    return -1;
+    return rc == -2 ? -2 : -1;
   }
   *out_result = work.result;
   return 0;

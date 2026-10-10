@@ -135,14 +135,16 @@ int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
                                    int64_t *out_epoch);
 
 /* Legacy NIP-04/NIP-44 crypto performed wholly inside custody. These
- * operations remain unavailable for writer-fenced identities. */
+ * operations remain unavailable for writer-fenced identities. Return -2 if
+ * text nip44_decrypt recovers binary/non-UTF-8 plaintext; use _b64 instead. */
 int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result);
 
 /* NIP-44 under the authenticated writer lease. Only the four NIP-44 methods
  * are accepted. The callback, expiry check, and DB commit are serialized with
- * transfer/revoke; on any failure *out_result is NULL. NIP-46 supplies owner
+ * transfer/revoke; on any failure *out_result is NULL. Return -2 for
+ * non-text nip44_decrypt plaintext, which must use _b64. NIP-46 supplies owner
  * from its authenticated client pubkey, never from request parameters. */
 int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
                                  const char *owner, int64_t epoch,

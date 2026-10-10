@@ -816,7 +816,11 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                 req.params[1], &result)
             : signet_key_store_crypt_legacy(s->keys, session_agent_id,
                 method, req.params[0], req.params[1], &result);
-        if (crypto_rc != 0) {
+        if (crypto_rc == -2) {
+          err_str = g_strdup("NIP-44 plaintext is not NUL-free UTF-8; use nip44_decrypt_b64 for binary data");
+          status = "error";
+          code = "invalid_plaintext";
+        } else if (crypto_rc != 0) {
           err_str = g_strdup("crypto operation denied or failed");
           status = "error";
           code = "crypto_failed";
