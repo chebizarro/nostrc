@@ -12,8 +12,11 @@
  * - pairing consumes that secret and records client_pubkey -> agent_id with
  *   the secret's hash in ONE critical section under the key-store mutex;
  * - a binding is pinned to the exact hot-cache entry it was made against, so
- *   revoke, rotate-key or re-adopt/re-provision invalidate it (no
- *   resurrection of prior authority);
+ *   revoke, evict, rotate-key, restore or re-adopt/re-provision invalidate it
+ *   (no resurrection of prior authority), and those operations drop the
+ *   agent's bindings at once;
+ * - rotate-key leaves no pending secret (like the store row);
+ *   signet_key_store_reissue_connect_secret mints one, as with a store;
  * - nothing survives the process: after a restart a cache-only signer holds
  *   no agents, secrets or bindings, and every client must be provisioned and
  *   paired again.
@@ -45,5 +48,8 @@ int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
                                              const char *client_pubkey_hex,
                                              char **out_agent_id,
                                              char **out_bound_secret_hash);
+
+/* Number of cache-only client bindings currently held (test seam). */
+unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks);
 
 #endif /* SIGNET_KEY_STORE_PRIVATE_H */

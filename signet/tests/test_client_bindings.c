@@ -27,7 +27,10 @@
  *      this one, bound or not; an unknown client is refused (both modes);
  *  11. revoke, rotate-key and revoke + re-adopt invalidate the binding;
  *  12. a restarted cache-only signer holds no bindings, so the client must
- *      pair again with a fresh secret.
+ *      pair again with a fresh secret;
+ *  13. after rotate-key or restore, reissue-connect mints a fresh secret
+ *      that re-pairs (the earlier one dies), and revoke/evict/rotate/restore
+ *      drop the agent's bindings at once.
  */
 
 #include "signet/key_store.h"
@@ -979,9 +982,9 @@ static void test_cache_only_identity_change_invalidates(void) {
   printf("test_cache_only_identity_change_invalidates: PASS\n");
 }
 
-/* 12: a cache-only signer keeps nothing across a restart. Re-adopting the
- * agent with its old key and old secret pairs the client again (that is a
- * NEW pending secret); without that, the client is refused. */
+/* 12: a cache-only signer keeps nothing across a restart. The client is
+ * refused until the operator re-adopts the agent (same key) with a fresh
+ * secret; the old, spent secret stays refused and the fresh one pairs. */
 static void test_cache_only_restart_requires_pairing(void) {
   N46Fixture f;
   n46_setup_mode(&f, true);
@@ -1010,6 +1013,164 @@ static void test_cache_only_restart_requires_pairing(void) {
   printf("test_cache_only_restart_requires_pairing: PASS\n");
 }
 
+/* Reissues a connect secret for `agent_id` (provisioner path unless
+ * `expected_pk`), returning it (g_free) or NULL with *rc set. */
+static char *n46_reissue(N46Fixture *f, const char *agent_id, const char *expected_pk,
+                         int *rc_out) {
+  char user_pk[65] = {0};
+  char *secret = NULL;
+  char *uri = NULL;
+  const char *relays[] = { "ws://127.0.0.1:1" };
+  int rc = signet_key_store_reissue_connect_secret(f->ks, agent_id, expected_pk,
+                                                   f->bunker_pk_hex, relays, 1,
+                                                   user_pk, &secret, &uri);
+  if (rc_out) *rc_out = rc;
+  if (rc == 0) {
+    char pk[65] = {0};
+    CHECK(secret && strlen(secret) == 64);
+    CHECK(signet_key_store_get_agent_pubkey(f->ks, agent_id, pk, sizeof(pk)));
+    CHECK(strcmp(user_pk, pk) == 0);
+    CHECK(uri && g_str_has_prefix(uri, "bunker://") && strstr(uri, secret) != NULL);
+  } else {
+    CHECK(secret == NULL && uri == NULL);
+  }
+  if (uri) {
+    sodium_memzero(uri, strlen(uri));
+    g_free(uri);
+  }
+  return secret;
+}
+
+static void n46_free_secret(char *secret) {
+  if (!secret) return;
+  sodium_memzero(secret, strlen(secret));
+  g_free(secret);
+}
+
+/* 13a: cache-only rotate-key leaves the agent without a pending secret (like
+ * the store row); reissue-connect mints one — provisioner or self-service
+ * under the CURRENT identity — and the client re-pairs. */
+static void test_cache_only_reissue_after_rotate(void) {
+  N46Fixture f;
+  n46_setup_mode(&f, true);
+  int64_t now = 1752380000;
+  int rc = 0;
+
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 1);
+
+  char new_pk[65] = {0};
+  CHECK(signet_key_store_rotate_agent(f.ks, "stew", new_pk, sizeof(new_pk)) == 0);
+  /* Dropped by the rotate itself, not on the client's next lookup. */
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e2", now) == false);
+
+  /* Errors: unknown agent; self-service under the superseded identity. */
+  CHECK(n46_reissue(&f, "nobody", NULL, &rc) == NULL && rc == 1);
+  CHECK(n46_reissue(&f, "stew", f.stew_pk_hex, &rc) == NULL && rc == 2);
+
+  /* Provisioner reissue, then a second one: only the latest secret pairs. */
+  char *first = n46_reissue(&f, "stew", NULL, &rc);
+  CHECK(first && rc == 0);
+  char *second = n46_reissue(&f, "stew", new_pk, &rc); /* self-service */
+  CHECK(second && rc == 0 && strcmp(first, second) != 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, first, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, second, "e4", now) == true);
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e5", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, second, "e6", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e7", now) == true);
+
+  /* A reissue keeps existing bindings; its secret pairs one more client. */
+  char *third = n46_reissue(&f, "stew", NULL, &rc);
+  CHECK(third && rc == 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e8", now) == true);
+  char other_sk[65], other_pk[65];
+  gen_keypair_hex(other_sk, other_pk);
+  CHECK(n46_connect(&f, other_sk, other_pk, third, "e9", now) == true);
+  CHECK(n46_connect(&f, other_sk, other_pk, second, "e10", now) == false);
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 2);
+
+  sodium_memzero(other_sk, sizeof(other_sk));
+  n46_free_secret(first);
+  n46_free_secret(second);
+  n46_free_secret(third);
+  n46_teardown(&f);
+  printf("test_cache_only_reissue_after_rotate: PASS\n");
+}
+
+/* 13b: cache-only restore drops the agent's bindings and keeps a pending
+ * secret (as the store row does); reissue-connect re-pairs once none is
+ * pending. */
+static void test_cache_only_reissue_after_restore(void) {
+  N46Fixture f;
+  n46_setup_mode(&f, true);
+  int64_t now = 1752380000;
+  int rc = 0;
+
+  /* Restore while the adopt secret is still pending: it survives. */
+  uint8_t sk_raw[32];
+  CHECK(hex_to_bytes(f.stew_sk_hex, sk_raw, 32) == 0);
+  char out_pk[65] = {0};
+  CHECK(signet_key_store_restore_agent(f.ks, "stew", sk_raw, f.stew_pk_hex, out_pk) ==
+        SIGNET_ADOPT_OK);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+
+  /* Restore again: binding dropped at once, no secret pending now. */
+  CHECK(signet_key_store_restore_agent(f.ks, "stew", sk_raw, f.stew_pk_hex, out_pk) ==
+        SIGNET_ADOPT_OK);
+  sodium_memzero(sk_raw, sizeof(sk_raw));
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e2", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e3", now) == false);
+
+  char *fresh = n46_reissue(&f, "stew", f.stew_pk_hex, &rc);
+  CHECK(fresh && rc == 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, fresh, "e4", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e5", now) == true);
+
+  n46_free_secret(fresh);
+  n46_teardown(&f);
+  printf("test_cache_only_reissue_after_restore: PASS\n");
+}
+
+/* 13c: revoke and evict drop exactly that agent's bindings at once. */
+static void test_cache_only_revoke_evict_drop_bindings(void) {
+  N46Fixture f;
+  n46_setup_mode(&f, true);
+  int64_t now = 1752380000;
+  int rc = 0;
+
+  char ops_sk[65], ops_pk[65], a_sk[65], a_pk[65], b_sk[65], b_pk[65];
+  gen_keypair_hex(ops_sk, ops_pk);
+  gen_keypair_hex(a_sk, a_pk);
+  gen_keypair_hex(b_sk, b_pk);
+  n46_adopt(&f, "ops", ops_sk, ops_pk, "ops-secret");
+
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  char *more = n46_reissue(&f, "stew", NULL, &rc);
+  CHECK(more && rc == 0);
+  CHECK(n46_connect(&f, a_sk, a_pk, more, "e2", now) == true);
+  CHECK(n46_connect(&f, b_sk, b_pk, "ops-secret", "e3", now) == true);
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 3);
+
+  CHECK(signet_key_store_revoke_agent(f.ks, "stew") == 0);
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 1);
+  n46_expect_binding(&f, b_pk, "ops", now);
+  CHECK(n46_connect(&f, b_sk, b_pk, NULL, "e4", now) == true);
+
+  CHECK(signet_key_store_evict_agent(f.ks, "ops") == 0);
+  CHECK(signet_key_store_ephemeral_binding_count(f.ks) == 0);
+  CHECK(n46_connect(&f, b_sk, b_pk, NULL, "e5", now) == false);
+
+  n46_free_secret(more);
+  sodium_memzero(ops_sk, sizeof(ops_sk));
+  sodium_memzero(a_sk, sizeof(a_sk));
+  sodium_memzero(b_sk, sizeof(b_sk));
+  n46_teardown(&f);
+  printf("test_cache_only_revoke_evict_drop_bindings: PASS\n");
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -1034,6 +1195,9 @@ int main(void) {
   }
   test_cache_only_identity_change_invalidates();
   test_cache_only_restart_requires_pairing();
+  test_cache_only_reissue_after_rotate();
+  test_cache_only_reissue_after_restore();
+  test_cache_only_revoke_evict_drop_bindings();
 
   printf("All client binding tests passed.\n");
   return 0;

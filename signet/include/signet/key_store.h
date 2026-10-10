@@ -332,7 +332,8 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
 
 /* Mint and persist a fresh one-time connect_secret for an EXISTING agent
  * (management agent/reissue-connect). The previous secret — consumed or not —
- * becomes invalid. Requires a backing store (fails in cache-only mode).
+ * becomes invalid. In cache-only mode (no backing store) the secret is held,
+ * as a SHA-256 digest, for the life of the process only.
  * When @expected_user_pubkey is non-NULL, the reissue proceeds only if the
  * agent's CURRENT identity pubkey equals it (case-insensitive), checked
  * atomically with the mutation under the key-store mutex — self-service
