@@ -194,7 +194,8 @@ jobs:
   release:
     name: Publish pre-release
     needs: [source, deb, rpm, arch, flatpak, nix]
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && needs.source.result == 'success' }}
+    # Publish only a complete release: a failed or cancelled package build blocks it.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && needs.source.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

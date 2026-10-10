@@ -24,6 +24,9 @@ include(GNUInstallDirs)
 find_program(NOSTRC_XGETTEXT xgettext)
 find_program(NOSTRC_MSGFMT msgfmt)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# include_guard(GLOBAL) runs this file once, in the first including directory;
+# keep the interpreter in the cache so every directory's rules can use it.
+set(NOSTRC_PYTHON3 ${Python3_EXECUTABLE} CACHE INTERNAL "Python 3 for the gettext helpers")
 set(NOSTRC_PSEUDO_PO ${CMAKE_CURRENT_LIST_DIR}/nostrc-pseudo-po.py CACHE INTERNAL "pseudo-locale generator")
 
 function(nostrc_gettext)
@@ -106,7 +109,7 @@ function(nostrc_gettext)
     set(po ${build_po}/${lang}.po)
     if (lang MATCHES "@pseudo$")
       add_custom_command(OUTPUT ${po}
-        COMMAND ${Python3_EXECUTABLE} ${NOSTRC_PSEUDO_PO} ${pot} ${po} ${lang}
+        COMMAND ${NOSTRC_PYTHON3} ${NOSTRC_PSEUDO_PO} ${pot} ${po} ${lang}
         DEPENDS ${pot} ${NOSTRC_PSEUDO_PO} VERBATIM)
     else()
       add_custom_command(OUTPUT ${po}
