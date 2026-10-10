@@ -22,6 +22,8 @@
 #include "gn-nostr-reference.h"
 #include "gn-og-preview-card.h"
 #include "gn-media-viewer.h"
+#include "gn-media-source.h"
+#include "gn-media-decode.h"
 #include "gn-nip34-issue-fields.h"
 #include "gn-timeline-tabs.h"
 #include "gnostr-card-visibility-policy.h"
