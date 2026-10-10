@@ -26,7 +26,7 @@ struct _GhComposer {
   GtkTextView *text_view;
   GtkLabel *placeholder;
   GtkMenuButton *emoji_button;
-  GtkEmojiChooser *emoji_chooser;
+  GtkEmojiChooser *emoji_chooser; /* owned by emoji_button; NULL until first opened */
   GtkButton *send_button;
   GtkLabel *disabled_reason;
   GtkButton *disabled_button;
@@ -552,6 +552,21 @@ on_emoji_picked(GhComposer *self, const gchar *emoji)
   gtk_widget_grab_focus(GTK_WIDGET(self->text_view));
 }
 
+/* GtkEmojiChooser fills its whole palette in idle callbacks as soon as it
+ * is made, so the button makes it only when first opened (nostrc-boq9.5):
+ * that work no longer competes with opening the first conversation. */
+static void
+create_emoji_chooser(GtkMenuButton *button, gpointer data)
+{
+  GhComposer *self = data;
+  if (self->emoji_chooser)
+    return;
+  self->emoji_chooser = GTK_EMOJI_CHOOSER(gtk_emoji_chooser_new());
+  g_signal_connect_swapped(self->emoji_chooser, "emoji-picked", G_CALLBACK(on_emoji_picked),
+                           self);
+  gtk_menu_button_set_popover(button, GTK_WIDGET(self->emoji_chooser));
+}
+
 static void
 action_send(GtkWidget *widget, const char *name, GVariant *parameter)
 {
@@ -891,6 +906,7 @@ gh_composer_dispose(GObject *object)
     self->mention_popover = NULL;
     self->mention_list = NULL;
   }
+  GH_COMPOSER(object)->emoji_chooser = NULL;
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_COMPOSER);
   G_OBJECT_CLASS(gh_composer_parent_class)->dispose(object);
 }
@@ -996,7 +1012,6 @@ gh_composer_class_init(GhComposerClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhComposer, text_view);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, placeholder);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, emoji_button);
-  gtk_widget_class_bind_template_child(widget_class, GhComposer, emoji_chooser);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, send_button);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_reason);
   gtk_widget_class_bind_template_child(widget_class, GhComposer, disabled_button);
@@ -1025,8 +1040,7 @@ gh_composer_init(GhComposer *self)
   self->buffer = gtk_text_view_get_buffer(self->text_view);
   g_signal_connect_swapped(self->buffer, "changed", G_CALLBACK(on_buffer_changed), self);
   g_signal_connect(self->buffer, "mark-set", G_CALLBACK(on_mention_mark_set), self);
-  g_signal_connect_swapped(self->emoji_chooser, "emoji-picked", G_CALLBACK(on_emoji_picked),
-                           self);
+  gtk_menu_button_set_create_popup_func(self->emoji_button, create_emoji_chooser, self, NULL);
   g_signal_connect_swapped(self->text_view, "preedit-changed", G_CALLBACK(on_preedit_changed),
                            self);
 

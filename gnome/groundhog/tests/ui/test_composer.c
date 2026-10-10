@@ -754,8 +754,13 @@ test_draft_timer_and_emoji(void)
   gh_composer_flush_draft(composer); /* nothing pending */
   g_assert_cmpuint(sink.drafts, ==, 2);
 
-  GtkEmojiChooser *chooser =
-    GTK_EMOJI_CHOOSER(template_child(composer, GH_TYPE_COMPOSER, "emoji_chooser"));
+  /* The chooser is made when the button first opens it (nostrc-boq9.5). */
+  GtkMenuButton *emoji_button =
+    GTK_MENU_BUTTON(template_child(composer, GH_TYPE_COMPOSER, "emoji_button"));
+  g_assert_null(gtk_menu_button_get_popover(emoji_button));
+  gtk_menu_button_popup(emoji_button);
+  GtkEmojiChooser *chooser = GTK_EMOJI_CHOOSER(gtk_menu_button_get_popover(emoji_button));
+  g_assert_nonnull(chooser);
   g_signal_emit_by_name(chooser, "emoji-picked", "🦫");
   g_autofree gchar *text = text_of(composer);
   g_assert_cmpstr(text, ==, "restored and edited!🦫");

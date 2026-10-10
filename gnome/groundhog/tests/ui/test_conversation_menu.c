@@ -724,7 +724,10 @@ test_gui_header_menu(void)
   drain_idle();
   g_assert_false(gh_conversation_get_pinned(alice));
 
-  /* Disappearing Messages…: Conversation Info, at its timer. */
+  /* Disappearing Messages…: Conversation Info, at its timer. The window
+   * moves focus left by the closed dialog on its next paint; wait for that
+   * paint so it does not land in the new dialog. */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(g.window));
   g_action_group_activate_action(actions, "disappearing-shown-conversation", NULL);
   spin_until(dialog_shown, &g);
   AdwDialog *info = visible_dialog(&g);
