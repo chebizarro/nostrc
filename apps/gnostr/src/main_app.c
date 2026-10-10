@@ -1,3 +1,4 @@
+#include "services/gnostr-media-source.h"
 #include <adwaita.h>
 #include <nostr-gtk-1.0/nostr-gtk.h>
 #include <glib/gstdio.h>
@@ -509,6 +510,10 @@ int main(int argc, char **argv) {
 
     /* Initialize nostr-gtk widget library AFTER storage is ready (nostrc-lx33 fix) */
     nostr_gtk_init();
+
+    /* nostrc-8xfib.4: nostr-gtk media widgets (viewer, video player) load
+     * through Gnostr policy, shared session and settings. */
+    gnostr_media_source_install();
 
     /* nostrc-reb8: Inject shared SoupSession into library NIP-05 module.
      * Must happen after nostr_gtk_init() and before any widget triggers

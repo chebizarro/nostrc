@@ -6,7 +6,8 @@
 
 #include "gnostr-picture-grid.h"
 #include "gnostr-picture-card.h"
-#include "gnostr-image-viewer.h"
+#include <nostr-gtk-1.0/gn-media-viewer.h>
+#include "../services/gnostr-media-source.h"
 #include <glib/gi18n.h>
 #include <string.h>
 
@@ -52,7 +53,7 @@ struct _GnostrPictureGrid {
 
   /* Image overlay */
   GtkWidget *overlay_window;
-  GnostrImageViewer *image_viewer;
+  GnMediaViewer *image_viewer;
 
   /* Data */
   GHashTable *pictures;        /* event_id -> GnostrPictureMeta */
@@ -635,21 +636,21 @@ gnostr_picture_grid_show_overlay(GnostrPictureGrid *self,
 
   /* Create image viewer (fresh each time — viewer is destroyed on close) */
   if (!self->image_viewer) {
-    self->image_viewer = gnostr_image_viewer_new(parent);
+    self->image_viewer = gn_media_viewer_new(parent);
+    gn_media_viewer_set_source(self->image_viewer, gnostr_media_source_get());
     self->overlay_window = GTK_WIDGET(self->image_viewer);
     g_signal_connect(self->overlay_window, "destroy",
                      G_CALLBACK(on_image_viewer_destroyed), self);
   }
 
-  if (urls && url_count > 1) {
-    gnostr_image_viewer_set_gallery(self->image_viewer, (const char * const *)urls, 0);
-  } else if (urls && url_count == 1) {
-    gnostr_image_viewer_set_image_url(self->image_viewer, urls[0]);
+  if (urls && url_count > 0) {
+    gn_media_viewer_set_gallery(self->image_viewer, (const char * const *)urls, 0);
   } else {
-    gnostr_image_viewer_set_image_url(self->image_viewer, fallback_url);
+    const char *single[] = { fallback_url, NULL };
+    gn_media_viewer_set_gallery(self->image_viewer, single, 0);
   }
 
-  gnostr_image_viewer_present(self->image_viewer);
+  gn_media_viewer_present(self->image_viewer);
 
   if (urls) {
     g_strfreev(urls);

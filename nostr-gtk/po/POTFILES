@@ -2,3 +2,4 @@
 src/gn-media-viewer.c
 src/gn-nip34-issue-fields.c
 src/gn-og-preview-card.c
+src/gn-video-player.c

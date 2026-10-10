@@ -1,171 +1,70 @@
 /*
- * gnostr-video-player.h
+ * gn-video-player.h
  *
- * Enhanced video player widget with custom controls overlay.
- * Features: fullscreen support, GSettings-based autoplay/loop config,
- * and a controls overlay with play/pause, seek, volume, and fullscreen buttons.
+ * Video player widget with custom OSD controls (play/pause, stop, seek, time,
+ * mute, volume, loop, fullscreen), auto-hiding controls, keyboard shortcuts
+ * (space/k, f, m, Esc), pause when scrolled out of view or unmapped, and
+ * loading/error/blocked states. Ported from Gnostr (nostrc-8xfib.4).
+ *
+ * The player never hands a remote URL to the media backend. Media arrives as
+ * a GtkMediaStream (gn_video_player_set_stream()), a caller-vetted GFile
+ * (gn_video_player_set_file()), or through a GnMediaSource's open_stream()
+ * after gn_video_player_set_url(). No GtkMediaFile exists until one of these.
  */
-
-#ifndef GNOSTR_VIDEO_PLAYER_H
-#define GNOSTR_VIDEO_PLAYER_H
+#ifndef GN_VIDEO_PLAYER_H
+#define GN_VIDEO_PLAYER_H
 
 #include <gtk/gtk.h>
+#include <nostr-gtk-1.0/gn-media-source.h>
 
 G_BEGIN_DECLS
 
-#define GNOSTR_TYPE_VIDEO_PLAYER (gnostr_video_player_get_type())
+#define GN_TYPE_VIDEO_PLAYER (gn_video_player_get_type())
+G_DECLARE_FINAL_TYPE(GnVideoPlayer, gn_video_player, GN, VIDEO_PLAYER, GtkWidget)
 
-G_DECLARE_FINAL_TYPE(GnostrVideoPlayer, gnostr_video_player, GNOSTR, VIDEO_PLAYER, GtkWidget)
+GnVideoPlayer *gn_video_player_new(void);
 
-/**
- * gnostr_video_player_new:
- *
- * Creates a new video player widget.
- * Reads autoplay and loop settings from GSettings (org.gnostr.Client).
- *
- * Returns: (transfer full): A new #GnostrVideoPlayer
- */
-GnostrVideoPlayer *gnostr_video_player_new(void);
+/* The host's media plumbing (nullable). Its adopt() hook runs once here. */
+void gn_video_player_set_source(GnVideoPlayer *self, GnMediaSource *source);
+GnMediaSource *gn_video_player_get_source(GnVideoPlayer *self);
 
-/**
- * gnostr_video_player_set_uri:
- * @self: A #GnostrVideoPlayer
- * @uri: The URI of the video to play
- *
- * Sets the video source URI. This can be a remote URL (http/https)
- * or a local file URI (file://).
- */
-void gnostr_video_player_set_uri(GnostrVideoPlayer *self, const char *uri);
+/* Identifies the video; loads nothing by itself unless the source's policy
+ * is ALLOW. ASK (or no source) shows a Load action; BLOCKED says so. */
+void gn_video_player_set_url(GnVideoPlayer *self, const char *url);
+const char *gn_video_player_get_url(GnVideoPlayer *self);
+/* The user's Load action: emits "load-requested" (url) and, with a source
+ * whose policy is not BLOCKED, opens the stream through it. */
+void gn_video_player_request_load(GnVideoPlayer *self);
 
-/**
- * gnostr_video_player_get_uri:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: (transfer none) (nullable): The current video URI, or NULL
- */
-const char *gnostr_video_player_get_uri(GnostrVideoPlayer *self);
+/* Plays stream (nullable). The player does not tear down a stream it did
+ * not create; it only pauses it when replaced or disposed. */
+void gn_video_player_set_stream(GnVideoPlayer *self, GtkMediaStream *stream);
+/* A local or otherwise vetted file, through a GtkMediaFile the player owns. */
+void gn_video_player_set_file(GnVideoPlayer *self, GFile *file);
+GtkMediaStream *gn_video_player_get_stream(GnVideoPlayer *self);
+/* Shows the error state with message. */
+void gn_video_player_set_error(GnVideoPlayer *self, const char *message);
 
-/**
- * gnostr_video_player_play:
- * @self: A #GnostrVideoPlayer
- *
- * Starts or resumes video playback.
- */
-void gnostr_video_player_play(GnostrVideoPlayer *self);
+void gn_video_player_play(GnVideoPlayer *self);
+void gn_video_player_pause(GnVideoPlayer *self);
+void gn_video_player_toggle_playback(GnVideoPlayer *self);
+/* Pauses and seeks to the start. */
+void gn_video_player_stop(GnVideoPlayer *self);
 
-/**
- * gnostr_video_player_pause:
- * @self: A #GnostrVideoPlayer
- *
- * Pauses video playback.
- */
-void gnostr_video_player_pause(GnostrVideoPlayer *self);
+void gn_video_player_set_fullscreen(GnVideoPlayer *self, gboolean fullscreen);
+gboolean gn_video_player_get_fullscreen(GnVideoPlayer *self);
 
-/**
- * gnostr_video_player_toggle_playback:
- * @self: A #GnostrVideoPlayer
- *
- * Toggles between play and pause states.
- */
-void gnostr_video_player_toggle_playback(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_stop:
- * @self: A #GnostrVideoPlayer
- *
- * Stops video playback, resets position to beginning, and shows
- * the first frame as a thumbnail/poster.
- */
-void gnostr_video_player_stop(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_set_fullscreen:
- * @self: A #GnostrVideoPlayer
- * @fullscreen: Whether to enter fullscreen mode
- *
- * Enters or exits fullscreen mode. In fullscreen mode, the video
- * is displayed in a separate window with auto-hiding controls.
- */
-void gnostr_video_player_set_fullscreen(GnostrVideoPlayer *self, gboolean fullscreen);
-
-/**
- * gnostr_video_player_get_fullscreen:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: TRUE if the player is in fullscreen mode
- */
-gboolean gnostr_video_player_get_fullscreen(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_set_autoplay:
- * @self: A #GnostrVideoPlayer
- * @autoplay: Whether to autoplay videos
- *
- * Sets whether videos should start playing automatically.
- * This overrides the GSettings value for this instance.
- */
-void gnostr_video_player_set_autoplay(GnostrVideoPlayer *self, gboolean autoplay);
-
-/**
- * gnostr_video_player_get_autoplay:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: TRUE if autoplay is enabled
- */
-gboolean gnostr_video_player_get_autoplay(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_set_loop:
- * @self: A #GnostrVideoPlayer
- * @loop: Whether to loop videos
- *
- * Sets whether videos should loop when finished.
- * This overrides the GSettings value for this instance.
- */
-void gnostr_video_player_set_loop(GnostrVideoPlayer *self, gboolean loop);
-
-/**
- * gnostr_video_player_get_loop:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: TRUE if loop is enabled
- */
-gboolean gnostr_video_player_get_loop(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_set_muted:
- * @self: A #GnostrVideoPlayer
- * @muted: Whether audio should be muted
- *
- * Sets the mute state of the video player.
- */
-void gnostr_video_player_set_muted(GnostrVideoPlayer *self, gboolean muted);
-
-/**
- * gnostr_video_player_get_muted:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: TRUE if audio is muted
- */
-gboolean gnostr_video_player_get_muted(GnostrVideoPlayer *self);
-
-/**
- * gnostr_video_player_set_volume:
- * @self: A #GnostrVideoPlayer
- * @volume: Volume level (0.0 to 1.0)
- *
- * Sets the audio volume level.
- */
-void gnostr_video_player_set_volume(GnostrVideoPlayer *self, double volume);
-
-/**
- * gnostr_video_player_get_volume:
- * @self: A #GnostrVideoPlayer
- *
- * Returns: The current volume level (0.0 to 1.0)
- */
-double gnostr_video_player_get_volume(GnostrVideoPlayer *self);
+/* GObject properties "autoplay", "loop", "muted", "volume" (bindable, e.g.
+ * with g_settings_bind() in a GnMediaSource's adopt()). */
+void gn_video_player_set_autoplay(GnVideoPlayer *self, gboolean autoplay);
+gboolean gn_video_player_get_autoplay(GnVideoPlayer *self);
+void gn_video_player_set_loop(GnVideoPlayer *self, gboolean loop);
+gboolean gn_video_player_get_loop(GnVideoPlayer *self);
+void gn_video_player_set_muted(GnVideoPlayer *self, gboolean muted);
+gboolean gn_video_player_get_muted(GnVideoPlayer *self);
+void gn_video_player_set_volume(GnVideoPlayer *self, double volume);
+double gn_video_player_get_volume(GnVideoPlayer *self);
 
 G_END_DECLS
 
-#endif /* GNOSTR_VIDEO_PLAYER_H */
+#endif /* GN_VIDEO_PLAYER_H */

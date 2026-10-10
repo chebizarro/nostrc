@@ -24,6 +24,7 @@
 #include "gn-media-viewer.h"
 #include "gn-media-source.h"
 #include "gn-media-decode.h"
+#include "gn-video-player.h"
 #include "gn-nip34-issue-fields.h"
 #include "gn-timeline-tabs.h"
 #include "gnostr-card-visibility-policy.h"

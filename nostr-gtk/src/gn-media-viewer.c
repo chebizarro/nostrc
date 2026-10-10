@@ -1,38 +1,42 @@
 /*
- * gnostr-image-viewer.c - Full-size image viewer modal
+ * gn-media-viewer.c - Full-size media viewer modal
  *
- * Implementation of a modal dialog for viewing images with zoom/pan support.
+ * Ported from Gnostr (gnostr-image-viewer.c, nostrc-8xfib.4): zoom and pan
+ * (fit never upscales, additive steps from the fitted scale, pinch, wheel,
+ * drag, arrow keys), click outside the image to close, a loading spinner,
+ * blocked and unavailable states, Save (Ctrl+S) and Copy link (Ctrl+C),
+ * gallery navigation. Grafted from the alpha-6 GnMediaViewer: nothing is
+ * fetched by the widget (a GnMediaSource or the "load-requested" signal
+ * does), results are bound to a generation and cancelled on navigation,
+ * close and dispose, any paintable is shown (animated GIF plays, a
+ * GtkMediaStream gets the GnVideoPlayer controls), the gallery is capped,
+ * and decoding is bounded (gn_media_decode). GTK 4.6 API only.
  */
 
-#include "gnostr-image-viewer.h"
 #include <nostr-gtk-1.0/gn-media-viewer.h>
-#include "gnostr-main-window.h"
-#include "gnostr-avatar-cache.h"
-#include "../util/utils.h"
-#include <glib/gi18n.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
+#include <nostr-gtk-1.0/gn-video-player.h>
+#include "gn-media-decode-private.h"
+#include "gn-portable-i18n-private.h"
 #include <math.h>
+#include <string.h>
 
-#ifdef HAVE_SOUP3
-#include <libsoup/soup.h>
-#endif
-
-#define GNOSTR_CLIENT_SCHEMA_ID "org.gnostr.Client"
-#define GNOSTR_CLIENT_LOAD_REMOTE_MEDIA_KEY "load-remote-media"
-
-/* Zoom constants */
 #define MIN_ZOOM 0.1
 #define MAX_ZOOM 10.0
 #define ZOOM_STEP 0.25
-#define FIT_ZOOM -1.0  /* Special value meaning "fit to window" */
+#define FIT_ZOOM 0.0 /* "fit to window" */
+#define MAX_GALLERY 256
+#define PAN_STEP 50.0
 
-struct _GnostrImageViewer {
+struct _GnMediaViewer {
   GtkWindow parent_instance;
 
-  /* Widgets */
   GtkWidget *overlay;
   GtkWidget *scrolled_window;
   GtkWidget *picture;
+  GtkWidget *video;          /* GnVideoPlayer for GtkMediaStream slots */
   GtkWidget *close_button;
+  GtkWidget *zoom_box;
   GtkWidget *zoom_label;
   GtkWidget *spinner;
   GtkWidget *blocked_overlay;
@@ -40,183 +44,759 @@ struct _GnostrImageViewer {
   GtkWidget *load_button;
   GtkWidget *save_button;
   GtkWidget *copy_link_button;
+  GtkWidget *nav_box;
   GtkWidget *prev_button;
   GtkWidget *next_button;
-  GtkWidget *nav_label;    /* Shows "1 / 5" style indicator */
+  GtkWidget *nav_label;
 
-  /* State */
-  GdkTexture *texture;
-  double zoom_level;      /* Current zoom level, or FIT_ZOOM for fit-to-window */
-  double actual_zoom;     /* Computed actual zoom when fitting */
+  GPtrArray *urls;           /* gchar* */
+  GPtrArray *paintables;     /* GdkPaintable* or NULL */
+  guint index;
+  guint64 generation;
+
+  double zoom_level;         /* FIT_ZOOM or a fixed scale */
+  double actual_zoom;        /* the scale shown, also when fitting */
   gboolean is_dragging;
-  double drag_start_x;
-  double drag_start_y;
   double scroll_start_h;
   double scroll_start_v;
-  char *image_url;
+  double pinch_base;         /* the scale when a pinch began */
 
-  /* Gallery state */
-  char **gallery_urls;    /* NULL-terminated array of URLs */
-  guint gallery_count;    /* Number of images in gallery */
-  guint gallery_index;    /* Current image index */
-  GnMediaViewer *portable_viewer; /* app-free gallery/zoom state */
+  /* State of the current slot while it has no paintable. */
+  gboolean loading;
+  char *message;             /* blocked or unavailable text, or NULL */
+  gboolean offer_load;
 
-#ifdef HAVE_SOUP3
-  /* Uses gnostr_get_shared_soup_session() instead of per-widget session */
-  GCancellable *cancellable;
-#endif
+  GnMediaSource *source;
+  GCancellable *cancellable; /* this generation: fetch and decode */
+  GnMediaDecodeLimits limits;
+  gboolean can_save;
 };
 
-G_DEFINE_TYPE(GnostrImageViewer, gnostr_image_viewer, GTK_TYPE_WINDOW)
+G_DEFINE_TYPE(GnMediaViewer, gn_media_viewer, GTK_TYPE_WINDOW)
 
-/* Forward declarations */
-static void update_zoom_display(GnostrImageViewer *self);
-static void apply_zoom(GnostrImageViewer *self);
-static void zoom_to_fit(GnostrImageViewer *self);
-static void zoom_to_actual(GnostrImageViewer *self);
-static gboolean on_key_pressed(GtkEventControllerKey *controller,
-                               guint keyval,
-                               guint keycode,
-                               GdkModifierType state,
-                               gpointer user_data);
-static gboolean on_scroll(GtkEventControllerScroll *controller,
-                          double dx, double dy,
-                          gpointer user_data);
-static void on_drag_begin(GtkGestureDrag *gesture,
-                          double start_x, double start_y,
-                          gpointer user_data);
-static void on_drag_update(GtkGestureDrag *gesture,
-                           double offset_x, double offset_y,
-                           gpointer user_data);
-static void on_drag_end(GtkGestureDrag *gesture,
-                        double offset_x, double offset_y,
-                        gpointer user_data);
-static void on_double_click(GtkGestureClick *gesture,
-                            int n_press,
-                            double x, double y,
-                            gpointer user_data);
-static void on_close_clicked(GtkButton *button, gpointer user_data);
-static void on_background_clicked(GtkGestureClick *gesture,
-                                  int n_press,
-                                  double x, double y,
-                                  gpointer user_data);
+enum { PROP_0, PROP_CAN_SAVE, N_PROPS };
+static GParamSpec *props[N_PROPS];
+enum { SIG_LOAD_REQUESTED, SIG_SAVE_REQUESTED, SIG_LINK_COPIED, N_SIGNALS };
+static guint signals[N_SIGNALS];
 
-/* Pinch zoom gesture handler */
-static void on_zoom_scale_changed(GtkGestureZoom *gesture,
-                                  gdouble scale,
-                                  gpointer user_data);
+static void update(GnMediaViewer *self);
+static void apply_zoom(GnMediaViewer *self);
+static void begin_fetch(GnMediaViewer *self);
 
-/* Navigation handlers */
-static void on_prev_clicked(GtkButton *button, gpointer user_data);
-static void on_next_clicked(GtkButton *button, gpointer user_data);
-static void on_save_clicked(GtkButton *button, gpointer user_data);
-static void on_copy_link_clicked(GtkButton *button, gpointer user_data);
-static void update_nav_display(GnostrImageViewer *self);
-static gboolean gnostr_image_viewer_remote_media_allowed(void);
-static void image_viewer_set_overlay_state(GnostrImageViewer *self,
-                                           gboolean visible,
-                                           const char *message,
-                                           gboolean show_load_action);
-static void image_viewer_set_blocked_state(GnostrImageViewer *self, gboolean blocked);
-static void image_viewer_set_unavailable_state(GnostrImageViewer *self, const char *message);
-static void image_viewer_begin_fetch(GnostrImageViewer *self);
-static void on_load_button_clicked(GtkButton *button, gpointer user_data);
+static void paintable_free(gpointer paintable) { if (paintable) g_object_unref(paintable); }
 
-static void gnostr_image_viewer_dispose(GObject *obj) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(obj);
+static GdkPaintable *
+current(GnMediaViewer *self)
+{
+  return self->index < self->paintables->len ? g_ptr_array_index(self->paintables, self->index)
+                                             : NULL;
+}
 
-#ifdef HAVE_SOUP3
-  /* nostrc-soup-dblf: Don't cancel — let requests complete harmlessly.
-   * The g_object_weak_ref in ImageLoadCtx detects widget destruction. */
+static const char *
+current_url(GnMediaViewer *self)
+{
+  return self->index < self->urls->len ? g_ptr_array_index(self->urls, self->index) : NULL;
+}
+
+/* Only a web link is worth copying; a host slot name is not. */
+static gboolean
+is_web_url(const char *url)
+{
+  return url && (g_ascii_strncasecmp(url, "https://", 8) == 0 ||
+                 g_ascii_strncasecmp(url, "http://", 7) == 0);
+}
+
+/* The still image to save, borrowed, or NULL (video, nothing loaded). */
+static GdkTexture *
+current_texture(GnMediaViewer *self)
+{
+  GdkPaintable *paintable = current(self);
+  if (GDK_IS_TEXTURE(paintable)) return GDK_TEXTURE(paintable);
+  if (GN_IS_ANIMATED_IMAGE(paintable))
+    return gn_animated_image_get_current_texture(GN_ANIMATED_IMAGE(paintable));
+  return NULL;
+}
+
+static void
+cancel_pending(GnMediaViewer *self)
+{
+  if (self->cancellable) g_cancellable_cancel(self->cancellable);
   g_clear_object(&self->cancellable);
-  /* Shared session is managed globally - do not clear here */
-#endif
+}
 
-  if (self->portable_viewer) {
-    gtk_window_destroy(GTK_WINDOW(self->portable_viewer));
-    g_clear_object(&self->portable_viewer);
+/* A new item is shown: earlier results are stale, requests are cancelled. */
+static void
+reset_slot_state(GnMediaViewer *self)
+{
+  self->generation++;
+  cancel_pending(self);
+  self->loading = FALSE;
+  g_clear_pointer(&self->message, g_free);
+  self->offer_load = FALSE;
+  self->zoom_level = FIT_ZOOM;
+}
+
+static void
+update_zoom_display(GnMediaViewer *self)
+{
+  double shown = self->zoom_level == FIT_ZOOM ? self->actual_zoom : self->zoom_level;
+  g_autofree char *text = g_strdup_printf("%.0f%%", shown * 100);
+  gtk_label_set_text(GTK_LABEL(self->zoom_label), text);
+}
+
+/* Fit: the picture gets the window and never more than its own size, so it
+ * is never upscaled; the label shows the real scale. Fixed: the picture is
+ * sized to the scale and the scrolled window pans it. (Gnostr used
+ * gtk_picture_set_content_fit, GTK 4.8; size requests and the default
+ * keep-aspect-ratio do the same on 4.6.) */
+static void
+apply_zoom(GnMediaViewer *self)
+{
+  GdkPaintable *paintable = current(self);
+  if (!paintable || GTK_IS_MEDIA_STREAM(paintable)) {
+    gtk_widget_set_size_request(self->picture, -1, -1);
+    gtk_picture_set_can_shrink(GTK_PICTURE(self->picture), TRUE);
+    return;
   }
-  g_clear_object(&self->texture);
-  g_clear_pointer(&self->image_url, g_free);
-  g_strfreev(self->gallery_urls);
-  self->gallery_urls = NULL;
-  self->gallery_count = 0;
-
-  G_OBJECT_CLASS(gnostr_image_viewer_parent_class)->dispose(obj);
+  int img_width = gdk_paintable_get_intrinsic_width(paintable);
+  int img_height = gdk_paintable_get_intrinsic_height(paintable);
+  if (self->zoom_level == FIT_ZOOM) {
+    gtk_picture_set_can_shrink(GTK_PICTURE(self->picture), TRUE);
+    gtk_widget_set_size_request(self->picture, -1, -1);
+    int win_width = gtk_widget_get_width(GTK_WIDGET(self));
+    int win_height = gtk_widget_get_height(GTK_WIDGET(self));
+    if (win_width <= 0 || win_height <= 0) {
+      gtk_window_get_default_size(GTK_WINDOW(self), &win_width, &win_height);
+    }
+    self->actual_zoom = 1.0;
+    if (win_width > 0 && win_height > 0 && img_width > 0 && img_height > 0) {
+      double scale = fmin((double)win_width / img_width, (double)win_height / img_height);
+      self->actual_zoom = fmin(scale, 1.0); /* Do not upscale */
+    }
+  } else {
+    gtk_picture_set_can_shrink(GTK_PICTURE(self->picture), FALSE);
+    gtk_widget_set_size_request(self->picture, (int)(img_width * self->zoom_level),
+                                (int)(img_height * self->zoom_level));
+    self->actual_zoom = self->zoom_level;
+  }
+  update_zoom_display(self);
 }
 
-static void gnostr_image_viewer_class_init(GnostrImageViewerClass *klass) {
-  GObjectClass *gclass = G_OBJECT_CLASS(klass);
-  gclass->dispose = gnostr_image_viewer_dispose;
+static void
+zoom_to(GnMediaViewer *self, double zoom)
+{
+  self->zoom_level = zoom == FIT_ZOOM ? FIT_ZOOM : CLAMP(zoom, MIN_ZOOM, MAX_ZOOM);
+  apply_zoom(self);
 }
 
-static void gnostr_image_viewer_init(GnostrImageViewer *self) {
-  /* Window setup - modal overlay style (no decorations, contained within parent) */
+static double
+shown_zoom(GnMediaViewer *self)
+{
+  return self->zoom_level == FIT_ZOOM ? self->actual_zoom : self->zoom_level;
+}
+
+/* Additive steps from what is shown, so leaving fit never jumps. */
+static void zoom_in(GnMediaViewer *self) { zoom_to(self, fmin(shown_zoom(self) + ZOOM_STEP, MAX_ZOOM)); }
+static void zoom_out(GnMediaViewer *self) { zoom_to(self, fmax(shown_zoom(self) - ZOOM_STEP, MIN_ZOOM)); }
+
+/* Gnostr: arrow keys pan only when magnified beyond 100%. */
+static gboolean
+is_zoomed(GnMediaViewer *self)
+{
+  return self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0;
+}
+
+static void
+update(GnMediaViewer *self)
+{
+  guint count = self->urls->len;
+  GdkPaintable *paintable = count ? current(self) : NULL;
+  gboolean stream = GTK_IS_MEDIA_STREAM(paintable);
+
+  gtk_picture_set_paintable(GTK_PICTURE(self->picture), stream ? NULL : paintable);
+  gn_animated_image_attach(self->picture, stream ? NULL : paintable);
+  gn_video_player_set_stream(GN_VIDEO_PLAYER(self->video),
+                             stream ? GTK_MEDIA_STREAM(paintable) : NULL);
+  gtk_widget_set_visible(self->video, stream);
+  gtk_widget_set_visible(self->scrolled_window, !stream);
+  if (stream && gtk_widget_get_mapped(GTK_WIDGET(self)))
+    gtk_media_stream_play(GTK_MEDIA_STREAM(paintable));
+
+  gboolean empty = count && !paintable;
+  gtk_widget_set_visible(self->spinner, empty && self->loading);
+  if (empty && self->loading) gtk_spinner_start(GTK_SPINNER(self->spinner));
+  else gtk_spinner_stop(GTK_SPINNER(self->spinner));
+  gboolean overlay = empty && !self->loading && (self->message || self->offer_load);
+  gtk_label_set_text(GTK_LABEL(self->blocked_label), self->message ? self->message : "");
+  gtk_widget_set_visible(self->blocked_label, self->message != NULL);
+  gtk_widget_set_visible(self->load_button, self->offer_load);
+  gtk_widget_set_visible(self->blocked_overlay, overlay);
+
+  gtk_widget_set_visible(self->save_button, self->can_save && current_texture(self) != NULL);
+  gtk_widget_set_visible(self->copy_link_button, is_web_url(current_url(self)));
+
+  g_autofree char *position =
+    g_strdup_printf(C_("image position", "%u / %u"), count ? self->index + 1 : 0, count);
+  gtk_label_set_text(GTK_LABEL(self->nav_label), position);
+  gtk_widget_set_visible(self->nav_box, count > 1);
+  gtk_widget_set_sensitive(self->prev_button, self->index > 0);
+  gtk_widget_set_sensitive(self->next_button, self->index + 1 < count);
+  gtk_widget_set_visible(self->zoom_box, paintable && !stream);
+  apply_zoom(self);
+}
+
+/* What the current slot needs when it has nothing to show. */
+static void
+evaluate_slot(GnMediaViewer *self)
+{
+  const char *url = current_url(self);
+  if (!url || current(self)) return;
+  if (!self->source) {
+    self->offer_load = TRUE; /* The host answers "load-requested". */
+    return;
+  }
+  switch (gn_media_source_get_policy(self->source, url, GN_MEDIA_KIND_IMAGE)) {
+  case GN_MEDIA_POLICY_ALLOW:
+    begin_fetch(self);
+    break;
+  case GN_MEDIA_POLICY_ASK:
+    self->message = g_strdup(_("Remote media is blocked"));
+    self->offer_load = TRUE;
+    break;
+  default:
+    self->message = g_strdup(_("Remote media is blocked"));
+    break;
+  }
+}
+
+/* ---- loading through the host source ----------------------------------- */
+
+typedef struct {
+  GWeakRef viewer;
+  guint64 generation;
+  guint index;
+  char *url;
+  GCancellable *cancellable;
+} FetchCtx;
+
+static void
+fetch_ctx_free(FetchCtx *ctx)
+{
+  g_weak_ref_clear(&ctx->viewer);
+  g_clear_object(&ctx->cancellable);
+  g_free(ctx->url);
+  g_free(ctx);
+}
+
+/* The viewer when ctx is still what it shows, else NULL (closed, moved on). */
+static GnMediaViewer *
+fetch_ctx_viewer(FetchCtx *ctx)
+{
+  if (g_cancellable_is_cancelled(ctx->cancellable)) return NULL;
+  GnMediaViewer *self = g_weak_ref_get(&ctx->viewer);
+  if (self && self->generation != ctx->generation) g_clear_object(&self);
+  return self;
+}
+
+static void
+on_decoded(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  FetchCtx *ctx = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GdkPaintable) paintable = gn_media_decode_finish(result, &error);
+  g_autoptr(GnMediaViewer) self = fetch_ctx_viewer(ctx);
+  if (self) {
+    if (paintable)
+      gn_media_viewer_set_paintable_for_generation(self, ctx->generation, ctx->index, paintable);
+    else {
+      g_warning("GnMediaViewer: cannot show %s: %s", ctx->url, error ? error->message : "?");
+      gn_media_viewer_set_error(self, ctx->generation, ctx->index,
+                                _("This image cannot be shown"));
+    }
+  }
+  fetch_ctx_free(ctx);
+}
+
+static void
+on_fetched(GObject *source, GAsyncResult *result, gpointer data)
+{
+  FetchCtx *ctx = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GBytes) bytes = gn_media_source_fetch_finish(GN_MEDIA_SOURCE(source), result, &error);
+  g_autoptr(GnMediaViewer) self = fetch_ctx_viewer(ctx);
+  if (!self) {
+    fetch_ctx_free(ctx);
+    return;
+  }
+  if (!bytes || g_bytes_get_size(bytes) == 0) {
+    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+      g_warning("GnMediaViewer: cannot load %s: %s", ctx->url,
+                error ? error->message : "empty response");
+    gn_media_viewer_set_error(self, ctx->generation, ctx->index, _("Remote images unavailable"));
+    fetch_ctx_free(ctx);
+    return;
+  }
+  /* Decoded off the main thread, within the limits. */
+  gn_media_decode_async(bytes, &self->limits, ctx->cancellable, on_decoded, ctx);
+}
+
+static void
+begin_fetch(GnMediaViewer *self)
+{
+  const char *url = current_url(self);
+  if (!self->source || !url || current(self)) return;
+  cancel_pending(self);
+  self->cancellable = g_cancellable_new();
+  g_clear_pointer(&self->message, g_free);
+  self->offer_load = FALSE;
+  self->loading = TRUE;
+  FetchCtx *ctx = g_new0(FetchCtx, 1);
+  g_weak_ref_init(&ctx->viewer, self);
+  ctx->generation = self->generation;
+  ctx->index = self->index;
+  ctx->url = g_strdup(url);
+  ctx->cancellable = g_object_ref(self->cancellable);
+  gn_media_source_fetch_async(self->source, url, GN_MEDIA_KIND_IMAGE, self->limits.max_bytes,
+                              self->cancellable, on_fetched, ctx);
+}
+
+/* ---- save and copy ------------------------------------------------------ */
+
+/* The last path element without a query, named .png: the saved file is
+ * always re-encoded as PNG, which also drops embedded metadata. */
+static char *
+suggested_name(const char *url)
+{
+  g_autofree char *base = NULL;
+  const char *slash = url && is_web_url(url) ? strrchr(url, '/') : NULL;
+  if (slash && slash[1]) base = g_strndup(slash + 1, strcspn(slash + 1, "?#"));
+  if (!base || !*base) {
+    g_free(base);
+    base = g_strdup("image");
+  }
+  char *dot = strrchr(base, '.');
+  if (dot && dot != base) *dot = '\0';
+  return g_strconcat(base, ".png", NULL);
+}
+
+typedef struct {
+  GtkFileChooserNative *dialog;
+  GdkTexture *texture;
+} SaveCtx;
+
+static void
+on_save_response(GtkNativeDialog *dialog, int response, gpointer data)
+{
+  SaveCtx *ctx = data;
+  if (response == GTK_RESPONSE_ACCEPT) {
+    g_autoptr(GFile) file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+    g_autofree char *path = file ? g_file_get_path(file) : NULL;
+    if (path && !gdk_texture_save_to_png(ctx->texture, path))
+      g_warning("GnMediaViewer: failed to save image to %s", path);
+  }
+  gtk_native_dialog_destroy(dialog);
+  g_object_unref(ctx->dialog);
+  g_object_unref(ctx->texture);
+  g_free(ctx);
+}
+
+/* Default "save-requested": a portal-capable native chooser (GTK 4.0; the
+ * GtkFileDialog Gnostr used needs 4.10), then a PNG of the shown frame. */
+static gboolean
+default_save(GnMediaViewer *self, guint index, const char *url, GdkPaintable *paintable)
+{
+  (void)index;
+  GdkTexture *texture = GDK_IS_TEXTURE(paintable) ? GDK_TEXTURE(paintable)
+    : GN_IS_ANIMATED_IMAGE(paintable)
+      ? gn_animated_image_get_current_texture(GN_ANIMATED_IMAGE(paintable)) : NULL;
+  if (!texture) return TRUE; /* Nothing to save: no dialog at all. */
+  SaveCtx *ctx = g_new0(SaveCtx, 1);
+  ctx->texture = g_object_ref(texture);
+  ctx->dialog = gtk_file_chooser_native_new(_("Save Image"), GTK_WINDOW(self),
+                                            GTK_FILE_CHOOSER_ACTION_SAVE, _("_Save"),
+                                            _("_Cancel"));
+  gtk_native_dialog_set_modal(GTK_NATIVE_DIALOG(ctx->dialog), TRUE);
+  g_autofree char *name = suggested_name(url);
+  gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(ctx->dialog), name);
+  g_signal_connect(ctx->dialog, "response", G_CALLBACK(on_save_response), ctx);
+  gtk_native_dialog_show(GTK_NATIVE_DIALOG(ctx->dialog));
+  return TRUE;
+}
+
+void
+gn_media_viewer_save(GnMediaViewer *self)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (!self->can_save || !current_texture(self)) return;
+  gboolean handled = FALSE;
+  g_signal_emit(self, signals[SIG_SAVE_REQUESTED], 0, self->index, current_url(self),
+                current(self), &handled);
+}
+
+void
+gn_media_viewer_copy_link(GnMediaViewer *self)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  const char *url = current_url(self);
+  if (!is_web_url(url)) return;
+  gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(self)), url);
+  g_signal_emit(self, signals[SIG_LINK_COPIED], 0, url);
+}
+
+/* ---- input -------------------------------------------------------------- */
+
+static void
+pan(GnMediaViewer *self, GtkOrientation orientation, double delta)
+{
+  GtkScrolledWindow *sw = GTK_SCROLLED_WINDOW(self->scrolled_window);
+  GtkAdjustment *adj = orientation == GTK_ORIENTATION_HORIZONTAL
+    ? gtk_scrolled_window_get_hadjustment(sw) : gtk_scrolled_window_get_vadjustment(sw);
+  gtk_adjustment_set_value(adj, gtk_adjustment_get_value(adj) + delta);
+}
+
+static gboolean
+on_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
+               GdkModifierType state, gpointer user_data)
+{
+  (void)controller; (void)keycode;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  GdkPaintable *paintable = current(self);
+  switch (keyval) {
+  case GDK_KEY_Escape:
+    gtk_window_close(GTK_WINDOW(self));
+    return TRUE;
+  case GDK_KEY_plus:
+  case GDK_KEY_equal:
+  case GDK_KEY_KP_Add:
+    zoom_in(self);
+    return TRUE;
+  case GDK_KEY_minus:
+  case GDK_KEY_KP_Subtract:
+    zoom_out(self);
+    return TRUE;
+  case GDK_KEY_0:
+  case GDK_KEY_KP_0:
+  case GDK_KEY_f:
+    zoom_to(self, FIT_ZOOM);
+    return TRUE;
+  case GDK_KEY_1:
+  case GDK_KEY_KP_1:
+    zoom_to(self, 1.0);
+    return TRUE;
+  case GDK_KEY_s:
+    if (state & GDK_CONTROL_MASK) {
+      gn_media_viewer_save(self);
+      return TRUE;
+    }
+    break;
+  case GDK_KEY_c:
+    if (state & GDK_CONTROL_MASK) {
+      gn_media_viewer_copy_link(self);
+      return TRUE;
+    }
+    break;
+  case GDK_KEY_space:
+    if (GTK_IS_MEDIA_STREAM(paintable)) {
+      gn_video_player_toggle_playback(GN_VIDEO_PLAYER(self->video));
+      return TRUE;
+    }
+    break;
+  case GDK_KEY_Left:
+  case GDK_KEY_Right:
+    /* Pan when zoomed in, else move through the gallery. */
+    if (is_zoomed(self)) {
+      pan(self, GTK_ORIENTATION_HORIZONTAL, keyval == GDK_KEY_Left ? -PAN_STEP : PAN_STEP);
+      return TRUE;
+    }
+    return gn_media_viewer_navigate(self, keyval == GDK_KEY_Left ? -1 : 1);
+  case GDK_KEY_Up:
+  case GDK_KEY_Down:
+    if (is_zoomed(self)) {
+      pan(self, GTK_ORIENTATION_VERTICAL, keyval == GDK_KEY_Up ? -PAN_STEP : PAN_STEP);
+      return TRUE;
+    }
+    break;
+  default:
+    break;
+  }
+  return FALSE;
+}
+
+static gboolean
+on_scroll(GtkEventControllerScroll *controller, double dx, double dy, gpointer user_data)
+{
+  (void)controller; (void)dx;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  if (dy < 0) zoom_in(self);
+  else if (dy > 0) zoom_out(self);
+  return TRUE;
+}
+
+static void
+on_drag_begin(GtkGestureDrag *gesture, double x, double y, gpointer user_data)
+{
+  (void)gesture; (void)x; (void)y;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  if (self->zoom_level == FIT_ZOOM) return;
+  self->is_dragging = TRUE;
+  GtkScrolledWindow *sw = GTK_SCROLLED_WINDOW(self->scrolled_window);
+  self->scroll_start_h = gtk_adjustment_get_value(gtk_scrolled_window_get_hadjustment(sw));
+  self->scroll_start_v = gtk_adjustment_get_value(gtk_scrolled_window_get_vadjustment(sw));
+}
+
+static void
+on_drag_update(GtkGestureDrag *gesture, double dx, double dy, gpointer user_data)
+{
+  (void)gesture;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  if (!self->is_dragging) return;
+  GtkScrolledWindow *sw = GTK_SCROLLED_WINDOW(self->scrolled_window);
+  gtk_adjustment_set_value(gtk_scrolled_window_get_hadjustment(sw), self->scroll_start_h - dx);
+  gtk_adjustment_set_value(gtk_scrolled_window_get_vadjustment(sw), self->scroll_start_v - dy);
+}
+
+static void
+on_drag_end(GtkGestureDrag *gesture, double dx, double dy, gpointer user_data)
+{
+  (void)gesture; (void)dx; (void)dy;
+  GN_MEDIA_VIEWER(user_data)->is_dragging = FALSE;
+}
+
+static void
+on_double_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer user_data)
+{
+  (void)gesture; (void)x; (void)y;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  if (n_press == 2) zoom_to(self, self->zoom_level == FIT_ZOOM ? 1.0 : FIT_ZOOM);
+}
+
+/* A click on the dark background, outside the image, closes. */
+static void
+on_background_clicked(GtkGestureClick *gesture, int n_press, double x, double y,
+                      gpointer user_data)
+{
+  (void)n_press;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  GtkWidget *widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+  graphene_rect_t bounds;
+  if (!current(self) || !gtk_widget_compute_bounds(self->picture, widget, &bounds)) return;
+  if (x < bounds.origin.x || x > bounds.origin.x + bounds.size.width ||
+      y < bounds.origin.y || y > bounds.origin.y + bounds.size.height)
+    gtk_window_close(GTK_WINDOW(self));
+}
+
+static void
+on_zoom_begin(GtkGesture *gesture, GdkEventSequence *sequence, gpointer user_data)
+{
+  (void)gesture; (void)sequence;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  self->pinch_base = shown_zoom(self);
+}
+
+/* scale is relative to the start of the pinch, so apply it to that scale
+ * (Gnostr compounded it on every event). */
+static void
+on_zoom_scale_changed(GtkGestureZoom *gesture, double scale, gpointer user_data)
+{
+  (void)gesture;
+  GnMediaViewer *self = GN_MEDIA_VIEWER(user_data);
+  double base = self->pinch_base > 0 ? self->pinch_base : shown_zoom(self);
+  zoom_to(self, fmax(MIN_ZOOM, fmin(MAX_ZOOM, base * scale)));
+}
+
+static void on_close_clicked(GtkButton *b, gpointer d) { (void)b; gtk_window_close(GTK_WINDOW(d)); }
+static void on_prev_clicked(GtkButton *b, gpointer d) { (void)b; gn_media_viewer_navigate(d, -1); }
+static void on_next_clicked(GtkButton *b, gpointer d) { (void)b; gn_media_viewer_navigate(d, 1); }
+static void on_save_clicked(GtkButton *b, gpointer d) { (void)b; gn_media_viewer_save(d); }
+static void on_copy_clicked(GtkButton *b, gpointer d) { (void)b; gn_media_viewer_copy_link(d); }
+static void on_load_clicked(GtkButton *b, gpointer d) { (void)b; gn_media_viewer_request_load(d); }
+static void on_fit_clicked(GtkButton *b, gpointer d) { (void)b; zoom_to(d, FIT_ZOOM); }
+static void on_zoom_in_clicked(GtkButton *b, gpointer d) { (void)b; zoom_in(d); }
+static void on_zoom_out_clicked(GtkButton *b, gpointer d) { (void)b; zoom_out(d); }
+
+/* ---- lifecycle ---------------------------------------------------------- */
+
+static void
+viewer_map(GtkWidget *widget)
+{
+  GTK_WIDGET_CLASS(gn_media_viewer_parent_class)->map(widget);
+  GnMediaViewer *self = GN_MEDIA_VIEWER(widget);
+  GdkPaintable *paintable = current(self);
+  if (GTK_IS_MEDIA_STREAM(paintable)) gtk_media_stream_play(GTK_MEDIA_STREAM(paintable));
+  apply_zoom(self);
+}
+
+static void
+viewer_unmap(GtkWidget *widget)
+{
+  GnMediaViewer *self = GN_MEDIA_VIEWER(widget);
+  GdkPaintable *paintable = current(self);
+  if (GTK_IS_MEDIA_STREAM(paintable)) gtk_media_stream_pause(GTK_MEDIA_STREAM(paintable));
+  GTK_WIDGET_CLASS(gn_media_viewer_parent_class)->unmap(widget);
+}
+
+static void
+viewer_size_allocate(GtkWidget *widget, int width, int height, int baseline)
+{
+  GTK_WIDGET_CLASS(gn_media_viewer_parent_class)->size_allocate(widget, width, height, baseline);
+  GnMediaViewer *self = GN_MEDIA_VIEWER(widget);
+  if (self->zoom_level == FIT_ZOOM && current(self)) {
+    double before = self->actual_zoom;
+    apply_zoom(self);
+    if (before != self->actual_zoom) update_zoom_display(self);
+  }
+}
+
+static void
+gn_media_viewer_dispose(GObject *object)
+{
+  GnMediaViewer *self = GN_MEDIA_VIEWER(object);
+  self->generation++;
+  cancel_pending(self);
+  if (self->video) gn_video_player_set_stream(GN_VIDEO_PLAYER(self->video), NULL);
+  if (self->picture) gn_animated_image_attach(self->picture, NULL);
+  g_clear_object(&self->source);
+  G_OBJECT_CLASS(gn_media_viewer_parent_class)->dispose(object);
+}
+
+static void
+gn_media_viewer_finalize(GObject *object)
+{
+  GnMediaViewer *self = GN_MEDIA_VIEWER(object);
+  g_ptr_array_unref(self->urls);
+  g_ptr_array_unref(self->paintables);
+  g_free(self->message);
+  G_OBJECT_CLASS(gn_media_viewer_parent_class)->finalize(object);
+}
+
+static void
+gn_media_viewer_get_property(GObject *object, guint id, GValue *value, GParamSpec *pspec)
+{
+  GnMediaViewer *self = GN_MEDIA_VIEWER(object);
+  if (id == PROP_CAN_SAVE) g_value_set_boolean(value, self->can_save);
+  else G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
+}
+
+static void
+gn_media_viewer_set_property(GObject *object, guint id, const GValue *value, GParamSpec *pspec)
+{
+  GnMediaViewer *self = GN_MEDIA_VIEWER(object);
+  if (id == PROP_CAN_SAVE) gn_media_viewer_set_can_save(self, g_value_get_boolean(value));
+  else G_OBJECT_WARN_INVALID_PROPERTY_ID(object, id, pspec);
+}
+
+static void
+gn_media_viewer_class_init(GnMediaViewerClass *klass)
+{
+  GObjectClass *object_class = G_OBJECT_CLASS(klass);
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  object_class->dispose = gn_media_viewer_dispose;
+  object_class->finalize = gn_media_viewer_finalize;
+  object_class->get_property = gn_media_viewer_get_property;
+  object_class->set_property = gn_media_viewer_set_property;
+  widget_class->map = viewer_map;
+  widget_class->unmap = viewer_unmap;
+  widget_class->size_allocate = viewer_size_allocate;
+  gn_portable_gettext_domain();
+
+  props[PROP_CAN_SAVE] = g_param_spec_boolean("can-save", NULL, NULL, TRUE,
+    G_PARAM_READWRITE | G_PARAM_EXPLICIT_NOTIFY | G_PARAM_STATIC_STRINGS);
+  g_object_class_install_properties(object_class, N_PROPS, props);
+
+  signals[SIG_LOAD_REQUESTED] = g_signal_new("load-requested", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_UINT, G_TYPE_STRING);
+  /* A handler returning TRUE replaces the default native Save dialog. */
+  signals[SIG_SAVE_REQUESTED] = g_signal_new_class_handler("save-requested",
+    G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, G_CALLBACK(default_save),
+    g_signal_accumulator_true_handled, NULL, NULL, G_TYPE_BOOLEAN, 3,
+    G_TYPE_UINT, G_TYPE_STRING, GDK_TYPE_PAINTABLE);
+  signals[SIG_LINK_COPIED] = g_signal_new("link-copied", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+}
+
+/* An icon-only OSD button; its name is for tooltips and screen readers. */
+static GtkWidget *
+osd_button(const char *icon, const char *name, const char *css_class)
+{
+  GtkWidget *button = gtk_button_new_from_icon_name(icon);
+  gtk_widget_add_css_class(button, css_class);
+  gtk_widget_add_css_class(button, "circular");
+  gtk_widget_set_tooltip_text(button, name);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(button), GTK_ACCESSIBLE_PROPERTY_LABEL, name, -1);
+  return button;
+}
+
+static void
+place(GtkWidget *widget, GtkAlign halign, GtkAlign valign)
+{
+  gtk_widget_set_halign(widget, halign);
+  gtk_widget_set_valign(widget, valign);
+  gtk_widget_set_margin_start(widget, 16);
+  gtk_widget_set_margin_end(widget, 16);
+  gtk_widget_set_margin_top(widget, 16);
+  gtk_widget_set_margin_bottom(widget, 16);
+}
+
+static void
+gn_media_viewer_init(GnMediaViewer *self)
+{
+  gn_media_install_css();
+  self->urls = g_ptr_array_new_with_free_func(g_free);
+  self->paintables = g_ptr_array_new_with_free_func(paintable_free);
+  self->generation = 1;
+  self->zoom_level = FIT_ZOOM;
+  self->actual_zoom = 1.0;
+  self->can_save = TRUE;
+  gn_media_decode_limits_init_default(&self->limits);
+
+  /* A modal panel over its parent: no decorations, not resizable. */
   gtk_window_set_decorated(GTK_WINDOW(self), FALSE);
   gtk_window_set_modal(GTK_WINDOW(self), TRUE);
-
-  /* Prevent fullscreen mode - the modal should stay within parent bounds */
   gtk_window_set_resizable(GTK_WINDOW(self), FALSE);
+  gtk_window_set_title(GTK_WINDOW(self), _("Media Viewer"));
+  gtk_window_set_default_size(GTK_WINDOW(self), 900, 700);
+  gtk_widget_add_css_class(GTK_WIDGET(self), "gn-media-viewer");
 
-  /* Add CSS class for styling */
-  gtk_widget_add_css_class(GTK_WIDGET(self), "image-viewer");
-
-  /* Initialize state */
-  self->zoom_level = FIT_ZOOM;
-  self->portable_viewer = gn_media_viewer_new(NULL);
-  g_object_ref_sink(self->portable_viewer);
-  self->actual_zoom = 1.0;
-  self->is_dragging = FALSE;
-
-#ifdef HAVE_SOUP3
-  /* Uses shared session from gnostr_get_shared_soup_session() */
-  self->cancellable = g_cancellable_new();
-#endif
-
-  /* Create overlay as the main container */
   self->overlay = gtk_overlay_new();
-  gtk_widget_add_css_class(self->overlay, "image-viewer-overlay");
   gtk_window_set_child(GTK_WINDOW(self), self->overlay);
 
-  /* Create scrolled window for panning */
   self->scrolled_window = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(self->scrolled_window),
-                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+                                 GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
   gtk_widget_set_hexpand(self->scrolled_window, TRUE);
   gtk_widget_set_vexpand(self->scrolled_window, TRUE);
   gtk_overlay_set_child(GTK_OVERLAY(self->overlay), self->scrolled_window);
 
-  /* Create picture widget */
   self->picture = gtk_picture_new();
   gtk_picture_set_can_shrink(GTK_PICTURE(self->picture), TRUE);
-  gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
   gtk_widget_set_halign(self->picture, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(self->picture, GTK_ALIGN_CENTER);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(self->scrolled_window), self->picture);
 
-  /* Create close button in top-right corner */
-  self->close_button = gtk_button_new_from_icon_name("window-close-symbolic");
-  gtk_widget_add_css_class(self->close_button, "image-viewer-close");
-  gtk_widget_add_css_class(self->close_button, "circular");
-  gtk_widget_add_css_class(self->close_button, "osd");
-  gtk_widget_set_halign(self->close_button, GTK_ALIGN_END);
-  gtk_widget_set_valign(self->close_button, GTK_ALIGN_START);
-  gtk_widget_set_margin_top(self->close_button, 16);
-  gtk_widget_set_margin_end(self->close_button, 16);
+  /* One video UI: GtkMediaStream slots play in a GnVideoPlayer. */
+  self->video = GTK_WIDGET(gn_video_player_new());
+  gn_video_player_set_autoplay(GN_VIDEO_PLAYER(self->video), TRUE);
+  gtk_widget_set_hexpand(self->video, TRUE);
+  gtk_widget_set_vexpand(self->video, TRUE);
+  gtk_widget_set_visible(self->video, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->video);
+
+  self->close_button = osd_button("window-close-symbolic", _("Close"), "gn-media-close");
+  place(self->close_button, GTK_ALIGN_END, GTK_ALIGN_START);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->close_button);
   g_signal_connect(self->close_button, "clicked", G_CALLBACK(on_close_clicked), self);
 
-  /* Create zoom indicator in bottom-right corner */
-  self->zoom_label = gtk_label_new("100%");
-  gtk_widget_add_css_class(self->zoom_label, "image-viewer-zoom");
-  gtk_widget_add_css_class(self->zoom_label, "osd");
-  gtk_widget_set_halign(self->zoom_label, GTK_ALIGN_END);
-  gtk_widget_set_valign(self->zoom_label, GTK_ALIGN_END);
-  gtk_widget_set_margin_bottom(self->zoom_label, 16);
-  gtk_widget_set_margin_end(self->zoom_label, 16);
-  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->zoom_label);
+  GtkWidget *toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  place(toolbar, GTK_ALIGN_START, GTK_ALIGN_START);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), toolbar);
+  self->save_button = osd_button("document-save-symbolic", _("Save Image (Ctrl+S)"), "gn-media-tool");
+  g_signal_connect(self->save_button, "clicked", G_CALLBACK(on_save_clicked), self);
+  gtk_box_append(GTK_BOX(toolbar), self->save_button);
+  self->copy_link_button = osd_button("edit-copy-symbolic", _("Copy Link (Ctrl+C)"), "gn-media-tool");
+  g_signal_connect(self->copy_link_button, "clicked", G_CALLBACK(on_copy_clicked), self);
+  gtk_box_append(GTK_BOX(toolbar), self->copy_link_button);
 
-  /* Create loading spinner (hidden by default) */
   self->spinner = gtk_spinner_new();
   gtk_widget_set_halign(self->spinner, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(self->spinner, GTK_ALIGN_CENTER);
@@ -224,1008 +804,355 @@ static void gnostr_image_viewer_init(GnostrImageViewer *self) {
   gtk_widget_set_visible(self->spinner, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->spinner);
 
-  /* Create blocked-media overlay (hidden by default) */
   self->blocked_overlay = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_halign(self->blocked_overlay, GTK_ALIGN_CENTER);
   gtk_widget_set_valign(self->blocked_overlay, GTK_ALIGN_CENTER);
   gtk_widget_set_visible(self->blocked_overlay, FALSE);
   gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->blocked_overlay);
-
-  self->blocked_label = gtk_label_new(_("Remote media is blocked"));
+  self->blocked_label = gtk_label_new(NULL);
+  gtk_widget_add_css_class(self->blocked_label, "gn-media-message");
+  gtk_label_set_wrap(GTK_LABEL(self->blocked_label), TRUE);
   gtk_box_append(GTK_BOX(self->blocked_overlay), self->blocked_label);
-
   self->load_button = gtk_button_new_with_label(_("Load image"));
-  g_signal_connect(self->load_button, "clicked", G_CALLBACK(on_load_button_clicked), self);
+  gtk_widget_add_css_class(self->load_button, "pill");
+  gtk_widget_add_css_class(self->load_button, "suggested-action");
+  g_signal_connect(self->load_button, "clicked", G_CALLBACK(on_load_clicked), self);
   gtk_box_append(GTK_BOX(self->blocked_overlay), self->load_button);
 
-  /* Create toolbar box for buttons in top-left */
-  GtkWidget *toolbar_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-  gtk_widget_set_halign(toolbar_box, GTK_ALIGN_START);
-  gtk_widget_set_valign(toolbar_box, GTK_ALIGN_START);
-  gtk_widget_set_margin_top(toolbar_box, 16);
-  gtk_widget_set_margin_start(toolbar_box, 16);
-  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), toolbar_box);
-
-  /* Save button */
-  self->save_button = gtk_button_new_from_icon_name("document-save-symbolic");
-  gtk_widget_add_css_class(self->save_button, "image-viewer-button");
-  gtk_widget_add_css_class(self->save_button, "circular");
-  gtk_widget_add_css_class(self->save_button, "osd");
-  gtk_widget_set_tooltip_text(self->save_button, "Save image (Ctrl+S)");
-  g_signal_connect(self->save_button, "clicked", G_CALLBACK(on_save_clicked), self);
-  gtk_box_append(GTK_BOX(toolbar_box), self->save_button);
-
-  /* Copy link button */
-  self->copy_link_button = gtk_button_new_from_icon_name("edit-copy-symbolic");
-  gtk_widget_add_css_class(self->copy_link_button, "image-viewer-button");
-  gtk_widget_add_css_class(self->copy_link_button, "circular");
-  gtk_widget_add_css_class(self->copy_link_button, "osd");
-  gtk_widget_set_tooltip_text(self->copy_link_button, "Copy link (Ctrl+C)");
-  g_signal_connect(self->copy_link_button, "clicked", G_CALLBACK(on_copy_link_clicked), self);
-  gtk_box_append(GTK_BOX(toolbar_box), self->copy_link_button);
-
-  /* Create navigation box in bottom center */
-  GtkWidget *nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-  gtk_widget_add_css_class(nav_box, "image-viewer-nav");
-  gtk_widget_add_css_class(nav_box, "osd");
-  gtk_widget_set_halign(nav_box, GTK_ALIGN_CENTER);
-  gtk_widget_set_valign(nav_box, GTK_ALIGN_END);
-  gtk_widget_set_margin_bottom(nav_box, 16);
-  gtk_widget_set_visible(nav_box, FALSE);  /* Hidden until gallery is set */
-  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), nav_box);
-
-  /* Previous button */
-  self->prev_button = gtk_button_new_from_icon_name("go-previous-symbolic");
-  gtk_widget_add_css_class(self->prev_button, "image-viewer-nav-button");
-  gtk_widget_add_css_class(self->prev_button, "circular");
-  gtk_widget_set_tooltip_text(self->prev_button, "Previous image (Left arrow)");
+  self->nav_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+  gtk_widget_add_css_class(self->nav_box, "gn-media-osd");
+  place(self->nav_box, GTK_ALIGN_CENTER, GTK_ALIGN_END);
+  gtk_widget_set_visible(self->nav_box, FALSE);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->nav_box);
+  self->prev_button = osd_button("go-previous-symbolic", _("Previous (Left)"), "gn-media-button");
   g_signal_connect(self->prev_button, "clicked", G_CALLBACK(on_prev_clicked), self);
-  gtk_box_append(GTK_BOX(nav_box), self->prev_button);
-
-  /* Navigation label (e.g., "1 / 5") */
-  self->nav_label = gtk_label_new("");
-  gtk_widget_add_css_class(self->nav_label, "image-viewer-nav-label");
-  gtk_box_append(GTK_BOX(nav_box), self->nav_label);
-
-  /* Next button */
-  self->next_button = gtk_button_new_from_icon_name("go-next-symbolic");
-  gtk_widget_add_css_class(self->next_button, "image-viewer-nav-button");
-  gtk_widget_add_css_class(self->next_button, "circular");
-  gtk_widget_set_tooltip_text(self->next_button, "Next image (Right arrow)");
+  gtk_box_append(GTK_BOX(self->nav_box), self->prev_button);
+  self->nav_label = gtk_label_new(NULL);
+  gtk_box_append(GTK_BOX(self->nav_box), self->nav_label);
+  self->next_button = osd_button("go-next-symbolic", _("Next (Right)"), "gn-media-button");
   g_signal_connect(self->next_button, "clicked", G_CALLBACK(on_next_clicked), self);
-  gtk_box_append(GTK_BOX(nav_box), self->next_button);
+  gtk_box_append(GTK_BOX(self->nav_box), self->next_button);
 
-  /* Store nav_box reference on overlay for visibility toggling */
-  g_object_set_data(G_OBJECT(self->overlay), "nav-box", nav_box);
+  self->zoom_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+  gtk_widget_add_css_class(self->zoom_box, "gn-media-osd");
+  place(self->zoom_box, GTK_ALIGN_END, GTK_ALIGN_END);
+  gtk_overlay_add_overlay(GTK_OVERLAY(self->overlay), self->zoom_box);
+  GtkWidget *minus = osd_button("zoom-out-symbolic", _("Zoom Out"), "gn-media-button");
+  GtkWidget *plus = osd_button("zoom-in-symbolic", _("Zoom In"), "gn-media-button");
+  GtkWidget *fit = osd_button("zoom-fit-best-symbolic", _("Fit"), "gn-media-button");
+  self->zoom_label = gtk_label_new("100%");
+  gtk_label_set_width_chars(GTK_LABEL(self->zoom_label), 5);
+  gtk_box_append(GTK_BOX(self->zoom_box), minus);
+  gtk_box_append(GTK_BOX(self->zoom_box), self->zoom_label);
+  gtk_box_append(GTK_BOX(self->zoom_box), plus);
+  gtk_box_append(GTK_BOX(self->zoom_box), fit);
+  g_signal_connect(minus, "clicked", G_CALLBACK(on_zoom_out_clicked), self);
+  g_signal_connect(plus, "clicked", G_CALLBACK(on_zoom_in_clicked), self);
+  g_signal_connect(fit, "clicked", G_CALLBACK(on_fit_clicked), self);
 
-  /* Add keyboard controller */
-  GtkEventController *key_controller = gtk_event_controller_key_new();
-  g_signal_connect(key_controller, "key-pressed", G_CALLBACK(on_key_pressed), self);
-  gtk_widget_add_controller(GTK_WIDGET(self), key_controller);
+  GtkEventController *key = gtk_event_controller_key_new();
+  g_signal_connect(key, "key-pressed", G_CALLBACK(on_key_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self), key);
 
-  /* Add scroll controller for zoom */
-  GtkEventController *scroll_controller = gtk_event_controller_scroll_new(
-      GTK_EVENT_CONTROLLER_SCROLL_VERTICAL | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
-  g_signal_connect(scroll_controller, "scroll", G_CALLBACK(on_scroll), self);
-  gtk_widget_add_controller(self->picture, scroll_controller);
+  GtkEventController *scroll = gtk_event_controller_scroll_new(
+    GTK_EVENT_CONTROLLER_SCROLL_VERTICAL | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
+  g_signal_connect(scroll, "scroll", G_CALLBACK(on_scroll), self);
+  gtk_widget_add_controller(self->picture, scroll);
 
-  /* Add drag gesture for panning */
-  GtkGesture *drag_gesture = gtk_gesture_drag_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag_gesture), GDK_BUTTON_PRIMARY);
-  g_signal_connect(drag_gesture, "drag-begin", G_CALLBACK(on_drag_begin), self);
-  g_signal_connect(drag_gesture, "drag-update", G_CALLBACK(on_drag_update), self);
-  g_signal_connect(drag_gesture, "drag-end", G_CALLBACK(on_drag_end), self);
-  gtk_widget_add_controller(self->scrolled_window, GTK_EVENT_CONTROLLER(drag_gesture));
+  GtkGesture *drag = gtk_gesture_drag_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), GDK_BUTTON_PRIMARY);
+  g_signal_connect(drag, "drag-begin", G_CALLBACK(on_drag_begin), self);
+  g_signal_connect(drag, "drag-update", G_CALLBACK(on_drag_update), self);
+  g_signal_connect(drag, "drag-end", G_CALLBACK(on_drag_end), self);
+  gtk_widget_add_controller(self->scrolled_window, GTK_EVENT_CONTROLLER(drag));
 
-  /* Add double-click gesture to toggle fit/100% */
-  GtkGesture *click_gesture = gtk_gesture_click_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click_gesture), GDK_BUTTON_PRIMARY);
-  g_signal_connect(click_gesture, "pressed", G_CALLBACK(on_double_click), self);
-  gtk_widget_add_controller(self->picture, GTK_EVENT_CONTROLLER(click_gesture));
+  GtkGesture *click = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_PRIMARY);
+  g_signal_connect(click, "pressed", G_CALLBACK(on_double_click), self);
+  gtk_widget_add_controller(self->picture, GTK_EVENT_CONTROLLER(click));
 
-  /* Add click gesture on overlay background to close */
-  GtkGesture *bg_click = gtk_gesture_click_new();
-  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(bg_click), GDK_BUTTON_PRIMARY);
-  g_signal_connect(bg_click, "pressed", G_CALLBACK(on_background_clicked), self);
-  gtk_widget_add_controller(self->scrolled_window, GTK_EVENT_CONTROLLER(bg_click));
+  GtkGesture *background = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(background), GDK_BUTTON_PRIMARY);
+  g_signal_connect(background, "pressed", G_CALLBACK(on_background_clicked), self);
+  gtk_widget_add_controller(self->scrolled_window, GTK_EVENT_CONTROLLER(background));
 
-  /* Add pinch-to-zoom gesture for touch devices */
-  GtkGesture *zoom_gesture = gtk_gesture_zoom_new();
-  g_signal_connect(zoom_gesture, "scale-changed", G_CALLBACK(on_zoom_scale_changed), self);
-  gtk_widget_add_controller(self->picture, GTK_EVENT_CONTROLLER(zoom_gesture));
+  GtkGesture *pinch = gtk_gesture_zoom_new();
+  g_signal_connect(pinch, "begin", G_CALLBACK(on_zoom_begin), self);
+  g_signal_connect(pinch, "scale-changed", G_CALLBACK(on_zoom_scale_changed), self);
+  gtk_widget_add_controller(self->picture, GTK_EVENT_CONTROLLER(pinch));
+
+  update(self);
 }
 
-GnostrImageViewer *gnostr_image_viewer_new(GtkWindow *parent) {
-  GnostrImageViewer *self = g_object_new(GNOSTR_TYPE_IMAGE_VIEWER,
-                                          "transient-for", parent,
-                                          NULL);
+/* ---- public API --------------------------------------------------------- */
+
+GnMediaViewer *
+gn_media_viewer_new(GtkWindow *parent)
+{
+  GnMediaViewer *self = g_object_new(GN_TYPE_MEDIA_VIEWER, NULL);
+  if (parent) {
+    gtk_window_set_transient_for(GTK_WINDOW(self), parent);
+    int width = gtk_widget_get_width(GTK_WIDGET(parent));
+    int height = gtk_widget_get_height(GTK_WIDGET(parent));
+    if (width > 0 && height > 0)
+      gtk_window_set_default_size(GTK_WINDOW(self), MAX(400, width), MAX(300, height));
+  }
   return self;
 }
 
-/* nostrc-jvdv.2: Delegate to shared utility in utils.c */
-static gboolean
-gnostr_image_viewer_remote_media_allowed(void)
+void
+gn_media_viewer_present(GnMediaViewer *self)
 {
-  return gnostr_is_remote_media_allowed();
-}
-
-static void
-image_viewer_set_overlay_state(GnostrImageViewer *self,
-                               gboolean visible,
-                               const char *message,
-                               gboolean show_load_action)
-{
-  if (GTK_IS_LABEL(self->blocked_label) && message) {
-    gtk_label_set_text(GTK_LABEL(self->blocked_label), message);
-  }
-
-  if (GTK_IS_WIDGET(self->load_button)) {
-    gtk_widget_set_visible(self->load_button, show_load_action);
-  }
-
-  if (GTK_IS_WIDGET(self->blocked_overlay)) {
-    gtk_widget_set_visible(self->blocked_overlay, visible);
-  }
-
-  if (visible && GTK_IS_WIDGET(self->spinner)) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-  }
-}
-
-static void
-image_viewer_set_blocked_state(GnostrImageViewer *self, gboolean blocked)
-{
-  image_viewer_set_overlay_state(self,
-                                 blocked,
-                                 _("Remote media is blocked"),
-                                 blocked);
-}
-
-static void
-image_viewer_set_unavailable_state(GnostrImageViewer *self, const char *message)
-{
-  image_viewer_set_overlay_state(self,
-                                 TRUE,
-                                 message ? message : _("Remote images unavailable"),
-                                 FALSE);
-}
-
-static void update_zoom_display(GnostrImageViewer *self) {
-  if (!GTK_IS_LABEL(self->zoom_label)) return;
-
-  double display_zoom = (self->zoom_level == FIT_ZOOM) ? self->actual_zoom : self->zoom_level;
-  g_autofree char *text = g_strdup_printf("%.0f%%", display_zoom * 100);
-  gtk_label_set_text(GTK_LABEL(self->zoom_label), text);
-}
-
-static void apply_zoom(GnostrImageViewer *self) {
-  if (!self->texture || !GTK_IS_PICTURE(self->picture)) return;
-
-  int img_width = gdk_texture_get_width(self->texture);
-  int img_height = gdk_texture_get_height(self->texture);
-
-  if (self->zoom_level == FIT_ZOOM) {
-    /* Fit to window - let GtkPicture handle it */
-    gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_CONTAIN);
-    gtk_widget_set_size_request(self->picture, -1, -1);
-
-    /* Calculate actual zoom for display */
-    int win_width = gtk_widget_get_width(GTK_WIDGET(self));
-    int win_height = gtk_widget_get_height(GTK_WIDGET(self));
-    if (win_width > 0 && win_height > 0 && img_width > 0 && img_height > 0) {
-      double scale_x = (double)win_width / (double)img_width;
-      double scale_y = (double)win_height / (double)img_height;
-      self->actual_zoom = fmin(scale_x, scale_y);
-      if (self->actual_zoom > 1.0) self->actual_zoom = 1.0;  /* Don't upscale */
-    }
-  } else {
-    /* Fixed zoom level */
-    gtk_picture_set_content_fit(GTK_PICTURE(self->picture), GTK_CONTENT_FIT_FILL);
-    int new_width = (int)(img_width * self->zoom_level);
-    int new_height = (int)(img_height * self->zoom_level);
-    gtk_widget_set_size_request(self->picture, new_width, new_height);
-    self->actual_zoom = self->zoom_level;
-  }
-
-  update_zoom_display(self);
-}
-
-static void zoom_to_fit(GnostrImageViewer *self) {
-  self->zoom_level = FIT_ZOOM;
-  apply_zoom(self);
-}
-
-static void zoom_to_actual(GnostrImageViewer *self) {
-  self->zoom_level = 1.0;
-  apply_zoom(self);
-}
-
-static void zoom_in(GnostrImageViewer *self) {
-  double current = (self->zoom_level == FIT_ZOOM) ? self->actual_zoom : self->zoom_level;
-  self->zoom_level = fmin(current + ZOOM_STEP, MAX_ZOOM);
-  apply_zoom(self);
-}
-
-static void zoom_out(GnostrImageViewer *self) {
-  double current = (self->zoom_level == FIT_ZOOM) ? self->actual_zoom : self->zoom_level;
-  self->zoom_level = fmax(current - ZOOM_STEP, MIN_ZOOM);
-  apply_zoom(self);
-}
-
-static gboolean on_key_pressed(GtkEventControllerKey *controller,
-                               guint keyval,
-                               guint keycode,
-                               GdkModifierType state,
-                               gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)controller;
-  (void)keycode;
-
-  switch (keyval) {
-    case GDK_KEY_Escape:
-      gtk_window_close(GTK_WINDOW(self));
-      return TRUE;
-
-    case GDK_KEY_plus:
-    case GDK_KEY_equal:
-    case GDK_KEY_KP_Add:
-      zoom_in(self);
-      return TRUE;
-
-    case GDK_KEY_minus:
-    case GDK_KEY_KP_Subtract:
-      zoom_out(self);
-      return TRUE;
-
-    case GDK_KEY_0:
-    case GDK_KEY_KP_0:
-      if (state & GDK_CONTROL_MASK) {
-        zoom_to_fit(self);
-      } else {
-        zoom_to_actual(self);
-      }
-      return TRUE;
-
-    case GDK_KEY_1:
-    case GDK_KEY_KP_1:
-      zoom_to_actual(self);
-      return TRUE;
-
-    case GDK_KEY_s:
-      /* Ctrl+S to save */
-      if (state & GDK_CONTROL_MASK) {
-        on_save_clicked(NULL, self);
-        return TRUE;
-      }
-      break;
-
-    case GDK_KEY_c:
-      /* Ctrl+C to copy link */
-      if (state & GDK_CONTROL_MASK) {
-        on_copy_link_clicked(NULL, self);
-        return TRUE;
-      }
-      break;
-
-    case GDK_KEY_Left:
-    case GDK_KEY_Right: {
-      /* Left/Right for gallery navigation when not zoomed, or pan when zoomed */
-      if (self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0) {
-        /* Pan mode */
-        GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-        double step = 50.0;
-        if (keyval == GDK_KEY_Left) {
-          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) - step);
-        } else {
-          gtk_adjustment_set_value(hadj, gtk_adjustment_get_value(hadj) + step);
-        }
-        return TRUE;
-      } else if (self->gallery_count > 1) {
-        /* Gallery navigation mode */
-        gnostr_image_viewer_navigate(self, (keyval == GDK_KEY_Left) ? -1 : 1);
-        return TRUE;
-      }
-      break;
-    }
-
-    case GDK_KEY_Up:
-    case GDK_KEY_Down: {
-      /* Pan with arrow keys when zoomed in */
-      if (self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0) {
-        GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-        double step = 50.0;
-        if (keyval == GDK_KEY_Up) {
-          gtk_adjustment_set_value(vadj, gtk_adjustment_get_value(vadj) - step);
-        } else {
-          gtk_adjustment_set_value(vadj, gtk_adjustment_get_value(vadj) + step);
-        }
-        return TRUE;
-      }
-      break;
-    }
-
-    default:
-      break;
-  }
-
-  return FALSE;
-}
-
-static gboolean on_scroll(GtkEventControllerScroll *controller,
-                          double dx, double dy,
-                          gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)controller;
-  (void)dx;
-
-  /* Zoom with scroll wheel */
-  if (dy < 0) {
-    zoom_in(self);
-  } else if (dy > 0) {
-    zoom_out(self);
-  }
-
-  return TRUE;
-}
-
-static void on_drag_begin(GtkGestureDrag *gesture,
-                          double start_x, double start_y,
-                          gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-  (void)start_x;
-  (void)start_y;
-
-  /* Only enable dragging when zoomed in */
-  if (self->zoom_level != FIT_ZOOM && self->zoom_level > 1.0) {
-    self->is_dragging = TRUE;
-    GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-    GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-    self->scroll_start_h = gtk_adjustment_get_value(hadj);
-    self->scroll_start_v = gtk_adjustment_get_value(vadj);
-    self->drag_start_x = start_x;
-    self->drag_start_y = start_y;
-  }
-}
-
-static void on_drag_update(GtkGestureDrag *gesture,
-                           double offset_x, double offset_y,
-                           gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-
-  if (!self->is_dragging) return;
-
-  GtkAdjustment *hadj = gtk_scrolled_window_get_hadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-  GtkAdjustment *vadj = gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(self->scrolled_window));
-
-  gtk_adjustment_set_value(hadj, self->scroll_start_h - offset_x);
-  gtk_adjustment_set_value(vadj, self->scroll_start_v - offset_y);
-}
-
-static void on_drag_end(GtkGestureDrag *gesture,
-                        double offset_x, double offset_y,
-                        gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-  (void)offset_x;
-  (void)offset_y;
-
-  self->is_dragging = FALSE;
-}
-
-static void on_double_click(GtkGestureClick *gesture,
-                            int n_press,
-                            double x, double y,
-                            gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-  (void)x;
-  (void)y;
-
-  if (n_press == 2) {
-    /* Toggle between fit and 100% */
-    if (self->zoom_level == FIT_ZOOM) {
-      zoom_to_actual(self);
-    } else {
-      zoom_to_fit(self);
-    }
-  }
-}
-
-static void on_close_clicked(GtkButton *button, gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)button;
-  gtk_window_close(GTK_WINDOW(self));
-}
-
-static void on_background_clicked(GtkGestureClick *gesture,
-                                  int n_press,
-                                  double x, double y,
-                                  gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-  (void)n_press;
-
-  /* Check if click was on the scrolled window background (not the image) */
-  GtkWidget *widget = gtk_event_controller_get_widget(
-      GTK_EVENT_CONTROLLER(gesture));
-
-  /* Get the picture's allocation relative to the scrolled window */
-  if (GTK_IS_PICTURE(self->picture)) {
-    graphene_rect_t bounds;
-    if (gtk_widget_compute_bounds(self->picture, widget, &bounds)) {
-      /* If click is outside the picture bounds, close */
-      if (x < bounds.origin.x || x > bounds.origin.x + bounds.size.width ||
-          y < bounds.origin.y || y > bounds.origin.y + bounds.size.height) {
-        gtk_window_close(GTK_WINDOW(self));
-      }
-    }
-  }
-}
-
-static void on_zoom_scale_changed(GtkGestureZoom *gesture,
-                                  gdouble scale,
-                                  gpointer user_data) {
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  (void)gesture;
-
-  /* Apply pinch zoom */
-  double base_zoom = (self->zoom_level == FIT_ZOOM) ? self->actual_zoom : self->zoom_level;
-  double new_zoom = base_zoom * scale;
-  new_zoom = fmax(MIN_ZOOM, fmin(MAX_ZOOM, new_zoom));
-  self->zoom_level = new_zoom;
-  apply_zoom(self);
-}
-
-/* Context struct for image loading - prevents use-after-free */
-typedef struct {
-  GnostrImageViewer *viewer;  /* Weak reference */
-  char *url;
-#ifdef HAVE_SOUP3
-  SoupMessage *msg;  /* For HTTP status checking */
-#endif
-} ImageLoadCtx;
-
-static void on_image_viewer_destroyed(gpointer data, GObject *where_the_object_was) {
-  ImageLoadCtx *ctx = (ImageLoadCtx *)data;
-  (void)where_the_object_was;
-  if (ctx) ctx->viewer = NULL;
-}
-
-static void image_load_ctx_free(ImageLoadCtx *ctx) {
-  if (!ctx) return;
-  if (ctx->viewer) {
-    g_object_weak_unref(G_OBJECT(ctx->viewer), on_image_viewer_destroyed, ctx);
-  }
-#ifdef HAVE_SOUP3
-  g_clear_object(&ctx->msg);
-#endif
-  g_free(ctx->url);
-  g_free(ctx);
-}
-
-#ifdef HAVE_SOUP3
-static void image_viewer_decode_thread(GTask *task, gpointer source_object,
-                                       gpointer task_data, GCancellable *cancellable) {
-  (void)source_object; (void)cancellable;
-  GBytes *bytes = (GBytes *)task_data;
-  GError *error = NULL;
-
-  GdkTexture *texture = gdk_texture_new_from_bytes(bytes, &error);
-  if (texture)
-    g_task_return_pointer(task, texture, g_object_unref);
-  else
-    g_task_return_error(task, error);
-}
-
-static void on_image_decode_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
-  ImageLoadCtx *ctx = (ImageLoadCtx *)user_data;
-  GError *error = NULL;
-  GdkTexture *texture = g_task_propagate_pointer(G_TASK(res), &error);
-
-  if (!ctx->viewer || !GNOSTR_IS_IMAGE_VIEWER(ctx->viewer)) {
-    if (texture) g_object_unref(texture);
-    if (error) g_error_free(error);
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  GnostrImageViewer *self = ctx->viewer;
-
-  if (GTK_IS_WIDGET(self->spinner)) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-  }
-
-  if (!texture) {
-    if (error) {
-      g_warning("ImageViewer: Failed to create texture for '%s': %s",
-                ctx->url ? ctx->url : "?", error->message);
-      g_error_free(error);
-    }
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  g_clear_object(&self->texture);
-  self->texture = texture;  /* Takes ownership */
-
-  if (GTK_IS_PICTURE(self->picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
-  }
-
-  image_viewer_set_blocked_state(self, FALSE);
-  zoom_to_fit(self);
-  image_load_ctx_free(ctx);
-}
-
-static void on_image_loaded(GObject *source, GAsyncResult *res, gpointer user_data) {
-  ImageLoadCtx *ctx = (ImageLoadCtx *)user_data;
-  GError *error = NULL;
-  GBytes *bytes = soup_session_send_and_read_finish(SOUP_SESSION(source), res, &error);
-
-  if (error) {
-    if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
-      g_warning("ImageViewer: Failed to load image '%s': %s",
-                ctx->url ? ctx->url : "?", error->message);
-    }
-    g_error_free(error);
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  /* Check if viewer was destroyed via weak reference */
-  if (!ctx->viewer || !GNOSTR_IS_IMAGE_VIEWER(ctx->viewer)) {
-    if (bytes) g_bytes_unref(bytes);
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  GnostrImageViewer *self = ctx->viewer;
-
-  /* hq-snq39: Check HTTP status code before trying to decode.
-   * Non-2xx responses (403, 404, 5xx) return HTML error pages that
-   * gdk_texture_new_from_bytes will fail to decode, leaving a blank viewer. */
-  if (ctx->msg) {
-    guint status = soup_message_get_status(ctx->msg);
-    if (status < 200 || status >= 300) {
-      g_warning("ImageViewer: HTTP %u for '%s'",
-                status, ctx->url ? ctx->url : "?");
-      if (bytes) g_bytes_unref(bytes);
-      if (GTK_IS_WIDGET(self->spinner)) {
-        gtk_widget_set_visible(self->spinner, FALSE);
-        gtk_spinner_stop(GTK_SPINNER(self->spinner));
-      }
-      image_load_ctx_free(ctx);
-      return;
-    }
-  }
-
-  if (!bytes || g_bytes_get_size(bytes) == 0) {
-    if (bytes) g_bytes_unref(bytes);
-    if (GTK_IS_WIDGET(self->spinner)) {
-      gtk_widget_set_visible(self->spinner, FALSE);
-      gtk_spinner_stop(GTK_SPINNER(self->spinner));
-    }
-    g_warning("ImageViewer: Empty image data for '%s'",
-              ctx->url ? ctx->url : "?");
-    image_load_ctx_free(ctx);
-    return;
-  }
-
-  GTask *task = g_task_new(NULL, NULL, on_image_decode_done, ctx);
-  g_task_set_task_data(task, bytes, (GDestroyNotify)g_bytes_unref);
-  g_task_run_in_thread(task, image_viewer_decode_thread);
-  g_object_unref(task);
-}
-#endif
-
-static void
-image_viewer_begin_fetch(GnostrImageViewer *self)
-{
-  const char *url = self->image_url;
-
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-
-#ifdef HAVE_SOUP3
-  if (!url || !*url) return;
-
-  /* nostrc-soup-dblf: Don't cancel pending requests — let them complete.
-   * The g_object_weak_ref in ImageLoadCtx will detect the widget is gone. */
-
-  /* Always fetch the full-size image from the network.  The avatar cache
-   * stores downscaled thumbnails which are too small for the image viewer.
-   * DO NOT use gnostr_avatar_try_load_cached here. */
-
-  image_viewer_set_blocked_state(self, FALSE);
-
-  /* Show loading spinner */
-  gtk_widget_set_visible(self->spinner, TRUE);
-  gtk_spinner_start(GTK_SPINNER(self->spinner));
-
-#ifdef GNOSTR_TESTING
-  if (g_strcmp0(g_getenv("GNOSTR_IMAGE_VIEWER_TEST_SKIP_FETCH"), "1") == 0) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-    return;
-  }
-#endif
-
-  /* hq-snq39: Check shared soup session before starting fetch */
-  g_autoptr(SoupSession) session = gnostr_get_shared_soup_session();
-  if (!session) {
-    g_warning("ImageViewer: shared soup session unavailable, cannot load: %s", url);
-    image_viewer_set_unavailable_state(self, _("Remote images unavailable"));
-    return;
-  }
-
-  /* Start async fetch */
-  SoupMessage *msg = soup_message_new("GET", url);
-  if (!msg) {
-    g_warning("ImageViewer: Invalid URL: %s", url);
-    image_viewer_set_unavailable_state(self, _("Remote image URL is invalid"));
-    return;
-  }
-
-  /* Create context with weak reference to viewer */
-  ImageLoadCtx *ctx = g_new0(ImageLoadCtx, 1);
-  ctx->viewer = self;
-  ctx->url = g_strdup(url);
-  ctx->msg = g_object_ref(msg);  /* Keep ref for HTTP status check in callback */
-  g_object_weak_ref(G_OBJECT(self), on_image_viewer_destroyed, ctx);
-
-  g_debug("ImageViewer: fetching image: %s", url);
-  soup_session_send_and_read_async(
-    session,
-    msg,
-    G_PRIORITY_DEFAULT,
-    NULL, /* nostrc-soup-dblf: no cancellable on shared session */
-    on_image_loaded,
-    ctx
-  );
-
-  g_object_unref(msg);
-#else
-  if (url && *url) {
-    g_warning("ImageViewer: libsoup3 not available, cannot load remote images");
-    image_viewer_set_unavailable_state(self, _("Remote images unavailable"));
-  }
-#endif
-}
-
-void gnostr_image_viewer_set_image_url(GnostrImageViewer *self, const char *url) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-
-  g_clear_pointer(&self->image_url, g_free);
-  self->image_url = g_strdup(url);
-  if (self->gallery_count == 0) {
-    const char *single[] = { url, NULL };
-    gn_media_viewer_set_gallery(self->portable_viewer, url ? single : NULL, 0);
-  }
-
-  g_clear_object(&self->texture);
-  if (GTK_IS_PICTURE(self->picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->picture), NULL);
-  }
-  if (GTK_IS_WIDGET(self->spinner)) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-  }
-
-  if (!url || !*url) {
-    image_viewer_set_blocked_state(self, FALSE);
-    return;
-  }
-
-  if (!gnostr_image_viewer_remote_media_allowed()) {
-    image_viewer_set_blocked_state(self, TRUE);
-    return;
-  }
-
-  image_viewer_begin_fetch(self);
-}
-
-void gnostr_image_viewer_set_texture(GnostrImageViewer *self, GdkTexture *texture) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-  g_return_if_fail(GDK_IS_TEXTURE(texture));
-
-#ifdef HAVE_SOUP3
-  /* Cancel any pending HTTP request since we already have the texture */
-  /* nostrc-soup-dblf: Don't cancel — let pending request complete harmlessly */
-  g_clear_object(&self->cancellable);
-#endif
-
-  g_clear_object(&self->texture);
-  self->texture = g_object_ref(texture);
-  gn_media_viewer_set_texture(self->portable_viewer,
-                              gn_media_viewer_get_index(self->portable_viewer), texture);
-
-  if (GTK_IS_PICTURE(self->picture)) {
-    gtk_picture_set_paintable(GTK_PICTURE(self->picture), GDK_PAINTABLE(texture));
-  }
-
-  /* Hide spinner in case it was shown by a prior set_image_url */
-  if (GTK_IS_WIDGET(self->spinner)) {
-    gtk_widget_set_visible(self->spinner, FALSE);
-    gtk_spinner_stop(GTK_SPINNER(self->spinner));
-  }
-  image_viewer_set_blocked_state(self, FALSE);
-
-  /* Apply initial fit zoom */
-  zoom_to_fit(self);
-}
-
-void gnostr_image_viewer_set_url_hint(GnostrImageViewer *self, const char *url) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-  g_clear_pointer(&self->image_url, g_free);
-  self->image_url = url ? g_strdup(url) : NULL;
-}
-
-static void update_nav_display(GnostrImageViewer *self) {
-  GtkWidget *nav_box = g_object_get_data(G_OBJECT(self->overlay), "nav-box");
-
-  if (self->gallery_count <= 1) {
-    /* Hide navigation for single images */
-    if (nav_box) gtk_widget_set_visible(nav_box, FALSE);
-    return;
-  }
-
-  /* Show navigation */
-  if (nav_box) gtk_widget_set_visible(nav_box, TRUE);
-
-  /* Update label */
-  g_autofree char *text = g_strdup_printf("%u / %u", self->gallery_index + 1, self->gallery_count);
-  gtk_label_set_text(GTK_LABEL(self->nav_label), text);
-
-  /* Update button sensitivity */
-  gtk_widget_set_sensitive(self->prev_button, self->gallery_index > 0);
-  gtk_widget_set_sensitive(self->next_button, self->gallery_index < self->gallery_count - 1);
-}
-
-static void on_prev_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  gnostr_image_viewer_navigate(self, -1);
-}
-
-static void on_next_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-  gnostr_image_viewer_navigate(self, 1);
-}
-
-/* Extract filename from URL for save dialog */
-static char *get_filename_from_url(const char *url) {
-  if (!url || !*url) return g_strdup("image.jpg");
-
-  const char *last_slash = strrchr(url, '/');
-  if (last_slash && *(last_slash + 1)) {
-    const char *filename = last_slash + 1;
-    /* Remove query string if present */
-    const char *query = strchr(filename, '?');
-    if (query) {
-      return g_strndup(filename, query - filename);
-    }
-    return g_strdup(filename);
-  }
-  return g_strdup("image.jpg");
-}
-
-static void on_save_response(GObject *source, GAsyncResult *result, gpointer user_data);
-
-static void on_save_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-
-  if (!self->texture && !self->image_url) {
-    g_warning("ImageViewer: No image to save");
-    return;
-  }
-
-  /* Get parent window for dialog */
-  GtkWindow *parent = GTK_WINDOW(self);
-
-  /* Create file chooser dialog */
-  GtkFileDialog *dialog = gtk_file_dialog_new();
-  gtk_file_dialog_set_title(dialog, "Save Image");
-
-  /* Suggest filename based on URL */
-  char *suggested_name = get_filename_from_url(self->image_url);
-  gtk_file_dialog_set_initial_name(dialog, suggested_name);
-  g_free(suggested_name);
-
-  /* If we have a texture, save it directly */
-  if (self->texture) {
-    gtk_file_dialog_save(dialog, parent, NULL,
-                         (GAsyncReadyCallback)on_save_response, self);
-  }
-#ifdef HAVE_SOUP3
-  else if (self->image_url) {
-    /* Download and save */
-    gtk_file_dialog_save(dialog, parent, NULL,
-                         (GAsyncReadyCallback)on_save_response, self);
-  }
-#endif
-
-  g_object_unref(dialog);
-}
-
-static void on_save_response(GObject *source, GAsyncResult *result, gpointer user_data) {
-  GtkFileDialog *dialog = GTK_FILE_DIALOG(source);
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-
-  GError *error = NULL;
-  g_autoptr(GFile) file = gtk_file_dialog_save_finish(dialog, result, &error);
-
-  if (error) {
-    if (!g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      g_warning("ImageViewer: Save dialog error: %s", error->message);
-    }
-    g_error_free(error);
-    return;
-  }
-
-  if (!file) return;
-
-  /* Save the texture to file */
-  if (self->texture) {
-    char *path = g_file_get_path(file);
-    if (path) {
-      gboolean saved = gdk_texture_save_to_png(self->texture, path);
-      if (!saved) {
-        g_warning("ImageViewer: Failed to save image to %s", path);
-      }
-      g_free(path);
-    }
-  }
-
-}
-
-static void on_copy_link_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-
-  if (!self->image_url || !*self->image_url) {
-    g_warning("ImageViewer: No image URL to copy");
-    return;
-  }
-
-  /* Get the clipboard and set the URL */
-  GdkDisplay *display = gtk_widget_get_display(GTK_WIDGET(self));
-  GdkClipboard *clipboard = gdk_display_get_clipboard(display);
-  gdk_clipboard_set_text(clipboard, self->image_url);
-
-  /* Show toast via the main window */
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  /* Sized to the parent now that it is allocated (nostrc-zqb: never beyond
+   * the parent window). */
   GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
-  if (parent) {
-    gnostr_main_window_show_toast(GTK_WIDGET(parent), "Link copied");
-  }
-}
-
-static void
-on_load_button_clicked(GtkButton *button, gpointer user_data)
-{
-  (void)button;
-  GnostrImageViewer *self = GNOSTR_IMAGE_VIEWER(user_data);
-
-  if (!self->image_url || !*self->image_url) {
-    return;
-  }
-
-  if (!GTK_IS_WIDGET(self->load_button) || !gtk_widget_get_visible(self->load_button)) {
-    return;
-  }
-
-  image_viewer_begin_fetch(self);
-}
-
-void gnostr_image_viewer_set_gallery(GnostrImageViewer *self,
-                                     const char * const *urls,
-                                     guint current_index) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-
-  /* Free old gallery */
-  g_strfreev(self->gallery_urls);
-  self->gallery_urls = NULL;
-  self->gallery_count = 0;
-  self->gallery_index = 0;
-
-  gn_media_viewer_set_gallery(self->portable_viewer, urls, current_index);
-  if (!urls || !urls[0]) {
-    update_nav_display(self);
-    return;
-  }
-
-  /* Count URLs */
-  guint count = 0;
-  while (urls[count]) count++;
-
-  /* Copy URLs */
-  self->gallery_urls = g_strdupv((char **)urls);
-  self->gallery_count = count;
-  self->gallery_index = (current_index < count) ? current_index : 0;
-
-  /* Load the current image */
-  gnostr_image_viewer_set_image_url(self, self->gallery_urls[self->gallery_index]);
-
-  /* Update navigation display */
-  update_nav_display(self);
-}
-
-gboolean gnostr_image_viewer_navigate(GnostrImageViewer *self, int delta) {
-  g_return_val_if_fail(GNOSTR_IS_IMAGE_VIEWER(self), FALSE);
-
-  if (!gn_media_viewer_navigate(self->portable_viewer, delta)) return FALSE;
-  self->gallery_index = gn_media_viewer_get_index(self->portable_viewer);
-
-  /* Load the new image */
-  gnostr_image_viewer_set_image_url(self, self->gallery_urls[self->gallery_index]);
-
-  /* Update navigation display */
-  update_nav_display(self);
-
-  /* Reset zoom to fit */
-  zoom_to_fit(self);
-
-  return TRUE;
-}
-
-void gnostr_image_viewer_present(GnostrImageViewer *self) {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-
-  /* Size the viewer to fit within the parent window bounds */
-  GtkWindow *parent = gtk_window_get_transient_for(GTK_WINDOW(self));
-  if (parent) {
-    int parent_width = gtk_widget_get_width(GTK_WIDGET(parent));
-    int parent_height = gtk_widget_get_height(GTK_WIDGET(parent));
-
-    /* Constrain viewer to exactly parent window size */
-    /* This ensures the modal cannot extend beyond the gnostr window (nostrc-zqb) */
-    int viewer_width = MAX(400, parent_width);
-    int viewer_height = MAX(300, parent_height);
-
-    /* Set default size to match parent bounds exactly */
-    gtk_window_set_default_size(GTK_WINDOW(self), viewer_width, viewer_height);
-  } else {
-    /* Fallback: use a reasonable default size if no parent */
-    gtk_window_set_default_size(GTK_WINDOW(self), 900, 700);
-  }
-
-  /* Present the window */
+  int width = parent ? gtk_widget_get_width(GTK_WIDGET(parent)) : 0;
+  int height = parent ? gtk_widget_get_height(GTK_WIDGET(parent)) : 0;
+  if (width > 0 && height > 0)
+    gtk_window_set_default_size(GTK_WINDOW(self), MAX(400, width), MAX(300, height));
   gtk_window_present(GTK_WINDOW(self));
-
-  /* Apply zoom after window is realized */
-  if (self->texture) {
-    apply_zoom(self);
-  }
-
-  /* Update navigation display */
-  update_nav_display(self);
-}
-
-#ifdef GNOSTR_TESTING
-gboolean
-gnostr_image_viewer_remote_media_allowed_for_testing(void)
-{
-  return gnostr_image_viewer_remote_media_allowed();
-}
-
-gboolean
-gnostr_image_viewer_is_load_action_visible_for_testing(GnostrImageViewer *self)
-{
-  g_return_val_if_fail(GNOSTR_IS_IMAGE_VIEWER(self), FALSE);
-  return GTK_IS_WIDGET(self->load_button) &&
-         gtk_widget_get_visible(self->load_button);
+  update(self);
 }
 
 void
-gnostr_image_viewer_activate_load_action_for_testing(GnostrImageViewer *self)
+gn_media_viewer_set_source(GnMediaViewer *self, GnMediaSource *source)
 {
-  g_return_if_fail(GNOSTR_IS_IMAGE_VIEWER(self));
-
-  on_load_button_clicked(GTK_BUTTON(self->load_button), self);
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  g_return_if_fail(!source || GN_IS_MEDIA_SOURCE(source));
+  if (!g_set_object(&self->source, source)) return;
+  if (source) gn_media_source_adopt(source, GTK_WIDGET(self));
+  if (!current(self)) {
+    reset_slot_state(self);
+    evaluate_slot(self);
+    update(self);
+  }
 }
-#endif
+
+GnMediaSource *
+gn_media_viewer_get_source(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), NULL);
+  return self->source;
+}
+
+void
+gn_media_viewer_set_decode_limits(GnMediaViewer *self, const GnMediaDecodeLimits *limits)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (limits) self->limits = *limits;
+  else gn_media_decode_limits_init_default(&self->limits);
+}
+
+void
+gn_media_viewer_set_gallery(GnMediaViewer *self, const gchar *const *urls, guint current_index)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  reset_slot_state(self);
+  g_ptr_array_set_size(self->urls, 0);
+  g_ptr_array_set_size(self->paintables, 0);
+  if (urls)
+    for (guint i = 0; urls[i] && i < MAX_GALLERY; i++) {
+      g_ptr_array_add(self->urls, g_strdup(urls[i]));
+      g_ptr_array_add(self->paintables, NULL);
+    }
+  self->index = self->urls->len ? MIN(current_index, self->urls->len - 1) : 0;
+  evaluate_slot(self);
+  update(self);
+}
+
+gboolean
+gn_media_viewer_navigate(GnMediaViewer *self, gint delta)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), FALSE);
+  gint64 next = (gint64)self->index + delta;
+  if (next < 0 || next >= (gint64)self->urls->len) return FALSE;
+  self->index = (guint)next;
+  reset_slot_state(self);
+  evaluate_slot(self);
+  update(self);
+  return TRUE;
+}
+
+void
+gn_media_viewer_set_paintable(GnMediaViewer *self, guint index, GdkPaintable *paintable)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  g_return_if_fail(!paintable || GDK_IS_PAINTABLE(paintable));
+  if (index >= self->paintables->len) return;
+  gpointer old = g_ptr_array_index(self->paintables, index);
+  g_ptr_array_index(self->paintables, index) = paintable ? g_object_ref(paintable) : NULL;
+  if (index == self->index) {
+    if (paintable) {
+      cancel_pending(self);
+      self->loading = FALSE;
+      g_clear_pointer(&self->message, g_free);
+      self->offer_load = FALSE;
+    }
+    self->zoom_level = FIT_ZOOM;
+    update(self);
+  }
+  if (old) g_object_unref(old);
+}
+
+void
+gn_media_viewer_set_texture(GnMediaViewer *self, guint index, GdkTexture *texture)
+{
+  gn_media_viewer_set_paintable(self, index,
+    texture ? gn_animated_image_paintable_for_texture(texture) : NULL);
+}
+
+void
+gn_media_viewer_set_paintable_for_generation(GnMediaViewer *self, guint64 generation, guint index,
+                                             GdkPaintable *paintable)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (generation == self->generation) gn_media_viewer_set_paintable(self, index, paintable);
+}
+
+void
+gn_media_viewer_set_texture_for_generation(GnMediaViewer *self, guint64 generation, guint index,
+                                           GdkTexture *texture)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (generation == self->generation) gn_media_viewer_set_texture(self, index, texture);
+}
+
+void
+gn_media_viewer_set_loading(GnMediaViewer *self, guint64 generation, guint index)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (generation != self->generation || index != self->index || current(self)) return;
+  self->loading = TRUE;
+  g_clear_pointer(&self->message, g_free);
+  self->offer_load = FALSE;
+  update(self);
+}
+
+void
+gn_media_viewer_set_error(GnMediaViewer *self, guint64 generation, guint index, const char *message)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  if (generation != self->generation || index != self->index || current(self)) return;
+  self->loading = FALSE;
+  g_free(self->message);
+  self->message = g_strdup(message ? message : _("Remote images unavailable"));
+  self->offer_load = FALSE;
+  update(self);
+}
+
+void
+gn_media_viewer_set_blocked(GnMediaViewer *self, gboolean blocked, const char *reason)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  self->loading = FALSE;
+  g_clear_pointer(&self->message, g_free);
+  if (blocked) self->message = g_strdup(reason ? reason : _("Remote media is blocked"));
+  self->offer_load = blocked;
+  update(self);
+}
+
+GdkPaintable *
+gn_media_viewer_get_paintable(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), NULL);
+  return current(self);
+}
+
+guint64
+gn_media_viewer_get_generation(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), 0);
+  return self->generation;
+}
+
+GCancellable *
+gn_media_viewer_get_cancellable(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), NULL);
+  return self->cancellable;
+}
+
+void
+gn_media_viewer_request_load(GnMediaViewer *self)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  const char *url = current_url(self);
+  if (!url || current(self) || self->loading) return;
+  g_signal_emit(self, signals[SIG_LOAD_REQUESTED], 0, self->index, url);
+  if (current(self) || self->loading || !self->source) {
+    update(self);
+    return;
+  }
+  /* The user asked: ASK becomes a fetch; BLOCKED stays blocked. */
+  if (gn_media_source_get_policy(self->source, url, GN_MEDIA_KIND_IMAGE) != GN_MEDIA_POLICY_BLOCKED)
+    begin_fetch(self);
+  update(self);
+}
+
+gboolean
+gn_media_viewer_get_load_offered(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), FALSE);
+  return gtk_widget_get_visible(self->blocked_overlay) && self->offer_load;
+}
+
+gboolean
+gn_media_viewer_get_loading(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), FALSE);
+  return self->loading;
+}
+
+const char *
+gn_media_viewer_get_message(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), NULL);
+  return self->message;
+}
+
+void
+gn_media_viewer_set_zoom(GnMediaViewer *self, gdouble zoom)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  zoom_to(self, zoom);
+}
+
+gdouble
+gn_media_viewer_get_zoom(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), 0);
+  return self->zoom_level;
+}
+
+gdouble
+gn_media_viewer_get_shown_zoom(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), 1.0);
+  return shown_zoom(self);
+}
+
+guint
+gn_media_viewer_get_index(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), 0);
+  return self->index;
+}
+
+void
+gn_media_viewer_set_can_save(GnMediaViewer *self, gboolean can_save)
+{
+  g_return_if_fail(GN_IS_MEDIA_VIEWER(self));
+  can_save = !!can_save;
+  if (self->can_save == can_save) return;
+  self->can_save = can_save;
+  update(self);
+  g_object_notify_by_pspec(G_OBJECT(self), props[PROP_CAN_SAVE]);
+}
+
+gboolean
+gn_media_viewer_get_can_save(GnMediaViewer *self)
+{
+  g_return_val_if_fail(GN_IS_MEDIA_VIEWER(self), FALSE);
+  return self->can_save;
+}
