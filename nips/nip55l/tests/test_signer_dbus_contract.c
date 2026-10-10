@@ -283,8 +283,45 @@ static void watcher_kill(void) {}
 /* The fixture that is up, if any. */
 static Ctx *live_ctx;
 
+/* Removes @path and everything below it, best effort. Symlinks are removed,
+ * not followed. */
+static void rm_tree(const char *path) {
+  GStatBuf st;
+  if (g_lstat(path, &st) != 0) return;
+  if (S_ISDIR(st.st_mode)) {
+    GDir *d = g_dir_open(path, 0, NULL);
+    const char *name;
+    while (d && (name = g_dir_read_name(d))) {
+      char *child = g_build_filename(path, name, NULL);
+      rm_tree(child);
+      g_free(child);
+    }
+    if (d) g_dir_close(d);
+  }
+  (void)g_remove(path);
+}
+
+/* Temporary directories made outside a fixture's tmpdir (the approval UI's
+ * service dir, the NIP-5F socket dir). Removed with the fixture's tmpdir at
+ * exit when a CHECK fails, so no run leaves anything in $TMPDIR or /tmp
+ * (nostrc-1hvq8). */
+static char *exit_dirs[4];
+
+static void remove_at_exit(const char *dir) {
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (!exit_dirs[i]) { exit_dirs[i] = g_strdup(dir); return; }
+  CHECK(!"exit_dirs full");
+}
+
+/* Removes @dir now and forgets it. */
+static void remove_dir_now(const char *dir) {
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (exit_dirs[i] && strcmp(exit_dirs[i], dir) == 0) g_clear_pointer(&exit_dirs[i], g_free);
+  rm_tree(dir);
+}
+
 /* A failed CHECK exits with the fixture up. Stop the daemon and the private
- * bus then, or they outlive the test: GTestDBus's dbus-daemon shares this
+ * bus then and remove the temporary directories, or they outlive the test: GTestDBus's dbus-daemon shares this
  * process's stdout and stderr, so ctest keeps reading until its timeout (the
  * "Timeout" of nostrc-oauv). The watcher that should kill it does not work on
  * macOS (watcher_kill()). */
@@ -297,7 +334,10 @@ static void teardown_at_exit(void) {
     if (ctx->secrets) g_subprocess_force_exit(ctx->secrets);
     if (ctx->bus) g_dbus_connection_set_exit_on_close(ctx->bus, FALSE);
     if (ctx->tbus) g_test_dbus_stop(ctx->tbus);
+    if (ctx->tmpdir) rm_tree(ctx->tmpdir);
   }
+  for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
+    if (exit_dirs[i]) remove_dir_now(exit_dirs[i]);
   watcher_kill();
 }
 
@@ -371,6 +411,13 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   const char *tmp_base = g_get_tmp_dir();
   ctx->tmpdir = g_build_filename(tmp_base, "nip55l_dbus_contractXXXXXX", NULL);
   CHECK(mkdtemp(ctx->tmpdir) != NULL);
+  /* From here a failed CHECK tears down what is up and removes tmpdir. */
+  static gboolean at_exit_registered;
+  if (!at_exit_registered) {
+    CHECK(atexit(teardown_at_exit) == 0);
+    at_exit_registered = TRUE;
+  }
+  live_ctx = ctx;
 
   char *xdg_cfg = g_build_filename(ctx->tmpdir, "config", NULL);
   char *xdg_data = g_build_filename(ctx->tmpdir, "data", NULL);
@@ -417,15 +464,9 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
 
   /* Private session bus. g_test_dbus_up sets DBUS_SESSION_BUS_ADDRESS in
    * this process's env, which g_subprocess_new inherits. */
-  static gboolean at_exit_registered;
-  if (!at_exit_registered) {
-    CHECK(atexit(teardown_at_exit) == 0);
-    at_exit_registered = TRUE;
-  }
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   if (approval_ui_service_dir) g_test_dbus_add_service_dir(ctx->tbus, approval_ui_service_dir);
   g_test_dbus_up(ctx->tbus);
-  live_ctx = ctx;
 
   /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
@@ -549,12 +590,7 @@ static void ctx_teardown(Ctx *ctx) {
   }
   g_clear_object(&ctx->keyring);
   if (ctx->tmpdir) {
-    /* Best-effort recursive cleanup; a leftover tmpdir is a hygiene issue,
-     * not a test failure. */
-    char *cmd = g_strdup_printf("rm -rf '%s'", ctx->tmpdir);
-    int rc = system(cmd);
-    (void)rc;
-    g_free(cmd);
+    rm_tree(ctx->tmpdir);
     g_free(ctx->tmpdir);
   }
   free(ctx->sk_hex);
@@ -1679,6 +1715,7 @@ static void nip5f_pre_daemon(Ctx *ctx, gpointer data) {
   /* Short path: sun_path is 104 bytes on macOS, and $TMPDIR is long there. */
   s->dir = g_strdup("/tmp/n5fXXXXXX");
   CHECK(mkdtemp(s->dir) != NULL);
+  remove_at_exit(s->dir);
   s->path = g_build_filename(s->dir, "s.sock", NULL);
   char *ep = g_strconcat("unix:", s->path, NULL);
   g_setenv("NOSTR_SIGNER_ENDPOINT", ep, TRUE);
@@ -2598,7 +2635,9 @@ static void run_phase3(void) {
  * implements only what the daemon calls. MODE "plain" refuses the
  * dh-ietf1024-sha256-aes128-cbc-pkcs7 session algorithm with NotSupported
  * and accepts "plain" (a plain-only provider, which crashed libsecret
- * 0.21.8 inside the daemon); MODE "none" refuses every session.
+ * 0.21.8 inside the daemon); MODE "none" refuses every session but can be
+ * searched; MODE "fail" answers every Service method with an error (a store
+ * that is up but cannot be read).
  * ------------------------------------------------------------------------- */
 
 #define FSS_NAME       "org.freedesktop.secrets"
@@ -2635,6 +2674,7 @@ typedef struct Fss Fss;
 typedef struct { Fss *fss; char *path; GHashTable *attrs; char *secret; } FssItem;
 struct Fss {
   gboolean plain_ok;
+  gboolean fail_all;
   GPtrArray *items;      /* FssItem* */
   GHashTable *sessions;  /* open session paths */
   guint next_session;
@@ -2670,6 +2710,11 @@ static void fss_service_call(GDBusConnection *c, const gchar *sender, const gcha
                              GDBusMethodInvocation *inv, gpointer ud) {
   (void)sender; (void)path; (void)iface;
   Fss *f = ud;
+  if (f->fail_all) {
+    g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.Failed",
+                                               "key store unavailable");
+    return;
+  }
   if (g_strcmp0(method, "OpenSession") == 0) {
     const char *alg = NULL;
     g_variant_get(params, "(&sv)", &alg, NULL);
@@ -2790,6 +2835,7 @@ static int fake_secret_service(int argc, char **argv) {
   if (argc < 2 || !addr) { g_printerr("fake-secret-service: usage/bus\n"); return 1; }
   Fss f = { 0 };
   f.plain_ok = g_strcmp0(argv[1], "plain") == 0;
+  f.fail_all = g_strcmp0(argv[1], "fail") == 0;
   f.items = g_ptr_array_new();
   f.sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   f.node = g_dbus_node_info_new_for_xml(fss_xml, &err);
@@ -2902,6 +2948,52 @@ static char *sign_with(Ctx *ctx, const char *selector, GError **err) {
   return pk;
 }
 
+/* Grants for every identity-taking kind the store checks use: a selector
+ * that resolves is served at once, never parked for approval. */
+#define IDENTITY_GRANTS \
+  "[event]\n@P|*=allow\n[nip44_encrypt]\n@P|*=allow\n" \
+  "[nip44_conversation_key]\n@P|*=allow\n[get_public_key]\n@P|*=allow\n"
+
+/* SignEvent with @selector signs as @want_pk_hex. */
+static void expect_signs_as(Ctx *ctx, const char *selector, const char *want_pk_hex) {
+  GError *err = NULL;
+  char *pk = sign_with(ctx, selector, &err);
+  if (!pk) g_printerr("SignEvent(\"%s\"): %s\n", selector, err ? err->message : "?");
+  CHECK(pk && g_strcmp0(pk, want_pk_hex) == 0);
+  g_free(pk);
+}
+
+/* SignEvent, NIP44Encrypt and NIP44DeriveConversationKey with @selector all
+ * fail with @want (nostrc-f6l29: NoKeyConfigured only when the signer holds
+ * no such identity, Internal when its key store cannot be read). */
+static void expect_identity_error(Ctx *ctx, const char *selector, const char *want) {
+  GError *err = NULL;
+  char *pk = sign_with(ctx, selector, &err);
+  if (pk) g_printerr("SignEvent(\"%s\") signed as %s, expected %s\n", selector, pk, want);
+  CHECK(pk == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+  GVariant *r = call(ctx->bus, "NIP44Encrypt", g_variant_new("(sss)", "hi", ctx->pk_hex, selector), "(s)", &err);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+  r = call(ctx->bus, "NIP44DeriveConversationKey",
+           g_variant_new("(sss)", ctx->pk_hex, selector, "contract-test"), "(s)", &err);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+}
+
+/* GetPublicKey (the active identity) fails with @want. */
+static void expect_get_public_key_error(Ctx *ctx, const char *want) {
+  GError *err = NULL;
+  GVariant *r = call(ctx->bus, "GetPublicKey", NULL, "(s)", &err);
+  if (r) g_printerr("GetPublicKey answered, expected %s\n", want);
+  CHECK(r == NULL);
+  expect_remote_error(err, want);
+  g_clear_error(&err);
+}
+
 static void run_identity_store_phase(void) {
   GError *err = NULL;
   TestKey stored, other;
@@ -2938,56 +3030,90 @@ static void run_identity_store_phase(void) {
     ctx_teardown(&ctx);
   }
 
-  /* A Secret Service that refuses every session: no secret can be read, and
-   * every lookup fails with a typed error instead of a crash. Listing needs
-   * no secrets; the environment key still signs. */
+  /* A Secret Service that refuses every session: it can be searched (and
+   * listed) but no secret can be read. A key it does not hold is
+   * NoKeyConfigured, as ListIdentities shows; a key it holds cannot be read,
+   * which is Internal, not NoKeyConfigured (nostrc-f6l29). The environment
+   * key still signs. */
   {
     FakeSecrets fs = { "none", stored.sk_hex };
     Ctx ctx;
-    ctx_setup_full(&ctx, FALSE, FALSE, "[event]\n@P|*=allow\n", &TRUST_UI,
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
-    char *pk = sign_with(&ctx, other.pk_hex, &err);
-    CHECK(pk == NULL);
-    expect_remote_error(err, ERR_NO_KEY);
-    g_clear_error(&err);
-    pk = sign_with(&ctx, stored.npub, &err);
-    CHECK(pk == NULL && err != NULL);
-    {
-      gchar *remote = g_dbus_error_get_remote_error(err);
-      if (!remote || !g_str_has_prefix(remote, "org.nostr.Signer.Error."))
-        g_printerr("SignEvent(stored, no session) = %s\n", err->message);
-      CHECK(remote && g_str_has_prefix(remote, "org.nostr.Signer.Error."));
-      g_free(remote);
-    }
-    g_clear_error(&err);
-    pk = sign_with(&ctx, "", &err);
-    CHECK(pk && g_strcmp0(pk, ctx.pk_hex) == 0);
-    g_free(pk);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.npub, ERR_NO_KEY);
+    expect_identity_error(&ctx, stored.pk_hex, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
     gchar **ids = list_identities(&ctx, &err);
     CHECK(ids && g_strv_length(ids) == 2);
     g_strfreev(ids);
+    /* No environment key: the active identity is a stored one, unreadable. */
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "", ERR_INTERNAL);
+    expect_get_public_key_error(&ctx, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
     ctx_teardown(&ctx);
   }
 
-  /* No Secret Service on the bus and no environment key (nostrc-sjyl3): the
-   * signer cannot tell which identities it holds, so ListIdentities fails
-   * instead of answering an empty list. */
+  /* A Secret Service that fails every call: the signer cannot tell which
+   * identities it holds. ListIdentities fails, and so does every selector
+   * other than the environment key's, with Internal (nostrc-f6l29). */
+  {
+    FakeSecrets fs = { "fail", stored.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    gchar **ids = list_identities(&ctx, &err);
+    CHECK(ids == NULL);
+    expect_remote_error(err, ERR_INTERNAL);
+    g_clear_error(&err);
+    expect_identity_error(&ctx, stored.pk_hex, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    expect_identity_error(&ctx, other.pk_hex, ERR_INTERNAL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
+    respawn_daemon(&ctx, FALSE);
+    expect_identity_error(&ctx, "", ERR_INTERNAL);
+    expect_get_public_key_error(&ctx, ERR_INTERNAL);
+    expect_identity_error(&ctx, stored.npub, ERR_INTERNAL);
+    ctx_teardown(&ctx);
+  }
+
+  /* No Secret Service on the bus (headless env-key deployments): the
+   * environment key is the signer's identity and any other key is
+   * NoKeyConfigured. With no environment key either, the signer holds no key:
+   * selectors and GetPublicKey answer NoKeyConfigured, while ListIdentities
+   * fails (nostrc-sjyl3: it cannot tell an empty store from no store). */
   {
     Ctx ctx;
-    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI, NULL, NULL);
+    expect_signs_as(&ctx, "", ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.npub, ctx.pk_hex);
+    expect_signs_as(&ctx, ctx.pk_hex, ctx.pk_hex);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.npub, ERR_NO_KEY);
     respawn_daemon(&ctx, FALSE);
     gchar **ids = list_identities(&ctx, &err);
     if (ids) g_printerr("ListIdentities with no key store answered %u identities\n", g_strv_length(ids));
     CHECK(ids == NULL);
     expect_remote_error(err, ERR_INTERNAL);
     g_clear_error(&err);
+    expect_identity_error(&ctx, "", ERR_NO_KEY);
+    expect_get_public_key_error(&ctx, ERR_NO_KEY);
+    expect_identity_error(&ctx, other.pk_hex, ERR_NO_KEY);
     ctx_teardown(&ctx);
   }
 
   test_key_free(&stored);
   test_key_free(&other);
-  g_print("PASS identity store (plain-only and session-refusing Secret Service, "
-          "environment key listed once, ListIdentities fails without a key store)\n");
+  g_print("PASS identity store (plain-only, session-refusing and failing Secret Service, "
+          "no Secret Service; environment key listed once; unreadable store is Internal, "
+          "unheld key NoKeyConfigured)\n");
 }
 #endif /* NIP55L_TEST_HAVE_LIBSECRET */
 
@@ -3036,6 +3162,7 @@ static char *write_approval_ui_service(void) {
   GError *err = NULL;
   char *dir = g_dir_make_tmp("nip55l_approval_ui_XXXXXX", &err);
   CHECK(dir != NULL);
+  remove_at_exit(dir);
   char *exe = self_exe();
   char *body = g_strdup_printf("[D-BUS Service]\nName=%s\nExec=%s --approval-ui\n", APPROVER_NAME, exe);
   char *path = g_build_filename(dir, APPROVER_NAME ".service", NULL);
@@ -3131,6 +3258,7 @@ int main(int argc, char **argv) {
     approval_ui_service_dir = NULL;
     test_summon_approval_ui(&ctx);
     ctx_teardown(&ctx);
+    remove_dir_now(dir);
     g_free(dir);
     g_print("PASS approval UI started on demand and answered from ListPendingRequests\n");
   }
@@ -3196,8 +3324,7 @@ int main(int argc, char **argv) {
     gboolean attested = ctx.attested;
     ctx_teardown(&ctx);
     g_unsetenv("NOSTR_SIGNER_ENDPOINT");
-    g_unlink(sock.path);
-    g_rmdir(sock.dir);
+    remove_dir_now(sock.dir);
     g_free(sock.path); g_free(sock.dir);
     g_print("PASS nip5f gating (peer-credential principal%s, prompt + remember, ListGrants/"
             "RevokeGrant, deny, grants "
