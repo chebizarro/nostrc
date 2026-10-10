@@ -102,7 +102,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #include <glib-unix.h>
 #include <json-glib/json-glib.h>
 
-#define SIGNET_VERSION "0.6.0"
+#define SIGNET_VERSION "0.6.1"
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
