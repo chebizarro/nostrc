@@ -41,8 +41,8 @@ set(GROUNDHOG_BLUEPRINTS
   gh-nip46-pair-dialog
   gh-conversation-row gh-shortcuts-window
   gh-conversation-section gh-timeline-row
-  gh-conversation-view gh-message-row gh-message-list-item gh-day-separator
-  gh-delivery-details gh-preferences-dialog gh-composer
+  gh-conversation-view gh-message-row gh-message-reference gh-message-list-item gh-day-separator
+  gh-delivery-indicator gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
   gh-add-contact-dialog
   gh-conversation-info-dialog gh-conversation-info-person

@@ -128,9 +128,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <accessibility>
                           <property name="label" translatable="yes">Insert Emoji</property>
                         </accessibility>
-                        <property name="popover">
-                          <object class="GtkEmojiChooser" id="emoji_chooser"></object>
-                        </property>
                         <style>
                           <class name="flat"/>
                           <class name="circular"/>

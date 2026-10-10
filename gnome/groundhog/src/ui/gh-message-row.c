@@ -51,6 +51,7 @@ struct _GhMessageRow {
   GtkButton *copy_button;
   GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
+  /* Built on first use (ensure_reference); NULL for most rows. */
   GtkBox *reference_box;
   GnNostrReferenceCard *reference_card;
   GtkButton *reference_copy_button;
@@ -820,6 +821,8 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
 static void
 update_public_actions(GhMessageRow *self)
 {
+  if (!self->reference_card)
+    return;
   const GnNostrReference *reference = gn_nostr_reference_card_get_reference(self->reference_card);
   GnNostrReferenceResolver *resolver = self->view
     ? gh_conversation_view_get_reference_resolver(self->view) : NULL;
@@ -828,6 +831,39 @@ update_public_actions(GhMessageRow *self)
     gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED
       ? gn_nostr_reference_resolver_lookup_local(resolver, reference) : NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->public_actions), local != NULL);
+}
+
+/* The reference box (gh-message-reference.blp) is made the first time the
+ * row shows a message with a reference, then kept while the row is
+ * recycled: few messages carry one (nostrc-boq9.5). Its widgets are named
+ * after their ids, as template children would be found. */
+static void
+ensure_reference(GhMessageRow *self)
+{
+  if (self->reference_box)
+    return;
+  g_autoptr(GtkBuilder) builder =
+    gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-message-reference.ui");
+  static const gchar *const names[] = {
+    "reference_box", "reference_card", "reference_copy_button", "share_reference_button",
+    "public_actions", "repost_reference_button", "quote_reference_button",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++)
+    gtk_widget_set_name(GTK_WIDGET(gtk_builder_get_object(builder, names[i])), names[i]);
+  self->reference_box = GTK_BOX(gtk_builder_get_object(builder, "reference_box"));
+  self->reference_card = GN_NOSTR_REFERENCE_CARD(gtk_builder_get_object(builder, "reference_card"));
+  self->reference_copy_button = GTK_BUTTON(gtk_builder_get_object(builder, "reference_copy_button"));
+  self->share_reference_button = GTK_BUTTON(gtk_builder_get_object(builder, "share_reference_button"));
+  self->public_actions = GTK_BOX(gtk_builder_get_object(builder, "public_actions"));
+  self->repost_reference_button = GTK_BUTTON(gtk_builder_get_object(builder, "repost_reference_button"));
+  self->quote_reference_button = GTK_BUTTON(gtk_builder_get_object(builder, "quote_reference_button"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->reference_copy_button),
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                 _("Copy Nostr address"), -1);
+  g_signal_connect_swapped(self->reference_card, "notify::state",
+                           G_CALLBACK(update_public_actions), self);
+  gtk_widget_insert_before(GTK_WIDGET(self->reference_box), GTK_WIDGET(self),
+                           GTK_WIDGET(self->web_box));
 }
 
 static void
@@ -844,6 +880,9 @@ update_reference(GhMessageRow *self)
   const GnNostrReference *reference = visible
     ? gh_conversation_view_get_reference_target(self->view, self->message, &uri, &role, &original)
     : NULL;
+  if (!reference && !self->reference_box)
+    return;
+  ensure_reference(self);
   gtk_widget_set_visible(GTK_WIDGET(self->reference_box), reference != NULL);
   /* The card only consults the resolver's verified local cache here. */
   gn_nostr_reference_card_set_resolver(self->reference_card, reference
@@ -1571,6 +1610,11 @@ gh_message_row_dispose(GObject *object)
     self->reply_button = NULL;
     self->reply_label = NULL;
   }
+  if (self->reference_box) {
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->reference_box));
+    self->reference_box = NULL;
+    self->reference_card = NULL;
+  }
   /* The extra cards are the slot's children: they go with the template. */
   g_clear_pointer(&self->extra_cards, g_ptr_array_unref);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MESSAGE_ROW);
@@ -1666,13 +1710,6 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_box);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_card);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, reference_copy_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, share_reference_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, public_actions);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, repost_reference_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, quote_reference_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, web_box);
@@ -1701,12 +1738,7 @@ gh_message_row_init(GhMessageRow *self)
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
-  g_signal_connect_swapped(self->reference_card, "notify::state",
-                           G_CALLBACK(update_public_actions), self);
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", "");
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->reference_copy_button),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                 _("Copy Nostr address"), -1);
   self->run_start = TRUE;
   /* Right-click and long-press on the bubble show the reaction picker. */
   GtkGesture *click = gtk_gesture_click_new();

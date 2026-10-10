@@ -77,8 +77,10 @@
     <file>ui/gh-timeline-row.ui</file>
     <file>ui/gh-conversation-view.ui</file>
     <file>ui/gh-message-row.ui</file>
+    <file>ui/gh-message-reference.ui</file>
     <file>ui/gh-message-list-item.ui</file>
     <file>ui/gh-day-separator.ui</file>
+    <file>ui/gh-delivery-indicator.ui</file>
     <file>ui/gh-delivery-details.ui</file>
     <file>ui/gh-shortcuts-window.ui</file>
     <file>ui/gh-preferences-dialog.ui</file>

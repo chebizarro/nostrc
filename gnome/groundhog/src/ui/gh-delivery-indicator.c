@@ -48,6 +48,51 @@ gh_delivery_report_free(GhDeliveryReport *report)
   g_free(report);
 }
 
+/* ---- GhDeliveryDetails ---------------------------------------------------------- */
+
+/* The details popover (data/ui/gh-delivery-details.blp). It is built when an
+ * indicator first opens it: every own message row has an indicator, but
+ * few are ever opened, and the popover is most of the indicator's widgets
+ * (nostrc-boq9.5). */
+#define GH_TYPE_DELIVERY_DETAILS (gh_delivery_details_get_type())
+G_DECLARE_FINAL_TYPE(GhDeliveryDetails, gh_delivery_details, GH, DELIVERY_DETAILS, GtkPopover)
+
+struct _GhDeliveryDetails {
+  GtkPopover parent_instance;
+  GtkLabel *details_title;
+  GtkLabel *details_summary;
+  GtkLabel *details_retry;
+  GtkListBox *relay_list;
+  GtkLabel *details_unavailable;
+  GtkLabel *details_note;
+};
+
+G_DEFINE_FINAL_TYPE(GhDeliveryDetails, gh_delivery_details, GTK_TYPE_POPOVER)
+
+static void update_header(GtkListBoxRow *row, GtkListBoxRow *before, gpointer data);
+
+static void
+gh_delivery_details_class_init(GhDeliveryDetailsClass *klass)
+{
+  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
+  gtk_widget_class_set_template_from_resource(widget_class,
+                                              "/org/nostr/Groundhog/ui/gh-delivery-details.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, details_title);
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, details_summary);
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, details_retry);
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, relay_list);
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, details_unavailable);
+  gtk_widget_class_bind_template_child(widget_class, GhDeliveryDetails, details_note);
+  gtk_widget_class_bind_template_child_full(widget_class, "details_honesty", FALSE, 0);
+}
+
+static void
+gh_delivery_details_init(GhDeliveryDetails *self)
+{
+  gtk_widget_init_template(GTK_WIDGET(self));
+  gtk_list_box_set_header_func(self->relay_list, update_header, NULL, NULL);
+}
+
 /* ---- GhDeliveryIndicator ------------------------------------------------------ */
 
 struct _GhDeliveryIndicator {
@@ -55,13 +100,7 @@ struct _GhDeliveryIndicator {
   GtkMenuButton *button;
   GtkImage *status_icon;
   GtkLabel *status_label;
-  GtkPopover *details;
-  GtkLabel *details_title;
-  GtkLabel *details_summary;
-  GtkLabel *details_retry;
-  GtkListBox *relay_list;
-  GtkLabel *details_unavailable;
-  GtkLabel *details_note;
+  GhDeliveryDetails *details; /* owned by button; NULL until first opened */
   GhMessage *message;
   GhMessageStatus status;
 };
@@ -116,9 +155,9 @@ relay_host(const gchar *url)
 }
 
 static void
-clear_relays(GhDeliveryIndicator *self)
+clear_relays(GhDeliveryDetails *details)
 {
-  gtk_list_box_remove_all(self->relay_list);
+  gtk_list_box_remove_all(details->relay_list);
 }
 
 /* A group header above the first relay of each receiver. */
@@ -162,9 +201,9 @@ group_title(const gchar *recipient, guint accepted, guint total)
 }
 
 static void
-fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
+fill_relays(GhDeliveryDetails *details, GhDeliveryReport *report)
 {
-  clear_relays(self);
+  clear_relays(details);
   /* Per receiver ("" is the self-copy): accepted and total relays. */
   g_autoptr(GHashTable) accepted = g_hash_table_new(g_str_hash, g_str_equal);
   g_autoptr(GHashTable) totals = g_hash_table_new(g_str_hash, g_str_equal);
@@ -200,7 +239,7 @@ fill_relays(GhDeliveryIndicator *self, GhDeliveryReport *report)
                                        GPOINTER_TO_UINT(g_hash_table_lookup(accepted, key)),
                                        GPOINTER_TO_UINT(g_hash_table_lookup(totals, key))),
                            g_free);
-    gtk_list_box_append(self->relay_list, row);
+    gtk_list_box_append(details->relay_list, row);
   }
 }
 
@@ -216,26 +255,27 @@ static void
 fill_details(GhDeliveryIndicator *self)
 {
   GhMessageStatus status = self->status;
-  if (status == GH_MESSAGE_STATUS_NONE)
+  GhDeliveryDetails *details = self->details;
+  if (status == GH_MESSAGE_STATUS_NONE || !details)
     return;
   GtkWidget *view = gtk_widget_get_ancestor(GTK_WIDGET(self), GH_TYPE_CONVERSATION_VIEW);
   g_autoptr(GhDeliveryReport) report =
     view && self->message
       ? gh_conversation_view_dup_delivery_report(GH_CONVERSATION_VIEW(view), self->message)
       : NULL;
-  gtk_label_set_text(self->details_title, gh_message_status_get_label(status));
-  gtk_label_set_text(self->details_summary,
+  gtk_label_set_text(details->details_title, gh_message_status_get_label(status));
+  gtk_label_set_text(details->details_summary,
                      report && report->detail && *report->detail
                        ? report->detail
                        : gh_message_status_get_accessible_description_for(
                            status, n_recipients(self->message)));
   gboolean relays = report && report->targets->len > 0;
   if (relays)
-    fill_relays(self, report);
+    fill_relays(details, report);
   else
-    clear_relays(self);
-  gtk_widget_set_visible(GTK_WIDGET(self->relay_list), relays);
-  gtk_widget_set_visible(GTK_WIDGET(self->details_unavailable), !relays);
+    clear_relays(details);
+  gtk_widget_set_visible(GTK_WIDGET(details->relay_list), relays);
+  gtk_widget_set_visible(GTK_WIDGET(details->details_unavailable), !relays);
 
   gboolean retry = report && report->next_attempt_at > 0;
   if (retry) {
@@ -243,14 +283,14 @@ fill_details(GhDeliveryIndicator *self)
     g_autofree gchar *when =
       gh_conversation_row_format_message_time(report->next_attempt_at, now);
     g_autofree gchar *text = g_strdup_printf(_("Groundhog will try again at %s."), when);
-    gtk_label_set_text(self->details_retry, text);
+    gtk_label_set_text(details->details_retry, text);
   }
-  gtk_widget_set_visible(GTK_WIDGET(self->details_retry), retry);
+  gtk_widget_set_visible(GTK_WIDGET(details->details_retry), retry);
 
   gboolean note = report && report->self_copy_missing;
   if (note)
-    gtk_label_set_text(self->details_note, gh_message_status_get_self_copy_note());
-  gtk_widget_set_visible(GTK_WIDGET(self->details_note), note);
+    gtk_label_set_text(details->details_note, gh_message_status_get_self_copy_note());
+  gtk_widget_set_visible(GTK_WIDGET(details->details_note), note);
 }
 
 static void
@@ -277,10 +317,10 @@ update(GhDeliveryIndicator *self)
                                    label, GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
                                    gh_message_status_get_accessible_description_for(
                                      status, n_recipients(self->message)), -1);
-  } else {
-    gtk_popover_popdown(self->details);
+  } else if (self->details) {
+    gtk_popover_popdown(GTK_POPOVER(self->details));
   }
-  if (shown && gtk_widget_get_visible(GTK_WIDGET(self->details)))
+  if (shown && self->details && gtk_widget_get_visible(GTK_WIDGET(self->details)))
     fill_details(self);
   if (changed)
     g_object_notify_by_pspec(G_OBJECT(self), props[PROP_STATUS]);
@@ -290,6 +330,18 @@ static void
 on_details_show(GhDeliveryIndicator *self)
 {
   fill_details(self);
+}
+
+/* GtkMenuButton calls this before every popup; the popover is made once. */
+static void
+create_details(GtkMenuButton *button, gpointer data)
+{
+  GhDeliveryIndicator *self = data;
+  if (self->details)
+    return;
+  self->details = g_object_new(GH_TYPE_DELIVERY_DETAILS, NULL);
+  g_signal_connect_swapped(self->details, "show", G_CALLBACK(on_details_show), self);
+  gtk_menu_button_set_popover(button, GTK_WIDGET(self->details));
 }
 
 void
@@ -375,6 +427,7 @@ gh_delivery_indicator_dispose(GObject *object)
   if (self->message)
     g_signal_handlers_disconnect_by_data(self->message, self);
   g_clear_object(&self->message);
+  self->details = NULL;
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_DELIVERY_INDICATOR);
   G_OBJECT_CLASS(gh_delivery_indicator_parent_class)->dispose(object);
 }
@@ -395,18 +448,10 @@ gh_delivery_indicator_class_init(GhDeliveryIndicatorClass *klass)
   g_object_class_install_properties(object_class, N_PROPS, props);
 
   gtk_widget_class_set_template_from_resource(widget_class,
-                                              "/org/nostr/Groundhog/ui/gh-delivery-details.ui");
+                                              "/org/nostr/Groundhog/ui/gh-delivery-indicator.ui");
   gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, button);
   gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, status_icon);
   gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, status_label);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details_title);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details_summary);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details_retry);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, relay_list);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details_unavailable);
-  gtk_widget_class_bind_template_child(widget_class, GhDeliveryIndicator, details_note);
-  gtk_widget_class_bind_template_child_full(widget_class, "details_honesty", FALSE, 0);
   gtk_widget_class_set_css_name(widget_class, "groundhog-delivery");
 }
 
@@ -415,6 +460,5 @@ gh_delivery_indicator_init(GhDeliveryIndicator *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->status = GH_MESSAGE_STATUS_NONE;
-  gtk_list_box_set_header_func(self->relay_list, update_header, NULL, NULL);
-  g_signal_connect_swapped(self->details, "show", G_CALLBACK(on_details_show), self);
+  gtk_menu_button_set_create_popup_func(self->button, create_details, self, NULL);
 }

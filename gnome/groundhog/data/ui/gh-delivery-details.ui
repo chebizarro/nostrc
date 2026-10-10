@@ -6,143 +6,107 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GhDeliveryIndicator" parent="GtkWidget">
-    <property name="layout-manager">
-      <object class="GtkBinLayout"></object>
-    </property>
-    <property name="visible">false</property>
-    <child>
-      <object class="GtkMenuButton" id="button">
-        <property name="has-frame">false</property>
-        <property name="direction">0</property>
-        <style>
-          <class name="groundhog-delivery-button"/>
-        </style>
+  <template class="GhDeliveryDetails" parent="GtkPopover">
+    <style>
+      <class name="groundhog-delivery-details"/>
+    </style>
+    <property name="child">
+      <object class="GtkScrolledWindow">
+        <property name="hscrollbar-policy">2</property>
+        <property name="propagate-natural-height">true</property>
+        <property name="max-content-height">420</property>
         <property name="child">
           <object class="GtkBox">
-            <property name="spacing">4</property>
+            <property name="orientation">1</property>
+            <property name="spacing">12</property>
+            <property name="margin-top">6</property>
+            <property name="margin-bottom">6</property>
+            <property name="margin-start">6</property>
+            <property name="margin-end">6</property>
+            <property name="width-request">280</property>
             <child>
-              <object class="GtkImage" id="status_icon">
-                <property name="pixel-size">12</property>
-                <property name="accessible-role">43</property>
+              <object class="GtkBox">
+                <property name="orientation">1</property>
+                <property name="spacing">4</property>
+                <child>
+                  <object class="GtkLabel" id="details_title">
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <style>
+                      <class name="heading"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="details_summary">
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="max-width-chars">36</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="details_retry">
+                    <property name="visible">false</property>
+                    <property name="xalign">0</property>
+                    <property name="wrap">true</property>
+                    <property name="max-width-chars">36</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
               </object>
             </child>
             <child>
-              <object class="GtkLabel" id="status_label">
+              <object class="GtkListBox" id="relay_list">
                 <property name="visible">false</property>
+                <property name="selection-mode">0</property>
+                <style>
+                  <class name="boxed-list"/>
+                </style>
+                <accessibility>
+                  <property name="label" translatable="yes">Message relays</property>
+                </accessibility>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="details_unavailable">
+                <property name="visible">false</property>
+                <property name="label" translatable="yes">Relay details aren't available for this message.</property>
+                <property name="xalign">0</property>
+                <property name="wrap">true</property>
+                <property name="max-width-chars">36</property>
+                <style>
+                  <class name="dim-label"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="details_note">
+                <property name="visible">false</property>
+                <property name="xalign">0</property>
+                <property name="wrap">true</property>
+                <property name="max-width-chars">36</property>
+                <style>
+                  <class name="warning"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="details_honesty">
+                <property name="label" translatable="yes">A relay accepting a message means it stored it. Groundhog can't tell when anyone receives or reads it.</property>
+                <property name="xalign">0</property>
+                <property name="wrap">true</property>
+                <property name="max-width-chars">36</property>
                 <style>
                   <class name="caption"/>
+                  <class name="dim-label"/>
                 </style>
               </object>
             </child>
           </object>
         </property>
-        <property name="popover">
-          <object class="GtkPopover" id="details">
-            <style>
-              <class name="groundhog-delivery-details"/>
-            </style>
-            <property name="child">
-              <object class="GtkScrolledWindow">
-                <property name="hscrollbar-policy">2</property>
-                <property name="propagate-natural-height">true</property>
-                <property name="max-content-height">420</property>
-                <property name="child">
-                  <object class="GtkBox">
-                    <property name="orientation">1</property>
-                    <property name="spacing">12</property>
-                    <property name="margin-top">6</property>
-                    <property name="margin-bottom">6</property>
-                    <property name="margin-start">6</property>
-                    <property name="margin-end">6</property>
-                    <property name="width-request">280</property>
-                    <child>
-                      <object class="GtkBox">
-                        <property name="orientation">1</property>
-                        <property name="spacing">4</property>
-                        <child>
-                          <object class="GtkLabel" id="details_title">
-                            <property name="xalign">0</property>
-                            <property name="wrap">true</property>
-                            <style>
-                              <class name="heading"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="details_summary">
-                            <property name="xalign">0</property>
-                            <property name="wrap">true</property>
-                            <property name="max-width-chars">36</property>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="details_retry">
-                            <property name="visible">false</property>
-                            <property name="xalign">0</property>
-                            <property name="wrap">true</property>
-                            <property name="max-width-chars">36</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
-                          </object>
-                        </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkListBox" id="relay_list">
-                        <property name="visible">false</property>
-                        <property name="selection-mode">0</property>
-                        <style>
-                          <class name="boxed-list"/>
-                        </style>
-                        <accessibility>
-                          <property name="label" translatable="yes">Message relays</property>
-                        </accessibility>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="details_unavailable">
-                        <property name="visible">false</property>
-                        <property name="label" translatable="yes">Relay details aren't available for this message.</property>
-                        <property name="xalign">0</property>
-                        <property name="wrap">true</property>
-                        <property name="max-width-chars">36</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="details_note">
-                        <property name="visible">false</property>
-                        <property name="xalign">0</property>
-                        <property name="wrap">true</property>
-                        <property name="max-width-chars">36</property>
-                        <style>
-                          <class name="warning"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="details_honesty">
-                        <property name="label" translatable="yes">A relay accepting a message means it stored it. Groundhog can't tell when anyone receives or reads it.</property>
-                        <property name="xalign">0</property>
-                        <property name="wrap">true</property>
-                        <property name="max-width-chars">36</property>
-                        <style>
-                          <class name="caption"/>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                  </object>
-                </property>
-              </object>
-            </property>
-          </object>
-        </property>
       </object>
-    </child>
+    </property>
   </template>
 </interface>

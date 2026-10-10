@@ -1,0 +1,36 @@
+using Gtk 4.0;
+
+// The delivery indicator of one of your own messages (charter §3.6, §7.4,
+// §7.6), driven by gh-delivery-indicator.c: a flat button with the status
+// icon (and the short label unless the message is simply "Sent"). It opens
+// the details (gh-delivery-details.blp), which are created on first use.
+template $GhDeliveryIndicator: Widget {
+  layout-manager: BinLayout {};
+  visible: false;
+
+  MenuButton button {
+    has-frame: false;
+    direction: up;
+
+    styles [
+      "groundhog-delivery-button",
+    ]
+
+    child: Box {
+      spacing: 4;
+
+      Image status_icon {
+        pixel-size: 12;
+        accessible-role: presentation;
+      }
+
+      Label status_label {
+        visible: false;
+
+        styles [
+          "caption",
+        ]
+      }
+    };
+  }
+}

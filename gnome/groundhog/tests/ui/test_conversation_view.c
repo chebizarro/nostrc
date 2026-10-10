@@ -227,10 +227,20 @@ view_child(GhConversationView *view, const char *name)
   return template_child(view, GH_TYPE_CONVERSATION_VIEW, name);
 }
 
+/* The details popover exists only once it has been opened (nostrc-boq9.5). */
 static gpointer
 indicator_child(GhDeliveryIndicator *indicator, const char *name)
 {
-  return template_child(indicator, GH_TYPE_DELIVERY_INDICATOR, name);
+  GObject *child = gtk_widget_get_template_child(GTK_WIDGET(indicator),
+                                                 GH_TYPE_DELIVERY_INDICATOR, name);
+  if (child)
+    return child;
+  GtkMenuButton *button = template_child(indicator, GH_TYPE_DELIVERY_INDICATOR, "button");
+  GtkPopover *details = gtk_menu_button_get_popover(button);
+  g_assert_nonnull(details);
+  if (g_str_equal(name, "details"))
+    return details;
+  return template_child(details, G_OBJECT_TYPE(details), name);
 }
 
 /* A click (GtkWidget::activate on a button waits for its pressed look). */
@@ -852,8 +862,11 @@ test_delivery_indicator(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_has_css_class(indicator_child(indicator, "status_label"), "error"));
 
   /* Details with nothing known: said so, plus what acceptance means. */
-  GtkWidget *details = indicator_child(indicator, "details");
+  /* No row builds its details popover until they are opened. */
+  g_assert_null(gtk_menu_button_get_popover(indicator_child(indicator, "button")));
+  g_assert_null(gtk_menu_button_get_popover(indicator_child(their_indicator, "button")));
   gh_delivery_indicator_show_details(indicator);
+  GtkWidget *details = indicator_child(indicator, "details");
   spin_until(popover_mapped, details);
   g_assert_cmpstr(text_of(indicator_child(indicator, "details_title")), ==, "Not sent");
   g_assert_cmpstr(text_of(indicator_child(indicator, "details_summary")), ==,
@@ -1111,6 +1124,15 @@ test_reference_card(Fixture *f, gconstpointer data)
 
   GhMessageRow *repost_row = row_for(f->view, repost_message);
   g_assert_true(shown(row_child(repost_row, "reference_box")));
+  /* nostrc-gofet.10: the icon-only and public actions have accessible text. */
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(repost_row, "reference_copy_button")),
+                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy Nostr address");
+  for (guint i = 0; i < 2; i++) {
+    const char *name = i ? "quote_reference_button" : "repost_reference_button";
+    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(repost_row, name)),
+      GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+      "Opens a preview before anything is published publicly");
+  }
   g_assert_nonnull(strstr(text_of(card_part(repost_row, "reference-title")), "Reposted Nostr note"));
   /* The verified embedded original resolves without any resolver. */
   const gchar *verified = NULL;
@@ -3721,6 +3743,13 @@ test_recycled_optional_subtrees(void)
   g_assert_null(row_child(row, "reaction_bar"));
   g_assert_null(row_child(row, "preview_button"));
   g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, "plain A");
+  /* nostrc-boq9.5: opening a conversation builds a screenful of rows, so a
+   * plain row stays small. The reference card and the delivery details are
+   * made only when needed (they were 37 of a plain row's 71 widgets). */
+  g_assert_null(row_child(row, "reference_box"));
+  g_assert_null(gtk_menu_button_get_popover(
+    template_child(row_child(row, "delivery"), GH_TYPE_DELIVERY_INDICATOR, "button")));
+  g_assert_cmpuint(plain_widgets, <=, 36);
 
   for (guint pass = 0; pass < 3; pass++) {
     /* Forward/backward recycling: A→reply→A→file→A→poll→A. */
@@ -3833,16 +3862,11 @@ test_message_action_accessibility(void)
   gh_message_row_set_message(row, message);
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "copy_button")),
                                       GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy message");
-  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "reference_copy_button")),
-                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy Nostr address");
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "react_button")),
                                       GTK_ACCESSIBLE_PROPERTY_LABEL, "Add Reaction");
-  for (guint i = 0; i < 2; i++) {
-    const char *name = i ? "quote_reference_button" : "repost_reference_button";
-    gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, name)),
-      GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-      "Opens a preview before anything is published publicly");
-  }
+  /* The reference actions' names are checked with test_reference_card: a
+   * plain message's row never builds them (nostrc-boq9.5). */
+  g_assert_null(row_child(row, "reference_box"));
   GtkWidget *avatar = row_child(row, "avatar");
   g_assert_true(gtk_test_accessible_has_property(GTK_ACCESSIBLE(avatar),
                                                  GTK_ACCESSIBLE_PROPERTY_LABEL));

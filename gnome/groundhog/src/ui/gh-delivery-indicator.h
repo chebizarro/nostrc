@@ -38,7 +38,7 @@ void gh_delivery_report_add(GhDeliveryReport *report, const gchar *recipient,
 void gh_delivery_report_free(GhDeliveryReport *report);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhDeliveryReport, gh_delivery_report_free)
 
-/* The delivery indicator of an own message (data/ui/gh-delivery-details.blp,
+/* The delivery indicator of an own message (data/ui/gh-delivery-indicator.blp,
  * charter §7.4, §7.6): hidden for incoming messages and
  * GH_MESSAGE_STATUS_NONE; otherwise a flat button with the status icon and,
  * unless the message is simply "Sent", its short label (gh-message-status.h).
