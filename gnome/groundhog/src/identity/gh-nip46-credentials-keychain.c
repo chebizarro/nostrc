@@ -97,7 +97,8 @@ keychain_locked(KeychainBackend *self, gboolean *locked, GError **error)
 
 static GPtrArray *
 kc_search(GhNip46CredentialBackend *backend, const gchar *account,
-          gboolean interactive, GCancellable *cancellable, GError **error)
+          gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
+          GError **error)
 {
   (void)cancellable;
   KeychainBackend *self = (KeychainBackend *)backend;
@@ -129,6 +130,13 @@ kc_search(GhNip46CredentialBackend *backend, const gchar *account,
     item->version = utf8(CFDictionaryGetValue(raw, kSecAttrComment));
     item->label = utf8(CFDictionaryGetValue(raw, kSecAttrLabel));
     item->attributes_valid = TRUE;
+    if (!load_secrets) {
+      /* Attributes only: never ask for kSecReturnData while listing. An
+       * unsigned or rebuilt binary fails the item's ACL, and a data request
+       * then blocks on a macOS "allow access" prompt. */
+      g_ptr_array_add(items, item);
+      continue;
+    }
     if (locked) {
       item->locked = TRUE;
       g_ptr_array_add(items, item);

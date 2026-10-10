@@ -75,14 +75,18 @@ check_empty_default(SecretService *service, GCancellable *cancellable, GError **
 
 static GPtrArray *
 ss_search(GhNip46CredentialBackend *backend, const gchar *account,
-          gboolean interactive, GCancellable *cancellable, GError **error)
+          gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
+          GError **error)
 {
   (void)backend;
   SecretService *service = open_service(cancellable, error);
   if (!service) return NULL;
   GHashTable *attrs = attributes(account, FALSE);
-  SecretSearchFlags flags = SECRET_SEARCH_ALL | SECRET_SEARCH_LOAD_SECRETS;
-  if (interactive) flags |= SECRET_SEARCH_UNLOCK;
+  /* Listing never loads secrets or unlocks: a locked keyring would otherwise
+   * wait on an unlock prompt and stall account discovery. */
+  SecretSearchFlags flags = SECRET_SEARCH_ALL;
+  if (load_secrets) flags |= SECRET_SEARCH_LOAD_SECRETS;
+  if (interactive && load_secrets) flags |= SECRET_SEARCH_UNLOCK;
   GError *local = NULL;
   GList *found = secret_service_search_sync(service, &schema, attrs, flags, cancellable, &local);
   g_hash_table_unref(attrs);
@@ -91,7 +95,7 @@ ss_search(GhNip46CredentialBackend *backend, const gchar *account,
     g_object_unref(service);
     return NULL;
   }
-  if (!found && !check_empty_default(service, cancellable, error)) {
+  if (!found && load_secrets && !check_empty_default(service, cancellable, error)) {
     g_object_unref(service);
     return NULL;
   }
@@ -113,7 +117,7 @@ ss_search(GhNip46CredentialBackend *backend, const gchar *account,
       if (!g_str_equal(name, "account") && !g_str_equal(name, "version") &&
           !g_str_equal(name, "xdg:schema")) item->attributes_valid = FALSE;
     }
-    if (!item->locked) {
+    if (load_secrets && !item->locked) {
       SecretValue *value = secret_item_get_secret(raw);
       if (value) {
         gsize len = 0;

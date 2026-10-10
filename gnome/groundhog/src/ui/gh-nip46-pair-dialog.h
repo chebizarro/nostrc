@@ -41,5 +41,9 @@ GhNip46PairDialog *gh_nip46_pair_dialog_new(const GhNip46PairConfig *config);
 /* For UI tests: never returns the sensitive URI or the transport secret. */
 gboolean gh_nip46_pair_dialog_qr_is_visible(GhNip46PairDialog *self);
 
+/* Test seams: shorten the 15 s selection deadline; read the status text. */
+void gh_nip46_pair_dialog_set_select_timeout_for_test(GhNip46PairDialog *self, guint ms);
+const gchar *gh_nip46_pair_dialog_get_status_for_test(GhNip46PairDialog *self);
+
 G_END_DECLS
 #endif

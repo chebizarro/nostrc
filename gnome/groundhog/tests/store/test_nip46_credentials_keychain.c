@@ -221,6 +221,49 @@ test_newer_and_locked(void)
   clear(&found);
   g_object_unref(store);
 }
+/* nostrc-p15n5.3: an item whose ACL trusts no application (as an unsigned or
+ * rebuilt binary sees its own items) makes any data read raise a macOS
+ * "allow access" prompt. Listing must only read attributes, so it returns at
+ * once without a prompt. A regression would block here until ctest's timeout. */
+static void
+test_list_without_secret_access(void)
+{
+  GhNip46CredentialStore *store = gh_nip46_credential_store_new_keychain(keychain);
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+  CFArrayRef nobody = CFArrayCreate(NULL, NULL, 0, &kCFTypeArrayCallBacks);
+  SecAccessRef access = NULL;
+  g_assert_cmpint(SecAccessCreate(CFSTR("Groundhog remote signer"), nobody, &access), ==, errSecSuccess);
+  CFRelease(nobody);
+  CFMutableDictionaryRef add = CFDictionaryCreateMutable(NULL, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef acct = CFStringCreateWithCString(NULL, account, kCFStringEncodingUTF8);
+  CFDictionarySetValue(add, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(add, kSecAttrService, CFSTR("org.nostr.Groundhog.Nip46Credential"));
+  CFDictionarySetValue(add, kSecAttrAccount, acct);
+  CFDictionarySetValue(add, kSecAttrComment, CFSTR("1"));
+  CFDictionarySetValue(add, kSecAttrLabel, CFSTR("Groundhog remote signer"));
+  CFDictionarySetValue(add, kSecAttrAccess, access);
+  CFDataRef value = CFDataCreate(NULL, (const UInt8 *)"{}", 2);
+  CFDictionarySetValue(add, kSecValueData, value);
+  CFDictionarySetValue(add, kSecUseKeychain, keychain);
+#pragma clang diagnostic pop
+  g_assert_cmpint(SecItemAdd(add, NULL), ==, errSecSuccess);
+  CFRelease(value); CFRelease(acct); CFRelease(add); CFRelease(access);
+  gint64 started = g_get_monotonic_time();
+  Result listed = list(store);
+  g_assert_no_error(listed.error);
+  g_assert_cmpuint(listed.list->len, ==, 1);
+  g_assert_cmpint(((GhIdentityInfo *)g_ptr_array_index(listed.list, 0))->backend, ==,
+                  GH_SIGNER_BACKEND_NIP46);
+  g_assert_cmpint(g_get_monotonic_time() - started, <, 5 * G_USEC_PER_SEC);
+  clear(&listed);
+  CFMutableDictionaryRef q = raw_query();
+  g_assert_cmpint(SecItemDelete(q), ==, errSecSuccess);
+  CFRelease(q);
+  g_object_unref(store);
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 static gboolean
@@ -249,6 +292,8 @@ main(int argc, char **argv)
   if (!setup_keychain()) { g_print("SKIP: temporary Keychain unavailable\n"); return 77; }
   loop = g_main_loop_new(NULL, FALSE);
   g_test_add_func("/nip46-credentials/keychain", test_keychain);
+  g_test_add_func("/nip46-credentials/list-without-secret-access",
+                  test_list_without_secret_access);
   g_test_add_func("/nip46-credentials/zz-newer-and-locked", test_newer_and_locked);
   int result = g_test_run();
   g_main_loop_unref(loop);

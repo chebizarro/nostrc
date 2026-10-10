@@ -76,6 +76,16 @@ GhNip46CredentialStore *gh_account_controller_get_credentials(GhAccountControlle
 void gh_account_controller_set_session_factory_for_test(GhAccountController *self,
                                            GhAccountSessionFactory factory,
                                            gpointer user_data);
+/* A credential read can wait on a Keychain access or keyring unlock prompt.
+ * After wait_ms the remote state becomes LOCKED with a "waiting" description;
+ * after timeout_ms the read is abandoned and the state stays LOCKED. Tests
+ * shorten these; production defaults are 1.5 s and 120 s. */
+void gh_account_controller_set_credential_timeouts_for_test(GhAccountController *self,
+                                           guint wait_ms, guint timeout_ms);
+/* Why a LOCKED remote signer is locked, for UI: NULL unless LOCKED. */
+const gchar *gh_account_controller_describe_remote_lock(GhAccountController *self);
+/* TRUE while either identity source of the latest refresh is still pending. */
+gboolean gh_account_controller_is_listing(GhAccountController *self);
 /* Re-lists identities; a result from an older listing is discarded. */
 void gh_account_controller_refresh(GhAccountController *self);
 gboolean gh_account_controller_select(GhAccountController *self,

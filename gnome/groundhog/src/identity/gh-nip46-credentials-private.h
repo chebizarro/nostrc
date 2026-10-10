@@ -23,9 +23,14 @@ static inline void gh_nip46_credential_item_free(GhNip46CredentialItem *item)
 }
 
 typedef struct _GhNip46CredentialBackend GhNip46CredentialBackend;
+/* search() with load_secrets FALSE must only read item attributes: it may not
+ * request secret data or unlock anything, so it can never raise a Keychain
+ * access prompt or a keyring unlock prompt (nostrc-p15n5.3). Listing accounts
+ * uses it that way; only lookup/store/delete load secrets. */
 struct _GhNip46CredentialBackend {
   GPtrArray *(*search)(GhNip46CredentialBackend *self, const gchar *account,
-                       gboolean interactive, GCancellable *cancellable, GError **error);
+                       gboolean interactive, gboolean load_secrets,
+                       GCancellable *cancellable, GError **error);
   gboolean (*write)(GhNip46CredentialBackend *self, const gchar *account,
                     GBytes *secret, gboolean interactive, GError **error);
   gboolean (*remove)(GhNip46CredentialBackend *self, const gchar *account,
@@ -34,6 +39,8 @@ struct _GhNip46CredentialBackend {
 };
 
 GhNip46CredentialBackend *gh_nip46_credentials_secret_service_new(void);
+/* Test seam: a store over an injected backend (takes ownership). */
+GhNip46CredentialStore *gh_nip46_credential_store_new_with_backend(GhNip46CredentialBackend *backend);
 #ifdef __APPLE__
 #include <Security/Security.h>
 GhNip46CredentialBackend *gh_nip46_credentials_keychain_new(SecKeychainRef keychain);

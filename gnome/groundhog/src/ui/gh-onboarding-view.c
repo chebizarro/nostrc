@@ -564,13 +564,16 @@ update_signer_status(GhOnboardingView *self)
   if (gh_account_controller_get_active_backend(self->config.accounts) ==
       GH_SIGNER_BACKEND_NIP46) {
     GhRemoteSignerState state = gh_account_controller_get_remote_state(self->config.accounts);
+    const gchar *lock = gh_account_controller_describe_remote_lock(self->config.accounts);
     title = state == GH_REMOTE_SIGNER_READY ? _("Remote signer connected") :
-            state == GH_REMOTE_SIGNER_LOCKED ? _("Unlock your keyring") :
+            state == GH_REMOTE_SIGNER_LOCKED ? (lock ? _(lock) : _("Unlock your keyring")) :
             state == GH_REMOTE_SIGNER_OFFLINE ? _("Remote signer offline") :
             state == GH_REMOTE_SIGNER_ERROR ? _("Remote signer needs attention") :
             _("Connecting to your remote signer…");
     subtitle = state == GH_REMOTE_SIGNER_READY ?
       _("You can test its permissions below. Your phone may ask for approval.") :
+      state == GH_REMOTE_SIGNER_LOCKED ?
+      _("Groundhog needs its saved remote signer credential. Account listing is not affected.") :
       _("Open your signer or check its pairing relays, then try again.");
     icon = state == GH_REMOTE_SIGNER_READY ? "emblem-ok-symbolic" :
                                                 "dialog-warning-symbolic";

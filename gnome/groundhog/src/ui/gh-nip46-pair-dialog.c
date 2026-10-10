@@ -20,7 +20,8 @@ typedef enum { PAIR_EDITING, PAIR_WAITING, PAIR_CONFIRMING, PAIR_SAVING,
 /* A keyring that waits on an unlock prompt nobody sees must not hold the
  * dialog forever; selection only waits for the controller's re-listing. */
 #define SAVE_TIMEOUT_SECONDS 60
-#define SELECT_TIMEOUT_SECONDS 15
+#define SELECT_TIMEOUT_MS 15000
+#define SELECT_WAIT_HINT_MS 3000
 
 struct _GhNip46PairDialog {
   AdwDialog parent_instance;
@@ -63,6 +64,8 @@ struct _GhNip46PairDialog {
   PairState state;
   gboolean closing;
   guint select_timeout;
+  guint select_hint;
+  guint select_timeout_ms;
   guint save_timeout;
   GCancellable *save_cancel; /* identifies the save in flight */
 };
@@ -285,16 +288,54 @@ npub_for_hex(const gchar *hex)
   return npub;
 }
 
+#ifdef __APPLE__
+#define WAITING_FOR_STORE N_("Waiting for Keychain access — allow Groundhog in the macOS prompt")
+#else
+#define WAITING_FOR_STORE N_("Unlock your keyring — Groundhog is waiting for it")
+#endif
+
+static void
+stop_selecting_timers(GhNip46PairDialog *self)
+{
+  g_clear_handle_id(&self->select_timeout, g_source_remove);
+  g_clear_handle_id(&self->select_hint, g_source_remove);
+}
+
+static void selection_changed(GhAccountController *accounts, gpointer data);
+
+static gboolean
+selection_hint(gpointer data)
+{
+  GhNip46PairDialog *self = data;
+  self->select_hint = 0;
+  if (!self->closing && self->state == PAIR_SELECTING &&
+      gh_account_controller_is_listing(self->accounts))
+    show_status(self, _(WAITING_FOR_STORE));
+  return G_SOURCE_REMOVE;
+}
+
 static gboolean
 selection_timed_out(gpointer data)
 {
   GhNip46PairDialog *self = data;
   self->select_timeout = 0;
-  g_debug("nip46-pair: selection timed out");
+  g_clear_handle_id(&self->select_hint, g_source_remove);
   if (!self->closing && self->state == PAIR_SELECTING) {
+    gboolean listing = gh_account_controller_is_listing(self->accounts);
+    g_message("nip46-pair: selecting %s timed out after %u ms (%s)",
+              self->pending_npub ? self->pending_npub : "?", self->select_timeout_ms,
+              listing ? "account listing still pending" : "account not listed");
     set_state(self, PAIR_COMPLETE);
-    show_status(self, _("Saved, but not selected."));
-    show_error(self, _("The signer was saved, but its account could not be selected. Refresh accounts in the switcher to try again."));
+    if (listing) {
+#ifdef __APPLE__
+      show_status(self, _("Saved, but the Keychain did not answer. Allow Groundhog in the macOS prompt, then choose the account in the switcher."));
+#else
+      show_status(self, _("Saved, but the keyring did not answer. Unlock your keyring, then choose the account in the switcher."));
+#endif
+    } else {
+      show_status(self, _("Saved, but the new account was not found. Refresh accounts in the switcher to select it."));
+    }
+    show_error(self, _("The signer was saved, but its account could not be selected yet."));
     gtk_button_set_label(self->cancel_button, _("Close"));
   }
   return G_SOURCE_REMOVE;
@@ -312,7 +353,7 @@ selection_changed(GhAccountController *accounts, gpointer data)
   if (gh_account_controller_select_backend(accounts, GH_SIGNER_BACKEND_NIP46,
                                            self->pending_npub, &error)) {
     g_debug("nip46-pair: selected %s", self->pending_npub);
-    g_clear_handle_id(&self->select_timeout, g_source_remove);
+    stop_selecting_timers(self);
     const gchar *name = self->display_name && self->name_source && self->user_pubkey ?
       self->display_name(self->name_source, self->user_pubkey) : NULL;
     g_autofree gchar *short_npub = g_strdup_printf("%.16s…", self->pending_npub);
@@ -396,9 +437,13 @@ stored(GObject *source, GAsyncResult *result, gpointer data)
       set_state(self, PAIR_SELECTING);
       show_status(self, _("Saved. Adding your account…"));
       g_debug("nip46-pair: refreshing accounts to select %s", self->pending_npub);
-      self->select_timeout = g_timeout_add_seconds(SELECT_TIMEOUT_SECONDS,
-                                                   selection_timed_out, self);
+      self->select_timeout = g_timeout_add(self->select_timeout_ms,
+                                           selection_timed_out, self);
+      self->select_hint = g_timeout_add(MIN(SELECT_WAIT_HINT_MS, self->select_timeout_ms / 2),
+                                        selection_hint, self);
       gh_account_controller_refresh(self->accounts);
+      /* Already listed (e.g. a replacement credential): select now. */
+      selection_changed(self->accounts, self);
     }
   }
   g_object_unref(call->cancel);
@@ -744,7 +789,7 @@ on_closed(AdwDialog *dialog, gpointer data)
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(dialog);
   self->closing = TRUE;
   g_debug("nip46-pair: dialog closed in state %s", state_name(self->state));
-  g_clear_handle_id(&self->select_timeout, g_source_remove);
+  stop_selecting_timers(self);
   g_clear_handle_id(&self->save_timeout, g_source_remove);
   if (self->save_cancel) g_cancellable_cancel(self->save_cancel);
   g_clear_object(&self->save_cancel);
@@ -758,7 +803,7 @@ unroot(GtkWidget *widget)
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(widget);
   if (self->state != PAIR_SAVING) {
     self->closing = TRUE;
-    g_clear_handle_id(&self->select_timeout, g_source_remove);
+    stop_selecting_timers(self);
     stop_attempt(self);
   }
   GTK_WIDGET_CLASS(gh_nip46_pair_dialog_parent_class)->unroot(widget);
@@ -769,7 +814,7 @@ dispose(GObject *object)
 {
   GhNip46PairDialog *self = GH_NIP46_PAIR_DIALOG(object);
   self->closing = TRUE;
-  g_clear_handle_id(&self->select_timeout, g_source_remove);
+  stop_selecting_timers(self);
   g_clear_handle_id(&self->save_timeout, g_source_remove);
   g_clear_object(&self->save_cancel);
   stop_attempt(self);
@@ -807,6 +852,7 @@ gh_nip46_pair_dialog_init(GhNip46PairDialog *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   set_state(self, PAIR_EDITING);
+  self->select_timeout_ms = SELECT_TIMEOUT_MS;
   g_autofree gchar *joined = g_strjoinv(", ", (gchar **)amber_relays);
   gtk_editable_set_text(GTK_EDITABLE(self->relay_row), joined);
   gtk_widget_set_sensitive(GTK_WIDGET(self->copy_button), FALSE);
@@ -870,4 +916,18 @@ gh_nip46_pair_dialog_qr_is_visible(GhNip46PairDialog *self)
 {
   g_return_val_if_fail(GH_IS_NIP46_PAIR_DIALOG(self), FALSE);
   return gtk_widget_get_visible(GTK_WIDGET(self->qr_picture));
+}
+
+void
+gh_nip46_pair_dialog_set_select_timeout_for_test(GhNip46PairDialog *self, guint ms)
+{
+  g_return_if_fail(GH_IS_NIP46_PAIR_DIALOG(self));
+  self->select_timeout_ms = MAX(ms, 2);
+}
+
+const gchar *
+gh_nip46_pair_dialog_get_status_for_test(GhNip46PairDialog *self)
+{
+  g_return_val_if_fail(GH_IS_NIP46_PAIR_DIALOG(self), NULL);
+  return gtk_label_get_text(self->bunker_details);
 }

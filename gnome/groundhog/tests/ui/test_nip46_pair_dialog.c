@@ -1,12 +1,21 @@
 #include "gh-nip46-pair-dialog.h"
 #include "gh-nip46-auth-url.h"
 #include "gh-identity.h"
+#include "gh-nip46-credentials-private.h"
 #include "nostrc-test-gdk-frame.h"
 #include "gh-test-bunker.h"
 #include <nostr/nip46/nip46_uri.h>
 #include <nostr/nip19/nip19.h>
 
 void groundhog_register_resource(void);
+
+#ifdef __APPLE__
+#define WAITING_TEXT "Waiting for Keychain access"
+#define GAVE_UP_TEXT "not granted"
+#else
+#define WAITING_TEXT "Unlock your keyring"
+#define GAVE_UP_TEXT "did not answer"
+#endif
 
 typedef struct {
   GhRelayScope *scope;
@@ -634,6 +643,290 @@ test_hidden_auth_notification_revoked(void)
   g_assert_false(gh_nip46_auth_url_has_pending(prompt));
 }
 
+/* ---- nostrc-p15n5.3: Keychain/keyring prompts never stall pairing ---------- */
+
+/* Drives the bunker tab through connect and get_public_key, then confirms. */
+static void
+pair_via_bunker(GhNip46PairDialog *dialog, TestBunker *bunker, AdwAlertDialog **alert)
+{
+  GtkStack *stack = GTK_STACK(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "mode_stack"));
+  gtk_stack_set_visible_child_name(stack, "bunker");
+  drain();
+  AdwEntryRow *entry = ADW_ENTRY_ROW(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "bunker_row"));
+  GtkButton *button = GTK_BUTTON(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "connect_button"));
+  g_autofree gchar *uri = g_strdup_printf("bunker://%s?relay=wss%%3A%%2F%%2Fnos.lol",
+                                          bunker->signer_pubkey);
+  gtk_editable_set_text(GTK_EDITABLE(entry), uri);
+  g_signal_emit_by_name(button, "clicked");
+  bunker_eose(bunker);
+  wait_for_publishes(bunker, 1);
+  g_autofree gchar *connect_json = bunker_request_json(bunker);
+  NostrNip46Request request = {0};
+  g_assert_cmpint(nostr_nip46_request_parse(connect_json, &request), ==, 0);
+  bunker_accept(bunker);
+  char *reply = nostr_nip46_response_build_ok(request.id, "\"ack\"");
+  nostr_nip46_request_free(&request);
+  ui_bunker_reply(bunker, reply);
+  free(reply);
+  wait_for_publishes(bunker, 2);
+  g_autofree gchar *key_json = bunker_request_json(bunker);
+  g_assert_cmpint(nostr_nip46_request_parse(key_json, &request), ==, 0);
+  bunker_accept(bunker);
+  g_autofree gchar *quoted_user = g_strdup_printf("\"%s\"", bunker->user_pubkey);
+  reply = nostr_nip46_response_build_ok(request.id, quoted_user);
+  nostr_nip46_request_free(&request);
+  ui_bunker_reply(bunker, reply);
+  free(reply);
+  wait_for_confirmation(alert);
+  click_response(*alert, "Save Remote Signer");
+  g_clear_object(alert);
+}
+
+static GPtrArray *
+grotto_unavailable(gpointer data, GError **error)
+{
+  (void)data;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                      "The name org.nostr.Signer was not provided by any .service files");
+  return NULL;
+}
+
+/* An in-memory credential backend: listing sees attributes only; once a
+ * credential is written, reading its secret parks like an unanswered macOS
+ * "allow access" prompt until the test releases it. */
+typedef struct {
+  GhNip46CredentialBackend base;
+  GMutex lock;
+  GCond cond;
+  gchar *account;
+  GBytes *secret;
+  guint secret_reads;
+  gboolean release;
+} PromptBackend;
+
+static GPtrArray *
+prompt_search(GhNip46CredentialBackend *backend, const gchar *account, gboolean interactive,
+              gboolean load_secrets, GCancellable *cancellable, GError **error)
+{
+  (void)account; (void)interactive; (void)cancellable; (void)error;
+  PromptBackend *self = (PromptBackend *)backend;
+  GPtrArray *items = g_ptr_array_new_with_free_func((GDestroyNotify)gh_nip46_credential_item_free);
+  g_mutex_lock(&self->lock);
+  if (self->account) {
+    if (load_secrets) {
+      self->secret_reads++;
+      while (!self->release) g_cond_wait(&self->cond, &self->lock);
+    }
+    GhNip46CredentialItem *item = g_new0(GhNip46CredentialItem, 1);
+    item->account = g_strdup(self->account);
+    item->version = g_strdup(GH_NIP46_CREDENTIAL_VERSION);
+    item->label = g_strdup(GH_NIP46_CREDENTIAL_LABEL);
+    item->attributes_valid = TRUE;
+    if (load_secrets) item->secret = g_bytes_ref(self->secret);
+    g_ptr_array_add(items, item);
+  }
+  g_mutex_unlock(&self->lock);
+  return items;
+}
+
+static gboolean
+prompt_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret,
+             gboolean interactive, GError **error)
+{
+  (void)interactive; (void)error;
+  PromptBackend *self = (PromptBackend *)backend;
+  g_mutex_lock(&self->lock);
+  g_free(self->account);
+  self->account = g_strdup(account);
+  g_clear_pointer(&self->secret, g_bytes_unref);
+  self->secret = g_bytes_ref(secret);
+  g_mutex_unlock(&self->lock);
+  return TRUE;
+}
+
+static gboolean
+prompt_remove(GhNip46CredentialBackend *b, const gchar *a, gboolean i, GError **e)
+{
+  (void)b; (void)a; (void)i; (void)e;
+  return TRUE;
+}
+
+static void prompt_free(GhNip46CredentialBackend *b) { (void)b; /* static */ }
+
+static gboolean
+wait_until_lock_text(GhAccountController *accounts, const gchar *needle)
+{
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!expired) {
+    const gchar *text = gh_account_controller_describe_remote_lock(accounts);
+    if (gh_account_controller_get_remote_state(accounts) == GH_REMOTE_SIGNER_LOCKED &&
+        text && strstr(text, needle)) break;
+    g_main_context_iteration(NULL, TRUE);
+  }
+  if (!expired) g_source_remove(timer);
+  return !expired;
+}
+
+/* The owner run: Grotto is absent, the remote credential is saved to the
+ * Keychain, and reading it back waits on a prompt. Listing must still merge
+ * the remote identity, the dialog must select it, and the remote signer must
+ * report it is waiting, then give up, without hanging anything. */
+static void
+test_grotto_fails_remote_selected_lookup_waits(void)
+{
+  static PromptBackend backend;
+  backend = (PromptBackend){ .base = { prompt_search, prompt_write, prompt_remove, prompt_free } };
+  g_mutex_init(&backend.lock);
+  g_cond_init(&backend.cond);
+  GhNip46CredentialStore *store = gh_nip46_credential_store_new_with_backend(&backend.base);
+  TestBunker bunker;
+  bunker_init(&bunker, "1111111111111111111111111111111111111111111111111111111111111111");
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
+  g_autoptr(GhAccountController) accounts = gh_account_controller_new_full_with_credentials(
+    settings, NULL, grotto_unavailable, NULL, store);
+  gh_account_controller_set_credential_timeouts_for_test(accounts, 50, 400);
+  GhNip46PairConfig config = { .accounts = accounts, .settings = settings,
+    .scope_transport = &qr_scope_transport,
+    .publish_transport = &bunker_publish_transport, .transport_data = &bunker };
+  GtkWidget *window = gtk_window_new();
+  GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
+  g_object_ref_sink(dialog);
+  AdwAlertDialog *alert = NULL;
+  g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
+  adw_dialog_present(ADW_DIALOG(dialog), window);
+  pair_via_bunker(dialog, &bunker, &alert);
+
+  g_autofree gchar *npub = npub_for_pubkey(bunker.user_pubkey);
+  gboolean expired = FALSE;
+  guint timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!expired) {
+    g_autofree gchar *selected = g_settings_get_string(settings, "current-npub");
+    if (g_strcmp0(selected, npub) == 0) break;
+    g_main_context_iteration(NULL, TRUE);
+  }
+  g_assert_false(expired);
+  g_source_remove(timer);
+  g_assert_cmpint(gh_account_controller_get_state(accounts), ==, GH_ACCOUNT_STATE_ACTIVE);
+  g_assert_cmpint(gh_account_controller_get_active_backend(accounts), ==, GH_SIGNER_BACKEND_NIP46);
+
+  /* The secret read is parked: the account shows a waiting state, then gives
+   * up with a specific message. */
+  g_assert_true(wait_until_lock_text(accounts, WAITING_TEXT));
+  g_autofree gchar *limits = gh_account_controller_describe_limits(accounts, TRUE);
+  g_assert_nonnull(strstr(limits, "Read-only: "));
+  g_assert_true(wait_until_lock_text(accounts, GAVE_UP_TEXT));
+  g_mutex_lock(&backend.lock);
+  g_assert_cmpuint(backend.secret_reads, ==, 1);
+  g_mutex_unlock(&backend.lock);
+  /* Listing again does not touch the secret and still completes. */
+  gh_account_controller_refresh(accounts);
+  expired = FALSE;
+  timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (gh_account_controller_is_listing(accounts) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
+  g_source_remove(timer);
+
+  g_mutex_lock(&backend.lock);
+  backend.release = TRUE;
+  g_cond_broadcast(&backend.cond);
+  g_mutex_unlock(&backend.lock);
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+  g_object_unref(dialog);
+  g_clear_object(&accounts);
+  g_object_unref(store);
+  bunker_clear(&bunker);
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
+}
+
+typedef struct {
+  GMutex lock;
+  GCond cond;
+  gboolean release;
+} BlockedList;
+
+/* A remote listing stuck behind a prompt nobody answers. */
+static GPtrArray *
+blocked_remote_list(gpointer data, GError **error)
+{
+  (void)error;
+  BlockedList *blocked = data;
+  g_mutex_lock(&blocked->lock);
+  while (!blocked->release) g_cond_wait(&blocked->cond, &blocked->lock);
+  g_mutex_unlock(&blocked->lock);
+  return g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+}
+
+static void
+test_selection_timeout_message(void)
+{
+  static BlockedList blocked;
+  blocked = (BlockedList){0};
+  g_mutex_init(&blocked.lock);
+  g_cond_init(&blocked.cond);
+  PairStore store = {0};
+  g_mutex_init(&store.lock);
+  TestBunker bunker;
+  bunker_init(&bunker, "1111111111111111111111111111111111111111111111111111111111111111");
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
+  g_autoptr(GhAccountController) accounts = gh_account_controller_new_full_with_remote_list(
+    settings, NULL, grotto_unavailable, NULL, blocked_remote_list, &blocked);
+  GhNip46PairConfig config = { .accounts = accounts, .settings = settings,
+    .scope_transport = &qr_scope_transport,
+    .publish_transport = &bunker_publish_transport, .transport_data = &bunker,
+    .test_save = save_pair_for_test, .test_save_data = &store };
+  GtkWidget *window = gtk_window_new();
+  GhNip46PairDialog *dialog = gh_nip46_pair_dialog_new(&config);
+  g_object_ref_sink(dialog);
+  gh_nip46_pair_dialog_set_select_timeout_for_test(dialog, 400);
+  AdwAlertDialog *alert = NULL;
+  g_signal_connect(dialog, "confirmation-presented", G_CALLBACK(capture_confirmation), &alert);
+  adw_dialog_present(ADW_DIALOG(dialog), window);
+  pair_via_bunker(dialog, &bunker, &alert);
+
+  gboolean expired = FALSE, saw_waiting = FALSE;
+  guint timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (!expired) {
+    const gchar *status = gh_nip46_pair_dialog_get_status_for_test(dialog);
+    if (strstr(status, WAITING_TEXT)) saw_waiting = TRUE;
+    if (strstr(status, "did not answer")) break;
+    g_main_context_iteration(NULL, TRUE);
+  }
+  g_assert_false(expired);
+  g_source_remove(timer);
+  g_assert_true(saw_waiting);
+  GtkLabel *error = GTK_LABEL(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "error_label"));
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(error)));
+  GtkButton *cancel = GTK_BUTTON(gtk_widget_get_template_child(GTK_WIDGET(dialog),
+    GH_TYPE_NIP46_PAIR_DIALOG, "cancel_button"));
+  g_assert_cmpstr(gtk_button_get_label(cancel), ==, "Close");
+
+  g_mutex_lock(&blocked.lock);
+  blocked.release = TRUE;
+  g_cond_broadcast(&blocked.cond);
+  g_mutex_unlock(&blocked.lock);
+  adw_dialog_close(ADW_DIALOG(dialog));
+  gtk_window_destroy(GTK_WINDOW(window));
+  drain();
+  g_object_unref(dialog);
+  g_clear_object(&accounts);
+  bunker_clear(&bunker);
+  pair_store_clear(&store);
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -654,5 +947,9 @@ main(int argc, char **argv)
                   test_controller_auth_url);
   g_test_add_func("/groundhog/nip46/pair-dialog/hidden-auth-revoked",
                   test_hidden_auth_notification_revoked);
+  g_test_add_func("/groundhog/nip46/pair-dialog/grotto-fails-remote-selected-lookup-waits",
+                  test_grotto_fails_remote_selected_lookup_waits);
+  g_test_add_func("/groundhog/nip46/pair-dialog/selection-timeout-message",
+                  test_selection_timeout_message);
   return g_test_run();
 }

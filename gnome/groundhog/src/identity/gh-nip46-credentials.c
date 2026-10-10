@@ -285,6 +285,12 @@ gh_nip46_credential_store_new(void)
   return gh_nip46_credential_store_new_secret_service();
 #endif
 }
+GhNip46CredentialStore *
+gh_nip46_credential_store_new_with_backend(GhNip46CredentialBackend *backend)
+{
+  g_return_val_if_fail(backend && backend->search && backend->free, NULL);
+  return store_with_backend(backend);
+}
 #ifdef __APPLE__
 GhNip46CredentialStore *
 gh_nip46_credential_store_new_keychain(SecKeychainRef keychain)
@@ -336,12 +342,12 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
                                 "Invalid user pubkey");
     goto fail;
   }
-  g_mutex_lock(&self->mutex);
-  GPtrArray *items = self->backend->search(self->backend, op->account,
-                                            op->interactive, cancellable, &error);
-  if (!items) goto unlock_fail;
-  if (cancelled(cancellable, &error)) goto items_fail;
   if (op->kind == OP_LIST) {
+    /* Attribute-only and lock-free: a lookup or write blocked on a Keychain
+     * or keyring prompt holds the mutex, and must not stall listing. */
+    GPtrArray *items = self->backend->search(self->backend, NULL, FALSE, FALSE,
+                                              cancellable, &error);
+    if (!items) goto fail;
     GPtrArray *list = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
     for (guint i = 0; i < items->len; i++) {
       GhNip46CredentialItem *item = g_ptr_array_index(items, i);
@@ -363,11 +369,16 @@ run_operation(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
     }
     g_ptr_array_sort(list, compare_identity);
     g_ptr_array_unref(items);
-    g_mutex_unlock(&self->mutex);
+    if (!error) cancelled(cancellable, &error);
     if (error) { g_ptr_array_unref(list); goto fail; }
     g_task_return_pointer(task, list, (GDestroyNotify)g_ptr_array_unref);
     return;
   }
+  g_mutex_lock(&self->mutex);
+  GPtrArray *items = self->backend->search(self->backend, op->account,
+                                            op->interactive, TRUE, cancellable, &error);
+  if (!items) goto unlock_fail;
+  if (cancelled(cancellable, &error)) goto items_fail;
   for (guint i = 0; i < items->len; i++) {
     GhNip46CredentialItem *item = g_ptr_array_index(items, i);
     if (version_number(item->version) > 1) {
@@ -444,7 +455,12 @@ start(GhNip46CredentialStore *self, Operation *op, GCancellable *cancellable,
       GAsyncReadyCallback callback, gpointer user_data, gpointer tag)
 {
   GTask *task = g_task_new(self, cancellable, callback, user_data);
-  g_task_set_check_cancellable(task, FALSE);
+  /* Reads complete as soon as they are cancelled even if the backend thread
+   * is still parked on a prompt; mutations report their confirmed outcome. */
+  if (op->kind == OP_LIST || op->kind == OP_LOOKUP)
+    g_task_set_return_on_cancel(task, TRUE);
+  else
+    g_task_set_check_cancellable(task, FALSE);
   g_task_set_source_tag(task, tag);
   g_task_set_task_data(task, op, (GDestroyNotify)operation_free);
   g_task_run_in_thread(task, run_operation);

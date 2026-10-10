@@ -1059,6 +1059,13 @@ if (TARGET groundhog-identity AND TARGET PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_D
     add_test(NAME groundhog-nip46-credentials-keyring COMMAND test-groundhog-nip46-credentials-keyring)
     set_tests_properties(groundhog-nip46-credentials-keyring PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 90 ENVIRONMENT "G_DEBUG=fatal-criticals")
+    add_executable(test-groundhog-nip46-credentials-list
+      tests/store/test_nip46_credentials_list.c)
+    target_link_libraries(test-groundhog-nip46-credentials-list PRIVATE groundhog-nip46-credentials)
+    target_compile_options(test-groundhog-nip46-credentials-list PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME groundhog-nip46-credentials-list COMMAND test-groundhog-nip46-credentials-list)
+    set_tests_properties(groundhog-nip46-credentials-list PROPERTIES
+      TIMEOUT 30 ENVIRONMENT "G_DEBUG=fatal-criticals")
     if(APPLE)
       add_executable(test-groundhog-nip46-credentials-keychain
         tests/store/test_nip46_credentials_keychain.c)
