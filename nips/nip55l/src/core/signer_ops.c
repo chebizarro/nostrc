@@ -40,6 +40,18 @@
 /* kSecAttrService value shared with the GUI (secret_store.c
  * GNOSTR_KC_SERVICE) so both processes see the same items. */
 #define KC_SIGNER_SERVICE        "Gnostr Identity Key"
+
+static int keychain_lookup_status(OSStatus status){
+  if (status == errSecSuccess) return 0;
+  return status == errSecItemNotFound ? NOSTR_SIGNER_ERROR_NOT_FOUND
+                                      : NOSTR_SIGNER_ERROR_BACKEND;
+}
+
+#ifdef NIP55L_KEYCHAIN_TEST_HOOKS
+int nostr_nip55l_test_keychain_lookup_status(OSStatus status){
+  return keychain_lookup_status(status);
+}
+#endif
 #endif
 
 static int is_hex_64(const char *s) {
@@ -395,6 +407,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
         CFRelease(d);
         return rc_kc;
       }
+      if (result) CFRelease(result);
+      return st == errSecSuccess ? NOSTR_SIGNER_ERROR_BACKEND : keychain_lookup_status(st);
     }
 #endif
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
@@ -445,7 +459,7 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
     CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
     CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
-    if (st != errSecSuccess) {
+    if (st == errSecItemNotFound) {
       /* Try comment == selector */
       if (account) { CFDictionaryRemoveValue(q, kSecAttrAccount); }
       CFStringRef comment = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
@@ -471,7 +485,9 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
       CFRelease(q);
       return rc_kc;
     }
+    if (result) CFRelease(result);
     if (q) CFRelease(q);
+    return st == errSecSuccess ? NOSTR_SIGNER_ERROR_BACKEND : keychain_lookup_status(st);
   }
 #endif
   return NOSTR_SIGNER_ERROR_INVALID_KEY;

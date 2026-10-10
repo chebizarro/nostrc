@@ -17,6 +17,7 @@
  *   - the marker makes a second pass a no-op.
  */
 #include "nostr/nip55l/signer_ops.h"
+#include "nostr/nip55l/error.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
@@ -32,6 +33,7 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 void nostr_nip55l_test_use_keychain(SecKeychainRef kc);
+int nostr_nip55l_test_keychain_lookup_status(OSStatus status);
 
 #define CHECK(c) do { if (!(c)) { \
     fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); \
@@ -109,6 +111,11 @@ static int holds_raw_key(CFDataRef d, const char *sk_hex) {
 
 int main(void) {
   nostrc_test_keychain_guard_begin();
+  /* Pure status mapping: no query against the developer's login keychain. */
+  CHECK(nostr_nip55l_test_keychain_lookup_status(errSecSuccess) == 0);
+  CHECK(nostr_nip55l_test_keychain_lookup_status(errSecItemNotFound) == NOSTR_SIGNER_ERROR_NOT_FOUND);
+  CHECK(nostr_nip55l_test_keychain_lookup_status(errSecInteractionNotAllowed) == NOSTR_SIGNER_ERROR_BACKEND);
+  CHECK(nostr_nip55l_test_keychain_lookup_status(errSecAuthFailed) == NOSTR_SIGNER_ERROR_BACKEND);
   char tmpl[] = "/tmp/nip55l-kc-XXXXXX";
   int fd = mkstemp(tmpl);
   CHECK(fd >= 0);
