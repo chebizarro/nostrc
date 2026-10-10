@@ -18,7 +18,7 @@ static int test_copy_key_in_custody(const uint8_t key[32], void *data) {
 static bool test_load_key_via_custody(SignetKeyStore *ks, const char *agent_id,
                                       SignetLoadedKey *out) {
   memset(out, 0, sizeof(*out));
-  return signet_key_store_with_signing_key(ks, agent_id, NULL, 0,
+  return signet_key_store_with_signing_key(ks, agent_id, NULL,
                                           test_copy_key_in_custody, out) == 0;
 }
 #endif

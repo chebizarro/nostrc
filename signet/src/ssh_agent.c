@@ -163,7 +163,7 @@ static int handle_request_identities(SignetSshAgent *sa, int client_fd,
   /* For simplicity, expose only the agent's own key (not all fleet keys). */
   uint8_t pk[32];
   bool found = signet_key_store_with_signing_key(sa->keys, agent_id,
-      NULL, 0, ssh_derive_identity_in_custody, pk) == 0;
+      NULL, ssh_derive_identity_in_custody, pk) == 0;
 
   for (size_t i = 0; i < count; i++) g_free(ids[i]);
   g_free(ids);
@@ -256,7 +256,7 @@ static int handle_sign_request(SignetSshAgent *sa, int client_fd,
     .data = sign_data, .data_len = msg_len
   };
   if (signet_key_store_with_signing_key(sa->keys, agent_id,
-      NULL, 0, ssh_sign_in_custody, &work) != 0)
+      NULL, ssh_sign_in_custody, &work) != 0)
     return send_failure(client_fd);
 
   /* Build signature blob:

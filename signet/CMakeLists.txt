@@ -60,7 +60,6 @@ set(SIGNET_CORE_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/audit_logger.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/replay_cache.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/key_store.c
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/sbom_dsse.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/policy_store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/policy_engine.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/relay_pool.c

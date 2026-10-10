@@ -171,7 +171,7 @@ static void handle_sign_event(const SignetDbusDispatchContext *ctx,
   }
 
   int sign_rc = signet_key_store_with_signing_key(ctx->keys, agent_id,
-                                                  NULL, 0, sign_dbus_event, ev);
+                                                  NULL, sign_dbus_event, ev);
 
   if (sign_rc != 0) {
     nostr_event_free(ev);

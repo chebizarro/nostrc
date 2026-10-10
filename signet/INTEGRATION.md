@@ -16,9 +16,9 @@ Agents connect to Signet via the NIP-46 protocol over Nostr relays, or locally v
 
 3. **Signing**: The agent sends `sign_event` requests via NIP-46. Signet resolves the
    client to its agent via the persistent binding, evaluates per-agent policy, signs
-   under the custody transaction, and returns the signed event. Identities that
-   have been writer-fenced require the authenticated owner's current epoch;
-   see [writer-epoch cutover](docs/WRITER_EPOCH_CUTOVER.md).
+   under the custody transaction, and returns the signed event. An identity
+   fenced by `agent/writer-acquire` signs only for its assigned owner client;
+   see [writer fence](docs/WRITER_EPOCH_CUTOVER.md).
 
 4. **Restarts**: Bound clients reconnect autonomously — no fresh secret, no operator.
    Agent restarts, daemon restarts, or both: the persistent pairing survives (see
@@ -141,7 +141,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 |---------------------|-------------------------------------|------------------------------------------------|
 | `connect`           | `[remote_signer_pubkey, connect_secret?]` | Pair (one-time secret, consumed atomically with the durable client binding) or reconnect (bound clients need no secret; the client's own stale secret is also accepted) |
 | `get_public_key`    | `[]`                                | Return agent's public key (hex)                |
-| `sign_event`        | `[event_json]`                      | Policy check then sign from hot cache          |
+| `sign_event`        | `[event_json]`                      | Policy check then sign under custody           |
 | `nip04_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-04 encrypt plaintext for a peer            |
 | `nip04_decrypt`     | `[peer_pubkey_hex, ciphertext]`     | NIP-04 decrypt ciphertext from a peer          |
 | `nip44_encrypt`     | `[peer_pubkey_hex, plaintext]`      | NIP-44 v2 encrypt plaintext for a peer         |

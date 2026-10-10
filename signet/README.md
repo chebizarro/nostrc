@@ -10,7 +10,7 @@ Signet is a NIP-46 compliant Nostr bunker server built for managing cryptographi
 - **Persistent Client Pairing** — The one-time `connect_secret` is a pairing bootstrap: it is consumed atomically with a durable `client_pubkey → agent` binding, so bound clients reconnect across agent AND daemon restarts with no secret and no operator (identity-pinned; suspension/revocation take effect immediately)
 - **NIP-04 / NIP-44 Encryption** — Encrypt and decrypt messages for agents using standard Nostr encryption protocols, including NIP-44 v2 `nip44_encrypt` / `nip44_decrypt` over NIP-46
 - **Hot Key Cache** — `sodium_malloc`-backed, `mlock`'d GHashTable for legacy non-signing key uses; signing now reads custody under a durable SQLite writer transaction
-- **Writer-Epoch Fence** — A same-pubkey service identity can be administratively transferred to a dedicated NIP-46 client; stale epochs and legacy no-epoch signing fail at custody. See [cutover contract](docs/WRITER_EPOCH_CUTOVER.md).
+- **Single-Writer Fence** — A provisioner can assign a service identity one authorized NIP-46 client (a single-use client key); every other client, any former owner, and non-NIP-46 transports are refused at custody. Standard NIP-46 request shapes are unchanged. See [cutover contract](docs/WRITER_EPOCH_CUTOVER.md).
 - **SQLCipher Persistence** — AES-256 encrypted SQLite database for agent records, key material, credentials, leases, and audit logs, verified at startup with `PRAGMA cipher_version` plus a keyed read
 - **Per-Agent Key Rotation** — Rotate an agent's keypair without reprovisioning; old keys are wiped from cache and store
 
@@ -404,7 +404,7 @@ Provisioner authorization is separate persisted state in the encrypted Signet da
 |-------------------|---------------------------------------------|-------------------------------------|
 | `connect`         | `[signer_pubkey, connect_secret?]`          | Pair (one-time secret) or reconnect (bound clients need no secret) |
 | `get_public_key`  | `[]`                                        | Return agent public key hex         |
-| `sign_event`      | `[event_json]`                              | Policy check then sign from cache   |
+| `sign_event`      | `[event_json]`                              | Policy check then sign under custody |
 | `nip04_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-04 encrypt for a peer           |
 | `nip04_decrypt`   | `[peer_pubkey_hex, ciphertext]`             | NIP-04 decrypt from a peer          |
 | `nip44_encrypt`   | `[peer_pubkey_hex, plaintext]`              | NIP-44 v2 encrypt for a peer        |
@@ -412,6 +412,7 @@ Provisioner authorization is separate persisted state in the encrypted Signet da
 | `nip44_encrypt_b64` | `[peer_pubkey_hex, base64(plaintext)]`    | NIP-44 v2 encrypt of raw bytes      |
 | `nip44_decrypt_b64` | `[peer_pubkey_hex, ciphertext]`           | NIP-44 v2 decrypt returning base64(plaintext) |
 | `get_relays`      | `[]`                                        | Return relay map JSON               |
+| `ping`            | `[]`                                        | Keepalive                           |
 
 NIP-46 carries params as JSON strings, so a plaintext that is not valid UTF-8
 cannot round-trip `nip44_encrypt` / `nip44_decrypt`: an encoder either rejects
@@ -423,8 +424,12 @@ format signal — Concord CORD-06 rekey blobs, for instance, are 72, 104, or 136
 bytes and any other width is dropped as malformed. Both map to the
 `nostr.encrypt` capability, so a policy already granting NIP-44 grants them;
 policies pinning `allow_methods` explicitly must list them to enable the
-binary-safe path.
-| `ping`            | `[]`                                        | Keepalive                           |
+binary-safe path. `nip44_decrypt` rejects a plaintext that is not NUL-free
+UTF-8 with `invalid_plaintext` rather than truncating it.
+
+For an identity fenced by `agent/writer-acquire`, `sign_event` and the four
+NIP-44 methods succeed only for the assigned owner client, and NIP-04 is
+refused; see [docs/WRITER_EPOCH_CUTOVER.md](docs/WRITER_EPOCH_CUTOVER.md).
 
 ## D-Bus Interface
 

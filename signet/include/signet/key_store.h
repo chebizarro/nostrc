@@ -114,23 +114,20 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
                                      const char *agent_id,
                                      SignetLoadedKey *out_key);
 
-/* Execute a cryptographic operation under custody. For a fenced identity,
- * owner must equal the authenticated NIP-46 client pubkey and epoch must be
- * current. Legacy callers pass NULL/0 and are permitted only for identities
- * that have never been fenced. The callback must not retain the key. */
+/* Execute a cryptographic operation under custody. client is the
+ * authenticated NIP-46 client pubkey, or NULL for transports without one.
+ * A fenced identity runs the callback only for its current owner client;
+ * never-fenced identities accept any client. The callback must not retain
+ * the key. */
 typedef int (*SignetKeyStoreCustodyFn)(const uint8_t secret_key[32], void *user_data);
 int signet_key_store_with_signing_key(SignetKeyStore *ks,
                                       const char *agent_id,
-                                      const char *owner,
-                                      int64_t epoch,
+                                      const char *client,
                                       SignetKeyStoreCustodyFn fn,
                                       void *user_data);
+/* Provisioner-administered writer assignment; see signet_store_writer_acquire. */
 int signet_key_store_writer_acquire(SignetKeyStore *ks, const char *agent_id,
-                                    const char *owner, int64_t ttl_seconds,
-                                    int64_t *out_epoch, int64_t *out_expires_at);
-int signet_key_store_writer_renew(SignetKeyStore *ks, const char *agent_id,
-                                  const char *owner, int64_t epoch,
-                                  int64_t ttl_seconds, int64_t *out_expires_at);
+                                    const char *owner, int64_t *out_epoch);
 int signet_key_store_writer_revoke(SignetKeyStore *ks, const char *agent_id,
                                    int64_t *out_epoch);
 
@@ -141,27 +138,16 @@ int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result);
 
-/* NIP-44 under the authenticated writer lease. Only the four NIP-44 methods
- * are accepted. The callback, expiry check, and DB commit are serialized with
- * transfer/revoke; on any failure *out_result is NULL. Return -2 for
- * non-text nip44_decrypt plaintext, which must use _b64. NIP-46 supplies owner
- * from its authenticated client pubkey, never from request parameters. */
+/* NIP-44 as an authenticated NIP-46 client. Only the four NIP-44 methods
+ * are accepted. The owner check and crypto are serialized with
+ * transfer/revoke in one transaction; on any failure *out_result is NULL.
+ * Return -2 for non-text nip44_decrypt plaintext, which must use _b64.
+ * NIP-46 supplies client from its authenticated envelope, never from request
+ * parameters. */
 int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
-                                 const char *owner, int64_t epoch,
+                                 const char *client,
                                  const char *method, const char *peer_pubkey,
                                  const char *input, char **out_result);
-
-/* Sign only Bahia's in-toto SBOM statement as DSSE: validate the exact JSON
- * payload, hash DSSEv1 PAE with the fixed application/vnd.in-toto+json type,
- * and BIP-340 sign under the authenticated writer lease. The caller supplies
- * neither a digest nor a payload type. Returns a base64 64-byte signature;
- * *out_signature_b64 stays NULL on any validation, lease or commit failure. */
-int signet_key_store_sign_bahia_sbom_dsse(SignetKeyStore *ks,
-                                          const char *agent_id,
-                                          const char *owner, int64_t epoch,
-                                          const uint8_t *payload,
-                                          size_t payload_len,
-                                          char **out_signature_b64);
 
 /* Provision a new agent key. Generates a new keypair, stores in SQLCipher,
  * and adds to the hot cache.

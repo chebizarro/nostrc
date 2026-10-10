@@ -263,14 +263,13 @@ static void test_writer_management_requires_provisioner(void) {
   adopt_agent(&f, "service");
   const char *owner =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-  int64_t rejected_epoch = 0, rejected_expiry = 0;
+  int64_t rejected_epoch = 0;
   CHECK(signet_key_store_writer_acquire(f.ks, "service", f.prov_pk_hex,
-      300, &rejected_epoch, &rejected_expiry) != 0);
+                                        &rejected_epoch) != 0);
   CHECK(signet_store_writer_is_fenced(signet_key_store_get_store(f.ks),
                                       "service") == 0);
   char *plain = g_strdup_printf(
-      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300}",
-      owner);
+      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\"}", owner);
   char *cipher = encrypt_to_bunker(&f, plain);
   g_free(plain);
   CHECK(signet_mgmt_handler_handle_request(f.mgmt, owner, cipher,
@@ -279,43 +278,47 @@ static void test_writer_management_requires_provisioner(void) {
                                       "service") == 0);
   char *intent = g_strdup_printf(
       "{\"jsonrpc\":\"2.0\",\"id\":\"lease-1\",\"method\":\"agent/writer-acquire\","
-      "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300}}",
+      "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\"}}",
       owner);
   CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
                                           "acquire", 1752380000) == 0);
   g_free(intent);
   CHECK(signet_store_writer_is_fenced(signet_key_store_get_store(f.ks),
                                       "service") == 1);
+  /* Lease renewal no longer exists on the management plane. */
+  intent = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"renew-1\",\"method\":\"agent/writer-renew\","
+      "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"epoch\":1}}",
+      owner);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
+                                          "renew", 1752380000) != 0);
+  g_free(intent);
   const char *next_owner =
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-  int64_t next_epoch = 0, next_expiry = 0;
-  CHECK(signet_key_store_writer_acquire(f.ks, "service", next_owner, 300,
-                                        &next_epoch, &next_expiry) == 0);
+  int64_t next_epoch = 0;
+  CHECK(signet_key_store_writer_acquire(f.ks, "service", next_owner,
+                                        &next_epoch) == 0);
   CHECK(next_epoch == 2);
   /* Former owner cannot use the management plane to reacquire itself. */
   CHECK(signet_mgmt_handler_handle_request(f.mgmt, owner, cipher,
       SIGNET_MGMT_OP_WRITER_ACQUIRE, "stale-owner", 1752380001) == -1);
   CHECK(!signet_store_is_provisioner(signet_key_store_get_store(f.ks), owner));
-  free(cipher);
-  plain = g_strdup_printf(
-      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300,\"epoch\":2}",
-      next_owner);
-  cipher = encrypt_to_bunker(&f, plain);
-  g_free(plain);
+  /* Nor can a provisioner reinstate it: writer client keys are single-use. */
   CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
-      SIGNET_MGMT_OP_WRITER_RENEW, "renew", 1752380000) == 0);
+      SIGNET_MGMT_OP_WRITER_ACQUIRE, "reinstate", 1752380001) == -1);
   free(cipher);
   cipher = encrypt_to_bunker(&f, "{\"agent_id\":\"service\"}");
   CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
       SIGNET_MGMT_OP_WRITER_REVOKE, "revoke", 1752380000) == 0);
   free(cipher);
   plain = g_strdup_printf(
-      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"ttl_seconds\":300}",
-      owner);
+      "{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\"}", next_owner);
   cipher = encrypt_to_bunker(&f, plain);
   g_free(plain);
-  CHECK(signet_mgmt_handler_handle_request(f.mgmt, owner, cipher,
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, f.prov_pk_hex, cipher,
       SIGNET_MGMT_OP_WRITER_ACQUIRE, "revoked-owner", 1752380002) == -1);
+  CHECK(signet_mgmt_handler_handle_request(f.mgmt, next_owner, cipher,
+      SIGNET_MGMT_OP_WRITER_ACQUIRE, "revoked-self", 1752380002) == -1);
   free(cipher);
   fixture_teardown(&f);
   printf("test_writer_management_requires_provisioner: PASS\n");

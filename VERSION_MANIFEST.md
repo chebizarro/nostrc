@@ -25,7 +25,7 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.5.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
+| signet | `signet/` | 0.6.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
 
@@ -35,6 +35,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
 | Markdown port (nostrc-8xfib.2): one Pango emitter for portable Markdown, gn-markdown-pango.h (full/summary modes, heading/glyph/table flags, visible-character cap, host link hook, plain-text and first-image queries); gnostr markdown_pango and the Groundhog formatter body removed. | nostr-gtk | 1.2.0 | MINOR from 1.1.1: additive public API; options struct carries reserved padding for growth. |
+| Standard NIP-46 and identity-based single-writer fence (nostrc-y3vc3): remove the epoch param from `sign_event`, `nip44_encrypt`/`nip44_decrypt` and `nip44_encrypt_b64`/`nip44_decrypt_b64` (restored to their pre-epoch shapes); remove NIP-46 `writer_renew`, management `agent/writer-renew`, `ttl_seconds`/`expires_at`, `signetctl writer-acquire --ttl`, the wall-clock rollback check, and Bahia-specific `sign_bahia_sbom_dsse` with its custody API. A fenced identity signs only for its assigned owner client; writer client keys are single-use. No schema migration. | signet | 0.6.0 | MINOR from 0.5.0: breaking removal of wire methods/params, a CLI flag and installed custody/store API (`0.x` rule); incompatibility called out in `signet/docs/WRITER_EPOCH_CUTOVER.md`. Never-fenced identities unchanged. |
 | Provisioner-authenticated `signetctl writer-acquire` and disposable loopback Signet/Bahia interop harness. | signet | 0.5.0 | MINOR from 0.4.0: additive CLI command; fixture is test-only. |
 | Bahia SBOM DSSE review follow-up: validate the optional Go `time.Time` RFC3339Nano timestamp and prove duplicate keys in subject objects, including escaped-equivalent names, are rejected. | signet | 0.4.0 | No further bump: correctness hardening folded into unreleased 0.4.0 capability. |
 | Bahia SBOM DSSE review hardening: reject duplicate JSON members recursively and require exact `allow_methods` opt-in rather than inherited wildcard/default allow. | signet | 0.4.0 | No further bump: security correction folded into unreleased 0.4.0 capability; no new public surface. |

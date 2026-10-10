@@ -35,7 +35,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
@@ -291,17 +290,6 @@ static int signet_custody_sign_event(const uint8_t secret_key[32], void *user_da
                                                          work->event_json, NULL);
   signet_memzero(sk_hex, sizeof(sk_hex));
   return work->signed_json ? 0 : -1;
-}
-
-static bool signet_parse_writer_epoch(const char *text, int64_t *out_epoch) {
-  if (!text || !text[0] || !out_epoch) return false;
-  for (const char *p = text; *p; p++) if (*p < '0' || *p > '9') return false;
-  errno = 0;
-  char *end = NULL;
-  long long parsed = strtoll(text, &end, 10);
-  if (errno || !end || *end || parsed < 1) return false;
-  *out_epoch = (int64_t)parsed;
-  return true;
 }
 
 /* ------------- build + sign outer response event using NostrEvent --------- */
@@ -751,19 +739,16 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       }
 
     } else if (strcmp(method, "sign_event") == 0) {
-      int64_t epoch = 0;
-      const char *owner = NULL;
-      if (!req.params || req.n_params < 1 || req.n_params > 2 ||
-          (req.n_params == 2 &&
-           !signet_parse_writer_epoch(req.params[1], &epoch))) {
-        err_str = g_strdup("sign_event requires [event_json, epoch?]");
+      if (!req.params || req.n_params < 1) {
+        err_str = g_strdup("sign_event requires event JSON param");
         status = "error";
         code = "invalid_params";
       } else {
-        if (req.n_params == 2) owner = client_pubkey_hex;
+        /* A fenced identity signs only for its current owner client; the
+         * owner is the authenticated envelope pubkey, never a parameter. */
         SignetCustodyEvent work = {.event_json = req.params[0]};
         if (signet_key_store_with_signing_key(s->keys, session_agent_id,
-                                              owner, epoch,
+                                              client_pubkey_hex,
                                               signet_custody_sign_event,
                                               &work) != 0) {
           free(work.signed_json);
@@ -779,57 +764,6 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               remote_signer_secret_key_hex, session_agent_id, now);
         }
       }
-    } else if (strcmp(method, "sign_bahia_sbom_dsse") == 0) {
-      int64_t epoch = 0;
-      if (!req.params || req.n_params != 2 || !req.params[0] ||
-          strlen(req.params[0]) > 87384 ||
-          !signet_parse_writer_epoch(req.params[1], &epoch)) {
-        err_str = g_strdup("sign_bahia_sbom_dsse requires [base64_statement_json, epoch]");
-        status = "error";
-        code = "invalid_params";
-      } else {
-        gsize payload_len = 0;
-        guchar *payload = g_base64_decode(req.params[0], &payload_len);
-        char *canonical = payload ? g_base64_encode(payload, payload_len) : NULL;
-        bool canonical_ok = canonical && strcmp(canonical, req.params[0]) == 0;
-        g_free(canonical);
-        int sign_rc = canonical_ok
-            ? signet_key_store_sign_bahia_sbom_dsse(s->keys, session_agent_id,
-                client_pubkey_hex, epoch, payload, payload_len, &result)
-            : -1;
-        g_free(payload);
-        if (sign_rc != 0) {
-          g_free(result);
-          result = NULL;
-          err_str = g_strdup("SBOM DSSE signing denied or failed");
-          status = "error";
-          code = "sign_failed";
-        } else {
-          result_is_json = false;
-          status = "ok";
-          code = "ok";
-          signet_nip46_publish_cas_audit(s->relays,
-              remote_signer_secret_key_hex, session_agent_id, now);
-        }
-      }
-    } else if (strcmp(method, "writer_renew") == 0) {
-      int64_t epoch = 0, expires_at = 0;
-      if (!req.params || req.n_params != 1 ||
-          !signet_parse_writer_epoch(req.params[0], &epoch)) {
-        err_str = g_strdup("writer_renew requires [epoch]");
-        status = "error";
-        code = "invalid_params";
-      } else if (signet_key_store_writer_renew(s->keys, session_agent_id,
-                   client_pubkey_hex, epoch, 300, &expires_at) != 0) {
-        err_str = g_strdup("writer lease stale, expired, or revoked");
-        status = "error";
-        code = "writer_stale";
-      } else {
-        result = g_strdup_printf("%lld", (long long)expires_at);
-        result_is_json = false;
-        status = "ok";
-        code = "ok";
-      }
     } else if (strcmp(method, "nip04_encrypt") == 0 ||
                strcmp(method, "nip04_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt") == 0 ||
@@ -837,18 +771,16 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "nip44_encrypt_b64") == 0 ||
                strcmp(method, "nip44_decrypt_b64") == 0) {
       bool is_nip44 = g_str_has_prefix(method, "nip44_");
-      int64_t crypto_epoch = 0;
-      if (!req.params || req.n_params < 2 ||
-          (is_nip44 && req.n_params > 3) ||
-          (is_nip44 && req.n_params == 3 &&
-           !signet_parse_writer_epoch(req.params[2], &crypto_epoch))) {
-        err_str = g_strdup("crypto method requires [pubkey, input, epoch?]");
+      if (!req.params || req.n_params < 2) {
+        err_str = g_strdup("crypto method requires [pubkey, input]");
         status = "error";
         code = "invalid_params";
       } else {
-        int crypto_rc = is_nip44 && req.n_params == 3
+        /* NIP-44 runs as the authenticated client (owner-gated for fenced
+         * identities). NIP-04 stays legacy-only: denied once fenced. */
+        int crypto_rc = is_nip44
             ? signet_key_store_crypt_nip44(s->keys, session_agent_id,
-                client_pubkey_hex, crypto_epoch, method, req.params[0],
+                client_pubkey_hex, method, req.params[0],
                 req.params[1], &result)
             : signet_key_store_crypt_legacy(s->keys, session_agent_id,
                 method, req.params[0], req.params[1], &result);

@@ -38,25 +38,26 @@ extern "C" {
  */
 typedef struct SignetStore SignetStore;
 
-/* A writer lease is a durable per-agent fencing token. owner is the
- * authenticated NIP-46 client pubkey (64 lowercase hex). Epochs are never
- * reused, including after revoke. All operations return 0 on success. */
+/* Single-writer fence. acquire assigns the identity's sole authorized
+ * client (owner: the authenticated NIP-46 client pubkey, 64 hex) and fences
+ * it permanently. Writer client keys are single-use: acquire fails for any
+ * pubkey that has ever been a writer for any agent, including after revoke.
+ * The returned epoch is an internal generation counter (never on the wire);
+ * it advances on every acquire and revoke. All operations return 0 on
+ * success. */
 int signet_store_writer_acquire(SignetStore *store, const char *agent_id,
-                                const char *owner, int64_t ttl_seconds,
-                                int64_t *out_epoch, int64_t *out_expires_at);
-int signet_store_writer_renew(SignetStore *store, const char *agent_id,
-                              const char *owner, int64_t epoch,
-                              int64_t ttl_seconds, int64_t *out_expires_at);
+                                const char *owner, int64_t *out_epoch);
 int signet_store_writer_revoke(SignetStore *store, const char *agent_id,
                                int64_t *out_epoch);
 
 /* Sign callback executes while the SQLite writer transaction holds the
- * lease state fixed. It must not retain or expose the secret key. No callback
- * is invoked on a stale, expired, revoked, or missing epoch for a fenced key.
- * On non-fenced keys owner=NULL/epoch=0 retains legacy behavior. */
+ * owner fixed. It must not retain or expose the secret key. For a fenced
+ * identity the callback runs only if client equals the current owner; a
+ * revoked or missing lease fails closed. Never-fenced identities run the
+ * callback for any client, including NULL (non-NIP-46 transports). */
 typedef int (*SignetStoreSignFn)(const uint8_t secret_key[32], void *user_data);
 int signet_store_writer_sign(SignetStore *store, const char *agent_id,
-                             const char *owner, int64_t epoch,
+                             const char *client,
                              SignetStoreSignFn sign_fn, void *user_data);
 /* Returns 0 if unfenced, 1 if fenced, -1 on DB error (fail closed). */
 int signet_store_writer_is_fenced(SignetStore *store, const char *agent_id);
