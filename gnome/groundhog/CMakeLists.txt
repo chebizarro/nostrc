@@ -375,6 +375,15 @@ if (TARGET groundhog-relay AND TARGET nostr_nip46_core)
       target_compile_options(test-groundhog-nip46-wire PRIVATE -Wall -Wextra -Werror)
       add_test(NAME groundhog-nip46-wire COMMAND test-groundhog-nip46-wire)
       set_tests_properties(groundhog-nip46-wire PROPERTIES TIMEOUT 30)
+      # Interop with a real signer, `nak bunker` (exit 77, skipped, without nak).
+      add_executable(test-groundhog-nip46-nak tests/app/test_nip46_nak.c)
+      target_include_directories(test-groundhog-nip46-nak PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+      target_link_libraries(test-groundhog-nip46-nak PRIVATE
+        groundhog-nip46-session PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+      target_compile_options(test-groundhog-nip46-nak PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-nip46-nak COMMAND test-groundhog-nip46-nak)
+      set_tests_properties(groundhog-nip46-nak PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
     endif()
   endif()
 endif()
@@ -2700,6 +2709,11 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
     target_link_libraries(test-groundhog-nip46-wire PRIVATE groundhog-net-relay)
     target_compile_definitions(test-groundhog-nip46-wire PRIVATE GROUNDHOG_NIP46_TOR_TEST=1)
     set_tests_properties(groundhog-nip46-wire PROPERTIES TIMEOUT 60)
+  endif()
+  if (TARGET test-groundhog-nip46-nak)
+    # Like the app: every relay connection through the network-mode dispatcher.
+    target_link_libraries(test-groundhog-nip46-nak PRIVATE groundhog-net-relay)
+    target_compile_definitions(test-groundhog-nip46-nak PRIVATE GROUNDHOG_NIP46_NET_TEST=1)
   endif()
   if (TEST groundhog-relay-wire)
     set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 60)
