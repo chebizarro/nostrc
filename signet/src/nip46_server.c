@@ -21,6 +21,7 @@
 #include "signet/relay_pool.h"
 #include "signet/policy_engine.h"
 #include "signet/key_store.h"
+#include "key_store_private.h" /* cache-only NIP-46 client bindings */
 #include "signet/store.h"      /* persistent NIP-46 client bindings */
 #include "signet/revocation.h" /* live deny list (suspension precedence) */
 #include "signet/replay_cache.h"
@@ -352,6 +353,25 @@ static char *signet_build_outer_response_event_json(const char *remote_signer_se
   return json; /* caller frees with free() */
 }
 
+/* ------------------------- NIP-46 client bindings ------------------------ */
+
+/* Resolve @client_pubkey_hex to the agent it is paired with: the persistent
+ * binding table when a store is open, otherwise the key store's in-process
+ * (cache-only) bindings. Same contract as signet_store_lookup_client_binding:
+ * 0 = bound (*out_agent_id set), 1 = not bound, -1 = error. */
+static int signet_nip46_lookup_binding(SignetKeyStore *keys,
+                                       const char *client_pubkey_hex,
+                                       int64_t now,
+                                       char **out_agent_id,
+                                       char **out_bound_secret_hash) {
+  SignetStore *st = signet_key_store_get_store(keys);
+  if (st)
+    return signet_store_lookup_client_binding(st, client_pubkey_hex, now,
+                                              out_agent_id, out_bound_secret_hash);
+  return signet_key_store_ephemeral_lookup_client(keys, client_pubkey_hex,
+                                                  out_agent_id, out_bound_secret_hash);
+}
+
 /* ------------------------------ server object ----------------------------- */
 
 struct SignetNip46Server {
@@ -363,10 +383,7 @@ struct SignetNip46Server {
   struct SignetFidoService *fido;
 
   char *identity;
-  GHashTable *sessions_by_client_pubkey; /* client ephemeral pubkey -> agent_id */
-  SignetDenyList *deny;                  /* live deny list (owned by daemon) */
-
-  GMutex mu;
+  SignetDenyList *deny; /* live deny list (owned by daemon) */
 };
 
 void signet_nip46_server_set_deny_list(SignetNip46Server *s,
@@ -386,8 +403,6 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
   SignetNip46Server *s = (SignetNip46Server *)calloc(1, sizeof(*s));
   if (!s) return NULL;
 
-  g_mutex_init(&s->mu);
-
   s->relays = relays;
   s->policy = policy;
   s->keys = keys;
@@ -396,11 +411,7 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
   s->fido = cfg->fido;
 
   s->identity = g_strdup(cfg->identity);
-  s->sessions_by_client_pubkey = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
-  if (!s->identity || !s->sessions_by_client_pubkey) {
-    if (s->sessions_by_client_pubkey) g_hash_table_destroy(s->sessions_by_client_pubkey);
-    g_free(s->identity);
-    g_mutex_clear(&s->mu);
+  if (!s->identity) {
     free(s);
     return NULL;
   }
@@ -410,10 +421,6 @@ SignetNip46Server *signet_nip46_server_new(SignetRelayPool *relays,
 
 void signet_nip46_server_free(SignetNip46Server *s) {
   if (!s) return;
-  if (s->sessions_by_client_pubkey) {
-    g_hash_table_destroy(s->sessions_by_client_pubkey);
-  }
-  g_mutex_clear(&s->mu);
   g_free(s->identity);
   free(s);
 }
@@ -507,24 +514,23 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       } else {
         /* PAIRING path: a provided one-time secret authorizes binding (or
          * re-binding) this client key to its agent. Consumption and the
-         * durable binding commit in ONE store transaction — a crash or
-         * binding failure can never burn the credential without recording
-         * the pairing. */
+         * binding commit together — in ONE store transaction, or in cache-only
+         * mode in one critical section of the key store — so the credential
+         * is never burnt without recording the pairing. */
         bool secret_provided = (provided_secret && provided_secret[0]);
         SignetStore *st = signet_key_store_get_store(s->keys);
-        if (secret_provided && st) {
-          int rc = signet_store_consume_connect_secret_and_bind(
-              st, provided_secret, client_pubkey_hex, now, &session_agent_id);
-          if (rc != 0) { g_free(session_agent_id); session_agent_id = NULL; }
-        } else if (secret_provided) {
-          /* Cache-only mode: no persistent secrets/bindings exist. */
-          int rc = signet_key_store_consume_connect_secret(s->keys, provided_secret, now, &session_agent_id);
+        if (secret_provided) {
+          int rc = st ? signet_store_consume_connect_secret_and_bind(
+                            st, provided_secret, client_pubkey_hex, now, &session_agent_id)
+                      : signet_key_store_ephemeral_pair_client(
+                            s->keys, provided_secret, client_pubkey_hex, &session_agent_id);
           if (rc != 0) { g_free(session_agent_id); session_agent_id = NULL; }
         }
 
-        /* RECONNECT path: falls back to the PERSISTENT binding created at
-         * pairing time. The sender proved possession of the bound client key
-         * by NIP-44-encrypting this request, so no new trust is granted.
+        /* RECONNECT path: falls back to the binding created at pairing time
+         * (persistent, or in-process in cache-only mode). The sender proved
+         * possession of the bound client key by NIP-44-encrypting this
+         * request, so no new trust is granted.
          * A non-empty secret that failed above is accepted ONLY when it is
          * the client's OWN former pairing secret (hash-pinned at pairing) —
          * the stale value a restarted client re-sends. An arbitrary wrong
@@ -533,8 +539,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         if (!session_agent_id) {
           char *bound = NULL;
           char *bound_hash = NULL;
-          if (st && signet_store_lookup_client_binding(st, client_pubkey_hex, now,
-                                                       &bound, &bound_hash) == 0 && bound) {
+          if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now,
+                                          &bound, &bound_hash) == 0 && bound) {
             bool stale_ok = true;
             if (secret_provided) {
               char *provided_hash =
@@ -552,51 +558,32 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
           g_free(bound_hash);
 
           if (!session_agent_id) {
+            /* Cache-only bindings live only as long as this process; say so,
+             * since a client paired before a restart lands here. */
+            const char *scope = st ? "" : " (cache-only signer: pairings do not outlive the process)";
             pre_code = "auth_failed";
             pre_err = secret_provided
-                          ? g_strdup("connect_secret mismatch")
-                          : g_strdup("connect requires a connect_secret or an existing client binding");
+                          ? g_strdup_printf("connect_secret mismatch%s", scope)
+                          : g_strdup_printf("connect requires a connect_secret or an existing "
+                                            "client binding%s", scope);
           }
         }
 
         if (session_agent_id) policy_identity = session_agent_id;
       }
     } else {
-      /* Resolve the requesting client to its agent. The persistent binding
-       * table is authoritative when a store is present (it survives daemon
-       * restarts and honors revocation immediately); the in-memory session
-       * table only serves cache-only deployments. */
-      SignetStore *st = signet_key_store_get_store(s->keys);
-      if (st) {
-        char *bound = NULL;
-        int brc = signet_store_lookup_client_binding(st, client_pubkey_hex, now, &bound, NULL);
-        if (brc == 0 && bound) {
-          session_agent_id = bound;
-        } else {
-          g_free(bound);
-          pre_code = "not_connected";
-          pre_err = g_strdup("client has no active NIP-46 session");
-        }
+      /* Resolve the requesting client to its agent through the same binding
+       * a connect would use: the persistent table when a store is present
+       * (it survives daemon restarts and honors revocation immediately),
+       * otherwise the key store's in-process cache-only bindings. */
+      char *bound = NULL;
+      if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now, &bound, NULL) == 0 &&
+          bound) {
+        session_agent_id = bound;
       } else {
-        bool bound_found = false;
-        if (s->sessions_by_client_pubkey) {
-          g_mutex_lock(&s->mu);
-          const char *bound_agent = (const char *)g_hash_table_lookup(
-              s->sessions_by_client_pubkey, client_pubkey_hex);
-          if (bound_agent && bound_agent[0]) {
-            bound_found = true;
-            session_agent_id = g_strdup(bound_agent);
-          }
-          g_mutex_unlock(&s->mu);
-        }
-
-        if (!bound_found) {
-          pre_code = "not_connected";
-          pre_err = g_strdup("client has no active NIP-46 session");
-        } else if (!session_agent_id) {
-          pre_code = "oom";
-          pre_err = g_strdup("out of memory");
-        }
+        g_free(bound);
+        pre_code = "not_connected";
+        pre_err = g_strdup("client has no active NIP-46 session");
       }
 
       if (session_agent_id) policy_identity = session_agent_id;
@@ -695,28 +682,12 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     /* 6) Execute method */
     if (strcmp(method, "connect") == 0) {
-      char *session_key = g_strdup(client_pubkey_hex);
-      char *session_value = g_strdup(session_agent_id);
-      if (!session_key || !session_value) {
-        g_free(session_key);
-        g_free(session_value);
-        err_str = g_strdup("out of memory");
-        status = "error";
-        code = "oom";
-      } else {
-        g_mutex_lock(&s->mu);
-        g_hash_table_replace(s->sessions_by_client_pubkey, session_key, session_value);
-        g_mutex_unlock(&s->mu);
-
-        /* The persistent pairing was already committed ATOMICALLY with the
-         * secret consumption (or resolved from an existing binding); only
-         * the cache-only RAM session needed recording here. */
-
-        result = g_strdup("ack");
-        result_is_json = false;
-        status = "ok";
-        code = "ok";
-      }
+      /* The pairing was already recorded atomically with the secret
+       * consumption, or resolved from an existing binding. */
+      result = g_strdup("ack");
+      result_is_json = false;
+      status = "ok";
+      code = "ok";
 
     } else if (strcmp(method, "ping") == 0) {
       result = g_strdup("pong");

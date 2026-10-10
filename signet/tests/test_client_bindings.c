@@ -19,9 +19,19 @@
  *   7. a revoked binding rejects both requests and secretless reconnects,
  *      and a fresh secret (reissue) re-pairs, clearing the revocation;
  *   8. full agent revocation revokes its client bindings.
+ *
+ * Cache-only mode (no persistent store, nostrc-xjznk) pairs the same way for
+ * the life of the process:
+ *   9. pairing, then reconnect with the client's own spent secret or none;
+ *  10. a secret spent by (or pending for) another client never authorizes
+ *      this one, bound or not; an unknown client is refused (both modes);
+ *  11. revoke, rotate-key and revoke + re-adopt invalidate the binding;
+ *  12. a restarted cache-only signer holds no bindings, so the client must
+ *      pair again with a fresh secret.
  */
 
 #include "signet/key_store.h"
+#include "key_store_private.h"
 #include "signet/nip46_server.h"
 #include "signet/policy_engine.h"
 #include "signet/policy_store.h"
@@ -203,6 +213,7 @@ typedef struct {
   char stew_pk_hex[65];
   char client_sk_hex[65];
   char client_pk_hex[65];
+  bool cache_only;
 } N46Fixture;
 
 static void n46_new_server(N46Fixture *f) {
@@ -213,20 +224,46 @@ static void n46_new_server(N46Fixture *f) {
   CHECK(f->srv != NULL);
 }
 
-static void n46_setup(N46Fixture *f) {
+/* Adopt `agent_id` under `sk_hex` with a known one-time connect secret. */
+static void n46_adopt(N46Fixture *f, const char *agent_id, const char *sk_hex,
+                      const char *pk_hex, const char *secret) {
+  uint8_t sk_raw[32];
+  CHECK(hex_to_bytes(sk_hex, sk_raw, 32) == 0);
+  char out_pk[65] = {0};
+  CHECK(signet_key_store_adopt_agent(f->ks, agent_id, sk_raw, pk_hex, secret,
+                                      f->bunker_pk_hex, NULL, 0, out_pk,
+                                      NULL) == SIGNET_ADOPT_OK);
+  sodium_memzero(sk_raw, sizeof(sk_raw));
+}
+
+/* Opens the key store: SQLCipher-backed, or cache-only (no db_path). */
+static void n46_open_key_store(N46Fixture *f) {
+  SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
+  f->ks = signet_key_store_new(f->audit, f->cache_only ? NULL : &kcfg);
+  CHECK(f->ks != NULL);
+  CHECK((signet_key_store_get_store(f->ks) == NULL) == f->cache_only);
+}
+
+static void n46_setup_mode(N46Fixture *f, bool cache_only) {
   memset(f, 0, sizeof(*f));
+  f->cache_only = cache_only;
 
   gen_keypair_hex(f->bunker_sk_hex, f->bunker_pk_hex);
   gen_keypair_hex(f->stew_sk_hex, f->stew_pk_hex);
   gen_keypair_hex(f->client_sk_hex, f->client_pk_hex);
 
-  f->db_path = make_temp_path("/tmp/signet-test-n46bind-XXXXXX.db");
+  if (!cache_only) f->db_path = make_temp_path("/tmp/signet-test-n46bind-XXXXXX.db");
 
   /* Permissive policy for the test agent. */
   f->policy_path = make_temp_path("/tmp/signet-test-n46pol-XXXXXX.toml");
   {
     const char *policy =
         "[identity.stew]\n"
+        "allow_clients = \"*\"\n"
+        "allow_methods = \"*\"\n"
+        "allow_kinds = \"*\"\n"
+        "default = \"allow\"\n"
+        "[identity.ops]\n"
         "allow_clients = \"*\"\n"
         "allow_methods = \"*\"\n"
         "allow_kinds = \"*\"\n"
@@ -239,9 +276,7 @@ static void n46_setup(N46Fixture *f) {
   f->audit = signet_audit_logger_new(&alc);
   CHECK(f->audit != NULL);
 
-  SignetKeyStoreConfig kcfg = { .db_path = f->db_path, .master_key = MASTER_KEY };
-  f->ks = signet_key_store_new(f->audit, &kcfg);
-  CHECK(f->ks != NULL);
+  n46_open_key_store(f);
 
   f->ps = signet_policy_store_file_new(f->policy_path);
   CHECK(f->ps != NULL);
@@ -250,15 +285,13 @@ static void n46_setup(N46Fixture *f) {
   CHECK(f->pe != NULL);
 
   /* Adopt the agent with a known one-time connect secret. */
-  uint8_t sk_raw[32];
-  CHECK(hex_to_bytes(f->stew_sk_hex, sk_raw, 32) == 0);
-  char out_pk[65] = {0};
-  CHECK(signet_key_store_adopt_agent(f->ks, "stew", sk_raw, f->stew_pk_hex,
-                                      "one-time-secret", f->bunker_pk_hex,
-                                      NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
-  sodium_memzero(sk_raw, sizeof(sk_raw));
+  n46_adopt(f, "stew", f->stew_sk_hex, f->stew_pk_hex, "one-time-secret");
 
   n46_new_server(f);
+}
+
+static void n46_setup(N46Fixture *f) {
+  n46_setup_mode(f, false);
 }
 
 static void n46_teardown(N46Fixture *f) {
@@ -267,7 +300,7 @@ static void n46_teardown(N46Fixture *f) {
   signet_policy_store_free(f->ps);
   signet_key_store_free(f->ks);
   signet_audit_logger_free(f->audit);
-  unlink(f->db_path);
+  if (f->db_path) unlink(f->db_path);
   g_free(f->db_path);
   unlink(f->policy_path);
   g_free(f->policy_path);
@@ -327,13 +360,30 @@ static bool n46_get_public_key(N46Fixture *f, const char *client_sk,
   return n46_send(f, client_sk, client_pk, req, event_id, now);
 }
 
+/* The agent `client_pk` is bound to, in either mode, or NULL. */
 static char *n46_read_binding(N46Fixture *f, const char *client_pk, int64_t now) {
   SignetStore *st = signet_key_store_get_store(f->ks);
-  CHECK(st != NULL);
+  CHECK((st == NULL) == f->cache_only);
   char *agent = NULL;
-  int rc = signet_store_lookup_client_binding(st, client_pk, now, &agent, NULL);
-  if (rc != 0) return NULL;
+  int rc = st ? signet_store_lookup_client_binding(st, client_pk, now, &agent, NULL)
+              : signet_key_store_ephemeral_lookup_client(f->ks, client_pk, &agent, NULL);
+  CHECK(rc == 0 || rc == 1);
+  if (rc != 0) {
+    g_free(agent);
+    return NULL;
+  }
   return agent;
+}
+
+static void n46_expect_binding(N46Fixture *f, const char *client_pk,
+                               const char *agent_id, int64_t now) {
+  char *bound = n46_read_binding(f, client_pk, now);
+  if (agent_id) {
+    CHECK(bound && strcmp(bound, agent_id) == 0);
+  } else {
+    CHECK(bound == NULL);
+  }
+  g_free(bound);
 }
 
 static void n46_expect_last_audit(N46Fixture *f, const char *method,
@@ -756,6 +806,210 @@ static void test_reprovision_does_not_resurrect_binding(void) {
   printf("test_reprovision_does_not_resurrect_binding: PASS\n");
 }
 
+/* ------------- reconnect, both modes (cache-only: nostrc-xjznk) ------------ */
+
+static const char *n46_mode_name(bool cache_only) {
+  return cache_only ? "cache-only" : "persistent";
+}
+
+/* 9: a paired client reconnects with no secret or its own spent secret —
+ * across a fresh NIP-46 server object too — and is served throughout; an
+ * arbitrary wrong secret is refused. */
+static void test_reconnect_own_or_no_secret(bool cache_only) {
+  N46Fixture f;
+  n46_setup_mode(&f, cache_only);
+  int64_t now = 1752380000;
+
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e0", now) == false);
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == true);
+
+  /* The secret is single-use: no other client can pair with it now. */
+  {
+    char other_sk[65], other_pk[65];
+    gen_keypair_hex(other_sk, other_pk);
+    CHECK(n46_connect(&f, other_sk, other_pk, "one-time-secret", "e3", now) == false);
+    n46_expect_binding(&f, other_pk, NULL, now);
+    sodium_memzero(other_sk, sizeof(other_sk));
+  }
+
+  /* Reload/restart of the client (same key): re-sends its spent secret... */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e5", now) == true);
+  /* ...or omits it. */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e6", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e7", now) == true);
+
+  /* The binding belongs to the signer, not the NIP-46 server object. */
+  signet_nip46_server_free(f.srv);
+  n46_new_server(&f);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e8", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e9", now) == true);
+
+  /* A wrong secret is surfaced, not masked by the binding. */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "totally-wrong", "e10", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e11", now) == true);
+
+  n46_teardown(&f);
+  printf("test_reconnect_own_or_no_secret (%s): PASS\n", n46_mode_name(cache_only));
+}
+
+/* 10a: another client's secret — spent or pending — never authorizes this
+ * client: neither a fresh client nor one bound to a different agent can use
+ * it to reconnect or to reach that secret's agent. */
+static void test_reconnect_foreign_secret_refused(bool cache_only) {
+  N46Fixture f;
+  n46_setup_mode(&f, cache_only);
+  int64_t now = 1752380000;
+
+  char ops_sk[65], ops_pk[65], other_sk[65], other_pk[65];
+  gen_keypair_hex(ops_sk, ops_pk);
+  gen_keypair_hex(other_sk, other_pk);
+  n46_adopt(&f, "ops", ops_sk, ops_pk, "ops-secret");
+
+  /* client pairs with stew; other pairs with ops. */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+  CHECK(n46_connect(&f, other_sk, other_pk, "ops-secret", "e2", now) == true);
+
+  /* Each re-sending the OTHER client's spent secret is refused... */
+  CHECK(n46_connect(&f, other_sk, other_pk, "one-time-secret", "e3", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "ops-secret", "e4", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+
+  /* ...and moves neither binding: each still resolves to its own agent. */
+  n46_expect_binding(&f, f.client_pk_hex, "stew", now);
+  n46_expect_binding(&f, other_pk, "ops", now);
+  CHECK(n46_connect(&f, other_sk, other_pk, NULL, "e5", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e6", now) == true);
+  CHECK(n46_get_public_key(&f, other_sk, other_pk, "e7", now) == true);
+
+  /* A third, unpaired client gets nothing from either spent secret. */
+  char third_sk[65], third_pk[65];
+  gen_keypair_hex(third_sk, third_pk);
+  CHECK(n46_connect(&f, third_sk, third_pk, "one-time-secret", "e8", now) == false);
+  CHECK(n46_connect(&f, third_sk, third_pk, "ops-secret", "e9", now) == false);
+  CHECK(n46_get_public_key(&f, third_sk, third_pk, "e10", now) == false);
+  n46_expect_last_audit(&f, "get_public_key", "error", "not_connected");
+  n46_expect_binding(&f, third_pk, NULL, now);
+
+  sodium_memzero(ops_sk, sizeof(ops_sk));
+  sodium_memzero(other_sk, sizeof(other_sk));
+  sodium_memzero(third_sk, sizeof(third_sk));
+  n46_teardown(&f);
+  printf("test_reconnect_foreign_secret_refused (%s): PASS\n", n46_mode_name(cache_only));
+}
+
+/* 10b: an unknown client is refused with no secret, a wrong secret, or a
+ * request, and does not consume the pending secret by trying. */
+static void test_reconnect_unknown_client_refused(bool cache_only) {
+  N46Fixture f;
+  n46_setup_mode(&f, cache_only);
+  int64_t now = 1752380000;
+
+  char rando_sk[65], rando_pk[65];
+  gen_keypair_hex(rando_sk, rando_pk);
+
+  CHECK(n46_connect(&f, rando_sk, rando_pk, NULL, "e1", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+  CHECK(n46_connect(&f, rando_sk, rando_pk, "wrong-secret", "e2", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+  CHECK(n46_get_public_key(&f, rando_sk, rando_pk, "e3", now) == false);
+  n46_expect_last_audit(&f, "get_public_key", "error", "not_connected");
+  n46_expect_binding(&f, rando_pk, NULL, now);
+
+  /* The real client can still pair with the untouched secret. */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == true);
+
+  sodium_memzero(rando_sk, sizeof(rando_sk));
+  n46_teardown(&f);
+  printf("test_reconnect_unknown_client_refused (%s): PASS\n", n46_mode_name(cache_only));
+}
+
+/* 11: cache-only bindings are pinned to the identity they were made against:
+ * rotate-key, and revoke followed by re-adopting the SAME agent_id, both
+ * leave the old client with nothing until it pairs with a fresh secret. */
+static void test_cache_only_identity_change_invalidates(void) {
+  N46Fixture f;
+  n46_setup_mode(&f, true);
+  int64_t now = 1752380000;
+
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+
+  char new_pk[65] = {0};
+  CHECK(signet_key_store_rotate_agent(f.ks, "stew", new_pk, sizeof(new_pk)) == 0);
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e2", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e3", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e4", now) == false);
+
+  /* Revoke, then re-adopt the ORIGINAL key under the same agent_id: the old
+   * binding must not come back even though the identity pubkey matches. */
+  CHECK(signet_key_store_revoke_agent(f.ks, "stew") == 0);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e5", now) == false);
+  n46_adopt(&f, "stew", f.stew_sk_hex, f.stew_pk_hex, "fresh-secret");
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e6", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e7", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e8", now) == false);
+
+  /* The fresh secret re-pairs; then the usual reconnects work again. */
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "fresh-secret", "e9", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "fresh-secret", "e10", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e11", now) == true);
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e12", now) == true);
+
+  /* A second agent cannot be adopted with a secret already pending. */
+  char ops_sk[65], ops_pk[65];
+  gen_keypair_hex(ops_sk, ops_pk);
+  uint8_t ops_raw[32];
+  CHECK(hex_to_bytes(ops_sk, ops_raw, 32) == 0);
+  char out_pk[65] = {0};
+  n46_adopt(&f, "ops", ops_sk, ops_pk, "ops-secret");
+  CHECK(signet_key_store_adopt_agent(f.ks, "ops2", ops_raw, NULL, "ops-secret",
+                                      f.bunker_pk_hex, NULL, 0, out_pk,
+                                      NULL) != SIGNET_ADOPT_OK);
+  sodium_memzero(ops_raw, sizeof(ops_raw));
+  sodium_memzero(ops_sk, sizeof(ops_sk));
+
+  n46_teardown(&f);
+  printf("test_cache_only_identity_change_invalidates: PASS\n");
+}
+
+/* 12: a cache-only signer keeps nothing across a restart. Re-adopting the
+ * agent with its old key and old secret pairs the client again (that is a
+ * NEW pending secret); without that, the client is refused. */
+static void test_cache_only_restart_requires_pairing(void) {
+  N46Fixture f;
+  n46_setup_mode(&f, true);
+  int64_t now = 1752380000;
+
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e1", now) == true);
+
+  /* Restart: new key store and server, nothing persisted. */
+  signet_nip46_server_free(f.srv);
+  signet_key_store_free(f.ks);
+  n46_open_key_store(&f);
+  n46_new_server(&f);
+  n46_expect_binding(&f, f.client_pk_hex, NULL, now);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e2", now) == false);
+  n46_expect_last_audit(&f, "connect", "error", "auth_failed");
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "e3", now) == false);
+
+  /* Operator re-provisions the agent with a fresh secret; the client pairs. */
+  n46_adopt(&f, "stew", f.stew_sk_hex, f.stew_pk_hex, "after-restart");
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e4", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "one-time-secret", "e5", now) == false);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, "after-restart", "e6", now) == true);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, NULL, "e7", now) == true);
+
+  n46_teardown(&f);
+  printf("test_cache_only_restart_requires_pairing: PASS\n");
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -772,6 +1026,14 @@ int main(void) {
   test_reprovision_does_not_resurrect_binding();
   test_fenced_nip46_signing_contract();
   test_fenced_nip46_nip44_contract();
+
+  for (int cache_only = 0; cache_only <= 1; cache_only++) {
+    test_reconnect_own_or_no_secret(cache_only);
+    test_reconnect_foreign_secret_refused(cache_only);
+    test_reconnect_unknown_client_refused(cache_only);
+  }
+  test_cache_only_identity_change_invalidates();
+  test_cache_only_restart_requires_pairing();
 
   printf("All client binding tests passed.\n");
   return 0;
