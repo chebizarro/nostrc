@@ -25,7 +25,7 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.4.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
+| signet | `signet/` | 0.5.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
 
@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| Provisioner-authenticated `signetctl writer-acquire` and disposable loopback Signet/Bahia interop harness. | signet | 0.5.0 | MINOR from 0.4.0: additive CLI command; fixture is test-only. |
 | Bahia SBOM DSSE review follow-up: validate the optional Go `time.Time` RFC3339Nano timestamp and prove duplicate keys in subject objects, including escaped-equivalent names, are rejected. | signet | 0.4.0 | No further bump: correctness hardening folded into unreleased 0.4.0 capability. |
 | Bahia SBOM DSSE review hardening: reject duplicate JSON members recursively and require exact `allow_methods` opt-in rather than inherited wildcard/default allow. | signet | 0.4.0 | No further bump: security correction folded into unreleased 0.4.0 capability; no new public surface. |
 | Bahia SBOM DSSE custody signing: optional NIP-46 `sign_bahia_sbom_dsse` method and installed typed custody API; Signet validates Bahia SBOM statement JSON and computes fixed-type DSSE PAE and SHA-256 before BIP-340 signing, with no caller digest. | signet | 0.4.0 | MINOR from 0.3.0 for additive public custody and wire capability; no change to never-fenced identities. |

@@ -14,6 +14,7 @@
 #include "signet/store_audit.h"
 #include "signet/store_secrets.h"
 #include "signet/cli_secret_output.h"
+#include "signet/util.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -36,7 +37,7 @@
 
 #include <secure_buf.h>
 
-#define SIGNETCTL_VERSION "0.4.0"
+#define SIGNETCTL_VERSION "0.5.0"
 #define SIGNETCTL_TIMEOUT_SEC 10
 #define SIGNETCTL_MAIN_CONTEXT_DRAIN_LIMIT 64
 
@@ -84,6 +85,8 @@ static void signetctl_usage(FILE *out) {
     "                           Persist and activate a provisioner grant\n"
     "  revoke-provisioner <pubkey>\n"
     "                           Persist and activate a provisioner revocation\n"
+    "  writer-acquire <agent_id> <owner_pubkey> --ttl <1..3600>\n"
+    "                           Transfer the fenced writer lease (provisioner only)\n"
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
     "\n"
@@ -163,6 +166,7 @@ static const char *signetctl_contextvm_method(SignetMgmtOp op) {
     case SIGNET_MGMT_OP_DELETE_CREDENTIAL: return "credential/delete";
     case SIGNET_MGMT_OP_GRANT_PROVISIONER: return "config/grant-provisioner";
     case SIGNET_MGMT_OP_REVOKE_PROVISIONER: return "config/revoke-provisioner";
+    case SIGNET_MGMT_OP_WRITER_ACQUIRE: return "agent/writer-acquire";
     default:                          return NULL;
   }
 }
@@ -178,7 +182,8 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
                                     const char *credential_id, const char *secret_type,
                                     const char *label, const char *payload_b64,
                                     const char *credential_policy_id,
-                                    bool has_expires_at, int64_t expires_at) {
+                                    bool has_expires_at, int64_t expires_at,
+                                    const char *writer_pubkey, int writer_ttl) {
   const char *method = signetctl_contextvm_method(op);
   if (!method) return NULL;
 
@@ -210,6 +215,12 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   if (provisioner_pubkey) {
     json_builder_set_member_name(b, "provisioner_pubkey");
     json_builder_add_string_value(b, provisioner_pubkey);
+  }
+  if (writer_pubkey) {
+    json_builder_set_member_name(b, "writer_pubkey");
+    json_builder_add_string_value(b, writer_pubkey);
+    json_builder_set_member_name(b, "ttl_seconds");
+    json_builder_add_int_value(b, writer_ttl);
   }
   if (credential_id) {
     json_builder_set_member_name(b, "credential_id");
@@ -674,6 +685,8 @@ int main(int argc, char **argv) {
   bool reissue_show_secret = false;
   const char *revoke_client_pubkey = NULL;
   const char *provisioner_pubkey = NULL;
+  const char *writer_pubkey = NULL;
+  int writer_ttl = 0;
   const char *credential_id = NULL;
   const char *credential_type = NULL;
   const char *credential_label = NULL;
@@ -766,6 +779,23 @@ int main(int argc, char **argv) {
       fprintf(stderr, "signetctl: unexpected %s argument\n", cmd);
       return 2;
     }
+  } else if (strcmp(cmd, "writer-acquire") == 0) {
+    op = SIGNET_MGMT_OP_WRITER_ACQUIRE;
+    if (argc - argi != 4 || strcmp(argv[argi + 2], "--ttl") != 0) {
+      fprintf(stderr, "signetctl: writer-acquire requires <agent_id> <owner_pubkey> --ttl <1..3600>\n");
+      return 2;
+    }
+    agent_id = argv[argi++];
+    writer_pubkey = argv[argi++];
+    argi++; /* --ttl */
+    int64_t parsed_ttl = 0;
+    if (!signetctl_parse_i64(argv[argi++], &parsed_ttl) ||
+        parsed_ttl < 1 || parsed_ttl > 3600 ||
+        !signet_hex_to_bytes32(writer_pubkey, (uint8_t[32]){0})) {
+      fprintf(stderr, "signetctl: invalid writer pubkey or TTL\n");
+      return 2;
+    }
+    writer_ttl = (int)parsed_ttl;
   } else if (strcmp(cmd, "adopt-existing") == 0 ||
              strcmp(cmd, "restore-existing") == 0) {
     bool restoring = strcmp(cmd, "restore-existing") == 0;
@@ -1354,7 +1384,8 @@ int main(int argc, char **argv) {
                                         credential_payload_b64,
                                         credential_policy_id,
                                         has_credential_expires_at,
-                                        credential_expires_at);
+                                        credential_expires_at,
+                                        writer_pubkey, writer_ttl);
   signetctl_wipe_free_string(credential_payload_b64);
   credential_payload_b64 = NULL;
   if (!intent) {
