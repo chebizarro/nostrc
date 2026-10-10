@@ -99,6 +99,32 @@ identities. NIP-04 has no epoch-bearing contract and stays denied for fenced
 identities. D-Bus and NIP-5L NIP-44 remain legacy-only and reject fenced
 identities regardless of their caller.
 
+Bahia SBOM attestations use the additional NIP-46 method
+`sign_bahia_sbom_dsse` with exactly
+`["<standard-base64 exact statement JSON>", "<decimal epoch>"]`. Its string
+result is standard base64 of a 64-byte BIP-340 Schnorr signature. Policy must
+explicitly allow this method. Signet accepts only a UTF-8 in-toto Statement/v1
+with one artifact subject and nonempty subject digest (with Bahia's SHA-256/Git
+length-and-hex validation), SPDX or CycloneDX
+predicate type matching its format, a SHA-256 SBOM digest, and a supported
+location type/URI. It rejects malformed/non-SBOM statements, noncanonical
+base64, payloads over 64 KiB, missing epoch, stale/wrong owner, expired or
+revoked lease, and DB failure. There is no no-epoch path. The authenticated
+NIP-46 client pubkey, not a request parameter, is the owner.
+
+Signet hashes `DSSEv1 28 application/vnd.in-toto+json <payload-byte-length> `
+followed by the **exact decoded statement bytes** with SHA-256, then signs
+that 32-byte digest under the same transaction-scoped custody fence as Nostr
+events. It never accepts a caller-supplied digest, payload type, or key ID,
+and returns no signature if the custody transaction fails. Bahia's envelope
+`keyid` remains the existing service pubkey; its current verifier's DSSE PAE
+and BIP-340 checks remain unchanged. The statement metadata is asserted by
+the lease owner, not independently verified by Signet against an artifact or
+SBOM blob. This is a signing capability, not an artifact-admission decision.
+The subject digest algorithm name is not the authorization boundary: Bahia's
+current builder permits other nonempty `algo:hash` values, so Signet accepts
+those too while still constraining the statement and SBOM predicate domain.
+
 There is no generic raw
 digest/DSSE signing API in this change.
 
@@ -108,7 +134,7 @@ digest/DSSE signing API in this change.
    **new, dedicated NIP-46 client key** to the incoming writer; do not reuse
    the old daemon's client key or any configured Signet provisioner key. Confirm the Signet adoption result matches the
    service's current pubkey. Confirm the single active Signet/DB topology and
-   policy for `sign_event`, `writer_renew`, and any required NIP-44 methods.
+   policy for `sign_event`, `writer_renew`, `sign_bahia_sbom_dsse`, and any required NIP-44 methods.
 2. On **stage-01**, stop and disable old service-key signers, drain or quarantine
    already-signed outboxes, and verify no old daemon can still use a retained
    secret or stale DB copy. Acquire an epoch for the new client. Prove old

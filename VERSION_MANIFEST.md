@@ -25,7 +25,7 @@ files already declare a version.
 | nip34 (NIP-34 git events) | `nips/nip34/` | 0.1.0 | Unreleased | — | `nips/nip34/CMakeLists.txt` (`declare_component_version`; SONAME `libnip34.so.0`) |
 | nip55l (Linux signer) | `nips/nip55l/` | 0.7.0 | Unreleased | — | `nips/nip55l/include/nostr/nip55l/signer_ops.h` (`NOSTR_NIP55L_VERSION_*`) |
 | nostr-seal | `gnome/nostr-seal/` | 0.1.0 (format nsealed v1) | Unreleased | — | `gnome/nostr-seal/src/main.c` (`NOSTR_SEAL_VERSION`), `gnome/nostr-seal/include/nostr-seal.h` (`NSEAL_FORMAT_VERSION`) |
-| signet | `signet/` | 0.3.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
+| signet | `signet/` | 0.4.0 | Unreleased | — | `signet/meson.build`, `signet/src/signetd_main.c` (`SIGNET_VERSION`), `signet/src/signetctl_main.c` (`SIGNETCTL_VERSION`); `signet/CMakeLists.txt` declares none |
 
 ## Recorded version decisions
 
@@ -34,6 +34,7 @@ Decisions for components affected by another component's change (AGENTS.md,
 
 | Change | Component | Declared | Decision |
 | --- | --- | --- | --- |
+| Bahia SBOM DSSE custody signing: optional NIP-46 `sign_bahia_sbom_dsse` method and installed typed custody API; Signet validates Bahia SBOM statement JSON and computes fixed-type DSSE PAE and SHA-256 before BIP-340 signing, with no caller digest. | signet | 0.4.0 | MINOR from 0.3.0 for additive public custody and wire capability; no change to never-fenced identities. |
 | NIP-46 decoded-NUL request/response hardening (nostrc-4j37h.1): reject Jansson strings that cannot be represented without truncation as C strings. | NIP-46 client/provider | Unversioned | No bump possible until this component has an authoritative version source (see component table); security correctness fix, no API signature change. |
 | Same: reject literal NUL bytes in decrypted NIP-46 request spans before C-string parsing. | signet | 0.3.0 | No further bump: security correction folded into the unreleased 0.3.0 fenced NIP-44 capability. |
 | Fenced NIP-44 custody (nostrc-4j37h.1): NIP-46 owner/epoch-bearing encrypt/decrypt and binary-safe methods without exporting the service nsec. | signet | 0.3.0 | MINOR from 0.2.0 for the additive installed custody API and optional NIP-46 wire capability. Legacy no-epoch calls remain for never-fenced identities; fenced NIP-04 and D-Bus/NIP-5L remain denied. |

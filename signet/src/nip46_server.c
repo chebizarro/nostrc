@@ -779,6 +779,39 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
               remote_signer_secret_key_hex, session_agent_id, now);
         }
       }
+    } else if (strcmp(method, "sign_bahia_sbom_dsse") == 0) {
+      int64_t epoch = 0;
+      if (!req.params || req.n_params != 2 || !req.params[0] ||
+          strlen(req.params[0]) > 87384 ||
+          !signet_parse_writer_epoch(req.params[1], &epoch)) {
+        err_str = g_strdup("sign_bahia_sbom_dsse requires [base64_statement_json, epoch]");
+        status = "error";
+        code = "invalid_params";
+      } else {
+        gsize payload_len = 0;
+        guchar *payload = g_base64_decode(req.params[0], &payload_len);
+        char *canonical = payload ? g_base64_encode(payload, payload_len) : NULL;
+        bool canonical_ok = canonical && strcmp(canonical, req.params[0]) == 0;
+        g_free(canonical);
+        int sign_rc = canonical_ok
+            ? signet_key_store_sign_bahia_sbom_dsse(s->keys, session_agent_id,
+                client_pubkey_hex, epoch, payload, payload_len, &result)
+            : -1;
+        g_free(payload);
+        if (sign_rc != 0) {
+          g_free(result);
+          result = NULL;
+          err_str = g_strdup("SBOM DSSE signing denied or failed");
+          status = "error";
+          code = "sign_failed";
+        } else {
+          result_is_json = false;
+          status = "ok";
+          code = "ok";
+          signet_nip46_publish_cas_audit(s->relays,
+              remote_signer_secret_key_hex, session_agent_id, now);
+        }
+      }
     } else if (strcmp(method, "writer_renew") == 0) {
       int64_t epoch = 0, expires_at = 0;
       if (!req.params || req.n_params != 1 ||

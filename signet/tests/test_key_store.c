@@ -18,6 +18,9 @@
 #include <glib.h>
 #include <sodium.h>
 #include <sqlite3.h>
+#include <openssl/sha.h>
+#include <secp256k1.h>
+#include <secp256k1_schnorrsig.h>
 
 #define MASTER_KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
@@ -780,6 +783,120 @@ static void test_fenced_nip44_transfer_serializes(void) {
   printf("test_fenced_nip44_transfer_serializes: PASS\n");
 }
 
+static void test_fenced_sbom_dsse_signature(void) {
+  static const char owner_a[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  static const char owner_b[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch, &expiry) == 0);
+  char *statement = g_strdup_printf(
+      "{\"_type\":\"https://in-toto.io/Statement/v1\","
+      "\"subject\":[{\"name\":\"artifact\",\"digest\":{\"sha256\":\"%064d\"}}],"
+      "\"predicateType\":\"https://spdx.dev/Document\","
+      "\"predicate\":{\"format\":\"spdx\",\"location\":{\"type\":\"blossom\","
+      "\"uri\":\"https://example.test/sbom\"},\"digest\":{\"sha256\":\"%064d\"}}}",
+      0, 0);
+  CHECK(statement != NULL);
+  char *signature = NULL;
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)statement, strlen(statement), &signature) == 0);
+  CHECK(signature != NULL);
+  size_t pae_len = strlen(statement) + 100;
+  char *pae = g_malloc(pae_len);
+  g_snprintf(pae, pae_len, "DSSEv1 28 application/vnd.in-toto+json %zu %s",
+             strlen(statement), statement);
+  uint8_t digest[32];
+  SHA256((const uint8_t *)pae, strlen(pae), digest);
+  gsize sig_len = 0;
+  guchar *sig = g_base64_decode(signature, &sig_len);
+  CHECK(sig && sig_len == 64);
+  uint8_t pubkey_bytes[32];
+  for (size_t i = 0; i < sizeof(pubkey_bytes); ++i)
+    pubkey_bytes[i] = (uint8_t)((g_ascii_xdigit_value(pubkey[2 * i]) << 4) |
+                                 g_ascii_xdigit_value(pubkey[2 * i + 1]));
+  secp256k1_context *ctx = secp256k1_context_create(SECP256K1_CONTEXT_VERIFY);
+  secp256k1_xonly_pubkey xpub;
+  CHECK(ctx && secp256k1_xonly_pubkey_parse(ctx, &xpub, pubkey_bytes) == 1);
+  CHECK(secp256k1_schnorrsig_verify(ctx, sig, digest, sizeof(digest), &xpub) == 1);
+  secp256k1_context_destroy(ctx);
+  g_free(sig);
+  g_free(signature);
+  g_free(pae);
+
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_b, epoch,
+      (const uint8_t *)statement, strlen(statement), &signature) != 0);
+  CHECK(signature == NULL);
+  const char *escaped_nul =
+      "{\"_type\":\"https://in-toto.io/Statement/v1\\u0000other\",\"subject\":[],"
+      "\"predicateType\":\"https://spdx.dev/Document\",\"predicate\":{}}";
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)escaped_nul, strlen(escaped_nul), &signature) != 0);
+  CHECK(signature == NULL);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, 0,
+      (const uint8_t *)statement, strlen(statement), &signature) != 0);
+  CHECK(signature == NULL);
+  const char *generic = "{\"_type\":\"arbitrary\",\"subject\":[],\"predicate\":{}}";
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)generic, strlen(generic), &signature) != 0);
+  CHECK(signature == NULL);
+  uint8_t truncated[] = "{\"_type\":\"x\"}\0hidden";
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      truncated, sizeof(truncated), &signature) != 0);
+  CHECK(signature == NULL);
+  const char *subject_digest = "\"digest\":{\"sha256\":";
+  char *subject_at = strstr(statement, subject_digest);
+  CHECK(subject_at != NULL);
+  char *other_algorithm = g_strdup_printf("%.*s\"digest\":{\"blake3\":%s",
+      (int)(subject_at - statement), statement, subject_at + strlen(subject_digest));
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)other_algorithm, strlen(other_algorithm), &signature) == 0);
+  CHECK(signature != NULL);
+  g_free(signature);
+  signature = NULL;
+  g_free(other_algorithm);
+
+  signet_key_store_free(ks);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks != NULL);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)statement, strlen(statement), &signature) == 0);
+  g_free(signature);
+  signature = NULL;
+  sqlite3 *db = signet_store_get_db(signet_key_store_get_store(ks));
+  CHECK(sqlite3_exec(db,
+      "CREATE TRIGGER fail_dsse_commit BEFORE UPDATE OF observed_at "
+      "ON agent_writer_leases BEGIN SELECT RAISE(ABORT, 'fail DSSE commit'); END;",
+      NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)statement, strlen(statement), &signature) != 0);
+  CHECK(signature == NULL);
+  CHECK(sqlite3_exec(db, "DROP TRIGGER fail_dsse_commit;",
+                     NULL, NULL, NULL) == SQLITE_OK);
+  int64_t new_epoch = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_b, 300,
+                                        &new_epoch, &expiry) == 0);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_a, epoch,
+      (const uint8_t *)statement, strlen(statement), &signature) != 0);
+  CHECK(signature == NULL);
+  CHECK(signet_key_store_writer_revoke(ks, "service", &new_epoch) == 0);
+  CHECK(signet_key_store_sign_bahia_sbom_dsse(ks, "service", owner_b, new_epoch - 1,
+      (const uint8_t *)statement, strlen(statement), &signature) != 0);
+  CHECK(signature == NULL);
+  g_free(statement);
+  signet_key_store_free(ks);
+  unlink(path);
+  g_free(path);
+  printf("test_fenced_sbom_dsse_signature: PASS\n");
+}
+
 int main(void) {
   CHECK(sodium_init() >= 0);
 
@@ -796,6 +913,7 @@ int main(void) {
   test_writer_fence_persists_and_fails_closed();
   test_writer_transfer_serializes_with_sign();
   test_fenced_nip44_transfer_serializes();
+  test_fenced_sbom_dsse_signature();
 
   printf("All key store tests passed!\n");
   return 0;
