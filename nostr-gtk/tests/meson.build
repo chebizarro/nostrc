@@ -48,6 +48,16 @@ else
   test('nostr-gtk:og-preview-card', og_card_test, env: test_env)
 endif
 
+# nostrc-8xfib.6: resolver contract and reference card (fake resolver).
+reference_card_test = executable('test_reference_card', 'test_reference_card.c',
+  dependencies: [nostr_gtk_portable_dep, gtk_dep, glib_dep],
+  include_directories: [include_directories('../../tests/common'), nostr_gtk_repo_inc])
+if xvfb_run.found()
+  test('nostr-gtk:reference-card', xvfb_run, args: ['-a', reference_card_test], env: test_env)
+else
+  test('nostr-gtk:reference-card', reference_card_test, env: test_env)
+endif
+
 # nostrc-8xfib.4: bounded decode, injected media source, viewer and player.
 media_test = executable('test_media', 'test_media.c',
   dependencies: [nostr_gtk_portable_dep, gtk_dep, glib_dep],

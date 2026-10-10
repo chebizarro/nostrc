@@ -2272,6 +2272,10 @@ test_open_timing(Fixture *f, gconstpointer data)
   g_assert_true(!order_env || g_str_equal(order_env, "0") ||
                 g_str_equal(order_env, "1") || g_str_equal(order_env, "2"));
   guint order = order_env ? (guint)atoi(order_env) : 0;
+  gboolean reposts = g_strcmp0(g_getenv("GROUNDHOG_TEST_REPOSTS"), "1") == 0;
+  /* GROUNDHOG_TEST_VERIFY_CACHE=0 empties the verification cache before
+   * every open, as on a first open. */
+  gboolean verify_cache = g_strcmp0(g_getenv("GROUNDHOG_TEST_VERIFY_CACHE"), "0") != 0;
   for (guint k = 0; k < G_N_ELEMENTS(orders[0]); k++) {
     guint size = orders[order][k];
     g_autoptr(GhConversationStore) store = gh_conversation_store_new();
@@ -2291,6 +2295,18 @@ test_open_timing(Fixture *f, gconstpointer data)
       g_autofree char *b_text = g_strdup_printf("B message %u, _ordinary text_ with a few words to wrap %s%s", i,
                                                i % 20 == 0 ? nprofile : "",
                                                long_body ? long_body->str : "");
+      /* GROUNDHOG_TEST_REPOSTS=1 (nostrc-8xfib.6): every tenth A message is a
+       * repost embedding a signed original, verified when it renders. */
+      if (reposts && i % 10 == 5) {
+        g_autofree gchar *original_text = g_strdup_printf("original note %u", i);
+        g_autofree char *original = signed_note(original_text);
+        g_autoptr(GnNostrEventInfo) original_info = gn_nostr_event_parse(original, NULL);
+        g_autofree gchar *original_uri = gn_nostr_reference_build_event(original_info->id, NULL, -1, NULL);
+        g_autoptr(GnNostrReference) target = gn_nostr_reference_parse(original_uri);
+        target->kind = 1;
+        g_free(a_text);
+        a_text = gn_nostr_build_repost_template(target, original);
+      }
       GhMessage *a = add_dm(store, i % 2 ? 2 : 1, i % 2 ? 1 : 2,
                             base + 10000 + i * 60, a_text);
       GhMessage *b = add_dm(store, i % 2 ? 3 : 1, i % 2 ? 1 : 3,
@@ -2313,6 +2329,8 @@ test_open_timing(Fixture *f, gconstpointer data)
     gh_conversation_window_enable(b);
     for (guint sample = 0; sample < warmups + pairs; sample++) {
       gboolean warmup = sample < warmups;
+      if (!verify_cache)
+        gn_nostr_event_verify_cache_clear();
       GhWindow *window = gh_window_new(NULL);
       GhSidebarPage *sidebar = gh_window_get_sidebar(window);
       gh_conversation_list_attach(window, store, NULL);
