@@ -155,6 +155,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
+  include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
@@ -166,6 +167,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
+  include/nostr-gtk-1.0/gn-animated-image.h
   include/nostr-gtk-1.0/gn-nip34-issue-fields.h
   include/nostr-gtk-1.0/gn-portable-i18n.h
 )
@@ -175,6 +177,7 @@ set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-nostr-reference.c
   src/gn-og-preview-card.c
   src/gn-media-viewer.c
+  src/gn-animated-image.c
   src/gn-nip34-issue-fields.c
   src/gn-portable-i18n.c
 )
