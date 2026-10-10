@@ -7,16 +7,18 @@
  * running, hands it the already-validated event over org.nostr.Handler1.
  * This module is the GTK-free half of both paths:
  *
- *   - gnostr_nostr_target_parse() decodes the URI (NIP-19 via nip21_uri)
- *     and refuses anything GNostr must never act on (nsec, ncryptsec,
- *     nrelay, other schemes);
+ *   - gnostr_nostr_target_parse() normalises the dispatcher URI (web+nostr:,
+ *     query, fragment) and decodes it with nostr-gtk's shared
+ *     gn_nostr_reference_parse_full(), refusing anything GNostr must never
+ *     act on (nsec, ncryptsec, nrelay, other schemes);
  *   - gnostr_nostr_view_for_kind() is the single kind -> view table. The
  *     kinds it maps to a purpose-built view are exactly the numeric entries
  *     of X-Nostr-Kinds= in the desktop file (a unit test keeps the two in
  *     sync). Every other kind reaches GNostr through the `*` fallback and
  *     is shown as a generic event in the thread view;
  *   - gnostr_nostr_event_parse() validates event JSON (NIP-01 canonical id
- *     and Schnorr signature) before anything is shown, and
+ *     and Schnorr signature, via gn_nostr_event_parse()) before anything is
+ *     shown, and
  *     gnostr_nostr_event_matches_target() checks that a fetched event is
  *     what the link points at.
  *

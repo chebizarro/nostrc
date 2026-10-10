@@ -9,6 +9,9 @@
 static GBytes *two_frame_gif(void);
 #include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
 #include <string.h>
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <nostr-tag.h>
 #include "nostrc-test-gdk-frame.h"
 
 static GnMarkdownToken *nth_kind(GnMarkdownDocument *doc, GnMarkdownTokenKind kind, guint nth) {
@@ -399,12 +402,193 @@ static void animated(void) {
   gtk_window_destroy(GTK_WINDOW(window));
   g_object_unref(picture);
 }
+/* nostrc-8xfib.6: NIP-21 typed errors, builders and NIP-01 verification
+ * ported from gnostr (nip21_uri, gnostr-nostr-target). */
+#define REF_SK "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
+#define REF_ID "b9f5441e45ca39179320e0031cfb18e34078673dcc3d3e3a3b3a981760aa5696"
+
+static char *signed_event(int kind, gint64 created_at, const char *d, const char *content) {
+  NostrEvent *ev = nostr_event_new();
+  nostr_event_set_kind(ev, kind);
+  nostr_event_set_created_at(ev, created_at);
+  nostr_event_set_content(ev, content);
+  NostrTags *tags = d ? nostr_tags_new(1, nostr_tag_new("d", d, NULL)) : nostr_tags_new(0);
+  nostr_event_set_tags(ev, tags);
+  g_assert_cmpint(nostr_event_sign(ev, REF_SK), ==, 0);
+  char *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  return json;
+}
+
+static void references_builders(void) {
+  g_autofree char *pk = nostr_key_get_public(REF_SK);
+  const gchar *relays[] = { "wss://relay.example", NULL };
+
+  g_autofree gchar *npub = gn_nostr_reference_build_person(pk, NULL);
+  g_assert_true(g_str_has_prefix(npub, "nostr:npub1"));
+  g_autoptr(GnNostrReference) p = gn_nostr_reference_parse(npub);
+  g_assert_cmpint(p->type, ==, GN_NOSTR_REFERENCE_PERSON);
+  g_assert_cmpstr(p->author, ==, pk);
+
+  g_autofree gchar *nprofile = gn_nostr_reference_build_person(pk, relays);
+  g_assert_true(g_str_has_prefix(nprofile, "nostr:nprofile1"));
+  g_autoptr(GnNostrReference) np = gn_nostr_reference_parse(nprofile);
+  g_assert_cmpstr(np->author, ==, pk);
+  g_assert_cmpstr(np->relay_hints[0], ==, "wss://relay.example");
+
+  /* Regression for gnostr's "nostr:note1<hex>": the builder emits real bech32. */
+  g_autofree gchar *note = gn_nostr_reference_build_event(REF_ID, NULL, -1, NULL);
+  g_assert_true(g_str_has_prefix(note, "nostr:note1"));
+  g_assert_null(strstr(note, REF_ID));
+  g_autoptr(GnNostrReference) n = gn_nostr_reference_parse(note);
+  g_assert_cmpstr(n->id, ==, REF_ID);
+  g_autofree gchar *bogus = g_strdup_printf("nostr:note1%s", REF_ID);
+  g_assert_null(gn_nostr_reference_parse(bogus));
+
+  g_autofree gchar *nevent = gn_nostr_reference_build_event(REF_ID, pk, 30023, relays);
+  g_assert_true(g_str_has_prefix(nevent, "nostr:nevent1"));
+  g_autoptr(GnNostrReference) e = gn_nostr_reference_parse(nevent);
+  g_assert_cmpint(e->type, ==, GN_NOSTR_REFERENCE_EVENT);
+  g_assert_cmpstr(e->id, ==, REF_ID);
+  g_assert_cmpstr(e->author, ==, pk);
+  g_assert_cmpint(e->kind, ==, 30023);
+  g_assert_cmpstr(e->relay_hints[0], ==, "wss://relay.example");
+
+  g_autofree gchar *naddr = gn_nostr_reference_build_address(pk, 30023, "my-article", relays);
+  g_autoptr(GnNostrReference) a = gn_nostr_reference_parse(naddr);
+  g_assert_cmpint(a->type, ==, GN_NOSTR_REFERENCE_ADDRESS);
+  g_assert_cmpstr(a->id, ==, "my-article");
+  g_assert_cmpint(a->kind, ==, 30023);
+  /* Empty d tag: a valid replaceable coordinate. */
+  g_autofree gchar *empty_d = gn_nostr_reference_build_address(pk, 10002, "", NULL);
+  g_assert_nonnull(empty_d);
+  g_autoptr(GnNostrReference) ed = gn_nostr_reference_parse(empty_d);
+  g_assert_nonnull(ed);
+  g_assert_cmpstr(ed->id, ==, "");
+
+  g_assert_null(gn_nostr_reference_build_person("zz", NULL));
+  g_assert_null(gn_nostr_reference_build_event("abc", NULL, -1, NULL));
+  g_assert_null(gn_nostr_reference_build_address(pk, 0, "x", NULL));
+}
+static void references_errors(void) {
+  g_autoptr(GError) error = NULL;
+  g_autofree char *pk = nostr_key_get_public(REF_SK);
+  guint8 sk[32];
+  for (guint i = 0; i < 32; i++)
+    sk[i] = (guint8)((g_ascii_xdigit_value(REF_SK[2 * i]) << 4) |
+                     g_ascii_xdigit_value(REF_SK[2 * i + 1]));
+  char *nsec = NULL;
+  g_assert_cmpint(nostr_nip19_encode_nsec(sk, &nsec), ==, 0);
+  g_autofree gchar *nsec_uri = g_strdup_printf("nostr:%s", nsec);
+  free(nsec);
+  g_assert_null(gn_nostr_reference_parse_full(nsec_uri, &error));
+  g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_REFUSED);
+  g_clear_error(&error);
+  g_assert_null(gn_nostr_reference_parse_full("nostr:ncryptsec1qgg9947rlpvqu76pj5ecreduf9jxhselq2nae2kghhvd5g7dgjtcxfqtd67p9m0w57lspw8gsq6yphnm8623nsl8xn9j4jdzz84zm3frztj3z7s35vpzmqf6ksu8r89qk5z2zxfmu5gv8th8wclt0h4p", &error));
+  g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_REFUSED);
+  g_clear_error(&error);
+  char *nrelay = NULL;
+  g_assert_cmpint(nostr_nip19_encode_nrelay("wss://r.example", &nrelay), ==, 0);
+  g_autofree gchar *nrelay_uri = g_strdup_printf("nostr:%s", nrelay);
+  free(nrelay);
+  g_assert_null(gn_nostr_reference_parse_full(nrelay_uri, &error));
+  g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_UNSUPPORTED);
+  g_clear_error(&error);
+
+  const char *bad[] = { NULL, "", "nostr:", "https:" "//example.com",
+                        "nostr:" "//open?event=abc", "nostr:npub1notvalid" };
+  for (gsize i = 0; i < G_N_ELEMENTS(bad); i++) {
+    g_assert_null(gn_nostr_reference_parse_full(bad[i], &error));
+    g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID);
+    g_clear_error(&error);
+  }
+
+  /* Case-insensitive scheme and single-case bech32 are accepted; mixed case,
+   * query strings and percent-encoding are not (normalised by the app). */
+  g_autofree gchar *npub = gn_nostr_reference_build_person(pk, NULL);
+  g_autofree gchar *upper = g_ascii_strup(npub, -1);
+  g_autoptr(GnNostrReference) up = gn_nostr_reference_parse_full(upper, &error);
+  g_assert_no_error(error);
+  g_assert_cmpstr(up->author, ==, pk);
+  g_assert_cmpstr(up->uri, ==, npub);
+  g_autofree gchar *mixed = g_strdup(npub);
+  mixed[8] = g_ascii_toupper(mixed[8]);
+  g_assert_null(gn_nostr_reference_parse(mixed));
+  g_autofree gchar *query = g_strconcat(npub, "?x=1", NULL);
+  g_assert_null(gn_nostr_reference_parse(query));
+  g_autofree gchar *pct = g_strconcat(npub, "%20", NULL);
+  g_assert_null(gn_nostr_reference_parse(pct));
+
+  /* Bounds. */
+  g_autofree gchar *huge = g_strnfill(2049, 'q');
+  g_assert_null(gn_nostr_reference_parse_full(huge, &error));
+  g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID);
+  g_clear_error(&error);
+  GString *many = g_string_new("[[\"e\",\"" REF_ID "\"]");
+  for (int i = 0; i < 1024; i++)
+    g_string_append_printf(many, ",[\"p\",\"%s\"]", pk);
+  g_string_append(many, "]");
+  g_assert_null(gn_nostr_repost_descriptor_parse_tags(6, many->str));
+  g_string_free(many, TRUE);
+  g_autofree gchar *big_tags = g_strnfill(128 * 1024 + 1, ' ');
+  g_assert_null(gn_nostr_repost_descriptor_parse_tags(6, big_tags));
+}
+static void references_verify(void) {
+  g_autofree char *pk = nostr_key_get_public(REF_SK);
+  g_autofree char *json = signed_event(1, 1700000000, NULL, "hello");
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(json, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(info->kind, ==, 1);
+  g_assert_cmpstr(info->pubkey, ==, pk);
+  g_assert_true(gn_nostr_event_verify(json, NULL));
+
+  GString *bad = g_string_new(json);
+  g_string_replace(bad, "hello", "HELLO", 1);
+  g_assert_false(gn_nostr_event_verify(bad->str, &error));
+  g_assert_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID);
+  g_clear_error(&error);
+  g_assert_false(gn_nostr_event_verify("garbage", NULL));
+
+  g_autofree gchar *uri = gn_nostr_reference_build_event(info->id, NULL, -1, NULL);
+  g_autoptr(GnNostrReference) ref = gn_nostr_reference_parse(uri);
+  g_assert_true(gn_nostr_reference_matches_event(ref, json));
+
+  /* A kind-6 repost's embedded original is used only when it verifies. */
+  ref->kind = 1;
+  g_autofree gchar *good_repost = gn_nostr_build_repost_template(ref, json);
+  g_autoptr(GnNostrRepostDescriptor) good = gn_nostr_repost_descriptor_parse(good_repost, FALSE);
+  g_assert_nonnull(good);
+  g_assert_nonnull(good->original_json);
+  g_assert_true(good->target->author_authenticated);
+  g_assert_cmpstr(good->target->author, ==, pk);
+  g_autofree gchar *bad_repost = gn_nostr_build_repost_template(ref, bad->str);
+  g_autoptr(GnNostrRepostDescriptor) tampered = gn_nostr_repost_descriptor_parse(bad_repost, FALSE);
+  g_assert_nonnull(tampered);
+  g_assert_null(tampered->original_json);
+  g_assert_false(tampered->target->author_authenticated);
+  g_string_free(bad, TRUE);
+
+  ref->kind = 30023;
+  g_assert_false(gn_nostr_reference_matches_event(ref, json));
+
+  g_autofree char *article = signed_event(30023, 1700000500, "art", "v2");
+  g_autofree gchar *naddr = gn_nostr_reference_build_address(pk, 30023, "art", NULL);
+  g_autoptr(GnNostrReference) addr = gn_nostr_reference_parse(naddr);
+  g_assert_true(gn_nostr_reference_matches_event(addr, article));
+  g_autofree char *other_d = signed_event(30023, 1700000500, "other", "v2");
+  g_assert_false(gn_nostr_reference_matches_event(addr, other_d));
+}
+
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/portable/markdown", markdown);
   g_test_add_func("/portable/markdown-gfm", markdown_gfm);
   g_test_add_func("/portable/references", references);
+  g_test_add_func("/portable/references-builders", references_builders);
+  g_test_add_func("/portable/references-errors", references_errors);
+  g_test_add_func("/portable/references-verify", references_verify);
   g_test_add_func("/portable/widgets", widgets);
   g_test_add_func("/portable/og-card-layout", og_card_layout);
   g_test_add_func("/portable/animated-gif", animated);

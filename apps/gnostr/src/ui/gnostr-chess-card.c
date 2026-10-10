@@ -8,6 +8,7 @@
 #include "gnostr-avatar-cache.h"
 #include "../util/nip64_chess.h"
 #include <nostr-gtk-1.0/gnostr-nip05.h>
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include "../util/utils.h"
 #include <glib/gi18n.h>
 #include <pango/pangocairo.h>
@@ -800,8 +801,11 @@ static void on_share_clicked(GtkButton *btn, gpointer user_data) {
   (void)btn;
 
   if (self->event_id) {
-    g_autofree gchar *uri = g_strdup_printf("nostr:note1%s", self->event_id);
-    g_signal_emit(self, signals[SIGNAL_SHARE_GAME], 0, uri);
+    /* nostrc-8xfib.6: a real NIP-19 note, not "note1" + hex. */
+    g_autofree gchar *uri = gn_nostr_reference_build_event(self->event_id, self->pubkey_hex,
+                                                           64, NULL);
+    if (uri)
+      g_signal_emit(self, signals[SIGNAL_SHARE_GAME], 0, uri);
   }
 }
 

@@ -1,6 +1,8 @@
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr/nip19/nip19.h>
 #include <json-glib/json-glib.h>
+#include <nostr-event.h>
+#include <nostr-tag.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,25 +31,67 @@ void gn_nostr_reference_free(GnNostrReference *r) {
   g_free(r);
 }
 
-GnNostrReference *gn_nostr_reference_parse(const gchar *uri) {
-  if (!uri || strlen(uri) > 2048) return NULL;
-  const char *value = g_str_has_prefix(uri, "nostr:") ? uri + 6 : uri;
-  if (strchr(value, '?') || strchr(value, '#') || strchr(value, '/')) return NULL;
-  GnNostrReference *r = g_new0(GnNostrReference, 1);
+G_DEFINE_QUARK(gn-nostr-reference-error-quark, gn_nostr_reference_error)
+
+#define REF_FAIL(code, ...) \
+  do { g_set_error(error, GN_NOSTR_REFERENCE_ERROR, code, __VA_ARGS__); goto fail; } while (0)
+
+/* Ported from gnostr-nostr-target / nip21_uri: case-insensitive scheme,
+ * single-case bech32, typed refusal of secrets and nrelay. Kept from the
+ * Groundhog reimplementation: length bound, no query/fragment/path, nsec is
+ * never decoded, relay hints inert. */
+GnNostrReference *gn_nostr_reference_parse_full(const gchar *uri, GError **error) {
+  GnNostrReference *r = NULL;
+  g_autofree gchar *value = NULL;
+  g_autofree gchar *upper = NULL;
+  if (!uri || !*uri || strlen(uri) > 2048) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Not a nostr: reference");
+    return NULL;
+  }
+  const char *raw = g_ascii_strncasecmp(uri, "nostr:", 6) == 0 ? uri + 6 : uri;
+  if (!*raw || strpbrk(raw, "?#/%")) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Not a NIP-21 nostr: reference");
+    return NULL;
+  }
+  value = g_ascii_strdown(raw, -1);
+  upper = g_ascii_strup(raw, -1);
+  /* Bech32 forbids mixed case. */
+  if (strcmp(raw, value) != 0 && strcmp(raw, upper) != 0) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Mixed-case nostr: reference");
+    return NULL;
+  }
+  if (g_str_has_prefix(value, "nsec1") || g_str_has_prefix(value, "ncryptsec1")) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_REFUSED,
+                "Refusing to open a private key reference");
+    return NULL;
+  }
+  if (g_str_has_prefix(value, "nrelay1")) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_UNSUPPORTED,
+                "nrelay references are not supported");
+    return NULL;
+  }
+  r = g_new0(GnNostrReference, 1);
   r->uri = g_strdup_printf("nostr:%s", value);
   r->kind = -1;
-  guint8 raw[32];
-  if (g_str_has_prefix(value, "npub1") && !nostr_nip19_decode_npub(value, raw)) {
+  guint8 bytes[32];
+  if (g_str_has_prefix(value, "npub1")) {
+    if (nostr_nip19_decode_npub(value, bytes))
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid npub");
     r->type = GN_NOSTR_REFERENCE_PERSON;
-    r->author = bytes_hex(raw);
-  } else if (g_str_has_prefix(value, "note1") && !nostr_nip19_decode_note(value, raw)) {
+    r->author = bytes_hex(bytes);
+  } else if (g_str_has_prefix(value, "note1")) {
+    if (nostr_nip19_decode_note(value, bytes))
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid note");
     r->type = GN_NOSTR_REFERENCE_EVENT;
-    r->id = bytes_hex(raw);
+    r->id = bytes_hex(bytes);
   } else if (g_str_has_prefix(value, "nprofile1")) {
     NostrProfilePointer *p = NULL;
     if (nostr_nip19_decode_nprofile(value, &p) || !p || !hex64(p->public_key)) {
       nostr_profile_pointer_free(p);
-      goto fail;
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid nprofile");
     }
     r->type = GN_NOSTR_REFERENCE_PERSON;
     r->author = g_ascii_strdown(p->public_key, -1);
@@ -57,31 +101,202 @@ GnNostrReference *gn_nostr_reference_parse(const gchar *uri) {
     NostrEventPointer *p = NULL;
     if (nostr_nip19_decode_nevent(value, &p) || !p || !hex64(p->id)) {
       nostr_event_pointer_free(p);
-      goto fail;
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid nevent");
     }
     r->type = GN_NOSTR_REFERENCE_EVENT;
     r->id = g_ascii_strdown(p->id, -1);
     if (hex64(p->author)) r->author = g_ascii_strdown(p->author, -1);
+    /* A missing kind TLV decodes as 0: profiles are npub/nprofile, so a
+     * nevent "kind 0" means "kind unknown". */
     r->kind = p->kind > 0 ? p->kind : -1;
     r->relay_hints = copy_relays(p->relays, p->relays_count);
     nostr_event_pointer_free(p);
   } else if (g_str_has_prefix(value, "naddr1")) {
     NostrEntityPointer *p = NULL;
-    if (nostr_nip19_decode_naddr(value, &p) || !p || !hex64(p->public_key) || p->kind <= 0 || !p->identifier) {
+    if (nostr_nip19_decode_naddr(value, &p) || !p || !hex64(p->public_key) ||
+        p->kind <= 0 || p->kind > 65535) {
       nostr_entity_pointer_free(p);
-      goto fail;
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid naddr");
     }
     r->type = GN_NOSTR_REFERENCE_ADDRESS;
-    r->id = g_strdup(p->identifier);
+    /* An empty d tag is a valid replaceable-event coordinate. */
+    r->id = g_strdup(p->identifier ? p->identifier : "");
     r->author = g_ascii_strdown(p->public_key, -1);
     r->kind = p->kind;
     r->relay_hints = copy_relays(p->relays, p->relays_count);
     nostr_entity_pointer_free(p);
-  } else goto fail;
+  } else {
+    NostrBech32Type t = NOSTR_B32_UNKNOWN;
+    if (nostr_nip19_inspect(value, &t) == 0 && t != NOSTR_B32_UNKNOWN)
+      REF_FAIL(GN_NOSTR_REFERENCE_ERROR_UNSUPPORTED, "Unsupported nostr: reference");
+    REF_FAIL(GN_NOSTR_REFERENCE_ERROR_INVALID, "Invalid nostr: reference");
+  }
   return r;
 fail:
   gn_nostr_reference_free(r);
   return NULL;
+}
+
+GnNostrReference *gn_nostr_reference_parse(const gchar *uri) {
+  return gn_nostr_reference_parse_full(uri, NULL);
+}
+
+/* ---- builders (ported from gnostr nip21_uri) ---------------------------- */
+
+static gboolean hex_bytes(const char *hex, guint8 out[32]) {
+  if (!hex64(hex)) return FALSE;
+  for (guint i = 0; i < 32; i++)
+    out[i] = (guint8)((g_ascii_xdigit_value(hex[2 * i]) << 4) |
+                      g_ascii_xdigit_value(hex[2 * i + 1]));
+  return TRUE;
+}
+
+static gchar *with_scheme(char *encoded) {
+  if (!encoded) return NULL;
+  gchar *uri = g_strdup_printf("nostr:%s", encoded);
+  free(encoded);
+  return uri;
+}
+
+static gsize relay_count(const gchar *const *relays) {
+  gsize n = 0;
+  while (relays && relays[n] && n < 8) n++;
+  return n;
+}
+
+gchar *gn_nostr_reference_build_person(const gchar *pubkey_hex,
+                                       const gchar *const *relays) {
+  guint8 bytes[32];
+  char *encoded = NULL;
+  if (!hex_bytes(pubkey_hex, bytes)) return NULL;
+  if (relay_count(relays) == 0) {
+    if (nostr_nip19_encode_npub(bytes, &encoded)) return NULL;
+  } else {
+    g_autofree gchar *pk = g_ascii_strdown(pubkey_hex, -1);
+    NostrProfilePointer p = { .public_key = pk, .relays = (char **)relays,
+                              .relays_count = relay_count(relays) };
+    if (nostr_nip19_encode_nprofile(&p, &encoded)) return NULL;
+  }
+  return with_scheme(encoded);
+}
+
+gchar *gn_nostr_reference_build_event(const gchar *id_hex,
+                                      const gchar *author_hex,
+                                      gint kind,
+                                      const gchar *const *relays) {
+  guint8 bytes[32];
+  char *encoded = NULL;
+  if (!hex_bytes(id_hex, bytes)) return NULL;
+  if (author_hex && !hex64(author_hex)) return NULL;
+  if (!author_hex && kind <= 0 && relay_count(relays) == 0) {
+    if (nostr_nip19_encode_note(bytes, &encoded)) return NULL;
+  } else {
+    g_autofree gchar *id = g_ascii_strdown(id_hex, -1);
+    g_autofree gchar *author = author_hex ? g_ascii_strdown(author_hex, -1) : NULL;
+    NostrEventPointer p = { .id = id, .author = author, .kind = kind > 0 ? kind : 0,
+                            .relays = (char **)relays, .relays_count = relay_count(relays) };
+    if (nostr_nip19_encode_nevent(&p, &encoded)) return NULL;
+  }
+  return with_scheme(encoded);
+}
+
+gchar *gn_nostr_reference_build_address(const gchar *author_hex,
+                                        gint kind,
+                                        const gchar *identifier,
+                                        const gchar *const *relays) {
+  char *encoded = NULL;
+  if (!hex64(author_hex) || kind <= 0 || kind > 65535 || !identifier) return NULL;
+  g_autofree gchar *author = g_ascii_strdown(author_hex, -1);
+  NostrEntityPointer p = { .identifier = (char *)identifier, .public_key = author,
+                           .kind = kind, .relays = (char **)relays,
+                           .relays_count = relay_count(relays) };
+  if (nostr_nip19_encode_naddr(&p, &encoded)) return NULL;
+  return with_scheme(encoded);
+}
+
+/* ---- event verification (ported from gnostr-nostr-target) -------------- */
+
+void gn_nostr_event_info_free(GnNostrEventInfo *info) {
+  if (!info) return;
+  g_free(info->id); g_free(info->pubkey); g_free(info->d_tag);
+  g_free(info);
+}
+
+static gchar *first_d_tag(NostrEvent *ev) {
+  NostrTags *tags = (NostrTags *)nostr_event_get_tags(ev);
+  gsize n = tags ? nostr_tags_size(tags) : 0;
+  for (gsize i = 0; i < n; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (!tag || nostr_tag_size(tag) < 2) continue;
+    const char *key = nostr_tag_get(tag, 0);
+    if (key && strcmp(key, "d") == 0) {
+      const char *v = nostr_tag_get(tag, 1);
+      return g_strdup(v ? v : "");
+    }
+  }
+  return NULL;
+}
+
+GnNostrEventInfo *gn_nostr_event_parse(const gchar *event_json, GError **error) {
+  if (!event_json || !*event_json || strlen(event_json) > 256 * 1024) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Empty or oversized event");
+    return NULL;
+  }
+  NostrEvent *ev = nostr_event_new();
+  if (!ev) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Out of memory");
+    return NULL;
+  }
+  char id[65] = { 0 };
+  NostrEventValidationStatus st = nostr_event_deserialize_signed(ev, event_json, NULL);
+  if (st == NOSTR_EVENT_VALIDATION_OK)
+    st = nostr_event_validate(ev, id);
+  if (st != NOSTR_EVENT_VALIDATION_OK) {
+    g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
+                "Invalid event: %s", nostr_event_validation_status_string(st));
+    nostr_event_free(ev);
+    return NULL;
+  }
+  GnNostrEventInfo *info = g_new0(GnNostrEventInfo, 1);
+  info->id = g_ascii_strdown(id, -1);
+  info->pubkey = g_ascii_strdown(nostr_event_get_pubkey(ev), -1);
+  info->kind = nostr_event_get_kind(ev);
+  info->created_at = nostr_event_get_created_at(ev);
+  info->d_tag = first_d_tag(ev);
+  nostr_event_free(ev);
+  return info;
+}
+
+gboolean gn_nostr_event_verify(const gchar *event_json, GError **error) {
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(event_json, error);
+  return info != NULL;
+}
+
+gboolean gn_nostr_reference_matches_event_info(const GnNostrReference *r,
+                                               const GnNostrEventInfo *info) {
+  g_return_val_if_fail(r != NULL && info != NULL, FALSE);
+  switch (r->type) {
+    case GN_NOSTR_REFERENCE_EVENT:
+      if (g_strcmp0(info->id, r->id) != 0) return FALSE;
+      if (r->kind >= 0 && info->kind != r->kind) return FALSE;
+      if (r->author && g_strcmp0(info->pubkey, r->author) != 0) return FALSE;
+      return TRUE;
+    case GN_NOSTR_REFERENCE_ADDRESS:
+      return info->kind == r->kind && g_strcmp0(info->pubkey, r->author) == 0 &&
+             g_strcmp0(info->d_tag ? info->d_tag : "", r->id ? r->id : "") == 0;
+    case GN_NOSTR_REFERENCE_PERSON:
+    default:
+      return info->kind == 0 && g_strcmp0(info->pubkey, r->author) == 0;
+  }
+}
+
+gboolean gn_nostr_reference_matches_event(const GnNostrReference *r,
+                                          const gchar *event_json) {
+  g_return_val_if_fail(r != NULL, FALSE);
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(event_json, NULL);
+  return info && gn_nostr_reference_matches_event_info(r, info);
 }
 
 void gn_nostr_repost_descriptor_free(GnNostrRepostDescriptor *d) {
@@ -181,8 +396,12 @@ GnNostrRepostDescriptor *gn_nostr_repost_descriptor_parse(const gchar *event_jso
     d->target->relay_hints = g_new0(gchar *, 2);
     d->target->relay_hints[0] = g_strdup(relay);
   }
+  /* The embedded original of a kind 6/16 is used only once it verifies. */
+  const char *embedded_content = kind != 1 ? object_string(obj, "content") : NULL;
+  if (!embedded_event_verified && embedded_content && *embedded_content)
+    embedded_event_verified = gn_nostr_event_verify(embedded_content, NULL);
   if (embedded_event_verified && kind != 1 && json_object_has_member(obj, "content")) {
-    const char *content = object_string(obj, "content");
+    const char *content = embedded_content;
     g_autoptr(JsonParser) embedded = json_parser_new();
     if (content && json_parser_load_from_data(embedded, content, -1, NULL) &&
         JSON_NODE_HOLDS_OBJECT(json_parser_get_root(embedded))) {

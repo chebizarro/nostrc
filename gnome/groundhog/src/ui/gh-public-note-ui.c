@@ -261,11 +261,21 @@ start_find(GhPublicNoteUi *self, const gchar *uri, const gchar *const *urls)
       _("Unlock the encrypted message store before searching for a public note."));
     return;
   }
-  self->find_reference = gn_nostr_reference_parse(uri);
+  g_autoptr(GError) parse_error = NULL;
+  self->find_reference = gn_nostr_reference_parse_full(uri, &parse_error);
   if (!self->find_reference || !self->find_reference->id ||
       (self->find_reference->type != GN_NOSTR_REFERENCE_EVENT &&
        self->find_reference->type != GN_NOSTR_REFERENCE_ADDRESS)) {
     cancel_find(self);
+    /* Typed errors from the shared parser (nostrc-8xfib.6): a refused
+     * private-key link is reported, never decoded or searched for. */
+    if (g_error_matches(parse_error, GN_NOSTR_REFERENCE_ERROR,
+                        GN_NOSTR_REFERENCE_ERROR_REFUSED))
+      notice(self, _("Find on Relays Unavailable"),
+        _("This link contains a private key. Groundhog never opens or searches for private keys."));
+    else
+      notice(self, _("Find on Relays Unavailable"),
+        _("Only Nostr notes and addresses can be found on relays."));
     return;
   }
   NostrFilters *filters = nostr_filters_new();

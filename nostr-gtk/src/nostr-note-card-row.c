@@ -31,7 +31,6 @@
 #include "nip03_opentimestamps.h"
 #include "nip73_external_ids.h"
 #include "gn-markdown-pango.h"
-#include "nip21_uri.h"
 #include "content_renderer.h"
 #include "note-card-binding-ctx.h"
 #include "note-card-data.h"

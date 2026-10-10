@@ -9,7 +9,6 @@
 #include "content_renderer.h"
 #include <nostr-gobject-1.0/storage_ndb.h>
 #include <nostr-gobject-1.0/nostr_profile_provider.h>
-#include <nostr-gobject-1.0/nostr_nip19.h>
 #include <json-glib/json-glib.h>
 #include <stdio.h>
 #include <string.h>
