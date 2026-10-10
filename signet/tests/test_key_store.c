@@ -265,6 +265,70 @@ static int slow_sign_past_expiry(const uint8_t secret_key[32], void *user_data) 
   return 0;
 }
 
+static void test_writer_client_cannot_be_provisioner(void) {
+  static const char owner_a[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  static const char owner_b[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  SignetStore *store = signet_key_store_get_store(ks);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  CHECK(signet_store_grant_provisioner(store, owner_a, NULL, 1) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch, &expiry) != 0);
+  CHECK(signet_store_writer_is_fenced(store, "service") == 0);
+  CHECK(signet_store_revoke_provisioner(store, owner_a) == 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch, &expiry) == 0);
+  CHECK(epoch == 1);
+  CHECK(signet_store_grant_provisioner(store, owner_a, NULL, 2) != 0);
+  CHECK(!signet_store_is_provisioner(store, owner_a));
+  CHECK(signet_store_grant_provisioner(store,
+      "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      NULL, 2) != 0);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_b, 300,
+                                        &epoch, &expiry) == 0);
+  CHECK(epoch == 2);
+  CHECK(signet_store_grant_provisioner(store, owner_a, NULL, 3) != 0);
+  CHECK(!signet_store_is_provisioner(store, owner_a));
+  int64_t revoked = 0;
+  CHECK(signet_key_store_writer_revoke(ks, "service", &revoked) == 0);
+  CHECK(signet_store_grant_provisioner(store, owner_b, NULL, 4) != 0);
+  CHECK(!signet_store_is_provisioner(store, owner_b));
+  signet_key_store_free(ks);
+  unlink(path);
+  g_free(path);
+  printf("test_writer_client_cannot_be_provisioner: PASS\n");
+}
+
+static void test_pre_history_writer_db_fails_closed(void) {
+  static const char owner[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner, 300,
+                                        &epoch, &expiry) == 0);
+  signet_key_store_free(ks);
+  sqlite3 *db = NULL;
+  CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+  CHECK(sqlite3_exec(db, "DROP TABLE writer_client_keys;", NULL, NULL, NULL)
+        == SQLITE_OK);
+  sqlite3_close(db);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  CHECK(signet_key_store_new(NULL, &cfg) == NULL);
+  unlink(path);
+  g_free(path);
+  printf("test_pre_history_writer_db_fails_closed: PASS\n");
+}
+
 static void test_writer_fence_persists_and_fails_closed(void) {
   static const char owner_a[] =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -477,6 +541,8 @@ int main(void) {
   test_rotate_agent();
   test_list_agents();
   test_provision_bunker_uri();
+  test_writer_client_cannot_be_provisioner();
+  test_pre_history_writer_db_fails_closed();
   test_writer_fence_persists_and_fails_closed();
   test_writer_transfer_serializes_with_sign();
 

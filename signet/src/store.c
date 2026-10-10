@@ -536,6 +536,21 @@ static const char *SIGNET_SCHEMA_SQL =
   "  granted_at INTEGER NOT NULL,"
   "  granted_by TEXT"
   ");"
+  /* A writer client must never also be a management provisioner. Keep all
+   * former owners, not just the current lease owner, to prevent promotion
+   * after a transfer or revoke. Both triggers run inside the caller's write
+   * transaction and cover grants from management, seed, and config reload. */
+  "CREATE TABLE IF NOT EXISTS writer_client_keys ("
+  "  pubkey_hex TEXT PRIMARY KEY NOT NULL COLLATE NOCASE"
+  ");"
+  "CREATE TRIGGER IF NOT EXISTS writer_client_not_provisioner "
+  "BEFORE INSERT ON writer_client_keys "
+  "WHEN EXISTS(SELECT 1 FROM provisioners WHERE pubkey_hex=NEW.pubkey_hex COLLATE NOCASE) "
+  "BEGIN SELECT RAISE(ABORT,'writer client is a provisioner'); END;"
+  "CREATE TRIGGER IF NOT EXISTS provisioner_not_writer_client "
+  "BEFORE INSERT ON provisioners "
+  "WHEN EXISTS(SELECT 1 FROM writer_client_keys WHERE pubkey_hex=NEW.pubkey_hex COLLATE NOCASE) "
+  "BEGIN SELECT RAISE(ABORT,'provisioner is a writer client'); END;"
 
   /* v4.1 (fp-56t): revocation tombstones. Under the "config is desired
    * state" decision (D2) a SIGHUP reload applies the config's provisioner
@@ -711,6 +726,27 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     return store;
   }
 
+  /* An older writer-lease DB has no complete writer-key history. Its former
+   * owners cannot be reconstructed from the current row, so refuse upgrade
+   * rather than permitting a stale owner to be granted provisioner later. */
+  bool had_writer_key_history = false;
+  {
+    sqlite3_stmt *history = NULL;
+    if (sqlite3_prepare_v2(store->db,
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='writer_client_keys';",
+        -1, &history, NULL) != SQLITE_OK) {
+      signet_store_close(store);
+      return NULL;
+    }
+    int step = sqlite3_step(history);
+    had_writer_key_history = step == SQLITE_ROW;
+    sqlite3_finalize(history);
+    if (step != SQLITE_ROW && step != SQLITE_DONE) {
+      signet_store_close(store);
+      return NULL;
+    }
+  }
+
   /* Create schema. */
   char *errmsg = NULL;
   rc = sqlite3_exec(store->db, SIGNET_SCHEMA_SQL, NULL, NULL, &errmsg);
@@ -720,6 +756,23 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
     if (errmsg) sqlite3_free(errmsg);
     signet_store_close(store);
     return NULL;
+  }
+
+  if (!had_writer_key_history) {
+    sqlite3_stmt *old_lease = NULL;
+    if (sqlite3_prepare_v2(store->db,
+        "SELECT 1 FROM agent_writer_leases LIMIT 1;",
+        -1, &old_lease, NULL) != SQLITE_OK) {
+      signet_store_close(store);
+      return NULL;
+    }
+    int step = sqlite3_step(old_lease);
+    sqlite3_finalize(old_lease);
+    if (step != SQLITE_DONE) {
+      g_critical("[signet] pre-history writer lease database cannot be upgraded safely; refusing open");
+      signet_store_close(store);
+      return NULL;
+    }
   }
 
   if (!signet_store_migrate_secret_lifecycle(store->db)) {
@@ -749,6 +802,16 @@ SignetStore *signet_store_open(const SignetStoreConfig *cfg) {
   (void)sqlite3_exec(store->db,
                      "ALTER TABLE agent_writer_leases ADD COLUMN observed_at INTEGER NOT NULL DEFAULT 0;",
                      NULL, NULL, NULL);
+  /* Verify/backfill current owners. A pre-history DB with any lease was
+   * refused above; this catches corrupt history on an otherwise modern DB. */
+  if (sqlite3_exec(store->db,
+      "INSERT OR IGNORE INTO writer_client_keys(pubkey_hex) "
+      "SELECT owner FROM agent_writer_leases WHERE owner IS NOT NULL;",
+      NULL, NULL, NULL) != SQLITE_OK) {
+    g_critical("[signet] writer-client/provisioner role conflict; refusing database open");
+    signet_store_close(store);
+    return NULL;
+  }
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agents_pubkey ON agents(pubkey);",
                      NULL, NULL, NULL);
@@ -2888,9 +2951,19 @@ int signet_store_writer_acquire(SignetStore *store, const char *agent_id,
   SignetAgentRecord agent = {0};
   if (signet_store_get_agent(store, agent_id, &agent) != 0) goto done;
   signet_agent_record_clear(&agent);
+  /* This insert is serialized with all provisioner grants by BEGIN IMMEDIATE.
+   * The schema trigger rejects a provisioner key, even for a fresh lease. */
+  sqlite3_stmt *st = NULL;
+  if (sqlite3_prepare_v2(store->db,
+      "INSERT OR IGNORE INTO writer_client_keys(pubkey_hex) VALUES(?);",
+      -1, &st, NULL) != SQLITE_OK) goto done;
+  sqlite3_bind_text(st, 1, owner, -1, SQLITE_TRANSIENT);
+  int step = sqlite3_step(st);
+  sqlite3_finalize(st);
+  if (step != SQLITE_DONE) goto done;
   epoch++;
   int64_t until = now + ttl_seconds;
-  sqlite3_stmt *st = NULL;
+  st = NULL;
   const char *sql = rr == 0
       ? "UPDATE agent_writer_leases SET epoch=?,owner=?,expires_at=?,observed_at=?,revoked=0 WHERE agent_id=?;"
       : "INSERT INTO agent_writer_leases(epoch,owner,expires_at,observed_at,agent_id,revoked) VALUES(?,?,?,?,?,0);";
@@ -2900,7 +2973,7 @@ int signet_store_writer_acquire(SignetStore *store, const char *agent_id,
   sqlite3_bind_int64(st, 3, until);
   sqlite3_bind_int64(st, 4, now);
   sqlite3_bind_text(st, 5, agent_id, -1, SQLITE_TRANSIENT);
-  int step = sqlite3_step(st);
+  step = sqlite3_step(st);
   sqlite3_finalize(st);
   if (step != SQLITE_DONE) goto done;
   if (sqlite3_prepare_v2(store->db,

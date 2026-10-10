@@ -47,7 +47,19 @@ acquire or renew after a transfer unless a provisioner deliberately transfers
 back to it with a new epoch.
 
 The writer is the authenticated NIP-46 client pubkey, not the service identity
-pubkey. A fenced NIP-46 client signs using
+pubkey. **A writer client key must be distinct from every Signet management
+provisioner key.** Signet rejects acquisition for a provisioner pubkey, and
+records every writer client pubkey permanently so subsequent management grants,
+configuration reloads, and seeds cannot promote a current or former writer.
+Both directions are enforced by database triggers inside the same write
+transaction as acquisition/grant. This is per-key role separation, not merely
+per-agent policy. `writer_renew` does not grant management authority. On
+upgrade, Signet refuses to open a pre-history database that already has writer
+leases: former owners cannot be reconstructed from a current lease row. Such
+a database needs operator-led reconciliation on a fresh, epoch-preserving
+cutover; do not just delete the old lease or copy a stale DB. A corrupt
+current owner/provisioner overlap also aborts database open.
+ A fenced NIP-46 client signs using
 `sign_event` with params `[event_json, "<decimal epoch>"]`. Its authenticated
 transport pubkey must equal the lease owner and its persistent client binding
 must still be valid; Signet also applies the usual signing policy. Legacy
@@ -76,7 +88,7 @@ digest/DSSE signing API in this change.
 
 1. Inventory every signer and previously signed service outbox. Assign a
    **new, dedicated NIP-46 client key** to the incoming writer; do not reuse
-   the old daemon's client key. Confirm the Signet adoption result matches the
+   the old daemon's client key or any configured Signet provisioner key. Confirm the Signet adoption result matches the
    service's current pubkey. Confirm the single active Signet/DB topology and
    policy for `sign_event` plus `writer_renew`.
 2. On **stage-01**, stop and disable old service-key signers, drain or quarantine
