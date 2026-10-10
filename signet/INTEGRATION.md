@@ -356,14 +356,19 @@ follows the same rules as above for the life of that process:
   client's secret, an arbitrary wrong secret and unknown clients get
   `auth_failed`, and requests from unbound clients get `not_connected`.
 - Bindings are pinned to the exact in-memory identity they were made
-  against: `agent/revoke`, `agent/rotate-key`, or revoking and re-adopting
-  the same `agent_id` (even with the same key) all invalidate them.
+  against: `agent/revoke`, `agent/rotate-key`, a key restore, or revoking
+  and re-adopting the same `agent_id` (even with the same key) all
+  invalidate them and drop them at once.
+- `agent/rotate-key` leaves no pending secret, as in persistent mode;
+  `agent/reissue-connect` (provisioner or self-service) mints a fresh one,
+  returned in a bunker URI, and the earlier pending secret stops working. A
+  restore keeps a still-pending secret.
 - **Nothing survives a restart.** A restarted cache-only signer holds no
   agents, secrets or bindings; agents must be provisioned or adopted again
   and every client must pair with the new secret. A reconnect without one
   fails `auth_failed` with a message naming the cache-only signer.
-  `agent/reissue-connect`, `agent/list-clients`, `agent/revoke-client`, the
-  deny list and writer fences need the persistent store and are unavailable.
+  `agent/list-clients`, `agent/revoke-client`, the deny list and writer
+  fences need the persistent store and are unavailable.
 
 Cache-only mode is for tests and development; deploy with the persistent
 store.
