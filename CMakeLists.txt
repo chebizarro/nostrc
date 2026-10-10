@@ -406,6 +406,58 @@ option(BUILD_NOSTR_GOBJECT "Build nostr-gobject GObject wrapper" ON)
 option(BUILD_GROUNDHOG "Build the Groundhog messaging app shell" OFF)
 set(NOSTR_GOBJECT_BUILD_SHARED ${BUILD_GROUNDHOG})
 
+# One libnostr per process (nostrc-0y5t6). libnostr, libgo, the NIP libraries,
+# nostrdb_storage and vendored nsync are static archives, and every executable
+# links them. A shared library in the same process that copied them in
+# (shared nostr_gobject did, ~950 symbols) would carry a second set of their
+# globals -- two named-mutex pools, two init refcounts, two libgo schedulers;
+# ASan aborts with "odr-violation" on nostr_named_mutex_pool. On ELF such a
+# shared library links the archives only for its executable consumers: its own
+# references stay undefined, GNU ld pulls the archive members it needs into the
+# executable and exports them, and the library binds to that one copy at load
+# time (as libnostr-json does, libjson/CMakeLists.txt). Apple's ld64 does not
+# pull archive members for a dylib's references, and a DLL may not have
+# undefined references, so macOS and Windows keep the embedded copies.
+if(NOSTR_GOBJECT_BUILD_SHARED AND NOT APPLE AND NOT WIN32)
+  set(NOSTRC_ARCHIVES_FROM_EXECUTABLE ON)
+else()
+  set(NOSTRC_ARCHIVES_FROM_EXECUTABLE OFF)
+endif()
+
+# nostrc_link_archives(<target> <PUBLIC|PRIVATE|INTERFACE> <dep>...)
+# Link in-tree static archives (or targets that bring them) to <target>; with
+# NOSTRC_ARCHIVES_FROM_EXECUTABLE, a shared <target> gets only their compile
+# usage requirements, and the link items reach the link of every consumer that
+# is not itself marked NOSTRC_ARCHIVES_FROM_EXECUTABLE (the condition is
+# evaluated on the target being linked).
+function(nostrc_link_archives target scope)
+  if(NOT NOSTRC_ARCHIVES_FROM_EXECUTABLE)
+    target_link_libraries(${target} ${scope} ${ARGN})
+    return()
+  endif()
+  get_target_property(_nla_type ${target} TYPE)
+  if(_nla_type STREQUAL "SHARED_LIBRARY")
+    set_property(TARGET ${target} PROPERTY NOSTRC_ARCHIVES_FROM_EXECUTABLE ON)
+    # GNU ld extracts archive members for a shared library's undefined
+    # references only if that library is needed by the link; under the
+    # --as-needed default of Debian/Ubuntu toolchains, an executable that
+    # reaches it only through another shared library would leave them
+    # unresolved.
+    target_link_options(${target} INTERFACE
+      "$<$<NOT:$<BOOL:$<TARGET_PROPERTY:NOSTRC_ARCHIVES_FROM_EXECUTABLE>>>:LINKER:--no-as-needed>")
+  endif()
+  foreach(_nla_dep IN LISTS ARGN)
+    target_link_libraries(${target} ${scope}
+      "$<$<NOT:$<BOOL:$<TARGET_PROPERTY:NOSTRC_ARCHIVES_FROM_EXECUTABLE>>>:${_nla_dep}>")
+    if(TARGET ${_nla_dep})
+      target_include_directories(${target} ${scope}
+        "$<TARGET_PROPERTY:${_nla_dep},INTERFACE_INCLUDE_DIRECTORIES>")
+      target_compile_definitions(${target} ${scope}
+        "$<TARGET_PROPERTY:${_nla_dep},INTERFACE_COMPILE_DEFINITIONS>")
+    endif()
+  endforeach()
+endfunction()
+
 # Shared test infrastructure (testkit) — must come before libraries that use it.
 # The testkit hard-depends on nostr-gobject headers (storage_ndb.h), so skip it
 # in builds that disable the GObject wrapper (e.g. libhanami-focused CI).

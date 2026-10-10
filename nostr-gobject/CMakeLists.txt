@@ -218,16 +218,22 @@ target_link_libraries(nostr_gobject
 )
 
 # Implementation libraries also expose legacy include paths to in-tree consumers.
-target_link_libraries(nostr_gobject
-  ${_LINK_VIS}
+# In-tree archives go through nostrc_link_archives: a shared nostr_gobject
+# must not hold a second copy of libnostr beside its executable's (root
+# CMakeLists.txt, NOSTRC_ARCHIVES_FROM_EXECUTABLE). nostr_json is shared but
+# brings the libnostr archive along on ELF.
+nostrc_link_archives(nostr_gobject ${_LINK_VIS}
     libnostr
     nostr_json
     libgo
+    ${NSYNC_LIB}
+)
+target_link_libraries(nostr_gobject
+  ${_LINK_VIS}
     PkgConfig::SECP256K1
     PkgConfig::LWS
     OpenSSL::SSL
     OpenSSL::Crypto
-    ${NSYNC_LIB}
 )
 
 # Conditionally link NIP libraries (guards handle missing targets)
@@ -235,7 +241,7 @@ foreach(_nip nip04 nip06 nip11 nip19
              nostr_nip44_core nostr_nip46_core
              nostr_nip49_core nostr_nip49_glib)
   if(TARGET ${_nip})
-    target_link_libraries(nostr_gobject ${_LINK_VIS} ${_nip})
+    nostrc_link_archives(nostr_gobject ${_LINK_VIS} ${_nip})
   endif()
 endforeach()
 
@@ -246,7 +252,7 @@ target_include_directories(nostr_gobject PRIVATE
   ${CMAKE_SOURCE_DIR}/third_party/nostrdb/deps/flatcc/include
 )
 if(TARGET nostrdb_storage)
-  target_link_libraries(nostr_gobject ${_LINK_VIS} nostrdb_storage)
+  nostrc_link_archives(nostr_gobject ${_LINK_VIS} nostrdb_storage)
 endif()
 
 if(JSON_GLIB_FOUND)
