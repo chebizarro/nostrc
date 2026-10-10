@@ -316,9 +316,11 @@ test_qr_pairing(void)
   g_assert_false(gh_nip46_session_is_ready(session));
   bunker_eose(&bunker);
   g_assert_true(gh_nip46_session_is_ready(session));
-  char *connect = nostr_nip46_response_build_ok("connect", "\"wrong\"");
+  /* Unrelated requests are ignored, not treated as a failed pairing. */
+  char *connect = nostr_nip46_request_build("x", "ping", NULL, 0);
   bunker_reply(&bunker, connect);
   g_assert_null(gh_nip46_session_get_remote_pubkey(session));
+  g_assert_false(wait.done);
   free(connect);
   g_autofree gchar *secret_json = g_strdup_printf("\"%s\"", parsed.secret);
   connect = nostr_nip46_response_build_ok("connect", secret_json);
@@ -731,6 +733,8 @@ test_interactive_priority(void)
   bunker_clear(&bunker);
 }
 
+#include "nip46-compat-tests.inc"
+
 int
 main(int argc, char **argv)
 {
@@ -751,6 +755,15 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip46/queue-bound", test_queue_bound);
   g_test_add_func("/groundhog/nip46/approval-timeout", test_approval_timeout);
   g_test_add_func("/groundhog/nip46/remote-error-classes", test_remote_error_classes);
+  g_test_add_func("/groundhog/nip46/qr-ack-rejected", test_qr_ack_rejected);
+  g_test_add_func("/groundhog/nip46/qr-wrong-secret", test_qr_wrong_secret_fails);
+  g_test_add_func("/groundhog/nip46/qr-wrong-secret-request", test_qr_wrong_secret_request_fails);
+  g_test_add_func("/groundhog/nip46/qr-signer-error", test_qr_signer_error_fails);
+  g_test_add_func("/groundhog/nip46/qr-undecryptable", test_qr_undecryptable_fails);
+  g_test_add_func("/groundhog/nip46/qr-p-tag-relay-hint", test_qr_p_tag_relay_hint);
+  g_test_add_func("/groundhog/nip46/reply-window-unknown-ids", test_reply_window_and_unknown_ids);
+  g_test_add_func("/groundhog/nip46/pair-timeout-names-relays", test_pair_timeout_names_relays);
+  g_test_add_func("/groundhog/nip46/bunker-secret-echo", test_bunker_secret_echo);
   g_test_add_func("/groundhog/nip46/pair-timeout", test_pair_timeout);
   g_test_add_func("/groundhog/nip46/pair-timeout-last-ref", test_pair_timeout_last_ref);
   return g_test_run();

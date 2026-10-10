@@ -19,6 +19,7 @@
 #define PUBLISH_SECONDS 30
 #define APPROVAL_SECONDS 330
 #define AUTH_URL_SECONDS 600
+#define REPLY_SKEW_SECONDS 600
 #define PERMISSIONS "get_public_key,sign_event,nip44_encrypt,nip44_decrypt,nip04_decrypt"
 
 typedef struct _Pending Pending;
@@ -270,7 +271,8 @@ has_client_p(const GhNip46Session *self, NostrEvent *event)
   NostrTags *tags = nostr_event_get_tags(event);
   for (size_t i = 0; tags && i < nostr_tags_size(tags); i++) {
     NostrTag *tag = nostr_tags_get(tags, i);
-    if (tag && nostr_tag_size(tag) == 2 &&
+    /* Signers may append a relay hint: ["p", <hex>, "wss://..."]. */
+    if (tag && nostr_tag_size(tag) >= 2 &&
         g_strcmp0(nostr_tag_get(tag, 0), "p") == 0 &&
         g_strcmp0(nostr_tag_get(tag, 1), self->client_pubkey) == 0)
       return TRUE;
@@ -467,12 +469,17 @@ pair_connect_done(GObject *source, GAsyncResult *result, gpointer data)
   GError *error = NULL;
   g_autofree gchar *reply = gh_nip46_session_call_finish(self, result, &error);
   if (!self->pair_task) { g_clear_error(&error); return; }
-  if (error || g_strcmp0(reply, "ack") != 0) {
+  /* NIP-46 says connect returns "ack"; some signers echo the connect
+   * secret instead. Both prove the reply came from the bunker we dialled. */
+  gboolean ok = !error && (g_strcmp0(reply, "ack") == 0 ||
+    (self->bunker_secret && *self->bunker_secret && reply &&
+     constant_equal(reply, self->bunker_secret)));
+  if (!ok) {
     GTask *task = g_steal_pointer(&self->pair_task);
     pair_cleanup(self);
     if (error) g_task_return_error(task, error);
     else g_task_return_new_error(task, GH_NIP46_SESSION_ERROR,
-      GH_NIP46_SESSION_ERROR_INVALID_RESULT, "Signer did not acknowledge connect");
+      GH_NIP46_SESSION_ERROR_INVALID_RESULT, "Signer did not acknowledge the connection request");
     g_object_unref(task);
     return;
   }
@@ -521,6 +528,28 @@ send_oneway(GhNip46Session *self, const gchar *peer, const gchar *plaintext)
 }
 
 static void
+fail_pairing(GhNip46Session *self, GhNip46SessionError code, const gchar *message)
+{
+  if (!self->pair_task) return;
+  GTask *task = g_steal_pointer(&self->pair_task);
+  pair_cleanup(self);
+  g_task_return_new_error(task, GH_NIP46_SESSION_ERROR, code, "%s", message);
+  g_object_unref(task);
+}
+
+/* QR (nostrconnect://) pairing. The reply reaching this point is a signed
+ * kind-24133 event p-tagging our fresh, single-use client key, NIP-44
+ * decryptable with it, and delivered on the listening subscription opened
+ * after the QR was shown. That binds it to this session, but not to the
+ * person who scanned the QR: anyone watching the relay sees our client key.
+ * Only the pairing secret, which travels solely inside the QR, proves the
+ * author scanned it, so (per NIP-46: the client MUST validate the secret)
+ * a bare "ack" is NOT accepted. Instead of ignoring a non-matching reply
+ * and spinning until the deadline, pairing fails at once with an error
+ * that names the problem; the cost is that a party who can inject events
+ * on the relay can abort (never hijack) an attempt, which the user can
+ * retry with a fresh QR. */
+static void
 handle_pair_response(GhNip46Session *self, const gchar *author, const gchar *json)
 {
   if (!self->pair_task || !self->pair_secret || self->remote_pubkey) return;
@@ -528,8 +557,25 @@ handle_pair_response(GhNip46Session *self, const gchar *author, const gchar *jso
   gboolean connect_request = FALSE;
   gchar *connect_id = NULL;
   gboolean match = FALSE;
+  const gchar *failure = NULL;
+  GhNip46SessionError code = GH_NIP46_SESSION_ERROR_INVALID_RESULT;
   if (nostr_nip46_response_parse(json, &response) == 0) {
-    match = constant_equal(response.result, self->pair_secret);
+    if (response.result && constant_equal(response.result, self->pair_secret))
+      match = TRUE;
+    else if (g_strcmp0(response.result, "auth_url") == 0)
+      ; /* Not a connect answer; keep waiting (the deadline still applies). */
+    else if (response.error && *response.error) {
+      code = classify_error(response.error);
+      failure = code == GH_NIP46_SESSION_ERROR_DENIED ?
+        "Signer declined the pairing request" :
+        "Signer reported an error while pairing";
+    } else if (g_strcmp0(response.result, "ack") == 0)
+      failure = "Signer replied \"ack\" without the pairing secret, so the "
+                "connection can't be verified. Update the signer app or pair "
+                "with a bunker:// link instead";
+    else
+      failure = "Signer replied but the pairing secret didn't match. "
+                "Regenerate the QR code and scan it again";
     nostr_nip46_response_free(&response);
   } else {
     NostrNip46Request request = { 0 };
@@ -540,12 +586,18 @@ handle_pair_response(GhNip46Session *self, const gchar *author, const gchar *jso
         if (match) {
           connect_request = TRUE;
           connect_id = g_strdup(request.id);
-        }
+        } else
+          failure = "Signer replied but the pairing secret didn't match. "
+                    "Regenerate the QR code and scan it again";
       }
       nostr_nip46_request_free(&request);
-    }
+    } else
+      failure = "Signer sent a reply Groundhog couldn't understand";
   }
-  if (!match) return;
+  if (!match) {
+    if (failure) fail_pairing(self, code, failure);
+    return;
+  }
   self->remote_pubkey = g_strdup(author);
   wipe_free(g_steal_pointer(&self->pair_secret));
   if (connect_request) {
@@ -592,8 +644,20 @@ scope_update_inner(GhRelayScope *scope, const GhRelayUpdate *update, gpointer da
     nostr_event_free(event); return;
   }
   g_autofree gchar *plaintext = decrypt_json(self, author, nostr_event_get_content(event));
+  gboolean legacy = !plaintext &&
+    strstr(nostr_event_get_content(event) ? nostr_event_get_content(event) : "", "?iv=");
   nostr_event_free(event);
-  if (!plaintext) return;
+  if (!plaintext) {
+    /* Unpaired, an undecryptable reply addressed to our single-use key is
+     * almost certainly the signer answering the QR: say so instead of
+     * leaving the dialog spinning. */
+    if (!self->remote_pubkey && self->pair_secret)
+      fail_pairing(self, GH_NIP46_SESSION_ERROR_INVALID_RESULT, legacy ?
+        "Signer replied using legacy NIP-04 encryption, which Groundhog "
+        "doesn't accept. Enable NIP-44 in the signer app" :
+        "Signer replied but the message couldn't be decrypted");
+    return;
+  }
   if (!self->remote_pubkey) { handle_pair_response(self, author, plaintext); return; }
   NostrNip46Response response = { 0 };
   if (nostr_nip46_response_parse(plaintext, &response) != 0) return;
@@ -872,7 +936,10 @@ gh_nip46_session_start(GhNip46Session *self)
   const int kinds[] = { NOSTR_EVENT_KIND_NIP46 };
   nostr_filter_set_kinds(filter, kinds, 1);
   nostr_filter_tags_append(filter, "p", self->client_pubkey, NULL);
-  nostr_filter_set_since_i64(filter, g_get_real_time() / G_USEC_PER_SEC - 60);
+  /* Signer clocks (phones especially) drift; a tight window silently drops
+   * valid replies. Request ids stay the dedup key: a reply is consumed once
+   * and replies for unknown ids are ignored. */
+  nostr_filter_set_since_i64(filter, g_get_real_time() / G_USEC_PER_SEC - REPLY_SKEW_SECONDS);
   nostr_filters_add(filters, filter);
   nostr_filter_free(filter); /* contents moved into the vector */
   self->scope = self->scope_transport.open ? gh_relay_scope_new_with_transport(
@@ -1035,8 +1102,18 @@ pair_timeout(gpointer data)
   if (self->pair_task) {
     GTask *task = g_steal_pointer(&self->pair_task);
     pair_cleanup(self);
-    g_task_return_new_error(task, GH_NIP46_SESSION_ERROR,
-      GH_NIP46_SESSION_ERROR_TIMED_OUT, "Signer pairing timed out");
+    g_autoptr(GString) urls = g_string_new(NULL);
+    for (guint i = 0; i < self->relays->len; i++)
+      g_string_append_printf(urls, "%s%s", i ? ", " : "",
+                             (const gchar *)g_ptr_array_index(self->relays, i));
+    if (g_hash_table_size(self->ready_urls) == 0)
+      g_task_return_new_error(task, GH_NIP46_SESSION_ERROR,
+        GH_NIP46_SESSION_ERROR_TIMED_OUT,
+        "Could not reach the signer relays (%s)", urls->str);
+    else
+      g_task_return_new_error(task, GH_NIP46_SESSION_ERROR,
+        GH_NIP46_SESSION_ERROR_TIMED_OUT,
+        "No reply from signer on %s", urls->str);
     g_object_unref(task);
   }
   gh_nip46_session_cancel(self);
