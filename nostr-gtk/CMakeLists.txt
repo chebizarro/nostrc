@@ -14,8 +14,8 @@ option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" 
 
 # ── Version metadata ─────────────────────────────────────────────────
 set(NOSTR_GTK_MAJOR_VERSION 1)
-set(NOSTR_GTK_MINOR_VERSION 1)
-set(NOSTR_GTK_MICRO_VERSION 1)
+set(NOSTR_GTK_MINOR_VERSION 2)
+set(NOSTR_GTK_MICRO_VERSION 0)
 declare_component_version(NOSTR_GTK
   ${NOSTR_GTK_MAJOR_VERSION}
   ${NOSTR_GTK_MINOR_VERSION}
@@ -152,6 +152,7 @@ set(NOSTR_GTK_HEADERS
   include/nostr-gtk-1.0/nostr-gtk-error.h
   include/nostr-gtk-1.0/gnostr-nip05.h
   include/nostr-gtk-1.0/gn-markdown.h
+  include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -164,6 +165,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
   include/nostr-gtk-1.0/content_renderer.h
   include/nostr-gtk-1.0/nostr-gtk-error.h
   include/nostr-gtk-1.0/gn-markdown.h
+  include/nostr-gtk-1.0/gn-markdown-pango.h
   include/nostr-gtk-1.0/gn-nostr-reference.h
   include/nostr-gtk-1.0/gn-og-preview-card.h
   include/nostr-gtk-1.0/gn-media-viewer.h
@@ -174,6 +176,7 @@ set(NOSTR_GTK_PORTABLE_HEADERS
 
 set(NOSTR_GTK_PORTABLE_SOURCES
   src/gn-markdown.c
+  src/gn-markdown-pango.c
   src/gn-nostr-reference.c
   src/gn-og-preview-card.c
   src/gn-media-viewer.c
@@ -508,6 +511,11 @@ if(BUILD_TESTING)
     LIBS nostr_gtk_portable nip19 PkgConfig::GTK4 PkgConfig::GLIB2
   )
   target_include_directories(test_nostr_gtk_portable PRIVATE ${PROJECT_ROOT}/tests/common)
+
+  gn_add_gtest(test_nostr_gtk_markdown_pango
+    SOURCES tests/test_markdown_pango.c
+    LIBS nostr_gtk_portable PkgConfig::GTK4 PkgConfig::GLIB2
+  )
 
   if (TARGET nostr-gtk-i18n)
   gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n
