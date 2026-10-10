@@ -1059,6 +1059,19 @@ if (TARGET groundhog-identity AND TARGET PkgConfig::GROUNDHOG_NIP46_CREDENTIAL_D
     add_test(NAME groundhog-nip46-credentials-keyring COMMAND test-groundhog-nip46-credentials-keyring)
     set_tests_properties(groundhog-nip46-credentials-keyring PROPERTIES
       SKIP_RETURN_CODE 77 TIMEOUT 90 ENVIRONMENT "G_DEBUG=fatal-criticals")
+    # nostrc-ep54q: GhStoreKey and the NIP-46 credential backend against a fake
+    # Secret Service on a private bus that offers only "plain" sessions, or
+    # none. Needs only dbus-daemon, so it also runs on macOS.
+    if (TARGET groundhog-store-key)
+      add_executable(test-groundhog-secret-service-sessions
+        tests/store/test_secret_service_sessions.c tests/store/fake-secret.c)
+      target_link_libraries(test-groundhog-secret-service-sessions PRIVATE
+        groundhog-store-key groundhog-nip46-credentials nostrc-test-bus)
+      target_compile_options(test-groundhog-secret-service-sessions PRIVATE -Wall -Wextra -Werror)
+      add_test(NAME groundhog-secret-service-sessions COMMAND test-groundhog-secret-service-sessions)
+      set_tests_properties(groundhog-secret-service-sessions PROPERTIES
+        SKIP_RETURN_CODE 77 TIMEOUT 60 ENVIRONMENT "G_DEBUG=fatal-criticals,fatal-warnings")
+    endif()
     add_executable(test-groundhog-nip46-credentials-list
       tests/store/test_nip46_credentials_list.c)
     target_link_libraries(test-groundhog-nip46-credentials-list PRIVATE groundhog-nip46-credentials)
