@@ -2,6 +2,7 @@
 #include "gh-metadata-strip.h"
 #include "gh-link-policy.h"
 #include <libxml/HTMLparser.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
 #include <string.h>
 
 struct _GhWebContent {
@@ -67,6 +68,12 @@ parse_result(GBytes *bytes, GhWebKind kind, GError **error)
       g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA, "Image dimensions exceed the limit");
       return NULL;
     }
+    /* nostrc-p15n5.8: an animated GIF also travels as its animation, kept
+     * on the still texture (gn_animated_image_paintable_for_texture()). */
+    g_autoptr(GnAnimatedImage) animation =
+      gn_animated_image_probe(bytes, NULL, NULL) ? gn_animated_image_new_from_bytes(bytes, 4096, NULL)
+                                                 : NULL;
+    if (animation) gn_animated_image_set_for_texture(result->texture, animation);
     return g_steal_pointer(&result);
   }
   gsize size = 0;

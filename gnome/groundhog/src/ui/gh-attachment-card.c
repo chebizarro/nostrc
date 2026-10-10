@@ -2,6 +2,8 @@
 #include "gh-message-row.h"
 
 #include <glib/gi18n.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
+#include <nostr-gtk-1.0/gn-media-viewer.h>
 #include <string.h>
 
 #define PROVIDER_DATA "groundhog-attachment-card-provider"
@@ -11,6 +13,10 @@
 /* The inline photo's largest size (charter §7.6: bubbles are capped). */
 #define PREVIEW_MAX 280
 #define PREVIEW_MAX_COMPACT 200
+/* GH_ATTACHMENT_PREVIEW_MAX_DIMENSION (gh-attachment.h, AT-4), for GIFs. */
+#define ANIMATION_MAX_DIMENSION 8192
+#define ANIMATION_DATA "groundhog-attachment-animation"
+#define ANIMATION_BYTES_DATA "groundhog-attachment-animation-bytes"
 
 typedef struct {
   GhAttachmentCardProvider vtable;
@@ -46,6 +52,7 @@ struct _GhAttachmentCard {
   gchar *summary;
   GtkMediaStream *audio_stream;
   GBytes *audio_bytes;
+  GtkWidget *video_button;         /* "Play Video" for a downloaded video */
 };
 
 enum { PROP_0, PROP_MESSAGE, PROP_INDEX, PROP_COMPACT, PROP_SUMMARY, N_PROPS };
@@ -310,20 +317,62 @@ update_header(GhAttachmentCard *self)
   gtk_label_set_text(self->detail_label, detail);
 }
 
+static void
+hide_preview(GhAttachmentCard *self)
+{
+  gtk_picture_set_paintable(self->preview, NULL);
+  gn_animated_image_attach(GTK_WIDGET(self->preview), NULL);
+  gtk_widget_set_visible(GTK_WIDGET(self->preview), FALSE);
+}
+
+/* nostrc-p15n5.8: an animated GIF plays inline. It is decoded by
+ * GnAnimatedImage (nostr-gtk's bounded GIF decoder, never gdk-pixbuf),
+ * whose header check uses the same limit as the PNG/JPEG decode guard;
+ * a still or damaged GIF stays a card as before. Kept on the transfer (not
+ * as its preview: that is the PNG/JPEG guard's) for these plaintext bytes. */
+static GnAnimatedImage *
+animated_preview(GhAttachmentTransfer *transfer)
+{
+  GBytes *plaintext = gh_attachment_transfer_get_plaintext(transfer);
+  if (plaintext && g_object_get_data(G_OBJECT(transfer), ANIMATION_BYTES_DATA) == plaintext)
+    return g_object_get_data(G_OBJECT(transfer), ANIMATION_DATA);
+  if (!plaintext || !gn_animated_image_probe(plaintext, NULL, NULL) ||
+      g_object_get_data(G_OBJECT(transfer), UNDECODABLE_DATA) == plaintext)
+    return NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GnAnimatedImage) animation =
+    gn_animated_image_new_from_bytes(plaintext, ANIMATION_MAX_DIMENSION, &error);
+  if (!animation) {
+    g_debug("Attachment: no animation shown: %s", error->message);
+    g_object_set_data(G_OBJECT(transfer), UNDECODABLE_DATA, plaintext);
+    return NULL;
+  }
+  g_object_set_data_full(G_OBJECT(transfer), ANIMATION_DATA, g_object_ref(animation),
+                         g_object_unref);
+  g_object_set_data_full(G_OBJECT(transfer), ANIMATION_BYTES_DATA, g_bytes_ref(plaintext),
+                         (GDestroyNotify)g_bytes_unref);
+  return animation; /* the transfer holds it */
+}
+
 /* The photo, decoded once per transfer, and only after the decode guard. */
 static gboolean
 update_preview(GhAttachmentCard *self)
 {
   GhAttachmentTransfer *transfer = self->transfer;
-  if (!transfer || gh_attachment_transfer_get_state(transfer) != GH_ATTACHMENT_STATE_READY ||
-      !gh_attachment_transfer_get_previewable(transfer)) {
-    gtk_picture_set_paintable(self->preview, NULL);
-    gtk_widget_set_visible(GTK_WIDGET(self->preview), FALSE);
+  if (!transfer || gh_attachment_transfer_get_state(transfer) != GH_ATTACHMENT_STATE_READY) {
+    hide_preview(self);
     return FALSE;
   }
   GObject *preview = gh_attachment_transfer_get_preview(transfer);
   GBytes *plaintext = gh_attachment_transfer_get_plaintext(transfer);
-  if (!GDK_IS_TEXTURE(preview)) {
+  if (!gh_attachment_transfer_get_previewable(transfer)) {
+    GnAnimatedImage *animation = animated_preview(transfer);
+    if (!animation) {
+      hide_preview(self);
+      return FALSE;
+    }
+    preview = G_OBJECT(animation);
+  } else if (!GDK_IS_TEXTURE(preview)) {
     g_autoptr(GError) error = NULL;
     g_autoptr(GdkTexture) texture =
       g_object_get_data(G_OBJECT(transfer), UNDECODABLE_DATA) != plaintext
@@ -334,8 +383,7 @@ update_preview(GhAttachmentCard *self)
         g_debug("Attachment: a photo could not be decoded: %s", error->message);
         g_object_set_data(G_OBJECT(transfer), UNDECODABLE_DATA, plaintext);
       }
-      gtk_picture_set_paintable(self->preview, NULL);
-      gtk_widget_set_visible(GTK_WIDGET(self->preview), FALSE);
+      hide_preview(self);
       return FALSE;
     }
     /* Kept on the transfer for recycled rows; this card updates itself. */
@@ -344,19 +392,148 @@ update_preview(GhAttachmentCard *self)
     g_signal_handlers_unblock_by_func(transfer, on_transfer_notify, self);
     preview = G_OBJECT(texture);
   }
-  GdkTexture *texture = GDK_TEXTURE(preview);
-  gint width = MAX(gdk_texture_get_width(texture), 1);
-  gint height = MAX(gdk_texture_get_height(texture), 1);
+  GdkPaintable *paintable = GDK_PAINTABLE(preview);
+  gint width = MAX(gdk_paintable_get_intrinsic_width(paintable), 1);
+  gint height = MAX(gdk_paintable_get_intrinsic_height(paintable), 1);
   gint max = self->compact ? PREVIEW_MAX_COMPACT : PREVIEW_MAX;
   gdouble scale = MIN(1.0, MIN((gdouble)max / width, (gdouble)max / height));
   gtk_widget_set_size_request(GTK_WIDGET(self->preview), MAX((gint)(width * scale), 1),
                               MAX((gint)(height * scale), 1));
-  gtk_picture_set_paintable(self->preview, GDK_PAINTABLE(texture));
+  gtk_picture_set_paintable(self->preview, paintable);
+  gn_animated_image_attach(GTK_WIDGET(self->preview), paintable);
   g_autofree gchar *sender = self->message ? gh_message_row_sender_name(self->message) : NULL;
   g_autofree gchar *alternative = g_strdup_printf(_("Photo from %s"), sender ? sender : "");
   gtk_picture_set_alternative_text(self->preview, alternative);
   gtk_widget_set_visible(GTK_WIDGET(self->preview), TRUE);
   return TRUE;
+}
+
+/* ---- the viewer (nostrc-p15n5.6) ------------------------------------------------- */
+
+static gboolean
+is_video(const gchar *mime)
+{
+  return mime && g_ascii_strncasecmp(mime, "video/", 6) == 0 && mime[6];
+}
+
+/* What the viewer shows for transfer: its decoded photo or animation, or a
+ * video played from the decrypted bytes in memory (new reference), or NULL. */
+static GdkPaintable *
+viewer_paintable(GhAttachmentTransfer *transfer, const gchar *mime)
+{
+  if (!transfer || gh_attachment_transfer_get_state(transfer) != GH_ATTACHMENT_STATE_READY)
+    return NULL;
+  GObject *preview = gh_attachment_transfer_get_preview(transfer);
+  if (GDK_IS_PAINTABLE(preview))
+    return GDK_PAINTABLE(g_object_ref(preview));
+  GnAnimatedImage *animation = animated_preview(transfer);
+  if (animation)
+    return GDK_PAINTABLE(g_object_ref(animation));
+  GBytes *plaintext = gh_attachment_transfer_get_plaintext(transfer);
+  if (plaintext && is_video(mime)) {
+    g_autoptr(GInputStream) input = g_memory_input_stream_new_from_bytes(plaintext);
+    return GDK_PAINTABLE(gtk_media_file_new_for_input_stream(input));
+  }
+  return NULL;
+}
+
+static const gchar *
+file_mime(GhMessage *message, guint index, GhNip17File *file)
+{
+  if (file)
+    return file->file_type;
+  const GhMessageAttachment *a = gh_message_get_attachment(message, index);
+  return a ? a->media_type : NULL;
+}
+
+GtkWindow *
+gh_attachment_card_open_viewer(GhAttachmentCard *self)
+{
+  g_return_val_if_fail(GH_IS_ATTACHMENT_CARD(self), NULL);
+  g_autoptr(GdkPaintable) shown = viewer_paintable(self->transfer, self->mime);
+  if (!shown)
+    return NULL;
+  /* The gallery: every file of this message that is ready to show - a
+   * kind-15 message's one file, an encrypted group message's several. */
+  Provider *provider = find_provider(self);
+  g_autoptr(GPtrArray) urls = g_ptr_array_new_with_free_func(g_free);
+  g_autoptr(GPtrArray) paintables = g_ptr_array_new_with_free_func(g_object_unref);
+  guint current = 0;
+  guint n = gh_message_get_n_attachments(self->message);
+  g_autoptr(GhNip17File) file = gh_message_dup_file(self->message);
+  if (file || n == 0)
+    n = 1;
+  const gchar *id = gh_message_get_rumor_id(self->message);
+  for (guint i = 0; i < n && i < 64; i++) {
+    g_autoptr(GdkPaintable) paintable = NULL;
+    if (i == self->index) {
+      paintable = g_object_ref(shown);
+      current = paintables->len;
+    } else if (provider) {
+      GhAttachmentTransfer *transfer = provider->vtable.lookup_at
+        ? provider->vtable.lookup_at(self->message, i, provider->data)
+        : NULL;
+      paintable = viewer_paintable(transfer, file_mime(self->message, i, file));
+    }
+    if (!paintable)
+      continue;
+    /* Slot names only; the viewer never fetches them. */
+    g_ptr_array_add(urls, g_strdup_printf("attachment:%s/%u", id ? id : "", i));
+    g_ptr_array_add(paintables, g_steal_pointer(&paintable));
+  }
+  g_ptr_array_add(urls, NULL);
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GnMediaViewer *viewer = gn_media_viewer_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
+  gn_media_viewer_set_gallery(viewer, (const gchar *const *)urls->pdata, current);
+  for (guint i = 0; i < paintables->len; i++)
+    gn_media_viewer_set_paintable(viewer, i, g_ptr_array_index(paintables, i));
+  gtk_window_present(GTK_WINDOW(viewer));
+  return GTK_WINDOW(viewer);
+}
+
+static void
+action_view(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  gh_attachment_card_open_viewer(GH_ATTACHMENT_CARD(widget));
+}
+
+static void
+on_preview_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y,
+                   GhAttachmentCard *self)
+{
+  (void)gesture; (void)n_press; (void)x; (void)y;
+  gh_attachment_card_open_viewer(self);
+}
+
+static gboolean
+on_preview_key(GtkEventControllerKey *controller, guint keyval, guint keycode,
+               GdkModifierType state, GhAttachmentCard *self)
+{
+  (void)controller; (void)keycode; (void)state;
+  if (keyval != GDK_KEY_Return && keyval != GDK_KEY_KP_Enter && keyval != GDK_KEY_space)
+    return FALSE;
+  return gh_attachment_card_open_viewer(self) != NULL;
+}
+
+static void
+update_video(GhAttachmentCard *self)
+{
+  gboolean ready = self->transfer && is_video(self->mime) &&
+    gh_attachment_transfer_get_state(self->transfer) == GH_ATTACHMENT_STATE_READY &&
+    gh_attachment_transfer_get_plaintext(self->transfer);
+  if (ready && !self->video_button) {
+    self->video_button = gtk_button_new_with_mnemonic(_("_Play Video"));
+    gtk_widget_set_name(self->video_button, "video_button");
+    gtk_widget_set_halign(self->video_button, GTK_ALIGN_START);
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(self->video_button), "attachment.view");
+    gtk_widget_insert_after(self->video_button,
+                            gtk_widget_get_parent(GTK_WIDGET(self->audio_slot)),
+                            GTK_WIDGET(self->audio_slot));
+  }
+  if (self->video_button)
+    gtk_widget_set_visible(self->video_button, ready);
 }
 
 /* Playback uses the decrypted bytes in memory, never a temporary plaintext
@@ -452,6 +629,7 @@ update(GhAttachmentCard *self)
   gboolean had_focus = focus_in_actions(self);
   update_header(self);
   update_audio(self);
+  update_video(self);
   g_autofree gchar *kind = gh_attachment_card_describe_type(self->described ? self->mime
                                                                             : NULL);
   const gchar *state_text = NULL;
@@ -852,6 +1030,7 @@ gh_attachment_card_class_init(GhAttachmentCardClass *klass)
   gtk_widget_class_install_action(widget_class, "attachment.download", NULL, action_download);
   gtk_widget_class_install_action(widget_class, "attachment.cancel", NULL, action_cancel);
   gtk_widget_class_install_action(widget_class, "attachment.save", NULL, action_save);
+  gtk_widget_class_install_action(widget_class, "attachment.view", NULL, action_view);
   gtk_widget_class_set_css_name(widget_class, "groundhog-attachment");
   gtk_widget_class_set_accessible_role(widget_class, GTK_ACCESSIBLE_ROLE_GROUP);
 }
@@ -861,6 +1040,20 @@ gh_attachment_card_init(GhAttachmentCard *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   gtk_widget_set_overflow(GTK_WIDGET(self->preview), GTK_OVERFLOW_HIDDEN);
+  /* nostrc-p15n5.6: the photo opens the media viewer (click, Enter, Space). */
+  gtk_widget_set_focusable(GTK_WIDGET(self->preview), TRUE);
+  gtk_widget_set_cursor_from_name(GTK_WIDGET(self->preview), "zoom-in");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->preview), _("Open in media viewer"));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(self->preview),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                 _("Open in media viewer"), -1);
+  GtkGesture *open = gtk_gesture_click_new();
+  gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(open), GDK_BUTTON_PRIMARY);
+  g_signal_connect(open, "pressed", G_CALLBACK(on_preview_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->preview), GTK_EVENT_CONTROLLER(open));
+  GtkEventController *keys = gtk_event_controller_key_new();
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(on_preview_key), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->preview), keys);
   self->summary = g_strdup("");
   update(self);
 }

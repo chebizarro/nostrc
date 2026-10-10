@@ -37,6 +37,8 @@
 #include "gh-agent-event-row.h"
 #include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
+#include <nostr-gtk-1.0/gn-media-viewer.h>
 #include "gh-reaction-store.h"
 #include "gh-reaction-picker.h"
 
@@ -1533,6 +1535,98 @@ test_web_consent(Fixture *f, gconstpointer data)
   gh_conversation_view_set_conversation(f->view, NULL);
   gh_conversation_view_enable_web_content(f->view, NULL, NULL);
   g_settings_reset(f->settings, key);
+  blossom_fixture_free(server);
+}
+
+/* nostrc-p15n5.6/.8: a linked image - here an animated GIF - in a NIP-17 DM
+ * and in a NIP-29 group loads after consent, animates inline and opens the
+ * media viewer (Enter on the picture) with the animation. */
+static void
+test_link_image_viewer(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_settings_set_boolean(f->settings, "load-remote-images", TRUE);
+  g_settings_set_string(f->settings, "network-mode", "none");
+  BlossomFixture *server = blossom_fixture_new();
+  static const guint8 gif[] = {
+    'G', 'I', 'F', '8', '9', 'a', 2, 0, 1, 0, 0x80, 0, 0,
+    0xFF, 0, 0, 0, 0, 0xFF,
+    0x21, 0xF9, 4, 0, 10, 0, 0, 0,
+    0x2C, 0, 0, 0, 0, 2, 0, 1, 0, 0, 2, 2, 0x44, 0x0A, 0,
+    0x21, 0xF9, 4, 0, 10, 0, 0, 0,
+    0x2C, 0, 0, 0, 0, 2, 0, 1, 0, 0, 2, 2, 0x0C, 0x0A, 0,
+    0x3B };
+  g_autoptr(GBytes) body = g_bytes_new_static(gif, sizeof gif);
+  g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
+  blossom_fixture_put_blob(server, hash, body);
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s",
+                                          blossom_fixture_port(server), hash);
+  for (guint channel = 0; channel < 2; channel++) {
+    GhMessage *message = NULL;
+    g_autoptr(GhMessage) group_message = NULL;
+    if (channel == 0) {
+      message = add_dm(f->store, 2, 1, noon_today() - 60, uri);
+    } else {
+      NostrEvent *event = nostr_event_new();
+      nostr_event_set_kind(event, 9);
+      nostr_event_set_pubkey(event, hex[1]); /* unsigned: the account's own */
+      nostr_event_set_created_at(event, noon_today() - 30);
+      nostr_event_set_content(event, uri);
+      nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("h", "gif-group", NULL)));
+      event->id = nostr_event_get_id(event);
+      g_autofree gchar *json = nostr_event_serialize_compact(event);
+      nostr_event_free(event);
+      g_autoptr(GError) error = NULL;
+      group_message = gh_message_new_from_nip29_event(hex[1], "wss://relay.example.com", json,
+                                                      &error);
+      g_assert_no_error(error);
+      gh_conversation_store_add_message(f->store, group_message, &error);
+      g_assert_no_error(error);
+      message = group_message;
+    }
+    GhConversation *conversation = room_of(f->store, message);
+    gh_conversation_accept(conversation);
+    show(f, conversation, 700, 700);
+    g_autoptr(GhNetHttp) http = gh_net_http_new(f->settings);
+    static const GhHttpTransport transport = { web_local_get, web_local_finish };
+    gh_conversation_view_enable_web_content(f->view, &transport, http);
+    drain_idle();
+    g_autofree gchar *id = g_strconcat("image:", gh_message_get_rumor_id(message), NULL);
+    gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s", id);
+    AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+    spin_until(dialog_presented, dialog);
+    g_signal_emit_by_name(dialog, "response", "preview-show");
+    close_dialog(ADW_DIALOG(dialog));
+    WebWait loaded = { f, message, GH_WEB_IMAGE };
+    spin_until(web_loaded, &loaded);
+    drain_idle();
+    GtkPicture *picture = row_child(row_for(f->view, message), "remote_image");
+    g_assert_true(GTK_IS_PICTURE(picture));
+    GdkPaintable *shown = gtk_picture_get_paintable(picture);
+    g_assert_true(GN_IS_ANIMATED_IMAGE(shown));
+    GListModel *controllers = gtk_widget_observe_controllers(GTK_WIDGET(picture));
+    gboolean handled = FALSE;
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+      g_autoptr(GObject) controller = g_list_model_get_item(controllers, i);
+      if (GTK_IS_EVENT_CONTROLLER_KEY(controller))
+        g_signal_emit_by_name(controller, "key-pressed", GDK_KEY_Return, 0, 0, &handled);
+    }
+    g_object_unref(controllers);
+    g_assert_true(handled);
+    GnMediaViewer *viewer = NULL;
+    GListModel *toplevels = gtk_window_get_toplevels();
+    for (guint i = 0; i < g_list_model_get_n_items(toplevels); i++) {
+      g_autoptr(GObject) window = g_list_model_get_item(toplevels, i);
+      if (GN_IS_MEDIA_VIEWER(window))
+        viewer = GN_MEDIA_VIEWER(window);
+    }
+    g_assert_nonnull(viewer);
+    g_assert_true(gn_media_viewer_get_paintable(viewer) == shown);
+    gtk_window_destroy(GTK_WINDOW(viewer));
+    gh_conversation_view_set_conversation(f->view, NULL);
+    gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  }
+  g_settings_reset(f->settings, "load-remote-images");
   blossom_fixture_free(server);
 }
 
@@ -3553,6 +3647,7 @@ main(int argc, char **argv)
     g_test_add(path, Fixture, GUINT_TO_POINTER(kind), fixture_setup, test_web_consent, fixture_teardown);
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
+  ADD("link-image-viewer", test_link_image_viewer);
   ADD("failed-picture-has-no-row-error", test_failed_picture_has_no_row_error);
   ADD("open-timing", test_open_timing);
   ADD("recycled-scroll-directions", test_recycled_scroll_directions);

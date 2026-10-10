@@ -92,6 +92,13 @@ GhAttachmentTransfer *gh_attachment_card_get_transfer(GhAttachmentCard *self);
 /* Re-check auto-download when the media preference changes. */
 void gh_attachment_card_maybe_auto_download(GhAttachmentCard *self);
 const gchar *gh_attachment_card_get_summary(GhAttachmentCard *self);
+/* nostrc-p15n5.6: opens nostr-gtk's GnMediaViewer on this file's decrypted
+ * bytes - the shown photo or animation, or a downloaded video played from
+ * memory - with the message's other ready files as its gallery (DMs' kind
+ * 15 and encrypted groups alike). Also the "attachment.view" action, a
+ * click or Enter on the photo, and the video's Play Video button. Returns
+ * the presented viewer (owned by GTK), or NULL when nothing is ready. */
+GtkWindow *gh_attachment_card_open_viewer(GhAttachmentCard *self);
 
 /* "Photo", "Video", "Audio", "File (PDF)" or "File" for a declared MIME
  * type (translated; transfer full). */

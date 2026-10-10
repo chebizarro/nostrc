@@ -37,6 +37,10 @@
 #include "../gh-test-port.h"
 
 #include <string.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
+#include <nostr-gtk-1.0/gn-media-viewer.h>
+#include "gh-attachment-card.h"
+static GnMediaViewer *open_viewer(GhAttachmentCard *card);
 
 #include "nostrc-test-gdk-frame.h"
 
@@ -1440,6 +1444,10 @@ test_card_download_and_save(void)
   g_assert_cmpint(gdk_paintable_get_intrinsic_width(gtk_picture_get_paintable(picture)), ==, 8);
   g_assert_nonnull(card_button(GTK_WIDGET(card), "_Save As…"));
   g_assert_nonnull(strstr(gh_attachment_card_get_summary(card), "Downloaded"));
+  /* nostrc-p15n5.6: a DM's (kind 15) photo opens the media viewer. */
+  GnMediaViewer *viewer = open_viewer(card);
+  g_assert_true(gn_media_viewer_get_paintable(viewer) == gtk_picture_get_paintable(picture));
+  gtk_window_destroy(GTK_WINDOW(viewer));
   /* Nothing written anywhere before the user saves. */
   g_assert_false(g_file_test(f.saved, G_FILE_TEST_EXISTS));
   g_assert_cmpuint(f.save_asked, ==, 0);
@@ -1795,6 +1803,91 @@ media_loaded_or_failed(gpointer data)
   return gtk_media_stream_is_prepared(stream) || gtk_media_stream_get_error(stream) != NULL;
 }
 
+/* nostrc-p15n5.6: the card's attachment.view action presents the viewer. */
+static GnMediaViewer *
+open_viewer(GhAttachmentCard *card)
+{
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(card), "attachment.view", NULL));
+  GnMediaViewer *viewer = NULL;
+  GListModel *toplevels = gtk_window_get_toplevels();
+  for (guint i = 0; i < g_list_model_get_n_items(toplevels); i++) {
+    g_autoptr(GObject) window = g_list_model_get_item(toplevels, i);
+    if (GN_IS_MEDIA_VIEWER(window))
+      viewer = GN_MEDIA_VIEWER(window);
+  }
+  g_assert_nonnull(viewer);
+  g_assert_nonnull(gn_media_viewer_get_paintable(viewer));
+  return viewer;
+}
+
+/* 2x1, two frames: an animated GIF. */
+static GBytes *
+make_gif(void)
+{
+  static const guint8 gif[] = {
+    'G', 'I', 'F', '8', '9', 'a', 2, 0, 1, 0, 0x80, 0, 0,
+    0xFF, 0, 0, 0, 0, 0xFF,
+    0x21, 0xF9, 4, 0, 10, 0, 0, 0,
+    0x2C, 0, 0, 0, 0, 2, 0, 1, 0, 0, 2, 2, 0x44, 0x0A, 0,
+    0x21, 0xF9, 4, 0, 10, 0, 0, 0,
+    0x2C, 0, 0, 0, 0, 2, 0, 1, 0, 0, 2, 2, 0x0C, 0x0A, 0,
+    0x3B };
+  return g_bytes_new_static(gif, sizeof gif);
+}
+
+/* nostrc-p15n5.6/.8: in an encrypted (MLS) group, an animated GIF plays
+ * inline and in the viewer; a downloaded video offers Play Video, which
+ * opens the viewer on a media stream over the decrypted bytes. */
+static void
+test_group_gif_and_video(void)
+{
+  const gchar *mimes[] = { "image/gif", "video/mp4" };
+  for (guint i = 0; i < G_N_ELEMENTS(mimes); i++) {
+    Fixture f;
+    fixture_init(&f);
+    fixture_up(&f, TRUE);
+    StubGroups stub = { 0 };
+    stub.transfer = gh_attachment_transfer_new_described(i ? "group/video" : "group/gif",
+                                                         mimes[i], i ? "clip.mp4" : "a.gif");
+    stub.group = g_simple_action_new("group", NULL);
+    gh_attachment_ui_set_groups(f.s.window, &stub_groups, &stub, NULL);
+    g_autoptr(GhMessage) message = group_file_message(&f);
+    GhMessageAttachment *a = (GhMessageAttachment *)gh_message_get_attachment(message, 0);
+    g_free(a->media_type);
+    a->media_type = g_strdup(mimes[i]);
+    g_autoptr(GError) error = NULL;
+    gh_conversation_store_add_message(f.s.model, message, &error);
+    g_assert_no_error(error);
+    GhConversation *group = gh_conversation_store_lookup(f.s.model,
+                                                         gh_message_get_room_id(message));
+    send_stack_select(&f.s, group);
+    GhAttachmentCard *card = card_of(&f, message);
+    g_assert_null(gh_attachment_card_open_viewer(card));
+    g_autoptr(GBytes) bytes = i ? g_bytes_new_static("\0\0\0\x18" "ftypmp42", 12) : make_gif();
+    /* Not PNG/JPEG: never previewable by the AT-4 guard. */
+    gh_attachment_transfer_succeed(stub.transfer, bytes, FALSE, FALSE);
+    gh_test_run_until_idle();
+    GnMediaViewer *viewer = NULL;
+    if (i) {
+      g_assert_null(shown_picture(GTK_WIDGET(card)));
+      g_assert_nonnull(card_button(GTK_WIDGET(card), "_Play Video"));
+      viewer = open_viewer(card);
+      g_assert_true(GTK_IS_MEDIA_STREAM(gn_media_viewer_get_paintable(viewer)));
+    } else {
+      GtkPicture *picture = shown_picture(GTK_WIDGET(card));
+      g_assert_nonnull(picture);
+      g_assert_true(GN_IS_ANIMATED_IMAGE(gtk_picture_get_paintable(picture)));
+      viewer = open_viewer(card);
+      g_assert_true(GN_IS_ANIMATED_IMAGE(gn_media_viewer_get_paintable(viewer)));
+    }
+    gtk_window_destroy(GTK_WINDOW(viewer));
+    gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
+    fixture_clear(&f);
+    g_clear_object(&stub.group);
+    g_clear_object(&stub.transfer);
+  }
+}
+
 static void
 test_group_inline_image(void)
 {
@@ -1820,6 +1913,12 @@ test_group_inline_image(void)
   gh_test_run_until_idle();
   g_assert_nonnull(shown_picture(GTK_WIDGET(card)));
   g_assert_null(find_media_controls(GTK_WIDGET(card)));
+  /* nostrc-p15n5.6: an encrypted group's photo opens the media viewer on
+   * its decrypted bytes. */
+  GdkPaintable *shown = gtk_picture_get_paintable(shown_picture(GTK_WIDGET(card)));
+  GnMediaViewer *viewer = open_viewer(card);
+  g_assert_true(gn_media_viewer_get_paintable(viewer) == shown);
+  gtk_window_destroy(GTK_WINDOW(viewer));
 
   gh_attachment_ui_set_groups(f.s.window, NULL, NULL, NULL);
   fixture_clear(&f);
@@ -2309,6 +2408,7 @@ main(int argc, char **argv)
   ADD("group-inline-image", test_group_inline_image);
   ADD("group-inline-audio", test_group_inline_audio);
   ADD("group-auto-download-media", test_group_auto_download_media);
+  ADD("group-gif-and-video", test_group_gif_and_video);
   ADD("group-delegate", test_group_delegate);
   ADD("group-first-use-suggested-send", test_group_first_use_suggested_send);
   ADD("group-policy-overrides-selected-server", test_group_policy_overrides_selected_server);

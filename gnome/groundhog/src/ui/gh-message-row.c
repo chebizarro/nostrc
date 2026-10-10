@@ -10,6 +10,7 @@
 #include "gh-link-policy.h"
 #include <nostr-gtk-1.0/gn-og-preview-card.h>
 #include <nostr-gtk-1.0/gn-media-viewer.h>
+#include <nostr-gtk-1.0/gn-animated-image.h>
 
 #ifdef GROUNDHOG_HAVE_VOICE
 #include "gh-voice-bubble.h"
@@ -619,7 +620,10 @@ update_web_images(GhMessageRow *self)
       gtk_widget_add_controller(GTK_WIDGET(self->remote_image), keys);
       gtk_box_append(self->web_box, GTK_WIDGET(self->remote_image));
     }
-    gtk_picture_set_paintable(self->remote_image, GDK_PAINTABLE(texture));
+    /* nostrc-p15n5.8: an animated GIF plays while the row is on screen. */
+    GdkPaintable *shown = gn_animated_image_paintable_for_texture(texture);
+    gtk_picture_set_paintable(self->remote_image, shown);
+    gn_animated_image_attach(GTK_WIDGET(self->remote_image), shown);
   } else if (self->remote_image) {
     gtk_box_remove(self->web_box, GTK_WIDGET(self->remote_image));
     self->remote_image = NULL;
