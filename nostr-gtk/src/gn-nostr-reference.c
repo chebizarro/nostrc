@@ -219,6 +219,7 @@ gchar *gn_nostr_reference_build_address(const gchar *author_hex,
 void gn_nostr_event_info_free(GnNostrEventInfo *info) {
   if (!info) return;
   g_free(info->id); g_free(info->pubkey); g_free(info->d_tag);
+  g_free(info->content);
   g_free(info);
 }
 
@@ -237,11 +238,54 @@ static gchar *first_d_tag(NostrEvent *ev) {
   return NULL;
 }
 
+static GnNostrEventInfo *event_info_copy(const GnNostrEventInfo *info) {
+  GnNostrEventInfo *copy = g_new0(GnNostrEventInfo, 1);
+  copy->id = g_strdup(info->id);
+  copy->pubkey = g_strdup(info->pubkey);
+  copy->kind = info->kind;
+  copy->created_at = info->created_at;
+  copy->d_tag = g_strdup(info->d_tag);
+  copy->content = g_strdup(info->content);
+  return copy;
+}
+
+/* Verification cache (nostrc-8xfib.6). Rows re-render the same embedded
+ * originals and resolver results on every bind; a Schnorr verification costs
+ * far more than hashing the bytes, so successful verifications are memoised
+ * by the SHA-256 of the exact JSON. Bounded in entries and per-entry size;
+ * a full cache is simply emptied. Thread-safe: renderers run off-thread. */
+#define VERIFY_CACHE_MAX_ENTRIES 512
+#define VERIFY_CACHE_MAX_JSON (64 * 1024)
+static GMutex verify_cache_lock;
+static GHashTable *verify_cache; /* sha256 hex -> GnNostrEventInfo */
+
+static gchar *verify_cache_key(const gchar *event_json, gsize len) {
+  return len <= VERIFY_CACHE_MAX_JSON
+    ? g_compute_checksum_for_data(G_CHECKSUM_SHA256, (const guchar *)event_json, len)
+    : NULL;
+}
+
+void gn_nostr_event_verify_cache_clear(void) {
+  g_mutex_lock(&verify_cache_lock);
+  g_clear_pointer(&verify_cache, g_hash_table_unref);
+  g_mutex_unlock(&verify_cache_lock);
+}
+
 GnNostrEventInfo *gn_nostr_event_parse(const gchar *event_json, GError **error) {
-  if (!event_json || !*event_json || strlen(event_json) > 256 * 1024) {
+  gsize len = event_json ? strlen(event_json) : 0;
+  if (!len || len > 256 * 1024) {
     g_set_error(error, GN_NOSTR_REFERENCE_ERROR, GN_NOSTR_REFERENCE_ERROR_INVALID,
                 "Empty or oversized event");
     return NULL;
+  }
+  g_autofree gchar *key = verify_cache_key(event_json, len);
+  if (key) {
+    GnNostrEventInfo *hit = NULL;
+    g_mutex_lock(&verify_cache_lock);
+    const GnNostrEventInfo *cached = verify_cache ? g_hash_table_lookup(verify_cache, key) : NULL;
+    if (cached) hit = event_info_copy(cached);
+    g_mutex_unlock(&verify_cache_lock);
+    if (hit) return hit;
   }
   NostrEvent *ev = nostr_event_new();
   if (!ev) {
@@ -265,7 +309,19 @@ GnNostrEventInfo *gn_nostr_event_parse(const gchar *event_json, GError **error) 
   info->kind = nostr_event_get_kind(ev);
   info->created_at = nostr_event_get_created_at(ev);
   info->d_tag = first_d_tag(ev);
+  const char *content = nostr_event_get_content(ev);
+  info->content = g_strdup(content ? content : "");
   nostr_event_free(ev);
+  if (key) {
+    g_mutex_lock(&verify_cache_lock);
+    if (!verify_cache)
+      verify_cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                           (GDestroyNotify)gn_nostr_event_info_free);
+    if (g_hash_table_size(verify_cache) >= VERIFY_CACHE_MAX_ENTRIES)
+      g_hash_table_remove_all(verify_cache);
+    g_hash_table_replace(verify_cache, g_steal_pointer(&key), event_info_copy(info));
+    g_mutex_unlock(&verify_cache_lock);
+  }
   return info;
 }
 

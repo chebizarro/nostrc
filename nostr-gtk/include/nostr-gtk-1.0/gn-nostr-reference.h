@@ -64,6 +64,7 @@ typedef struct {
   gint kind;
   gint64 created_at;
   gchar *d_tag;            /* first "d" tag value, or NULL */
+  gchar *content;          /* event content, never NULL */
 } GnNostrEventInfo;
 
 /* Bounded (256 KiB) strict parse + verification; NULL and
@@ -72,6 +73,9 @@ GnNostrEventInfo *gn_nostr_event_parse(const gchar *event_json, GError **error);
 void gn_nostr_event_info_free(GnNostrEventInfo *info);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnNostrEventInfo, gn_nostr_event_info_free)
 gboolean gn_nostr_event_verify(const gchar *event_json, GError **error);
+/* Successful verifications are memoised (bounded, by SHA-256 of the JSON), so
+ * re-rendering the same event does not repeat the Schnorr check. Drops it. */
+void gn_nostr_event_verify_cache_clear(void);
 
 /* TRUE when @info is what @reference points at: same id (EVENT; and kind and
  * author when the reference carries them), same kind + author + identifier
