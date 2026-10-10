@@ -59,7 +59,8 @@ leases: former owners cannot be reconstructed from a current lease row. Such
 a database needs operator-led reconciliation on a fresh, epoch-preserving
 cutover; do not just delete the old lease or copy a stale DB. A corrupt
 current owner/provisioner overlap also aborts database open.
- A fenced NIP-46 client signs using
+
+A fenced NIP-46 client signs using
 `sign_event` with params `[event_json, "<decimal epoch>"]`. Its authenticated
 transport pubkey must equal the lease owner and its persistent client binding
 must still be valid; Signet also applies the usual signing policy. Legacy
@@ -73,15 +74,64 @@ provisioner-authenticated acquire, which advances the epoch.
 
 D-Bus, NIP-5L, and SSH-agent signing have no epoch-bearing contract and reject
 fenced identities. Their legacy operations remain available to identities
-that have never been fenced. Legacy raw-key borrows reject **all DB-backed identities**, including
-never-fenced ones: a copy issued before acquisition could otherwise bypass a
+that have never been fenced. Legacy raw-key borrows reject **all DB-backed
+identities**, including never-fenced ones: a copy issued before acquisition could otherwise bypass a
 later fence. All daemon signing and private-key crypto paths use the
 transaction-scoped custody operation. Before first acquisition, stop/quiesce
 old binaries and any previously issued raw-key borrowers; the new daemon
-cannot claw back a key they already copied. NIP-04/NIP-44 private-key encrypt/decrypt operations likewise
-reject fenced identities for now, even for the owner, rather than offering an
-unfenced bypass. A separate epoch-bearing data-crypto contract is required if
-the service needs these operations after cutover. There is no generic raw
+cannot claw back a key they already copied.
+
+The authenticated NIP-46 lease owner may also use `nip44_encrypt`,
+`nip44_decrypt`, `nip44_encrypt_b64`, and `nip44_decrypt_b64` with params
+`[peer_pubkey, input, "<decimal epoch>"]`. The binary-safe variants encode
+or return the plaintext as standard base64; ordinary NIP-44 requires
+NUL-free valid UTF-8 and rejects binary plaintext with `invalid_plaintext`
+(use `nip44_decrypt_b64` instead).
+The client pubkey comes from the authenticated NIP-46 envelope, never from a
+request parameter. Signet checks owner, exact epoch, expiry and observed clock
+inside the same SQLCipher write transaction as NIP-44 crypto; failed/stale/
+expired/revoked or uncommitted operations return no ciphertext or plaintext.
+Signet rejects decoded NULs in NIP-46 request identifiers, methods and
+parameters, and literal NULs in the decrypted request byte span. This avoids
+silently shortening a text operation before the custody check.
+Legacy two-param NIP-44 calls remain available only to never-fenced
+identities. NIP-04 has no epoch-bearing contract and stays denied for fenced
+identities. D-Bus and NIP-5L NIP-44 remain legacy-only and reject fenced
+identities regardless of their caller.
+
+Bahia SBOM attestations use the additional NIP-46 method
+`sign_bahia_sbom_dsse` with exactly
+`["<standard-base64 exact statement JSON>", "<decimal epoch>"]`. Its string
+result is standard base64 of a 64-byte BIP-340 Schnorr signature. The identity
+policy must list the literal `sign_bahia_sbom_dsse` in `allow_methods`;
+`allow_methods = "*"` and `default = "allow"` alone do **not** opt in to this
+capability. All other client/method deny policy still applies. Signet accepts
+only a UTF-8 in-toto Statement/v1
+with one artifact subject and nonempty subject digest (with Bahia's SHA-256/Git
+length-and-hex validation), SPDX or CycloneDX
+predicate type matching its format, a SHA-256 SBOM digest, and a supported
+location type/URI. Nested generator, timestamp, and NTIA fields must match
+Bahia's typed statement shape, including an RFC3339Nano timestamp when present;
+duplicate JSON keys are rejected at every depth
+before signing the unchanged input bytes. It rejects malformed/non-SBOM statements, noncanonical
+base64, payloads over 64 KiB, missing epoch, stale/wrong owner, expired or
+revoked lease, and DB failure. There is no no-epoch path. The authenticated
+NIP-46 client pubkey, not a request parameter, is the owner.
+
+Signet hashes `DSSEv1 28 application/vnd.in-toto+json <payload-byte-length> `
+followed by the **exact decoded statement bytes** with SHA-256, then signs
+that 32-byte digest under the same transaction-scoped custody fence as Nostr
+events. It never accepts a caller-supplied digest, payload type, or key ID,
+and returns no signature if the custody transaction fails. Bahia's envelope
+`keyid` remains the existing service pubkey; its current verifier's DSSE PAE
+and BIP-340 checks remain unchanged. The statement metadata is asserted by
+the lease owner, not independently verified by Signet against an artifact or
+SBOM blob. This is a signing capability, not an artifact-admission decision.
+The subject digest algorithm name is not the authorization boundary: Bahia's
+current builder permits other nonempty `algo:hash` values, so Signet accepts
+those too while still constraining the statement and SBOM predicate domain.
+
+There is no generic raw
 digest/DSSE signing API in this change.
 
 ## Operational rollout (not performed by this code change)
@@ -90,7 +140,7 @@ digest/DSSE signing API in this change.
    **new, dedicated NIP-46 client key** to the incoming writer; do not reuse
    the old daemon's client key or any configured Signet provisioner key. Confirm the Signet adoption result matches the
    service's current pubkey. Confirm the single active Signet/DB topology and
-   policy for `sign_event` plus `writer_renew`.
+   policy for `sign_event`, `writer_renew`, `sign_bahia_sbom_dsse`, and any required NIP-44 methods.
 2. On **stage-01**, stop and disable old service-key signers, drain or quarantine
    already-signed outboxes, and verify no old daemon can still use a retained
    secret or stale DB copy. Acquire an epoch for the new client. Prove old
