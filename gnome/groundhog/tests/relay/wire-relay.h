@@ -105,6 +105,15 @@ struct _WireRelay {
   guint future_refused;      /* EVENTs refused for it */
   gboolean hold_oks;         /* serve: an EVENT's OK waits for wire_relay_release_oks() */
   GPtrArray *held_oks;       /* WireHeldOk, in arrival order */
+  /* Unreliable relays (nostrc-8xfib.1), serve mode. Events signed by
+   * exempt_pubkey (hex; e.g. a signer under test) are never affected. */
+  gboolean no_eose;          /* a REQ is answered, but never with EOSE */
+  guint nack_events;         /* the next N EVENTs: OK false nack_message, not kept */
+  const gchar *nack_message; /*   default "rate-limited: slow down" */
+  guint nacked;
+  guint drop_events;         /* the next N EVENTs: socket dropped before any OK */
+  guint dropped;
+  const gchar *exempt_pubkey;
 };
 
 /* An OK held back (hold_oks). */
@@ -376,6 +385,8 @@ wire_answer_req(WireRelay *relay, SoupWebsocketConnection *connection, const gch
       break;
     }
   }
+  if (relay->no_eose)
+    return;
   g_autofree gchar *eose = g_strdup_printf("[\"EOSE\",\"%s\"]", sub_id);
   wire_send(connection, eose);
 }
@@ -638,6 +649,26 @@ wire_serve_message(WireRelay *relay, SoupWebsocketConnection *connection, const 
       return TRUE;
     }
     g_autofree gchar *json = wire_frame_payload(text, "[\"EVENT\",");
+    if (relay->nack_events || relay->drop_events) {
+      NostrEvent *event = nostr_event_new();
+      gboolean exempt = relay->exempt_pubkey &&
+        nostr_event_deserialize_signed(event, json, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+        g_strcmp0(nostr_event_get_pubkey(event), relay->exempt_pubkey) == 0;
+      nostr_event_free(event);
+      if (!exempt && relay->drop_events) {
+        relay->drop_events--;
+        relay->dropped++;
+        soup_websocket_connection_close(connection, SOUP_WEBSOCKET_CLOSE_GOING_AWAY, NULL);
+        return TRUE;
+      }
+      if (!exempt && relay->nack_events) {
+        relay->nack_events--;
+        relay->nacked++;
+        wire_send_ok(connection, event_id, FALSE,
+                     relay->nack_message ? relay->nack_message : "rate-limited: slow down");
+        return TRUE;
+      }
+    }
     /* The older KeyPackage shape alone carries an encoding tag. */
     gboolean refuse_legacy = relay->refuse_legacy_key_packages &&
                              strstr(json, "\"encoding\"") != NULL;

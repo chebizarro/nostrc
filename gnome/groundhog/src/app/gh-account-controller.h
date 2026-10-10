@@ -94,6 +94,26 @@ gboolean gh_account_controller_select_backend(GhAccountController *self,
                                               GhSignerBackend backend,
                                               const gchar *npub, GError **error);
 
+/* Makes the account of a just-paired remote signer active at once, bound to
+ * the live, already-connected @session (a reference is taken): no keyring
+ * lookup, no reconnect, no wait for a re-listing (nostrc-8xfib.1, as gnostr
+ * hands its login session to the signer service). Writes current-backend and
+ * current-npub in one transaction. Persisting the credential is the caller's
+ * job and runs alongside; the account stays listed until a keyring listing
+ * includes it. */
+gboolean gh_account_controller_adopt_remote(GhAccountController *self, const gchar *npub,
+                                            GhNip46Session *session, GError **error);
+/* Explicit "Unlock": retries the credential read of a LOCKED (or ERROR)
+ * remote account interactively, so the keyring or Keychain may prompt.
+ * FALSE when there is nothing to unlock. */
+gboolean gh_account_controller_unlock_remote(GhAccountController *self);
+/* Test seams: the number of credential lookups started; whether sessions of
+ * the fake session factory are pinged (default FALSE) and the ping deadline. */
+guint gh_account_controller_get_credential_lookups_for_test(GhAccountController *self);
+void gh_account_controller_set_ping_for_test(GhAccountController *self,
+                                             gboolean ping_factory_sessions,
+                                             guint timeout_ms);
+
 GhAccountState gh_account_controller_get_state(GhAccountController *self);
 GhSignerAvailability gh_account_controller_get_signer_availability(GhAccountController *self);
 GhSignerBackend gh_account_controller_get_active_backend(GhAccountController *self);

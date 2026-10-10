@@ -127,6 +127,8 @@ wire_bunker_on_event(WireRelay *relay, SoupWebsocketConnection *connection,
       value = g_strndup((const gchar *)decrypted, len);
       free(decrypted);
     }
+  } else if (g_str_equal(request.method, "ping")) {
+    value = strdup("pong"); /* the health ping after restore (nostrc-8xfib.1) */
   } else {
     g_error("unpermitted bunker method: %s", request.method);
   }

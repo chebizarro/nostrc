@@ -178,6 +178,49 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="GtkBox" id="confirm_box">
+                        <property name="visible">false</property>
+                        <property name="orientation">1</property>
+                        <property name="spacing">12</property>
+                        <child>
+                          <object class="GtkLabel" id="confirm_heading">
+                            <property name="wrap">true</property>
+                            <property name="xalign">0</property>
+                            <style>
+                              <class name="title-3"/>
+                            </style>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkLabel" id="confirm_body">
+                            <property name="wrap">true</property>
+                            <property name="selectable">true</property>
+                            <property name="xalign">0</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkBox">
+                            <property name="spacing">12</property>
+                            <property name="halign">3</property>
+                            <child>
+                              <object class="GtkButton" id="confirm_cancel_button">
+                                <property name="label" translatable="yes">Back</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="confirm_save_button">
+                                <property name="label" translatable="yes">Save Remote Signer</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </child>
+                          </object>
+                        </child>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkLabel" id="error_label">
                         <property name="visible">false</property>
                         <property name="wrap">true</property>

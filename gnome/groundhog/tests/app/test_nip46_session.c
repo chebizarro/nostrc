@@ -438,24 +438,108 @@ test_reconnect_and_publish_failure(void)
 {
   TestBunker bunker;
   g_autoptr(GhNip46Session) session = new_session(&bunker);
+  gh_nip46_session_set_test_windows(session, 50, 100, 10);
   gh_nip46_session_start(session);
   bunker_eose(&bunker);
   BunkerHandle *scope = g_ptr_array_index(bunker.scopes, 0);
   gh_relay_scope_notice(scope->scope, scope->url, GH_RELAY_NOTICE_DISCONNECTED,
                         NULL, FALSE, "connection lost");
   g_assert_false(gh_nip46_session_is_ready(session));
+  /* Requests still go out (each publish has its own connection); the
+   * listening REQ catches the reply on reconnect through its since window. */
+  g_assert_true(gh_nip46_session_is_listening(session));
   Await wait = { 0 };
   gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
                               call_done, &wait);
-  while (g_main_context_iteration(NULL, FALSE)) {}
-  g_assert_cmpuint(bunker.publishes->len, ==, 0);
-  bunker_eose(&bunker);
-  until(has_publish, &bunker);
-  BunkerHandle *published = bunker_last_publish(&bunker);
-  gh_relay_publish_failed(published->publish, published->url, "offline");
+  /* A connection lost before any OK is retried (re-sent on a new
+   * connection) a bounded number of times, then reported. */
+  for (guint attempt = 0; attempt <= 3; attempt++) {
+    PublishCount want = { &bunker, attempt + 1 };
+    until(publish_count, &want);
+    BunkerHandle *published = bunker_last_publish(&bunker);
+    gh_relay_publish_failed(published->publish, published->url, "offline");
+  }
   until(await_done, &wait);
+  g_assert_cmpuint(bunker.publishes->len, ==, 4);
   g_assert_error(wait.error, GH_NIP46_SESSION_ERROR,
                  GH_NIP46_SESSION_ERROR_UNAVAILABLE);
+  g_clear_error(&wait.error);
+  gh_nip46_session_cancel(session);
+  bunker_clear(&bunker);
+}
+
+/* A relay that never sends EOSE: requests go out after the listen grace. */
+static void
+test_no_eose_grace(void)
+{
+  TestBunker bunker;
+  g_autoptr(GhNip46Session) session = new_session(&bunker);
+  gh_nip46_session_set_test_windows(session, 50, 100, 10);
+  gh_nip46_session_start(session);
+  Await wait = { 0 };
+  gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
+                              call_done, &wait);
+  until(has_publish, &bunker);
+  g_assert_false(gh_nip46_session_is_ready(session));
+  g_assert_true(gh_nip46_session_is_listening(session));
+  bunker_accept(&bunker);
+  reply_result(&bunker, bunker.user_pubkey);
+  until(await_done, &wait);
+  g_assert_no_error(wait.error);
+  g_free(wait.result);
+  gh_nip46_session_cancel(session);
+  bunker_clear(&bunker);
+}
+
+/* "rate-limited:" is retried with backoff on a new connection. */
+static void
+test_rate_limited_retry(void)
+{
+  TestBunker bunker;
+  g_autoptr(GhNip46Session) session = new_session(&bunker);
+  gh_nip46_session_set_test_windows(session, 50, 100, 10);
+  gh_nip46_session_start(session);
+  bunker_eose(&bunker);
+  Await wait = { 0 };
+  gh_nip46_session_call_async(session, "sign_event", NULL, 0, NULL, call_done, &wait);
+  until(has_publish, &bunker);
+  BunkerHandle *first = bunker_last_publish(&bunker);
+  gh_relay_publish_ok(first->publish, first->url, first->event_id, FALSE,
+                      "rate-limited: slow down");
+  PublishCount want = { &bunker, 2 };
+  until(publish_count, &want);
+  bunker_accept(&bunker);
+  reply_result(&bunker, "signed");
+  until(await_done, &wait);
+  g_assert_no_error(wait.error);
+  g_assert_cmpstr(wait.result, ==, "signed");
+  g_free(wait.result);
+  gh_nip46_session_cancel(session);
+  bunker_clear(&bunker);
+}
+
+/* The signer text survives (sanitised) in the error shown to the user. */
+static void
+test_signer_error_text(void)
+{
+  TestBunker bunker;
+  g_autoptr(GhNip46Session) session = new_session(&bunker);
+  gh_nip46_session_start(session);
+  bunker_eose(&bunker);
+  Await wait = { 0 };
+  gh_nip46_session_call_async(session, "sign_event", NULL, 0, NULL, call_done, &wait);
+  until(has_publish, &bunker);
+  bunker_accept(&bunker);
+  g_autofree gchar *request_json = bunker_request_json(&bunker);
+  NostrNip46Request request = { 0 };
+  g_assert_cmpint(nostr_nip46_request_parse(request_json, &request), ==, 0);
+  char *reply = nostr_nip46_response_build_err(request.id, "blocked by policy\n\x07kind 4");
+  bunker_reply(&bunker, reply);
+  free(reply);
+  nostr_nip46_request_free(&request);
+  until(await_done, &wait);
+  g_assert_error(wait.error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_DENIED);
+  g_assert_nonnull(strstr(wait.error->message, "signer said: blocked by policy kind 4"));
   g_clear_error(&wait.error);
   gh_nip46_session_cancel(session);
   bunker_clear(&bunker);
@@ -755,11 +839,13 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip46/queue-bound", test_queue_bound);
   g_test_add_func("/groundhog/nip46/approval-timeout", test_approval_timeout);
   g_test_add_func("/groundhog/nip46/remote-error-classes", test_remote_error_classes);
-  g_test_add_func("/groundhog/nip46/qr-ack-rejected", test_qr_ack_rejected);
-  g_test_add_func("/groundhog/nip46/qr-wrong-secret", test_qr_wrong_secret_fails);
-  g_test_add_func("/groundhog/nip46/qr-wrong-secret-request", test_qr_wrong_secret_request_fails);
-  g_test_add_func("/groundhog/nip46/qr-signer-error", test_qr_signer_error_fails);
-  g_test_add_func("/groundhog/nip46/qr-undecryptable", test_qr_undecryptable_fails);
+  g_test_add_func("/groundhog/nip46/qr-ack-accepted", test_qr_ack_accepted);
+  g_test_add_func("/groundhog/nip46/qr-secret-beats-ack", test_qr_secret_beats_ack);
+  g_test_add_func("/groundhog/nip46/qr-wrong-secret-ignored", test_qr_wrong_secret_ignored);
+  g_test_add_func("/groundhog/nip46/qr-signer-error-hint", test_qr_signer_error_hint);
+  g_test_add_func("/groundhog/nip46/no-eose-grace", test_no_eose_grace);
+  g_test_add_func("/groundhog/nip46/rate-limited-retry", test_rate_limited_retry);
+  g_test_add_func("/groundhog/nip46/signer-error-text", test_signer_error_text);
   g_test_add_func("/groundhog/nip46/qr-p-tag-relay-hint", test_qr_p_tag_relay_hint);
   g_test_add_func("/groundhog/nip46/reply-window-unknown-ids", test_reply_window_and_unknown_ids);
   g_test_add_func("/groundhog/nip46/pair-timeout-names-relays", test_pair_timeout_names_relays);

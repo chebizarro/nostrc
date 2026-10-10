@@ -134,6 +134,38 @@ template $GhNip46PairDialog: Adw.Dialog {
             }
           }
 
+          Box confirm_box {
+            visible: false;
+            orientation: vertical;
+            spacing: 12;
+
+            Label confirm_heading {
+              wrap: true;
+              xalign: 0;
+              styles ["title-3"]
+            }
+
+            Label confirm_body {
+              wrap: true;
+              selectable: true;
+              xalign: 0;
+            }
+
+            Box {
+              spacing: 12;
+              halign: center;
+
+              Button confirm_cancel_button {
+                label: _("Back");
+              }
+
+              Button confirm_save_button {
+                label: _("Save Remote Signer");
+                styles ["pill", "suggested-action"]
+              }
+            }
+          }
+
           Label error_label {
             visible: false;
             wrap: true;

@@ -57,14 +57,31 @@ const gchar *gh_nip46_session_get_client_pubkey(GhNip46Session *self);
 gchar *gh_nip46_session_dup_client_secret(GhNip46Session *self);
 const gchar *gh_nip46_session_get_remote_pubkey(GhNip46Session *self);
 gboolean gh_nip46_session_is_ready(GhNip46Session *self);
+/* TRUE once requests are being published: after the first EOSE, or after a
+ * short grace once the listening REQ was sent (a relay need never EOSE). */
+gboolean gh_nip46_session_is_listening(GhNip46Session *self);
 void gh_nip46_session_start(GhNip46Session *self);
 /* The owner calls cancel before dropping its final reference: outstanding
  * GTasks retain their source session until completed. Cancellation revokes
  * the scope and every request, drops pairing secrets, and is idempotent. */
 void gh_nip46_session_cancel(GhNip46Session *self);
 
-/* "ready" is emitted after the first complete REQ/EOSE; a UI must not show
- * the QR before then. "offline" is emitted after all ready relays drop. */
+/* "ready" is emitted after the first complete REQ/EOSE. "listening" is
+ * emitted once, at the first EOSE or after a short grace from the REQ being
+ * sent, whichever is first: requests are published from then on and a UI may
+ * show the QR (the since window of the REQ still delivers an early reply).
+ * "offline" is emitted after all ready relays drop.
+ * "pair-progress" (int GhNip46PairStage, nullable string detail) reports
+ * pairing stages for the UI. */
+typedef enum {
+  GH_NIP46_PAIR_STAGE_LISTENING,      /* listening; requests go out now */
+  GH_NIP46_PAIR_STAGE_DELIVERED,      /* a relay accepted our request */
+  GH_NIP46_PAIR_STAGE_RELAYS_SLOW,    /* bunker: no relay reachable yet (~15 s) */
+  GH_NIP46_PAIR_STAGE_NO_ANSWER,      /* bunker: no answer from the signer (~45 s) */
+  GH_NIP46_PAIR_STAGE_IGNORED_REPLY   /* QR: a non-matching reply was ignored; detail */
+} GhNip46PairStage;
+/* Sanitised, truncated copy of a signer-supplied error string, or NULL. */
+gchar *gh_nip46_sanitize_signer_text(const gchar *text);
 typedef gboolean (*GhNip46AuthUrlFunc)(GhNip46Session *self,
                                        const gchar *https_url,
                                        gpointer user_data);
@@ -77,9 +94,11 @@ void gh_nip46_session_call_async(GhNip46Session *self, const gchar *method,
                                  GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_nip46_session_call_finish(GhNip46Session *self, GAsyncResult *result,
                                     GError **error);
-/* Pairing returns the user's hex pubkey, which may differ from the bunker key.
- * A QR attempt waits for a valid secret from the response author; bunker
- * pairing sends connect only after EOSE, then requires ack. */
+/* Pairing returns the hex pubkey of the user, which may differ from the
+ * bunker key. A QR attempt waits for a reply carrying the secret (or, after
+ * a short window, a bare "ack"), ignoring stray replies; bunker pairing
+ * sends connect once listening, then requires ack or the secret. Bunker
+ * pairing gives up after 90 s, QR after 300 s. */
 void gh_nip46_session_pair_async(GhNip46Session *self, GCancellable *cancellable,
                                  GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_nip46_session_pair_finish(GhNip46Session *self, GAsyncResult *result,

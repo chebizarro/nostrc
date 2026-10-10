@@ -33,33 +33,25 @@ gh_signer_nip46_call_async(GhNip46Signer *self, const gchar *method,
                               cancel, cb, data);
 }
 
+/* The session messages are user-facing and keep the sanitised text of the
+ * signer (nostrc-8xfib.1); only the error domain and code are mapped. */
 static GError *
 map_error(const GError *error)
 {
-  if (!g_error_matches(error, GH_NIP46_SESSION_ERROR, error->code))
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                               "Remote signer is unavailable");
-  switch (error->code) {
-  case GH_NIP46_SESSION_ERROR_INVALID_INPUT:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT,
-                               "Invalid remote signer request");
-  case GH_NIP46_SESSION_ERROR_DENIED:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED,
-                               "Remote signer denied the request");
-  case GH_NIP46_SESSION_ERROR_TIMED_OUT:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_TIMED_OUT,
-                               "Remote signer request timed out");
-  case GH_NIP46_SESSION_ERROR_CANCELLED:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
-                               "Remote signer request cancelled");
-  case GH_NIP46_SESSION_ERROR_INVALID_RESULT:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_RESULT,
-                               "Remote signer returned an invalid result");
-  case GH_NIP46_SESSION_ERROR_UNAVAILABLE:
-  default:
-    return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
-                               "Remote signer is unavailable");
-  }
+  static const struct { GhNip46SessionError from; GhSignerError to; } codes[] = {
+    { GH_NIP46_SESSION_ERROR_INVALID_INPUT, GH_SIGNER_ERROR_INVALID_INPUT },
+    { GH_NIP46_SESSION_ERROR_DENIED, GH_SIGNER_ERROR_DENIED },
+    { GH_NIP46_SESSION_ERROR_TIMED_OUT, GH_SIGNER_ERROR_TIMED_OUT },
+    { GH_NIP46_SESSION_ERROR_CANCELLED, GH_SIGNER_ERROR_CANCELLED },
+    { GH_NIP46_SESSION_ERROR_INVALID_RESULT, GH_SIGNER_ERROR_INVALID_RESULT },
+    { GH_NIP46_SESSION_ERROR_UNAVAILABLE, GH_SIGNER_ERROR_UNAVAILABLE },
+  };
+  if (error->domain == GH_NIP46_SESSION_ERROR)
+    for (gsize i = 0; i < G_N_ELEMENTS(codes); i++)
+      if (codes[i].from == (GhNip46SessionError)error->code)
+        return g_error_new_literal(GH_SIGNER_ERROR, codes[i].to, error->message);
+  return g_error_new_literal(GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
+                             "Remote signer is unavailable");
 }
 
 gchar *

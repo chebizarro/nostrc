@@ -6,6 +6,10 @@
 #define SIGNER_BUS "org.nostr.Signer"
 #define CREDENTIAL_WAIT_MS 1500
 #define CREDENTIAL_TIMEOUT_MS 120000
+/* A health ping after restore or reconnect: READY means the signer answered,
+ * not merely that a relay sent EOSE (nostrc-8xfib.1). A ping with no answer
+ * within this bound reports OFFLINE, which still lets requests queue. */
+#define PING_TIMEOUT_MS 20000
 
 typedef enum { LOCK_NONE, LOCK_WAITING, LOCK_TIMED_OUT, LOCK_LOCKED } LockReason;
 
@@ -24,6 +28,7 @@ struct _GhAccountController {
   GPtrArray *remote_results;
   gboolean source_ok[2];
   gboolean list_pending[2];
+  gboolean remote_fresh; /* a remote listing arrived since the last merge */
   guint reconcile_id;
   gboolean pair_reconciliation_pending;
   gboolean own_pair_write;
@@ -54,6 +59,17 @@ struct _GhAccountController {
   guint credential_wait_ms;
   guint credential_timeout_ms;
   LockReason lock_reason;
+  gboolean lookup_interactive;   /* the next lookup may prompt (Unlock) */
+  guint credential_lookups;      /* test counter */
+
+  /* A remote account adopted from a live pairing session, kept listed until
+   * a keyring listing includes it (a listing started before the save). */
+  gchar *adopted_npub;
+  GCancellable *ping_cancel;
+  guint ping_timeout_id;
+  guint ping_timeout_ms;
+  gboolean ping_factory_sessions;
+  gboolean factory_session;
 
   GhSignerAvailability availability;
   guint watch_id;
@@ -67,6 +83,7 @@ static guint signals[N_SIGNALS];
 G_DEFINE_FINAL_TYPE(GhAccountController, gh_account_controller, G_TYPE_OBJECT)
 
 static void stop_lookup(GhAccountController *self, gboolean cancel);
+static void stop_ping(GhAccountController *self);
 
 static GPtrArray *
 default_list(gpointer user_data, GError **error)
@@ -121,6 +138,7 @@ revoke_generation(GhAccountController *self, gboolean replace)
   if (self->remote_gate_cancel) g_cancellable_cancel(self->remote_gate_cancel);
   g_clear_object(&self->remote_gate_cancel);
   stop_lookup(self, TRUE);
+  stop_ping(self);
   if (replace)
     self->generation_cancel = g_cancellable_new();
   if (old) {
@@ -138,10 +156,92 @@ set_remote_state(GhAccountController *self, GhRemoteSignerState state)
 }
 
 static void
+stop_ping(GhAccountController *self)
+{
+  g_clear_handle_id(&self->ping_timeout_id, g_source_remove);
+  if (self->ping_cancel) g_cancellable_cancel(self->ping_cancel);
+  g_clear_object(&self->ping_cancel);
+}
+
+typedef struct {
+  GhAccountController *self;
+  GhNip46Session *session;
+  GCancellable *cancel;
+} PingCall;
+
+static void
+ping_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  PingCall *call = data;
+  GhAccountController *self = call->self;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *pong = gh_nip46_session_call_finish(GH_NIP46_SESSION(source), result,
+                                                        &error);
+  if (self->settings && call->cancel == self->ping_cancel &&
+      call->session == self->remote_session) {
+    g_clear_handle_id(&self->ping_timeout_id, g_source_remove);
+    g_clear_object(&self->ping_cancel);
+    /* Any answer from the signer (even "unsupported") proves it is there. */
+    gboolean answered = !error ||
+      (!g_error_matches(error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_TIMED_OUT) &&
+       !g_error_matches(error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_UNAVAILABLE) &&
+       !g_error_matches(error, GH_NIP46_SESSION_ERROR, GH_NIP46_SESSION_ERROR_CANCELLED));
+    g_debug("Groundhog remote signer ping: %s", answered ? "answered" :
+            error ? error->message : "?");
+    set_remote_state(self, answered ? GH_REMOTE_SIGNER_READY : GH_REMOTE_SIGNER_OFFLINE);
+  }
+  g_object_unref(call->session);
+  g_object_unref(call->cancel);
+  g_object_unref(self);
+  g_free(call);
+}
+
+static gboolean
+ping_timed_out(gpointer data)
+{
+  GhAccountController *self = data;
+  self->ping_timeout_id = 0;
+  if (self->ping_cancel) g_cancellable_cancel(self->ping_cancel);
+  g_clear_object(&self->ping_cancel);
+  if (self->settings && self->remote_session)
+    set_remote_state(self, GH_REMOTE_SIGNER_OFFLINE);
+  return G_SOURCE_REMOVE;
+}
+
+/* After restore or reconnect: ping the signer and report READY on its answer. */
+static void
+start_ping(GhAccountController *self)
+{
+  if (!self->remote_session || self->ping_cancel) return;
+  if (self->factory_session && !self->ping_factory_sessions) {
+    set_remote_state(self, GH_REMOTE_SIGNER_READY);
+    return;
+  }
+  PingCall *call = g_new0(PingCall, 1);
+  call->self = g_object_ref(self);
+  call->session = g_object_ref(self->remote_session);
+  call->cancel = g_cancellable_new();
+  self->ping_cancel = g_object_ref(call->cancel);
+  self->ping_timeout_id = g_timeout_add(self->ping_timeout_ms, ping_timed_out, self);
+  gh_nip46_session_call_async(self->remote_session, "ping", NULL, 0, call->cancel,
+                              ping_done, call);
+}
+
+static void
 remote_ready(GhNip46Session *session, GhAccountController *self)
 {
-  if (session == self->remote_session && self->settings)
-    set_remote_state(self, GH_REMOTE_SIGNER_READY);
+  if (session == self->remote_session && self->settings &&
+      self->remote_state != GH_REMOTE_SIGNER_READY)
+    start_ping(self);
+}
+
+/* Listening without an EOSE (a relay that never sends one): ping anyway. */
+static void
+remote_listening(GhNip46Session *session, GhAccountController *self)
+{
+  if (session == self->remote_session && self->settings &&
+      self->remote_state == GH_REMOTE_SIGNER_CONNECTING)
+    start_ping(self);
 }
 
 static void
@@ -188,9 +288,11 @@ activate_remote_session(GhAccountController *self, GhNip46Session *session)
                          bound_generation, g_free);
   gh_nip46_session_set_auth_url_handler(session, remote_auth_url, self);
   g_signal_connect_object(session, "ready", G_CALLBACK(remote_ready), self, 0);
+  g_signal_connect_object(session, "listening", G_CALLBACK(remote_listening), self, 0);
   g_signal_connect_object(session, "offline", G_CALLBACK(remote_offline), self, 0);
   set_remote_state(self, GH_REMOTE_SIGNER_CONNECTING);
   gh_nip46_session_start(session);
+  if (gh_nip46_session_is_listening(session)) start_ping(self);
 }
 
 typedef struct {
@@ -281,7 +383,11 @@ bind_signer(GhAccountController *self)
   }
   gh_signer_free(g_steal_pointer(&self->signer));
   stop_lookup(self, TRUE);
+  stop_ping(self);
+  self->factory_session = FALSE;
   self->lock_reason = LOCK_NONE;
+  gboolean interactive = self->lookup_interactive;
+  self->lookup_interactive = FALSE;
   if (!self->active_npub) return;
   if (self->active_backend == GH_SIGNER_BACKEND_GROTTO) {
     if (self->bus)
@@ -290,6 +396,7 @@ bind_signer(GhAccountController *self)
   }
   self->remote_state = GH_REMOTE_SIGNER_LOADING_CREDENTIAL;
   if (self->session_factory) {
+    self->factory_session = TRUE;
     activate_remote_session(self, self->session_factory(self->active_npub,
                                                         self->session_factory_data));
     return;
@@ -313,9 +420,10 @@ bind_signer(GhAccountController *self)
   query->cancel = g_object_ref(self->lookup_cancel);
   self->lookup_wait_id = g_timeout_add(self->credential_wait_ms, lookup_waiting, self);
   self->lookup_timeout_id = g_timeout_add(self->credential_timeout_ms, lookup_timed_out, self);
-  gh_nip46_credential_store_lookup_async(self->credentials, pubkey,
-                                          self->lookup_cancel,
-                                          credential_lookup_done, query);
+  self->credential_lookups++;
+  gh_nip46_credential_store_lookup_full_async(self->credentials, pubkey, interactive,
+                                               self->lookup_cancel,
+                                               credential_lookup_done, query);
 }
 
 /* Returns TRUE when it emitted "changed". */
@@ -381,39 +489,69 @@ list_thread(GTask *task, gpointer source, gpointer task_data, GCancellable *canc
 static void
 append_source(GPtrArray *merged, GPtrArray *source, GhSignerBackend backend)
 {
-  while (source && source->len) {
-    GhIdentityInfo *info = g_ptr_array_steal_index_fast(source, source->len - 1);
+  for (guint i = 0; source && i < source->len; i++) {
+    const GhIdentityInfo *item = g_ptr_array_index(source, i);
+    if (identities_contain(merged, backend, item->npub)) continue;
+    GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+    info->npub = g_strdup(item->npub);
+    info->label = g_strdup(item->label);
     info->backend = backend;
-    if (identities_contain(merged, backend, info->npub))
-      gh_identity_info_free(info);
-    else
-      g_ptr_array_add(merged, info);
+    g_ptr_array_add(merged, info);
   }
 }
 
+static GhIdentityInfo *
+remote_identity(const gchar *npub)
+{
+  GhIdentityInfo *info = g_new0(GhIdentityInfo, 1);
+  info->npub = g_strdup(npub);
+  info->label = g_strdup("Remote signer");
+  info->backend = GH_SIGNER_BACKEND_NIP46;
+  return info;
+}
+
+/* Merges the latest result of each source. A remote (NIP-46) account never
+ * waits on the Grotto listing (a D-Bus list that hangs must not hold it up,
+ * nostrc-8xfib.1): while the current backend is NIP-46, a successful keyring
+ * result alone settles the listing, merged with the last known Grotto
+ * result; the Grotto result is merged in when it arrives. */
 static void
 finish_listing(GhAccountController *self)
 {
-  if (self->list_pending[0] || self->list_pending[1]) return;
+  gboolean remote_first = self->settings &&
+    backend_from_settings(self->settings) == GH_SIGNER_BACKEND_NIP46;
+  /* A failed keyring listing still waits for Grotto, as before. */
+  if (self->list_pending[1] ||
+      (self->list_pending[0] && !(remote_first && self->source_ok[1]))) return;
   g_clear_pointer(&self->identities, g_ptr_array_unref);
-  if (self->source_ok[0] || self->source_ok[1]) {
+  if (self->source_ok[0] || self->source_ok[1] || self->adopted_npub) {
     self->identities = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
     append_source(self->identities, self->grotto_results, GH_SIGNER_BACKEND_GROTTO);
     append_source(self->identities, self->remote_results, GH_SIGNER_BACKEND_NIP46);
+    if (self->adopted_npub) {
+      if (self->source_ok[1] &&
+          identities_contain(self->identities, GH_SIGNER_BACKEND_NIP46, self->adopted_npub))
+        g_clear_pointer(&self->adopted_npub, g_free); /* the keyring lists it now */
+      else
+        g_ptr_array_add(self->identities, remote_identity(self->adopted_npub));
+    }
     g_ptr_array_sort(self->identities, compare_identity);
   }
-  g_clear_pointer(&self->grotto_results, g_ptr_array_unref);
-  g_clear_pointer(&self->remote_results, g_ptr_array_unref);
   gboolean was_listed = self->listed;
+  gboolean remote_fresh = self->remote_fresh;
+  self->remote_fresh = FALSE;
   guint64 before = self->generation;
   self->listed = TRUE;
   gboolean emitted = update_state(self);
-  /* A same-pair refresh may be a replacement credential or an unlocked
-   * keyring. Reload it rather than retaining an obsolete remote session. */
-  if (was_listed && self->generation == before && self->active_npub &&
+  /* A refresh rebinds an unchanged remote account only when its signer is
+   * LOCKED or in ERROR (a keyring that was unlocked meanwhile): a live,
+   * working session is never torn down by an unrelated refresh. */
+  if (was_listed && remote_fresh && self->generation == before && self->active_npub &&
       !self->pair_reconciliation_pending && !self->mode_rebind_id &&
       !g_cancellable_is_cancelled(self->generation_cancel) &&
       self->active_backend == GH_SIGNER_BACKEND_NIP46 && self->source_ok[1] &&
+      (self->remote_state == GH_REMOTE_SIGNER_LOCKED ||
+       self->remote_state == GH_REMOTE_SIGNER_ERROR) && !self->lookup_cancel &&
       identities_contain(self->identities, GH_SIGNER_BACKEND_NIP46, self->active_npub)) {
     revoke_generation(self, TRUE);
     bind_signer(self);
@@ -453,6 +591,7 @@ remote_fake_done(GObject *source, GAsyncResult *result, gpointer user_data)
   self->remote_results = items;
   self->source_ok[1] = items != NULL;
   self->list_pending[1] = FALSE;
+  self->remote_fresh = TRUE;
   finish_listing(self);
 }
 
@@ -493,6 +632,7 @@ remote_list_done(GObject *source, GAsyncResult *result, gpointer user_data)
     self->remote_results = identities;
     self->source_ok[1] = identities != NULL;
     self->list_pending[1] = FALSE;
+    self->remote_fresh = TRUE;
     finish_listing(self);
   } else {
     g_clear_pointer(&identities, g_ptr_array_unref);
@@ -839,6 +979,105 @@ gh_account_controller_select_backend(GhAccountController *self,
   g_clear_handle_id(&self->reconcile_id, g_source_remove);
   (void)update_state(self); /* one pair, one generation */
   return TRUE;
+}
+
+gboolean
+gh_account_controller_adopt_remote(GhAccountController *self, const gchar *npub,
+                                   GhNip46Session *session, GError **error)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), FALSE);
+  g_return_val_if_fail(GH_IS_NIP46_SESSION(session), FALSE);
+  if (!self->settings) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED,
+                        "Groundhog account controller is shut down");
+    return FALSE;
+  }
+  g_autofree gchar *pubkey = npub ? gh_identity_pubkey_hex(npub) : NULL;
+  if (!pubkey || !gh_nip46_session_get_remote_pubkey(session)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "The paired remote signer is not usable");
+    return FALSE;
+  }
+  g_autoptr(GSettings) writer = transaction_writer(self->settings);
+  g_settings_delay(writer);
+  if (!g_settings_set_string(writer, "current-backend", backend_name(GH_SIGNER_BACKEND_NIP46)) ||
+      !g_settings_set_string(writer, "current-npub", npub)) {
+    g_settings_revert(writer);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Groundhog could not save the selected account");
+    return FALSE;
+  }
+  self->own_pair_write = TRUE;
+  g_settings_apply(writer);
+  self->own_pair_write = FALSE;
+  g_clear_handle_id(&self->reconcile_id, g_source_remove);
+  self->pair_reconciliation_pending = FALSE;
+
+  /* Listed at once, whatever the keyring listing says yet. */
+  g_free(self->adopted_npub);
+  self->adopted_npub = g_strdup(npub);
+  if (!self->identities)
+    self->identities = g_ptr_array_new_with_free_func((GDestroyNotify)gh_identity_info_free);
+  if (!identities_contain(self->identities, GH_SIGNER_BACKEND_NIP46, npub)) {
+    g_ptr_array_add(self->identities, remote_identity(npub));
+    g_ptr_array_sort(self->identities, compare_identity);
+  }
+  self->source_ok[1] = TRUE;
+  self->listed = TRUE;
+
+  /* One new generation bound to the live session: no keyring lookup, no
+   * reconnect (gnostr hands its session to the signer service the same way). */
+  if (self->remote_session) {
+    gh_nip46_session_cancel(self->remote_session);
+    g_clear_object(&self->remote_session);
+  }
+  gh_signer_free(g_steal_pointer(&self->signer));
+  g_free(self->active_npub);
+  self->active_npub = g_strdup(npub);
+  self->active_backend = GH_SIGNER_BACKEND_NIP46;
+  revoke_generation(self, TRUE);
+  self->factory_session = FALSE;
+  self->lock_reason = LOCK_NONE;
+  self->lookup_interactive = FALSE;
+  self->state = GH_ACCOUNT_STATE_ACTIVE;
+  self->remote_state = GH_REMOTE_SIGNER_CONNECTING;
+  activate_remote_session(self, g_object_ref(session));
+  stop_ping(self); /* the signer has just answered get_public_key */
+  if (self->remote_session) self->remote_state = GH_REMOTE_SIGNER_READY;
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return TRUE;
+}
+
+gboolean
+gh_account_controller_unlock_remote(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), FALSE);
+  if (!self->settings || !self->active_npub || !self->credentials ||
+      self->active_backend != GH_SIGNER_BACKEND_NIP46 ||
+      (self->remote_state != GH_REMOTE_SIGNER_LOCKED &&
+       self->remote_state != GH_REMOTE_SIGNER_ERROR))
+    return FALSE;
+  revoke_generation(self, TRUE);
+  self->lookup_interactive = TRUE;
+  bind_signer(self);
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return TRUE;
+}
+
+guint
+gh_account_controller_get_credential_lookups_for_test(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), 0);
+  return self->credential_lookups;
+}
+
+void
+gh_account_controller_set_ping_for_test(GhAccountController *self,
+                                        gboolean ping_factory_sessions, guint timeout_ms)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  self->ping_factory_sessions = ping_factory_sessions;
+  if (timeout_ms) self->ping_timeout_ms = timeout_ms;
 }
 
 gboolean
@@ -1310,6 +1549,7 @@ gh_account_controller_finalize(GObject *object)
   g_clear_pointer(&self->grotto_results, g_ptr_array_unref);
   g_clear_pointer(&self->remote_results, g_ptr_array_unref);
   g_free(self->active_npub);
+  g_free(self->adopted_npub);
   G_OBJECT_CLASS(gh_account_controller_parent_class)->finalize(object);
 }
 
@@ -1334,6 +1574,7 @@ gh_account_controller_init(GhAccountController *self)
   self->generation = 1;
   self->credential_wait_ms = CREDENTIAL_WAIT_MS;
   self->credential_timeout_ms = CREDENTIAL_TIMEOUT_MS;
+  self->ping_timeout_ms = PING_TIMEOUT_MS;
   self->generation_cancel = g_cancellable_new();
   self->signer_cancel = g_cancellable_new();
 }

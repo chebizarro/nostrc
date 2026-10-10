@@ -26,6 +26,8 @@ typedef struct {
   gchar *auth_message;         /* the relay's auth-required OK message */
   gboolean auth_needed;        /* the EVENT awaits an authenticated re-send */
   gboolean resent;             /* the one re-send has been made */
+  guint retries;               /* reopens made (gh_relay_publish_set_retries()) */
+  GSource *retry;              /* backoff before the next reopen */
 } GhPublishEndpoint;
 
 struct _GhRelayPublish {
@@ -43,6 +45,8 @@ struct _GhRelayPublish {
   GPtrArray *endpoints;  /* GhPublishEndpoint, in add order */
   GHashTable *by_url;    /* url -> borrowed endpoint */
   guint deadline_seconds;
+  guint max_retries;
+  guint retry_base_ms;
   guint terminal;
   GhRelayAuthSigner *signer;   /* account signer, for ACCOUNT URLs only */
   GhRelayPublishSummary summary;
@@ -103,9 +107,19 @@ clear_deadline(GhPublishEndpoint *endpoint)
 }
 
 static void
+clear_retry(GhPublishEndpoint *endpoint)
+{
+  if (!endpoint->retry)
+    return;
+  g_source_destroy(endpoint->retry);
+  g_clear_pointer(&endpoint->retry, g_source_unref);
+}
+
+static void
 close_transport(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
 {
   clear_deadline(endpoint);
+  clear_retry(endpoint);
   g_clear_pointer(&endpoint->attempt, gh_relay_auth_attempt_drop);
   endpoint->auth_event_id[0] = '\0';
   if (!endpoint->opened)
@@ -121,6 +135,7 @@ endpoint_free(gpointer data)
 {
   GhPublishEndpoint *endpoint = data;
   clear_deadline(endpoint);
+  clear_retry(endpoint);
   g_clear_pointer(&endpoint->attempt, gh_relay_auth_attempt_drop);
   g_free(endpoint->challenge);
   g_free(endpoint->auth_challenge);
@@ -326,6 +341,15 @@ gh_relay_publish_set_deadline(GhRelayPublish *publish, guint seconds)
   g_return_if_fail(publish != NULL);
   g_return_if_fail(!publish->started);
   publish->deadline_seconds = CLAMP(seconds, 1, GH_PUBLISH_MAX_DEADLINE_SECONDS);
+}
+
+void
+gh_relay_publish_set_retries(GhRelayPublish *publish, guint max_retries, guint base_ms)
+{
+  g_return_if_fail(publish != NULL);
+  g_return_if_fail(!publish->started);
+  publish->max_retries = MIN(max_retries, GH_RELAY_PUBLISH_MAX_RETRIES);
+  publish->retry_base_ms = CLAMP(base_ms, 10, 10000);
 }
 
 gboolean
@@ -586,6 +610,46 @@ maybe_auth(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
   clear_deadline(endpoint);
 }
 
+static void open_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint);
+
+static gboolean
+retry_fire(gpointer data)
+{
+  GhPublishEndpoint *endpoint = data;
+  GhRelayPublish *publish = endpoint->publish;
+  g_clear_pointer(&endpoint->retry, g_source_unref);
+  if (publish->cancelled || endpoint->outcome != GH_RELAY_PUBLISH_PENDING)
+    return G_SOURCE_REMOVE;
+  gh_relay_publish_ref(publish);
+  open_endpoint(publish, endpoint);
+  gh_relay_publish_unref(publish);
+  return G_SOURCE_REMOVE;
+}
+
+/* A rate-limited refusal or a connection lost before any OK is not final
+ * while retries remain: the URL's connection is closed and reopened (the
+ * EVENT is sent again on the new one) after an exponential backoff, as
+ * nips/nip46's pool does for late-connecting relays and "rate-limited:"
+ * NACKs. Each attempt has its own deadline. */
+static gboolean
+maybe_retry(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
+{
+  if (publish->cancelled || endpoint->retries >= publish->max_retries ||
+      endpoint->outcome != GH_RELAY_PUBLISH_PENDING || endpoint->auth_needed ||
+      endpoint->attempt)
+    return FALSE;
+  guint delay = publish->retry_base_ms << endpoint->retries;
+  endpoint->retries++;
+  close_transport(publish, endpoint);
+  endpoint->resent = FALSE;
+  g_clear_pointer(&endpoint->challenge, g_free);
+  g_clear_pointer(&endpoint->auth_challenge, g_free);
+  endpoint->retry = g_timeout_source_new(delay);
+  g_source_set_callback(endpoint->retry, retry_fire, endpoint, NULL);
+  g_source_attach(endpoint->retry, publish->context);
+  return TRUE;
+}
+
 static void
 open_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
 {
@@ -594,13 +658,16 @@ open_endpoint(GhRelayPublish *publish, GhPublishEndpoint *endpoint)
                                             publish->event_json,
                                             publish->transport_data, &error);
   if (!handle) {
+    if (maybe_retry(publish, endpoint))
+      return;
     finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_CONNECTION_FAILED,
                     GH_RELAY_OK_PREFIX_NONE,
                     error ? error->message : "relay open failed");
     return;
   }
-  if (publish->cancelled || endpoint->outcome != GH_RELAY_PUBLISH_PENDING) {
-    /* Cancelled, or terminal already while opening. */
+  if (publish->cancelled || endpoint->outcome != GH_RELAY_PUBLISH_PENDING ||
+      endpoint->retry) {
+    /* Cancelled, terminal already, or failed (retry scheduled) while opening. */
     publish->transport.close(handle, publish->transport_data);
     return;
   }
@@ -688,6 +755,9 @@ gh_relay_publish_ok(GhRelayPublish *publish, const gchar *url,
     }
     return;
   }
+  if (!accepted && prefix == GH_RELAY_OK_PREFIX_RATE_LIMITED &&
+      maybe_retry(publish, endpoint))
+    return;
   GhRelayPublishOutcome outcome = GH_RELAY_PUBLISH_ACCEPTED;
   if (!accepted)
     outcome = prefix == GH_RELAY_OK_PREFIX_AUTH_REQUIRED
@@ -703,6 +773,10 @@ gh_relay_publish_failed(GhRelayPublish *publish, const gchar *url,
   g_return_if_fail(publish != NULL);
   g_return_if_fail(on_owner_context(publish));
   GhPublishEndpoint *endpoint = pending_endpoint(publish, url);
+  if (endpoint && endpoint->retry)
+    return; /* the connection was already given up; a reopen is pending */
+  if (endpoint && maybe_retry(publish, endpoint))
+    return;
   if (endpoint)
     finish_endpoint(publish, endpoint, GH_RELAY_PUBLISH_CONNECTION_FAILED,
                     GH_RELAY_OK_PREFIX_NONE,

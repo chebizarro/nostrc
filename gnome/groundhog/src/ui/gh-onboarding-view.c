@@ -353,6 +353,7 @@ struct _GhOnboardingView {
   GtkListBox *identity_list;
   AdwActionRow *signer_status;
   GtkImage *signer_icon;
+  GtkButton *unlock_button; /* explicit, interactive keyring retry */
   GtkWidget *signer_test;
   GtkSpinner *signer_spinner;
   GtkLabel *signer_result;
@@ -558,12 +559,34 @@ on_identity_activate(GhOnboardingView *self, GtkListBoxRow *row)
 /* ---- signer ----------------------------------------------------------------- */
 
 static void
+on_unlock_remote(GtkButton *button, gpointer data)
+{
+  (void)button;
+  GhOnboardingView *self = data;
+  if (self->config.accounts)
+    gh_account_controller_unlock_remote(self->config.accounts);
+}
+
+static void
 update_signer_status(GhOnboardingView *self)
 {
   const gchar *title, *subtitle, *icon;
-  if (gh_account_controller_get_active_backend(self->config.accounts) ==
-      GH_SIGNER_BACKEND_NIP46) {
-    GhRemoteSignerState state = gh_account_controller_get_remote_state(self->config.accounts);
+  if (!self->unlock_button) {
+    self->unlock_button = GTK_BUTTON(gtk_button_new_with_mnemonic(_("_Unlock")));
+    gtk_widget_set_valign(GTK_WIDGET(self->unlock_button), GTK_ALIGN_CENTER);
+    gtk_widget_set_name(GTK_WIDGET(self->unlock_button), "unlock-remote-signer");
+    g_signal_connect(self->unlock_button, "clicked", G_CALLBACK(on_unlock_remote), self);
+    adw_action_row_add_suffix(self->signer_status, GTK_WIDGET(self->unlock_button));
+  }
+  gboolean remote = gh_account_controller_get_active_backend(self->config.accounts) ==
+                    GH_SIGNER_BACKEND_NIP46;
+  GhRemoteSignerState remote_state = remote ?
+    gh_account_controller_get_remote_state(self->config.accounts) : GH_REMOTE_SIGNER_READY;
+  gtk_widget_set_visible(GTK_WIDGET(self->unlock_button),
+                         remote && (remote_state == GH_REMOTE_SIGNER_LOCKED ||
+                                    remote_state == GH_REMOTE_SIGNER_ERROR));
+  if (remote) {
+    GhRemoteSignerState state = remote_state;
     const gchar *lock = gh_account_controller_describe_remote_lock(self->config.accounts);
     title = state == GH_REMOTE_SIGNER_READY ? _("Remote signer connected") :
             state == GH_REMOTE_SIGNER_LOCKED ? (lock ? _(lock) : _("Unlock your keyring")) :

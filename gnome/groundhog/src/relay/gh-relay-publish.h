@@ -17,9 +17,9 @@ G_BEGIN_DECLS
  *    id. It is relay-local acceptance only: it is NOT upstream or recipient
  *    delivery, and says nothing about propagation to other relays.
  *  - This is not a durable outbox. Nothing is persisted, and nothing is
- *    retried automatically, with one exception: the single authenticated
- *    re-send described under NIP-42 below. A caller that wants a retry
- *    starts a new publish.
+ *    retried automatically, with two exceptions: the single authenticated
+ *    re-send described under NIP-42 below, and the opt-in bounded retries of
+ *    gh_relay_publish_set_retries().
  *  - No relay is ever contacted unless its URL was added explicitly. There are
  *    no fallback or default relays.
  *  - CONNECTION_FAILED covers a failed dial, a failed EVENT/AUTH write, a
@@ -170,6 +170,18 @@ gboolean gh_relay_publish_add_url(GhRelayPublish *publish, const gchar *url,
  * waiting for the relay, never the signer, and is never a success signal.
  * Set before start. */
 void gh_relay_publish_set_deadline(GhRelayPublish *publish, guint seconds);
+/* Opt-in bounded retries (default 0: none), before start. A URL whose relay
+ * answers OK false "rate-limited:", or whose connection fails or is lost
+ * before any OK, is reopened and the EVENT sent again, up to @max_retries
+ * times (at most GH_RELAY_PUBLISH_MAX_RETRIES) after a backoff of
+ * @base_ms << attempt. Each attempt has the full per-relay deadline; a
+ * deadline expiry is still terminal. The URL's outcome is that of its last
+ * attempt. Ported from nips/nip46's pool (late publish to relays that
+ * connect later, rate-limited backoff x3), on Groundhog's transports so it
+ * honours network mode and Tor. */
+#define GH_RELAY_PUBLISH_MAX_RETRIES 5
+void gh_relay_publish_set_retries(GhRelayPublish *publish, guint max_retries,
+                                  guint base_ms);
 /* The account signer used by ACCOUNT URLs only. Before start. Refuses
  * (G_IO_ERROR_PERMISSION_DENIED) a signer bound to another account
  * generation or already revoked; NULL clears (refused while a URL is set to

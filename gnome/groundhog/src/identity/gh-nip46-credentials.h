@@ -54,6 +54,13 @@ void gh_nip46_credential_store_lookup_async(GhNip46CredentialStore *self,
                                             const gchar *user_pubkey_hex,
                                             GCancellable *cancellable,
                                             GAsyncReadyCallback callback, gpointer user_data);
+/* As lookup_async, but @interactive lets the backend prompt to unlock the
+ * keyring or ask for Keychain access (the explicit Unlock action). */
+void gh_nip46_credential_store_lookup_full_async(GhNip46CredentialStore *self,
+                                                 const gchar *account, gboolean interactive,
+                                                 GCancellable *cancellable,
+                                                 GAsyncReadyCallback callback,
+                                                 gpointer user_data);
 GhNip46Credential *gh_nip46_credential_store_lookup_finish(GhNip46CredentialStore *self,
                                                             GAsyncResult *result, GError **error);
 void gh_nip46_credential_store_store_async(GhNip46CredentialStore *self,

@@ -1376,35 +1376,9 @@ static char *nip46_rpc_call_impl(NostrNip46Session *s, const char *method,
  * suddenly recover. Callers that latch on DENIED should still time out
  * the latch so a fixed permission grant recovers on its own. */
 static NostrNip46RpcError nip46_classify_error_string(const char *err) {
-    if (!err || !*err) return NOSTR_NIP46_RPC_ERR_DENIED;
-    /* Case-insensitive substring scan — canonicalise a shortish copy. */
-    char buf[128];
-    size_t n = 0;
-    for (; err[n] && n + 1 < sizeof buf; n++) {
-        unsigned char c = (unsigned char)err[n];
-        buf[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
-    }
-    buf[n] = '\0';
-    /* Protocol-shape errors: the request itself was rejected as
-     * malformed, or the method is not implemented. Retrying with the
-     * same payload will not help. */
-    if (strstr(buf, "invalid") || strstr(buf, "malformed") ||
-        strstr(buf, "method not found") || strstr(buf, "unknown method") ||
-        strstr(buf, "not implemented") || strstr(buf, "bad request") ||
-        strstr(buf, "syntax") || strstr(buf, "unsupported"))
-        return NOSTR_NIP46_RPC_ERR_PROTOCOL;
-    /* Policy refusals — signer explicitly said no. */
-    if (strstr(buf, "restrict") || strstr(buf, "denied") ||
-        strstr(buf, "deny") || strstr(buf, "permission") ||
-        strstr(buf, "unauthorized") || strstr(buf, "unauthorised") ||
-        strstr(buf, "not allowed") || strstr(buf, "acl") ||
-        strstr(buf, "policy") || strstr(buf, "forbid") ||
-        strstr(buf, "reject") || strstr(buf, "no perm"))
-        return NOSTR_NIP46_RPC_ERR_DENIED;
-    /* Unknown error string: safe default is DENIED so the caller doesn't
-     * latch a transient signer-offline into a policy refusal loop, but
-     * also doesn't keep hammering a signer that just said "no". */
-    return NOSTR_NIP46_RPC_ERR_DENIED;
+    /* The keyword table lives in nip46_msg.c so other clients share it. */
+    return nostr_nip46_error_classify(err) == NOSTR_NIP46_ERROR_CLASS_PROTOCOL
+               ? NOSTR_NIP46_RPC_ERR_PROTOCOL : NOSTR_NIP46_RPC_ERR_DENIED;
 }
 
 /* nostrc-qpow: Publish an RPC event and wait briefly for the relay's OK so

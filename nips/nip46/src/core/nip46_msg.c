@@ -182,3 +182,23 @@ void nostr_nip46_response_free(NostrNip46Response *res) {
     free(res->id); free(res->result); free(res->error);
     memset(res, 0, sizeof(*res));
 }
+
+NostrNip46ErrorClass nostr_nip46_error_classify(const char *err) {
+    if (!err || !*err) return NOSTR_NIP46_ERROR_CLASS_DENIED;
+    char buf[128];
+    size_t n = 0;
+    for (; err[n] && n + 1 < sizeof buf; n++) {
+        unsigned char c = (unsigned char)err[n];
+        buf[n] = (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : (char)c;
+    }
+    buf[n] = '\0';
+    /* Protocol-shape errors: malformed request or method not implemented. */
+    if (strstr(buf, "invalid") || strstr(buf, "malformed") ||
+        strstr(buf, "method not found") || strstr(buf, "unknown method") ||
+        strstr(buf, "not implemented") || strstr(buf, "bad request") ||
+        strstr(buf, "syntax") || strstr(buf, "unsupported"))
+        return NOSTR_NIP46_ERROR_CLASS_PROTOCOL;
+    /* Policy refusals ("restrict", "denied", "permission", "reject",
+     * "policy", ...) and unknown text are both DENIED. */
+    return NOSTR_NIP46_ERROR_CLASS_DENIED;
+}

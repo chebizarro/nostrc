@@ -182,6 +182,8 @@ tags_match(const NostrTags *a, const NostrTags *b)
   return TRUE;
 }
 
+#define SIGN_CREATED_AT_DRIFT 600
+
 static GhSignerError
 signed_event_error(Pending *p, const gchar *json)
 {
@@ -193,7 +195,10 @@ signed_event_error(Pending *p, const gchar *json)
       nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK) {
     if (g_strcmp0(event->pubkey, p->request->pubkey) != 0)
       code = GH_SIGNER_ERROR_KEY_MISMATCH;
-    else if (event->created_at == p->request->created_at &&
+    /* nostr_event_validate() above re-derived the id from the signed
+     * content. Some signers re-stamp created_at; allow a bounded drift
+     * (nostrc-8xfib.1) but keep kind, content and tags exact. */
+    else if (ABS(event->created_at - p->request->created_at) <= SIGN_CREATED_AT_DRIFT &&
              event->kind == p->request->kind &&
              g_strcmp0(event->content, p->request->content) == 0 &&
              tags_match(event->tags, p->request->tags))
