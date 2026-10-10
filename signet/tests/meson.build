@@ -205,10 +205,11 @@ test_reissue_self_service = executable('test_reissue_self_service',
   install: false,
 )
 
+# key_store_private.h: cache-only bindings (nostrc-xjznk).
 test_client_bindings = executable('test_client_bindings',
   'test_client_bindings.c',
   link_with: signet_core,
-  include_directories: signet_includes,
+  include_directories: [signet_includes, include_directories('../src')],
   dependencies: signet_deps + [in_tree_dep],
   c_args: signet_test_c_args,
   install: false,

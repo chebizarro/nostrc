@@ -11,10 +11,12 @@
  */
 
 #include "signet/key_store.h"
+#include "key_store_private.h"
 #include "signet/store.h"
 #include "signet/store_tokens.h"
 #include "signet/audit_logger.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,7 +39,30 @@ typedef struct {
   uint8_t secret_key[32];  /* plaintext secret key (mlock'd) */
   char pubkey_hex[65];     /* derived pubkey for this agent */
   int64_t loaded_at;
+  /* Process-unique id of this entry. Cache-only client bindings pin it, so
+   * any replacement or removal of the entry invalidates them. */
+  uint64_t generation;
+  /* Cache-only mode: SHA-256 hex of the agent's pending one-time
+   * connect_secret ("" = none or consumed). Persistent mode keeps the
+   * secret in the store instead and leaves this empty. */
+  char connect_secret_hash[65];
 } SignetCacheEntry;
+
+/* Cache-only NIP-46 client binding (see key_store_private.h). */
+typedef struct {
+  char *agent_id;
+  uint64_t generation;      /* SignetCacheEntry.generation at pairing time */
+  char secret_hash[65];     /* SHA-256 hex of the consumed pairing secret */
+} SignetEphemeralBinding;
+
+static void signet_ephemeral_binding_free(gpointer p) {
+  SignetEphemeralBinding *b = p;
+  if (!b) return;
+  g_free(b->agent_id);
+  g_free(b);
+}
+
+static atomic_uint_fast64_t signet_cache_next_generation = 1;
 
 /* Weak allocation seam used by the key-store unit test to prove that a
  * replacement key is fully prepared before durable identity state changes.
@@ -75,6 +100,7 @@ static SignetCacheEntry *signet_cache_entry_new(const uint8_t *sk, int64_t loade
   free(pub_hex);
 
   e->loaded_at = loaded_at;
+  e->generation = atomic_fetch_add(&signet_cache_next_generation, 1);
   return e;
 }
 
@@ -93,8 +119,42 @@ struct SignetKeyStore {
 
   /* Hot cache: agent_id (gchar*) → SignetCacheEntry* (mlock'd) */
   GHashTable *cache;
+  /* Cache-only NIP-46 bindings: canonical client pubkey (gchar*) →
+   * SignetEphemeralBinding*. Unused when a persistent store is open. */
+  GHashTable *ephemeral_bindings;
   GMutex mu;
 };
+
+/* SHA-256 hex of a connect secret, the same digest the persistent store
+ * records as bound_secret_hash. */
+static bool signet_connect_secret_hash(const char *secret, char out[65]) {
+  out[0] = '\0';
+  if (!secret || !secret[0]) return false;
+  char *h = g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+  if (!h || strlen(h) != 64) {
+    g_free(h);
+    return false;
+  }
+  memcpy(out, h, 65);
+  g_free(h);
+  return true;
+}
+
+/* True when another hot-cache entry already holds @hash as its pending
+ * connect secret (the cache-only analogue of the store's UNIQUE column).
+ * Call with ks->mu held. */
+static bool signet_cache_secret_hash_in_use(SignetKeyStore *ks, const char *hash) {
+  GHashTableIter it;
+  gpointer v;
+  g_hash_table_iter_init(&it, ks->cache);
+  while (g_hash_table_iter_next(&it, NULL, &v)) {
+    const SignetCacheEntry *e = v;
+    if (e->connect_secret_hash[0] &&
+        sodium_memcmp(e->connect_secret_hash, hash, 64) == 0)
+      return true;
+  }
+  return false;
+}
 
 SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
                                      const SignetKeyStoreConfig *cfg) {
@@ -108,7 +168,11 @@ SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
 
   ks->cache = g_hash_table_new_full(g_str_hash, g_str_equal,
                                      g_free, signet_cache_entry_free);
-  if (!ks->cache) {
+  ks->ephemeral_bindings = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
+                                                 signet_ephemeral_binding_free);
+  if (!ks->cache || !ks->ephemeral_bindings) {
+    if (ks->cache) g_hash_table_destroy(ks->cache);
+    if (ks->ephemeral_bindings) g_hash_table_destroy(ks->ephemeral_bindings);
     g_mutex_clear(&ks->mu);
     free(ks);
     return NULL;
@@ -160,6 +224,10 @@ void signet_key_store_free(SignetKeyStore *ks) {
   if (ks->cache) {
     g_hash_table_destroy(ks->cache);
     ks->cache = NULL;
+  }
+  if (ks->ephemeral_bindings) {
+    g_hash_table_destroy(ks->ephemeral_bindings);
+    ks->ephemeral_bindings = NULL;
   }
 
   if (ks->store) {
@@ -453,6 +521,14 @@ int signet_key_store_provision_agent(SignetKeyStore *ks,
   if (rc == 0 || !ks->store) {
     /* Add to hot cache. */
     SignetCacheEntry *entry = signet_cache_entry_new(sk_raw, now);
+    /* Cache-only: the hot cache is the only place the pending pairing
+     * secret can live; keep its digest so the bunker URI handed out below
+     * can actually pair. */
+    if (entry && !ks->store &&
+        !signet_connect_secret_hash(connect_secret, entry->connect_secret_hash)) {
+      signet_cache_entry_free(entry);
+      entry = NULL;
+    }
     if (entry) {
       g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
       rc = 0;
@@ -606,6 +682,15 @@ SignetAdoptResult signet_key_store_adopt_agent(SignetKeyStore *ks,
   }
   if (rc == 0 || !ks->store) {
     SignetCacheEntry *entry = signet_cache_entry_new(secret_key, now);
+    /* Cache-only: keep the pending pairing secret's digest on the entry,
+     * unique across agents like the store's connect_secret column. */
+    if (entry && !ks->store) {
+      if (!signet_connect_secret_hash(connect_secret, entry->connect_secret_hash) ||
+          signet_cache_secret_hash_in_use(ks, entry->connect_secret_hash)) {
+        signet_cache_entry_free(entry);
+        entry = NULL;
+      }
+    }
     if (entry) {
       g_hash_table_replace(ks->cache, g_strdup(agent_id), entry);
       rc = 0;
@@ -779,6 +864,112 @@ int signet_key_store_consume_connect_secret(SignetKeyStore *ks,
   int rc = signet_store_consume_connect_secret_value(ks->store, provided_secret, now, out_agent_id);
   g_mutex_unlock(&ks->mu);
   return rc;
+}
+
+/* ------------------- cache-only NIP-46 client bindings ------------------- */
+
+/* Lowercase a 64-hex pubkey. Returns false if malformed. */
+static bool signet_ks_canonical_pubkey(const char *pubkey_hex, char out[65]) {
+  if (!pubkey_hex || strlen(pubkey_hex) != 64) return false;
+  for (int i = 0; i < 64; i++) {
+    if (!g_ascii_isxdigit(pubkey_hex[i])) return false;
+    out[i] = (char)g_ascii_tolower(pubkey_hex[i]);
+  }
+  out[64] = '\0';
+  return true;
+}
+
+int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
+                                           const char *connect_secret,
+                                           const char *client_pubkey_hex,
+                                           char **out_agent_id) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (!ks || !connect_secret || !connect_secret[0] || !out_agent_id) return -1;
+
+  char client[65];
+  char hash[65];
+  if (!signet_ks_canonical_pubkey(client_pubkey_hex, client)) return -1;
+  if (!signet_connect_secret_hash(connect_secret, hash)) return -1;
+
+  g_mutex_lock(&ks->mu);
+  if (ks->store) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  /* Find the one agent holding this pending secret. Adopt/provision keep the
+   * digests unique; compare every entry without an early exit. */
+  const char *match_id = NULL;
+  SignetCacheEntry *match = NULL;
+  GHashTableIter it;
+  gpointer k, v;
+  g_hash_table_iter_init(&it, ks->cache);
+  while (g_hash_table_iter_next(&it, &k, &v)) {
+    SignetCacheEntry *e = v;
+    if (e->connect_secret_hash[0] &&
+        sodium_memcmp(e->connect_secret_hash, hash, 64) == 0) {
+      match_id = k;
+      match = e;
+    }
+  }
+  if (!match) {
+    g_mutex_unlock(&ks->mu);
+    return 1;
+  }
+
+  SignetEphemeralBinding *b = g_new0(SignetEphemeralBinding, 1);
+  b->agent_id = g_strdup(match_id);
+  b->generation = match->generation;
+  memcpy(b->secret_hash, hash, 65);
+  char *agent_copy = g_strdup(match_id);
+
+  /* Consume and bind together: the secret is single-use, and a re-pair of an
+   * already bound client key replaces its earlier binding. */
+  match->connect_secret_hash[0] = '\0';
+  g_hash_table_replace(ks->ephemeral_bindings, g_strdup(client), b);
+  g_mutex_unlock(&ks->mu);
+
+  *out_agent_id = agent_copy;
+  return 0;
+}
+
+int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
+                                             const char *client_pubkey_hex,
+                                             char **out_agent_id,
+                                             char **out_bound_secret_hash) {
+  if (out_agent_id) *out_agent_id = NULL;
+  if (out_bound_secret_hash) *out_bound_secret_hash = NULL;
+  if (!ks || !out_agent_id) return -1;
+
+  char client[65];
+  if (!signet_ks_canonical_pubkey(client_pubkey_hex, client)) return 1;
+
+  g_mutex_lock(&ks->mu);
+  if (ks->store) {
+    g_mutex_unlock(&ks->mu);
+    return -1;
+  }
+
+  SignetEphemeralBinding *b = g_hash_table_lookup(ks->ephemeral_bindings, client);
+  if (!b) {
+    g_mutex_unlock(&ks->mu);
+    return 1;
+  }
+
+  /* The binding conveys authority only toward the exact identity it was made
+   * against: a revoked agent has no entry, and rotate-key or a re-adopt or
+   * re-provision under the same agent_id installs a new entry. */
+  const SignetCacheEntry *e = g_hash_table_lookup(ks->cache, b->agent_id);
+  if (!e || e->generation != b->generation) {
+    g_hash_table_remove(ks->ephemeral_bindings, client);
+    g_mutex_unlock(&ks->mu);
+    return 1;
+  }
+
+  *out_agent_id = g_strdup(b->agent_id);
+  if (out_bound_secret_hash) *out_bound_secret_hash = g_strdup(b->secret_hash);
+  g_mutex_unlock(&ks->mu);
+  return 0;
 }
 
 int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
