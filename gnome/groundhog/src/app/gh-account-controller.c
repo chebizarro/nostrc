@@ -4,6 +4,10 @@
 #include "gh-nip46-session.h"
 
 #define SIGNER_BUS "org.nostr.Signer"
+#define CREDENTIAL_WAIT_MS 1500
+#define CREDENTIAL_TIMEOUT_MS 120000
+
+typedef enum { LOCK_NONE, LOCK_WAITING, LOCK_TIMED_OUT, LOCK_LOCKED } LockReason;
 
 struct _GhAccountController {
   GObject parent_instance;
@@ -43,6 +47,14 @@ struct _GhAccountController {
   GCancellable *generation_cancel;
   GhSigner *signer; /* active generation only; never exposes secret material */
 
+  /* The in-flight credential read (lookup) for the active generation. */
+  GCancellable *lookup_cancel;
+  guint lookup_wait_id;
+  guint lookup_timeout_id;
+  guint credential_wait_ms;
+  guint credential_timeout_ms;
+  LockReason lock_reason;
+
   GhSignerAvailability availability;
   guint watch_id;
   guint signer_serial;
@@ -53,6 +65,8 @@ enum { SIGNAL_CHANGED, SIGNAL_AUTH_URL, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 G_DEFINE_FINAL_TYPE(GhAccountController, gh_account_controller, G_TYPE_OBJECT)
+
+static void stop_lookup(GhAccountController *self, gboolean cancel);
 
 static GPtrArray *
 default_list(gpointer user_data, GError **error)
@@ -106,6 +120,7 @@ revoke_generation(GhAccountController *self, gboolean replace)
   self->remote_gate_epoch++;
   if (self->remote_gate_cancel) g_cancellable_cancel(self->remote_gate_cancel);
   g_clear_object(&self->remote_gate_cancel);
+  stop_lookup(self, TRUE);
   if (replace)
     self->generation_cancel = g_cancellable_new();
   if (old) {
@@ -181,7 +196,48 @@ activate_remote_session(GhAccountController *self, GhNip46Session *session)
 typedef struct {
   GhAccountController *self;
   guint64 generation;
+  GCancellable *cancel;
 } CredentialQuery;
+
+static void
+stop_lookup(GhAccountController *self, gboolean cancel)
+{
+  g_clear_handle_id(&self->lookup_wait_id, g_source_remove);
+  g_clear_handle_id(&self->lookup_timeout_id, g_source_remove);
+  if (cancel && self->lookup_cancel) g_cancellable_cancel(self->lookup_cancel);
+  g_clear_object(&self->lookup_cancel);
+}
+
+static gboolean
+lookup_waiting(gpointer data)
+{
+  GhAccountController *self = data;
+  self->lookup_wait_id = 0;
+  if (!self->settings || self->remote_state != GH_REMOTE_SIGNER_LOADING_CREDENTIAL)
+    return G_SOURCE_REMOVE;
+  g_message("Groundhog is waiting for access to the remote signer credential");
+  self->lock_reason = LOCK_WAITING;
+  self->remote_state = GH_REMOTE_SIGNER_LOCKED;
+  g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  return G_SOURCE_REMOVE;
+}
+
+static gboolean
+lookup_timed_out(gpointer data)
+{
+  GhAccountController *self = data;
+  self->lookup_timeout_id = 0;
+  g_message("Groundhog gave up waiting for the remote signer credential");
+  g_clear_handle_id(&self->lookup_wait_id, g_source_remove);
+  if (self->lookup_cancel) g_cancellable_cancel(self->lookup_cancel);
+  g_clear_object(&self->lookup_cancel);
+  if (self->settings) {
+    self->lock_reason = LOCK_TIMED_OUT;
+    self->remote_state = GH_REMOTE_SIGNER_LOCKED;
+    g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
+  }
+  return G_SOURCE_REMOVE;
+}
 
 static void
 credential_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data)
@@ -192,19 +248,26 @@ credential_lookup_done(GObject *source, GAsyncResult *result, gpointer user_data
   g_autoptr(GhNip46Credential) credential =
     gh_nip46_credential_store_lookup_finish(GH_NIP46_CREDENTIAL_STORE(source), result,
                                              &error);
-  if (self->settings && query->generation == self->generation &&
+  gboolean current = query->cancel == self->lookup_cancel;
+  if (current) stop_lookup(self, FALSE);
+  if (current && self->settings && query->generation == self->generation &&
       self->active_backend == GH_SIGNER_BACKEND_NIP46 && self->active_npub) {
     if (!credential) {
-      set_remote_state(self, g_error_matches(error, GH_NIP46_CREDENTIAL_ERROR,
-                                              GH_NIP46_CREDENTIAL_ERROR_LOCKED) ?
-        GH_REMOTE_SIGNER_LOCKED : GH_REMOTE_SIGNER_ERROR);
+      gboolean locked = g_error_matches(error, GH_NIP46_CREDENTIAL_ERROR,
+                                        GH_NIP46_CREDENTIAL_ERROR_LOCKED);
+      self->lock_reason = locked ? LOCK_LOCKED : LOCK_NONE;
+      if (locked && self->remote_state == GH_REMOTE_SIGNER_LOCKED)
+        g_signal_emit(self, signals[SIGNAL_CHANGED], 0); /* reason changed */
+      set_remote_state(self, locked ? GH_REMOTE_SIGNER_LOCKED : GH_REMOTE_SIGNER_ERROR);
     } else {
+      self->lock_reason = LOCK_NONE;
       activate_remote_session(self, gh_nip46_session_new(
         gh_nip46_credential_get_client_secret_hex(credential),
         gh_nip46_credential_get_remote_signer_pubkey_hex(credential),
         gh_nip46_credential_get_relays(credential), NULL, NULL, NULL, NULL, NULL, &error));
     }
   }
+  g_object_unref(query->cancel);
   g_object_unref(self);
   g_free(query);
 }
@@ -217,6 +280,8 @@ bind_signer(GhAccountController *self)
     g_clear_object(&self->remote_session);
   }
   gh_signer_free(g_steal_pointer(&self->signer));
+  stop_lookup(self, TRUE);
+  self->lock_reason = LOCK_NONE;
   if (!self->active_npub) return;
   if (self->active_backend == GH_SIGNER_BACKEND_GROTTO) {
     if (self->bus)
@@ -238,11 +303,18 @@ bind_signer(GhAccountController *self)
     self->remote_state = GH_REMOTE_SIGNER_ERROR;
     return;
   }
+  /* The read may wait on a Keychain/keyring prompt: it has its own
+   * cancellable (also cancelled with the generation) and a deadline, and it
+   * never holds up listing or selection. */
+  self->lookup_cancel = g_cancellable_new();
   CredentialQuery *query = g_new0(CredentialQuery, 1);
   query->self = g_object_ref(self);
   query->generation = self->generation;
+  query->cancel = g_object_ref(self->lookup_cancel);
+  self->lookup_wait_id = g_timeout_add(self->credential_wait_ms, lookup_waiting, self);
+  self->lookup_timeout_id = g_timeout_add(self->credential_timeout_ms, lookup_timed_out, self);
   gh_nip46_credential_store_lookup_async(self->credentials, pubkey,
-                                          self->generation_cancel,
+                                          self->lookup_cancel,
                                           credential_lookup_done, query);
 }
 
@@ -416,6 +488,7 @@ remote_list_done(GObject *source, GAsyncResult *result, gpointer user_data)
     GH_NIP46_CREDENTIAL_STORE(source), result, &error);
   if (self->settings && query->serial == self->list_serial) {
     if (error) g_message("Groundhog could not list remote identities: %s", error->message);
+    else g_debug("Groundhog listed %u remote identities", identities->len);
     g_clear_pointer(&self->remote_results, g_ptr_array_unref);
     self->remote_results = identities;
     self->source_ok[1] = identities != NULL;
@@ -831,6 +904,48 @@ gh_account_controller_set_remote_storage_ready(GhAccountController *self,
   g_signal_emit(self, signals[SIGNAL_CHANGED], 0);
 }
 
+void
+gh_account_controller_set_credential_timeouts_for_test(GhAccountController *self,
+                                                       guint wait_ms, guint timeout_ms)
+{
+  g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
+  self->credential_wait_ms = wait_ms;
+  self->credential_timeout_ms = MAX(timeout_ms, wait_ms);
+}
+
+const gchar *
+gh_account_controller_describe_remote_lock(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), NULL);
+  if (self->remote_state != GH_REMOTE_SIGNER_LOCKED) return NULL;
+#ifdef __APPLE__
+  switch (self->lock_reason) {
+  case LOCK_WAITING:
+    return "Waiting for Keychain access — allow Groundhog in the macOS prompt";
+  case LOCK_TIMED_OUT:
+    return "Keychain access was not granted. Allow Groundhog in the macOS prompt, then reselect the account";
+  default:
+    return "Unlock your Keychain to use the remote signer";
+  }
+#else
+  switch (self->lock_reason) {
+  case LOCK_WAITING:
+    return "Unlock your keyring — Groundhog is waiting for it";
+  case LOCK_TIMED_OUT:
+    return "Unlock your keyring, then reselect the account. The keyring did not answer";
+  default:
+    return "Unlock your keyring to use the remote signer";
+  }
+#endif
+}
+
+gboolean
+gh_account_controller_is_listing(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), FALSE);
+  return self->list_pending[0] || self->list_pending[1];
+}
+
 const gchar *
 gh_account_controller_get_active_npub(GhAccountController *self)
 {
@@ -1146,7 +1261,7 @@ gh_account_controller_describe_limits(GhAccountController *self,
      * OFFLINE, so refusing calls here would strand the account forever. */
     return NULL;
   case GH_REMOTE_SIGNER_LOCKED:
-    return g_strdup("Read-only: unlock the remote signer credential store");
+    return g_strdup_printf("Read-only: %s", gh_account_controller_describe_remote_lock(self));
   case GH_REMOTE_SIGNER_ERROR:
     return g_strdup("Read-only: remote signer needs repair or re-pairing");
   case GH_REMOTE_SIGNER_READY:
@@ -1217,6 +1332,8 @@ gh_account_controller_init(GhAccountController *self)
 {
   self->state = GH_ACCOUNT_STATE_DISCOVERING;
   self->generation = 1;
+  self->credential_wait_ms = CREDENTIAL_WAIT_MS;
+  self->credential_timeout_ms = CREDENTIAL_TIMEOUT_MS;
   self->generation_cancel = g_cancellable_new();
   self->signer_cancel = g_cancellable_new();
 }
