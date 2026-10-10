@@ -1373,8 +1373,10 @@ static gboolean handle_create_profile(NostrSigner *object, GDBusMethodInvocation
 }
 
 /* ---------------------------------------------------------------------------
- * ListIdentities (nostrc-oh0s): return all stored identity npubs.
- * No approval gating. Signature: () -> (as)
+ * ListIdentities (nostrc-oh0s): the npubs of every identity the signer holds
+ * (stored ones plus the environment key, nostrc-sic82). No approval gating.
+ * Signature: () -> (as). Error.Internal when they cannot be listed: an empty
+ * array would claim the signer holds none (nostrc-sjyl3).
  * ------------------------------------------------------------------------- */
 static gboolean handle_list_identities(NostrSigner *object, GDBusMethodInvocation *invocation)
 {
@@ -1382,8 +1384,10 @@ static gboolean handle_list_identities(NostrSigner *object, GDBusMethodInvocatio
   int count = 0;
   int rc = nostr_nip55l_list_identities(&npubs, &count);
   if (rc != 0) {
-    const gchar *empty[] = { NULL };
-    nostr_signer_complete_list_identities(object, invocation, empty);
+    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
+      rc == NOSTR_SIGNER_ERROR_NOT_FOUND
+        ? "no key store is available and no key is configured in the signer's environment"
+        : "the key store could not be read");
     return TRUE;
   }
   /* Build a null-terminated string array for the D-Bus response */

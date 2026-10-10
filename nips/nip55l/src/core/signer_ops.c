@@ -1152,24 +1152,75 @@ int nostr_nip55l_clear_key(const char *identity){
 }
 
 /* ---------------------------------------------------------------------------
- * List all stored identity npubs.
- * Returns 0 on success. Caller frees each string and the array with free().
+ * List identities.
  * ------------------------------------------------------------------------- */
-int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
-  if (!out_npubs || !out_count) return NOSTR_SIGNER_ERROR_INVALID_ARG;
-  *out_npubs = NULL;
-  *out_count = 0;
 
+/* npub of the key in the daemon's environment (NOSTR_SIGNER_SECKEY_HEX, else
+ * NOSTR_SIGNER_NSEC), or NULL. resolve_seckey_hex() makes it the active
+ * identity and its npub/hex selects it, so it is an identity the signer
+ * holds (nostrc-sic82). */
+static char *env_identity_npub(void){
+  char *sk_hex = NULL;
+  const char *hex = getenv("NOSTR_SIGNER_SECKEY_HEX");
+  const char *nsec = getenv("NOSTR_SIGNER_NSEC");
+  if (hex && is_hex_64(hex)) {
+    sk_hex = strdup(hex);
+  } else if (nsec && strncmp(nsec, "nsec1", 5) == 0) {
+    uint8_t sk[32];
+    if (nostr_nip19_decode_nsec(nsec, sk) == 0) sk_hex = bin_to_hex(sk, 32);
+    secure_wipe(sk, sizeof sk);
+  }
+  if (!sk_hex) return NULL;
+  char *npub = NULL;
+  if (sk_hex_to_npub(sk_hex, &npub) != 0) npub = NULL;
+  secure_wipe(sk_hex, strlen(sk_hex));
+  free(sk_hex);
+  return npub;
+}
+
+#ifdef NIP55L_HAVE_LIBSECRET
+/* No Secret Service on the bus at all (nothing owns or activates
+ * org.freedesktop.secrets), as opposed to one that fails. */
+static gboolean secret_service_absent(const GError *e){
+  return e && (g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+               g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER));
+}
+
+static int store_error_rc(const char *what, const GError *e){
+  if (secret_service_absent(e)) {
+    g_debug("nip55l: ListIdentities: no Secret Service: %s", e->message);
+    return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  }
+  g_message("nip55l: ListIdentities: Secret Service %s: %s", what, e ? e->message : "unknown error");
+  return NOSTR_SIGNER_ERROR_BACKEND;
+}
+#endif
+
+/* The npubs in the key store. 0 on success (possibly none);
+ * NOSTR_SIGNER_ERROR_NOT_FOUND when there is no key store (none compiled in,
+ * or no Secret Service on the bus); NOSTR_SIGNER_ERROR_BACKEND when the store
+ * could not be read. */
+static int list_stored_identities(char ***out_npubs, int *out_count) {
 #ifdef NIP55L_HAVE_LIBSECRET
   GError *gerr = NULL;
   SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &gerr);
-  if (!service) { if (gerr) g_error_free(gerr); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!service) {
+    int rc = store_error_rc("unavailable", gerr);
+    g_clear_error(&gerr);
+    return rc;
+  }
 
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
   GList *items = secret_service_search_sync(service, &gnostr_secret_schema, attrs,
                                             SECRET_SEARCH_ALL, NULL, &gerr);
   g_hash_table_unref(attrs);
-  if (gerr) { g_error_free(gerr); g_object_unref(service); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (gerr) {
+    int rc = store_error_rc("search failed", gerr);
+    g_clear_error(&gerr);
+    g_list_free_full(items, g_object_unref);
+    g_object_unref(service);
+    return rc;
+  }
 
   int n = g_list_length(items);
   char **npubs = calloc(n + 1, sizeof(char*));
@@ -1205,8 +1256,11 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
   CFRelease(q);
   if (st != errSecSuccess || !result) {
     if (result) CFRelease(result);
-    /* No items is not an error */
+    /* No items is not an error; any other status (locked, denied) is:
+     * an empty list would claim the signer holds nothing (nostrc-sjyl3). */
+    if (st != errSecItemNotFound && st != errSecSuccess) return NOSTR_SIGNER_ERROR_BACKEND;
     *out_npubs = calloc(1, sizeof(char*));
+    if (!*out_npubs) return NOSTR_SIGNER_ERROR_BACKEND;
     *out_count = 0;
     return 0;
   }
@@ -1242,8 +1296,46 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
   return 0;
 
 #else
+  (void)out_npubs; (void)out_count;
   return NOSTR_SIGNER_ERROR_NOT_FOUND;
 #endif
+}
+
+int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
+  if (!out_npubs || !out_count) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npubs = NULL;
+  *out_count = 0;
+
+  char *env_npub = env_identity_npub();
+  char **stored = NULL;
+  int n_stored = 0;
+  int rc = list_stored_identities(&stored, &n_stored);
+  if (rc != 0) {
+    /* A store that fails is reported even beside an environment key: a
+     * short list would deny stored identities that do exist. With no store
+     * at all, the environment key is the signer's only identity. */
+    if (rc != NOSTR_SIGNER_ERROR_NOT_FOUND || !env_npub) { free(env_npub); return rc; }
+    stored = NULL;
+    n_stored = 0;
+  }
+
+  char **npubs = calloc((size_t)n_stored + 2, sizeof(char*));
+  if (!npubs) {
+    for (int i = 0; i < n_stored; i++) free(stored[i]);
+    free(stored);
+    free(env_npub);
+    return NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  int n = 0;
+  if (env_npub) npubs[n++] = env_npub;
+  for (int i = 0; i < n_stored; i++) {
+    if (env_npub && strcmp(stored[i], env_npub) == 0) { free(stored[i]); continue; }
+    npubs[n++] = stored[i];
+  }
+  free(stored);
+  *out_npubs = npubs;
+  *out_count = n;
+  return 0;
 }
 
 #ifdef NIP55L_HAVE_LIBSECRET
