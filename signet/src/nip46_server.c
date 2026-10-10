@@ -800,20 +800,31 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "nip44_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt_b64") == 0 ||
                strcmp(method, "nip44_decrypt_b64") == 0) {
-      if (!req.params || req.n_params < 2) {
-        err_str = g_strdup("crypto method requires [pubkey, input]");
+      bool is_nip44 = g_str_has_prefix(method, "nip44_");
+      int64_t crypto_epoch = 0;
+      if (!req.params || req.n_params < 2 ||
+          (is_nip44 && req.n_params > 3) ||
+          (is_nip44 && req.n_params == 3 &&
+           !signet_parse_writer_epoch(req.params[2], &crypto_epoch))) {
+        err_str = g_strdup("crypto method requires [pubkey, input, epoch?]");
         status = "error";
         code = "invalid_params";
-      } else if (signet_key_store_crypt_legacy(s->keys, session_agent_id,
-                                                method, req.params[0],
-                                                req.params[1], &result) != 0) {
-        err_str = g_strdup("crypto operation denied or failed");
-        status = "error";
-        code = "crypto_failed";
       } else {
-        result_is_json = false;
-        status = "ok";
-        code = "ok";
+        int crypto_rc = is_nip44 && req.n_params == 3
+            ? signet_key_store_crypt_nip44(s->keys, session_agent_id,
+                client_pubkey_hex, crypto_epoch, method, req.params[0],
+                req.params[1], &result)
+            : signet_key_store_crypt_legacy(s->keys, session_agent_id,
+                method, req.params[0], req.params[1], &result);
+        if (crypto_rc != 0) {
+          err_str = g_strdup("crypto operation denied or failed");
+          status = "error";
+          code = "crypto_failed";
+        } else {
+          result_is_json = false;
+          status = "ok";
+          code = "ok";
+        }
       }
 
     } else if (strcmp(method, "webauthn_get_info") == 0 ||

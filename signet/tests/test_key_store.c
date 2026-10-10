@@ -305,6 +305,109 @@ static void test_writer_client_cannot_be_provisioner(void) {
   printf("test_writer_client_cannot_be_provisioner: PASS\n");
 }
 
+static void test_fenced_nip44_custody(void) {
+  static const char owner_a[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  static const char owner_b[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  char *path = NULL;
+  SignetKeyStore *ks = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(ks, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_a, 300,
+                                        &epoch, &expiry) == 0);
+  char *ciphertext = NULL, *plain = NULL;
+  CHECK(signet_key_store_crypt_legacy(ks, "service", "nip44_encrypt",
+                                      pubkey, "secret", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_b, epoch,
+      "nip44_encrypt", pubkey, "secret", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch + 1,
+      "nip44_encrypt", pubkey, "secret", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip04_encrypt", pubkey, "secret", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt", pubkey, "secret", &ciphertext) == 0);
+  CHECK(ciphertext && ciphertext[0]);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt", pubkey, ciphertext, &plain) == 0);
+  CHECK(strcmp(plain, "secret") == 0);
+  g_free(plain);
+  g_free(ciphertext);
+
+  const uint8_t binary[] = {0, 0xff, 0x80, 0x01, 0};
+  char *encoded = g_base64_encode(binary, sizeof(binary));
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt_b64", pubkey, encoded, &ciphertext) == 0);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt_b64", pubkey, ciphertext, &plain) == 0);
+  CHECK(strcmp(plain, encoded) == 0);
+  g_free(plain);
+  g_free(encoded);
+  g_free(ciphertext);
+  ciphertext = NULL;
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt_b64", pubkey, "not base64!", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+
+  signet_key_store_free(ks);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  ks = signet_key_store_new(NULL, &cfg);
+  CHECK(ks != NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt", pubkey, "after restart", &ciphertext) == 0);
+  sqlite3 *db = signet_store_get_db(signet_key_store_get_store(ks));
+  CHECK(sqlite3_exec(db,
+      "CREATE TRIGGER fail_crypto_commit BEFORE UPDATE OF observed_at "
+      "ON agent_writer_leases BEGIN SELECT RAISE(ABORT,'forced failure'); END;",
+      NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_decrypt", pubkey, ciphertext, &plain) != 0);
+  CHECK(plain == NULL);
+  char *failed_ciphertext = NULL;
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt", pubkey, "uncommitted", &failed_ciphertext) != 0);
+  CHECK(failed_ciphertext == NULL);
+  CHECK(sqlite3_exec(db, "DROP TRIGGER fail_crypto_commit;",
+                     NULL, NULL, NULL) == SQLITE_OK);
+  g_free(ciphertext);
+  ciphertext = NULL;
+  CHECK(sqlite3_exec(db, "PRAGMA query_only=ON;", NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch,
+      "nip44_encrypt", pubkey, "db error", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(sqlite3_exec(db, "PRAGMA query_only=OFF;", NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_writer_acquire(ks, "service", owner_b, 300,
+                                        &epoch, &expiry) == 0);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_a, epoch - 1,
+      "nip44_encrypt", pubkey, "stale", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_b, epoch,
+      "nip44_encrypt", pubkey, "current", &ciphertext) == 0);
+  g_free(ciphertext);
+  ciphertext = NULL;
+  CHECK(sqlite3_exec(db,
+      "UPDATE agent_writer_leases SET expires_at=1 WHERE agent_id='service';",
+      NULL, NULL, NULL) == SQLITE_OK);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_b, epoch,
+      "nip44_encrypt", pubkey, "expired", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  int64_t revoked = 0;
+  CHECK(signet_key_store_writer_revoke(ks, "service", &revoked) == 0);
+  CHECK(signet_key_store_crypt_nip44(ks, "service", owner_b, epoch,
+      "nip44_encrypt", pubkey, "revoked", &ciphertext) != 0);
+  CHECK(ciphertext == NULL);
+  signet_key_store_free(ks);
+  unlink(path);
+  g_free(path);
+  printf("test_fenced_nip44_custody: PASS\n");
+}
+
 static void test_pre_history_writer_db_fails_closed(void) {
   static const char owner[] =
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -540,6 +643,125 @@ static void test_writer_transfer_serializes_with_sign(void) {
   printf("test_writer_transfer_serializes_with_sign: PASS\n");
 }
 
+typedef struct {
+  SignetKeyStore *crypto_store;
+  SignetKeyStore *transfer_store;
+  const char *peer;
+  GMutex mu;
+  GCond cond;
+  bool hold_once;
+  bool in_commit;
+  bool release_commit;
+  bool transfer_started;
+  bool transfer_done;
+  int crypto_rc;
+  int transfer_rc;
+  int64_t transfer_epoch;
+} CryptoRace;
+
+static void hold_nip44_commit(sqlite3_context *ctx, int argc,
+                              sqlite3_value **argv) {
+  (void)argc; (void)argv;
+  CryptoRace *race = sqlite3_user_data(ctx);
+  g_mutex_lock(&race->mu);
+  if (race->hold_once) {
+    race->hold_once = false;
+    race->in_commit = true;
+    g_cond_broadcast(&race->cond);
+    while (!race->release_commit) g_cond_wait(&race->cond, &race->mu);
+  }
+  g_mutex_unlock(&race->mu);
+  sqlite3_result_int(ctx, 1);
+}
+
+static gpointer run_fenced_crypto(gpointer data) {
+  CryptoRace *race = data;
+  static const char owner[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *result = NULL;
+  race->crypto_rc = signet_key_store_crypt_nip44(race->crypto_store,
+      "service", owner, 1, "nip44_encrypt", race->peer,
+      "transaction race", &result);
+  g_free(result);
+  return NULL;
+}
+
+static gpointer run_crypto_transfer(gpointer data) {
+  CryptoRace *race = data;
+  static const char owner[] =
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  g_mutex_lock(&race->mu);
+  race->transfer_started = true;
+  g_cond_broadcast(&race->cond);
+  g_mutex_unlock(&race->mu);
+  int64_t expiry = 0;
+  race->transfer_rc = signet_key_store_writer_acquire(race->transfer_store,
+      "service", owner, 300, &race->transfer_epoch, &expiry);
+  g_mutex_lock(&race->mu);
+  race->transfer_done = true;
+  g_cond_broadcast(&race->cond);
+  g_mutex_unlock(&race->mu);
+  return NULL;
+}
+
+static void test_fenced_nip44_transfer_serializes(void) {
+  static const char owner[] =
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  char *path = NULL;
+  SignetKeyStore *first = open_test_ks(&path);
+  char pubkey[65];
+  CHECK(signet_key_store_provision_agent(first, "service", NULL, NULL, 0,
+                                         pubkey, sizeof(pubkey), NULL) == 0);
+  int64_t epoch = 0, expiry = 0;
+  CHECK(signet_key_store_writer_acquire(first, "service", owner, 300,
+                                        &epoch, &expiry) == 0);
+  SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
+  SignetKeyStore *second = signet_key_store_new(NULL, &cfg);
+  CHECK(second != NULL);
+  CryptoRace race = {.crypto_store = first, .transfer_store = second,
+                     .peer = pubkey, .hold_once = true};
+  g_mutex_init(&race.mu);
+  g_cond_init(&race.cond);
+  sqlite3 *first_db = signet_store_get_db(signet_key_store_get_store(first));
+  sqlite3 *second_db = signet_store_get_db(signet_key_store_get_store(second));
+  CHECK(sqlite3_create_function(first_db, "hold_nip44", 0, SQLITE_UTF8,
+      &race, hold_nip44_commit, NULL, NULL) == SQLITE_OK);
+  CHECK(sqlite3_create_function(second_db, "hold_nip44", 0, SQLITE_UTF8,
+      &race, hold_nip44_commit, NULL, NULL) == SQLITE_OK);
+  CHECK(sqlite3_exec(first_db,
+      "CREATE TRIGGER hold_nip44_observed BEFORE UPDATE OF observed_at "
+      "ON agent_writer_leases BEGIN SELECT hold_nip44(); END;",
+      NULL, NULL, NULL) == SQLITE_OK);
+  GThread *crypto = g_thread_new("fenced-nip44", run_fenced_crypto, &race);
+  g_mutex_lock(&race.mu);
+  while (!race.in_commit) g_cond_wait(&race.cond, &race.mu);
+  g_mutex_unlock(&race.mu);
+  GThread *transfer = g_thread_new("nip44-transfer", run_crypto_transfer, &race);
+  g_mutex_lock(&race.mu);
+  while (!race.transfer_started) g_cond_wait(&race.cond, &race.mu);
+  CHECK(!race.transfer_done);
+  race.release_commit = true;
+  g_cond_broadcast(&race.cond);
+  g_mutex_unlock(&race.mu);
+  g_thread_join(crypto);
+  g_thread_join(transfer);
+  CHECK(race.crypto_rc == 0);
+  CHECK(race.transfer_rc == 0 && race.transfer_epoch == epoch + 1);
+  char *result = NULL;
+  CHECK(signet_key_store_crypt_nip44(first, "service", owner, epoch,
+      "nip44_encrypt", pubkey, "stale", &result) != 0);
+  CHECK(result == NULL);
+  CHECK(sqlite3_exec(first_db, "DROP TRIGGER hold_nip44_observed;",
+                     NULL, NULL, NULL) == SQLITE_OK);
+  g_cond_clear(&race.cond);
+  g_mutex_clear(&race.mu);
+  signet_key_store_free(second);
+  signet_key_store_free(first);
+  unlink(path);
+  g_free(path);
+  printf("test_fenced_nip44_transfer_serializes: PASS\n");
+}
+
 int main(void) {
   CHECK(sodium_init() >= 0);
 
@@ -551,9 +773,11 @@ int main(void) {
   test_list_agents();
   test_provision_bunker_uri();
   test_writer_client_cannot_be_provisioner();
+  test_fenced_nip44_custody();
   test_pre_history_writer_db_fails_closed();
   test_writer_fence_persists_and_fails_closed();
   test_writer_transfer_serializes_with_sign();
+  test_fenced_nip44_transfer_serializes();
 
   printf("All key store tests passed!\n");
   return 0;

@@ -266,7 +266,8 @@ typedef struct {
   const char *peer;
   const char *input;
   char *result;
-} SignetLegacyCryptoWork;
+  size_t result_len;
+} SignetCryptoWork;
 
 static bool signet_key_store_decode_peer(const char *hex, uint8_t out[32]) {
   if (!hex || strlen(hex) != 64) return false;
@@ -280,7 +281,7 @@ static bool signet_key_store_decode_peer(const char *hex, uint8_t out[32]) {
 }
 
 static int signet_key_store_crypto_callback(const uint8_t key[32], void *data) {
-  SignetLegacyCryptoWork *work = data;
+  SignetCryptoWork *work = data;
   const char *m = work->method;
   if (strcmp(m, "nip04_encrypt") == 0 || strcmp(m, "nip04_decrypt") == 0) {
     char sk_hex[65];
@@ -293,6 +294,7 @@ static int signet_key_store_crypto_callback(const uint8_t key[32], void *data) {
                              &work->result, &err);
     sodium_memzero(sk_hex, sizeof(sk_hex));
     free(err);
+    if (work->result) work->result_len = strlen(work->result);
     return rc == 0 && work->result ? 0 : -1;
   }
 
@@ -331,31 +333,73 @@ static int signet_key_store_crypto_callback(const uint8_t key[32], void *data) {
     size_t raw_len = 0;
     rc = nostr_nip44_decrypt_v2(key, peer, work->input, &raw, &raw_len);
     if (rc == 0 && raw) {
-      work->result = strcmp(m, "nip44_decrypt_b64") == 0
+      bool binary_safe = strcmp(m, "nip44_decrypt_b64") == 0;
+      work->result = binary_safe
           ? g_base64_encode(raw, raw_len)
           : g_strndup((const char *)raw, raw_len);
+      if (work->result && !binary_safe) work->result_len = raw_len;
     }
     if (raw) { sodium_memzero(raw, raw_len); free(raw); }
   }
 done:
   sodium_memzero(peer, sizeof(peer));
+  if (rc == 0 && work->result && work->result_len == 0)
+    work->result_len = strlen(work->result);
   return rc == 0 && work->result ? 0 : -1;
+}
+
+static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
+                                             const char *agent_id,
+                                             const char *owner, int64_t epoch,
+                                             const char *method,
+                                             const char *peer_pubkey,
+                                             const char *input,
+                                             char **out_result) {
+  if (out_result) *out_result = NULL;
+  if (!ks || !agent_id || !method || !peer_pubkey || !input || !out_result)
+    return -1;
+  SignetCryptoWork work = {
+      .method = method, .peer = peer_pubkey, .input = input
+  };
+  int rc = signet_key_store_with_signing_key(ks, agent_id, owner, epoch,
+                                             signet_key_store_crypto_callback,
+                                             &work);
+  /* The callback may have completed before a lease expires or DB commit
+   * fails. No ciphertext or plaintext may escape in either case. */
+  if (rc != 0) {
+    if (work.result) {
+      sodium_memzero(work.result, work.result_len);
+      g_free(work.result);
+    }
+    return -1;
+  }
+  *out_result = work.result;
+  return 0;
 }
 
 int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result) {
-  if (out_result) *out_result = NULL;
-  if (!ks || !agent_id || !method || !peer_pubkey || !input || !out_result) return -1;
-  SignetLegacyCryptoWork work = {
-      .method = method, .peer = peer_pubkey, .input = input
-  };
-  int rc = signet_key_store_with_signing_key(ks, agent_id, NULL, 0,
-                                             signet_key_store_crypto_callback,
-                                             &work);
-  if (rc != 0) { free(work.result); return -1; }
-  *out_result = work.result;
-  return 0;
+  return signet_key_store_crypt_in_custody(ks, agent_id, NULL, 0,
+                                           method, peer_pubkey, input,
+                                           out_result);
+}
+
+int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
+                                 const char *owner, int64_t epoch,
+                                 const char *method, const char *peer_pubkey,
+                                 const char *input, char **out_result) {
+  if (!owner || epoch < 1 || !method ||
+      (strcmp(method, "nip44_encrypt") != 0 &&
+       strcmp(method, "nip44_decrypt") != 0 &&
+       strcmp(method, "nip44_encrypt_b64") != 0 &&
+       strcmp(method, "nip44_decrypt_b64") != 0)) {
+    if (out_result) *out_result = NULL;
+    return -1;
+  }
+  return signet_key_store_crypt_in_custody(ks, agent_id, owner, epoch,
+                                           method, peer_pubkey, input,
+                                           out_result);
 }
 
 int signet_key_store_provision_agent(SignetKeyStore *ks,
