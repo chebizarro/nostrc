@@ -316,6 +316,20 @@ member_naming_reqs(WireRelay *relay, guint key)
   return n;
 }
 
+/* A REQ for Carol's kind-10050 inbox list reached the relay. */
+static gboolean
+inbox_lookup_sent(gpointer data)
+{
+  WireRelay *relay = data;
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\"") &&
+        strstr(frame->text, "10050]") && strstr(frame->text, hex[CAROL]))
+      return TRUE;
+  }
+  return FALSE;
+}
+
 /* On either group relay of the world (g, and h, the second one). */
 static guint
 group_relay_reqs(World *w, guint key)
@@ -412,9 +426,12 @@ test_member_lookups_on_demand_only(void)
   gh_mls_service_add_members_async(alice->service, ga, carol, NULL, on_changed, &added);
   spin_until(op_done, &added, "Alice's Add of Carol");
   g_assert_no_error(added.error);
-  /* Drain deferred callbacks from Alice's Add before snapshotting: the
-   * broadened counter may catch an asynchronous REQ that the kind-specific
-   * counter missed, producing a race under the sanitizer gate. */
+  /* Alice's Add is not over when its operation is: her Welcome to Carol
+   * leaves afterwards (MIP-02 Welcome outbox), and resolving Carol's inbox
+   * asks the discovery relay for her kind-10050 list. That lookup is Alice's,
+   * the inviter's, and belongs in the snapshot; under load it could land
+   * after a plain drain() and be blamed on Bob (nostrc-b98ci). */
+  spin_until(inbox_lookup_sent, &w.e, "Alice's lookup of Carol's inbox for the Welcome");
   drain();
   guint asked = member_naming_reqs(&w.e, CAROL) + member_naming_reqs(&w.w, CAROL);
   wait_members(gb, 3);
