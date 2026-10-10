@@ -85,8 +85,9 @@ static void signetctl_usage(FILE *out) {
     "                           Persist and activate a provisioner grant\n"
     "  revoke-provisioner <pubkey>\n"
     "                           Persist and activate a provisioner revocation\n"
-    "  writer-acquire <agent_id> <owner_pubkey> --ttl <1..3600>\n"
-    "                           Transfer the fenced writer lease (provisioner only)\n"
+    "  writer-acquire <agent_id> <owner_pubkey>\n"
+    "                           Assign the fenced identity's sole NIP-46 writer\n"
+    "                           client (provisioner only; single-use client key)\n"
     "  status                   Query daemon health status\n"
     "  list                     List managed agents\n"
     "\n"
@@ -183,7 +184,7 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
                                     const char *label, const char *payload_b64,
                                     const char *credential_policy_id,
                                     bool has_expires_at, int64_t expires_at,
-                                    const char *writer_pubkey, int writer_ttl) {
+                                    const char *writer_pubkey) {
   const char *method = signetctl_contextvm_method(op);
   if (!method) return NULL;
 
@@ -219,8 +220,6 @@ static char *signetctl_build_intent(SignetMgmtOp op, const char *agent_id, const
   if (writer_pubkey) {
     json_builder_set_member_name(b, "writer_pubkey");
     json_builder_add_string_value(b, writer_pubkey);
-    json_builder_set_member_name(b, "ttl_seconds");
-    json_builder_add_int_value(b, writer_ttl);
   }
   if (credential_id) {
     json_builder_set_member_name(b, "credential_id");
@@ -686,7 +685,6 @@ int main(int argc, char **argv) {
   const char *revoke_client_pubkey = NULL;
   const char *provisioner_pubkey = NULL;
   const char *writer_pubkey = NULL;
-  int writer_ttl = 0;
   const char *credential_id = NULL;
   const char *credential_type = NULL;
   const char *credential_label = NULL;
@@ -781,21 +779,16 @@ int main(int argc, char **argv) {
     }
   } else if (strcmp(cmd, "writer-acquire") == 0) {
     op = SIGNET_MGMT_OP_WRITER_ACQUIRE;
-    if (argc - argi != 4 || strcmp(argv[argi + 2], "--ttl") != 0) {
-      fprintf(stderr, "signetctl: writer-acquire requires <agent_id> <owner_pubkey> --ttl <1..3600>\n");
+    if (argc - argi != 2) {
+      fprintf(stderr, "signetctl: writer-acquire requires <agent_id> <owner_pubkey>\n");
       return 2;
     }
     agent_id = argv[argi++];
     writer_pubkey = argv[argi++];
-    argi++; /* --ttl */
-    int64_t parsed_ttl = 0;
-    if (!signetctl_parse_i64(argv[argi++], &parsed_ttl) ||
-        parsed_ttl < 1 || parsed_ttl > 3600 ||
-        !signet_hex_to_bytes32(writer_pubkey, (uint8_t[32]){0})) {
-      fprintf(stderr, "signetctl: invalid writer pubkey or TTL\n");
+    if (!signet_hex_to_bytes32(writer_pubkey, (uint8_t[32]){0})) {
+      fprintf(stderr, "signetctl: invalid writer pubkey\n");
       return 2;
     }
-    writer_ttl = (int)parsed_ttl;
   } else if (strcmp(cmd, "adopt-existing") == 0 ||
              strcmp(cmd, "restore-existing") == 0) {
     bool restoring = strcmp(cmd, "restore-existing") == 0;
@@ -1385,7 +1378,7 @@ int main(int argc, char **argv) {
                                         credential_policy_id,
                                         has_credential_expires_at,
                                         credential_expires_at,
-                                        writer_pubkey, writer_ttl);
+                                        writer_pubkey);
   signetctl_wipe_free_string(credential_payload_b64);
   credential_payload_b64 = NULL;
   if (!intent) {

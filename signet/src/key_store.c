@@ -212,17 +212,16 @@ bool signet_key_store_load_agent_key(SignetKeyStore *ks,
 
 int signet_key_store_with_signing_key(SignetKeyStore *ks,
                                       const char *agent_id,
-                                      const char *owner,
-                                      int64_t epoch,
+                                      const char *client,
                                       SignetKeyStoreCustodyFn fn,
                                       void *user_data) {
   if (!ks || !agent_id || !fn) return -1;
   g_mutex_lock(&ks->mu);
   int rc = -1;
   if (ks->store) {
-    rc = signet_store_writer_sign(ks->store, agent_id, owner, epoch,
-                                  fn, user_data);
-  } else if (!owner && epoch == 0) {
+    rc = signet_store_writer_sign(ks->store, agent_id, client, fn, user_data);
+  } else {
+    /* Cache-only stores have no persistent fence. */
     SignetCacheEntry *entry = g_hash_table_lookup(ks->cache, agent_id);
     if (entry) rc = fn(entry->secret_key, user_data);
   }
@@ -231,23 +230,10 @@ int signet_key_store_with_signing_key(SignetKeyStore *ks,
 }
 
 int signet_key_store_writer_acquire(SignetKeyStore *ks, const char *agent_id,
-                                    const char *owner, int64_t ttl_seconds,
-                                    int64_t *out_epoch, int64_t *out_expires_at) {
+                                    const char *owner, int64_t *out_epoch) {
   if (!ks || !ks->store) return -1;
   g_mutex_lock(&ks->mu);
-  int rc = signet_store_writer_acquire(ks->store, agent_id, owner,
-                                      ttl_seconds, out_epoch, out_expires_at);
-  g_mutex_unlock(&ks->mu);
-  return rc;
-}
-
-int signet_key_store_writer_renew(SignetKeyStore *ks, const char *agent_id,
-                                  const char *owner, int64_t epoch,
-                                  int64_t ttl_seconds, int64_t *out_expires_at) {
-  if (!ks || !ks->store) return -1;
-  g_mutex_lock(&ks->mu);
-  int rc = signet_store_writer_renew(ks->store, agent_id, owner, epoch,
-                                    ttl_seconds, out_expires_at);
+  int rc = signet_store_writer_acquire(ks->store, agent_id, owner, out_epoch);
   g_mutex_unlock(&ks->mu);
   return rc;
 }
@@ -358,7 +344,7 @@ done:
 
 static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
                                              const char *agent_id,
-                                             const char *owner, int64_t epoch,
+                                             const char *client,
                                              const char *method,
                                              const char *peer_pubkey,
                                              const char *input,
@@ -369,11 +355,11 @@ static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
   SignetCryptoWork work = {
       .method = method, .peer = peer_pubkey, .input = input
   };
-  int rc = signet_key_store_with_signing_key(ks, agent_id, owner, epoch,
+  int rc = signet_key_store_with_signing_key(ks, agent_id, client,
                                              signet_key_store_crypto_callback,
                                              &work);
-  /* The callback may have completed before a lease expires or DB commit
-   * fails. No ciphertext or plaintext may escape in either case. */
+  /* The callback may have completed before the custody transaction fails
+   * to commit. No ciphertext or plaintext may escape in that case. */
   if (rc != 0) {
     if (work.result) {
       sodium_memzero(work.result, work.result_len);
@@ -388,16 +374,16 @@ static int signet_key_store_crypt_in_custody(SignetKeyStore *ks,
 int signet_key_store_crypt_legacy(SignetKeyStore *ks, const char *agent_id,
                                   const char *method, const char *peer_pubkey,
                                   const char *input, char **out_result) {
-  return signet_key_store_crypt_in_custody(ks, agent_id, NULL, 0,
+  return signet_key_store_crypt_in_custody(ks, agent_id, NULL,
                                            method, peer_pubkey, input,
                                            out_result);
 }
 
 int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
-                                 const char *owner, int64_t epoch,
+                                 const char *client,
                                  const char *method, const char *peer_pubkey,
                                  const char *input, char **out_result) {
-  if (!owner || epoch < 1 || !method ||
+  if (!client || !method ||
       (strcmp(method, "nip44_encrypt") != 0 &&
        strcmp(method, "nip44_decrypt") != 0 &&
        strcmp(method, "nip44_encrypt_b64") != 0 &&
@@ -405,7 +391,7 @@ int signet_key_store_crypt_nip44(SignetKeyStore *ks, const char *agent_id,
     if (out_result) *out_result = NULL;
     return -1;
   }
-  return signet_key_store_crypt_in_custody(ks, agent_id, owner, epoch,
+  return signet_key_store_crypt_in_custody(ks, agent_id, client,
                                            method, peer_pubkey, input,
                                            out_result);
 }

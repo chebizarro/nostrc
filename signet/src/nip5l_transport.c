@@ -257,7 +257,7 @@ static char *nip5l_handle_message(SignetNip5lServer *ns,
           resp = g_strdup("{\"error\":\"invalid event json\"}");
         } else {
           int src = signet_key_store_with_signing_key(ns->keys, cs->agent_id,
-              NULL, 0, nip5l_sign_event_in_custody, ev);
+              NULL, nip5l_sign_event_in_custody, ev);
           if (src != 0) {
             resp = g_strdup("{\"error\":\"signing failed\"}");
           } else {
