@@ -19,8 +19,9 @@ const gchar *gh_mls_relay_row_get_url(GhMlsRelayRow *self);
 
 /*
  * GhMlsNewGroupPage (data/ui/gh-mls-new-group-page.blp; charter §7.9;
- * nostrc-9xf5): the "Encrypted Group" page of New Group
- * (gh_new_group_dialog_add_encrypted_page()).
+ * nostrc-9xf5): the "Encrypted Group" page of New Group, the name taking
+ * focus when it shows
+ * (gh_new_group_page_add_encrypted_page()).
  *
  *  - This device's approval (GhMlsService:identity-state, followed live):
  *    "Waiting for approval in Grotto…", or declined/failed with Try
@@ -31,8 +32,8 @@ const gchar *gh_mls_relay_row_get_url(GhMlsRelayRow *self);
  *  - Create (mls-new.create) is sensitive only when everything is ready;
  *    otherwise the reason is under it. It calls
  *    gh_mls_service_create_group_async() and shows the status: creating,
- *    created (Open Group: "open-group" with the GhMlsGroup, then the
- *    enclosing dialog closes) or not created (gh_mls_error_copy(), Change
+ *    created (Open Group: "open-group" with the GhMlsGroup; New Group
+ *    then finishes and the sidebar returns to the list) or not created (gh_mls_error_copy(), Change
  *    and Try Again).
  * Actions (widget actions): mls-new.create, mls-new.open, mls-new.back,
  * mls-new.retry-identity.

@@ -344,6 +344,35 @@ gh_window_open_item(GhWindow *self, gpointer item)
 }
 
 void
+gh_window_push_flow(GhWindow *self, AdwNavigationPage *page)
+{
+  g_return_if_fail(GH_IS_WINDOW(self));
+  g_return_if_fail(ADW_IS_NAVIGATION_PAGE(page));
+  if (adw_navigation_split_view_get_collapsed(self->split))
+    adw_navigation_split_view_set_show_content(self->split, FALSE);
+  AdwNavigationView *navigation = gh_sidebar_page_get_navigation(self->sidebar);
+  AdwNavigationPage *base = adw_navigation_view_find_page(navigation, "new-message");
+  if (!base && self->new_message && self->new_message_enabled) {
+    self->new_message(self, self->new_message_data);
+    base = adw_navigation_view_find_page(navigation, "new-message");
+  }
+  if (!base) {
+    gh_sidebar_page_push_panel(self->sidebar, page);
+    return;
+  }
+  if (adw_navigation_view_get_visible_page(navigation) != base)
+    adw_navigation_view_pop_to_page(navigation, base);
+  adw_navigation_view_push(navigation, page);
+}
+
+void
+gh_window_close_panels(GhWindow *self)
+{
+  g_return_if_fail(GH_IS_WINDOW(self));
+  gh_sidebar_page_close_panel(self->sidebar);
+}
+
+void
 gh_window_set_new_message_handler(GhWindow *self, GhWindowNewMessageFunc func, gpointer data,
                                   GDestroyNotify destroy)
 {

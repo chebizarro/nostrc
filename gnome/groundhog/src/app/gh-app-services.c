@@ -67,7 +67,7 @@
 #endif
 #if GROUNDHOG_HAVE_NEW_MESSAGE
 #include "gh-new-message-page.h"
-#include "gh-add-contact-dialog.h"
+#include "gh-add-contact-page.h"
 #include "gh-recipient.h"
 #endif
 

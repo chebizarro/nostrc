@@ -61,6 +61,18 @@ void gh_window_set_new_message_handler(GhWindow *self, GhWindowNewMessageFunc fu
 /* Whether New Message can run now (e.g. an account is active). */
 void gh_window_set_new_message_enabled(GhWindow *self, gboolean enabled);
 
+/* The flows New Message starts (New Group, Join Group, Add Contact, charter
+ * §7.9) are sidebar panels too, pushed over the New Message panel (Signal
+ * style): push_flow() brings the sidebar on screen (collapsed: leaves an
+ * open conversation for it), opens New Message under the flow when it is not
+ * in the sidebar's stack already (when win.new-message can run), drops
+ * anything over it, and pushes page; Back or Escape on page returns to New
+ * Message. Without New Message the page is pushed over the conversation
+ * list. close_panels() returns the sidebar to the list (a flow that
+ * finished). */
+void gh_window_push_flow(GhWindow *self, AdwNavigationPage *page);
+void gh_window_close_panels(GhWindow *self);
+
 /* Adds app.quit and binds every accelerator of the shortcuts window to its
  * action on app (Ctrl+F, Alt+Up/Down and Ctrl+Page Up/Down, Ctrl+N, Ctrl+?,
  * Ctrl+, for app.preferences, which gh-app-services.c adds, Ctrl+W, Ctrl+Q).

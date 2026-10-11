@@ -17,7 +17,7 @@ G_BEGIN_DECLS
  * directly.
  *
  *  - New Group (gh_mls_ui_extend_new_group(), a GhGroupUiNewGroupFunc):
- *    adds the "Encrypted Group" page (GhMlsNewGroupPage) to each dialog while
+ *    adds the "Encrypted Group" page (GhMlsNewGroupPage) to each New Group page while
  *    a service exists; Open Group opens its conversation.
  *  - Invitations: the sidebar's "Group Invitations · N" entry
  *    (gh_sidebar_page_set_invitations()) and win.group-invitations present
@@ -83,7 +83,7 @@ gboolean gh_mls_ui_show_info(GhWindow *window, GhConversation *conversation,
 
 /* A GhGroupUiNewGroupFunc: adds the encrypted page to dialog (nothing
  * without a service). gh_mls_ui_attach() installs it. */
-void gh_mls_ui_extend_new_group(GhWindow *window, GhNewGroupDialog *dialog, gpointer user_data);
+void gh_mls_ui_extend_new_group(GhWindow *window, GhNewGroupPage *new_group, gpointer user_data);
 
 /* The window's current service, for tests (NULL: none). */
 GhMlsService *gh_mls_ui_get_service(GhWindow *window);

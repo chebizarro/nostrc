@@ -17,8 +17,9 @@ G_BEGIN_DECLS
  * chat"): Back (new-message.close) or Escape slides back, from the confirm
  * page first to the search. Above the contacts are rows for the window's
  * win.new-group, win.join-group and win.add-contact (each shown only while
- * the window has that action, hidden while searching); choosing one leaves
- * the panel and runs it. Contacts show their profile picture only when the
+ * the window has that action, hidden while searching); choosing one runs
+ * it, and its flow slides in over the panel (gh_window_push_flow()): Back
+ * returns here. Contacts show their profile picture only when the
  * shared cache has it with that contact's consent (config->picture, W32);
  * otherwise initials of a cached name, never of an npub.
  *

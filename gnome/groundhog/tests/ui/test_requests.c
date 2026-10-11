@@ -27,15 +27,20 @@
  *    the sidebar to it (entry focused), Back and Escape slide back, the
  *    search filters the contacts and hides the actions, Enter takes the
  *    first match, an npub gives its exact row, New Group / Join Group / Add
- *    Contact rows run the window's actions (Add Contact's real dialog),
+ *    Contact rows run the window's actions with the panel kept under them,
  *    choosing a contact opens the DM, and in the collapsed (360x294) layout
- *    New Message leaves an open conversation for the panel; PNGs of the
- *    chat list, the panel (wide, narrow) and a filtered search
+ *    New Message leaves an open conversation for the panel; Add Contact
+ *    (the real page) slides in over New Message, field focused, Escape
+ *    returns, adding opens the conversation and closes the panels, and
+ *    collapsed, win.add-contact brings the sidebar back; PNGs of the chat
+ *    list, the panel (wide, narrow), Add Contact (wide, narrow) and a
+ *    filtered search
  *    (groundhog-new-chat-panel-*.png, in GROUNDHOG_TEST_SCREENSHOTS or a
  *    temporary directory removed afterwards);
  *  - with GROUNDHOG_TEST_SCREENSHOTS=<dir>, PNGs of both (wide and 360x294).
  * Waits iterate the main context against a deadline; they never sleep. */
-#include "gh-add-contact-dialog.h"
+#include "gh-add-contact-page.h"
+#include "gh-test-escape.h"
 #include "gh-contact-directory.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
@@ -1463,6 +1468,12 @@ split_collapsed(gpointer split)
   return adw_navigation_split_view_get_collapsed(split);
 }
 
+static gboolean
+split_expanded(gpointer split)
+{
+  return !adw_navigation_split_view_get_collapsed(split);
+}
+
 static GhNewMessagePage *
 visible_panel(Fixture *f)
 {
@@ -1476,6 +1487,15 @@ shoot_panel(Fixture *f, const char *dir, const char *name)
   drain();
   gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
   save_png_as(GTK_WIDGET(f->window), dir, "groundhog-new-chat-panel", name);
+}
+
+/* The flows New Message starts (groundhog-group-contact-panels-*.png). */
+static void
+shoot_flow(Fixture *f, const char *dir, const char *name)
+{
+  drain();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  save_png_as(GTK_WIDGET(f->window), dir, "groundhog-group-contact-panels", name);
 }
 
 static void
@@ -1629,18 +1649,20 @@ test_gui_new_chat_panel(void)
   g_assert_null(visible_panel(&f));
   g_assert_true(gtk_widget_get_mapped(list_search));
 
-  /* Each action row leaves the panel and runs the window's action (last:
-   * Add Contact's real dialog stays open until the window goes). */
+  /* Each action row runs the window's action; the panel stays under the
+   * flow it starts (the group flows' own suites push them,
+   * test_group_ui.c). */
   panel = open_dialog(&f);
   adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "new_group_row")));
   drain();
   g_assert_cmpuint(new_groups, ==, 1);
-  g_assert_null(visible_panel(&f));
-  panel = open_dialog(&f);
+  g_assert_true(visible_panel(&f) == panel);
   adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "join_group_row")));
   drain();
   g_assert_cmpuint(joins, ==, 1);
-  g_assert_null(visible_panel(&f));
+  g_assert_true(visible_panel(&f) == panel);
+  gh_new_message_page_close(panel);
+  drain();
   /* A row whose action the window lacks is not offered. */
   g_action_map_remove_action(G_ACTION_MAP(f.window), "join-group");
   panel = open_dialog(&f);
@@ -1649,12 +1671,71 @@ test_gui_new_chat_panel(void)
   gh_new_message_page_close(panel);
   drain();
 
+  /* Add Contact slides in over New Message (the real page), field focused,
+   * the conversation pane untouched; Escape returns to New Message. */
+  resize(&f, 900, 600);
+  gh_test_spin_until(split_expanded, split);
   panel = open_dialog(&f);
+  gh_test_spin_until(widget_mapped, panel);
+  gboolean shown_before = gh_content_page_get_conversation_shown(content);
   adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "add_contact_row")));
   drain();
-  g_assert_null(visible_panel(&f));
-  AdwDialog *added = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window));
-  g_assert_true(GH_IS_ADD_CONTACT_DIALOG(added)); /* closed with the window */
+  AdwNavigationPage *flow = gh_sidebar_page_get_panel(sidebar);
+  g_assert_true(GH_IS_ADD_CONTACT_PAGE(flow));
+  AdwNavigationView *sidebar_nav = gh_sidebar_page_get_navigation(sidebar);
+  g_assert_true(adw_navigation_view_get_previous_page(sidebar_nav, flow) ==
+                ADW_NAVIGATION_PAGE(panel));
+  gh_test_spin_until(widget_mapped, flow);
+  GtkWidget *contact_input = template_child(flow, GH_TYPE_ADD_CONTACT_PAGE, "input_row");
+  g_assert_true(focus_in(f.window, contact_input));
+  g_assert_cmpint(gh_content_page_get_conversation_shown(content), ==, shown_before);
+  g_assert_false(adw_navigation_split_view_get_collapsed(split));
+  gh_test_press_escape(GTK_WINDOW(f.window));
+  drain();
+  g_assert_true(visible_panel(&f) == panel);
+
+  /* Back to it, then add Frank: the sidebar returns to the list and his
+   * conversation opens, focused. */
+  adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "add_contact_row")));
+  drain();
+  flow = gh_sidebar_page_get_panel(sidebar);
+  g_assert_true(GH_IS_ADD_CONTACT_PAGE(flow));
+  gh_test_spin_until(widget_mapped, flow);
+  contact_input = template_child(flow, GH_TYPE_ADD_CONTACT_PAGE, "input_row");
+  gtk_editable_set_text(GTK_EDITABLE(contact_input), frank->npub);
+  g_signal_emit_by_name(contact_input, "apply");
+  g_assert_true(gtk_widget_get_sensitive(template_child(flow, GH_TYPE_ADD_CONTACT_PAGE,
+                                                        "add_button")));
+  shoot_flow(&f, shots, "add-contact-wide");
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(flow), "add-contact.add", NULL));
+  drain();
+  GhConversation *frank_room = room_of(&f, frank);
+  g_assert_nonnull(frank_room);
+  g_assert_null(gh_sidebar_page_get_panel(sidebar));
+  g_assert_true(gh_sidebar_page_get_selected(sidebar) == frank_room);
+  g_assert_true(gh_conversation_view_get_conversation(
+    GH_CONVERSATION_VIEW(gh_content_page_get_view(content))) == frank_room);
+  g_assert_true(focus_in(f.window, GTK_WIDGET(content)));
+
+  /* Collapsed: win.add-contact from an open conversation brings the
+   * sidebar back with Add Contact over New Message; Back returns to it. */
+  resize(&f, 360, 294);
+  gh_test_spin_until(split_collapsed, split);
+  g_assert_true(gh_window_open_item(f.window, frank_room));
+  drain();
+  g_assert_true(adw_navigation_split_view_get_show_content(split));
+  g_action_group_activate_action(G_ACTION_GROUP(f.window), "add-contact", NULL);
+  drain();
+  g_assert_false(adw_navigation_split_view_get_show_content(split));
+  flow = gh_sidebar_page_get_panel(sidebar);
+  g_assert_true(GH_IS_ADD_CONTACT_PAGE(flow));
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(adw_navigation_view_get_previous_page(sidebar_nav, flow)));
+  gh_test_spin_until(widget_mapped, flow);
+  g_assert_true(focus_in(f.window, template_child(flow, GH_TYPE_ADD_CONTACT_PAGE, "input_row")));
+  shoot_flow(&f, shots, "add-contact-narrow");
+  gh_add_contact_page_close(GH_ADD_CONTACT_PAGE(flow));
+  drain();
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(visible_panel(&f)));
   fixture_down(&f);
   if (tmp) {
     rm_rf(tmp);

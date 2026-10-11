@@ -5,11 +5,12 @@ using Adw 1;
 // nostr: URI, hex pubkey or NIP-05 address. Nothing touches the network
 // before the user acts. The parsed result is shown; NIP-05 needs an
 // explicit lookup consent row. "Add" creates an accepted DM conversation,
-// making the person an accepted contact.
-template $GhAddContactDialog: Adw.Dialog {
+// making the person an accepted contact. A sidebar panel pushed over New
+// Message (gh_window_push_flow()): the header's back button and Escape
+// return to it.
+template $GhAddContactPage: Adw.NavigationPage {
+  tag: "add-contact";
   title: _("Add Contact");
-  content-width: 400;
-  content-height: -1;
 
   child: Adw.ToolbarView {
     [top]

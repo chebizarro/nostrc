@@ -1,11 +1,11 @@
-#include "gh-add-contact-dialog.h"
+#include "gh-add-contact-page.h"
 #include "gh-recipient.h"
 #include "gh-window.h"
 
 #include <glib/gi18n.h>
 
-struct _GhAddContactDialog {
-  AdwDialog parent_instance;
+struct _GhAddContactPage {
+  AdwNavigationPage parent_instance;
   AdwEntryRow *input_row;
   AdwPreferencesGroup *result_group;
   AdwActionRow *result_row;
@@ -23,10 +23,10 @@ struct _GhAddContactDialog {
 enum { SIGNAL_CONTACT_ADDED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-G_DEFINE_FINAL_TYPE(GhAddContactDialog, gh_add_contact_dialog, ADW_TYPE_DIALOG)
+G_DEFINE_FINAL_TYPE(GhAddContactPage, gh_add_contact_page, ADW_TYPE_NAVIGATION_PAGE)
 
 static void
-show_error(GhAddContactDialog *self, const gchar *message)
+show_error(GhAddContactPage *self, const gchar *message)
 {
   gtk_label_set_text(self->error_label, message);
   gtk_widget_set_visible(GTK_WIDGET(self->error_label), message != NULL);
@@ -35,7 +35,7 @@ show_error(GhAddContactDialog *self, const gchar *message)
 }
 
 static void
-show_person(GhAddContactDialog *self, const gchar *pubkey, const gchar *display)
+show_person(GhAddContactPage *self, const gchar *pubkey, const gchar *display)
 {
   g_free(self->resolved_pubkey);
   self->resolved_pubkey = g_strdup(pubkey);
@@ -63,7 +63,7 @@ show_person(GhAddContactDialog *self, const gchar *pubkey, const gchar *display)
 static void
 nip05_done(GObject *source, GAsyncResult *result, gpointer data)
 {
-  GhAddContactDialog *self = data;
+  GhAddContactPage *self = data;
   g_autoptr(GError) error = NULL;
   g_autofree gchar *pubkey = gh_nip05_lookup_finish(GH_NIP05(source), result, &error);
   gtk_spinner_set_spinning(self->lookup_spinner, FALSE);
@@ -81,7 +81,7 @@ nip05_done(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-start_lookup(GhAddContactDialog *self, const gchar *address)
+start_lookup(GhAddContactPage *self, const gchar *address)
 {
   if (self->lookup_cancellable)
     g_cancellable_cancel(self->lookup_cancellable);
@@ -97,7 +97,7 @@ static void
 on_lookup_activated(AdwActionRow *row, gpointer data)
 {
   (void)row;
-  GhAddContactDialog *self = data;
+  GhAddContactPage *self = data;
   const gchar *text = gtk_editable_get_text(GTK_EDITABLE(self->input_row));
   g_autoptr(GhRecipientInput) input = gh_recipient_input_parse(text);
   if (input->kind == GH_RECIPIENT_INPUT_NIP05 && input->nip05)
@@ -107,7 +107,7 @@ on_lookup_activated(AdwActionRow *row, gpointer data)
 static void
 on_input_apply(AdwEntryRow *entry, gpointer data)
 {
-  GhAddContactDialog *self = data;
+  GhAddContactPage *self = data;
   const gchar *text = gtk_editable_get_text(GTK_EDITABLE(entry));
   g_autoptr(GhRecipientInput) input = gh_recipient_input_parse(text);
 
@@ -171,7 +171,7 @@ on_add(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  GhAddContactDialog *self = GH_ADD_CONTACT_DIALOG(widget);
+  GhAddContactPage *self = GH_ADD_CONTACT_PAGE(widget);
   if (!self->resolved_pubkey)
     return;
   /* "Adding a contact" = opening an accepted DM conversation with them.
@@ -186,68 +186,109 @@ on_add(GtkWidget *widget, const gchar *action, GVariant *parameter)
     return;
   }
   g_signal_emit(self, signals[SIGNAL_CONTACT_ADDED], 0, room);
-  adw_dialog_close(ADW_DIALOG(self));
+}
+
+/* Back and Escape: to the page under this one (New Message). */
+static gboolean
+on_escape(GtkWidget *widget, GVariant *args, gpointer data)
+{
+  (void)args;
+  (void)data;
+  gh_add_contact_page_close(GH_ADD_CONTACT_PAGE(widget));
+  return TRUE;
+}
+
+void
+gh_add_contact_page_close(GhAddContactPage *self)
+{
+  g_return_if_fail(GH_IS_ADD_CONTACT_PAGE(self));
+  if (self->lookup_cancellable)
+    g_cancellable_cancel(self->lookup_cancellable);
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(self));
+}
+
+/* Focus goes to the field on arrival (charter §7.14). */
+static void
+gh_add_contact_page_shown(AdwNavigationPage *page)
+{
+  gtk_widget_grab_focus(GTK_WIDGET(GH_ADD_CONTACT_PAGE(page)->input_row));
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_add_contact_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_add_contact_page_parent_class)->shown(page);
+}
+
+/* Taken out of the window (Back, Escape, added, or the window closed): a
+ * lookup still running is cancelled. */
+static void
+gh_add_contact_page_unroot(GtkWidget *widget)
+{
+  GhAddContactPage *self = GH_ADD_CONTACT_PAGE(widget);
+  if (self->lookup_cancellable)
+    g_cancellable_cancel(self->lookup_cancellable);
+  GTK_WIDGET_CLASS(gh_add_contact_page_parent_class)->unroot(widget);
 }
 
 static void
-gh_add_contact_dialog_dispose(GObject *object)
+gh_add_contact_page_dispose(GObject *object)
 {
-  GhAddContactDialog *self = GH_ADD_CONTACT_DIALOG(object);
+  GhAddContactPage *self = GH_ADD_CONTACT_PAGE(object);
   if (self->lookup_cancellable) {
     g_cancellable_cancel(self->lookup_cancellable);
     g_clear_object(&self->lookup_cancellable);
   }
   g_clear_object(&self->config.conversations);
   g_clear_object(&self->config.nip05);
-  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_ADD_CONTACT_DIALOG);
-  G_OBJECT_CLASS(gh_add_contact_dialog_parent_class)->dispose(object);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_ADD_CONTACT_PAGE);
+  G_OBJECT_CLASS(gh_add_contact_page_parent_class)->dispose(object);
 }
 
 static void
-gh_add_contact_dialog_finalize(GObject *object)
+gh_add_contact_page_finalize(GObject *object)
 {
-  GhAddContactDialog *self = GH_ADD_CONTACT_DIALOG(object);
+  GhAddContactPage *self = GH_ADD_CONTACT_PAGE(object);
   g_free(self->resolved_pubkey);
-  G_OBJECT_CLASS(gh_add_contact_dialog_parent_class)->finalize(object);
+  G_OBJECT_CLASS(gh_add_contact_page_parent_class)->finalize(object);
 }
 
 static void
-gh_add_contact_dialog_class_init(GhAddContactDialogClass *klass)
+gh_add_contact_page_class_init(GhAddContactPageClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  object_class->dispose = gh_add_contact_dialog_dispose;
-  object_class->finalize = gh_add_contact_dialog_finalize;
+  object_class->dispose = gh_add_contact_page_dispose;
+  object_class->finalize = gh_add_contact_page_finalize;
+  widget_class->unroot = gh_add_contact_page_unroot;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_add_contact_page_shown;
   signals[SIGNAL_CONTACT_ADDED] = g_signal_new(
     "contact-added", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
     NULL, NULL, G_TYPE_NONE, 1, GH_TYPE_CONVERSATION);
   gtk_widget_class_set_template_from_resource(
-    widget_class, "/org/nostr/Groundhog/ui/gh-add-contact-dialog.ui");
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, input_row);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, result_group);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, result_row);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, result_avatar);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, lookup_row);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, lookup_spinner);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, error_label);
-  gtk_widget_class_bind_template_child(widget_class, GhAddContactDialog, add_button);
+    widget_class, "/org/nostr/Groundhog/ui/gh-add-contact-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, input_row);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, result_group);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, result_row);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, result_avatar);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, lookup_row);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, lookup_spinner);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, error_label);
+  gtk_widget_class_bind_template_child(widget_class, GhAddContactPage, add_button);
   gtk_widget_class_install_action(widget_class, "add-contact.add", NULL, on_add);
+  gtk_widget_class_add_binding(widget_class, GDK_KEY_Escape, 0, on_escape, NULL);
 }
 
 static void
-gh_add_contact_dialog_init(GhAddContactDialog *self)
+gh_add_contact_page_init(GhAddContactPage *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   g_signal_connect(self->input_row, "apply", G_CALLBACK(on_input_apply), self);
   g_signal_connect(self->lookup_row, "activated", G_CALLBACK(on_lookup_activated), self);
 }
 
-GhAddContactDialog *
-gh_add_contact_dialog_new(const GhAddContactConfig *config)
+GhAddContactPage *
+gh_add_contact_page_new(const GhAddContactConfig *config)
 {
   g_return_val_if_fail(config != NULL, NULL);
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(config->conversations), NULL);
-  GhAddContactDialog *self = g_object_new(GH_TYPE_ADD_CONTACT_DIALOG, NULL);
+  GhAddContactPage *self = g_object_new(GH_TYPE_ADD_CONTACT_PAGE, NULL);
   self->config = *config;
   g_object_ref(config->conversations);
   if (config->nip05)
@@ -271,11 +312,17 @@ add_contact_attachment_free(gpointer data)
   g_free(a);
 }
 
+/* Added: the sidebar returns to the list and the conversation opens, with
+ * focus in it (its composer when sending is possible). */
 static void
-on_contact_added(GhAddContactDialog *dialog, GhConversation *room, gpointer data)
+on_contact_added(GhAddContactPage *page, GhConversation *room, gpointer data)
 {
-  (void)dialog;
-  gh_window_open_item(GH_WINDOW(data), room);
+  (void)page;
+  GhWindow *window = GH_WINDOW(data);
+  gboolean opened = gh_window_open_item(window, room);
+  gh_window_close_panels(window);
+  if (opened)
+    gh_content_page_focus_conversation(gh_window_get_content(window));
 }
 
 static void
@@ -284,10 +331,10 @@ present_add_contact(GSimpleAction *action, GVariant *parameter, gpointer data)
   (void)action;
   (void)parameter;
   AddContactAttachment *a = data;
-  GhAddContactDialog *dialog = gh_add_contact_dialog_new(&a->config);
-  g_signal_connect_object(dialog, "contact-added", G_CALLBACK(on_contact_added),
+  GhAddContactPage *page = gh_add_contact_page_new(&a->config);
+  g_signal_connect_object(page, "contact-added", G_CALLBACK(on_contact_added),
                           a->window, 0);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(a->window));
+  gh_window_push_flow(a->window, ADW_NAVIGATION_PAGE(page));
 }
 
 static void

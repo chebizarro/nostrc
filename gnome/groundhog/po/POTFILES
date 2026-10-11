@@ -3,7 +3,7 @@
 data/org.nostr.Groundhog.desktop.in
 data/org.nostr.Groundhog.metainfo.xml
 data/ui/gh-account-ui.blp
-data/ui/gh-add-contact-dialog.blp
+data/ui/gh-add-contact-page.blp
 data/ui/gh-attachment-card.blp
 data/ui/gh-attachment-sheet.blp
 data/ui/gh-blocked-page.blp
@@ -19,7 +19,7 @@ data/ui/gh-create-poll-dialog.blp
 data/ui/gh-delivery-details.blp
 data/ui/gh-delivery-indicator.blp
 data/ui/gh-group-info-dialog.blp
-data/ui/gh-group-join-dialog.blp
+data/ui/gh-group-join-page.blp
 data/ui/gh-group-member-row.blp
 data/ui/gh-message-reference.blp
 data/ui/gh-message-row.blp
@@ -31,7 +31,7 @@ data/ui/gh-mls-invites-dialog.blp
 data/ui/gh-mls-member-row.blp
 data/ui/gh-mls-new-group-page.blp
 data/ui/gh-mls-relay-row.blp
-data/ui/gh-new-group-dialog.blp
+data/ui/gh-new-group-page.blp
 data/ui/gh-new-message-page.blp
 data/ui/gh-nip46-pair-dialog.blp
 data/ui/gh-onboarding-view.blp
@@ -62,7 +62,7 @@ src/media/gh-attachments.c
 src/net/gh-issue-uploader.c
 src/mls/gh-mls-attachments.c
 src/ui/gh-about-dialog.c
-src/ui/gh-add-contact-dialog.c
+src/ui/gh-add-contact-page.c
 src/ui/gh-agents-page.c
 src/ui/gh-attachment-card.c
 src/ui/gh-attachment-sheet.c
@@ -77,7 +77,7 @@ src/ui/gh-create-poll-dialog.c
 src/ui/gh-delivery-indicator.c
 src/ui/gh-group-copy.c
 src/ui/gh-group-info-dialog.c
-src/ui/gh-group-join-dialog.c
+src/ui/gh-group-join-page.c
 src/ui/gh-group-ui.c
 src/ui/gh-issue-adapters.c
 src/ui/gh-message-row.c
@@ -87,7 +87,7 @@ src/ui/gh-mls-invitee-picker.c
 src/ui/gh-mls-invites-dialog.c
 src/ui/gh-mls-new-group-page.c
 src/ui/gh-mls-ui.c
-src/ui/gh-new-group-dialog.c
+src/ui/gh-new-group-page.c
 src/ui/gh-new-message-page.c
 src/ui/gh-nip46-auth-url.c
 src/ui/gh-nip46-pair-dialog.c

@@ -40,6 +40,7 @@
 #include "gh-mls-invitee-picker.h"
 #include "gh-mls-invites-dialog.h"
 #include "gh-mls-new-group-page.h"
+#include "gh-test-escape.h"
 #include "gh-mls-ui.h"
 #include "gh-nip29-service.h"
 #include "gh-shell.h"
@@ -863,6 +864,44 @@ no_dialog(gpointer window)
   return visible_dialog(window) == NULL;
 }
 
+/* With GROUNDHOG_TEST_SCREENSHOTS=<dir>: the window as
+ * <dir>/groundhog-group-contact-panels-<name>.png. */
+static void
+save_shot(GhWindow *window, const gchar *name)
+{
+  const gchar *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (!dir || !*dir)
+    return;
+  drain();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+  drain();
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(GTK_WIDGET(window));
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  graphene_rect_t bounds;
+  gsk_render_node_get_bounds(node, &bounds);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
+  g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
+  g_autofree gchar *path = g_strdup_printf("%s/groundhog-group-contact-panels-%s.png", dir, name);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+}
+
+/* The sidebar's visible panel (a flow such as New Group), or NULL. */
+static AdwNavigationPage *
+visible_flow(GhWindow *window)
+{
+  return gh_sidebar_page_get_panel(gh_window_get_sidebar(window));
+}
+
+static gboolean
+no_flow(gpointer window)
+{
+  return visible_flow(window) == NULL;
+}
+
 static const gchar *
 header_subtitle(GhWindow *window)
 {
@@ -1121,11 +1160,11 @@ test_gui_new_group(void)
   /* New Group opens on the chooser, both kinds explained. */
   g_assert_true(g_action_group_get_action_enabled(G_ACTION_GROUP(window), "new-group"));
   g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
-  AdwDialog *dialog = visible_dialog(window);
-  g_assert_true(GH_IS_NEW_GROUP_DIALOG(dialog));
-  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationPage *dialog = visible_flow(window);
+  g_assert_true(GH_IS_NEW_GROUP_PAGE(dialog));
+  spin_until(is_mapped, dialog, "New Group shown");
   AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(
-    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_DIALOG, "navigation"));
+    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_PAGE, "navigation"));
   g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
                   ==, "type");
   GtkWidget *encrypted = find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group");
@@ -1134,10 +1173,32 @@ test_gui_new_group(void)
                   "Only members can read messages. Ask people to use a compatible Marmot "
                   "format; some app versions cannot join.");
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Relay Group"));
+  /* A sidebar panel: the chooser's first row has the focus; the form's own
+   * Back is hidden (the form is a pushed step here). */
+  GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
+  g_assert_true(focus && (focus == encrypted || gtk_widget_is_ancestor(focus, encrypted)));
+  g_assert_false(gtk_widget_get_visible(GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_PAGE, "form_back_button"))));
+  save_shot(window, "new-group-chooser-wide");
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
-    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+    gh_new_group_page_get_encrypted_page(GH_NEW_GROUP_PAGE(dialog)));
   g_assert_true(ADW_NAVIGATION_PAGE(page) == adw_navigation_view_get_visible_page(navigation));
+  /* Escape: one step back, to the chooser; then on to the encrypted page. */
+  spin_until(is_mapped, page, "the encrypted page shown");
+  gh_test_press_escape(GTK_WINDOW(window));
+  drain();
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
+                  ==, "type");
+  g_assert_true(visible_flow(window) == dialog);
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
+  g_assert_true(ADW_NAVIGATION_PAGE(page) == adw_navigation_view_get_visible_page(navigation));
+  spin_until(is_mapped, page, "the encrypted page shown");
+  focus = gtk_window_get_focus(GTK_WINDOW(window));
+  GtkWidget *name_row = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(page), GH_TYPE_MLS_NEW_GROUP_PAGE, "name_row"));
+  g_assert_true(focus && (focus == name_row || gtk_widget_is_ancestor(focus, name_row)));
+  save_shot(window, "new-group-encrypted-wide");
   g_assert_nonnull(find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Who can see this group"));
   AdwActionRow *compatibility = ADW_ACTION_ROW(
     find_type(GTK_WIDGET(page), ADW_TYPE_ACTION_ROW, "Marmot compatibility"));
@@ -1253,7 +1314,7 @@ test_gui_new_group(void)
 
   /* Open Group closes the dialog and shows the conversation. */
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.open", NULL);
-  spin_until(no_dialog, window, "New Group closed");
+  spin_until(no_flow, window, "New Group closed");
   ShownWait shown = { window, conversation };
   spin_until(is_shown, &shown, "the new group shown");
   g_assert_cmpstr(header_subtitle(window), ==, "Encrypted group · 2 members");
@@ -1639,18 +1700,18 @@ test_gui_flag_new_group(void)
   g_assert_true(g_action_group_has_action(G_ACTION_GROUP(window), "group-invitations"));
 
   g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
-  AdwDialog *dialog = visible_dialog(window);
-  g_assert_true(GH_IS_NEW_GROUP_DIALOG(dialog));
-  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationPage *dialog = visible_flow(window);
+  g_assert_true(GH_IS_NEW_GROUP_PAGE(dialog));
+  spin_until(is_mapped, dialog, "New Group shown");
   AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(
-    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_DIALOG, "navigation"));
+    gtk_widget_get_template_child(GTK_WIDGET(dialog), GH_TYPE_NEW_GROUP_PAGE, "navigation"));
   const gchar *first = adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation));
   g_autoptr(GListModel) stack = adw_navigation_view_get_navigation_stack(navigation);
   g_assert_cmpuint(g_list_model_get_n_items(stack), ==, 1);   /* nothing to go back to */
   g_assert_cmpstr(first, ==, "type");
-  g_assert_nonnull(gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+  g_assert_nonnull(gh_new_group_page_get_encrypted_page(GH_NEW_GROUP_PAGE(dialog)));
   g_assert_nonnull(find_mapped(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW, "Encrypted Group"));
-  adw_dialog_force_close(dialog);
+  gh_window_close_panels(window);
   drain();
   close_window(window);
   gh_test_release(nip29);
@@ -1969,11 +2030,12 @@ test_gui_new_group_formats(void)
   group_send_stub_reset();
   GhWindow *window = app_window(alice, nip29);
   g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
-  AdwDialog *dialog = visible_dialog(window);
-  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationPage *dialog = visible_flow(window);
+  g_assert_true(GH_IS_NEW_GROUP_PAGE(dialog));
+  spin_until(is_mapped, dialog, "New Group shown");
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
-    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+    gh_new_group_page_get_encrypted_page(GH_NEW_GROUP_PAGE(dialog)));
   gh_mls_new_group_page_set_name(page, "Formats");
   /* The group relay G, not W: the invitees' KeyPackages are on W, and a
    * lookup never asks the new group's relays (nostrc-0bdg). */
@@ -2039,7 +2101,7 @@ test_gui_new_group_formats(void)
   g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
   GhConversation *conversation = gh_conversation_store_lookup(alice->model, room);
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.open", NULL);
-  spin_until(no_dialog, window, "New Group closed");
+  spin_until(no_flow, window, "New Group closed");
 
   /* Group Info: Bob can't join this group's format, and it says why. */
   GhMlsGroupInfoDialog *info = show_info(window, conversation);
@@ -2081,11 +2143,12 @@ test_gui_new_group_format_changed(void)
   group_send_stub_reset();
   GhWindow *window = app_window(alice, nip29);
   g_action_group_activate_action(G_ACTION_GROUP(window), "new-group", NULL);
-  AdwDialog *dialog = visible_dialog(window);
-  spin_until(gh_test_dialog_shown, dialog, "New Group shown");
+  AdwNavigationPage *dialog = visible_flow(window);
+  g_assert_true(GH_IS_NEW_GROUP_PAGE(dialog));
+  spin_until(is_mapped, dialog, "New Group shown");
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   GhMlsNewGroupPage *page = GH_MLS_NEW_GROUP_PAGE(
-    gh_new_group_dialog_get_encrypted_page(GH_NEW_GROUP_DIALOG(dialog)));
+    gh_new_group_page_get_encrypted_page(GH_NEW_GROUP_PAGE(dialog)));
   gh_mls_new_group_page_set_name(page, "As Shown");
   g_assert_true(gh_mls_new_group_page_add_relay(page, w.g.url));
   gtk_widget_activate_action(find_type(GTK_WIDGET(page), GH_TYPE_MLS_RELAY_ROW, w.w.url),
@@ -2112,7 +2175,7 @@ test_gui_new_group_format_changed(void)
   wait_pick(picker, hex[BOB], GH_MLS_INVITEE_READY_LEGACY);
   g_assert_nonnull(gh_mls_new_group_page_get_format_notice(page));
   g_assert_cmpint(gh_mls_new_group_page_get_format(page), ==, GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
-  adw_dialog_force_close(dialog);
+  gh_window_close_panels(window);
   drain();
   close_window(window);
   gh_test_release(nip29);

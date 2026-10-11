@@ -544,11 +544,11 @@ sync_poll_button(MlsUi *ui)
 /* ---- dialogs ------------------------------------------------------------------------------ */
 
 void
-gh_mls_ui_extend_new_group(GhWindow *window, GhNewGroupDialog *dialog, gpointer user_data)
+gh_mls_ui_extend_new_group(GhWindow *window, GhNewGroupPage *new_group, gpointer user_data)
 {
   (void)user_data;
   g_return_if_fail(GH_IS_WINDOW(window));
-  g_return_if_fail(GH_IS_NEW_GROUP_DIALOG(dialog));
+  g_return_if_fail(GH_IS_NEW_GROUP_PAGE(new_group));
   MlsUi *ui = ui_of(window);
   GhMlsUiContext context;
   if (!ui)
@@ -559,7 +559,7 @@ gh_mls_ui_extend_new_group(GhWindow *window, GhNewGroupDialog *dialog, gpointer 
   GhMlsNewGroupPage *page = gh_mls_new_group_page_new(&context);
   g_signal_connect_object(page, "open-group", G_CALLBACK(open_group), window,
                           G_CONNECT_SWAPPED);
-  gh_new_group_dialog_add_encrypted_page(dialog, ADW_NAVIGATION_PAGE(page));
+  gh_new_group_page_add_encrypted_page(new_group, ADW_NAVIGATION_PAGE(page));
 }
 
 gboolean
