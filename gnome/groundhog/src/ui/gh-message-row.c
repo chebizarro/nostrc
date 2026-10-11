@@ -1053,7 +1053,47 @@ body_table(GhMessageRow *self, const GnMarkdownPangoBlock *block)
   return GTK_WIDGET(grid);
 }
 
-/* Shows the rendered blocks of a body with a table (see body_blocks). */
+/* The width of @chars characters of the body text, as a label measures
+ * its max-width-chars. */
+static gint
+body_chars_width(GhMessageRow *self, gint chars)
+{
+  PangoContext *context = gtk_widget_get_pango_context(GTK_WIDGET(self->body_label));
+  PangoFontMetrics *metrics = pango_context_get_metrics(context, NULL, NULL);
+  gint width = MAX(pango_font_metrics_get_approximate_char_width(metrics),
+                   pango_font_metrics_get_approximate_digit_width(metrics));
+  pango_font_metrics_unref(metrics);
+  return PANGO_PIXELS_CEIL(width * chars);
+}
+
+/* A fenced code block as written: one unwrapped, selectable monospace label
+ * that scrolls sideways (scrollbar only when it is wider than the bubble's
+ * text width) and is never taller than its lines. */
+static GtkWidget *
+body_code(GhMessageRow *self, const GnMarkdownPangoBlock *block, gint chars)
+{
+  GtkLabel *label = GTK_LABEL(gtk_label_new(NULL));
+  gtk_label_set_markup(label, block->markup);
+  gtk_label_set_selectable(label, TRUE);
+  gtk_label_set_wrap(label, FALSE);
+  gtk_label_set_xalign(label, 0);
+  gtk_label_set_yalign(label, 0);
+  gtk_widget_add_css_class(GTK_WIDGET(label), "monospace");
+  GtkScrolledWindow *scroller = GTK_SCROLLED_WINDOW(gtk_scrolled_window_new());
+  gtk_widget_add_css_class(GTK_WIDGET(scroller), "groundhog-message-code");
+  gtk_scrolled_window_set_policy(scroller, GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+  gtk_scrolled_window_set_propagate_natural_width(scroller, TRUE);
+  gtk_scrolled_window_set_propagate_natural_height(scroller, TRUE);
+  gtk_scrolled_window_set_max_content_width(scroller, body_chars_width(self, chars));
+  gtk_scrolled_window_set_child(scroller, GTK_WIDGET(label));
+  gtk_widget_set_halign(GTK_WIDGET(scroller), GTK_ALIGN_FILL);
+  gtk_widget_set_valign(GTK_WIDGET(scroller), GTK_ALIGN_START);
+  gtk_widget_set_vexpand(GTK_WIDGET(scroller), FALSE);
+  return GTK_WIDGET(scroller);
+}
+
+/* Shows the rendered blocks of a body with a table or fenced code (see
+ * body_blocks). */
 static void
 show_body_blocks(GhMessageRow *self, GPtrArray *blocks)
 {
@@ -1077,8 +1117,9 @@ show_body_blocks(GhMessageRow *self, GPtrArray *blocks)
   }
   for (; i < blocks->len; i++) {
     const GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
-    GtkWidget *widget = block->kind == GN_MARKDOWN_PANGO_BLOCK_TABLE
-      ? body_table(self, block) : GTK_WIDGET(body_block_label(self, block->markup, chars));
+    GtkWidget *widget = block->kind == GN_MARKDOWN_PANGO_BLOCK_TABLE ? body_table(self, block)
+      : block->kind == GN_MARKDOWN_PANGO_BLOCK_CODE ? body_code(self, block, chars)
+      : GTK_WIDGET(body_block_label(self, block->markup, chars));
     gtk_box_append(self->body_blocks, widget);
   }
   sync_body_blocks_visible(self);

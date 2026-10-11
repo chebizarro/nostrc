@@ -376,7 +376,8 @@ gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_pubkey)
 }
 
 /* The Groundhog look of the shared nostr-gtk formatter: raw addresses pass
- * this policy (mentions show cached names), blocks use glyphs, tables a grid.
+ * this policy (mentions show cached names), blocks use glyphs, tables a grid
+ * (a fence holding just a table is that table), fenced code its own block.
  * Called on whichever thread formats; it performs no I/O. */
 static gboolean
 format_policy_text(GString *out, const gchar *text, gpointer account_pubkey)
@@ -388,7 +389,8 @@ format_policy_text(GString *out, const gchar *text, gpointer account_pubkey)
 
 #define POLICY_OPTIONS(account) {                                         \
     .mode = GN_MARKDOWN_PANGO_FULL,                                       \
-    .flags = GN_MARKDOWN_PANGO_GLYPH_BLOCKS | GN_MARKDOWN_PANGO_TABLE_GRID, \
+    .flags = GN_MARKDOWN_PANGO_GLYPH_BLOCKS | GN_MARKDOWN_PANGO_TABLE_GRID |   \
+             GN_MARKDOWN_PANGO_FENCED_TABLES | GN_MARKDOWN_PANGO_CODE_BLOCKS,     \
     .format_text = format_policy_text,                                    \
     .user_data = (gpointer)(account),                                     \
   }
@@ -405,11 +407,14 @@ GPtrArray *
 gh_link_policy_format_markdown_blocks(const GnMarkdownDocument *document,
                                       const gchar *account_pubkey)
 {
-  gboolean table = FALSE;
-  for (guint i = 0; document && i < document->tokens->len && !table; i++)
-    table = ((GnMarkdownToken *)g_ptr_array_index(document->tokens, i))->kind ==
-            GN_MARKDOWN_TABLE_CELL;
-  if (!table)
+  /* Only a body with a table or fenced code needs blocks. */
+  gboolean blocks = FALSE;
+  for (guint i = 0; document && i < document->tokens->len && !blocks; i++) {
+    const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
+    blocks = token->kind == GN_MARKDOWN_TABLE_CELL ||
+             (token->kind == GN_MARKDOWN_CODE && token->level > 0);
+  }
+  if (!blocks)
     return NULL;
   const GnMarkdownPangoOptions options = POLICY_OPTIONS(account_pubkey);
   return gn_markdown_pango_format_blocks(document, &options);

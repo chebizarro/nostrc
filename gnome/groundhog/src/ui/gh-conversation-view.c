@@ -1306,7 +1306,8 @@ render_blocks_size(GPtrArray *blocks)
   gsize size = 0;
   for (guint i = 0; blocks && i < blocks->len; i++) {
     GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
-    size += sizeof *block + (block->markup ? strlen(block->markup) : 0);
+    size += sizeof *block + (block->markup ? strlen(block->markup) : 0) +
+            (block->source ? strlen(block->source) : 0);
     for (gchar **cell = block->cells; cell && *cell; cell++)
       size += strlen(*cell) + sizeof *cell;
   }
@@ -1325,7 +1326,7 @@ render_entry_format(RenderEntry *entry, const GnMarkdownDocument *document,
   entry->blocks = gh_link_policy_format_markdown_blocks(document, account);
   /* Opt-in (G_MESSAGES_DEBUG): pipe lines that are not a table say why,
    * by line and code point, never with the message text. */
-  if (!entry->blocks && strchr(document->source, '|') &&
+  if (!gn_markdown_pango_blocks_have_table(entry->blocks) && strchr(document->source, '|') &&
       !g_log_writer_default_would_drop(G_LOG_LEVEL_DEBUG, G_LOG_DOMAIN)) {
     g_autofree gchar *why = gn_markdown_explain_no_table(document->source, -1);
     if (why)
@@ -2767,6 +2768,11 @@ visible_text_from_blocks(GPtrArray *blocks)
     const GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
     if (text->len)
       g_string_append(text, "\n\n");
+    if (block->source) {
+      /* A table that was written in a code fence copies as written. */
+      g_string_append(text, block->source);
+      continue;
+    }
     if (block->kind != GN_MARKDOWN_PANGO_BLOCK_TABLE) {
       g_autofree gchar *paragraph = visible_text_from_markup(block->markup);
       g_string_append(text, paragraph);
