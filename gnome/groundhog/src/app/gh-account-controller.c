@@ -1287,17 +1287,24 @@ signer_call_done(GObject *source, GAsyncResult *result, gpointer user_data)
   g_free(call);
 }
 
+gboolean
+gh_account_controller_can_call_signer(GhAccountController *self)
+{
+  g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(self), FALSE);
+  return self->signer && self->settings &&
+         (self->active_backend != GH_SIGNER_BACKEND_NIP46 ||
+          (self->remote_storage_ready &&
+           (self->remote_state == GH_REMOTE_SIGNER_READY ||
+            self->remote_state == GH_REMOTE_SIGNER_OFFLINE)));
+}
+
 static SignerCall *
 new_signer_call(GhAccountController *self, gpointer tag, GCancellable *caller,
                 GAsyncReadyCallback callback, gpointer user_data)
 {
   GTask *task = g_task_new(self, NULL, callback, user_data);
   g_task_set_source_tag(task, tag);
-  if (!self->signer || !self->settings ||
-      (self->active_backend == GH_SIGNER_BACKEND_NIP46 &&
-       (!self->remote_storage_ready ||
-        (self->remote_state != GH_REMOTE_SIGNER_READY &&
-         self->remote_state != GH_REMOTE_SIGNER_OFFLINE)))) {
+  if (!gh_account_controller_can_call_signer(self)) {
     g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE,
                             self->active_backend == GH_SIGNER_BACKEND_NIP46 &&
                               !self->remote_storage_ready ?

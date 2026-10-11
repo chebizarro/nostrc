@@ -254,8 +254,13 @@ gint64 gh_dm_inbox_get_since(GhDmInbox *self);
 gint64 gh_dm_inbox_get_checkpoint(GhDmInbox *self);
 /* Counters of the current account generation (reset on switch). */
 void gh_dm_inbox_get_counters(GhDmInbox *self, GhDmInboxCounters *counters);
-/* Pending plus deferred wraps for the active remote account; zero for Grotto. */
+/* Wraps still to decrypt (queued, waiting for the remote signer to become
+ * ready, or in flight) for the active remote account; zero for Grotto.
+ * Wraps the signer declined or failed are counted by gh_dm_inbox_get_locked(). */
 guint gh_dm_inbox_get_remote_backlog(GhDmInbox *self);
+/* Whether the active account of this inbox's generation signs with Grotto:
+ * only then do locked messages wait for Grotto (the banner names it). */
+gboolean gh_dm_inbox_signer_is_grotto(GhDmInbox *self);
 /* Messages waiting for the signer to unlock them (charter §7.6, §7.15 state
  * 12): the wraps of this session whose unwrap the signer declined or could
  * not do. They are not asked about again by themselves until a later

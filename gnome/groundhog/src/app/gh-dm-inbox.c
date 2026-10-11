@@ -3,6 +3,7 @@
 #include "gh-auth-policy.h"
 #include "gh-identity.h"
 #include "gh-nip17-inbox.h"
+#include "gh-signer.h"
 
 #include <errno.h>
 #include <glib/gstdio.h>
@@ -104,7 +105,14 @@ struct _GhDmInbox {
   GCancellable *cancellable;
   GQueue queue;              /* Job, oldest first */
   GHashTable *pending_ids;   /* wrap ids queued or in flight */
-  GHashTable *deferred_ids;  /* wrap ids a signer error deferred this session */
+  GHashTable *deferred_ids;  /* wrap id -> Job a signer error deferred this session */
+  /* Wraps addressed to carry_pubkey that a session ended with still queued
+   * or deferred. They are verified wrap events, not secrets; the next
+   * session of the same account (whichever signer backend it uses) queues
+   * them again, so a switch from Grotto to a remote signer for one npub
+   * decrypts them with the new signer. Another account drops them. */
+  GQueue carry;
+  gchar *carry_pubkey;
   gboolean hold_checkpoint;
 
   GhDmInboxState state;
@@ -150,6 +158,8 @@ static void
 job_free(gpointer data)
 {
   Job *job = data;
+  if (!job)
+    return;
   g_free(job->wrap_json);
   g_free(job->wrap_id);
   g_free(job->relay_url);
@@ -293,6 +303,11 @@ effective_in_flight(GhDmInbox *self)
 static void
 pump(GhDmInbox *self)
 {
+  /* A signer that cannot take a call now (a remote signer still loading its
+   * credential or connecting) would fail every wrap at once; they wait in
+   * the queue and the accounts' "changed" pumps again (sync_binding). */
+  if (!self->accounts || !gh_account_controller_can_call_signer(self->accounts))
+    return;
   guint limit = effective_in_flight(self);
   while (self->counters.in_flight < limit && !g_queue_is_empty(&self->queue)) {
     Job *job = g_queue_pop_head(&self->queue);
@@ -443,10 +458,12 @@ admit(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
 
 /* A verified Marmot Welcome: the sink stores it with its wrap id seen. */
 static void
-welcome(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
+welcome(GhDmInbox *self, const GhNip17Message *message, Job *job)
 {
   g_autoptr(GError) error = NULL;
-  if (self->welcome_func && self->welcome_func(self->welcome_data, message, relay_url, &error)) {
+  if (self->welcome_func &&
+      self->welcome_func(self->welcome_data, message, job->relay_url, &error)) {
+    job_free(job);
     self->counters.admitted++;
     return;
   }
@@ -455,7 +472,7 @@ welcome(GhDmInbox *self, const GhNip17Message *message, const gchar *relay_url)
             error ? error->message : "nothing takes invitations now");
   self->counters.deferred++;
   self->hold_checkpoint = TRUE;
-  g_hash_table_add(self->deferred_ids, g_strdup(message->wrap_id));
+  g_hash_table_replace(self->deferred_ids, g_strdup(message->wrap_id), job);
 }
 
 void
@@ -491,10 +508,20 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   self->counters.in_flight--;
+  if (!message && g_error_matches(error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_UNAVAILABLE) &&
+      !gh_account_controller_can_call_signer(self->accounts)) {
+    /* The signer went away (or was never ready) before this call: the wrap
+     * stays pending, first in line, for when it can take calls again. */
+    g_queue_push_head(&self->queue, g_steal_pointer(&call->job));
+    unwrap_call_free(call);
+    emit_changed(self);
+    g_object_unref(self);
+    return;
+  }
   self->counters.pending--;
   g_hash_table_remove(self->pending_ids, call->job->wrap_id);
   if (message && message->kind == GH_NIP17_WELCOME_KIND) {
-    welcome(self, message, call->job->relay_url);
+    welcome(self, message, g_steal_pointer(&call->job));
   } else if (message && (message->kind == 7 || message->kind == 5) && self->reaction_func) {
     /* W26 slice B: NIP-25 reaction or deletion. */
     g_autoptr(GError) rxn_error = NULL;
@@ -522,7 +549,8 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
     g_debug("Groundhog deferred a NIP-17 wrap: %s", error->message);
     self->counters.deferred++;
     self->hold_checkpoint = TRUE;
-    g_hash_table_add(self->deferred_ids, g_strdup(call->job->wrap_id));
+    g_hash_table_replace(self->deferred_ids, g_strdup(call->job->wrap_id),
+                         g_steal_pointer(&call->job));
   }
   gh_nip17_message_free(message);
   unwrap_call_free(call);
@@ -924,6 +952,68 @@ session_since(GhDmInbox *self)
   return now - GH_DM_INBOX_INITIAL_BACKFILL;
 }
 
+static void
+drop_carry(GhDmInbox *self)
+{
+  g_queue_clear_full(&self->carry, job_free);
+  g_clear_pointer(&self->carry_pubkey, g_free);
+}
+
+/* Keeps what the ending session still owed its account: queued wraps and
+ * deferred ones (in flight ones die with the session; their relays deliver
+ * them again). */
+static void
+carry_jobs(GhDmInbox *self)
+{
+  if (!self->pubkey_hex)
+    return;
+  if (g_strcmp0(self->carry_pubkey, self->pubkey_hex) != 0) {
+    drop_carry(self);
+    self->carry_pubkey = g_strdup(self->pubkey_hex);
+  }
+  Job *job;
+  while ((job = g_queue_pop_head(&self->queue))) {
+    if (self->carry.length < GH_DM_INBOX_QUEUE_LIMIT)
+      g_queue_push_tail(&self->carry, job);
+    else
+      job_free(job);
+  }
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->deferred_ids);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    if (value && self->carry.length < GH_DM_INBOX_QUEUE_LIMIT) {
+      g_queue_push_tail(&self->carry, value);
+      g_hash_table_iter_steal(&iter);
+    }
+  }
+}
+
+/* The carried wraps of this account go first in the new session's queue,
+ * for whichever signer the account now uses. */
+static void
+requeue_carry(GhDmInbox *self)
+{
+  if (!self->pubkey_hex || g_strcmp0(self->carry_pubkey, self->pubkey_hex) != 0) {
+    drop_carry(self);
+    return;
+  }
+  Job *job;
+  while ((job = g_queue_pop_head(&self->carry))) {
+    if (g_hash_table_contains(self->pending_ids, job->wrap_id) ||
+        gh_conversation_store_has_wrap(self->store, job->wrap_id) ||
+        gh_conversation_store_has_rejected(self->store, job->wrap_id) ||
+        self->counters.pending >= GH_DM_INBOX_QUEUE_LIMIT) {
+      job_free(job);
+      continue;
+    }
+    g_hash_table_add(self->pending_ids, g_strdup(job->wrap_id));
+    g_queue_push_tail(&self->queue, job);
+    self->counters.pending++;
+  }
+  g_clear_pointer(&self->carry_pubkey, g_free);
+}
+
 /* Cancel first: the scopes revoke their generation and close every
  * transport, and the cancellable revokes pending signer approvals, before
  * anything for the next session exists. Late unwrap callbacks see a newer
@@ -937,6 +1027,7 @@ teardown_session(GhDmInbox *self)
     g_cancellable_cancel(self->cancellable);
     g_clear_object(&self->cancellable);
   }
+  carry_jobs(self);
   g_queue_clear_full(&self->queue, job_free);
   g_hash_table_remove_all(self->pending_ids);
   g_hash_table_remove_all(self->deferred_ids);
@@ -954,6 +1045,7 @@ start_session(GhDmInbox *self, GStrv urls)
   self->since = session_since(self);
   self->limit = self->req_limit;
   self->cancellable = g_cancellable_new();
+  requeue_carry(self);
   /* Every endpoint and its scope exist before any scope starts, so a
    * synchronous open failure lands on its own endpoint. */
   for (guint i = 0; urls[i]; i++) {
@@ -969,6 +1061,7 @@ start_session(GhDmInbox *self, GStrv urls)
     if (endpoint && endpoint->live)
       gh_relay_scope_start(endpoint->live);
   }
+  pump(self);
 }
 
 static gint
@@ -1176,6 +1269,13 @@ sync_binding(GhDmInbox *self)
       account_changed = TRUE; /* the session changed: always report it */
     }
   }
+  if (self->pubkey_hex && self->carry_pubkey &&
+      g_strcmp0(self->carry_pubkey, self->pubkey_hex) != 0)
+    drop_carry(self);
+  /* The signer may have become able to take calls (a remote signer that is
+   * now ready): the waiting queue drains through it. */
+  if (self->cancellable)
+    pump(self);
   GhDmInboxState before = self->state;
   update_state(self);
   maybe_advance_checkpoint(self);
@@ -1415,7 +1515,16 @@ gh_dm_inbox_get_remote_backlog(GhDmInbox *self)
       self->generation != gh_account_controller_get_generation(self->accounts) ||
       gh_account_controller_get_active_backend(self->accounts) != GH_SIGNER_BACKEND_NIP46)
     return 0;
-  return self->counters.pending + g_hash_table_size(self->deferred_ids);
+  return self->counters.pending;
+}
+
+gboolean
+gh_dm_inbox_signer_is_grotto(GhDmInbox *self)
+{
+  g_return_val_if_fail(GH_IS_DM_INBOX(self), FALSE);
+  return self->accounts && self->generation &&
+         self->generation == gh_account_controller_get_generation(self->accounts) &&
+         gh_account_controller_get_active_backend(self->accounts) == GH_SIGNER_BACKEND_GROTTO;
 }
 
 guint
@@ -1481,6 +1590,7 @@ gh_dm_inbox_finalize(GObject *object)
   g_hash_table_unref(self->endpoints);
   g_hash_table_unref(self->pending_ids);
   g_hash_table_unref(self->deferred_ids);
+  drop_carry(self);
   g_free(self->state_dir);
   G_OBJECT_CLASS(gh_dm_inbox_parent_class)->finalize(object);
 }
@@ -1510,6 +1620,7 @@ gh_dm_inbox_init(GhDmInbox *self)
   /* Keys are the endpoints' own URLs. */
   self->endpoints = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, endpoint_free);
   self->pending_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  self->deferred_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  self->deferred_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, job_free);
   g_queue_init(&self->queue);
+  g_queue_init(&self->carry);
 }

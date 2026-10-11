@@ -297,9 +297,12 @@ void gh_conversation_view_set_recipient_without_inbox(GhConversationView *self,
  * messaging (nostrc-lff5): "No one in this conversation has set up private
  * messaging yet" (FALSE hides it). It takes the banner's place over a name. */
 void gh_conversation_view_set_room_without_inbox(GhConversationView *self, gboolean nobody);
-/* Charter §7.15 state 12: "Waiting for Grotto to unlock N messages"
- * with Unlock (conversation.unlock-messages); 0 hides it. */
-void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count);
+/* Charter §7.15 state 12: messages the signer has not unlocked, with Unlock
+ * (conversation.unlock-messages); 0 hides it. grotto: the account signs with
+ * Grotto ("Waiting for Grotto to unlock N messages"); otherwise the copy
+ * names no app ("Your signer hasn't unlocked N messages"). */
+void gh_conversation_view_set_locked_messages(GhConversationView *self, guint count,
+                                              gboolean grotto);
 /* Charter §7.15 state 13, encrypted groups (nostrc-oya4): "Some messages in
  * this group can't be read yet." while GhMlsGroup:decrypt-pending; FALSE
  * hides it. No number and no cause: a held event's type (message or group

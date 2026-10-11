@@ -2583,13 +2583,16 @@ gh_conversation_view_set_room_without_inbox(GhConversationView *self, gboolean n
 }
 
 void
-gh_conversation_view_set_locked_messages(GhConversationView *self, guint count)
+gh_conversation_view_set_locked_messages(GhConversationView *self, guint count,
+                                         gboolean grotto)
 {
   g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
   if (count > 0) {
     g_autofree gchar *text = g_strdup_printf(
-      g_dngettext(NULL, "Waiting for Grotto to unlock %u message",
-                  "Waiting for Grotto to unlock %u messages", count), count);
+      grotto ? g_dngettext(NULL, "Waiting for Grotto to unlock %u message",
+                           "Waiting for Grotto to unlock %u messages", count)
+             : g_dngettext(NULL, "Your signer hasn’t unlocked %u message",
+                           "Your signer hasn’t unlocked %u messages", count), count);
     gtk_label_set_text(self->locked_label, text);
   }
   gtk_widget_set_visible(self->locked_row, count > 0);
