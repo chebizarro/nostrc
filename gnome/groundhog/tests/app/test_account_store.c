@@ -933,6 +933,94 @@ test_remote_cache_gate_and_offline_restart(void)
   fixture_down(&f);
 }
 
+/* The owner's flow (relogin-signer-groups): signed in with a remote signer,
+ * the account's messages, groups and MLS state are in its store; the user
+ * removes the remote signer (Account menu: log out) and pairs the same
+ * account again (log in). The store must be closed, never deleted, and the
+ * same one reopened: every room is back before any relay answers and no
+ * signer call is made for what was already decrypted. */
+static void
+test_remote_relogin_same_account(void)
+{
+  Fixture f = { .remote = TRUE, .with_outbox = TRUE };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  bunker_eose(&f.bunker);
+  publish_inbox_list(&f, 2);
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  g_autofree gchar *wrap = craft_wrap(1, 2, g_get_real_time() / G_USEC_PER_SEC - 60,
+                                      CANARY " before logout", NULL);
+  gh_relay_scope_event(req->scope, INBOX_A, wrap);
+  reply_remote_decrypt(&f, 1);
+  reply_remote_decrypt(&f, 2);
+  g_autofree gchar *room = room_of(1, 2);
+  RoomWait listed_room = { f.model, room };
+  gh_test_spin_until(room_listed, &listed_room);
+  /* A NIP-29 group, an MLS group and MLS key state in the same store. */
+  GhStore *store = gh_account_store_get_store(f.store);
+  g_autoptr(GError) error = NULL;
+  gint64 nip29_id = 0, mls_id = 0, found = 0;
+  const gchar *nip29_key = "wss://groups.test.invalid\x1f" "club";
+  const gchar *mls_key = "00112233445566778899aabbccddeeff";
+  g_assert_true(gh_store_ensure_conversation(store, GH_STORE_BACKEND_NIP29, nip29_key,
+                                             GH_STORE_REQUEST_ACCEPTED, &nip29_id, &error));
+  g_assert_true(gh_store_ensure_conversation(store, GH_STORE_BACKEND_MLS, mls_key,
+                                             GH_STORE_REQUEST_ACCEPTED, &mls_id, &error));
+  g_assert_true(gh_store_set_cursor(store, "mls-kp-test", "", 1700000123, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *db = store_db_path(&f, 2);
+  guint decrypts = f.bunker.publishes->len;
+
+  /* Log out: Remove Remote Signer selects no remote account. */
+  g_assert_true(gh_account_controller_select_backend(f.accounts, GH_SIGNER_BACKEND_GROTTO,
+                                                     "", &error));
+  g_assert_no_error(error);
+  gh_test_run_until_idle();
+  g_assert_cmpint(gh_account_store_get_state(f.store), ==, GH_ACCOUNT_STORE_INACTIVE);
+  g_assert_cmpuint(count_events(&f, "closed"), ==, 1);
+  g_assert_null(gh_conversation_store_lookup(f.model, room));
+  /* Detached, not wiped. */
+  g_assert_true(g_file_test(db, G_FILE_TEST_IS_REGULAR));
+  g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 1);
+
+  /* Log in again: the pairing dialog adopts a fresh session for the same
+   * account. */
+  GhNip46Session *session = remote_session(npub[2], &f);
+  g_assert_true(gh_account_controller_adopt_remote(f.accounts, npub[2], session, &error));
+  g_assert_no_error(error);
+  g_object_unref(session);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpstr(gh_account_store_get_account(f.store), ==, hex[2]);
+  g_assert_cmpuint(count_events(&f, "opening"), ==, 2);
+  /* The same store, the same key item: nothing created anew. */
+  g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 1);
+  GhConversation *restored = gh_conversation_store_lookup(f.model, room);
+  g_assert_nonnull(restored);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(restored)), ==, 1);
+  store = gh_account_store_get_store(f.store);
+  g_assert_true(gh_store_find_conversation(store, GH_STORE_BACKEND_NIP29, nip29_key,
+                                           &found, &error));
+  g_assert_cmpint(found, ==, nip29_id);
+  g_assert_true(gh_store_find_conversation(store, GH_STORE_BACKEND_MLS, mls_key,
+                                           &found, &error));
+  g_assert_cmpint(found, ==, mls_id);
+  gint64 cursor = 0;
+  g_assert_true(gh_store_get_cursor(store, "mls-kp-test", "", &cursor, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(cursor, ==, 1700000123);
+  /* Already decrypted: the same wrap again costs no signer call. */
+  bunker_eose(&f.bunker);
+  publish_inbox_list(&f, 2);
+  req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  gh_relay_scope_event(req->scope, INBOX_A, wrap);
+  gh_test_run_until_idle();
+  g_assert_cmpuint(f.bunker.publishes->len, ==, decrypts);
+  fixture_down(&f);
+}
+
 static void
 test_remote_failed_restore_keeps_gate_closed(void)
 {
@@ -2286,6 +2374,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
   g_test_add_func("/groundhog/account-store/remote-cache-gate-offline-restart",
                   test_remote_cache_gate_and_offline_restart);
+  g_test_add_func("/groundhog/account-store/remote-relogin-same-account",
+                  test_remote_relogin_same_account);
   g_test_add_func("/groundhog/account-store/remote-memory-only-refused",
                   test_remote_memory_only_refused);
   g_test_add_func("/groundhog/account-store/remote-failed-restore",
