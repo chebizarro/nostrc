@@ -660,12 +660,17 @@ typedef struct {
   GhLinkPreviewState state;
   gchar *uri;
   gchar *sender;
+  gchar *room; /* the conversation's room id: loaded bytes are reused only there */
   gchar *title;
   gchar *description;
   gchar *image_url;
   gchar *site_name;
   GhWebKind kind;
   GdkTexture *texture;
+  /* The user allowed this message's uri to be loaded (a dialog, or a
+   * "don't ask again" that was in force). Kept for the account's session
+   * so that leaving the conversation never asks for it again. */
+  gboolean approved;
 } Preview;
 
 static gboolean picture_via_cache(GhConversationView *self, const gchar *id, Preview *preview);
@@ -675,6 +680,7 @@ preview_free(Preview *preview)
 {
   g_free(preview->uri);
   g_free(preview->sender);
+  g_free(preview->room);
   g_free(preview->title);
   g_clear_object(&preview->texture);
   g_free(preview->description);
@@ -766,6 +772,7 @@ struct _GhConversationView {
   GQueue render_lru;
   gsize render_bytes;
   gchar *render_account;
+  gchar *previews_account; /* whose loaded web content previews holds */
   guint64 render_generation;
   GCancellable *render_cancel;
   GnNostrReferenceResolver *reference_resolver;
@@ -1688,6 +1695,40 @@ cancel_previews(GhConversationView *self)
   g_clear_pointer(&self->pending_link, g_free);
 }
 
+/* Leaving a conversation (owner report: approvals were asked for again after
+ * switching back). Its pending loads stop and its "don't ask again" senders
+ * are forgotten (charter §2.1), but what this account's session already
+ * loaded stays shown without another fetch, and a message whose uri the user
+ * allowed is not asked about again: rumor ids are unique, so a kept entry
+ * only ever matches its own message. An account switch, the Web Content
+ * switch turning off, or a new fetcher still forget everything. */
+static void
+leave_conversation_previews(GhConversationView *self)
+{
+  if (self->cancellable) {
+    g_cancellable_cancel(self->cancellable);
+    g_clear_object(&self->cancellable);
+  }
+  self->web_generation++;
+  g_hash_table_remove_all(self->allowed_senders);
+  GHashTableIter iter;
+  gpointer value;
+  g_hash_table_iter_init(&iter, self->previews);
+  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+    Preview *preview = value;
+    if (preview->state == GH_LINK_PREVIEW_LOADED)
+      continue;
+    if (!preview->approved) {
+      g_hash_table_iter_remove(&iter);
+      continue;
+    }
+    /* Cancelled or failed: loads again, without asking, when next asked for. */
+    preview->state = GH_LINK_PREVIEW_NONE;
+  }
+  g_clear_pointer(&self->pending_preview, g_free);
+  g_clear_pointer(&self->pending_link, g_free);
+}
+
 void
 gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *conversation)
 {
@@ -1713,7 +1754,15 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   g_clear_handle_id(&self->pin_idle, g_source_remove);
   g_clear_handle_id(&self->open_idle, g_source_remove);
   self->pin_pending = FALSE;
-  cancel_previews(self);
+  /* No conversation in between (a request, an emptied list) keeps them. */
+  const gchar *next_account = conversation ? gh_conversation_get_account(conversation) : NULL;
+  if (!conversation || g_strcmp0(self->previews_account, next_account) == 0) {
+    leave_conversation_previews(self);
+  } else {
+    cancel_previews(self);
+    g_free(self->previews_account);
+    self->previews_account = g_strdup(next_account);
+  }
   close_dialog(ADW_DIALOG(self->link_dialog));
   close_dialog(ADW_DIALOG(self->preview_dialog));
   if (self->loading_older) {
@@ -2135,6 +2184,7 @@ fetch_preview(GhConversationView *self, const gchar *rumor_id)
   }
   if (!self->cancellable)
     self->cancellable = g_cancellable_new();
+  preview->approved = TRUE;
   set_preview_state(self, rumor_id, GH_LINK_PREVIEW_LOADING);
   FetchClosure *closure = g_new0(FetchClosure, 1);
   g_weak_ref_init(&closure->view, self);
@@ -2221,12 +2271,19 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
     preview = g_new0(Preview, 1);
     preview->uri = g_steal_pointer(&uri);
     preview->sender = g_strdup(gh_message_get_sender(message));
+    preview->room = g_strdup(gh_conversation_get_room_id(self->conversation));
     preview->kind = kind;
     g_hash_table_insert(self->previews, g_strdup(rumor_id), preview);
   }
   if (preview->state != GH_LINK_PREVIEW_NONE && preview->state != GH_LINK_PREVIEW_FAILED)
     return;
-  if (previews_allowed(self, preview)) {
+  if (uri && g_strcmp0(uri, preview->uri) != 0) {
+    /* Another uri now (a changed profile picture): a new question. */
+    g_free(preview->uri);
+    preview->uri = g_steal_pointer(&uri);
+    preview->approved = FALSE;
+  }
+  if (preview->approved || previews_allowed(self, preview)) {
     fetch_preview(self, rumor_id);
     return;
   }
@@ -2467,17 +2524,19 @@ gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *messag
 }
 
 /* A texture already loaded for uri (and kind) in this conversation: the
- * same profile picture appears under every message of its sender. */
+ * same profile picture appears under every message of its sender. Another
+ * conversation's loads (kept for when it is shown again) never count. */
 static GdkTexture *
 loaded_texture_for(GhConversationView *self, GhWebKind kind, const gchar *uri)
 {
   GHashTableIter iter;
   gpointer value;
+  const gchar *room = gh_conversation_get_room_id(self->conversation);
   g_hash_table_iter_init(&iter, self->previews);
   while (g_hash_table_iter_next(&iter, NULL, &value)) {
     Preview *other = value;
     if (other->kind == kind && other->state == GH_LINK_PREVIEW_LOADED && other->texture &&
-        g_strcmp0(other->uri, uri) == 0)
+        g_strcmp0(other->uri, uri) == 0 && g_strcmp0(other->room, room) == 0)
       return other->texture;
   }
   return NULL;
@@ -2522,6 +2581,7 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     preview = g_new0(Preview, 1);
     preview->uri = g_steal_pointer(&uri);
     preview->sender = g_strdup(gh_message_get_sender(message));
+    preview->room = g_strdup(gh_conversation_get_room_id(self->conversation));
     preview->kind = kind;
     g_hash_table_insert(self->previews, g_strdup(id), preview);
   }
@@ -3148,6 +3208,7 @@ gh_conversation_view_finalize(GObject *object)
   g_queue_clear(&self->render_lru);
   g_hash_table_unref(self->render_cache);
   g_free(self->render_account);
+  g_free(self->previews_account);
   g_free(self->pending_link);
   g_free(self->pending_preview);
   g_free(self->last_announcement);
