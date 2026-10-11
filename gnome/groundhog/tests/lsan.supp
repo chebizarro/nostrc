@@ -3,10 +3,17 @@
 #
 # Only leaks of libraries outside Groundhog whose objects Groundhog cannot
 # free itself belong here, each with its bead; a leak in Groundhog code is
-# fixed, never suppressed. LSan matches a pattern against every frame of an
-# allocation's stack, so each entry names a function whose allocations are
-# all part of the leak it describes (an indirect leak below a suppressed one
-# carries the same frame). Remove an entry once its bead is fixed.
+# fixed, never suppressed. LSan matches a function, source path, or module
+# name in an allocation stack, but not the printed module+offset. Ubuntu's
+# libsecret is stripped, so its static signal handler cannot be named by a
+# function-pattern suppression in the CI image.
 #
-# No entries: the libnostr/libgo/nostr-gobject leaks listed here before
-# (nostrc-jwj0, -jw23, -xbso, -xfjg, -vpha) are fixed at their source.
+# nostrc-eixk6: libsecret 0.21.4 secret_collection_signal() hands a floating
+# GVariant from g_variant_builder_end() to SecretCollection's
+# handle_property_changed(), which neither sinks nor unrefs it. The only
+# libsecret-specific function is static and requires matching debug symbols.
+# The test-local fallback handles stripped CI packages; it also scopes the
+# GIO-allocated path lost by this handler to the affected executable. No
+# module-wide rule belongs in this suite-wide file.
+# Revisit when libsecret fixes both ownership errors.
+leak:secret_collection_signal

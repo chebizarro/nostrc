@@ -4,6 +4,20 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
+/* nostrc-eixk6: libsecret 0.21.4 secret_collection_signal() breaks out
+ * of its Items scan on an existing path without unrefing the full reference
+ * from g_variant_iter_next_value(). GIO allocated that path before the
+ * libsecret callback, so its allocation stack has no libsecret frame.
+ * Its static signal handler is stripped from Ubuntu's libsecret binary,
+ * so the precise lsan.supp rule cannot match in CI without debug symbols.
+ * Keep the necessary module fallback and this GIO allocation-site rule
+ * local to this executable, never suite-wide in lsan.supp. */
+const char *
+__lsan_default_suppressions(void)
+{
+  return "leak:libsecret-1.so.0\nleak:g_variant_new_object_path\n";
+}
+
 static const SecretSchema schema = {
   .name = "org.nostr.Groundhog.Nip46Credential", .flags = SECRET_SCHEMA_NONE,
   .attributes = { { "account", SECRET_SCHEMA_ATTRIBUTE_STRING },
