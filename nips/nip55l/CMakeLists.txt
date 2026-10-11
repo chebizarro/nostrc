@@ -253,9 +253,9 @@ if (BUILD_TESTING)
 
   # Core contract tests for the D1.a / D2 landings: SignEvent returns the
   # complete signed event JSON, GetRelays reads explicit per-user config only.
-  # Tests provision throwaway keys via the environment so no test reaches
-  # libsecret, the Keychain, or a session bus. Fuzz harnesses and the
-  # real-service D-Bus contract test wire below (nostrc-tf3b).
+  # Most unit tests provision throwaway keys via the environment. Selector
+  # safety also probes absent identities: keep its libsecret lookup off the
+  # real session bus. Fuzz harnesses and the private-bus contract test follow.
   foreach(t sign_event_json getrelays)
     add_executable(test_nip55l_${t} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_${t}.c)
     target_link_libraries(test_nip55l_${t} PRIVATE nostr_nip55l_core nostr_nip44_core nostr)
@@ -268,7 +268,12 @@ if (BUILD_TESTING)
   target_link_libraries(test_nip55l_selector_safety PRIVATE nostr_nip55l_core nostr nip19)
   target_compile_options(test_nip55l_selector_safety PRIVATE -Wall -Wextra -Werror)
   add_test(NAME nip55l_selector_safety COMMAND test_nip55l_selector_safety)
-  set_tests_properties(nip55l_selector_safety PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
+  set(_nip55l_selector_home "${CMAKE_CURRENT_BINARY_DIR}/selector-safety-home")
+  file(MAKE_DIRECTORY "${_nip55l_selector_home}/config" "${_nip55l_selector_home}/data"
+                      "${_nip55l_selector_home}/cache")
+  set_tests_properties(nip55l_selector_safety PROPERTIES
+    LABELS "nip55l;signer;unit" TIMEOUT 60
+    ENVIRONMENT "DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent;HOME=${_nip55l_selector_home};XDG_CONFIG_HOME=${_nip55l_selector_home}/config;XDG_DATA_HOME=${_nip55l_selector_home}/data;XDG_CACHE_HOME=${_nip55l_selector_home}/cache")
 
   # macOS Keychain import of pre-e5nz GNostr client keys (nostrc-de9h). The
   # migration is compiled into the test with NIP55L_KEYCHAIN_TEST_HOOKS so it

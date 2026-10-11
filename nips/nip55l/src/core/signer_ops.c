@@ -426,27 +426,12 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
   return 0;
 }
 
-/* Resolve a secret key for an identity selector. Key material enters only
- * through StoreKey, the environment, or the key store. A 64-hex selector is
- * an x-only public key, never a secret key; nsec selectors are invalid.
- * On success, returns newly allocated 64-hex in *out_sk_hex. NOT_FOUND /
- * INVALID_KEY when no key matches; BACKEND when the key store cannot be read
- * (see "Key store reads").
+/* Look up a secret by selector in the cache, environment, or key store.
+ * The caller verifies identity selectors against the returned secret before
+ * exposing it to any signing or encryption operation.
  */
-static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
+static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
   if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_sk_hex=NULL;
-  if (current_user && strncmp(current_user, "nsec1", 5) == 0)
-    return NOSTR_SIGNER_ERROR_INVALID_ARG;
-  if (is_hex_64(current_user)) {
-    uint8_t pk[32];
-    char *npub = NULL;
-    if (!nostr_hex2bin(pk, current_user, sizeof pk) ||
-        nostr_nip19_encode_npub(pk, &npub) != 0 || !npub)
-      return NOSTR_SIGNER_ERROR_BACKEND;
-    int rc = resolve_seckey_hex(npub, out_sk_hex);
-    free(npub);
-    return rc;
-  }
   /* nostrc-7g9d: honour the in-process cache before the env/libsecret path
    * so a key freshly stored via StoreKey is visible immediately. When the
    * caller supplies a specific selector (identity) we only match if the
@@ -620,6 +605,53 @@ static int sk_hex_to_npub(const char *sk_hex, char **out_npub){
   *out_npub = npub; return 0;
 }
 
+/* Identity selectors name a public key, never supply secret material. Check
+ * the actual key after lookup: store attributes (including the key_id
+ * fallback) and Keychain metadata are not proof of the stored secret's npub. */
+static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
+  if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_sk_hex = NULL;
+  if (current_user && strncmp(current_user, "nsec1", 5) == 0)
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  /* The NIP-19 decoder rejects uppercase HRPs, as D-Bus normalization does.
+   * Do not let an uppercase npub fall through as a key_id or label. */
+  if (current_user && strncmp(current_user, "NPUB1", 5) == 0)
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+
+  char *canonical = NULL;
+  const char *selector = current_user;
+  if (is_hex_64(selector) ||
+      (selector && strncmp(selector, "npub1", 5) == 0)) {
+    uint8_t pk[32];
+    if (is_hex_64(selector)) {
+      if (!nostr_hex2bin(pk, selector, sizeof pk))
+        return NOSTR_SIGNER_ERROR_INVALID_ARG;
+    } else if (nostr_nip19_decode_npub(selector, pk) != 0) {
+      return NOSTR_SIGNER_ERROR_INVALID_ARG;
+    }
+    if (nostr_nip19_encode_npub(pk, &canonical) != 0 || !canonical)
+      return NOSTR_SIGNER_ERROR_BACKEND;
+    selector = canonical;
+  }
+
+  int rc = lookup_seckey_hex(selector, out_sk_hex);
+  if (rc == 0 && selector && strncmp(selector, "npub1", 5) == 0) {
+    char *actual = NULL;
+    rc = *out_sk_hex ? sk_hex_to_npub(*out_sk_hex, &actual)
+                     : NOSTR_SIGNER_ERROR_NOT_FOUND;
+    if (rc == 0 && strcmp(actual, selector) != 0)
+      rc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+    free(actual);
+  }
+  if (rc != 0 && *out_sk_hex) {
+    secure_wipe(*out_sk_hex, strlen(*out_sk_hex));
+    free(*out_sk_hex);
+    *out_sk_hex = NULL;
+  }
+  free(canonical);
+  return rc;
+}
+
 int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub){
   if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub = NULL;
   char *sk_hex = NULL; int rc = resolve_seckey_hex(current_user, &sk_hex);
@@ -665,11 +697,10 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
     return 0;
   }
   free(active);
-  /* A stored identity whose key is exactly this npub (the lookup's
-   * fallbacks may return another key, which must not be used). */
+  /* The resolver has already verified any stored secret against this npub. */
   char *np = NULL;
   int rc = nostr_nip55l_resolve_npub(want, &np);
-  if (rc == 0 && np && strcmp(np, want) == 0) {
+  if (rc == 0 && np) {
     free(np);
     *out_selector = strdup(want);
     if (!*out_selector) { free(want); return NOSTR_SIGNER_ERROR_BACKEND; }
@@ -678,8 +709,7 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
   }
   free(np);
   free(want);
-  /* No such identity (or the lookup's fallback found another key), or the
-   * key store could not say: BACKEND, not NOT_FOUND (nostrc-f6l29). */
+  /* A missing identity is NOT_FOUND; an unreadable store is BACKEND. */
   return rc == 0 ? NOSTR_SIGNER_ERROR_NOT_FOUND : rc;
 }
 
