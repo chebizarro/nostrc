@@ -1,0 +1,14 @@
+# Shared flatpak-builder module: libpeas 2 (gnostr's plugin host).
+name: libpeas
+buildsystem: meson
+config-opts:
+  - -Dlua51=false
+  - -Dpython3=false
+  - -Dgjs=false
+  - -Dintrospection=false
+  - -Dvapi=false
+  - -Dgtk_doc=false
+sources:
+  - type: archive
+    url: https://download.gnome.org/sources/libpeas/2.0/libpeas-2.0.7.tar.xz
+    sha256: 1e9a9d69761d2109eff5b7c11d8c96b4867ccfaca2b921eded49401192769ec9

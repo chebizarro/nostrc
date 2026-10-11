@@ -1,0 +1,18 @@
+# Shared flatpak-builder module (copied from the Groundhog manifest,
+# gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml), used by the
+# gnostr and Grotto manifests.
+name: nsync
+buildsystem: cmake-ninja
+config-opts:
+  - -DCMAKE_BUILD_TYPE=Release
+  - -DBUILD_SHARED_LIBS=ON
+  - -DNSYNC_ENABLE_TESTS=OFF
+  # The sandbox searches /app/lib only.
+  - -DCMAKE_INSTALL_LIBDIR=lib
+  # Upstream still declares a CMake minimum the SDK's CMake rejects.
+  - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+sources:
+  - type: git
+    url: https://github.com/google/nsync.git
+    tag: 1.29.2
+    commit: 7cf7a68ca123f7563e05b1657a7e73b43c885971

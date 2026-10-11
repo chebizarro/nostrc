@@ -119,6 +119,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
       - name: Build
+        env:
+          UPSTREAM_VERSION: ${{ needs.source.outputs.version }}
         run: |
           set -eux
           dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon
@@ -126,7 +128,12 @@ jobs:
           dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
           rpmdev-setuptree
           cp src/groundhog-*.tar.gz ~/rpmbuild/SOURCES/
-          rpmbuild -ba groundhog-*/packaging/rpm/groundhog.spec
+          # The spec names the archive by its pinned release; a branch build
+          # (workflow_dispatch) carries a 0.0.0-<sha> version instead. Point
+          # the spec at the archive actually built, as the Arch job does.
+          spec=$(echo groundhog-*/packaging/rpm/groundhog.spec)
+          sed -i "s/^%global upstream_version .*/%global upstream_version ${UPSTREAM_VERSION}/" "$spec"
+          rpmbuild -ba "$spec"
           mkdir -p dist && cp ~/rpmbuild/RPMS/*/*.rpm dist/
       - name: Install and launch
         run: |

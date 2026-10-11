@@ -1,5 +1,8 @@
+# Built from the repository root: CI copies this file to snap/snapcraft.yaml
+# (see the snap jobs in .github/workflows/release.yml), so `source: .` is
+# the whole tree, submodules included.
 name: grotto-daemon
-base: core22
+base: core24
 version: 0.1.0
 summary: Grotto Daemon
 description: |
@@ -17,25 +20,35 @@ apps:
 
 parts:
   app:
-    plugin: cmake
-    source: ../..
+    plugin: nil
+    source: .
+    # Configuring the tree needs the GUI libraries too; only the daemon is built.
     build-packages:
       - build-essential
       - cmake
       - ninja-build
       - pkg-config
+      - git
+      - python3-pip
+      - libgtk-4-dev
+      - libadwaita-1-dev
+      - libjson-glib-dev
+      - libsoup-3.0-dev
+      - libsecret-1-dev
       - libjansson-dev
       - libwebsockets-dev
-      - libsecret-1-dev
       - libssl-dev
-      - libnsync-dev
+      - libpeas-2-dev
+      - libsqlite3-dev
+      - libqrencode-dev
+      - libsecp256k1-dev
+      - libsodium-dev
+      - libcurl4-openssl-dev
     stage-packages:
+      - libglib2.0-0t64
       - libjansson4
-      - libwebsockets16
+      - libwebsockets19t64
       - libsecret-1-0
-      - libssl3
-      - libnsync
-    override-build: |
-      cmake -S $SNAPCRAFT_PROJECT_DIR -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      cmake --build build -j --target grotto-daemon
-      cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
+      - libsecp256k1-2
+      - libsodium23
+    override-build: scripts/ci/build-snap-part.sh daemon

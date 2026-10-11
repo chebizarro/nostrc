@@ -47,9 +47,10 @@ jobs:
             component="${BASH_REMATCH[1]}"
             version="${BASH_REMATCH[2]}"
           else
-            # Preserve workflow_dispatch behavior on branches.
+            # A branch build (workflow_dispatch) packages everything under a
+            # version every format accepts (deb and rpm need a leading digit).
             component="global"
-            version="${tag//\//-}"
+            version="0.0.0.git$(echo "${GITHUB_SHA}" | cut -c1-8)"
           fi
 
           echo "component=${component}" >> "${GITHUB_OUTPUT}"
@@ -65,12 +66,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+      # git archive leaves submodules out, and the tree does not build
+      # without nostrdb and nsync (nostrc-y5cv): archive every tracked file
+      # of the superproject and its submodules.
       - name: Create source archive
         run: |
-          archive="${GITHUB_REF_NAME//\//-}-source.tar.gz"
-          git archive --format=tar.gz --prefix="${GITHUB_REF_NAME}/" HEAD > "${archive}"
+          set -euo pipefail
+          name="${GITHUB_REF_NAME//\//-}"
           mkdir -p dist
-          mv "${archive}" dist/
+          git ls-files -z --recurse-submodules |
+            tar --null -T - --transform "s,^,${name}/," -czf "dist/${name}-source.tar.gz"
+          tar -tzf "dist/${name}-source.tar.gz" | grep -q "^${name}/third_party/nostrdb/src/nostrdb.c$"
       - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
@@ -78,8 +84,11 @@ jobs:
           path: dist/*-source.tar.gz
           if-no-files-found: error
 
-  build-deb:
-    name: Build .deb packages (${{ matrix.arch }})
+  # One build per architecture feeds every native Linux format: deb, rpm,
+  # the Linux and daemon tarballs and the Grotto AppImage, so they all ship
+  # the same binaries. Packages are only made for the released component.
+  build-linux:
+    name: Build Linux packages (${{ matrix.arch }})
     needs: detect-component
     if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ${{ matrix.runner }}
@@ -87,79 +96,90 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64,  runner: ubuntu-latest }
+          - { arch: x86_64,  runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      COMPONENT: ${{ needs.detect-component.outputs.component }}
+      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
+      ARCH: ${{ matrix.arch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev \
-            ruby ruby-dev rubygems \
-            git ca-certificates
-          sudo gem install --no-document fpm
+        run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
+        run: scripts/ci/configure-release.sh build
       - name: Build
         run: cmake --build build -j
       - name: Stage install tree
-        run: |
-          cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build DEBs with fpm
-        env:
-          COMPONENT: ${{ needs.detect-component.outputs.component }}
-          RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
+        run: cmake --install build --prefix "$PWD/stage/usr"
+      - name: Build DEBs and RPMs
         run: |
           set -e
-          mkdir -p dist package-roots
+          scripts/ci/fpm-packages.sh deb "$COMPONENT" "$RELEASE_VERSION" stage dist
+          scripts/ci/fpm-packages.sh rpm "$COMPONENT" "$RELEASE_VERSION" stage dist
+      - name: Build Linux tarball
+        run: |
+          set -e
+          if [[ "${COMPONENT}" == "grotto" ]]; then
+            ROOT="grotto-${RELEASE_VERSION}"
+          else
+            ROOT="gnostr-${RELEASE_VERSION}"
+          fi
+          mkdir -p "tar/${ROOT}/bin" "tar/${ROOT}/share/applications" "tar/${ROOT}/share/icons"
           if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
-            root="package-roots/gnostr"
-            mkdir -p "${root}/usr/bin" \
-              "${root}/usr/share/applications" \
-              "${root}/usr/share/icons/hicolor/scalable/apps" \
-              "${root}/usr/share/icons/hicolor/scalable/actions"
-            cp stage/usr/bin/gnostr "${root}/usr/bin/"
-            cp stage/usr/share/applications/org.gnostr.gnostr.desktop "${root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg "${root}/usr/share/icons/hicolor/scalable/apps/"
-            cp stage/usr/share/icons/hicolor/scalable/actions/gnostr-*.svg "${root}/usr/share/icons/hicolor/scalable/actions/"
-            fpm -s dir -t deb -n gnostr -v "${RELEASE_VERSION}" \
-              -C "${root}" -p dist/gnostr_VERSION_ARCH.deb .
+            cp build/apps/gnostr/gnostr "tar/${ROOT}/bin/"
+            cp stage/usr/share/applications/org.gnostr.gnostr.desktop "tar/${ROOT}/share/applications/"
+            cp -r apps/gnostr/data/icons/* "tar/${ROOT}/share/icons/"
           fi
           if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
-            signer_root="package-roots/grotto"
-            mkdir -p "${signer_root}/usr/bin" \
-              "${signer_root}/usr/share/glib-2.0/schemas" \
-              "${signer_root}/usr/share/dbus-1/services" \
-              "${signer_root}/usr/share/applications" \
-              "${signer_root}/usr/share/icons/hicolor/scalable/apps"
-            cp stage/usr/bin/grotto "${signer_root}/usr/bin/"
-            cp stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
-            glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
-            cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
-            cp stage/usr/share/applications/org.nostr.Grotto.desktop "${signer_root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
-            fpm -s dir -t deb -n grotto -v "${RELEASE_VERSION}" \
-              -C "${signer_root}" -p dist/grotto_VERSION_ARCH.deb .
-
-            daemon_root="package-roots/grotto-daemon"
-            mkdir -p "${daemon_root}/usr/bin"
-            cp stage/usr/bin/grotto-daemon "${daemon_root}/usr/bin/"
-            fpm -s dir -t deb -n grotto-daemon -v "${RELEASE_VERSION}" \
-              -C "${daemon_root}" -p dist/grotto-daemon_VERSION_ARCH.deb .
+            mkdir -p "tar/${ROOT}/share/systemd/user"
+            cp build/apps/grotto/grotto build/apps/grotto/grotto-daemon "tar/${ROOT}/bin/"
+            cp stage/usr/share/applications/org.nostr.Grotto.desktop "tar/${ROOT}/share/applications/"
+            cp -r apps/grotto/data/icons/* "tar/${ROOT}/share/icons/"
+            cp apps/grotto/daemon/packaging/systemd/user/*.service "tar/${ROOT}/share/systemd/user/"
           fi
-      - name: Upload DEBs
+          tar -C tar -czf "dist/${ROOT}-linux-${ARCH}.tar.gz" "${ROOT}"
+      - name: Build daemon tarball
+        if: ${{ env.COMPONENT != 'gnostr' }}
+        run: |
+          set -e
+          d=tar/grotto-daemon
+          install -D build/apps/grotto/grotto-daemon "$d/bin/grotto-daemon"
+          install -D -m644 apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service "$d/share/systemd/user/grotto-daemon.service"
+          install -D apps/grotto/daemon/packaging/tar/install.sh "$d/scripts/install.sh"
+          tar -C tar -czf "dist/grotto-daemon-${RELEASE_VERSION}-linux-${ARCH}.tar.gz" grotto-daemon
+      - name: Build Grotto AppImage
+        if: ${{ env.COMPONENT != 'gnostr' }}
+        run: |
+          set -e
+          mkdir -p AppDir/usr
+          cp -a stage/usr/lib AppDir/usr/ 2>/dev/null || true
+          install -D build/apps/grotto/grotto AppDir/usr/bin/grotto
+          install -D -m644 apps/grotto/packaging/appimage/grotto.desktop AppDir/usr/share/applications/grotto.desktop
+          install -D -m644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg \
+            AppDir/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
+          install -D -m644 stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml \
+            AppDir/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
+          glib-compile-schemas AppDir/usr/share/glib-2.0/schemas
+          scripts/ci/make-appimage.sh AppDir usr/bin/grotto usr/share/applications/grotto.desktop \
+            "dist/grotto-${RELEASE_VERSION}-${ARCH}.AppImage" --gtk
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: deb-packages-${{ matrix.arch }}
-          path: dist/*.deb
+          name: linux-packages-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
 
-  build-appimage:
-    name: Build AppImage (grotto) (${{ matrix.arch }})
+  # grotto-daemon with TCP IPC: deb, rpm, tarball and AppImage of one build.
+  build-linux-daemon-tcp:
+    name: Build grotto-daemon TCP packages (${{ matrix.arch }})
     needs: detect-component
     if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
     runs-on: ${{ matrix.runner }}
@@ -167,130 +187,63 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x86_64,  runner: ubuntu-latest }
+          - { arch: x86_64,  runner: ubuntu-24.04 }
           - { arch: aarch64, runner: ubuntu-24.04-arm }
-    container: ubuntu:22.04
     env:
       RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
+      ARCH: ${{ matrix.arch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev \
-            wget file patchelf desktop-file-utils
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
-      - name: Build
-        run: cmake --build build -j --target grotto
-      - name: Download AppImage tools
-        run: |
-          mkdir -p appimage-tools
-          cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-${{ matrix.arch }}.AppImage
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/releases/download/continuous/linuxdeploy-plugin-gtk.sh
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage
-          chmod +x linuxdeploy-${{ matrix.arch }}.AppImage linuxdeploy-plugin-gtk.sh appimagetool-${{ matrix.arch }}.AppImage
-      - name: Prepare AppDir
-        run: |
-          set -e
-          APPDIR=$PWD/AppDir
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
-          cp build/apps/grotto/grotto "$APPDIR/usr/bin/grotto"
-          # Desktop file and metadata
-          cp apps/grotto/packaging/appimage/grotto.desktop "$APPDIR/usr/share/applications/"
-          # Icon
-          if [ -f apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg ]; then
-            cp apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-          fi
-      - name: Build AppImage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
-        run: |
-          set -e
-          export NO_APPSTREAM=1
-          ./appimage-tools/linuxdeploy-${{ matrix.arch }}.AppImage --appdir AppDir \
-            -d AppDir/usr/share/applications/grotto.desktop \
-            --executable AppDir/usr/bin/grotto \
-            --plugin gtk
-          ./appimage-tools/appimagetool-${{ matrix.arch }}.AppImage AppDir grotto-${RELEASE_VERSION}-${{ matrix.arch }}.AppImage
-          mkdir -p dist
-          mv grotto-*.AppImage dist/
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v4
         with:
-          name: appimage-${{ matrix.arch }}
-          path: dist/*.AppImage
-
-  build-appimage-daemon-tcp:
-    name: Build AppImage (grotto-daemon TCP) (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    container: ubuntu:22.04
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+          submodules: recursive
       - name: Install build deps
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config wget file patchelf
+        run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
+        run: scripts/ci/configure-release.sh build -DENABLE_TCP_IPC=ON
       - name: Build (daemon only)
         run: cmake --build build -j --target grotto-daemon
-      - name: Download AppImage tools
-        run: |
-          mkdir -p appimage-tools
-          cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-${{ matrix.arch }}.AppImage
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage
-          chmod +x linuxdeploy-${{ matrix.arch }}.AppImage appimagetool-${{ matrix.arch }}.AppImage
-      - name: Prepare AppDir
+      - name: Stage daemon
         run: |
           set -e
-          APPDIR=$PWD/AppDir
-          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/share/applications"
-          cp build/apps/grotto/grotto-daemon "$APPDIR/usr/bin/grotto-daemon"
-          # Minimal desktop (optional for CLI); enables AppImage metadata
-          cat > "$APPDIR/usr/share/applications/grotto-daemon.desktop" <<EOF
-          [Desktop Entry]
-          Type=Application
-          Name=Grotto Daemon (TCP)
-          Exec=grotto-daemon
-          Terminal=true
-          Categories=Utility;
-          EOF
+          install -D build/apps/grotto/grotto-daemon stage/usr/bin/grotto-daemon
+          install -D -m644 apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service \
+            stage/usr/share/systemd/user/grotto-daemon.service
+      - name: Build DEB and RPM
+        run: |
+          set -e
+          scripts/ci/fpm-packages.sh deb grotto-daemon-tcp "$RELEASE_VERSION" stage dist
+          scripts/ci/fpm-packages.sh rpm grotto-daemon-tcp "$RELEASE_VERSION" stage dist
+      - name: Build tarball
+        run: |
+          set -e
+          d=tar/grotto-daemon-tcp
+          install -D stage/usr/bin/grotto-daemon "$d/bin/grotto-daemon"
+          install -D -m644 stage/usr/share/systemd/user/grotto-daemon.service "$d/share/systemd/user/grotto-daemon.service"
+          install -D apps/grotto/daemon/packaging/tar/install.sh "$d/scripts/install.sh"
+          tar -C tar -czf "dist/grotto-daemon-tcp-${RELEASE_VERSION}-linux-${ARCH}.tar.gz" grotto-daemon-tcp
       - name: Build AppImage
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -e
-          export NO_APPSTREAM=1
-          ./appimage-tools/linuxdeploy-${{ matrix.arch }}.AppImage --appdir AppDir \
-            -d AppDir/usr/share/applications/grotto-daemon.desktop \
-            --executable AppDir/usr/bin/grotto-daemon
-          ./appimage-tools/appimagetool-${{ matrix.arch }}.AppImage AppDir grotto-daemon-tcp-${RELEASE_VERSION}-${{ matrix.arch }}.AppImage
-          mkdir -p dist
-          mv grotto-daemon-tcp-*.AppImage dist/
-      - name: Upload AppImage (daemon TCP)
+          install -D stage/usr/bin/grotto-daemon AppDir/usr/bin/grotto-daemon
+          mkdir -p AppDir/usr/share/applications
+          printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Grotto Daemon (TCP)' \
+            'Exec=grotto-daemon' 'Icon=grotto-daemon' 'Terminal=true' 'Categories=Utility;' \
+            > AppDir/usr/share/applications/grotto-daemon.desktop
+          install -D -m644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg \
+            AppDir/usr/share/icons/hicolor/scalable/apps/grotto-daemon.svg
+          scripts/ci/make-appimage.sh AppDir usr/bin/grotto-daemon usr/share/applications/grotto-daemon.desktop \
+            "dist/grotto-daemon-tcp-${RELEASE_VERSION}-${ARCH}.AppImage"
+      - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-daemon-tcp-${{ matrix.arch }}
-          path: dist/*.AppImage
+          name: linux-daemon-tcp-${{ matrix.arch }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
 
   build-appimage-gnostr:
     name: Build AppImage (gnostr)
@@ -313,15 +266,20 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - name: Build snap
-        uses: snapcore/action-build@v1
         with:
-          path: ./snap/gnostr
+          submodules: recursive
+      # Snapcraft only sees its project directory, so the snap is built
+      # from the repository root with this snap's recipe in place.
+      - name: Select the gnostr recipe
+        run: cp snap/gnostr/snapcraft.yaml snap/snapcraft.yaml
+      - name: Build snap
+        id: snap
+        uses: snapcore/action-build@v1
       - name: Upload snap
         uses: actions/upload-artifact@v4
         with:
           name: snap-gnostr-${{ matrix.arch }}
-          path: snap/gnostr/*.snap
+          path: ${{ steps.snap.outputs.snap }}
 
   build-snap-signer:
     name: Build Snap (grotto) (${{ matrix.arch }})
@@ -336,15 +294,20 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - name: Build snap
-        uses: snapcore/action-build@v1
         with:
-          path: ./snap/grotto
+          submodules: recursive
+      # Snapcraft only sees its project directory, so the snap is built
+      # from the repository root with this snap's recipe in place.
+      - name: Select the grotto recipe
+        run: cp snap/grotto/snapcraft.yaml snap/snapcraft.yaml
+      - name: Build snap
+        id: snap
+        uses: snapcore/action-build@v1
       - name: Upload snap
         uses: actions/upload-artifact@v4
         with:
           name: snap-grotto-${{ matrix.arch }}
-          path: snap/grotto/*.snap
+          path: ${{ steps.snap.outputs.snap }}
 
   build-snap-daemon:
     name: Build Snap (grotto-daemon) (${{ matrix.arch }})
@@ -359,24 +322,29 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - name: Build snap
-        uses: snapcore/action-build@v1
         with:
-          path: ./snap/grotto-daemon
+          submodules: recursive
+      # Snapcraft only sees its project directory, so the snap is built
+      # from the repository root with this snap's recipe in place.
+      - name: Select the grotto-daemon recipe
+        run: cp snap/grotto-daemon/snapcraft.yaml snap/snapcraft.yaml
+      - name: Build snap
+        id: snap
+        uses: snapcore/action-build@v1
       - name: Upload snap
         uses: actions/upload-artifact@v4
         with:
           name: snap-grotto-daemon-${{ matrix.arch }}
-          path: snap/grotto-daemon/*.snap
+          path: ${{ steps.snap.outputs.snap }}
 
   create-release:
     name: Create GitHub Release and upload artifacts
-    needs: [detect-component, build-source, build-deb, build-deb-tcp, build-rpm, build-rpm-tcp, build-tarball-daemon, build-tarball-daemon-tcp, build-tarball-linux, build-appimage, build-appimage-gnostr, build-appimage-daemon-tcp, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
+    needs: [detect-component, build-source, build-linux, build-linux-daemon-tcp, build-appimage-gnostr, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     # A workflow_dispatch run publishes only for a tag with dry_run unticked.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && (needs.build-source.result == 'success' || needs.build-deb.result == 'success' || needs.build-deb-tcp.result == 'success' || needs.build-rpm.result == 'success' || needs.build-rpm-tcp.result == 'success' || needs.build-tarball-daemon.result == 'success' || needs.build-tarball-daemon-tcp.result == 'success' || needs.build-tarball-linux.result == 'success' || needs.build-appimage.result == 'success' || needs.build-appimage-gnostr.result == 'success' || needs.build-appimage-daemon-tcp.result == 'success' || needs.build-snap-gnostr.result == 'success' || needs.build-snap-signer.result == 'success' || needs.build-snap-daemon.result == 'success' || needs.build-flatpak.result == 'success' || needs.build-flatpak-gnostr.result == 'success' || needs.build-macos-signer-dmg.result == 'success' || needs.build-macos-tarball.result == 'success') }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && (needs.build-source.result == 'success' || needs.build-linux.result == 'success' || needs.build-linux-daemon-tcp.result == 'success' || needs.build-appimage-gnostr.result == 'success' || needs.build-snap-gnostr.result == 'success' || needs.build-snap-signer.result == 'success' || needs.build-snap-daemon.result == 'success' || needs.build-flatpak.result == 'success' || needs.build-flatpak-gnostr.result == 'success' || needs.build-macos-signer-dmg.result == 'success' || needs.build-macos-tarball.result == 'success') }}
     steps:
       - name: Download artifacts from this workflow run
         uses: actions/download-artifact@v4
@@ -392,319 +360,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-rpm:
-    name: Build RPM packages (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev ruby ruby-dev rubygems git ca-certificates
-          sudo gem install --no-document fpm
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
-      - name: Build
-        run: cmake --build build -j
-      - name: Stage install tree
-        run: cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build RPMs with fpm
-        env:
-          COMPONENT: ${{ needs.detect-component.outputs.component }}
-          RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-        run: |
-          set -e
-          mkdir -p dist package-roots
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
-            root="package-roots/gnostr"
-            mkdir -p "${root}/usr/bin" \
-              "${root}/usr/share/applications" \
-              "${root}/usr/share/icons/hicolor/scalable/apps" \
-              "${root}/usr/share/icons/hicolor/scalable/actions"
-            cp stage/usr/bin/gnostr "${root}/usr/bin/"
-            cp stage/usr/share/applications/org.gnostr.gnostr.desktop "${root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg "${root}/usr/share/icons/hicolor/scalable/apps/"
-            cp stage/usr/share/icons/hicolor/scalable/actions/gnostr-*.svg "${root}/usr/share/icons/hicolor/scalable/actions/"
-            fpm -s dir -t rpm -n gnostr -v "${RELEASE_VERSION}" \
-              -C "${root}" -p dist/gnostr_VERSION_ARCH.rpm .
-          fi
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
-            signer_root="package-roots/grotto"
-            mkdir -p "${signer_root}/usr/bin" \
-              "${signer_root}/usr/share/glib-2.0/schemas" \
-              "${signer_root}/usr/share/dbus-1/services" \
-              "${signer_root}/usr/share/applications" \
-              "${signer_root}/usr/share/icons/hicolor/scalable/apps"
-            cp stage/usr/bin/grotto "${signer_root}/usr/bin/"
-            cp stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml "${signer_root}/usr/share/glib-2.0/schemas/"
-            glib-compile-schemas "${signer_root}/usr/share/glib-2.0/schemas"
-            cp stage/usr/share/dbus-1/services/org.nostr.Signer.service "${signer_root}/usr/share/dbus-1/services/"
-            cp stage/usr/share/applications/org.nostr.Grotto.desktop "${signer_root}/usr/share/applications/"
-            cp stage/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg "${signer_root}/usr/share/icons/hicolor/scalable/apps/"
-            fpm -s dir -t rpm -n grotto -v "${RELEASE_VERSION}" \
-              -C "${signer_root}" -p dist/grotto_VERSION_ARCH.rpm .
-
-            daemon_root="package-roots/grotto-daemon"
-            mkdir -p "${daemon_root}/usr/bin" "${daemon_root}/usr/share/systemd/user"
-            cp stage/usr/bin/grotto-daemon "${daemon_root}/usr/bin/"
-            cp stage/usr/share/systemd/user/grotto-daemon.service "${daemon_root}/usr/share/systemd/user/"
-            fpm -s dir -t rpm -n grotto-daemon -v "${RELEASE_VERSION}" \
-              -C "${daemon_root}" -p dist/grotto-daemon_VERSION_ARCH.rpm .
-          fi
-      - name: Upload RPMs
-        uses: actions/upload-artifact@v4
-        with:
-          name: rpm-packages-${{ matrix.arch }}
-          path: dist/*.rpm
-
-  build-tarball-daemon:
-    name: Build tarball (daemon + systemd + installer) (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
-      - name: Build
-        run: cmake --build build -j --target grotto-daemon
-      - name: Assemble tarball tree
-        run: |
-          set -e
-          mkdir -p tar/grotto-daemon/bin
-          mkdir -p tar/grotto-daemon/share/systemd/user
-          mkdir -p tar/grotto-daemon/scripts
-          cp build/apps/grotto/grotto-daemon tar/grotto-daemon/bin/
-          cp apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service tar/grotto-daemon/share/systemd/user/
-          cp apps/grotto/daemon/packaging/tar/install.sh tar/grotto-daemon/scripts/
-          tar -C tar -czf grotto-daemon-${RELEASE_VERSION}-linux-${{ matrix.arch }}.tar.gz grotto-daemon
-          mkdir -p dist
-          mv grotto-daemon-*.tar.gz dist/
-      - name: Upload tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-daemon-${{ matrix.arch }}
-          path: dist/*.tar.gz
-
-  build-tarball-linux:
-    name: Build Linux tarball (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'gnostr' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev
-      - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
-      - name: Build
-        run: cmake --build build -j
-      - name: Assemble tarball tree
-        env:
-          COMPONENT: ${{ needs.detect-component.outputs.component }}
-        run: |
-          set -e
-          VERSION="${RELEASE_VERSION}"
-          if [[ "${COMPONENT}" == "grotto" ]]; then
-            ROOT="grotto-${VERSION}"
-          else
-            ROOT="gnostr-${VERSION}"
-          fi
-          mkdir -p "tar/${ROOT}/bin" "tar/${ROOT}/share/applications" "tar/${ROOT}/share/icons"
-
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "gnostr" ]]; then
-            cp build/apps/gnostr/gnostr "tar/${ROOT}/bin/"
-            cp apps/gnostr/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
-            cp -r apps/gnostr/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
-          fi
-          if [[ "${COMPONENT}" == "global" || "${COMPONENT}" == "grotto" ]]; then
-            mkdir -p "tar/${ROOT}/share/systemd/user"
-            cp build/apps/grotto/grotto "tar/${ROOT}/bin/"
-            cp build/apps/grotto/grotto-daemon "tar/${ROOT}/bin/"
-            cp apps/grotto/data/*.desktop "tar/${ROOT}/share/applications/" 2>/dev/null || true
-            cp -r apps/grotto/data/icons/* "tar/${ROOT}/share/icons/" 2>/dev/null || true
-            cp apps/grotto/daemon/packaging/systemd/user/*.service "tar/${ROOT}/share/systemd/user/" 2>/dev/null || true
-          fi
-
-          tar -C tar -czf "${ROOT}-linux-${{ matrix.arch }}.tar.gz" "${ROOT}"
-          mkdir -p dist
-          mv "${ROOT}-linux-${{ matrix.arch }}.tar.gz" dist/
-      - name: Upload tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-linux-${{ matrix.arch }}
-          path: dist/*.tar.gz
-
-  build-rpm-tcp:
-    name: Build RPM package (daemon TCP-enabled) (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev ruby ruby-dev rubygems git ca-certificates
-          sudo gem install --no-document fpm
-      - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
-      - name: Build (daemon only)
-        run: cmake --build build -j --target grotto-daemon
-      - name: Stage install tree
-        run: cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build RPM (daemon TCP variant)
-        run: |
-          set -e
-          mkdir -p dist
-          fpm -s dir -t rpm -n grotto-daemon-tcp -v "${RELEASE_VERSION}" \
-            --prefix=/usr \
-            stage/usr/bin/grotto-daemon=/usr/bin/grotto-daemon \
-            stage/usr/share/systemd/user/=usr/share/systemd/user/ \
-            -C . -p dist/grotto-daemon-tcp_VERSION_ARCH.rpm
-      - name: Upload RPM TCP
-        uses: actions/upload-artifact@v4
-        with:
-          name: rpm-packages-tcp-${{ matrix.arch }}
-          path: dist/*.rpm
-
-  build-tarball-daemon-tcp:
-    name: Build tarball (daemon TCP-enabled) (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential cmake ninja-build pkg-config
-      - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
-      - name: Build
-        run: cmake --build build -j --target grotto-daemon
-      - name: Assemble tarball tree
-        run: |
-          set -e
-          mkdir -p tar/grotto-daemon-tcp/bin
-          mkdir -p tar/grotto-daemon-tcp/share/systemd/user
-          mkdir -p tar/grotto-daemon-tcp/scripts
-          cp build/apps/grotto/grotto-daemon tar/grotto-daemon-tcp/bin/
-          cp apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service tar/grotto-daemon-tcp/share/systemd/user/
-          cp apps/grotto/daemon/packaging/tar/install.sh tar/grotto-daemon-tcp/scripts/
-          tar -C tar -czf grotto-daemon-tcp-${RELEASE_VERSION}-linux-${{ matrix.arch }}.tar.gz grotto-daemon-tcp
-          mkdir -p dist
-          mv grotto-daemon-tcp-*.tar.gz dist/
-      - name: Upload tarball TCP
-        uses: actions/upload-artifact@v4
-        with:
-          name: tarball-daemon-tcp-${{ matrix.arch }}
-          path: dist/*.tar.gz
-
-  build-deb-tcp:
-    name: Build .deb package (daemon TCP-enabled) (${{ matrix.arch }})
-    needs: detect-component
-    if: ${{ needs.detect-component.outputs.component == 'global' || needs.detect-component.outputs.component == 'grotto' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64,  runner: ubuntu-latest }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
-    env:
-      RELEASE_VERSION: ${{ needs.detect-component.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev libsecret-1-dev libssl-dev \
-            libnsync-dev ruby ruby-dev rubygems git ca-certificates
-          sudo gem install --no-document fpm
-      - name: Configure (TCP enabled)
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF -DENABLE_TCP_IPC=ON
-      - name: Build (daemon only)
-        run: cmake --build build -j --target grotto-daemon
-      - name: Stage install tree
-        run: cmake --install build --prefix "$PWD/stage/usr"
-      - name: Build DEB (daemon TCP variant)
-        run: |
-          set -e
-          mkdir -p dist
-          fpm -s dir -t deb -n grotto-daemon-tcp -v "${RELEASE_VERSION}" \
-            --prefix=/usr \
-            stage/usr/bin/grotto-daemon=/usr/bin/grotto-daemon \
-            -C . -p dist/grotto-daemon-tcp_VERSION_ARCH.deb
-      - name: Upload DEB TCP
-        uses: actions/upload-artifact@v4
-        with:
-          name: deb-packages-tcp-${{ matrix.arch }}
-          path: dist/*.deb
-
   build-flatpak:
     name: Build Flatpak (grotto) (${{ matrix.arch }})
     needs: detect-component
@@ -718,19 +373,24 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - name: Install flatpak & builder
+        with:
+          submodules: recursive
+      # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
+      - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder elfutils
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.gnome.Sdk//46 org.gnome.Platform//46
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak flatpak-builder elfutils >/dev/null
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Sdk//51 org.gnome.Platform//51
       - name: Build flatpak bundle
         run: |
           mkdir -p flatpak-build
-          flatpak-builder --arch=${{ matrix.arch }} --force-clean --repo=repo flatpak-build apps/grotto/flatpak/org.nostr.Grotto.yaml
+          flatpak-builder --user --arch=${{ matrix.arch }} --force-clean --repo=repo flatpak-build apps/grotto/flatpak/org.nostr.Grotto.yaml
           # x86_64 keeps its historical name; other arches get a suffix.
           name="grotto${{ matrix.arch != 'x86_64' && format('-{0}', matrix.arch) || '' }}.flatpak"
-          flatpak build-bundle --arch=${{ matrix.arch }} repo "$name" org.nostr.Grotto
+          flatpak build-bundle --arch=${{ matrix.arch }} repo "$name" org.nostr.Grotto \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
           mkdir -p dist
           mv "$name" dist/
       - name: Upload Flatpak bundle
@@ -752,19 +412,24 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
-      - name: Install flatpak & builder
+        with:
+          submodules: recursive
+      # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
+      - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder elfutils
-          sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y flathub org.gnome.Sdk//46 org.gnome.Platform//46
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq flatpak flatpak-builder elfutils >/dev/null
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.gnome.Sdk//51 org.gnome.Platform//51
       - name: Build flatpak bundle
         run: |
           mkdir -p flatpak-build
-          flatpak-builder --arch=${{ matrix.arch }} --force-clean --repo=repo flatpak-build apps/gnostr/flatpak/org.gnostr.Client.yaml
+          flatpak-builder --user --arch=${{ matrix.arch }} --force-clean --repo=repo flatpak-build apps/gnostr/flatpak/org.gnostr.Client.yaml
           # x86_64 keeps its historical name; other arches get a suffix.
           name="gnostr${{ matrix.arch != 'x86_64' && format('-{0}', matrix.arch) || '' }}.flatpak"
-          flatpak build-bundle --arch=${{ matrix.arch }} repo "$name" org.gnostr.Client
+          flatpak build-bundle --arch=${{ matrix.arch }} repo "$name" org.gnostr.Client \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
           mkdir -p dist
           mv "$name" dist/
       - name: Upload Flatpak bundle
@@ -789,13 +454,12 @@ jobs:
         run: |
           brew update
           brew install gtk4 libadwaita glib json-glib cmake ninja pkg-config librsvg \
-            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync || true
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync \
+            libpeas qrencode sqlite blueprint-compiler
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/sqlite/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_GROUNDHOG=OFF \
+          scripts/ci/configure-release.sh build \
             -DBUILD_MACOS_BUNDLE=ON \
             -DGNOSTR_SIGNER_VERSION="${RELEASE_VERSION}"
       - name: Build
@@ -826,11 +490,12 @@ jobs:
         run: |
           brew update
           brew install gtk4 libadwaita glib json-glib cmake ninja pkg-config \
-            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync || true
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
+            jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync \
+            libpeas qrencode sqlite blueprint-compiler
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/sqlite/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:${PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_GROUNDHOG=OFF
+          scripts/ci/configure-release.sh build
       - name: Build
         run: cmake --build build -j
       - name: Create tarball

@@ -22,6 +22,7 @@ on:
       - 'nostr-gobject/**'
       - 'nostr-gtk/**'
       - 'components/**'
+      - 'scripts/ci/**'
       - '.github/workflows/gnostr-appimage.yml'
       - '.github/workflows/release.yml'
   pull_request:
@@ -33,6 +34,7 @@ on:
       - 'nostr-gobject/**'
       - 'nostr-gtk/**'
       - 'components/**'
+      - 'scripts/ci/**'
       - '.github/workflows/gnostr-appimage.yml'
       - '.github/workflows/release.yml'
 
@@ -55,34 +57,10 @@ jobs:
           submodules: recursive
 
       - name: Install build and smoke-test dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libgtk-4-dev libadwaita-1-dev libjansson-dev libwebsockets-dev \
-            libsecret-1-dev libssl-dev libnsync-dev libpeas-2-dev libjson-glib-dev \
-            libsoup-3.0-dev libsqlite3-dev libqrencode-dev libsecp256k1-dev \
-            libsodium-dev libcurl4-openssl-dev libgit2-dev blueprint-compiler \
-            librsvg2-dev libgdk-pixbuf-2.0-dev adwaita-icon-theme \
-            wget file patchelf desktop-file-utils xvfb xauth python3-pip
-          sudo python3 -m pip install --break-system-packages blueprint-compiler==0.22.2
+        run: scripts/ci/install-linux-build-deps.sh --appimage
 
       - name: Configure
-        run: |
-          cat > "$PWD/ci-gcc-compat.h" <<'EOF'
-          #ifndef __has_feature
-          #define __has_feature(x) 0
-          #endif
-          EOF
-          # Adw.Spinner is newer than Noble's libadwaita; Gtk.Spinner is compatible.
-          sed -i 's/Adw\.Spinner/Gtk.Spinner/' apps/gnostr/data/ui/gnostr-main-window.blp
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_APPS=ON \
-            -DSIGNET_ENABLE=OFF \
-            -DBUILD_RELAYD=OFF \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_TESTING_FRAMEWORK=OFF \
-            -DCMAKE_C_FLAGS="-include $PWD/ci-gcc-compat.h"
+        run: scripts/ci/configure-release.sh build
 
       - name: Build all targets
         run: |

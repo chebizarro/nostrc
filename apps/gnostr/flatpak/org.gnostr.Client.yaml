@@ -1,25 +1,69 @@
+# Flatpak manifest for gnostr. From the repository root:
+#
+#   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+#   flatpak-builder --user --install --install-deps-from=flathub --force-clean \
+#       build-flatpak apps/gnostr/flatpak/org.gnostr.Client.yaml
 app-id: org.gnostr.Client
 runtime: org.gnome.Platform
-runtime-version: '46'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: gnostr
 finish-args:
   - --share=ipc
+  - --share=network
   - --socket=fallback-x11
   - --socket=wayland
+  - --device=dri
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.nostr.Signer
   - --filesystem=home
+  # gnostr owns its desktop id on the bus (org.nostr.Handler1).
+  - --own-name=org.gnostr.gnostr
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /lib/cmake
+  - /lib/*.a
+  - /lib/*.la
+  - /share/man
+  - /share/doc
+  - /share/aclocal
+  - /bin/lws-*
+  - /share/libwebsockets-test-server
+
 modules:
-  - name: nostrc
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
+  # Shared with the Grotto manifest: packaging/flatpak/modules/.
+  - ../../../packaging/flatpak/modules/blueprint-compiler.yml
+  - ../../../packaging/flatpak/modules/libpeas.yml
+  - ../../../packaging/flatpak/modules/libsecp256k1.yml
+  - ../../../packaging/flatpak/modules/libsodium.yml
+  - ../../../packaging/flatpak/modules/libqrencode.yml
+  - ../../../packaging/flatpak/modules/nsync.yml
+  - ../../../packaging/flatpak/modules/jansson.yml
+  - ../../../packaging/flatpak/modules/libwebsockets.yml
+
+  # gnostr with the flags every release job uses
+  # (scripts/ci/configure-release.sh) and the in-tree nostrdb/nsync submodules.
+  - name: gnostr
+    buildsystem: simple
+    build-commands:
+      - scripts/ci/configure-release.sh build -DCMAKE_INSTALL_PREFIX=/app -DCMAKE_INSTALL_LIBDIR=lib
+      - cmake --build build -j
+      - cmake --install build
+      # Only gnostr ships here; Grotto has its own Flatpak.
+      - rm -f /app/bin/grotto /app/bin/grotto-daemon /app/share/applications/org.nostr.Grotto.desktop
+          /app/share/dbus-1/services/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Grotto.service
+          /app/share/systemd/user/grotto-daemon.service /app/share/metainfo/org.nostr.Grotto.metainfo.xml
+      - glib-compile-schemas /app/share/glib-2.0/schemas/
     sources:
       - type: dir
-        path: ../..
-    build-commands:
-      - cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      - cmake --build build -j --target gnostr
-      - DESTDIR="${FLATPAK_DEST}" cmake --install build
-      - install -Dm755 build/apps/gnostr/gnostr /app/bin/gnostr
-      - install -Dm644 apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg /app/share/icons/hicolor/scalable/apps/org.gnostr.Client.svg || true
-      - install -Dm644 apps/gnostr/packaging/appimage/gnostr.desktop /app/share/applications/gnostr.desktop
+        path: ../../..
+        skip:
+          - .git
+          - .beads
+          - .claude
+          - build
+          - build-flatpak
+          - flatpak-build
+          - .flatpak-builder
