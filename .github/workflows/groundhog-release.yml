@@ -5,6 +5,15 @@
 # Each job mirrors the container recipe the packages were first verified
 # with (docs/designs/groundhog-packaging-plan-2026-10-05.md). The signer,
 # Grotto, is built from the same tree and shipped beside Groundhog.
+#
+# Every Linux package is built twice, natively: x86_64 on ubuntu-24.04 and
+# aarch64 on GitHub's arm64 runner (ubuntu-24.04-arm), no QEMU. File names
+# carry each format's own architecture tag (_amd64/_arm64 debs,
+# .x86_64/.aarch64 rpms, -x86_64/-aarch64 Arch packages and flatpaks).
+#
+# Dry run: Actions -> Groundhog release -> Run workflow on any branch builds
+# and smoke-tests every package and keeps them as run artifacts; nothing is
+# published unless the run is for a groundhog-v* tag and dry_run is off.
 name: Groundhog release
 
 on:
@@ -12,6 +21,11 @@ on:
     tags:
       - 'groundhog-v*'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and test only; never publish a release
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -42,20 +56,25 @@ jobs:
           if-no-files-found: error
 
   deb:
-    name: ${{ matrix.name }} package
+    name: ${{ matrix.distro.name }} package (${{ matrix.arch }})
     needs: source
-    runs-on: ubuntu-24.04
-    container: ${{ matrix.image }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.distro.image }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # One deb per release: library names differ (libsecp256k1-1 on
-          # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does
-          # not install elsewhere. The version carries the distribution.
+        # One deb per release: library names differ (libsecp256k1-1 on
+        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does
+        # not install elsewhere. The version carries the distribution;
+        # dpkg names the file _amd64 or _arm64.
+        distro:
           - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }
           - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }
           - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }
+        arch: [x86_64, aarch64]
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
@@ -70,7 +89,7 @@ jobs:
           # The archive carries the headless stack's debian/; the desktop
           # recipe replaces it (scripts/build-desktop-deb.sh does the same).
           rm -rf debian && cp -r packaging/debian-desktop debian
-          sed -i "1s/(\([^)]*\))/(\1~${{ matrix.tag }})/" debian/changelog
+          sed -i "1s/(\([^)]*\))/(\1~${{ matrix.distro.tag }})/" debian/changelog
           mk-build-deps -i -r -t 'apt-get -y -qq' debian/control
           dpkg-buildpackage -b -us -uc
           mkdir -p ../dist && cp ../*.deb ../dist/
@@ -82,18 +101,26 @@ jobs:
           xvfb-run -a dbus-run-session -- groundhog --smoke
       - uses: actions/upload-artifact@v4
         with:
-          name: deb-${{ matrix.tag }}
+          name: deb-${{ matrix.distro.tag }}-${{ matrix.arch }}
           path: dist/*.deb
 
   rpm:
-    name: Fedora package
+    name: Fedora package (${{ matrix.arch }})
     needs: source
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
     container: registry.fedoraproject.org/fedora:42
     steps:
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
       - name: Build
+        env:
+          UPSTREAM_VERSION: ${{ needs.source.outputs.version }}
         run: |
           set -eux
           dnf install -y -q rpm-build rpmdevtools dnf-plugins-core xorg-x11-server-Xvfb dbus-daemon
@@ -101,7 +128,12 @@ jobs:
           dnf builddep -y -q groundhog-*/packaging/rpm/groundhog.spec
           rpmdev-setuptree
           cp src/groundhog-*.tar.gz ~/rpmbuild/SOURCES/
-          rpmbuild -ba groundhog-*/packaging/rpm/groundhog.spec
+          # The spec names the archive by its pinned release; a branch build
+          # (workflow_dispatch) carries a 0.0.0-<sha> version instead. Point
+          # the spec at the archive actually built, as the Arch job does.
+          spec=$(echo groundhog-*/packaging/rpm/groundhog.spec)
+          sed -i "s/^%global upstream_version .*/%global upstream_version ${UPSTREAM_VERSION}/" "$spec"
+          rpmbuild -ba "$spec"
           mkdir -p dist && cp ~/rpmbuild/RPMS/*/*.rpm dist/
       - name: Install and launch
         run: |
@@ -111,28 +143,37 @@ jobs:
           xvfb-run -a dbus-run-session -- groundhog --smoke
       - uses: actions/upload-artifact@v4
         with:
-          name: rpm
+          name: rpm-${{ matrix.arch }}
           path: dist/*.rpm
 
   arch:
-    name: Arch package
+    name: Arch package (${{ matrix.arch }})
     needs: source
-    runs-on: ubuntu-24.04
-    container: archlinux:latest
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }
+          # The official archlinux image is x86_64 only. Arch Linux ARM is
+          # what Linux-on-Android setups run (Termux proot-distro archlinux,
+          # chroots), so the aarch64 package is built on an Arch Linux ARM
+          # root: menci/archlinuxarm is rebuilt daily from the official
+          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring
+          # initialised. Pinned by digest; bump it deliberately.
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+          path: ci
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
       - name: Build
-        run: |
-          set -eux
-          pacman -Syu --noconfirm --needed base-devel sudo xorg-server-xvfb dbus >/dev/null
-          useradd -m build && echo 'build ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/build
-          tar -xzf src/groundhog-*.tar.gz
-          mkdir -p /home/build/pkg
-          cp groundhog-*/packaging/archlinux/groundhog/PKGBUILD src/groundhog-*.tar.gz /home/build/pkg/
-          chown -R build /home/build/pkg
-          su build -c 'cd /home/build/pkg && makepkg -s --noconfirm'
-          mkdir -p dist && cp /home/build/pkg/*.pkg.tar.zst dist/
+        run: ci/scripts/ci/build-arch-package.sh src/groundhog-*.tar.gz dist
       - name: Install and launch
         run: |
           set -eux
@@ -141,13 +182,19 @@ jobs:
           xvfb-run -a dbus-run-session -- groundhog --smoke
       - uses: actions/upload-artifact@v4
         with:
-          name: arch
+          name: arch-${{ matrix.arch }}
           path: dist/*.pkg.tar.zst
 
   flatpak:
-    name: Flatpak bundle
+    name: Flatpak bundle (${{ matrix.arch }})
     needs: source
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -162,10 +209,10 @@ jobs:
       - name: Build and bundle
         run: |
           set -eux
-          flatpak-builder --user --force-clean --repo=repo build-flatpak \
+          flatpak-builder --user --arch=${{ matrix.arch }} --force-clean --repo=repo build-flatpak \
             gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml
           mkdir -p dist
-          flatpak build-bundle repo "dist/org.nostr.Groundhog-${{ needs.source.outputs.version }}-x86_64.flatpak" \
+          flatpak build-bundle --arch=${{ matrix.arch }} repo "dist/org.nostr.Groundhog-${{ needs.source.outputs.version }}-${{ matrix.arch }}.flatpak" \
             org.nostr.Groundhog --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Install and launch
         run: |
@@ -175,13 +222,21 @@ jobs:
           xvfb-run -a dbus-run-session -- flatpak run org.nostr.Groundhog --smoke
       - uses: actions/upload-artifact@v4
         with:
-          name: flatpak
+          name: flatpak-${{ matrix.arch }}
           path: dist/*.flatpak
 
   nix:
-    name: Nix flake
+    # Checks the flake builds on x86_64-linux and aarch64-linux; nothing
+    # is uploaded (users build from the flake).
+    name: Nix flake (${{ matrix.system }})
     needs: source
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: x86_64-linux,  runner: ubuntu-24.04 }
+          - { system: aarch64-linux, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -195,7 +250,8 @@ jobs:
     name: Publish pre-release
     needs: [source, deb, rpm, arch, flatpak, nix]
     # Publish only a complete release: a failed or cancelled package build blocks it.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && needs.source.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    # A workflow_dispatch run publishes only for a tag with dry_run unticked.
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && !inputs.dry_run && needs.source.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -205,7 +261,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Checksums
-        run: cd dist && sha256sum * > SHA256SUMS
+        run: cd dist && sha256sum -- * > SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/**
@@ -213,6 +269,6 @@ jobs:
           generate_release_notes: false
           body: |
             Groundhog ${{ needs.source.outputs.version }} (alpha) with Grotto, its signer.
-            Jobs that failed have no file here: deb (all releases) ${{ needs.deb.result }}, rpm ${{ needs.rpm.result }}, arch ${{ needs.arch.result }}, flatpak ${{ needs.flatpak.result }}, nix ${{ needs.nix.result }}.
+            Packages are built for x86_64 and aarch64 (amd64/arm64). Jobs that failed have no file here: deb (all releases) ${{ needs.deb.result }}, rpm ${{ needs.rpm.result }}, arch ${{ needs.arch.result }}, flatpak ${{ needs.flatpak.result }}, nix ${{ needs.nix.result }}.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

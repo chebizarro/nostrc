@@ -2,11 +2,11 @@
 # Build with: flatpak-builder --user --install build-dir org.nostr.Grotto.yaml
 #
 # Prerequisites:
-#   flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47
+#   flatpak install flathub org.gnome.Platform//51 org.gnome.Sdk//51
 #
 app-id: org.nostr.Grotto
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 command: grotto
 
@@ -43,126 +43,45 @@ cleanup:
   - /share/gtk-doc
   - /share/aclocal
 
+
 modules:
-  # libsecp256k1 - Elliptic curve cryptography for Nostr (Schnorr signatures)
-  - name: libsecp256k1
-    buildsystem: autotools
-    config-opts:
-      - --enable-module-recovery
-      - --enable-module-extrakeys
-      - --enable-module-schnorrsig
-      - --disable-benchmark
-      - --disable-tests
-      - --disable-exhaustive-tests
-    sources:
-      - type: git
-        url: https://github.com/bitcoin-core/secp256k1.git
-        tag: v0.5.1
-        commit: 642c885b6102725e25623738529895a95addc7d4
+  # Shared with the gnostr manifest: packaging/flatpak/modules/.
+  # Configuring the tree needs gnostr's dependencies too.
+  - ../../../packaging/flatpak/modules/blueprint-compiler.yml
+  - ../../../packaging/flatpak/modules/libpeas.yml
+  - ../../../packaging/flatpak/modules/libsecp256k1.yml
+  - ../../../packaging/flatpak/modules/libsodium.yml
+  - ../../../packaging/flatpak/modules/libqrencode.yml
+  - ../../../packaging/flatpak/modules/nsync.yml
+  - ../../../packaging/flatpak/modules/jansson.yml
+  - ../../../packaging/flatpak/modules/libwebsockets.yml
 
-  # libsodium - Modern cryptography library (NIP-44, secure memory)
-  - name: libsodium
-    buildsystem: autotools
-    config-opts:
-      - --disable-static
-    sources:
-      - type: git
-        url: https://github.com/jedisct1/libsodium.git
-        tag: 1.0.20-RELEASE
-        commit: d72e3f01c37e1c743cc7151a8e23c6e8ee592770
-
-  # nsync - Google's C synchronization library
-  - name: nsync
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DBUILD_SHARED_LIBS=ON
-      - -DNSYNC_ENABLE_TESTS=OFF
-    sources:
-      - type: git
-        url: https://github.com/google/nsync.git
-        tag: '1.29.2'
-
-  # jansson - JSON library for C
-  - name: jansson
-    buildsystem: meson
-    config-opts:
-      - -Ddocs=disabled
-      - -Dtests=disabled
-    sources:
-      - type: git
-        url: https://github.com/akheron/jansson.git
-        tag: v2.14
-        commit: 684e18c927e89615c2d501737e90018f4930d6c5
-
-  # flatcc - FlatBuffers compiler and runtime for C (for nostrdb)
-  - name: flatcc
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DFLATCC_INSTALL=ON
-      - -DFLATCC_TEST=OFF
-      - -DFLATCC_REFLECTION=OFF
-    sources:
-      - type: git
-        url: https://github.com/dvidelern/flatcc.git
-        tag: v0.6.1
-        commit: 034f15e4a9e26e21c72a1e2bdd37eb9ed1bdc625
-
-  # libwebsockets - WebSocket client/server library for relay connections
-  - name: libwebsockets
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DLWS_WITH_SSL=ON
-      - -DLWS_WITH_SHARED=ON
-      - -DLWS_WITH_STATIC=OFF
-      - -DLWS_WITHOUT_TESTAPPS=ON
-      - -DLWS_WITHOUT_TEST_SERVER=ON
-      - -DLWS_WITHOUT_TEST_SERVER_EXTPOLL=ON
-      - -DLWS_WITHOUT_TEST_PING=ON
-      - -DLWS_WITHOUT_TEST_CLIENT=ON
-      - -DLWS_WITH_GLIB=ON
-      - -DLWS_WITH_LIBUV=OFF
-      - -DLWS_WITH_LIBEVENT=OFF
-    sources:
-      - type: git
-        url: https://github.com/warmcat/libwebsockets.git
-        tag: v4.3.3
-        commit: b0a749c8e7a8294b68581ce4feac224e51768bcf
-
-  # The main nostrc/grotto application
+  # Grotto and grotto-daemon, built with the flags every release job uses
+  # (scripts/ci/configure-release.sh) and the in-tree nostrdb/nsync submodules.
   - name: grotto
     buildsystem: simple
-    build-options:
-      env:
-        # Help CMake find flatcc
-        CMAKE_PREFIX_PATH: /app
     build-commands:
-      # Configure and build the project
-      - |
-        cmake -S . -B build -G Ninja \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_INSTALL_PREFIX=/app \
-          -DBUILD_APPS=ON \
-          -DBUILD_TESTING_FRAMEWORK=OFF \
-          -DGNOSTR_ENABLE_SEAHORSE_HELPERS=OFF \
-          -DLIBNOSTR_WITH_NOSTRDB=OFF
+      - scripts/ci/configure-release.sh build -DCMAKE_INSTALL_PREFIX=/app -DCMAKE_INSTALL_LIBDIR=lib
       - cmake --build build --target grotto grotto-daemon -j
-      # Install binaries
       - install -Dm755 build/apps/grotto/grotto /app/bin/grotto
       - install -Dm755 build/apps/grotto/grotto-daemon /app/bin/grotto-daemon
-      # Install desktop file
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.desktop /app/share/applications/org.nostr.Grotto.desktop
-      # Install AppStream metainfo
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.metainfo.xml /app/share/metainfo/org.nostr.Grotto.metainfo.xml
-      # Install icons (scalable SVG)
-      - install -Dm644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg /app/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
-      # Install GSettings schema and compile
+      - for sz in 16 24 32 48 64 128 256 512; do install -Dm644 apps/grotto/data/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png /app/share/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png; done
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.gschema.xml /app/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
       - glib-compile-schemas /app/share/glib-2.0/schemas/
-      # Install D-Bus service file (Flatpak-specific with /app/bin path)
+      # D-Bus service file (Flatpak-specific with /app/bin path)
       - install -Dm644 apps/grotto/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service
+      # The desktop file is D-Bus activatable: export its service too.
+      - install -Dm644 build/apps/grotto/org.nostr.Grotto.service /app/share/dbus-1/services/org.nostr.Grotto.service
     sources:
       - type: dir
         path: ../../..
+        skip:
+          - .git
+          - .beads
+          - .claude
+          - build
+          - build-flatpak
+          - flatpak-build
+          - .flatpak-builder

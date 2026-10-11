@@ -358,7 +358,8 @@ endif()
 target_link_libraries(${APP_CLIENT_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB)
 # Link secp256k1 for identity/key derivation
 if (SECP256K1_FOUND)
-  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${SECP256K1_LIBRARIES})
+  # Full paths: a bare -lsecp256k1 misses non-default prefixes (Homebrew).
+  target_link_libraries(${APP_CLIENT_BIN} PRIVATE ${SECP256K1_LINK_LIBRARIES})
 endif()
 # Link math library on Linux
 if (UNIX AND NOT APPLE)

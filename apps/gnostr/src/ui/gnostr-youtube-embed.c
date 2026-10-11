@@ -137,7 +137,8 @@ static void gnostr_youtube_embed_init(GnostrYoutubeEmbed *self) {
   webkit_settings_set_enable_javascript(settings, TRUE);
   webkit_settings_set_media_playback_requires_user_gesture(settings, FALSE);
 
-  self->webview = WEBKIT_WEB_VIEW(webkit_web_view_new_with_settings(settings));
+  /* webkitgtk-6.0 has no webkit_web_view_new_with_settings(). */
+  self->webview = WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings, NULL));
   gtk_overlay_set_child(GTK_OVERLAY(self->overlay), GTK_WIDGET(self->webview));
   g_object_unref(settings);
 

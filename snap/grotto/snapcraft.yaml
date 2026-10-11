@@ -1,9 +1,12 @@
+# Built from the repository root: CI copies this file to snap/snapcraft.yaml
+# (see the snap jobs in .github/workflows/release.yml), so `source: .` is
+# the whole tree, submodules included.
 name: grotto
-base: core22
+base: core24
 version: 0.1.0
-summary: Grotto (GTK)
+summary: Grotto, a Nostr signer (GTK)
 description: |
-  Grotto GTK application. Securely authorize Nostr app requests.
+  Grotto securely authorizes Nostr app requests (NIP-55L, NIP-46).
 
 grade: stable
 confinement: strict
@@ -11,44 +14,45 @@ confinement: strict
 apps:
   grotto:
     command: usr/bin/grotto
-    desktop: usr/share/applications/grotto.desktop
+    desktop: usr/share/applications/org.nostr.Grotto.desktop
     extensions: [gnome]
-    plugs: [network, network-bind, wayland, x11]
+    plugs: [network, network-bind, password-manager-service]
+    environment:
+      LD_LIBRARY_PATH: $SNAP/usr/lib:$LD_LIBRARY_PATH
 
 parts:
   app:
-    plugin: cmake
-    source: ../..
+    plugin: nil
+    source: .
     build-packages:
       - build-essential
       - cmake
       - ninja-build
       - pkg-config
-      - libgtk-4-dev
-      - libadwaita-1-dev
+      - git
+      - python3-pip
+      - python3-gi
       - libjansson-dev
       - libwebsockets-dev
-      - libsecret-1-dev
       - libssl-dev
-      - libnsync-dev
+      - libpeas-2-dev
+      - libsqlite3-dev
+      - libqrencode-dev
+      - libsecp256k1-dev
+      - libsodium-dev
+      - libcurl4-openssl-dev
     stage-packages:
-      - libgtk-4-1
-      - libadwaita-1-0
       - libjansson4
-      - libwebsockets16
-      - libsecret-1-0
-      - libssl3
-      - libnsync
-    override-build: |
-      cmake -S $SNAPCRAFT_PROJECT_DIR -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      cmake --build build -j --target grotto
-      cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
-      # Desktop file and icon
-      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
-      if [ -f apps/grotto/packaging/appimage/grotto.desktop ]; then
-        cp apps/grotto/packaging/appimage/grotto.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
-      fi
-      if [ -f apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg ]; then
-        mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
-        cp apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
-      fi
+      - libwebsockets19t64
+      - libpeas-2-0
+      - libqrencode4
+      - libsecp256k1-1
+      - libsodium23
+    override-build: scripts/ci/build-snap-part.sh all
+    prime:
+      - -usr/bin/gnostr
+      - -usr/share/gnostr
+      - -usr/share/applications/org.gnostr.gnostr.desktop
+      - -usr/include
+      - -usr/lib/pkgconfig
+      - -usr/lib/cmake

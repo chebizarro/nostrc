@@ -1,9 +1,12 @@
+# Built from the repository root: CI copies this file to snap/snapcraft.yaml
+# (see the snap jobs in .github/workflows/release.yml), so `source: .` is
+# the whole tree, submodules included.
 name: gnostr
-base: core22
+base: core24
 version: 0.1.0
 summary: GNostr Client (GTK)
 description: |
-  Demo GTK desktop client for Nostr using the GNostr stack.
+  GTK desktop client for Nostr using the GNostr stack.
 
 grade: stable
 confinement: strict
@@ -11,43 +14,49 @@ confinement: strict
 apps:
   gnostr:
     command: usr/bin/gnostr
-    desktop: usr/share/applications/gnostr.desktop
+    desktop: usr/share/applications/org.gnostr.gnostr.desktop
     extensions: [gnome]
+    plugs: [network, password-manager-service]
+    environment:
+      GNOSTR_PLUGIN_PATH: $SNAP/usr/share/gnostr/plugins
+      LD_LIBRARY_PATH: $SNAP/usr/lib:$LD_LIBRARY_PATH
 
 parts:
   app:
-    plugin: cmake
-    source: ../..
+    plugin: nil
+    source: .
     build-packages:
       - build-essential
       - cmake
       - ninja-build
       - pkg-config
-      - libgtk-4-dev
-      - libadwaita-1-dev
+      - git
+      - python3-pip
+      - python3-gi
       - libjansson-dev
       - libwebsockets-dev
-      - libsecret-1-dev
       - libssl-dev
-      - libnsync-dev
+      - libpeas-2-dev
+      - libsqlite3-dev
+      - libqrencode-dev
+      - libsecp256k1-dev
+      - libsodium-dev
+      - libcurl4-openssl-dev
     stage-packages:
-      - libgtk-4-1
-      - libadwaita-1-0
       - libjansson4
-      - libwebsockets16
-      - libsecret-1-0
-      - libssl3
-      - libnsync
-    override-build: |
-      cmake -S $SNAPCRAFT_PROJECT_DIR -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-      cmake --build build -j --target gnostr
-      cmake --install build --prefix $SNAPCRAFT_PART_INSTALL/usr
-      # Desktop file and icon
-      mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/applications
-      if [ -f apps/gnostr/packaging/appimage/gnostr.desktop ]; then
-        cp apps/gnostr/packaging/appimage/gnostr.desktop $SNAPCRAFT_PART_INSTALL/usr/share/applications/
-      fi
-      if [ -f apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg ]; then
-        mkdir -p $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps
-        cp apps/gnostr/data/icons/hicolor/scalable/apps/org.gnostr.Client.svg $SNAPCRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/
-      fi
+      - libwebsockets19t64
+      - libpeas-2-0
+      - libqrencode4
+      - libsecp256k1-1
+      - libsodium23
+    override-build: scripts/ci/build-snap-part.sh all
+    prime:
+      - -usr/bin/grotto
+      - -usr/bin/grotto-daemon
+      - -usr/share/applications/org.nostr.Grotto.desktop
+      - -usr/share/dbus-1/services/org.nostr.Signer.service
+      - -usr/share/dbus-1/services/org.nostr.Grotto.service
+      - -usr/share/systemd
+      - -usr/include
+      - -usr/lib/pkgconfig
+      - -usr/lib/cmake

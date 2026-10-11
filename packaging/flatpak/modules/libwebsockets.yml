@@ -1,0 +1,27 @@
+# Shared flatpak-builder module (copied from the Groundhog manifest,
+# gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml), used by the
+# gnostr and Grotto manifests.
+name: libwebsockets
+buildsystem: cmake-ninja
+config-opts:
+  - -DCMAKE_BUILD_TYPE=Release
+  - -DLWS_WITH_SSL=ON
+  - -DLWS_WITH_SHARED=ON
+  - -DLWS_WITH_STATIC=OFF
+  - -DLWS_WITHOUT_TESTAPPS=ON
+  - -DLWS_WITH_GLIB=ON
+  - -DLWS_WITH_LIBUV=OFF
+  - -DLWS_WITH_LIBEVENT=OFF
+  # 4.3.3 is the release Groundhog is tested with (Ubuntu 24.04); the SDK's
+  # newer compiler and C library turn one of its warnings into an error.
+  - -DDISABLE_WERROR=ON
+  # Upstream still declares a CMake minimum the SDK's CMake rejects.
+  - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+sources:
+  - type: git
+    url: https://github.com/warmcat/libwebsockets.git
+    tag: v4.3.3
+    commit: 4415e84c095857629863804e941b9e1c2e9347ef
+
+# Build-time only: sqlcipher generates its sources with tclsh, which the
+# SDK does not have. Nothing of it is kept (see cleanup).

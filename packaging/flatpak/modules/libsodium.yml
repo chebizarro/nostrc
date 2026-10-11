@@ -1,0 +1,12 @@
+# Shared flatpak-builder module (copied from the Groundhog manifest,
+# gnome/groundhog/packaging/flatpak/org.nostr.Groundhog.yml), used by the
+# gnostr and Grotto manifests.
+name: libsodium
+buildsystem: autotools
+config-opts:
+  - --disable-static
+sources:
+  - type: git
+    url: https://github.com/jedisct1/libsodium.git
+    tag: 1.0.20-RELEASE
+    commit: 9511c982fb1d046470a8b42aa36556cdb7da15de
