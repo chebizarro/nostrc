@@ -452,35 +452,43 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
     CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
     CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
-    if (service) CFDictionarySetValue(q, kSecAttrService, service);
+    if (!service) { CFRelease(q); return NOSTR_SIGNER_ERROR_BACKEND; }
+    CFDictionarySetValue(q, kSecAttrService, service);
     /* Try account == selector */
     CFStringRef account = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
-    if (account) CFDictionarySetValue(q, kSecAttrAccount, account);
+    if (!account) { CFRelease(service); CFRelease(q); return NOSTR_SIGNER_ERROR_BACKEND; }
+    CFDictionarySetValue(q, kSecAttrAccount, account);
     CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
     CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
     CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
     if (st == errSecItemNotFound) {
       /* Try comment == selector */
-      if (account) { CFDictionaryRemoveValue(q, kSecAttrAccount); }
+      CFDictionaryRemoveValue(q, kSecAttrAccount);
       CFStringRef comment = CFStringCreateWithCString(NULL, cand, kCFStringEncodingUTF8);
-      if (comment) {
-        CFDictionarySetValue(q, kSecAttrComment, comment);
-        st = SecItemCopyMatching(q, &result);
-        CFRelease(comment);
+      if (!comment) {
+        if (result) CFRelease(result);
+        CFRelease(account);
+        CFRelease(service);
+        CFRelease(q);
+        return NOSTR_SIGNER_ERROR_BACKEND;
       }
+      CFDictionarySetValue(q, kSecAttrComment, comment);
+      st = SecItemCopyMatching(q, &result);
+      CFRelease(comment);
     }
-    if (service) CFRelease(service);
-    if (account) CFRelease(account);
+    CFRelease(service);
+    CFRelease(account);
     if (st == errSecSuccess && result) {
       CFDataRef d = (CFDataRef)result;
       const UInt8 *bytes = CFDataGetBytePtr(d);
       CFIndex blen = CFDataGetLength(d);
-      int rc_kc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+      int rc_kc = NOSTR_SIGNER_ERROR_INVALID_KEY;
       if (blen == 32 && bytes) {
         char *hex = bin_to_hex((const uint8_t*)bytes, 32);
         if (hex) { *out_sk_hex = hex; rc_kc = 0; }
         else rc_kc = NOSTR_SIGNER_ERROR_BACKEND;
       }
+      if (bytes && blen > 0) memset((void *)bytes, 0, (size_t)blen);
       CFRelease(d);
       CFRelease(q);
       return rc_kc;
