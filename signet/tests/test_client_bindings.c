@@ -35,6 +35,7 @@
 
 #include "signet/key_store.h"
 #include "key_store_private.h"
+#include "nip46_server_test_hooks.h"
 #include "signet/nip46_server.h"
 #include "signet/policy_engine.h"
 #include "signet/policy_store.h"
@@ -369,7 +370,7 @@ static char *n46_read_binding(N46Fixture *f, const char *client_pk, int64_t now)
   CHECK((st == NULL) == f->cache_only);
   char *agent = NULL;
   int rc = st ? signet_store_lookup_client_binding(st, client_pk, now, &agent, NULL)
-              : signet_key_store_ephemeral_lookup_client(f->ks, client_pk, &agent, NULL);
+              : signet_key_store_ephemeral_lookup_client(f->ks, client_pk, &agent, NULL, NULL);
   CHECK(rc == 0 || rc == 1);
   if (rc != 0) {
     g_free(agent);
@@ -1171,6 +1172,118 @@ static void test_cache_only_revoke_evict_drop_bindings(void) {
   printf("test_cache_only_revoke_evict_drop_bindings: PASS\n");
 }
 
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+typedef struct {
+  N46Fixture *fixture;
+  char new_sk[65];
+  char new_pk[65];
+  unsigned int calls;
+} BindingRace;
+
+static void re_adopt_after_lookup(void *data) {
+  BindingRace *race = data;
+  CHECK(++race->calls == 1);
+  CHECK(signet_key_store_revoke_agent(race->fixture->ks, "stew") == 0);
+  n46_adopt(race->fixture, "stew", race->new_sk, race->new_pk, "new-secret");
+}
+
+static void test_re_adopt_between_lookup_and_custody(bool cache_only) {
+  static const char *methods[] = {
+      "get_public_key", "sign_event", "nip04_encrypt", "nip04_decrypt",
+      "nip44_encrypt", "nip44_decrypt", "nip44_encrypt_b64", "nip44_decrypt_b64"
+#ifdef SIGNET_ENABLE_PASSKEYS
+      , "webauthn_get_info", "webauthn_make_credential", "webauthn_get_assertion",
+      "webauthn_export", "webauthn_import"
+#endif
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(methods); i++) {
+    N46Fixture f;
+    n46_setup_mode(&f, cache_only);
+    int64_t now = 1752380000;
+    CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
+                      "one-time-secret", "race-connect", now));
+    BindingRace race = {.fixture = &f};
+    gen_keypair_hex(race.new_sk, race.new_pk);
+    signet_nip46_server_set_after_binding_hook(f.srv, re_adopt_after_lookup, &race);
+    if (strcmp(methods[i], "get_public_key") == 0) {
+      (void)n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "race-key", now);
+    } else if (strcmp(methods[i], "sign_event") == 0) {
+      const char *req = "{\"id\":\"race-sign\",\"method\":\"sign_event\",\"params\":[\"{\\\"kind\\\":1,\\\"created_at\\\":1752380000,\\\"tags\\\":[],\\\"content\\\":\\\"x\\\"}\"]}";
+      (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "race-sign", now);
+#ifdef SIGNET_ENABLE_PASSKEYS
+    } else if (g_str_has_prefix(methods[i], "webauthn_")) {
+      char *req = g_strdup_printf(
+          "{\"id\":\"race-fido\",\"method\":\"%s\",\"params\":[\"{}\"]}", methods[i]);
+      (void)n46_send(&f, f.client_sk_hex, f.client_pk_hex, req, "race-fido", now);
+      g_free(req);
+#endif
+    } else {
+      n46_crypto(&f, f.client_sk_hex, f.client_pk_hex, methods[i],
+                 "input", "race-crypto", now);
+    }
+    CHECK(race.calls == 1);
+    n46_expect_last_audit(&f, methods[i], "error", "not_connected");
+    signet_nip46_server_set_after_binding_hook(f.srv, NULL, NULL);
+    CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
+                      "new-secret", "race-repair", now));
+    sodium_memzero(race.new_sk, sizeof(race.new_sk));
+    n46_teardown(&f);
+  }
+  printf("test_re_adopt_between_lookup_and_custody (%s): PASS\n",
+         n46_mode_name(cache_only));
+}
+#endif
+
+static void test_spent_secret_reuse_rejected(bool cache_only) {
+  N46Fixture f;
+  n46_setup_mode(&f, cache_only);
+  int64_t now = 1752380000;
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex,
+                    "one-time-secret", "spent-1", now));
+  char other_sk[65], other_pk[65], out_pk[65] = {0};
+  uint8_t other_raw[32];
+  gen_keypair_hex(other_sk, other_pk);
+  CHECK(hex_to_bytes(other_sk, other_raw, sizeof(other_raw)) == 0);
+  CHECK(signet_key_store_adopt_agent(f.ks, "ops", other_raw, other_pk,
+      "one-time-secret", f.bunker_pk_hex, NULL, 0, out_pk, NULL) != SIGNET_ADOPT_OK);
+  CHECK(signet_key_store_adopt_agent(f.ks, "ops", other_raw, other_pk,
+      "distinct-secret", f.bunker_pk_hex, NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  int rc = 0;
+  signet_key_store_test_next_reissue_secret(f.ks, "one-time-secret");
+  CHECK(n46_reissue(&f, "ops", NULL, &rc) == NULL && rc != 0);
+  signet_key_store_test_next_reissue_secret(f.ks, "distinct-secret");
+  CHECK(n46_reissue(&f, "stew", NULL, &rc) == NULL && rc != 0);
+  signet_key_store_test_next_reissue_secret(f.ks, "distinct-secret");
+  CHECK(n46_reissue(&f, "ops", NULL, &rc) == NULL && rc != 0);
+  char *fresh = n46_reissue(&f, "stew", NULL, &rc);
+  CHECK(fresh && rc == 0);
+  CHECK(n46_connect(&f, other_sk, other_pk, fresh, "spent-2", now));
+  n46_free_secret(fresh);
+  fresh = n46_reissue(&f, "stew", NULL, &rc);
+  CHECK(fresh && rc == 0);
+  CHECK(n46_connect(&f, f.client_sk_hex, f.client_pk_hex, fresh, "spent-rebind", now));
+  n46_free_secret(fresh);
+#endif
+  CHECK(n46_get_public_key(&f, f.client_sk_hex, f.client_pk_hex, "spent-3", now));
+  CHECK(signet_key_store_revoke_agent(f.ks, "stew") == 0);
+  char new_sk[65], new_pk[65];
+  uint8_t new_raw[32];
+  gen_keypair_hex(new_sk, new_pk);
+  CHECK(hex_to_bytes(new_sk, new_raw, sizeof(new_raw)) == 0);
+  CHECK(signet_key_store_adopt_agent(f.ks, "stew", new_raw, new_pk,
+      "one-time-secret", f.bunker_pk_hex, NULL, 0, out_pk, NULL) != SIGNET_ADOPT_OK);
+  /* Different key and different secret remain usable after the refusal. */
+  CHECK(signet_key_store_adopt_agent(f.ks, "stew", new_raw, new_pk,
+      "revived-secret", f.bunker_pk_hex, NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
+  sodium_memzero(new_raw, sizeof(new_raw));
+  sodium_memzero(new_sk, sizeof(new_sk));
+  sodium_memzero(other_raw, sizeof(other_raw));
+  sodium_memzero(other_sk, sizeof(other_sk));
+  n46_teardown(&f);
+  printf("test_spent_secret_reuse_rejected (%s): PASS\n", n46_mode_name(cache_only));
+}
+
 int main(void) {
   if (sodium_init() < 0) {
     fprintf(stderr, "sodium_init failed\n");
@@ -1178,6 +1291,8 @@ int main(void) {
   }
 
   test_store_binding_lifecycle();
+  for (int cache_only = 0; cache_only <= 1; cache_only++)
+    test_spent_secret_reuse_rejected(cache_only != 0);
   test_pair_once_reconnect_freely();
   test_unbound_client_rejected();
   test_revoked_binding_and_repair();
@@ -1192,6 +1307,9 @@ int main(void) {
     test_reconnect_own_or_no_secret(cache_only);
     test_reconnect_foreign_secret_refused(cache_only);
     test_reconnect_unknown_client_refused(cache_only);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+    test_re_adopt_between_lookup_and_custody(cache_only);
+#endif
   }
   test_cache_only_identity_change_invalidates();
   test_cache_only_restart_requires_pairing();

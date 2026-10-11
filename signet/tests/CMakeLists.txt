@@ -78,6 +78,9 @@ signet_add_test_executable(test_mgmt_replay)
 signet_add_test_executable(test_pubkey_backfill)          # legacy agents.pubkey backfill
 signet_add_test_executable(test_reissue_self_service)
 signet_add_test_executable(test_client_bindings)          # persistent NIP-46 bindings
+if (SIGNET_ENABLE_TEST_HOOKS)
+  target_compile_definitions(test_client_bindings PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+endif()
 # key_store_private.h: cache-only bindings (nostrc-xjznk).
 target_include_directories(test_client_bindings PRIVATE ${CMAKE_SOURCE_DIR}/signet/src)
 signet_add_test_executable(test_credential_lifecycle)

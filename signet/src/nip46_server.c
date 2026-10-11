@@ -39,6 +39,7 @@
 
 #include <glib.h>
 #include <json-glib/json-glib.h>
+#include <sodium.h>
 
 /* libnostr */
 #include <nostr-event.h>
@@ -363,13 +364,16 @@ static int signet_nip46_lookup_binding(SignetKeyStore *keys,
                                        const char *client_pubkey_hex,
                                        int64_t now,
                                        char **out_agent_id,
-                                       char **out_bound_secret_hash) {
+                                       char **out_bound_secret_hash,
+                                       uint64_t *out_generation) {
+  if (out_generation) *out_generation = 0;
   SignetStore *st = signet_key_store_get_store(keys);
   if (st)
     return signet_store_lookup_client_binding(st, client_pubkey_hex, now,
                                               out_agent_id, out_bound_secret_hash);
   return signet_key_store_ephemeral_lookup_client(keys, client_pubkey_hex,
-                                                  out_agent_id, out_bound_secret_hash);
+                                                  out_agent_id, out_bound_secret_hash,
+                                                  out_generation);
 }
 
 /* ------------------------------ server object ----------------------------- */
@@ -383,8 +387,21 @@ struct SignetNip46Server {
   struct SignetFidoService *fido;
 
   char *identity;
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  void (*after_binding_hook)(void *);
+  void *after_binding_data;
+#endif
   SignetDenyList *deny; /* live deny list (owned by daemon) */
 };
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+void signet_nip46_server_set_after_binding_hook(SignetNip46Server *s,
+                                                 void (*hook)(void *), void *data) {
+  if (!s) return;
+  s->after_binding_hook = hook;
+  s->after_binding_data = data;
+}
+#endif
 
 void signet_nip46_server_set_deny_list(SignetNip46Server *s,
                                        struct SignetDenyList *deny) {
@@ -424,6 +441,37 @@ void signet_nip46_server_free(SignetNip46Server *s) {
   g_free(s->identity);
   free(s);
 }
+
+#ifdef SIGNET_ENABLE_PASSKEYS
+typedef struct {
+  SignetNip46Server *server;
+  const char *agent_id;
+  const char *method;
+  const char *payload;
+  char *json;
+  SignetFidoError error;
+  SignetFidoStatus status;
+} SignetFidoBoundWork;
+
+static int signet_nip46_fido_bound_call(void *data) {
+  SignetFidoBoundWork *w = data;
+  if (strcmp(w->method, "webauthn_get_info") == 0)
+    w->status = signet_fido_get_info_json(w->server->fido, w->agent_id, &w->json, &w->error);
+  else if (strcmp(w->method, "webauthn_make_credential") == 0)
+    w->status = signet_fido_make_credential_json(w->server->fido, w->agent_id,
+                                                  w->payload, &w->json, &w->error);
+  else if (strcmp(w->method, "webauthn_get_assertion") == 0)
+    w->status = signet_fido_get_assertion_json(w->server->fido, w->agent_id,
+                                                w->payload, &w->json, &w->error);
+  else if (strcmp(w->method, "webauthn_export") == 0)
+    w->status = signet_fido_export_credential_json(w->server->fido, w->agent_id,
+                                                    w->payload, &w->json, &w->error);
+  else
+    w->status = signet_fido_import_credential_json(w->server->fido, w->agent_id,
+                                                    w->payload, &w->json, &w->error);
+  return 0;
+}
+#endif
 
 /* ----------------------------- handle_event ------------------------------- */
 
@@ -496,6 +544,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   }
 
   char *session_agent_id = NULL;
+  char *binding_secret_hash = NULL;
+  uint64_t binding_generation = 0;
   const char *policy_identity = s->identity;
   const char *pre_code = NULL;
   char *pre_err = NULL;
@@ -540,13 +590,15 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
           char *bound = NULL;
           char *bound_hash = NULL;
           if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now,
-                                          &bound, &bound_hash) == 0 && bound) {
+                                          &bound, &bound_hash, NULL) == 0 && bound) {
             bool stale_ok = true;
             if (secret_provided) {
               char *provided_hash =
                   g_compute_checksum_for_string(G_CHECKSUM_SHA256, provided_secret, -1);
               stale_ok = (bound_hash && provided_hash &&
-                          g_strcmp0(bound_hash, provided_hash) == 0);
+                          strlen(bound_hash) == 64 && strlen(provided_hash) == 64 &&
+                          sodium_memcmp(bound_hash, provided_hash, 64) == 0);
+              if (provided_hash) signet_memzero(provided_hash, strlen(provided_hash));
               g_free(provided_hash);
             }
             if (stale_ok) {
@@ -555,6 +607,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
             }
           }
           g_free(bound);
+          if (bound_hash) signet_memzero(bound_hash, strlen(bound_hash));
           g_free(bound_hash);
 
           if (!session_agent_id) {
@@ -577,7 +630,8 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
        * (it survives daemon restarts and honors revocation immediately),
        * otherwise the key store's in-process cache-only bindings. */
       char *bound = NULL;
-      if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now, &bound, NULL) == 0 &&
+      if (signet_nip46_lookup_binding(s->keys, client_pubkey_hex, now,
+              &bound, &binding_secret_hash, &binding_generation) == 0 &&
           bound) {
         session_agent_id = bound;
       } else {
@@ -588,6 +642,12 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
       if (session_agent_id) policy_identity = session_agent_id;
     }
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+    if (!pre_err && session_agent_id && strcmp(method, "connect") != 0 &&
+        s->after_binding_hook)
+      s->after_binding_hook(s->after_binding_data);
+#endif
 
     if (!pre_err && !event_kind_ok) {
       pre_code = "invalid_event_kind";
@@ -697,11 +757,12 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
 
     } else if (strcmp(method, "get_public_key") == 0) {
       char agent_pubkey_hex[65];
-      if (!signet_key_store_get_agent_pubkey(s->keys, session_agent_id,
-                                             agent_pubkey_hex, sizeof(agent_pubkey_hex))) {
+      int key_rc = signet_key_store_get_bound_pubkey(s->keys, session_agent_id,
+          client_pubkey_hex, binding_secret_hash, binding_generation, agent_pubkey_hex);
+      if (key_rc != 0) {
         err_str = g_strdup("failed to load agent pubkey");
         status = "error";
-        code = "invalid_key";
+        code = key_rc == -3 ? "not_connected" : "invalid_key";
       } else {
         result = g_strdup(agent_pubkey_hex);
         result_is_json = false;
@@ -718,14 +779,14 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         /* A fenced identity signs only for its current owner client; the
          * owner is the authenticated envelope pubkey, never a parameter. */
         SignetCustodyEvent work = {.event_json = req.params[0]};
-        if (signet_key_store_with_signing_key(s->keys, session_agent_id,
-                                              client_pubkey_hex,
-                                              signet_custody_sign_event,
-                                              &work) != 0) {
+        int sign_rc = signet_key_store_with_bound_key(s->keys, session_agent_id,
+            client_pubkey_hex, binding_secret_hash, binding_generation,
+            signet_custody_sign_event, &work);
+        if (sign_rc != 0) {
           free(work.signed_json);
           err_str = g_strdup("signing denied or failed");
           status = "error";
-          code = "sign_failed";
+          code = sign_rc == -3 ? "not_connected" : "sign_failed";
         } else {
           result = work.signed_json;
           result_is_json = false;
@@ -741,7 +802,6 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "nip44_decrypt") == 0 ||
                strcmp(method, "nip44_encrypt_b64") == 0 ||
                strcmp(method, "nip44_decrypt_b64") == 0) {
-      bool is_nip44 = g_str_has_prefix(method, "nip44_");
       if (!req.params || req.n_params < 2) {
         err_str = g_strdup("crypto method requires [pubkey, input]");
         status = "error";
@@ -749,12 +809,9 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
       } else {
         /* NIP-44 runs as the authenticated client (owner-gated for fenced
          * identities). NIP-04 stays legacy-only: denied once fenced. */
-        int crypto_rc = is_nip44
-            ? signet_key_store_crypt_nip44(s->keys, session_agent_id,
-                client_pubkey_hex, method, req.params[0],
-                req.params[1], &result)
-            : signet_key_store_crypt_legacy(s->keys, session_agent_id,
-                method, req.params[0], req.params[1], &result);
+        int crypto_rc = signet_key_store_crypt_bound(s->keys, session_agent_id,
+            client_pubkey_hex, binding_secret_hash, binding_generation,
+            method, req.params[0], req.params[1], &result);
         if (crypto_rc == -2) {
           err_str = g_strdup("NIP-44 plaintext is not NUL-free UTF-8; use nip44_decrypt_b64 for binary data");
           status = "error";
@@ -762,7 +819,7 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
         } else if (crypto_rc != 0) {
           err_str = g_strdup("crypto operation denied or failed");
           status = "error";
-          code = "crypto_failed";
+          code = crypto_rc == -3 ? "not_connected" : "crypto_failed";
         } else {
           result_is_json = false;
           status = "ok";
@@ -776,44 +833,38 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
                strcmp(method, "webauthn_export") == 0 ||
                strcmp(method, "webauthn_import") == 0) {
 #ifdef SIGNET_ENABLE_PASSKEYS
-      char *fido_json = NULL;
-      SignetFidoError ferr;
-      SignetFidoStatus fst = SIGNET_FIDO_ERR_INTERNAL;
-      if (strcmp(method, "webauthn_get_info") == 0) {
-        fst = signet_fido_get_info_json(s->fido, session_agent_id, &fido_json, &ferr);
+      SignetFidoBoundWork fido = {.server = s, .agent_id = session_agent_id,
+                                  .method = method, .status = SIGNET_FIDO_ERR_INTERNAL};
+      if (strcmp(method, "webauthn_get_info") != 0 &&
+          (!req.params || req.n_params < 1)) {
+        err_str = g_strdup("webauthn method requires JSON payload param");
+        status = "error";
+        code = "invalid_params";
       } else {
-        if (!req.params || req.n_params < 1) {
-          err_str = g_strdup("webauthn method requires JSON payload param");
+        fido.payload = strcmp(method, "webauthn_get_info") == 0 ? NULL : req.params[0];
+        int bound_rc = signet_key_store_with_bound_session(s->keys, session_agent_id,
+            client_pubkey_hex, binding_secret_hash, binding_generation,
+            signet_nip46_fido_bound_call, &fido);
+        if (bound_rc != 0) {
+          err_str = g_strdup("client has no active NIP-46 session");
           status = "error";
-          code = "invalid_params";
-        } else if (strcmp(method, "webauthn_make_credential") == 0) {
-          fst = signet_fido_make_credential_json(s->fido, session_agent_id,
-                                                 req.params[0], &fido_json, &ferr);
-        } else if (strcmp(method, "webauthn_get_assertion") == 0) {
-          fst = signet_fido_get_assertion_json(s->fido, session_agent_id,
-                                               req.params[0], &fido_json, &ferr);
-        } else if (strcmp(method, "webauthn_export") == 0) {
-          fst = signet_fido_export_credential_json(s->fido, session_agent_id,
-                                                   req.params[0], &fido_json, &ferr);
-        } else {
-          fst = signet_fido_import_credential_json(s->fido, session_agent_id,
-                                                   req.params[0], &fido_json, &ferr);
+          code = bound_rc == -3 ? "not_connected" : "internal_error";
         }
       }
       if (!err_str) {
-        if (fst == SIGNET_FIDO_OK) {
-          result = fido_json;
-          fido_json = NULL;
+        if (fido.status == SIGNET_FIDO_OK) {
+          result = fido.json;
+          fido.json = NULL;
           result_is_json = true;
           status = "ok";
           code = "ok";
         } else {
-          err_str = g_strdup(ferr.reason ? ferr.reason : signet_fido_status_string(fst));
+          err_str = g_strdup(fido.error.reason ? fido.error.reason : signet_fido_status_string(fido.status));
           status = "error";
-          code = signet_fido_status_string(fst);
+          code = signet_fido_status_string(fido.status);
         }
       }
-      g_free(fido_json);
+      g_free(fido.json);
 #else
       err_str = g_strdup("passkeys support not built");
       status = "error";
@@ -920,6 +971,10 @@ bool signet_nip46_server_handle_event(SignetNip46Server *s,
   if (result) { signet_memzero(result, strlen(result)); g_free(result); }
   g_free(err_str);
   g_free(pre_err);
+  if (binding_secret_hash) {
+    signet_memzero(binding_secret_hash, strlen(binding_secret_hash));
+    g_free(binding_secret_hash);
+  }
   g_free(session_agent_id);
   free(dec_err);
 

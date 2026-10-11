@@ -189,6 +189,7 @@ target_include_directories(signetd PRIVATE
 )
 if (SIGNET_ENABLE_TEST_HOOKS)
   target_compile_definitions(signetd PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+  target_compile_definitions(signet_core PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
 endif()
 
 add_executable(signetctl ${CMAKE_CURRENT_SOURCE_DIR}/src/signetctl_main.c)

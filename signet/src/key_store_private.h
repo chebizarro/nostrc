@@ -20,6 +20,12 @@
  * - nothing survives the process: after a restart a cache-only signer holds
  *   no agents, secrets or bindings, and every client must be provisioned and
  *   paired again.
+ *
+ * Lock order for bound custody: ks->mu -> SQLite connection mutex/transaction.
+ * Never acquire ks->mu while holding the connection mutex; revocation commits
+ * and releases the database mutex before it evicts the hot key. Custody
+ * callbacks must not re-enter the key store. No cache entry or binding pointer
+ * may escape ks->mu.
  */
 
 #ifndef SIGNET_KEY_STORE_PRIVATE_H
@@ -47,9 +53,40 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
 int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
                                              const char *client_pubkey_hex,
                                              char **out_agent_id,
-                                             char **out_bound_secret_hash);
+                                             char **out_bound_secret_hash,
+                                             uint64_t *out_generation);
+
+/* NIP-46 custody path. The pin comes from the initial binding lookup. The
+ * callback runs only if that same binding still authorizes the client, while
+ * ks->mu and (with a store) the SQLite writer transaction protect the key. */
+int signet_key_store_with_bound_key(SignetKeyStore *ks, const char *agent_id,
+                                    const char *client_pubkey,
+                                    const char *bound_secret_hash,
+                                    uint64_t generation,
+                                    SignetKeyStoreCustodyFn fn, void *user_data);
+int signet_key_store_crypt_bound(SignetKeyStore *ks, const char *agent_id,
+                                 const char *client_pubkey,
+                                 const char *bound_secret_hash,
+                                 uint64_t generation, const char *method,
+                                 const char *peer_pubkey, const char *input,
+                                 char **out_result);
+int signet_key_store_get_bound_pubkey(SignetKeyStore *ks, const char *agent_id,
+                                      const char *client_pubkey,
+                                      const char *bound_secret_hash,
+                                      uint64_t generation, char out[65]);
+/* For agent-id-scoped custody services which do not consume the agent nsec
+ * (WebAuthn). The callback must not re-enter the key store. */
+int signet_key_store_with_bound_session(SignetKeyStore *ks, const char *agent_id,
+                                        const char *client_pubkey,
+                                        const char *bound_secret_hash,
+                                        uint64_t generation,
+                                        int (*fn)(void *), void *data);
 
 /* Number of cache-only client bindings currently held (test seam). */
 unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks);
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+void signet_key_store_test_next_reissue_secret(SignetKeyStore *ks, const char *secret);
+#endif
 
 #endif /* SIGNET_KEY_STORE_PRIVATE_H */
