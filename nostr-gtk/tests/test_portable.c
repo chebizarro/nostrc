@@ -22,6 +22,107 @@ static GnMarkdownToken *nth_kind(GnMarkdownDocument *doc, GnMarkdownTokenKind ki
   return NULL;
 }
 
+static guint table_cells(const gchar *text) {
+  g_autoptr(GnMarkdownDocument) doc = gn_markdown_parse(text, -1);
+  guint cells = 0;
+  for (guint i = 0; i < doc->tokens->len; i++)
+    cells += ((GnMarkdownToken *)g_ptr_array_index(doc->tokens, i))->kind == GN_MARKDOWN_TABLE_CELL;
+  return cells;
+}
+
+/* The owner's bot table (nostrc-p15n5.1) in the byte variants chat clients
+ * and model output produce: each is still a 4-column table of 3 rows, its
+ * cells trimmed of every kind of blank, ragged rows padded/truncated. */
+static void markdown_table_variants(void) {
+  static const gchar *const rows[] = {
+    "| Port | Model                     | VRAM              | Speed      |",
+    "| ---- | ------------------------- | ----------------- | ---------- |",
+    "| 8080 | Gemma 4 26B A4B + DSpark  | ~35 GB            | 45.7 tok/s |",
+    "| 8081 | Phi-4-reasoning-plus Q4_K_M | ~5 GB (20/40 layers GPU) | 7.3 tok/s  |",
+    NULL,
+  };
+  static const struct { const gchar *name, *eol, *from, *to; } variants[] = {
+    { "lf", "\n", NULL, NULL },
+    { "crlf", "\r\n", NULL, NULL },
+    { "cr", "\r", NULL, NULL },
+    { "u2028", "\xe2\x80\xa8", NULL, NULL },
+    { "u2029", "\xe2\x80\xa9", NULL, NULL },
+    { "nel", "\xc2\x85", NULL, NULL },
+    { "nbsp", "\n", " ", "\xc2\xa0" },
+    { "narrow-nbsp", "\n", " ", "\xe2\x80\xaf" },
+    { "tabs", "\n", " ", "\t" },
+    { "trailing-blanks", "\n", "|\n", "|  \t\xc2\xa0\n" },
+    { "zero-width", "\n", "| ", "|\xe2\x80\x8b " },
+    { "en-dash-rule", "\n", "--", "\xe2\x80\x93\xe2\x80\x93" },
+    { "no-outer-pipes", "\n", NULL, NULL },
+  };
+  for (guint v = 0; v < G_N_ELEMENTS(variants); v++) {
+    g_autoptr(GString) text = g_string_new("**Final stack on dual P40s:**");
+    g_string_append(text, variants[v].eol);
+    g_string_append(text, variants[v].eol);
+    g_string_append(text, variants[v].eol);
+    for (guint r = 0; rows[r]; r++) {
+      g_autofree gchar *row = g_strdup(rows[r]);
+      if (g_str_equal(variants[v].name, "no-outer-pipes")) {
+        g_autofree gchar *inner = g_strndup(row + 1, strlen(row) - 2);
+        g_free(row);
+        row = g_steal_pointer(&inner);
+      }
+      g_string_append(text, row);
+      g_string_append(text, variants[v].eol);
+    }
+    g_string_append(text, variants[v].eol);
+    g_string_append(text, "~6 GB free headroom.");
+    if (variants[v].from)
+      g_string_replace(text, variants[v].from, variants[v].to, 0);
+    g_test_message("variant %s", variants[v].name);
+    g_autoptr(GnMarkdownDocument) doc = gn_markdown_parse(text->str, -1);
+    g_assert_false(doc->truncated);
+    g_assert_cmpuint(table_cells(text->str), ==, 12);
+    GnMarkdownToken *header = nth_kind(doc, GN_MARKDOWN_TABLE_CELL, 0);
+    g_assert_cmpstr(header->text, ==, "Port");
+    g_assert_true(header->ordered);
+    g_assert_cmpuint(header->columns, ==, 4);
+    g_assert_cmpstr(nth_kind(doc, GN_MARKDOWN_TABLE_CELL, 3)->text, ==, "Speed");
+    /* Blanks inside a cell are its text. */
+    g_autoptr(GString) speed = g_string_new("7.3 tok/s");
+    if (g_str_equal(variants[v].from ? variants[v].from : "", " "))
+      g_string_replace(speed, " ", variants[v].to, 0);
+    g_assert_cmpstr(nth_kind(doc, GN_MARKDOWN_TABLE_CELL, 11)->text, ==, speed->str);
+    g_assert_cmpuint(nth_kind(doc, GN_MARKDOWN_TEXT, 0)->style, !=, 0); /* the bold line */
+    g_assert_null(gn_markdown_explain_no_table(text->str, -1));
+  }
+  /* Ragged body rows: padded with empty cells, extra cells dropped. */
+  g_autoptr(GnMarkdownDocument) ragged = gn_markdown_parse("a | b | c\n--|--|--\n1 |\n1 | 2 | 3 | 4\n", -1);
+  g_assert_cmpuint(table_cells("a | b | c\n--|--|--\n1 |\n1 | 2 | 3 | 4\n"), ==, 9);
+  g_assert_cmpstr(nth_kind(ragged, GN_MARKDOWN_TABLE_CELL, 3)->text, ==, "1");
+  g_assert_cmpstr(nth_kind(ragged, GN_MARKDOWN_TABLE_CELL, 4)->text, ==, "");
+  g_assert_cmpstr(nth_kind(ragged, GN_MARKDOWN_TABLE_CELL, 8)->text, ==, "3");
+}
+
+/* Pipe lines that are not a table say why, without their text. */
+static void markdown_table_explain(void) {
+  static const struct { const gchar *text, *why; } cases[] = {
+    { "no pipes here", NULL },
+    { "| a | b |\n| - | - |\n", NULL },
+    { "intro\n| a | b | c |\n| --- | --- |\n", "line 2 has 3 cells but its delimiter row has 2" },
+    { "| a | b |\n\n| --- | --- |\n", "line 1 has 2 cells but the next line is blank" },
+    { "| a | b |\n| \xe2\x80\x94 | --- |\n", NULL }, /* an em dash rule is one */
+    { "| a | b |\n| === | --- |\n",
+      "line 1 has 2 cells but cell 1 of the next line has U+003D, not '-' or ':'" },
+    { "| a | b |\n| | --- |\n", "line 1 has 2 cells but cell 1 of the next line is empty, not a run of '-'" },
+    { "| a | b |\nplain\n", "line 1 has 2 cells but the next line has no pipe" },
+    { "text\n| a | b |", "line 2 has 2 cells but is the last line" },
+    { "```\n| a | b |\n| - | - |\n```\n", "2 pipe lines are inside a code fence" },
+    { "\xef\xbd\x9c a \xef\xbd\x9c b \xef\xbd\x9c\n", NULL },
+    { "a | b\nplain\n| c | d |\n| - | - |\n", NULL }, /* a later table */
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autofree gchar *why = gn_markdown_explain_no_table(cases[i].text, -1);
+    g_assert_cmpstr(why, ==, cases[i].why);
+  }
+}
+
 /* GFM blocks and inlines (nostrc-p15n5.1). */
 static void markdown_gfm(void) {
   g_autoptr(GnMarkdownDocument) table = gn_markdown_parse(
@@ -585,6 +686,8 @@ int main(int argc, char **argv) {
   nostrc_test_tolerate_gdk_frame_warning();
   g_test_add_func("/portable/markdown", markdown);
   g_test_add_func("/portable/markdown-gfm", markdown_gfm);
+  g_test_add_func("/portable/markdown-table-variants", markdown_table_variants);
+  g_test_add_func("/portable/markdown-table-explain", markdown_table_explain);
   g_test_add_func("/portable/references", references);
   g_test_add_func("/portable/references-builders", references_builders);
   g_test_add_func("/portable/references-errors", references_errors);

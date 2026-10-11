@@ -3492,6 +3492,146 @@ test_markdown_table_only(Fixture *f, gconstpointer data)
   g_assert_null(gtk_widget_get_first_child(blocks));
 }
 
+/* nostrc-p15n5.1, second report: the owner's bot table ("Final stack on dual
+ * P40s"), whose row 4 is wider than the header, after a bold line and two
+ * blank lines, with "~" in cells. eol is the line terminator. */
+static gchar *
+p40_body(const gchar *eol, const gchar *space)
+{
+  g_autoptr(GString) text = g_string_new(NULL);
+  static const gchar *const lines[] = {
+    "Both servers are up and humming:", "", "**Final stack on dual P40s:**", "", "",
+    "| Port | Model                     | VRAM              | Speed      |",
+    "| ---- | ------------------------- | ----------------- | ---------- |",
+    "| 8080 | Gemma 4 26B A4B + DSpark  | ~35 GB            | 45.7 tok/s |",
+    "| 8081 | Phi-4-reasoning-plus Q4_K_M | ~5 GB (20/40 layers GPU) | 7.3 tok/s  |",
+    "", "~6 GB free headroom.", NULL,
+  };
+  for (guint i = 0; lines[i]; i++) {
+    g_string_append(text, lines[i]);
+    if (lines[i + 1])
+      g_string_append(text, eol);
+  }
+  if (space)
+    g_string_replace(text, "| ", space, 0);
+  return g_string_free(g_steal_pointer(&text), FALSE);
+}
+
+static void
+assert_p40_table(Fixture *f, GhMessage *message, const gchar *shot)
+{
+  GhMessageRow *row = row_for(f->view, message);
+  spin_until(row_has_table, row);
+  GtkLabel *body = row_child(row, "body_label");
+  g_assert_cmpstr(gtk_label_get_text(body), ==,
+                  "Both servers are up and humming:\n\nFinal stack on dual P40s:");
+  GtkGrid *grid = row_table(row);
+  static const gchar *const cells[3][4] = {
+    { "Port", "Model", "VRAM", "Speed" },
+    { "8080", "Gemma 4 26B A4B + DSpark", "~35 GB", "45.7 tok/s" },
+    { "8081", "Phi-4-reasoning-plus Q4_K_M", "~5 GB (20/40 layers GPU)", "7.3 tok/s" },
+  };
+  for (int r = 0; r < 3; r++)
+    for (int c = 0; c < 4; c++)
+      g_assert_cmpstr(cell_text(grid, c, r), ==, cells[r][c]);
+  g_assert_null(gtk_grid_get_child_at(grid, 4, 0));
+  g_assert_null(gtk_grid_get_child_at(grid, 0, 3));
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  GtkWidget *after = gtk_widget_get_last_child(blocks);
+  g_assert_true(GTK_IS_LABEL(after));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(after)), ==, "~6 GB free headroom.");
+  assert_no_table_syntax(GTK_WIDGET(row));
+  assert_cells_inside_bubble(row, 2);
+  maybe_save_table_png(f, shot);
+  /* Copy gives the text as shown, the table as tab-separated rows. */
+  g_clear_pointer(&f->copied, g_free);
+  click(row_child(row, "copy_button"));
+  g_assert_cmpstr(f->copied, ==,
+                  "Both servers are up and humming:\n\nFinal stack on dual P40s:\n\n"
+                  "Port\tModel\tVRAM\tSpeed\n"
+                  "8080\tGemma 4 26B A4B + DSpark\t~35 GB\t45.7 tok/s\n"
+                  "8081\tPhi-4-reasoning-plus Q4_K_M\t~5 GB (20/40 layers GPU)\t7.3 tok/s\n\n"
+                  "~6 GB free headroom.");
+}
+
+/* Line terminators other than LF (CR, U+2028, U+2029, NEL), which Pango
+ * shows as line breaks, end table lines too; so do CRLF and LF. */
+static void
+test_markdown_table_line_ends(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  static const struct { const gchar *eol, *shot; } ends[] = {
+    { "\n", "p40-lf" }, { "\r\n", "p40-crlf" }, { "\r", "p40-cr" },
+    { "\xe2\x80\xa8", "p40-u2028" }, { "\xe2\x80\xa9", "p40-u2029" }, { "\xc2\x85", "p40-nel" },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(ends); i++) {
+    g_autofree gchar *body = p40_body(ends[i].eol, NULL);
+    GhMessage *message = add_dm(f->store, 2, 1, noon_today() + i, body);
+    if (i == 0)
+      show(f, room_of(f->store, message), 700, 800);
+    g_test_message("line end %s", ends[i].shot);
+    assert_p40_table(f, message, ends[i].shot);
+  }
+}
+
+/* No-break, narrow no-break and zero-width spaces and tabs around pipes. */
+static void
+test_markdown_table_blanks(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  static const gchar *const blanks[] = {
+    "|\xc2\xa0", "|\xe2\x80\xaf", "|\t", "|\xe2\x80\x8b ", "|\xef\xbb\xbf ",
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(blanks); i++) {
+    g_autofree gchar *body = p40_body("\n", blanks[i]);
+    GhMessage *message = add_dm(f->store, 2, 1, noon_today() + i, body);
+    if (i == 0)
+      show(f, room_of(f->store, message), 700, 800);
+    assert_p40_table(f, message, i == 0 ? "p40-nbsp" : "p40-blank");
+  }
+}
+
+static void
+capture_table_debug(const gchar *domain, GLogLevelFlags level, const gchar *message,
+                    gpointer data)
+{
+  if ((level & G_LOG_LEVEL_DEBUG) && g_str_has_prefix(message, "Groundhog found no Markdown table")) {
+    g_free(*(gchar **)data);
+    *(gchar **)data = g_strdup(message);
+    return;
+  }
+  g_log_default_handler(domain, level, message, NULL);
+}
+
+static gboolean
+string_set(gpointer data)
+{
+  return *(gchar **)data != NULL;
+}
+
+/* Pipe lines that are not a table say why in an opt-in debug log, by line,
+ * cell count and code point, never with the message text. */
+static void
+test_markdown_table_explained(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autofree gchar *logged = NULL;
+  g_log_set_debug_enabled(TRUE);
+  GLogFunc previous = g_log_set_default_handler(capture_table_debug, &logged);
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), "| Port | Speed |\n| === | --- |\n");
+  show(f, room_of(f->store, message), 700, 600);
+  GhMessageRow *row = row_for(f->view, message);
+  spin_until(string_set, &logged);
+  g_log_set_default_handler(previous, NULL);
+  g_log_set_debug_enabled(FALSE);
+  g_autofree gchar *expected = g_strdup_printf(
+    "Groundhog found no Markdown table in message %.8s: line 1 has 2 cells but cell 1 of "
+    "the next line has U+003D, not '-' or ':'", gh_message_get_rumor_id(message));
+  g_assert_cmpstr(logged, ==, expected);
+  g_assert_null(strstr(logged, "Port"));
+  g_assert_null(row_table(row));
+}
+
 typedef struct {
   GhConversationStore *store;
   GhConversation *dm;      /* B: days, runs, a link, statuses */
@@ -4382,6 +4522,9 @@ main(int argc, char **argv)
   ADD("markdown-table-compact", test_markdown_table_compact);
   ADD("markdown-table-tight", test_markdown_table_tight);
   ADD("markdown-table-only", test_markdown_table_only);
+  ADD("markdown-table-line-ends", test_markdown_table_line_ends);
+  ADD("markdown-table-blanks", test_markdown_table_blanks);
+  ADD("markdown-table-explained", test_markdown_table_explained);
   ADD("reference-card", test_reference_card);
   ADD("share-reference", test_share_reference);
   ADD("link-previews", test_link_previews);

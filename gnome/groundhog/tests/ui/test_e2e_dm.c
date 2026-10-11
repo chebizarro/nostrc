@@ -24,6 +24,7 @@
 #include "gh-test-signer.h"
 #include "send-stack.h"
 
+#include "gh-message-row.h"
 #include "gh-outbox.h"
 #include "gh-nip17-envelope.h"
 #include "gh-reaction.h"
@@ -492,6 +493,117 @@ reaction_pending_in_room(SendStack *s, const gchar *reaction_id, const gchar *ro
   return found;
 }
 
+/* nostrc-p15n5.1: a bot's kind-14 DM with a GFM table, as the owner got it. */
+static const gchar *const table_body =
+  "Both servers are up and humming:\n\n**Final stack on dual P40s:**\n\n\n"
+  "| Port | Model                     | VRAM              | Speed      |\n"
+  "| ---- | ------------------------- | ----------------- | ---------- |\n"
+  "| 8080 | Gemma 4 26B A4B + DSpark  | ~35 GB            | 45.7 tok/s |\n"
+  "| 8081 | Phi-4-reasoning-plus Q4_K_M | ~5 GB (20/40 layers GPU) | 7.3 tok/s  |\n"
+  "\n~6 GB free headroom.";
+
+/* The same with the CR line ends it may arrive with: Pango breaks lines at
+ * a lone CR, so it looked like the text above, but was one long line. */
+static const gchar *const table_body_cr =
+  "Both servers are up and humming:\r\r**Final stack on dual P40s:**\r\r\r"
+  "| Port | Model                     | VRAM              | Speed      |\r"
+  "| ---- | ------------------------- | ----------------- | ---------- |\r"
+  "| 8080 | Gemma 4 26B A4B + DSpark  | ~35 GB            | 45.7 tok/s |\r"
+  "| 8081 | Phi-4-reasoning-plus Q4_K_M | ~5 GB (20/40 layers GPU) | 7.3 tok/s  |\r"
+  "\r~6 GB free headroom.";
+
+typedef struct {
+  GtkWidget *view;
+  const gchar *content;
+} TableWait;
+
+static GtkWidget *
+find_message_row(GtkWidget *root, const gchar *content)
+{
+  if (GH_IS_MESSAGE_ROW(root)) {
+    GhMessage *message = gh_message_row_get_message(GH_MESSAGE_ROW(root));
+    if (message && g_strcmp0(gh_message_get_content(message), content) == 0)
+      return root;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_message_row(child, content);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+static GtkWidget *
+find_named(GtkWidget *root, const gchar *name)
+{
+  if (g_strcmp0(gtk_widget_get_name(root), name) == 0)
+    return root;
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_named(child, name);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+/* The open view lays the table out as a grid, its header cells first. */
+static gboolean
+view_shows_table(gpointer data)
+{
+  TableWait *wait = data;
+  GtkWidget *row = find_message_row(wait->view, wait->content);
+  GtkWidget *blocks = row ? find_named(row, "body_blocks") : NULL;
+  if (!blocks || !gtk_widget_get_visible(blocks))
+    return FALSE;
+  for (GtkWidget *child = gtk_widget_get_first_child(blocks); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (!GTK_IS_GRID(child))
+      continue;
+    GtkWidget *port = gtk_grid_get_child_at(GTK_GRID(child), 0, 0);
+    GtkWidget *speed = gtk_grid_get_child_at(GTK_GRID(child), 3, 2);
+    return GTK_IS_LABEL(port) && GTK_IS_LABEL(speed) &&
+           g_str_equal(gtk_label_get_text(GTK_LABEL(port)), "Port") &&
+           g_str_equal(gtk_label_get_text(GTK_LABEL(speed)), "7.3 tok/s");
+  }
+  return FALSE;
+}
+
+static gboolean
+wait_flag(gpointer data);
+
+static void
+mark_painted(gboolean *painted)
+{
+  *painted = TRUE;
+}
+
+static void
+assert_view_shows_table(SendStack *s, const gchar *content, const gchar *shot)
+{
+  GtkWidget *view = GTK_WIDGET(send_stack_view(s));
+  TableWait wait = { view, content };
+  gh_test_spin_until(view_shows_table, &wait);
+  GtkWidget *row = find_message_row(view, content);
+  GObject *body = gtk_widget_get_template_child(row, GH_TYPE_MESSAGE_ROW, "body_label");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(body)), ==,
+                  "Both servers are up and humming:\n\nFinal stack on dual P40s:");
+  const gchar *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (dir) {
+    GtkWidget *window = GTK_WIDGET(gtk_widget_get_root(view));
+    gboolean painted = FALSE;
+    GdkFrameClock *clock = gtk_widget_get_frame_clock(window);
+    gulong handler = g_signal_connect_swapped(clock, "after-paint", G_CALLBACK(mark_painted),
+                                              &painted);
+    gtk_widget_queue_draw(window);
+    gh_test_spin_until(wait_flag, &painted);
+    g_signal_handler_disconnect(clock, handler);
+    g_autofree gchar *path = g_build_filename(dir, shot, NULL);
+    stack_save_png(window, path);
+  }
+}
+
 static void
 compose(SendStack *s, const gchar *text)
 {
@@ -706,13 +818,24 @@ test_two_accounts(void)
   g_assert_false(reaction_stored_in_room(&a, foreign_id, foreign_room));
   g_assert_false(reaction_stored_anywhere(&a, foreign_id));
 
+  /* A bot's table DM reaches A's open view through the relay, the inbox
+   * and the signer's decrypt, and shows as a table (nostrc-p15n5.1). */
+  g_autofree gchar *table_wrap = stack_craft_wrap(2, 1, recipients_a, now + 1, table_body);
+  g_autofree gchar *table_cr_wrap = stack_craft_wrap(2, 1, recipients_a, now + 2, table_body_cr);
+  g_assert_true(relay_store(&inbox_a, table_wrap, NULL));
+  g_assert_true(relay_store(&inbox_a, table_cr_wrap, NULL));
+  wait_message(&a, room, table_body);
+  wait_message(&a, room, table_body_cr);
+  assert_view_shows_table(&a, table_body, "p15n5-1-e2e-live.png");
+  assert_view_shows_table(&a, table_body_cr, "p15n5-1-e2e-live-cr.png");
+
   /* 4. One room each, the same messages; own ones "Sent". */
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(a.model)), ==, 1);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(b.model)), ==, 1);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_a)), ==, 4);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room_a)), ==, 6);
   g_auto(GStrv) ids_a = room_ids(room_a);
   g_auto(GStrv) ids_b = room_ids(room_b);
-  g_assert_true(g_strv_equal((const gchar *const *)ids_a, (const gchar *const *)ids_b));
+  g_assert_cmpuint(g_strv_length(ids_a), ==, g_strv_length(ids_b) + 2); /* the bot DMs */
   g_assert_false(gh_conversation_get_is_request(room_a));
 
   /* 5. Both restart; everything comes back from the encrypted stores. */
@@ -742,6 +865,9 @@ test_two_accounts(void)
   g_assert_true(view_shows(send_stack_view(&b), "Great, see you Saturday."));
   reaction.view = send_stack_view(&a);
   g_assert_true(reaction_chip_shows(&reaction));
+  /* Reopened from the encrypted store, the table is a table again. */
+  assert_view_shows_table(&a, table_body, "p15n5-1-e2e-reopen.png");
+  assert_view_shows_table(&a, table_body_cr, "p15n5-1-e2e-reopen-cr.png");
   late_chip.view = send_stack_view(&a);
   g_assert_true(reaction_chip_shows(&late_chip));
   foreign_chip.view = send_stack_view(&a);

@@ -1316,6 +1316,14 @@ render_entry_format(RenderEntry *entry, const GnMarkdownDocument *document,
   entry->markup = gh_link_policy_format_markdown(document, account);
   g_clear_pointer(&entry->blocks, g_ptr_array_unref);
   entry->blocks = gh_link_policy_format_markdown_blocks(document, account);
+  /* Opt-in (G_MESSAGES_DEBUG): pipe lines that are not a table say why,
+   * by line and code point, never with the message text. */
+  if (!entry->blocks && strchr(document->source, '|') &&
+      !g_log_writer_default_would_drop(G_LOG_LEVEL_DEBUG, G_LOG_DOMAIN)) {
+    g_autofree gchar *why = gn_markdown_explain_no_table(document->source, -1);
+    if (why)
+      g_debug("Groundhog found no Markdown table in message %.8s: %s", entry->id, why);
+  }
 }
 
 static gsize
@@ -2684,6 +2692,36 @@ visible_text_from_markup(const gchar *markup)
   return text;
 }
 
+/* The text of a body with a table as shown: its paragraphs, and each table
+ * as tab-separated rows, which paste as a table into a spreadsheet or a
+ * document and read as one in plain text (a monospace grid only lines up
+ * in a monospace font). */
+static gchar *
+visible_text_from_blocks(GPtrArray *blocks)
+{
+  GString *text = g_string_new(NULL);
+  for (guint i = 0; i < blocks->len; i++) {
+    const GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
+    if (text->len)
+      g_string_append(text, "\n\n");
+    if (block->kind != GN_MARKDOWN_PANGO_BLOCK_TABLE) {
+      g_autofree gchar *paragraph = visible_text_from_markup(block->markup);
+      g_string_append(text, paragraph);
+      continue;
+    }
+    for (guint r = 0; r < block->rows; r++) {
+      for (guint c = 0; c < block->columns; c++) {
+        g_autofree gchar *cell = visible_text_from_markup(block->cells[r * block->columns + c]);
+        g_strdelimit(cell, "\t\n", ' ');
+        g_string_append(text, cell);
+        g_string_append_c(text, c + 1 < block->columns ? '\t' : '\n');
+      }
+    }
+    g_string_truncate(text, text->len - 1);
+  }
+  return g_string_free(text, FALSE);
+}
+
 static void
 action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
 {
@@ -2709,7 +2747,11 @@ action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
     text = gh_message_dup_display_text(message);
   } else {
     const gchar *markup = gh_conversation_view_get_render_markup(self, message);
-    text = markup ? visible_text_from_markup(markup) : NULL;
+    GPtrArray *blocks = markup ? gh_conversation_view_get_render_blocks(self, message) : NULL;
+    if (blocks && blocks->len)
+      text = visible_text_from_blocks(blocks);
+    else
+      text = markup ? visible_text_from_markup(markup) : NULL;
     if (!text)
       text = gh_message_dup_display_text(message);
   }

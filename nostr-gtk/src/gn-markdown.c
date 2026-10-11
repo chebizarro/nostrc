@@ -178,9 +178,42 @@ typedef struct {
   gsize len;
 } Span;
 
+/* The bytes of the blank at s (an ASCII space or tab, a Unicode space
+ * separator such as U+00A0 or U+202F, or a zero-width space or joiner),
+ * 0 if s is not blank. Chat clients and model output use these around
+ * table pipes as freely as spaces. */
+static gsize blank_at(const char *s, gsize n) {
+  if (!n) return 0;
+  if (*s == ' ' || *s == '\t') return 1;
+  if ((guchar)*s < 0x80) return 0;
+  gunichar c = g_utf8_get_char_validated(s, (gssize)n);
+  if (c == (gunichar)-1 || c == (gunichar)-2) return 0;
+  gboolean blank = g_unichar_type(c) == G_UNICODE_SPACE_SEPARATOR ||
+                   c == 0x200B || c == 0x200C || c == 0x200D || c == 0x2060 || c == 0xFEFF;
+  return blank ? (gsize)g_utf8_skip[*(const guchar *)s] : 0;
+}
+
+/* The bytes of the blank ending at s + n, 0 if there is none. */
+static gsize blank_before(const char *s, gsize n) {
+  gsize back = 1;
+  while (back < n && back < 4 && ((guchar)s[n - back] & 0xC0) == 0x80) back++;
+  gsize len = blank_at(s + n - back, back);
+  return len == back ? len : 0;
+}
+
 static void trim(const char **s, gsize *n) {
-  while (*n && (**s == ' ' || **s == '\t')) { (*s)++; (*n)--; }
-  while (*n && ((*s)[*n - 1] == ' ' || (*s)[*n - 1] == '\t')) (*n)--;
+  gsize len;
+  while ((len = blank_at(*s, *n))) { (*s) += len; (*n) -= len; }
+  while (*n && (len = blank_before(*s, *n))) (*n) -= len;
+}
+
+/* A hyphen of a delimiter row: '-', or a Unicode dash (U+2010..U+2015,
+ * U+2212) that text substitution makes of it. Returns its bytes, or 0. */
+static gsize dash_at(const char *s, gsize n) {
+  if (n && *s == '-') return 1;
+  if (n < 3 || (guchar)*s < 0x80) return 0;
+  gunichar c = g_utf8_get_char_validated(s, (gssize)n);
+  return (c >= 0x2010 && c <= 0x2015) || c == 0x2212 ? 3 : 0;
 }
 
 /* Splits a row on unescaped pipes; a leading and a trailing pipe are
@@ -216,8 +249,8 @@ static gboolean delimiter_row(const char *s, gsize n, guint *aligns, guint *colu
     gboolean left = len && c[0] == ':', right = len > 1 && c[len - 1] == ':';
     gsize first = left ? 1 : 0, last = right ? len - 1 : len;
     if (last <= first) return FALSE;
-    for (gsize j = first; j < last; j++)
-      if (c[j] != '-') return FALSE;
+    for (gsize j = first, len_j; j < last; j += len_j)
+      if (!(len_j = dash_at(c + j, last - j))) return FALSE;
     aligns[i] = left && right ? GN_MARKDOWN_ALIGN_CENTER
               : right ? GN_MARKDOWN_ALIGN_RIGHT
               : left ? GN_MARKDOWN_ALIGN_LEFT : GN_MARKDOWN_ALIGN_NONE;
@@ -297,12 +330,22 @@ static gboolean fence_line(const char *s, gsize n, char open) {
   return !open || open == s[i];
 }
 
+/* The line at p: its length in *n, and the start of the next line (NULL
+ * after the last). A line ends at LF, CRLF, a lone CR, NEL (U+0085), or a
+ * Unicode line or paragraph separator (U+2028, U+2029): Pango breaks the
+ * line at each of them, so the parser must see the same lines. */
 static const char *line_bounds(const char *p, const char *end, gsize *n) {
-  const char *line_end = memchr(p, '\n', end - p);
-  if (!line_end) line_end = end;
-  *n = line_end - p;
-  if (*n && p[*n - 1] == '\r') (*n)--;
-  return line_end;
+  const char *q = p;
+  while (q < end) {
+    if (*q == '\n') { *n = q - p; return q + 1; }
+    if (*q == '\r') { *n = q - p; return q + 1 < end && q[1] == '\n' ? q + 2 : q + 1; }
+    if ((guchar)*q == 0xC2 && q + 1 < end && (guchar)q[1] == 0x85) { *n = q - p; return q + 2; }
+    if ((guchar)*q == 0xE2 && q + 2 < end && (guchar)q[1] == 0x80 &&
+        ((guchar)q[2] == 0xA8 || (guchar)q[2] == 0xA9)) { *n = q - p; return q + 3; }
+    q++;
+  }
+  *n = end - p;
+  return NULL;
 }
 
 static GnMarkdownDocument *document_new(const gchar *input, gssize length) {
@@ -332,9 +375,90 @@ static guint table_start(const char *s, gsize n, const char *next, const char *e
   if (!count || !next) return 0;
   gsize next_n = 0;
   guint columns = 0;
-  line_bounds(next, end, &next_n);
+  (void)line_bounds(next, end, &next_n);
   if (!delimiter_row(next, next_n, aligns, &columns) || columns != count) return 0;
   return columns;
+}
+
+/* Why the delimiter-row candidate at s is not one, for gn_markdown_explain_no_table. */
+static gchar *delimiter_problem(const char *s, gsize n) {
+  Span cells[GN_MARKDOWN_MAX_TABLE_COLUMNS];
+  guint count = split_row(s, n, cells, GN_MARKDOWN_MAX_TABLE_COLUMNS);
+  if (!count) {
+    const char *t = s;
+    gsize len = n;
+    trim(&t, &len);
+    return g_strdup(len ? "the next line has no pipe" : "the next line is blank");
+  }
+  for (guint i = 0; i < count; i++) {
+    const char *c = cells[i].start;
+    gsize len = cells[i].len;
+    if (!len)
+      return g_strdup_printf("cell %u of the next line is empty, not a run of '-'", i + 1);
+    for (gsize j = 0; j < len; j = g_utf8_next_char(c + j) - c) {
+      if (c[j] == ':' || dash_at(c + j, len - j))
+        continue;
+      return g_strdup_printf("cell %u of the next line has U+%04X, not '-' or ':'", i + 1,
+                             g_utf8_get_char(c + j));
+    }
+  }
+  return g_strdup("the next line is not a delimiter row");
+}
+
+gchar *gn_markdown_explain_no_table(const gchar *input, gssize length) {
+  g_autoptr(GnMarkdownDocument) doc = document_new(input, length);
+  const char *p = doc->source, *end = doc->source + strlen(doc->source);
+  char fence = 0;
+  guint line = 0, fenced_pipes = 0;
+  gchar *first = NULL;
+  while (p < end) {
+    gsize n = 0;
+    const char *s = p;
+    const char *next = line_bounds(p, end, &n);
+    line++;
+    p = next ? next : end;
+    if (fence_line(s, n, fence)) {
+      gsize i = 0;
+      while (s[i] == ' ') i++;
+      fence = fence ? 0 : s[i];
+      continue;
+    }
+    Span cells[GN_MARKDOWN_MAX_TABLE_COLUMNS];
+    guint count = split_row(s, n, cells, GN_MARKDOWN_MAX_TABLE_COLUMNS);
+    if (!count)
+      continue;
+    if (fence) {
+      fenced_pipes++;
+      continue;
+    }
+    guint aligns[GN_MARKDOWN_MAX_TABLE_COLUMNS];
+    guint columns = 0;
+    gsize next_n = 0;
+    if (next) (void)line_bounds(next, end, &next_n);
+    if (table_start(s, n, next, end, aligns)) {
+      g_free(first);
+      return NULL; /* a table: nothing to explain */
+    }
+    if (first)
+      continue;
+    if (!next)
+      first = g_strdup_printf("line %u has %u cells but is the last line", line, count);
+    else if (delimiter_row(next, next_n, aligns, &columns))
+      first = g_strdup_printf("line %u has %u cells but its delimiter row has %u", line,
+                              count, columns);
+    else {
+      g_autofree gchar *why = delimiter_problem(next, next_n);
+      first = g_strdup_printf("line %u has %u cells but %s", line, count, why);
+    }
+  }
+  if (!first && fenced_pipes)
+    first = g_strdup_printf("%u pipe lines are inside a code fence", fenced_pipes);
+  if (doc->truncated && first) {
+    gchar *with = g_strconcat(first, " (input over the parser's size budget)", NULL);
+    g_free(first);
+    first = with;
+  }
+  return first;
 }
 
 GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
@@ -345,9 +469,8 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
   guint aligns[GN_MARKDOWN_MAX_TABLE_COLUMNS] = { 0 };
   while (p < end && doc->tokens->len < GN_MARKDOWN_MAX_TOKENS) {
     gsize n = 0;
-    const char *line_end = line_bounds(p, end, &n);
     const char *s = p;
-    const char *next = line_end < end ? line_end + 1 : NULL;
+    const char *next = line_bounds(p, end, &n);
     if (table) {
       /* Body rows continue until a blank line or a line without a pipe. */
       Span probe[1];
@@ -370,7 +493,7 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
       emit_row(doc, s, n, TRUE, aligns, table);
       /* The delimiter row emits nothing, not even its line break. */
       gsize skipped = 0;
-      line_end = line_bounds(next, end, &skipped);
+      next = line_bounds(next, end, &skipped);
     } else {
       guint level = 0;
       while (level < n && level < 6 && s[level] == '#') level++;
@@ -384,9 +507,9 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
         inline_tokens(doc, s, n, 0, 0);
       }
     }
-    if (line_end < end)
+    if (next)
       emit(doc, GN_MARKDOWN_LINE_BREAK, "\n", 1, NULL, 0, 0, FALSE);
-    p = line_end < end ? line_end + 1 : end;
+    p = next ? next : end;
   }
   if (p < end) doc->truncated = TRUE;
   return doc;
