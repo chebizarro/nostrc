@@ -17,6 +17,7 @@
     <file>icons/scalable/actions/alarm-symbolic.svg</file>
     <file>icons/scalable/actions/audio-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/channel-secure-symbolic.svg</file>
+    <file>icons/scalable/actions/contact-new-symbolic.svg</file>
     <file>icons/scalable/actions/computer-symbolic.svg</file>
     <file>icons/scalable/actions/content-loading-symbolic.svg</file>
     <file>icons/scalable/actions/dialog-question-symbolic.svg</file>
@@ -43,6 +44,7 @@
     <file>icons/scalable/actions/preferences-system-privacy-symbolic.svg</file>
     <file>icons/scalable/actions/system-lock-screen-symbolic.svg</file>
     <file>icons/scalable/actions/system-log-out-symbolic.svg</file>
+    <file>icons/scalable/actions/system-users-symbolic.svg</file>
     <file>icons/scalable/actions/text-x-generic-symbolic.svg</file>
     <file>icons/scalable/actions/user-bookmarks-symbolic.svg</file>
     <file>icons/scalable/actions/video-x-generic-symbolic.svg</file>
@@ -86,7 +88,7 @@
     <file>ui/gh-preferences-dialog.ui</file>
     <file>ui/gh-composer.ui</file>
     <file>ui/gh-requests-view.ui</file>
-    <file>ui/gh-new-message-dialog.ui</file>
+    <file>ui/gh-new-message-page.ui</file>
     <file>ui/gh-add-contact-dialog.ui</file>
     <file>ui/gh-new-message-row.ui</file>
     <file>ui/gh-recipient-chip.ui</file>

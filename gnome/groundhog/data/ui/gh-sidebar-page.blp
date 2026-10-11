@@ -1,9 +1,9 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Sidebar navigation page (charter §7.4, §7.5): header with new message
-// and the main menu; the search entry, always shown (Ctrl+F focuses it); the one status banner (from
-// GhStatus); and the stack that shows the conversation list or its empty,
+// Sidebar navigation page (charter §7.4, §7.5). Its list page: header with
+// New Message and the main menu; the search entry, always shown (Ctrl+F
+// focuses it); the one status banner (from GhStatus); and the stack that shows the conversation list or its empty,
 // no-results and error states. Account-state pages (gh-account-ui.blp) or
 // the onboarding_unavailable page below are added to the stack from C. The list's
 // model and row factory are bound from C (gh-conversation-list.c); nothing
@@ -11,275 +11,269 @@ using Adw 1;
 template $GhSidebarPage: Adw.NavigationPage {
   title: _("Conversations");
 
-  child: Adw.ToolbarView {
-    [top]
-    Adw.HeaderBar header {
-      // Only in Message Requests mode (show-requests).
-      [start]
-      Button back_button {
-        visible: false;
-        icon-name: "go-previous-symbolic";
-        tooltip-text: _("Back to Conversations");
-        action-name: "sidebar.show-requests";
-        action-target: "false";
+  // The sidebar's own navigation (charter §7.9): the conversation list is
+  // its root page; New Message (gh-new-message-page.blp) slides in over it
+  // with gh_sidebar_page_push_panel() and Back or Escape slides back. Inside
+  // the sidebar pane, so the split and the collapsed layouts behave alike.
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage chats_page {
+      tag: "conversations";
+      title: _("Conversations");
 
-        accessibility {
-          label: _("Back to Conversations");
-        }
-      }
-
-      title-widget: Adw.WindowTitle window_title {
-        title: "Groundhog";
-      };
-
-      [end]
-      MenuButton primary_button {
-        primary: true;
-        icon-name: "open-menu-symbolic";
-        tooltip-text: _("Main Menu");
-        menu-model: primary_menu;
-
-        accessibility {
-          label: _("Main Menu");
-        }
-      }
-
-      // win.new-message opens New Message (charter §7.9, G18).
-      [end]
-      Button new_button {
-        icon-name: "list-add-symbolic";
-        action-name: "win.new-message";
-        tooltip-text: _("New Message");
-
-        accessibility {
-          label: _("New Message");
-        }
-      }
-    }
-
-    [top]
-    Box search_box {
-      margin-start: 6;
-      margin-end: 6;
-      margin-bottom: 6;
-
-      SearchEntry search_entry {
-        placeholder-text: _("Search titles or npubs");
-        tooltip-text: _("Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.");
-        hexpand: true;
-
-        accessibility {
-          label: _("Search conversations");
-        }
-      }
-    }
-
-    // Title, button and visibility follow the window's GhStatus.
-    [top]
-    Adw.Banner status_banner {
-      revealed: false;
-      use-markup: false;
-    }
-
-    // The region whose visible child changes with account and list state;
-    // named so it is announced apart from the list it contains.
-    content: Stack stack {
-      accessibility {
-        label: _("Conversation list status");
-      }
-
-      StackPage {
-        name: "conversations";
-
-        child: Box {
-          orientation: vertical;
-
-          // Shown when message requests exist (charter §7.5, PD-8): they
-          // are listed apart and never mixed into the conversations.
-          Button requests_button {
+      child: Adw.ToolbarView {
+        [top]
+        Adw.HeaderBar header {
+          // Only in Message Requests mode (show-requests).
+          [start]
+          Button back_button {
             visible: false;
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back to Conversations");
             action-name: "sidebar.show-requests";
-            action-target: "true";
+            action-target: "false";
 
-            styles [
-              "flat",
-              "groundhog-requests-button",
-            ]
+            accessibility {
+              label: _("Back to Conversations");
+            }
+          }
+
+          title-widget: Adw.WindowTitle window_title {
+            title: "Groundhog";
+          };
+
+          [end]
+          MenuButton primary_button {
+            primary: true;
+            icon-name: "open-menu-symbolic";
+            tooltip-text: _("Main Menu");
+            menu-model: primary_menu;
+
+            accessibility {
+              label: _("Main Menu");
+            }
+          }
+
+          // win.new-message slides the sidebar to New Message (charter §7.9, G18).
+          [end]
+          Button new_button {
+            icon-name: "list-add-symbolic";
+            action-name: "win.new-message";
+            tooltip-text: _("New Message");
+
+            accessibility {
+              label: _("New Message");
+            }
+          }
+        }
+
+        [top]
+        Box search_box {
+          margin-start: 6;
+          margin-end: 6;
+          margin-bottom: 6;
+
+          SearchEntry search_entry {
+            placeholder-text: _("Search titles or npubs");
+            tooltip-text: _("Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.");
+            hexpand: true;
+
+            accessibility {
+              label: _("Search conversations");
+            }
+          }
+        }
+
+        // Title, button and visibility follow the window's GhStatus.
+        [top]
+        Adw.Banner status_banner {
+          revealed: false;
+          use-markup: false;
+        }
+
+        // The region whose visible child changes with account and list state;
+        // named so it is announced apart from the list it contains.
+        content: Stack stack {
+          accessibility {
+            label: _("Conversation list status");
+          }
+
+          StackPage {
+            name: "conversations";
 
             child: Box {
-              spacing: 12;
+              orientation: vertical;
 
-              Image {
-                icon-name: "mail-unread-symbolic";
-                accessible-role: presentation;
-              }
+              // Shown when message requests exist (charter §7.5, PD-8): they
+              // are listed apart and never mixed into the conversations.
+              Button requests_button {
+                visible: false;
+                action-name: "sidebar.show-requests";
+                action-target: "true";
 
-              Label {
-                label: _("Message Requests");
-                xalign: 0;
-                hexpand: true;
-                ellipsize: end;
-              }
-
-              Label requests_count {
                 styles [
-                  "dim-label",
-                  "numeric",
+                  "flat",
+                  "groundhog-requests-button",
                 ]
+
+                child: Box {
+                  spacing: 12;
+
+                  Image {
+                    icon-name: "mail-unread-symbolic";
+                    accessible-role: presentation;
+                  }
+
+                  Label {
+                    label: _("Message Requests");
+                    xalign: 0;
+                    hexpand: true;
+                    ellipsize: end;
+                  }
+
+                  Label requests_count {
+                    styles [
+                      "dim-label",
+                      "numeric",
+                    ]
+                  }
+
+                  Image {
+                    icon-name: "go-next-symbolic";
+                    accessible-role: presentation;
+                  }
+                };
               }
 
-              Image {
-                icon-name: "go-next-symbolic";
-                accessible-role: presentation;
+              // Shown when encrypted-group invitations wait (qp24.13 part 2):
+              // like requests, nothing is joined until one is accepted there.
+              Button invitations_button {
+                visible: false;
+                action-name: "win.group-invitations";
+
+                styles [
+                  "flat",
+                  "groundhog-requests-button",
+                ]
+
+                child: Box {
+                  spacing: 12;
+
+                  Image {
+                    icon-name: "channel-secure-symbolic";
+                    accessible-role: presentation;
+                  }
+
+                  Label {
+                    label: _("Group Invitations");
+                    xalign: 0;
+                    hexpand: true;
+                    ellipsize: end;
+                  }
+
+                  Label invitations_count {
+                    styles [
+                      "dim-label",
+                      "numeric",
+                    ]
+                  }
+
+                  Image {
+                    icon-name: "go-next-symbolic";
+                    accessible-role: presentation;
+                  }
+                };
+              }
+
+              ScrolledWindow {
+                vexpand: true;
+                hscrollbar-policy: never;
+
+                child: ListView list {
+                  show-separators: true;
+                  styles [
+                    "navigation-sidebar",
+                  ]
+
+                  accessibility {
+                    label: _("Conversations");
+                  }
+                };
               }
             };
           }
 
-          // Shown when encrypted-group invitations wait (qp24.13 part 2):
-          // like requests, nothing is joined until one is accepted there.
-          Button invitations_button {
-            visible: false;
-            action-name: "win.group-invitations";
+          StackPage {
+            name: "empty";
 
-            styles [
-              "flat",
-              "groundhog-requests-button",
-            ]
+            // #9 (charter §7.15): the way to start one is right here.
+            child: Adw.StatusPage empty_page {
+              icon-name: "mail-unread-symbolic";
+              title: _("No Conversations");
+              description: _("Start a private conversation. Messages people send you will appear here too.");
+              hexpand: true;
+              vexpand: true;
 
-            child: Box {
-              spacing: 12;
-
-              Image {
-                icon-name: "channel-secure-symbolic";
-                accessible-role: presentation;
-              }
-
-              Label {
-                label: _("Group Invitations");
-                xalign: 0;
-                hexpand: true;
-                ellipsize: end;
-              }
-
-              Label invitations_count {
-                styles [
-                  "dim-label",
-                  "numeric",
-                ]
-              }
-
-              Image {
-                icon-name: "go-next-symbolic";
-                accessible-role: presentation;
-              }
-            };
-          }
-
-          ScrolledWindow {
-            vexpand: true;
-            hscrollbar-policy: never;
-
-            child: ListView list {
-              show-separators: true;
               styles [
-                "navigation-sidebar",
+                "groundhog-shell-status",
               ]
 
-              accessibility {
-                label: _("Conversations");
-              }
+              child: Button empty_new_button {
+                label: _("_New Message");
+                use-underline: true;
+                halign: center;
+                action-name: "win.new-message";
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              };
+            };
+          }
+
+          StackPage {
+            name: "no-results";
+
+            child: Adw.StatusPage no_results_page {
+              icon-name: "system-search-symbolic";
+              title: _("No Results");
+              description: _("No title, request subject or participant npub matches. Try another search or press Escape to clear it.");
+              hexpand: true;
+              vexpand: true;
+
+              styles [
+                "groundhog-shell-status",
+              ]
+            };
+          }
+
+          // The description is replaced with the receive path's own
+          // explanation when it has one.
+          StackPage {
+            name: "error";
+
+            child: Adw.StatusPage error_page {
+              icon-name: "dialog-warning-symbolic";
+              title: _("Conversations Unavailable");
+              description: _("Groundhog can't receive messages on this device right now.");
+              hexpand: true;
+              vexpand: true;
+
+              styles [
+                "groundhog-shell-status",
+              ]
             };
           }
         };
-      }
-
-      StackPage {
-        name: "empty";
-
-        // #9 (charter §7.15): the way to start one is right here.
-        child: Adw.StatusPage empty_page {
-          icon-name: "mail-unread-symbolic";
-          title: _("No Conversations");
-          description: _("Start a private conversation. Messages people send you will appear here too.");
-          hexpand: true;
-          vexpand: true;
-
-          styles [
-            "groundhog-shell-status",
-          ]
-
-          child: Button empty_new_button {
-            label: _("_New Message");
-            use-underline: true;
-            halign: center;
-            action-name: "win.new-message";
-
-            styles [
-              "pill",
-              "suggested-action",
-            ]
-          };
-        };
-      }
-
-      StackPage {
-        name: "no-results";
-
-        child: Adw.StatusPage no_results_page {
-          icon-name: "system-search-symbolic";
-          title: _("No Results");
-          description: _("No title, request subject or participant npub matches. Try another search or press Escape to clear it.");
-          hexpand: true;
-          vexpand: true;
-
-          styles [
-            "groundhog-shell-status",
-          ]
-        };
-      }
-
-      // The description is replaced with the receive path's own
-      // explanation when it has one.
-      StackPage {
-        name: "error";
-
-        child: Adw.StatusPage error_page {
-          icon-name: "dialog-warning-symbolic";
-          title: _("Conversations Unavailable");
-          description: _("Groundhog can't receive messages on this device right now.");
-          hexpand: true;
-          vexpand: true;
-
-          styles [
-            "groundhog-shell-status",
-          ]
-        };
-      }
-    };
+      };
+    }
   };
 }
 
 menu primary_menu {
-  // NIP-29 relay groups (G20b, gh-group-ui.c); absent without them.
+  // New Group, Join Group and Add Contact are rows of the New Message
+  // panel (gh-new-message-page.blp), the one place they start from.
   section {
-    item {
-      label: _("_Join Group…");
-      action: "win.join-group";
-      hidden-when: "action-missing";
-    }
-
-    item {
-      label: _("New _Group…");
-      action: "win.new-group";
-      hidden-when: "action-missing";
-    }
-
-    item {
-      label: _("_Add Contact…");
-      action: "win.add-contact";
-      hidden-when: "action-missing";
-    }
-
     // Encrypted-group invitations (gh-mls-ui.c), also when none wait: the
     // dialog's "This Device" section says why groups joined on another
     // device or app are not here. The sidebar entry shows only with some.

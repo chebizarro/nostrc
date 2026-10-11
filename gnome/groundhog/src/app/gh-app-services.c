@@ -66,7 +66,7 @@
 #include "gh-notifier.h"
 #endif
 #if GROUNDHOG_HAVE_NEW_MESSAGE
-#include "gh-new-message-dialog.h"
+#include "gh-new-message-page.h"
 #include "gh-add-contact-dialog.h"
 #include "gh-recipient.h"
 #endif
@@ -1981,7 +1981,7 @@ directory_claimed_nip05(gpointer data, const gchar *pubkey)
  * when the default-dm-protocol is "marmot". The callback gets the MLS
  * service from the outbox, uses the account's write relays, and returns a
  * GhConversation for the new DM. On failure, the dialog falls back to
- * NIP-17 (gh-new-message-dialog.c marmot_dm_done()). */
+ * NIP-17 (gh-new-message-page.c marmot_dm_done()). */
 
 typedef struct {
   GhConversationStore *conversations; /* held across account switches/shutdown */

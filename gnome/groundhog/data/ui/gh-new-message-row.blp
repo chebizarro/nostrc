@@ -1,13 +1,14 @@
 using Gtk 4.0;
 using Adw 1;
 
-// One row of New Message (gh-new-message-dialog.blp): a person you talk to, a
+// One row of New Message (gh-new-message-page.blp): a person you talk to, a
 // pasted identifier, a lookup to consent to, or (on the confirm page) a
 // recipient and whether they can receive private messages. Its item
-// (GhNewMessageItem, gh-new-message-dialog.c) supplies every text and state.
+// (GhNewMessageItem, gh-new-message-page.c) supplies every text and state.
 // Names come from other people's profiles and addresses from what was typed,
-// so nothing here is read as markup; avatars show initials only (no picture
-// is ever loaded, PD-2).
+// so nothing here is read as markup; avatars show the contact's profile
+// picture only when the shared cache has it with their consent (W32,
+// GhNewMessageConfig.picture), else initials of a cached name.
 template $GhNewMessageRow: Adw.ActionRow {
   use-markup: false;
   title-lines: 0;
@@ -23,6 +24,7 @@ template $GhNewMessageRow: Adw.ActionRow {
     accessible-role: presentation;
     text: bind template.item as <$GhNewMessageItem>.avatar-text;
     show-initials: bind template.item as <$GhNewMessageItem>.show-initials;
+    custom-image: bind template.item as <$GhNewMessageItem>.picture;
     visible: bind template.item as <$GhNewMessageItem>.show-avatar;
   }
 

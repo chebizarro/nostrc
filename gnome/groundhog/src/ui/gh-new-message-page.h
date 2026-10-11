@@ -1,5 +1,5 @@
-#ifndef GH_NEW_MESSAGE_DIALOG_H
-#define GH_NEW_MESSAGE_DIALOG_H
+#ifndef GH_NEW_MESSAGE_PAGE_H
+#define GH_NEW_MESSAGE_PAGE_H
 
 #include <adwaita.h>
 
@@ -11,8 +11,16 @@
 G_BEGIN_DECLS
 
 /*
- * GhNewMessageDialog (privacy charter §7.9, §2 PD-2/PD-8, §8.2 G18;
- * data/ui/gh-new-message-dialog.blp): starting a conversation.
+ * GhNewMessagePage (privacy charter §7.9, §2 PD-2/PD-8, §8.2 G18;
+ * data/ui/gh-new-message-page.blp): starting a conversation, as a panel the
+ * sidebar slides to (gh_sidebar_page_push_panel(), modelled on Signal's "New
+ * chat"): Back (new-message.close) or Escape slides back, from the confirm
+ * page first to the search. Above the contacts are rows for the window's
+ * win.new-group, win.join-group and win.add-contact (each shown only while
+ * the window has that action, hidden while searching); choosing one leaves
+ * the panel and runs it. Contacts show their profile picture only when the
+ * shared cache has it with that contact's consent (config->picture, W32);
+ * otherwise initials of a cached name, never of an npub.
  *
  * Lookup consent. Typing searches only what is already on this device: the
  * people of accepted conversations, by their cached name, claimed address
@@ -28,7 +36,7 @@ G_BEGIN_DECLS
  * up.
  *
  * Recipients are chips, up to GH_CONVERSATION_MAX_PEERS (10); at the limit
- * the dialog says "A private conversation can include up to 10 people." and
+ * the panel says "A private conversation can include up to 10 people." and
  * then, only when config->encrypted_groups, "For larger groups, create an
  * encrypted group.", else "Larger groups aren't available in this version
  * yet." (P4: nothing points to a missing feature). It adds nobody else. "Note to
@@ -37,8 +45,8 @@ G_BEGIN_DECLS
  * emits "conversation-started" (GhConversation) and closes; nothing is sent
  * or published. A conversation the user blocked is unblocked by starting it,
  * and the confirm page says so first ("You blocked this conversation.
- * Starting it unblocks it: …"). Pending lookups are cancelled when the dialog
- * closes.
+ * Starting it unblocks it: …"). Pending lookups are cancelled when the panel
+ * leaves the window.
  */
 
 typedef struct {
@@ -56,12 +64,17 @@ typedef struct {
   gboolean encrypted_groups;
   /* Nullable: creates a Marmot DM (2-member MLS group with empty name) for
    * pubkey (hex). On success, the result is a GhConversation (transfer full).
-   * When NULL, the dialog always creates NIP-17 rooms. When the async call
-   * fails, the dialog falls back to NIP-17 with honest copy. */
+   * When NULL, the panel always creates NIP-17 rooms. When the async call
+   * fails, the panel falls back to NIP-17 with honest copy. */
   void (*create_marmot_dm)(const gchar *pubkey, GCancellable *cancellable,
                            GAsyncReadyCallback callback, gpointer user_data,
                            gpointer config_data);
   gpointer create_dm_data;
+  /* Nullable: the consented profile picture of pubkey, borrowed (W32);
+   * never a fetch without consent. gh_new_message_attach() supplies the
+   * conversation list's cache when unset. */
+  GdkPaintable *(*picture)(gpointer data, const gchar *pubkey);
+  gpointer picture_data;
 } GhNewMessageConfig;
 
 typedef enum {
@@ -74,7 +87,7 @@ typedef enum {
 } GhNewMessageItemKind;
 
 /* One row or chip; readable properties for the templates: "title",
- * "subtitle", "avatar-text", "show-avatar", "show-initials", "icon-name",
+ * "subtitle", "avatar-text", "show-avatar", "show-initials", "picture", "icon-name",
  * "show-icon", "busy", "status", "has-status" and "enabled". */
 #define GH_TYPE_NEW_MESSAGE_ITEM (gh_new_message_item_get_type())
 G_DECLARE_FINAL_TYPE(GhNewMessageItem, gh_new_message_item, GH, NEW_MESSAGE_ITEM, GObject)
@@ -87,21 +100,34 @@ const gchar *gh_new_message_item_get_pubkey(GhNewMessageItem *self); /* hex, or 
 gboolean gh_new_message_item_get_busy(GhNewMessageItem *self);
 gboolean gh_new_message_item_get_enabled(GhNewMessageItem *self);
 
-#define GH_TYPE_NEW_MESSAGE_DIALOG (gh_new_message_dialog_get_type())
-G_DECLARE_FINAL_TYPE(GhNewMessageDialog, gh_new_message_dialog, GH, NEW_MESSAGE_DIALOG,
-                     AdwDialog)
+#define GH_TYPE_NEW_MESSAGE_PAGE (gh_new_message_page_get_type())
+G_DECLARE_FINAL_TYPE(GhNewMessagePage, gh_new_message_page, GH, NEW_MESSAGE_PAGE,
+                     AdwNavigationPage)
 
-GhNewMessageDialog *gh_new_message_dialog_new(const GhNewMessageConfig *config);
+GhNewMessagePage *gh_new_message_page_new(const GhNewMessageConfig *config);
 
 /* The item models behind the pick page's rows, its chips and the confirm
  * page's rows (GhNewMessageItem), for tests and assistive checks. */
-GListModel *gh_new_message_dialog_get_suggestions(GhNewMessageDialog *self);
-GListModel *gh_new_message_dialog_get_recipients(GhNewMessageDialog *self);
-GListModel *gh_new_message_dialog_get_people(GhNewMessageDialog *self);
+GListModel *gh_new_message_page_get_suggestions(GhNewMessagePage *self);
+GListModel *gh_new_message_page_get_recipients(GhNewMessagePage *self);
+GListModel *gh_new_message_page_get_people(GhNewMessagePage *self);
 
-/* Makes win.new-message (Ctrl+N) of window present a GhNewMessageDialog
- * made with config (copied; its objects are referenced until the window is
- * destroyed). The action is enabled while config->conversations has an
+/* Chooses pubkey (hex) as if picked; FALSE when refused (own key, already
+ * chosen, the limit). */
+gboolean gh_new_message_page_add_recipient(GhNewMessagePage *self, const gchar *pubkey);
+/* Moves keyboard focus to the search entry (unless the confirm page shows). */
+void gh_new_message_page_focus_entry(GhNewMessagePage *self);
+/* Leaves the panel: cancels what it asked for and pops it (and anything over
+ * it) from the navigation view it was pushed onto. */
+void gh_new_message_page_close(GhNewMessagePage *self);
+/* Refreshes pubkey's picture in the rows (the cache finished loading it). */
+void gh_new_message_page_update_picture(GhNewMessagePage *self, const gchar *pubkey);
+
+/* Makes win.new-message (Ctrl+N, the sidebar's New Message buttons) of
+ * window slide its sidebar to a GhNewMessagePage made with config (copied;
+ * its objects are referenced until the window is destroyed), or focus the
+ * one already open; win.message-uri opens one with the link's person
+ * chosen. The action is enabled while config->conversations has an
  * account. A started conversation opens in the window (selected and shown)
  * with keyboard focus in the composer when sending is possible, else in the
  * conversation (gh_content_page_focus_conversation()). */

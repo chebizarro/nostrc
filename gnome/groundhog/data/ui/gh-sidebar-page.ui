@@ -9,276 +9,271 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
   <template class="GhSidebarPage" parent="AdwNavigationPage">
     <property name="title" translatable="yes">Conversations</property>
     <property name="child">
-      <object class="AdwToolbarView">
-        <child type="top">
-          <object class="AdwHeaderBar" id="header">
-            <child type="start">
-              <object class="GtkButton" id="back_button">
-                <property name="visible">false</property>
-                <property name="icon-name">go-previous-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Back to Conversations</property>
-                <property name="action-name">sidebar.show-requests</property>
-                <property name="action-target">false</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Back to Conversations</property>
-                </accessibility>
-              </object>
-            </child>
-            <property name="title-widget">
-              <object class="AdwWindowTitle" id="window_title">
-                <property name="title">Groundhog</property>
-              </object>
-            </property>
-            <child type="end">
-              <object class="GtkMenuButton" id="primary_button">
-                <property name="primary">true</property>
-                <property name="icon-name">open-menu-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Main Menu</property>
-                <property name="menu-model">primary_menu</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Main Menu</property>
-                </accessibility>
-              </object>
-            </child>
-            <child type="end">
-              <object class="GtkButton" id="new_button">
-                <property name="icon-name">list-add-symbolic</property>
-                <property name="action-name">win.new-message</property>
-                <property name="tooltip-text" translatable="yes">New Message</property>
-                <accessibility>
-                  <property name="label" translatable="yes">New Message</property>
-                </accessibility>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child type="top">
-          <object class="GtkBox" id="search_box">
-            <property name="margin-start">6</property>
-            <property name="margin-end">6</property>
-            <property name="margin-bottom">6</property>
-            <child>
-              <object class="GtkSearchEntry" id="search_entry">
-                <property name="placeholder-text" translatable="yes">Search titles or npubs</property>
-                <property name="tooltip-text" translatable="yes">Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.</property>
-                <property name="hexpand">true</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Search conversations</property>
-                </accessibility>
-              </object>
-            </child>
-          </object>
-        </child>
-        <child type="top">
-          <object class="AdwBanner" id="status_banner">
-            <property name="revealed">false</property>
-            <property name="use-markup">false</property>
-          </object>
-        </child>
-        <property name="content">
-          <object class="GtkStack" id="stack">
-            <accessibility>
-              <property name="label" translatable="yes">Conversation list status</property>
-            </accessibility>
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">conversations</property>
-                <property name="child">
-                  <object class="GtkBox">
-                    <property name="orientation">1</property>
-                    <child>
-                      <object class="GtkButton" id="requests_button">
+      <object class="AdwNavigationView" id="navigation">
+        <child>
+          <object class="AdwNavigationPage" id="chats_page">
+            <property name="tag">conversations</property>
+            <property name="title" translatable="yes">Conversations</property>
+            <property name="child">
+              <object class="AdwToolbarView">
+                <child type="top">
+                  <object class="AdwHeaderBar" id="header">
+                    <child type="start">
+                      <object class="GtkButton" id="back_button">
                         <property name="visible">false</property>
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Back to Conversations</property>
                         <property name="action-name">sidebar.show-requests</property>
-                        <property name="action-target">true</property>
-                        <style>
-                          <class name="flat"/>
-                          <class name="groundhog-requests-button"/>
-                        </style>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="spacing">12</property>
-                            <child>
-                              <object class="GtkImage">
-                                <property name="icon-name">mail-unread-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Message Requests</property>
-                                <property name="xalign">0</property>
-                                <property name="hexpand">true</property>
-                                <property name="ellipsize">3</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="requests_count">
-                                <style>
-                                  <class name="dim-label"/>
-                                  <class name="numeric"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkImage">
-                                <property name="icon-name">go-next-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                          </object>
-                        </property>
+                        <property name="action-target">false</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Back to Conversations</property>
+                        </accessibility>
                       </object>
                     </child>
-                    <child>
-                      <object class="GtkButton" id="invitations_button">
-                        <property name="visible">false</property>
-                        <property name="action-name">win.group-invitations</property>
-                        <style>
-                          <class name="flat"/>
-                          <class name="groundhog-requests-button"/>
-                        </style>
-                        <property name="child">
-                          <object class="GtkBox">
-                            <property name="spacing">12</property>
-                            <child>
-                              <object class="GtkImage">
-                                <property name="icon-name">channel-secure-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel">
-                                <property name="label" translatable="yes">Group Invitations</property>
-                                <property name="xalign">0</property>
-                                <property name="hexpand">true</property>
-                                <property name="ellipsize">3</property>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkLabel" id="invitations_count">
-                                <style>
-                                  <class name="dim-label"/>
-                                  <class name="numeric"/>
-                                </style>
-                              </object>
-                            </child>
-                            <child>
-                              <object class="GtkImage">
-                                <property name="icon-name">go-next-symbolic</property>
-                                <property name="accessible-role">43</property>
-                              </object>
-                            </child>
-                          </object>
-                        </property>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkScrolledWindow">
-                        <property name="vexpand">true</property>
-                        <property name="hscrollbar-policy">2</property>
-                        <property name="child">
-                          <object class="GtkListView" id="list">
-                            <property name="show-separators">true</property>
-                            <style>
-                              <class name="navigation-sidebar"/>
-                            </style>
-                            <accessibility>
-                              <property name="label" translatable="yes">Conversations</property>
-                            </accessibility>
-                          </object>
-                        </property>
-                      </object>
-                    </child>
-                  </object>
-                </property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">empty</property>
-                <property name="child">
-                  <object class="AdwStatusPage" id="empty_page">
-                    <property name="icon-name">mail-unread-symbolic</property>
-                    <property name="title" translatable="yes">No Conversations</property>
-                    <property name="description" translatable="yes">Start a private conversation. Messages people send you will appear here too.</property>
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
-                    <style>
-                      <class name="groundhog-shell-status"/>
-                    </style>
-                    <property name="child">
-                      <object class="GtkButton" id="empty_new_button">
-                        <property name="label" translatable="yes">_New Message</property>
-                        <property name="use-underline">true</property>
-                        <property name="halign">3</property>
-                        <property name="action-name">win.new-message</property>
-                        <style>
-                          <class name="pill"/>
-                          <class name="suggested-action"/>
-                        </style>
+                    <property name="title-widget">
+                      <object class="AdwWindowTitle" id="window_title">
+                        <property name="title">Groundhog</property>
                       </object>
                     </property>
+                    <child type="end">
+                      <object class="GtkMenuButton" id="primary_button">
+                        <property name="primary">true</property>
+                        <property name="icon-name">open-menu-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Main Menu</property>
+                        <property name="menu-model">primary_menu</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Main Menu</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                    <child type="end">
+                      <object class="GtkButton" id="new_button">
+                        <property name="icon-name">list-add-symbolic</property>
+                        <property name="action-name">win.new-message</property>
+                        <property name="tooltip-text" translatable="yes">New Message</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">New Message</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="top">
+                  <object class="GtkBox" id="search_box">
+                    <property name="margin-start">6</property>
+                    <property name="margin-end">6</property>
+                    <property name="margin-bottom">6</property>
+                    <child>
+                      <object class="GtkSearchEntry" id="search_entry">
+                        <property name="placeholder-text" translatable="yes">Search titles or npubs</property>
+                        <property name="tooltip-text" translatable="yes">Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.</property>
+                        <property name="hexpand">true</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Search conversations</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child type="top">
+                  <object class="AdwBanner" id="status_banner">
+                    <property name="revealed">false</property>
+                    <property name="use-markup">false</property>
+                  </object>
+                </child>
+                <property name="content">
+                  <object class="GtkStack" id="stack">
+                    <accessibility>
+                      <property name="label" translatable="yes">Conversation list status</property>
+                    </accessibility>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">conversations</property>
+                        <property name="child">
+                          <object class="GtkBox">
+                            <property name="orientation">1</property>
+                            <child>
+                              <object class="GtkButton" id="requests_button">
+                                <property name="visible">false</property>
+                                <property name="action-name">sidebar.show-requests</property>
+                                <property name="action-target">true</property>
+                                <style>
+                                  <class name="flat"/>
+                                  <class name="groundhog-requests-button"/>
+                                </style>
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="spacing">12</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">mail-unread-symbolic</property>
+                                        <property name="accessible-role">43</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Message Requests</property>
+                                        <property name="xalign">0</property>
+                                        <property name="hexpand">true</property>
+                                        <property name="ellipsize">3</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="requests_count">
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="numeric"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">go-next-symbolic</property>
+                                        <property name="accessible-role">43</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="invitations_button">
+                                <property name="visible">false</property>
+                                <property name="action-name">win.group-invitations</property>
+                                <style>
+                                  <class name="flat"/>
+                                  <class name="groundhog-requests-button"/>
+                                </style>
+                                <property name="child">
+                                  <object class="GtkBox">
+                                    <property name="spacing">12</property>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">channel-secure-symbolic</property>
+                                        <property name="accessible-role">43</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel">
+                                        <property name="label" translatable="yes">Group Invitations</property>
+                                        <property name="xalign">0</property>
+                                        <property name="hexpand">true</property>
+                                        <property name="ellipsize">3</property>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkLabel" id="invitations_count">
+                                        <style>
+                                          <class name="dim-label"/>
+                                          <class name="numeric"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                    <child>
+                                      <object class="GtkImage">
+                                        <property name="icon-name">go-next-symbolic</property>
+                                        <property name="accessible-role">43</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkScrolledWindow">
+                                <property name="vexpand">true</property>
+                                <property name="hscrollbar-policy">2</property>
+                                <property name="child">
+                                  <object class="GtkListView" id="list">
+                                    <property name="show-separators">true</property>
+                                    <style>
+                                      <class name="navigation-sidebar"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label" translatable="yes">Conversations</property>
+                                    </accessibility>
+                                  </object>
+                                </property>
+                              </object>
+                            </child>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">empty</property>
+                        <property name="child">
+                          <object class="AdwStatusPage" id="empty_page">
+                            <property name="icon-name">mail-unread-symbolic</property>
+                            <property name="title" translatable="yes">No Conversations</property>
+                            <property name="description" translatable="yes">Start a private conversation. Messages people send you will appear here too.</property>
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
+                            <style>
+                              <class name="groundhog-shell-status"/>
+                            </style>
+                            <property name="child">
+                              <object class="GtkButton" id="empty_new_button">
+                                <property name="label" translatable="yes">_New Message</property>
+                                <property name="use-underline">true</property>
+                                <property name="halign">3</property>
+                                <property name="action-name">win.new-message</property>
+                                <style>
+                                  <class name="pill"/>
+                                  <class name="suggested-action"/>
+                                </style>
+                              </object>
+                            </property>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">no-results</property>
+                        <property name="child">
+                          <object class="AdwStatusPage" id="no_results_page">
+                            <property name="icon-name">system-search-symbolic</property>
+                            <property name="title" translatable="yes">No Results</property>
+                            <property name="description" translatable="yes">No title, request subject or participant npub matches. Try another search or press Escape to clear it.</property>
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
+                            <style>
+                              <class name="groundhog-shell-status"/>
+                            </style>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkStackPage">
+                        <property name="name">error</property>
+                        <property name="child">
+                          <object class="AdwStatusPage" id="error_page">
+                            <property name="icon-name">dialog-warning-symbolic</property>
+                            <property name="title" translatable="yes">Conversations Unavailable</property>
+                            <property name="description" translatable="yes">Groundhog can't receive messages on this device right now.</property>
+                            <property name="hexpand">true</property>
+                            <property name="vexpand">true</property>
+                            <style>
+                              <class name="groundhog-shell-status"/>
+                            </style>
+                          </object>
+                        </property>
+                      </object>
+                    </child>
                   </object>
                 </property>
               </object>
-            </child>
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">no-results</property>
-                <property name="child">
-                  <object class="AdwStatusPage" id="no_results_page">
-                    <property name="icon-name">system-search-symbolic</property>
-                    <property name="title" translatable="yes">No Results</property>
-                    <property name="description" translatable="yes">No title, request subject or participant npub matches. Try another search or press Escape to clear it.</property>
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
-                    <style>
-                      <class name="groundhog-shell-status"/>
-                    </style>
-                  </object>
-                </property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkStackPage">
-                <property name="name">error</property>
-                <property name="child">
-                  <object class="AdwStatusPage" id="error_page">
-                    <property name="icon-name">dialog-warning-symbolic</property>
-                    <property name="title" translatable="yes">Conversations Unavailable</property>
-                    <property name="description" translatable="yes">Groundhog can't receive messages on this device right now.</property>
-                    <property name="hexpand">true</property>
-                    <property name="vexpand">true</property>
-                    <style>
-                      <class name="groundhog-shell-status"/>
-                    </style>
-                  </object>
-                </property>
-              </object>
-            </child>
+            </property>
           </object>
-        </property>
+        </child>
       </object>
     </property>
   </template>
   <menu id="primary_menu">
     <section>
-      <item>
-        <attribute name="label" translatable="yes">_Join Group…</attribute>
-        <attribute name="action">win.join-group</attribute>
-        <attribute name="hidden-when">action-missing</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">New _Group…</attribute>
-        <attribute name="action">win.new-group</attribute>
-        <attribute name="hidden-when">action-missing</attribute>
-      </item>
-      <item>
-        <attribute name="label" translatable="yes">_Add Contact…</attribute>
-        <attribute name="action">win.add-contact</attribute>
-        <attribute name="hidden-when">action-missing</attribute>
-      </item>
       <item>
         <attribute name="label" translatable="yes">Group _Invitations…</attribute>
         <attribute name="action">win.group-invitations</attribute>

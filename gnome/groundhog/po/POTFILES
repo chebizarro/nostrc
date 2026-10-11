@@ -32,7 +32,7 @@ data/ui/gh-mls-member-row.blp
 data/ui/gh-mls-new-group-page.blp
 data/ui/gh-mls-relay-row.blp
 data/ui/gh-new-group-dialog.blp
-data/ui/gh-new-message-dialog.blp
+data/ui/gh-new-message-page.blp
 data/ui/gh-nip46-pair-dialog.blp
 data/ui/gh-onboarding-view.blp
 data/ui/gh-preferences-dialog.blp
@@ -88,7 +88,7 @@ src/ui/gh-mls-invites-dialog.c
 src/ui/gh-mls-new-group-page.c
 src/ui/gh-mls-ui.c
 src/ui/gh-new-group-dialog.c
-src/ui/gh-new-message-dialog.c
+src/ui/gh-new-message-page.c
 src/ui/gh-nip46-auth-url.c
 src/ui/gh-nip46-pair-dialog.c
 src/ui/gh-onboarding-view.c

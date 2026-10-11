@@ -40,6 +40,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <lookup name="item" type="GhNewMessageRow">GhNewMessageRow</lookup>
           </lookup>
         </binding>
+        <binding name="custom-image">
+          <lookup name="picture" type="GhNewMessageItem">
+            <lookup name="item" type="GhNewMessageRow">GhNewMessageRow</lookup>
+          </lookup>
+        </binding>
         <binding name="visible">
           <lookup name="show-avatar" type="GhNewMessageItem">
             <lookup name="item" type="GhNewMessageRow">GhNewMessageRow</lookup>

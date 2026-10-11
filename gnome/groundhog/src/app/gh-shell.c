@@ -6,6 +6,7 @@
 
 struct _GhSidebarPage {
   AdwNavigationPage parent_instance;
+  AdwNavigationView *navigation; /* the list (root) and the New Message panel */
   AdwHeaderBar *header;
   AdwWindowTitle *window_title;
   GtkButton *back_button;
@@ -257,6 +258,9 @@ gh_sidebar_page_dispose(GObject *object)
   GhSidebarPage *self = GH_SIDEBAR_PAGE(object);
   if (self->list)
     gtk_list_view_set_model(self->list, NULL);
+  /* navigation is both the page's child and a bound template child. */
+  if (self->navigation)
+    adw_navigation_page_set_child(ADW_NAVIGATION_PAGE(self), NULL);
   gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_SIDEBAR_PAGE);
   if (self->selection)
     g_signal_handlers_disconnect_by_data(self->selection, self);
@@ -301,6 +305,7 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
 
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-sidebar-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, navigation);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, header);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, window_title);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, back_button);
@@ -556,10 +561,44 @@ gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item)
   return TRUE;
 }
 
+AdwNavigationView *
+gh_sidebar_page_get_navigation(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  return self->navigation;
+}
+
+void
+gh_sidebar_page_push_panel(GhSidebarPage *self, AdwNavigationPage *panel)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  g_return_if_fail(ADW_IS_NAVIGATION_PAGE(panel));
+  gh_sidebar_page_close_panel(self);
+  adw_navigation_view_push(self->navigation, panel);
+}
+
+AdwNavigationPage *
+gh_sidebar_page_get_panel(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), NULL);
+  AdwNavigationPage *visible = adw_navigation_view_get_visible_page(self->navigation);
+  return visible && g_strcmp0(adw_navigation_page_get_tag(visible), "conversations") != 0
+    ? visible : NULL;
+}
+
+void
+gh_sidebar_page_close_panel(GhSidebarPage *self)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  if (gh_sidebar_page_get_panel(self))
+    adw_navigation_view_pop_to_tag(self->navigation, "conversations");
+}
+
 void
 gh_sidebar_page_start_search(GhSidebarPage *self)
 {
   g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  gh_sidebar_page_close_panel(self);
   gtk_widget_grab_focus(GTK_WIDGET(self->search_entry));
 }
 

@@ -43,7 +43,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-section gh-timeline-row
   gh-conversation-view gh-message-row gh-message-reference gh-message-list-item gh-day-separator
   gh-delivery-indicator gh-delivery-details gh-preferences-dialog gh-composer
-  gh-requests-view gh-new-message-dialog gh-new-message-row gh-recipient-chip
+  gh-requests-view gh-new-message-page gh-new-message-row gh-recipient-chip
   gh-add-contact-dialog
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
@@ -1955,8 +1955,9 @@ endif()
 #    a selected request's npub, count and first message, Accept / Delete /
 #    Block (the store's gh_store_conversations_block), no profile fetch before
 #    Accept;
-#  - GhNewMessageDialog (gh-new-message-dialog.blp, -row.blp,
-#    gh-recipient-chip.blp) behind win.new-message / Ctrl+N.
+#  - GhNewMessagePage (gh-new-message-page.blp, -row.blp,
+#    gh-recipient-chip.blp), the sidebar panel behind win.new-message /
+#    Ctrl+N, which is also where New Group, Join Group and Add Contact start.
 pkg_check_modules(GROUNDHOG_NET_DEPS QUIET IMPORTED_TARGET libsoup-3.0 json-glib-1.0>=1.6)
 if (TARGET nostr AND TARGET nip19)
   add_library(groundhog-recipient STATIC src/ui/gh-recipient.c)
@@ -1978,7 +1979,7 @@ if (TARGET groundhog-conversation-ui AND TARGET groundhog-recipient)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-recipient)
 endif()
 if (TARGET groundhog-conversation-ui AND TARGET groundhog-net AND GROUNDHOG_DM_SEND_SOURCES)
-  add_library(groundhog-new-message STATIC src/ui/gh-new-message-dialog.c src/ui/gh-add-contact-dialog.c)
+  add_library(groundhog-new-message STATIC src/ui/gh-new-message-page.c src/ui/gh-add-contact-dialog.c)
   target_link_libraries(groundhog-new-message PUBLIC groundhog-conversation-ui groundhog-net)
   target_compile_options(groundhog-new-message PRIVATE -Wall -Wextra -Werror)
   # gh-inbox-resolver.c (the directory's interface) is one of the
@@ -2807,7 +2808,10 @@ if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
   target_link_libraries(groundhog-group-ui PUBLIC groundhog-nip29-service
     groundhog-conversation-ui groundhog-recipient groundhog-privacy-summary)
   target_compile_options(groundhog-group-ui PRIVATE -Wall -Wextra -Werror)
-  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+  # Only with New Message: its panel holds the New Group and Join Group
+  # rows (the main menu no longer does).
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
+      TARGET groundhog-new-message)
     # Beside gh-send-ui.c (G13), whose delegate it sets.
     target_sources(groundhog PRIVATE src/ui/gh-group-ui.c)
     target_link_libraries(groundhog PRIVATE groundhog-group-ui)
@@ -2882,7 +2886,8 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     set_tests_properties(groundhog-poll-ui PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
-  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES)
+  if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
+      TARGET groundhog-new-message)
     # Beside gh-send-ui.c and gh-group-ui.c, whose hooks it uses.
     target_sources(groundhog PRIVATE src/ui/gh-mls-ui.c src/ui/gh-poll-ui.c)
     target_link_libraries(groundhog PRIVATE groundhog-mls-ui)

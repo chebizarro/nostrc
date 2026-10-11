@@ -359,6 +359,16 @@ flowbox.groundhog-recipient-chips > flowboxchild {
   font-family: monospace;
 }
 
+/* The New Message panel's action rows (gh-new-message-page.blp): a round
+ * accent icon the size of a contact's avatar, as in Signal's New chat. */
+.groundhog-new-message-icon {
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 999px;
+  color: @accent_fg_color;
+  background-color: @accent_bg_color;
+}
+
 /* == conversation info (G19) == */
 /* The two safety codes' card (gh-conversation-info-dialog.blp). */
 .groundhog-safety-code {
