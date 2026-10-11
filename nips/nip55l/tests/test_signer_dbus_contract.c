@@ -3172,9 +3172,9 @@ static void run_identity_store_phase(void) {
     Ctx ctx;
     /* Any libsecret CRITICAL in the daemon now aborts this contract run.
      * In particular, refusing OpenSession must not enter libsecret 0.21.8's
-     * broken synchronous failure cleanup (nostrc-vcie8). Ubuntu 24.04 CI
-     * has 0.21.4, whose sync wrapper uses the async path; nostrc-xy204
-     * tracks a versioned CI lane that can detect a reintroduced sync call. */
+     * broken synchronous failure cleanup (nostrc-vcie8). The dedicated
+     * libsecret 0.21.8 CI lane (nostrc-xy204) runs this fake service; Noble's
+     * 0.21.4 cannot exercise the broken sync implementation. */
     char *old_debug = g_strdup(g_getenv("G_DEBUG"));
     g_setenv("G_DEBUG", "fatal-criticals", TRUE);
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
@@ -3342,6 +3342,12 @@ int main(int argc, char **argv) {
 #ifdef NIP55L_TEST_HAVE_LIBSECRET
   if (argc > 1 && g_strcmp0(argv[1], "--fake-secret-service") == 0)
     return fake_secret_service(argc - 1, argv + 1);
+  /* CI's versioned-libsecret lane exercises only the private fake services,
+   * including the OpenSession-refusing fixture with fatal criticals. */
+  if (argc > 1 && g_strcmp0(argv[1], "--fake-secret-service-contract") == 0) {
+    run_identity_store_phase();
+    return 0;
+  }
 #endif
   /* First fixture: mutations disabled, relays absent. Exercises the read
    * lanes plus GetRelays=NotFound plus StoreKey=PermissionDenied. */
