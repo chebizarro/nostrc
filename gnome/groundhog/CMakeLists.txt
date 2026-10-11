@@ -3490,6 +3490,32 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
   target_compile_options(groundhog-issue PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-issue)
   target_compile_definitions(groundhog PRIVATE GROUNDHOG_HAVE_ISSUE=1)
+  # Issue attachments (owner decision, nostrc-8xfib.5): GhIssueUploader, the
+  # only uploader the form gets, sends to the user's own attachment servers
+  # through GhBlossomClient and so GhNetHttp (network mode, Tor, public
+  # hosts only), after the form's per-upload consent.
+  if (TARGET groundhog-media)
+    target_sources(groundhog-issue PRIVATE src/net/gh-issue-uploader.c)
+    target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
+    target_link_libraries(groundhog-issue PUBLIC groundhog-media)
+    target_compile_definitions(groundhog-issue PUBLIC GH_ISSUE_UPLOADS=1)
+    if (BUILD_TESTING AND TARGET groundhog-test-schemas)
+      # Against the local Blossom fixture only: nothing before the upload is
+      # asked for, public bytes with metadata stripped, the size cap before
+      # reading, private hosts refused, and no built-in server.
+      add_executable(test-groundhog-issue-uploader tests/net/test_issue_uploader.c
+        tests/media/blossom-fixture.c tests/net/socks5-fixture.c)
+      target_include_directories(test-groundhog-issue-uploader PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/media ${CMAKE_CURRENT_SOURCE_DIR}/tests/net)
+      target_link_libraries(test-groundhog-issue-uploader PRIVATE groundhog-issue)
+      target_compile_options(test-groundhog-issue-uploader PRIVATE -Wall -Wextra -Werror)
+      groundhog_store_link_sqlcipher_first(test-groundhog-issue-uploader)
+      add_dependencies(test-groundhog-issue-uploader groundhog-test-schemas)
+      add_test(NAME groundhog-issue-uploader COMMAND test-groundhog-issue-uploader)
+      set_tests_properties(groundhog-issue-uploader PROPERTIES TIMEOUT 60
+        ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    endif()
+  endif()
   # Groundhog and portable must resolve GObject types from one DSO. Bundle
   # both versioned libraries privately; target installation preserves SONAME
   # links, unlike copying one build artifact by filename.

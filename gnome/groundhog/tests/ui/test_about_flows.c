@@ -299,9 +299,39 @@ test_issue_consent(gconstpointer data)
   GtkWindow *window = GTK_WINDOW(adw_window_new());
   gtk_window_present(window);
   /* The factory returns the portable nostr-gtk form with Groundhog services. */
-  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings);
+  /* Files: mode 2 has an attachment client with one public server the user
+   * chose; the others have none, so the form offers no files. Nothing is
+   * contacted either way unless a file is attached and its upload confirmed
+   * (tests/net/test_issue_uploader.c covers the upload itself). */
+  GhBlossomClient *blossom = NULL;
+#if GH_ISSUE_UPLOADS
+  g_autoptr(GhNetHttp) http = NULL;
+  g_autoptr(GhBlossomClient) client = NULL;
+  if (mode == 2) {
+    const char *servers[] = { "https://blossom.example.com", NULL };
+    g_settings_set_strv(settings, "blossom-servers", servers);
+    http = gh_net_http_new(settings);
+    client = gh_blossom_client_new(settings, http);
+    blossom = client;
+  }
+#endif
+  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings, blossom);
   g_assert_true(GN_IS_NIP34_ISSUE_VIEW(dialog));
   gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
+  {
+    GtkWidget *attach = child(dialog, "attach_button");
+    g_autofree char *path = g_build_filename(g_get_tmp_dir(), "groundhog-issue-attach.txt", NULL);
+    g_assert_true(g_file_set_contents(path, "log", -1, NULL));
+    g_autoptr(GFile) file = g_file_new_for_path(path);
+    if (blossom) {
+      g_assert_true(gtk_widget_is_visible(attach));
+    } else {
+      g_assert_false(gtk_widget_is_visible(attach));
+      /* No uploader: a file cannot be queued at all. */
+      g_assert_false(gn_nip34_issue_view_add_attachment(dialog, file));
+    }
+    g_assert_cmpint(g_unlink(path), ==, 0);
+  }
   gtk_editable_set_text(GTK_EDITABLE(child(dialog, "title_row")), "<Test title>");
   gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(child(dialog, "body_view"))),
                            body, -1);
@@ -419,6 +449,7 @@ cleanup:
   soup_server_disconnect(server);
   nostr_event_free(relay.event);
   gh_test_release(g_steal_pointer(&accounts));
+  g_settings_reset(settings, "blossom-servers");
   GhTestSenders check = { &bus, &signer };
   gh_test_spin_until(gh_test_signer_senders_closed, &check);
   gh_test_signer_down(&bus, &signer);

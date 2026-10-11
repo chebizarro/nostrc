@@ -59,6 +59,7 @@ src/app/gh-tray.c
 src/app/gh-update-handoff.c
 src/main.c
 src/media/gh-attachments.c
+src/net/gh-issue-uploader.c
 src/mls/gh-mls-attachments.c
 src/ui/gh-about-dialog.c
 src/ui/gh-add-contact-dialog.c

@@ -931,32 +931,59 @@ def check_diagnostics(tree):
 
 
 # nostrc-8xfib.5: the portable NIP-34 issue form (nostr-gtk) takes injected
-# services. Outside src/net/ Groundhog passes no uploader and no repository
-# resolver (gn_nip34_issue_view_new(target, publisher, NULL, NULL)) and
-# implements neither interface: files and lookups would bypass GhNet's
-# network mode, Tor isolation and dispatcher.
+# services. Groundhog passes no repository resolver
+# (gn_nip34_issue_view_new(target, publisher, NULL, ...)), and the only
+# uploader it may pass is GhIssueUploader (src/net/gh-issue-uploader.c, owner
+# decision): the form's uploader argument is NULL or a variable named
+# `uploader` that is only ever set from gh_issue_uploader_new() or NULL.
+# GhIssueUploader is the only implementation of the uploader interface, and
+# it sends only through gh_blossom_client_upload_public_async() (GhNetHttp:
+# network mode, Tor, public hosts only); it never opens sockets, resolves
+# names or calls another upload. A resolver may only be a GhNet adapter in
+# src/net/. Anything else would bypass GhNet's network mode, Tor isolation
+# and dispatcher.
 ISSUE_VIEW_NEW_RE = re.compile(r"\bgn_nip34_issue_view_new\s*\(([^;]*?)\)\s*;", re.S)
-ISSUE_SERVICE_IMPL_RE = re.compile(
-    r"\bGN_TYPE_ISSUE_(?:UPLOADER|REPO_RESOLVER)\b|\bGnIssue(?:Uploader|RepoResolver)Interface\b")
+ISSUE_UPLOADER_IMPL_RE = re.compile(r"\bGN_TYPE_ISSUE_UPLOADER\b|\bGnIssueUploaderInterface\b")
+ISSUE_RESOLVER_IMPL_RE = re.compile(
+    r"\bGN_TYPE_ISSUE_REPO_RESOLVER\b|\bGnIssueRepoResolverInterface\b")
+ISSUE_UPLOADER_FILE = "src/net/gh-issue-uploader.c"
+ISSUE_UPLOADER_ASSIGN_RE = re.compile(r"\buploader\s*=\s*([^;]*);")
+ISSUE_UPLOADER_ALLOWED_VALUE_RE = re.compile(r"^(?:NULL|gh_issue_uploader_new\s*\([^;]*\))$", re.S)
+ISSUE_UPLOADER_NET_RE = re.compile(
+    r"\bgh_blossom_client_upload(?:_on_servers|_keyed)?_async\b|\bgh_blossom_client_download_async\b"
+    r"|\bgh_net_http_\w+\b|\bg_socket_\w+\b|\bg_resolver_\w+\b|\bsoup_\w+\b|\bg_network_\w+\b")
 
 
 def check_issue_services(tree):
     rule = "issue-services"
     found = []
     for rel in tree.files("src", suffixes={".c", ".h"}):
-        if rel.startswith("src/net/"):
-            continue
         _, _, code = tree.views(rel)
+        if rel == ISSUE_UPLOADER_FILE:
+            if "gh_blossom_client_upload_public_async" not in code:
+                found.append(Violation(rule, rel, 0, "the issue uploader must send through "
+                                       "gh_blossom_client_upload_public_async()", "upload"))
+            found += find_all(rule, rel, code, ISSUE_UPLOADER_NET_RE,
+                              lambda s: f"{s}: the issue uploader sends only through "
+                                        "gh_blossom_client_upload_public_async()")
+        else:
+            found += find_all(rule, rel, code, ISSUE_UPLOADER_IMPL_RE,
+                              lambda s: f"{s}: the only issue uploader is GhIssueUploader "
+                                        f"({ISSUE_UPLOADER_FILE})")
+        if not rel.startswith("src/net/"):
+            found += find_all(rule, rel, code, ISSUE_RESOLVER_IMPL_RE,
+                              lambda s: f"{s}: an issue resolver must be a GhNet adapter in src/net/")
         for m in ISSUE_VIEW_NEW_RE.finditer(code):
             args = [a.strip() for a in m.group(1).split(",")]
-            if len(args) != 4 or args[2] != "NULL" or args[3] != "NULL":
+            ok = len(args) == 4 and args[2] == "NULL" and args[3] in ("NULL", "uploader")
+            if ok and args[3] == "uploader":
+                values = [v.group(1).strip() for v in ISSUE_UPLOADER_ASSIGN_RE.finditer(code)]
+                ok = bool(values) and all(ISSUE_UPLOADER_ALLOWED_VALUE_RE.match(v) for v in values)
+            if not ok:
                 found.append(Violation(rule, rel, line_of(code, m.start()),
-                                       "the issue form gets a resolver or uploader outside src/net/; "
-                                       "pass NULL, NULL or a GhNet adapter (charter: no fetch "
-                                       "or upload outside GhNet)", m.group()))
-        found += find_all(rule, rel, code, ISSUE_SERVICE_IMPL_RE,
-                          lambda s: f"{s}: an issue uploader or resolver must be a GhNet adapter "
-                                    "in src/net/")
+                                       "the issue form gets a resolver, or an uploader other than "
+                                       "gh_issue_uploader_new() (charter: no fetch or upload "
+                                       "outside GhNet)", m.group()))
     return found
 
 
@@ -1017,8 +1044,18 @@ def clean_tree():
     return {
         "src/ui/gh-issue-adapters.c": (
             "#include \"gh-issue-adapters.h\"\n"
-            "/* No GnIssueUploader here: Groundhog never uploads issue files. */\n"
-            "static void *v(void *t, void *p) { return gn_nip34_issue_view_new(t, p, NULL, NULL); }\n"),
+            "/* No GnIssueUploaderInterface here: only GhIssueUploader uploads. */\n"
+            "static void *v(void *t, void *p, void *b) {\n"
+            "  void *uploader = gh_issue_uploader_new(b);\n"
+            "  /* No resolver: no lookup */\n"
+            "  return gn_nip34_issue_view_new(t, p, NULL, uploader);\n"
+            "}\n"
+            "static void *w(void *t, void *p) { return gn_nip34_issue_view_new(t, p, NULL, NULL); }\n"),
+        "src/net/gh-issue-uploader.c": (
+            "#include \"gh-issue-uploader.h\"\n"
+            "/* Not gh_net_http_send_async() or g_socket_client_new(): GhBlossomClient only. */\n"
+            "static void iface(GnIssueUploaderInterface *i) { (void)i; }\n"
+            "static void up(void *c) { gh_blossom_client_upload_public_async(c, 0, 0, 0, 0, 0, 0); }\n"),
         "src/main.c": (
             "#include <adwaita.h>\n"
             f'#define GROUNDHOG_APP_ID "{APP_ID}"\n'
@@ -1293,11 +1330,30 @@ MUTATIONS = [
       [replace("data/ui/gh-window.blp", "      Gtk.Spinner {}", "      Adw.Sidebar {}")]),
     M("blueprint-ui-class", {"blueprint-denylist"},
       [replace("data/ui/gh-window.ui", 'class="GtkSpinner"', 'class="AdwButtonRow"')]),
-    M("issue-uploader-passed", {"issue-services"},
-      [replace("src/ui/gh-issue-adapters.c", "p, NULL, NULL)", "p, NULL, uploader)")]),
+    M("issue-uploader-foreign", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "uploader = gh_issue_uploader_new(",
+               "uploader = other_uploader_new(")]),
+    M("issue-uploader-reassigned", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "  /* No resolver: no lookup",
+               "  uploader = gh_other_uploader_new();\n  /* No resolver: no lookup")]),
+    M("issue-uploader-other-arg", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "p, NULL, uploader)", "p, NULL, blossom_uploader)")]),
+    M("issue-resolver-passed", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "p, NULL, uploader)", "p, resolver, uploader)")]),
     M("issue-uploader-impl", {"issue-services"},
       [append("src/ui/gh-issue-adapters.c",
               "static void i(GnIssueUploaderInterface *iface) { (void)iface; }\n")]),
+    M("issue-uploader-impl-net", {"issue-services"},
+      [append("src/net/gh-net-session.c",
+              "static void i(GnIssueUploaderInterface *iface) { (void)iface; }\n")]),
+    M("issue-resolver-impl", {"issue-services"},
+      [append("src/ui/gh-issue-adapters.c",
+              "static void r(GnIssueRepoResolverInterface *iface) { (void)iface; }\n")]),
+    M("issue-uploader-bypass", {"issue-services"},
+      [replace(ISSUE_UPLOADER_FILE, "gh_blossom_client_upload_public_async(",
+               "gh_blossom_client_upload_on_servers_async(")]),
+    M("issue-uploader-socket", {"issue-services"},
+      [append(ISSUE_UPLOADER_FILE, "static void s(void) { g_socket_client_new(); }\n")]),
     M("libsoup-include", {"libsoup-boundary"},
       [append("src/app/gh-fetch.c", "#include <libsoup/soup.h>\n")]),
     M("libsoup-api", {"libsoup-boundary"},
