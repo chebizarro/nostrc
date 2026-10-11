@@ -4,20 +4,6 @@
 #include <glib/gstdio.h>
 #include <string.h>
 
-/* nostrc-eixk6: libsecret 0.21.4 secret_collection_signal() breaks out
- * of its Items scan on an existing path without unrefing the full reference
- * from g_variant_iter_next_value(). GIO allocated that path before the
- * libsecret callback, so its allocation stack has no libsecret frame.
- * Its static signal handler is stripped from Ubuntu's libsecret binary,
- * so the precise lsan.supp rule cannot match in CI without debug symbols.
- * Keep the necessary module fallback and this GIO allocation-site rule
- * local to this executable, never suite-wide in lsan.supp. */
-const char *
-__lsan_default_suppressions(void)
-{
-  return "leak:libsecret-1.so.0\nleak:g_variant_new_object_path\n";
-}
-
 static const SecretSchema schema = {
   .name = "org.nostr.Groundhog.Nip46Credential", .flags = SECRET_SCHEMA_NONE,
   .attributes = { { "account", SECRET_SCHEMA_ATTRIBUTE_STRING },
@@ -83,12 +69,18 @@ lookup(GhNip46CredentialStore *store, const gchar *account, GCancellable *cancel
   return out;
 }
 static Result
-save(GhNip46CredentialStore *store, GhNip46Credential *c, GCancellable *cancel)
+save_with_interaction(GhNip46CredentialStore *store, GhNip46Credential *c,
+                      gboolean interactive, GCancellable *cancel)
 {
   Result out = {0};
-  gh_nip46_credential_store_store_async(store, c, FALSE, cancel, on_store, &out);
+  gh_nip46_credential_store_store_async(store, c, interactive, cancel, on_store, &out);
   g_main_loop_run(loop);
   return out;
+}
+static Result
+save(GhNip46CredentialStore *store, GhNip46Credential *c, GCancellable *cancel)
+{
+  return save_with_interaction(store, c, FALSE, cancel);
 }
 static Result
 remove_item(GhNip46CredentialStore *store, const gchar *account, GCancellable *cancel)
@@ -191,7 +183,10 @@ test_round_trip(void)
   g_assert_true(g_str_has_prefix(identity->npub, "npub1"));
   clear_result(&listed);
   g_autoptr(GhNip46Credential) second = credential(account_a, signer_b, client_b);
-  saved = save(store, second, NULL);
+  /* Exercise replacement through the service method: libsecret 0.21.4's
+   * collection proxy leaks an object-path variant on an existing ItemCreated
+   * signal (nostrc-eixk6), while Groundhog's interactive path avoids it. */
+  saved = save_with_interaction(store, second, TRUE, NULL);
   g_assert_no_error(saved.error); g_assert_true(saved.ok); clear_result(&saved);
   items = raw_items(account_a); g_assert_cmpuint(g_list_length(items), ==, 1);
   g_list_free_full(items, g_object_unref);

@@ -27,8 +27,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # signet-ci.yml
     libmicrohttpd-dev libcbor-dev \
     # local tooling: sources, debugging, the gate's tree sync and lock
-    git python3 ca-certificates gdb rsync util-linux \
+    git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
+# Ubuntu's stripped libsecret needs its matching dbgsym for LSan to match the
+# narrow secret_collection_signal suppression (nostrc-eixk6).
+RUN version="$(dpkg-query -W -f='${Version}' libsecret-1-0)" \
+ && arch="$(dpkg --print-architecture)" \
+ && curl --fail --location --retry 3 \
+      "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
+      --output /tmp/libsecret-dbgsym.ddeb \
+ && dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb / \
+ && rm /tmp/libsecret-dbgsym.ddeb
 # A real (non-C) UTF-8 locale: gettext ignores LANGUAGE under C and C.UTF-8,
 # so the en@pseudo catalog tests (nostrc-gofet.10) need one to run.
 RUN localedef -i en_US -f UTF-8 en_US.UTF-8
