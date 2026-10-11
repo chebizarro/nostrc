@@ -29,8 +29,6 @@ if [[ $component == global || $component == gnostr ]]; then
   put "$r" usr/bin/gnostr \
     usr/share/applications/org.gnostr.gnostr.desktop \
     usr/share/icons/hicolor/scalable/apps/org.gnostr.gnostr.svg
-  (cd "$stage" && ls usr/share/icons/hicolor/scalable/actions/gnostr-*.svg) |
-    while read -r f; do put "$r" "$f"; done
   pkg gnostr "$r"
 fi
 
@@ -39,8 +37,9 @@ if [[ $component == global || $component == grotto ]]; then
   put "$r" usr/bin/grotto \
     usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml \
     usr/share/dbus-1/services/org.nostr.Signer.service \
-    usr/share/applications/org.nostr.Grotto.desktop \
-    usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
+    usr/share/applications/org.nostr.Grotto.desktop
+  (cd "$stage" && ls usr/share/icons/hicolor/*/apps/org.nostr.Grotto.png) |
+    while read -r f; do put "$r" "$f"; done
   glib-compile-schemas "$r/usr/share/glib-2.0/schemas"
   pkg grotto "$r"
 fi

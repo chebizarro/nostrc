@@ -46,6 +46,9 @@ cleanup:
 
 modules:
   # Shared with the gnostr manifest: packaging/flatpak/modules/.
+  # Configuring the tree needs gnostr's dependencies too.
+  - ../../../packaging/flatpak/modules/blueprint-compiler.yml
+  - ../../../packaging/flatpak/modules/libpeas.yml
   - ../../../packaging/flatpak/modules/libsecp256k1.yml
   - ../../../packaging/flatpak/modules/libsodium.yml
   - ../../../packaging/flatpak/modules/libqrencode.yml
@@ -64,7 +67,7 @@ modules:
       - install -Dm755 build/apps/grotto/grotto-daemon /app/bin/grotto-daemon
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.desktop /app/share/applications/org.nostr.Grotto.desktop
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.metainfo.xml /app/share/metainfo/org.nostr.Grotto.metainfo.xml
-      - install -Dm644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg /app/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
+      - for sz in 16 24 32 48 64 128 256 512; do install -Dm644 apps/grotto/data/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png /app/share/icons/hicolor/${sz}x${sz}/apps/org.nostr.Grotto.png; done
       - install -Dm644 apps/grotto/data/org.nostr.Grotto.gschema.xml /app/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
       - glib-compile-schemas /app/share/glib-2.0/schemas/
       # D-Bus service file (Flatpak-specific with /app/bin path)

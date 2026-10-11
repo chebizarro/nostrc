@@ -2,6 +2,8 @@
 name: libpeas
 buildsystem: meson
 config-opts:
+  # The sandbox searches /app/lib only.
+  - --libdir=lib
   - -Dlua51=false
   - -Dpython3=false
   - -Dgjs=false

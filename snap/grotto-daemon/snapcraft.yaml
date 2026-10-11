@@ -49,6 +49,6 @@ parts:
       - libjansson4
       - libwebsockets19t64
       - libsecret-1-0
-      - libsecp256k1-2
+      - libsecp256k1-1
       - libsodium23
     override-build: scripts/ci/build-snap-part.sh daemon

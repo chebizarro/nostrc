@@ -76,7 +76,10 @@ jobs:
           mkdir -p dist
           git ls-files -z --recurse-submodules |
             tar --null -T - --transform "s,^,${name}/," -czf "dist/${name}-source.tar.gz"
-          tar -tzf "dist/${name}-source.tar.gz" | grep -q "^${name}/third_party/nostrdb/src/nostrdb.c$"
+          tar -tzf "dist/${name}-source.tar.gz" > dist/contents.txt
+          grep -qx "${name}/third_party/nostrdb/src/nostrdb.c" dist/contents.txt
+          grep -q "^${name}/third_party/nsync/" dist/contents.txt
+          rm dist/contents.txt
       - name: Upload source archive
         uses: actions/upload-artifact@v4
         with:
@@ -159,8 +162,8 @@ jobs:
           cp -a stage/usr/lib AppDir/usr/ 2>/dev/null || true
           install -D build/apps/grotto/grotto AppDir/usr/bin/grotto
           install -D -m644 apps/grotto/packaging/appimage/grotto.desktop AppDir/usr/share/applications/grotto.desktop
-          install -D -m644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg \
-            AppDir/usr/share/icons/hicolor/scalable/apps/org.nostr.Grotto.svg
+          install -D -m644 apps/grotto/data/icons/hicolor/256x256/apps/org.nostr.Grotto.png \
+            AppDir/usr/share/icons/hicolor/256x256/apps/org.nostr.Grotto.png
           install -D -m644 stage/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml \
             AppDir/usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
           glib-compile-schemas AppDir/usr/share/glib-2.0/schemas
@@ -230,8 +233,8 @@ jobs:
           printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=Grotto Daemon (TCP)' \
             'Exec=grotto-daemon' 'Icon=grotto-daemon' 'Terminal=true' 'Categories=Utility;' \
             > AppDir/usr/share/applications/grotto-daemon.desktop
-          install -D -m644 apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto.svg \
-            AppDir/usr/share/icons/hicolor/scalable/apps/grotto-daemon.svg
+          install -D -m644 apps/grotto/data/icons/hicolor/256x256/apps/org.nostr.Grotto.png \
+            AppDir/usr/share/icons/hicolor/256x256/apps/grotto-daemon.png
           scripts/ci/make-appimage.sh AppDir usr/bin/grotto-daemon usr/share/applications/grotto-daemon.desktop \
             "dist/grotto-daemon-tcp-${RELEASE_VERSION}-${ARCH}.AppImage"
       - name: Upload packages

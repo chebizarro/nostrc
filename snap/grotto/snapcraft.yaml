@@ -45,7 +45,7 @@ parts:
       - libwebsockets19t64
       - libpeas-2-0
       - libqrencode4
-      - libsecp256k1-2
+      - libsecp256k1-1
       - libsodium23
     override-build: scripts/ci/build-snap-part.sh all
     prime:
