@@ -14,11 +14,11 @@ if [[ "$libdir" != /opt/libsecret-0.21.8/lib ]]; then
 fi
 echo "NIP-55L refusing-session contract: libsecret $version from $libdir"
 
-# signer_secret_service() is currently dormant; a runtime test cannot exercise
-# a sync call put back there. Reject every sync session-open call in the signer
-# source as well as exercising the live read path below.
-if grep -nE '(^|[^[:alnum:]_])(secret_service_ensure_session_sync|_secret_session_open_sync)[[:space:]]*\(' \
-        /src/nips/nip55l/src/core/signer_ops.c; then
+# A runtime test reaches only the paths it drives; reject every sync
+# session-open call in the signer sources as well as exercising the live read
+# path below.
+if grep -rnE '(^|[^[:alnum:]_])(secret_service_ensure_session_sync|_secret_session_open_sync)[[:space:]]*\(' \
+        /src/nips/nip55l/src; then
     echo "ERROR: synchronous libsecret session opening reintroduced" >&2
     exit 1
 fi

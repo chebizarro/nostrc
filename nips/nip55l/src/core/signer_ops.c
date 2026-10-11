@@ -249,17 +249,6 @@ static gboolean signer_ensure_session(SecretService *service, GError **error){
   return ok;
 }
 
-/* The Secret Service with a session open, for a search that loads secrets. */
-static SecretService *signer_secret_service(GError **error){
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
-  if (!service) return NULL;
-  if (!signer_ensure_session(service, error)) {
-    g_object_unref(service);
-    return NULL;
-  }
-  return service;
-}
-
 /* --- Key store reads (nostrc-sjyl3, nostrc-f6l29) ---------------------------
  *
  * Each returns 0; NOSTR_SIGNER_ERROR_NOT_FOUND when the store holds no such
@@ -1666,7 +1655,7 @@ static char *npub_from_sk_hex(const char *sk_hex){
  * secret decodes to a private key whose npub is npub. Attributes alone are
  * not evidence — a half-written item must not justify deleting the only
  * good copy. Hardware references carry no private key and never match.
- * @service already has its session open (signer_secret_service()). */
+ * @service already has its session open (signer_ensure_session()). */
 static gboolean unified_holds_same_key(SecretService *service, const char *npub){
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
   g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)npub);
