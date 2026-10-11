@@ -549,8 +549,8 @@ unwrap_done(GObject *source, GAsyncResult *result, gpointer data)
     g_debug("Groundhog deferred a NIP-17 wrap: %s", error->message);
     self->counters.deferred++;
     self->hold_checkpoint = TRUE;
-    g_hash_table_replace(self->deferred_ids, g_strdup(call->job->wrap_id),
-                         g_steal_pointer(&call->job));
+    Job *job = g_steal_pointer(&call->job);
+    g_hash_table_replace(self->deferred_ids, g_strdup(job->wrap_id), job);
   }
   gh_nip17_message_free(message);
   unwrap_call_free(call);
