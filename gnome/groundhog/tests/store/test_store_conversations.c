@@ -1128,6 +1128,74 @@ test_st9_forget(void)
   fixture_clear(&f);
 }
 
+/* ---- Delete for Me (groundhog/bubble-menu) ----------------------------------------------- */
+
+static gboolean
+delete_message(Fixture *f, const gchar *room_id, const gchar *id, const gchar *sender)
+{
+  gboolean deleted = TRUE;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_store_conversations_delete_message(f->conversations, room_id, id, sender,
+                                                      &deleted, &error));
+  g_assert_no_error(error);
+  return deleted;
+}
+
+static void
+test_delete_message(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  Rumor one = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 100, .content = "one" };
+  Rumor two = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 90, .content = "two" };
+  Rumor three = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 80,
+                  .content = "three" };
+  g_autofree gchar *one_id = rumor_id(ACCOUNT_A, &one);
+  g_autofree gchar *two_id = rumor_id(ACCOUNT_A, &two);
+  g_autofree gchar *three_id = rumor_id(ACCOUNT_A, &three);
+  g_assert_cmpint(deliver(f.model, &one, "del/1"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &two, "del/2"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpint(deliver(f.model, &three, "del/3"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_room(&f, ap, 3, 3, TRUE);
+
+  /* A deletion request from someone who did not write it changes nothing,
+   * nor does an unknown id. */
+  g_assert_false(delete_message(&f, ap, two_id, ACCOUNT_A));
+  g_assert_false(delete_message(&f, ap, "00", NULL));
+  assert_room(&f, ap, 3, 3, TRUE);
+  g_assert_cmpint(stored_messages(f.store, two_id), ==, 1);
+
+  /* Its author's request, or Delete for Me: gone from the store and the
+   * model, unread recounted. */
+  g_assert_true(delete_message(&f, ap, two_id, PEER_P));
+  g_assert_null(gh_conversation_store_lookup_message(f.model, two_id));
+  g_assert_cmpint(stored_messages(f.store, two_id), ==, 0);
+  assert_room(&f, ap, 2, 2, TRUE);
+  /* Seen stays: another wrap of it from a relay is never admitted again. */
+  g_assert_true(is_seen(f.store, GH_STORE_SEEN_RUMOR, two_id));
+  g_assert_cmpint(deliver(f.model, &two, "del/2-again"), ==, GH_CONVERSATION_ADD_DUPLICATE);
+  fixture_restart(&f);
+  assert_room(&f, ap, 2, 2, TRUE);
+  g_assert_null(gh_conversation_store_lookup_message(f.model, two_id));
+
+  /* Deleting the read marker's message moves it back: the read state stays. */
+  gh_conversation_mark_read(room(&f, ap));
+  g_assert_cmpuint(gh_conversation_get_unread_count(room(&f, ap)), ==, 0);
+  g_assert_true(delete_message(&f, ap, three_id, NULL));
+  assert_room(&f, ap, 1, 0, TRUE);
+  fixture_restart(&f);
+  assert_room(&f, ap, 1, 0, TRUE);
+  g_assert_cmpstr(gh_conversation_get_preview(room(&f, ap)), ==, "one");
+
+  /* The last one: the room is no longer listed. */
+  g_assert_true(delete_message(&f, ap, one_id, NULL));
+  g_assert_null(room(&f, ap));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM messages"), ==, 0);
+  assert_store_consistent(f.store);
+  fixture_clear(&f);
+}
+
 /* ---- Notification state (G16, NO-7): mute and block live in the store ---------------------------- */
 
 static GhStoreNotifyState
@@ -2243,6 +2311,7 @@ main(int argc, char **argv)
                   test_search_stored_message_bodies);
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);
+  g_test_add_func("/groundhog/store-conversations/delete-message", test_delete_message);
   g_test_add_func("/groundhog/store-conversations/notify-state", test_notify_state);
   g_test_add_func("/groundhog/store-conversations/list-blocked", test_list_blocked);
   g_test_add_func("/groundhog/store-conversations/ex4-ex6/expiry", test_expiry);

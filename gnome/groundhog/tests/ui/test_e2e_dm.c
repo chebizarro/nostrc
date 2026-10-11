@@ -392,6 +392,92 @@ wait_sent(GhConversation *room, const gchar *content)
 }
 
 /* The view shows the message: it is in the shown timeline. */
+
+/* ---- Delete for Me / Delete for Everyone (groundhog/bubble-menu) ------------------------- */
+
+/* The view's delete callback, as gh-app-services.c sets it. */
+static gboolean
+stack_delete_message(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
+                     gpointer data, GError **error)
+{
+  SendStack *s = data;
+  return gh_app_outbox_delete_message(gh_account_store_get_conversations(s->store),
+                                      gh_account_store_get_outbox(s->store), conversation,
+                                      message, for_everyone, error);
+}
+
+/* A received deletion request, as gh-app-services.c honours it. */
+static void
+stack_honour_deletion(const gchar *room_id, const gchar *rumor_id, const gchar *author,
+                      gpointer data)
+{
+  SendStack *s = data;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_app_outbox_honour_deletion(gh_account_store_get_conversations(s->store),
+                                              gh_account_store_get_outbox(s->store), room_id,
+                                              rumor_id, author, NULL, &error));
+  g_assert_no_error(error);
+}
+
+static void
+stack_wire_deletion(SendStack *s)
+{
+  gh_conversation_view_set_delete_func(send_stack_view(s), stack_delete_message, s, NULL);
+  gh_app_outbox_set_delete_func(s->sender, stack_honour_deletion, s);
+}
+
+static gboolean
+dialog_up(gpointer dialog)
+{
+  return gtk_widget_get_root(GTK_WIDGET(dialog)) && gtk_widget_get_mapped(GTK_WIDGET(dialog));
+}
+
+static gboolean
+dialog_down(gpointer dialog)
+{
+  if (!gtk_widget_get_root(GTK_WIDGET(dialog)))
+    return TRUE;
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  return FALSE;
+}
+
+/* The bubble menu's Delete item (conversation.delete-message), confirmed. */
+static void
+stack_delete(SendStack *s, GhConversation *conversation, const gchar *content,
+             gboolean for_everyone)
+{
+  GhConversationView *view = send_stack_view(s);
+  GhMessage *message = stack_find(conversation, content);
+  g_assert_true(gh_conversation_view_can_delete_message(view, message, for_everyone));
+  gtk_widget_activate_action(GTK_WIDGET(view), "conversation.delete-message", "(sb)",
+                             gh_message_get_rumor_id(message), for_everyone);
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(
+    gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW, "delete_dialog"));
+  gh_test_spin_until(dialog_up, dialog);
+  g_signal_emit_by_name(dialog, "response", "delete-confirm");
+  gh_test_spin_until(dialog_down, dialog);
+}
+
+typedef struct {
+  GhConversationStore *model;
+  const gchar *room;
+  const gchar *content;
+} GoneWait;
+
+static gboolean
+message_gone(gpointer data)
+{
+  GoneWait *wait = data;
+  GhConversation *conversation = gh_conversation_store_lookup(wait->model, wait->room);
+  GListModel *list = G_LIST_MODEL(conversation);
+  for (guint i = 0; i < g_list_model_get_n_items(list); i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(list, i);
+    if (g_strcmp0(gh_message_get_content(message), wait->content) == 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
 static gboolean
 view_shows(GhConversationView *view, const gchar *content)
 {
@@ -873,6 +959,35 @@ test_two_accounts(void)
   foreign_chip.view = send_stack_view(&a);
   g_assert_false(reaction_chip_shows(&foreign_chip));
   g_assert_false(reaction_stored_anywhere(&a, foreign_id));
+
+  /* 6. A deletes its own message for everyone from the bubble's menu: the
+   * NIP-09 request reaches B over the relays and B's copy goes; B deletes
+   * an incoming one for itself only. Neither comes back after a restart. */
+  stack_wire_deletion(&a);
+  stack_wire_deletion(&b);
+  g_assert_false(gh_conversation_view_can_delete_message(
+    send_stack_view(&a), stack_find(room_a, "Hi A! Got it."), TRUE));
+  stack_delete(&a, room_a, "Great, see you Saturday.", TRUE);
+  GoneWait gone_a = { a.model, room, "Great, see you Saturday." };
+  g_assert_true(message_gone(&gone_a)); /* at once, here */
+  GoneWait gone_b = { b.model, room, "Great, see you Saturday." };
+  gh_test_spin_until(message_gone, &gone_b);
+  g_assert_false(view_shows(send_stack_view(&b), "Great, see you Saturday."));
+  stack_delete(&b, room_b, "Hello B, it's A", FALSE);
+  GoneWait mine_b = { b.model, room, "Hello B, it's A" };
+  g_assert_true(message_gone(&mine_b));
+  g_assert_nonnull(stack_find(room_a, "Hello B, it's A")); /* A keeps it */
+  send_stack_down(&a);
+  send_stack_down(&b);
+  stack_bring_up(&a);
+  stack_bring_up(&b);
+  gone_a.model = a.model;
+  gone_b.model = mine_b.model = b.model;
+  g_assert_true(message_gone(&gone_a));
+  g_assert_true(message_gone(&gone_b));
+  g_assert_true(message_gone(&mine_b));
+  room_a = gh_conversation_store_lookup(a.model, room);
+  g_assert_nonnull(stack_find(room_a, "Hello B, it's A"));
 
   send_stack_clear(&a);
   send_stack_clear(&b);

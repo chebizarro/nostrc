@@ -712,6 +712,21 @@ gboolean gh_store_outbox_set_no_inbox(GhStore *store, gint64 outbox_event_id,
  * a relay is not admitted again. NOT_FOUND if absent. */
 gboolean gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error);
 
+/* Delete for Me (groundhog/bubble-menu): deletes the message @backend_msg_id
+ * of the conversation (@backend, @backend_key) together with its outbox
+ * entry (rumor and signed events) and the decrypted attachments only it
+ * named, in one transaction, keeping the read state exact as T-purge does
+ * (a read marker on it moves back; the room's unread count is recounted).
+ * The seen keys stay, so the same message from a relay is never admitted
+ * again. Then the WAL is truncated. With @sender_pubkey (lowercase hex),
+ * only a message written by that key is deleted (a NIP-09 request may
+ * only delete its author's own messages). *out_deleted is FALSE, and
+ * nothing changes, when there is no such message: not an error. */
+gboolean gh_store_delete_message(GhStore *store, GhStoreBackend backend,
+                                 const gchar *backend_key, const gchar *backend_msg_id,
+                                 const gchar *sender_pubkey, gboolean *out_deleted,
+                                 GError **error);
+
 /* ---- T-purge ------------------------------------------------------------------------ */
 
 typedef struct {

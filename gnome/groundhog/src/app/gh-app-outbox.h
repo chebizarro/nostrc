@@ -67,6 +67,37 @@ GObject *gh_app_outbox_get_mls_service(GhAppOutbox *self);
  * is open. Borrowed. */
 typedef struct _GhReactionStore GhReactionStore;
 GhReactionStore *gh_app_outbox_get_reactions(GhAppOutbox *self);
+
+/* A NIP-09 deletion request received in a NIP-17 room (groundhog/
+ * bubble-menu): called for each message it names, with the room, the
+ * message's rumor id and the request's author (the verified seal sender).
+ * The callee deletes the message only if that author wrote it in that room
+ * (gh_store_conversations_delete_message() with the sender). NULL: none. */
+typedef void (*GhAppOutboxDeleteFunc)(const gchar *room_id, const gchar *rumor_id,
+                                      const gchar *author_pubkey, gpointer user_data);
+void gh_app_outbox_set_delete_func(GhAppOutbox *self, GhAppOutboxDeleteFunc func,
+                                   gpointer user_data);
+
+/* Delete for Me / Delete for Everyone from a bubble's menu (groundhog/
+ * bubble-menu), for a NIP-17 conversation of @stored's account. For
+ * everyone (own messages only), a NIP-09 deletion request (a kind-5 rumor
+ * naming the message) goes first, gift-wrapped to every member and the
+ * self-copy through @outbox (a gh_app_outbox_create() object) like any
+ * message; then the message is deleted here, from the store (its outbox
+ * entry with it, seen keys kept) and the model, and the outbox lets go of
+ * an entry it was still sending. */
+typedef struct _GhStoreConversations GhStoreConversations;
+gboolean gh_app_outbox_delete_message(GhStoreConversations *stored, GObject *outbox,
+                                      GhConversation *conversation, GhMessage *message,
+                                      gboolean for_everyone, GError **error);
+/* A received NIP-09 request (GhAppOutboxDeleteFunc): the message @rumor_id
+ * in @room_id is deleted as with Delete for Me only if @author_pubkey wrote
+ * it; anyone else's is left alone. *out_deleted (nullable) says whether one
+ * was. @outbox (nullable) lets go of a deleted own message's entry. */
+gboolean gh_app_outbox_honour_deletion(GhStoreConversations *stored, GObject *outbox,
+                                       const gchar *room_id, const gchar *rumor_id,
+                                       const gchar *author_pubkey, gboolean *out_deleted,
+                                       GError **error);
 /* The DM inbox whose Welcome sink the MLS service takes (borrowed; NULL
  * detaches). Set it before the store opens. */
 void gh_app_outbox_set_inbox(GhAppOutbox *self, GObject *inbox);

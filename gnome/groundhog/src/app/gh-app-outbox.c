@@ -21,6 +21,7 @@
 #include "gh-reaction.h"
 #include "gh-reaction-store.h"
 #include "gh-store-reactions.h"
+#include "gh-store-conversations.h"
 #include <nostr-event.h>
 #include <nostr-tag.h>
 
@@ -49,6 +50,8 @@ struct _GhAppOutbox {
   GhReactionStore *reactions;             /* in-memory model, or NULL */
   GhStoreReactions *store_reactions;      /* persistence delegate, or NULL */
   GObject *reactions_outbox;              /* the outbox it was made beside (weak) */
+  GhAppOutboxDeleteFunc delete_func;      /* received NIP-09 requests for messages */
+  gpointer delete_data;
 };
 
 GhAppOutbox *
@@ -336,6 +339,9 @@ nip17_reaction_sink(gpointer data, const GhNip17Message *message,
           const gchar *rid = nostr_tag_get_value(tag);
           gh_reaction_store_delete_event(self->reactions, rid,
                                          message->sender_pubkey, room_id, NULL);
+          /* Or a message: deleted only if its author asked, in its room. */
+          if (self->delete_func)
+            self->delete_func(room_id, rid, message->sender_pubkey, self->delete_data);
         }
       }
     }
@@ -397,6 +403,68 @@ gh_app_outbox_get_reactions(GhAppOutbox *self)
 {
   g_return_val_if_fail(self != NULL, NULL);
   return self->reactions;
+}
+
+gboolean
+gh_app_outbox_delete_message(GhStoreConversations *stored, GObject *outbox,
+                             GhConversation *conversation, GhMessage *message,
+                             gboolean for_everyone, GError **error)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation) && GH_IS_MESSAGE(message), FALSE);
+  if (!GH_IS_STORE_CONVERSATIONS(stored) || !GH_IS_OUTBOX(outbox) ||
+      gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP17) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "Messages can't be deleted here now");
+    return FALSE;
+  }
+  /* The message (and an emptied room) may leave the model below. */
+  g_autofree gchar *room_id = g_strdup(gh_conversation_get_room_id(conversation));
+  g_autofree gchar *rumor_id = g_strdup(gh_message_get_rumor_id(message));
+  if (for_everyone) {
+    if (!gh_message_is_self(message)) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                          "Only your own messages can be deleted for everyone");
+      return FALSE;
+    }
+    g_autofree gchar *request =
+      gh_outbox_send_deletion_room(GH_OUTBOX(outbox), gh_conversation_get_peers(conversation),
+                                   rumor_id, error);
+    if (!request)
+      return FALSE;
+  }
+  if (!gh_store_conversations_delete_message(stored, room_id, rumor_id, NULL, NULL, error))
+    return FALSE;
+  gh_outbox_prune(GH_OUTBOX(outbox));
+  return TRUE;
+}
+
+gboolean
+gh_app_outbox_honour_deletion(GhStoreConversations *stored, GObject *outbox,
+                              const gchar *room_id, const gchar *rumor_id,
+                              const gchar *author_pubkey, gboolean *out_deleted,
+                              GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(stored), FALSE);
+  g_return_val_if_fail(author_pubkey != NULL, FALSE);
+  gboolean deleted = FALSE;
+  if (out_deleted)
+    *out_deleted = FALSE;
+  if (!gh_store_conversations_delete_message(stored, room_id, rumor_id, author_pubkey, &deleted,
+                                             error))
+    return FALSE;
+  if (deleted && GH_IS_OUTBOX(outbox))
+    gh_outbox_prune(GH_OUTBOX(outbox));
+  if (out_deleted)
+    *out_deleted = deleted;
+  return TRUE;
+}
+
+void
+gh_app_outbox_set_delete_func(GhAppOutbox *self, GhAppOutboxDeleteFunc func, gpointer user_data)
+{
+  g_return_if_fail(self != NULL);
+  self->delete_func = func;
+  self->delete_data = func ? user_data : NULL;
 }
 
 void

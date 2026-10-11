@@ -397,6 +397,10 @@ relays_teardown(GhAppServices *self)
 #endif
 
 #if GROUNDHOG_HAVE_OUTBOX
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+static void on_delete_request(const gchar *, const gchar *, const gchar *, gpointer);
+#endif
+
 /* Recipient 10050 lookup and the NIP-17 sealer/publisher each account's
  * durable outbox drives. */
 static gboolean
@@ -411,6 +415,9 @@ sender_init(GhAppServices *self, GError **error)
     .encrypted_groups = GH_FEATURE_ENCRYPTED_GROUPS,
   };
   self->outbox = gh_app_outbox_new(&config);
+#if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+  gh_app_outbox_set_delete_func(self->outbox, on_delete_request, self);
+#endif
   return TRUE;
 }
 
@@ -742,6 +749,7 @@ expiry_teardown(GhAppServices *self)
  * freed on close). */
 #if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
 static void on_react(GhConversation *, GhMessage *, const gchar *, gboolean, gpointer);
+static gboolean on_delete_message(GhConversation *, GhMessage *, gboolean, gpointer, GError **);
 
 static void
 reactions_share(GhAppServices *self)
@@ -756,6 +764,8 @@ reactions_share(GhAppServices *self)
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
       gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
                                              on_react, self, NULL);
+      gh_conversation_view_set_delete_func(GH_CONVERSATION_VIEW(view),
+                                           on_delete_message, self, NULL);
     }
   }
 }
@@ -784,6 +794,7 @@ reactions_teardown(GhAppServices *self)
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), NULL);
       gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
                                              NULL, NULL, NULL);
+      gh_conversation_view_set_delete_func(GH_CONVERSATION_VIEW(view), NULL, NULL, NULL);
     }
   }
 }
@@ -792,6 +803,34 @@ reactions_teardown(GhAppServices *self)
 /* W26 slice B (nostrc-191r): the user toggled a reaction. Dispatch to the
  * appropriate backend based on the conversation type. */
 #if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
+/* Delete for Me / Delete for Everyone from a bubble's menu (groundhog/
+ * bubble-menu): gh_app_outbox_delete_message() on the open store. */
+static gboolean
+on_delete_message(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
+                  gpointer user_data, GError **error)
+{
+  GhAppServices *self = user_data;
+  return gh_app_outbox_delete_message(gh_account_store_get_conversations(self->account_store),
+                                      gh_account_store_get_outbox(self->account_store),
+                                      conversation, message, for_everyone, error);
+}
+
+/* A NIP-09 request received in a NIP-17 room (from another member, or the
+ * self-copy of one sent from another device): its author's own message
+ * there is deleted as with Delete for Me; anyone else's is left alone. */
+static void
+on_delete_request(const gchar *room_id, const gchar *rumor_id, const gchar *author_pubkey,
+                  gpointer user_data)
+{
+  GhAppServices *self = user_data;
+  GhStoreConversations *stored = gh_account_store_get_conversations(self->account_store);
+  g_autoptr(GError) error = NULL;
+  if (stored && author_pubkey &&
+      !gh_app_outbox_honour_deletion(stored, gh_account_store_get_outbox(self->account_store),
+                                     room_id, rumor_id, author_pubkey, NULL, &error))
+    g_message("Groundhog could not honour a deletion request: %s", error->message);
+}
+
 static void
 on_react(GhConversation *conversation, GhMessage *target, const gchar *emoji,
          gboolean add, gpointer user_data)
@@ -2439,6 +2478,8 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
       gh_conversation_view_set_reaction_store(GH_CONVERSATION_VIEW(view), reactions);
       gh_conversation_view_set_reaction_func(GH_CONVERSATION_VIEW(view),
                                              on_react, self, NULL);
+      gh_conversation_view_set_delete_func(GH_CONVERSATION_VIEW(view),
+                                           on_delete_message, self, NULL);
     }
   }
 #if GROUNDHOG_HAVE_ATTACHMENTS

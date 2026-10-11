@@ -140,6 +140,18 @@ gboolean gh_store_conversations_purge(GhStoreConversations *self, gint64 retenti
                                       GhStorePurgeStats *out_stats, GStrv *out_purged,
                                       GError **error);
 
+/* Delete for Me (groundhog/bubble-menu): gh_store_delete_message() of the
+ * NIP-17 message @rumor_id in @room_id (with @sender_pubkey, only if that
+ * key wrote it), then, as after a purge, the room's stored name is taken
+ * again from the newest remaining subject and the message leaves the
+ * attached model (a room left empty is unlisted). Seen keys stay: it never
+ * comes back from a relay. *out_deleted is FALSE when there was no such
+ * message (not an error). A read-only store refuses (STORE error). */
+gboolean gh_store_conversations_delete_message(GhStoreConversations *self,
+                                               const gchar *room_id, const gchar *rumor_id,
+                                               const gchar *sender_pubkey,
+                                               gboolean *out_deleted, GError **error);
+
 /* ---- Pins and timer changes (charter §7.4, §7.5, §3.7; W18) -------------------
  * Local only: kept in the conversations row (PD-11), never published (P8). */
 
