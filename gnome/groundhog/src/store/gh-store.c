@@ -4216,3 +4216,82 @@ fail:
   store_rollback(store);
   return FALSE;
 }
+
+/* ---- Delete one message (Delete for Me, groundhog/bubble-menu) ---------------------------- */
+
+gboolean
+gh_store_delete_message(GhStore *store, GhStoreBackend backend, const gchar *backend_key,
+                        const gchar *backend_msg_id, const gchar *sender_pubkey,
+                        gboolean *out_deleted, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  g_return_val_if_fail(backend_key != NULL && backend_msg_id != NULL, FALSE);
+  if (out_deleted)
+    *out_deleted = FALSE;
+  if (!check_backend(backend, error))
+    return FALSE;
+  sqlite3_stmt *stmt = NULL;
+  gboolean has_row = FALSE;
+  gint64 id = 0;
+  if (!store_begin(store, "delete-message", error))
+    return FALSE;
+  stmt = store_prepare(store,
+    "SELECT m.id FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+    "WHERE c.backend = ?1 AND c.backend_key = ?2 AND m.backend_msg_id = ?3 "
+    "AND (?4 IS NULL OR m.sender_pubkey = ?4)", error);
+  if (!stmt)
+    goto fail;
+  BIND(sqlite3_bind_int64(stmt, 1, backend));
+  BIND(bind_text(stmt, 2, backend_key));
+  BIND(bind_text(stmt, 3, backend_msg_id));
+  BIND(bind_text(stmt, 4, sender_pubkey));
+  if (!store_step_row(store, stmt, &has_row, "Looking up a message", error))
+    goto fail;
+  if (has_row)
+    id = sqlite3_column_int64(stmt, 0);
+  g_clear_pointer(&stmt, sqlite3_finalize);
+  if (!has_row) {
+    store_rollback(store);
+    return TRUE;
+  }
+  /* As T-purge: a read marker on it moves back to the newest message at or
+   * before it, and its room's unread count is counted again without it. */
+  if (!store_exec_id(store,
+        "UPDATE conversations SET last_read_msg = ("
+        "SELECT k.id FROM messages k, messages r WHERE r.id = conversations.last_read_msg "
+        "AND k.conversation_id = conversations.id AND k.id <> ?1 "
+        "AND (k.created_at, k.backend_msg_id) <= (r.created_at, r.backend_msg_id) "
+        "ORDER BY k.created_at DESC, k.backend_msg_id DESC LIMIT 1) "
+        "WHERE last_read_msg = ?1", id, 0, error) ||
+      !store_exec_id(store,
+        "UPDATE conversations SET unread_count = ("
+        "SELECT count(*) FROM messages m WHERE m.conversation_id = conversations.id "
+        "AND m.direction = 0 AND m.id <> ?1 "
+        "AND NOT (conversations.backend = 3 AND m.kind BETWEEN 1200 AND 1202) "
+        "AND NOT " READ_BY("m", "conversations") ") "
+        "WHERE id = (SELECT conversation_id FROM messages WHERE id = ?1) "
+        "AND (last_read_msg IS NULL OR "
+        "EXISTS (SELECT 1 FROM messages r WHERE r.id = conversations.last_read_msg))",
+        id, 0, error) ||
+      /* A downloaded file's plaintext goes with it (nostrc-5x5b). */
+      !store_exec_id(store, MEDIA_FORGET("d.id = ?1", "k.id <> ?1"), id, 0, error) ||
+      /* An own message's text is also in its outbox row and signed wraps. */
+      !store_exec_id(store,
+        "DELETE FROM outbox WHERE id = (SELECT outbox_id FROM messages WHERE id = ?1)",
+        id, 0, error) ||
+      !store_exec_id(store, "DELETE FROM messages WHERE id = ?1", id, 0, error))
+    goto fail;
+  if (!store_commit(store, error))
+    return FALSE;
+  if (out_deleted)
+    *out_deleted = TRUE;
+  /* The deleted content leaves the WAL now, not at the next purge. */
+  if (store->depth == 0 && !store->ephemeral)
+    (void) sqlite3_wal_checkpoint_v2(store->db, NULL, SQLITE_CHECKPOINT_TRUNCATE, NULL, NULL);
+  return TRUE;
+
+fail:
+  sqlite3_finalize(stmt);
+  store_rollback(store);
+  return FALSE;
+}

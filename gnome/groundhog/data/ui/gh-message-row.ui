@@ -59,18 +59,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
-              <object class="GtkButton" id="copy_button">
-                <property name="icon-name">edit-copy-symbolic</property>
-                <property name="halign">2</property>
-                <property name="action-name">conversation.copy-message</property>
-                <property name="tooltip-text" translatable="yes">Copy message. The clipboard may be visible to other applications.</property>
-                <style>
-                  <class name="flat"/>
-                  <class name="groundhog-copy-button"/>
-                </style>
-              </object>
-            </child>
-            <child>
               <object class="GtkBox" id="poll_slot">
                 <property name="visible">false</property>
                 <property name="orientation">1</property>

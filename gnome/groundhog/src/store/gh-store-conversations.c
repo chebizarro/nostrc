@@ -1326,6 +1326,61 @@ gh_store_conversations_purge(GhStoreConversations *self, gint64 retention_cutoff
   return TRUE;
 }
 
+/* ---- Delete for Me (groundhog/bubble-menu) ----------------------------------------------- */
+
+gboolean
+gh_store_conversations_delete_message(GhStoreConversations *self, const gchar *room_id,
+                                      const gchar *rumor_id, const gchar *sender_pubkey,
+                                      gboolean *out_deleted, GError **error)
+{
+  g_return_val_if_fail(GH_IS_STORE_CONVERSATIONS(self), FALSE);
+  if (out_deleted)
+    *out_deleted = FALSE;
+  if (!check_open(self, error) || !check_room(self, room_id, error))
+    return FALSE;
+  if (!rumor_id || !*rumor_id) {
+    g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID, "No message id");
+    return FALSE;
+  }
+  GhStore *store = self->store;
+  gboolean deleted = FALSE;
+  if (!gh_store_delete_message(store, GH_STORE_BACKEND_NIP17, room_id, rumor_id, sender_pubkey,
+                               &deleted, error))
+    return FALSE;
+  if (out_deleted)
+    *out_deleted = deleted;
+  if (!deleted)
+    return TRUE;
+  /* Committed: what follows brings the room's name and the model in line,
+   * as after a purge; a failure there is logged, and the message still
+   * leaves the model. */
+  g_autoptr(GError) sync_error = NULL;
+  gboolean renamed = FALSE;
+  if (gh_store_begin(store, &sync_error)) {
+    gboolean found = FALSE;
+    gint64 id = 0;
+    if (!lookup_room(store, room_id, &found, &id, &sync_error) ||
+        (found && !refresh_title(self, id, &renamed, &sync_error)))
+      gh_store_rollback(store);
+    else if (!gh_store_commit(store, &sync_error))
+      renamed = FALSE;
+  }
+  /* A name taken from the deleted message must not stay in the WAL. */
+  if (renamed && !sync_error && gh_store_get_transaction_depth(store) == 0)
+    (void)gh_store_checkpoint(store, NULL);
+  g_autoptr(GhConversationStore) model = g_weak_ref_get(&self->model);
+  if (model && g_strcmp0(gh_conversation_store_get_account(model), self->account) == 0) {
+    gh_conversation_store_remove_message(model, rumor_id);
+    g_autoptr(GError) room_error = NULL;
+    if (!refresh_room(self, model, room_id, &room_error) && !sync_error)
+      sync_error = g_steal_pointer(&room_error);
+  }
+  if (sync_error)
+    g_warning("Groundhog could not update a conversation after deleting a message: %s",
+              sync_error->message);
+  return TRUE;
+}
+
 /* ---- Pins and timer changes (nostrc-qp24.86, qp24.83) ----------------------------------- */
 
 /* The attached model's listing of room_id, or NULL. */

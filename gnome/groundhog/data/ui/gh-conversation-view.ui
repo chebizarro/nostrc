@@ -190,6 +190,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <response id="link-open" translatable="yes">_Open Link</response>
     </responses>
   </object>
+  <object class="AdwAlertDialog" id="delete_dialog">
+    <property name="heading" translatable="yes">Delete for Me?</property>
+    <property name="default-response">delete-cancel</property>
+    <property name="close-response">delete-cancel</property>
+    <responses>
+      <response id="delete-cancel" translatable="yes">_Cancel</response>
+      <response id="delete-confirm" translatable="yes" appearance="destructive">_Delete</response>
+    </responses>
+  </object>
   <object class="AdwAlertDialog" id="preview_dialog">
     <property name="heading" translatable="yes">Show Link Preview?</property>
     <property name="default-response">preview-cancel</property>

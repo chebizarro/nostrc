@@ -47,6 +47,22 @@ void gh_message_row_set_poll_widget(GhMessageRow *self, GtkWidget *poll_card);
 typedef struct _GhReactionSummary GhReactionSummary;
 void gh_message_row_set_reaction_summary(GhMessageRow *self, GhReactionSummary *summary);
 
+/* The bubble's menu (owner request, groundhog/bubble-menu), in place of the
+ * labels' default one: "Copy" (the selected text, only with a selection;
+ * message.copy-selection activates conversation.copy-text), "Copy Message"
+ * ("Copy Link" for a file; conversation.copy-message with the rumor id),
+ * "Add Reaction…" (the reaction picker, while React is offered), and
+ * "Delete for Me…" / "Delete for Everyone…" (conversation.delete-message
+ * with (rumor id, for everyone)) where gh_conversation_view_can_delete_message()
+ * allows. Right-click and long press on the bubble open it at the pointer;
+ * the view opens it for Menu and Shift+F10 (popup_menu_for_focus, which
+ * leaves the avatar's own menu alone). @x, @y in the bubble's coordinates,
+ * negative: the whole bubble. FALSE when nothing was shown. */
+gboolean gh_message_row_popup_menu(GhMessageRow *self, gdouble x, gdouble y);
+gboolean gh_message_row_popup_menu_for_focus(GhMessageRow *self, GtkWidget *focus);
+/* The menu once it has been opened, else NULL (for tests). */
+GtkPopover *gh_message_row_get_menu(GhMessageRow *self);
+
 /* The name shown for a pubkey (lowercase hex): its abbreviated npub
  * ("npub1abcde…wxyz"). Profile names are not fetched (charter PT-8). */
 gchar *gh_message_row_display_name(const gchar *pubkey_hex);

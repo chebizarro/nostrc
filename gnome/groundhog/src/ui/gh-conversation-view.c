@@ -713,6 +713,7 @@ struct _GhConversationView {
   AdwAlertDialog *link_dialog;
   AdwAlertDialog *preview_dialog;
   GtkCheckButton *preview_dont_ask;
+  AdwAlertDialog *delete_dialog;
 
   GhConversation *conversation;
   GhTimeline *timeline;
@@ -782,6 +783,13 @@ struct _GhConversationView {
   GhConversationViewReactFunc react_func;
   gpointer react_data;
   GDestroyNotify react_destroy;
+
+  /* Delete for Me / Delete for Everyone (groundhog/bubble-menu). */
+  GhConversationViewDeleteFunc delete_func;
+  gpointer delete_data;
+  GDestroyNotify delete_destroy;
+  gchar *pending_delete;      /* the rumor id awaiting confirmation */
+  gboolean pending_delete_everyone;
 
   guint announcements[3];
   gchar *last_announcement;
@@ -1766,6 +1774,8 @@ gh_conversation_view_set_conversation(GhConversationView *self, GhConversation *
   }
   close_dialog(ADW_DIALOG(self->link_dialog));
   close_dialog(ADW_DIALOG(self->preview_dialog));
+  close_dialog(ADW_DIALOG(self->delete_dialog));
+  g_clear_pointer(&self->pending_delete, g_free);
   if (self->loading_older) {
     self->loading_older = FALSE;
     gtk_widget_set_visible(self->loading_box, FALSE);
@@ -2830,6 +2840,141 @@ action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
   announce(self, _("Copied"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
 }
 
+/* "Copy" in a bubble's menu: the text selected there. */
+static void
+action_copy_text(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  const gchar *text = g_variant_get_string(parameter, NULL);
+  if (!self->conversation || !text || !*text)
+    return;
+  g_signal_emit(self, signals[SIGNAL_COPY_TEXT], 0, text);
+  show_toast(self, _("Copied"));
+  announce(self, _("Copied"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+/* ---- Delete for Me / Delete for Everyone (groundhog/bubble-menu) ------------------------ */
+
+gboolean
+gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *message,
+                                        gboolean for_everyone)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  if (!self->delete_func || !self->conversation || !message ||
+      gh_conversation_get_backend(self->conversation) != GH_CONVERSATION_BACKEND_NIP17 ||
+      g_strcmp0(gh_message_get_account(message),
+                gh_conversation_get_account(self->conversation)) != 0 ||
+      !gh_conversation_lookup_message(self->conversation, gh_message_get_rumor_id(message)))
+    return FALSE;
+  if (!for_everyone)
+    return TRUE;
+  /* A request to delete only makes sense for an own message that reached
+   * someone: one still sending (or never sent) is simply deleted here,
+   * which also stops it. */
+  if (!gh_message_is_self(message))
+    return FALSE;
+  switch (gh_message_get_status(message)) {
+  case GH_MESSAGE_STATUS_NONE:
+  case GH_MESSAGE_STATUS_SENT:
+  case GH_MESSAGE_STATUS_PARTIALLY_SENT:
+    return TRUE;
+  default:
+    return FALSE;
+  }
+}
+
+static void
+action_delete_message(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name;
+  GhConversationView *self = GH_CONVERSATION_VIEW(widget);
+  const gchar *rumor_id = NULL;
+  gboolean everyone = FALSE;
+  g_variant_get(parameter, "(&sb)", &rumor_id, &everyone);
+  GhMessage *message = self->conversation
+    ? gh_conversation_lookup_message(self->conversation, rumor_id) : NULL;
+  if (!gh_conversation_view_can_delete_message(self, message, everyone))
+    return;
+  g_free(self->pending_delete);
+  self->pending_delete = g_strdup(rumor_id);
+  self->pending_delete_everyone = everyone;
+  adw_alert_dialog_set_heading(self->delete_dialog,
+    everyone ? _("Delete for Everyone?") : _("Delete for Me?"));
+  adw_alert_dialog_set_body(self->delete_dialog, everyone
+    ? _("The message is deleted from this device, and everyone in the conversation is "
+        "asked to delete it too. Their apps may ignore the request, and they may "
+        "already have read or saved it.")
+    : _("The message is deleted from this device only. Everyone else in the "
+        "conversation keeps their copy."));
+  adw_alert_dialog_set_response_label(self->delete_dialog, "delete-confirm",
+    everyone ? _("_Delete for Everyone") : _("_Delete for Me"));
+  adw_dialog_present(ADW_DIALOG(self->delete_dialog), GTK_WIDGET(self));
+}
+
+static void
+on_delete_response(GhConversationView *self, const gchar *response)
+{
+  g_autofree gchar *rumor_id = g_steal_pointer(&self->pending_delete);
+  if (!rumor_id || g_strcmp0(response, "delete-confirm") != 0)
+    return;
+  gboolean everyone = self->pending_delete_everyone;
+  GhMessage *message = self->conversation
+    ? gh_conversation_lookup_message(self->conversation, rumor_id) : NULL;
+  /* Gone meanwhile (expired, deleted elsewhere): nothing left to do. */
+  if (!gh_conversation_view_can_delete_message(self, message, everyone))
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!self->delete_func(self->conversation, message, everyone, self->delete_data, &error)) {
+    g_message("Groundhog could not delete a message: %s",
+              error ? error->message : "unknown error");
+    show_toast(self, _("Couldn’t delete the message"));
+    announce(self, _("Couldn’t delete the message"), GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_HIGH);
+    return;
+  }
+  const gchar *done = everyone ? _("Deleted. Others were asked to delete it.") : _("Deleted");
+  show_toast(self, done);
+  announce(self, done, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
+}
+
+void
+gh_conversation_view_set_delete_func(GhConversationView *self,
+                                     GhConversationViewDeleteFunc func,
+                                     gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->delete_destroy)
+    self->delete_destroy(self->delete_data);
+  self->delete_func = func;
+  self->delete_data = user_data;
+  self->delete_destroy = destroy;
+}
+
+/* Menu and Shift+F10 on a message (its list item, its text or a button in
+ * it) open its bubble's menu, before a label's own default menu can. */
+static gboolean
+on_list_key_pressed(GtkEventControllerKey *controller, guint keyval, guint keycode,
+                    GdkModifierType state, GhConversationView *self)
+{
+  (void)controller; (void)keycode;
+  if (keyval != GDK_KEY_Menu && !(keyval == GDK_KEY_F10 && (state & GDK_SHIFT_MASK)))
+    return FALSE;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWidget *focus = root ? gtk_root_get_focus(root) : NULL;
+  if (!focus)
+    return FALSE;
+  GtkWidget *row = gtk_widget_get_ancestor(focus, GH_TYPE_MESSAGE_ROW);
+  if (!row) {
+    /* The focused list item: its child is the row's GhTimelineRow. */
+    GtkWidget *child = gtk_widget_get_first_child(focus);
+    GhMessageRow *message_row = GH_IS_TIMELINE_ROW(child)
+      ? gh_timeline_row_get_message_row(GH_TIMELINE_ROW(child)) : NULL;
+    row = message_row && gh_message_row_get_message(message_row) ? GTK_WIDGET(message_row)
+                                                               : NULL;
+  }
+  return row && gh_message_row_popup_menu_for_focus(GH_MESSAGE_ROW(row), focus);
+}
+
 static void
 action_share_reference(GtkWidget *widget, const char *name, GVariant *parameter)
 {
@@ -3190,6 +3335,8 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_delivery_report_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
+  gh_conversation_view_set_delete_func(self, NULL, NULL, NULL);
+  g_clear_pointer(&self->pending_delete, g_free);
   g_clear_object(&self->reference_resolver);
   if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);
   g_clear_object(&self->web);
@@ -3282,6 +3429,7 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, link_dialog);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, preview_dialog);
   gtk_widget_class_bind_template_child(widget_class, GhConversationView, preview_dont_ask);
+  gtk_widget_class_bind_template_child(widget_class, GhConversationView, delete_dialog);
   gtk_widget_class_bind_template_child_full(widget_class, "unlock_button", FALSE, 0);
 
   gtk_widget_class_install_action(widget_class, "conversation.open-link", "s", action_open_link);
@@ -3290,6 +3438,10 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
   gtk_widget_class_install_action(widget_class, "conversation.retry-message", "s", action_retry);
   gtk_widget_class_install_action(widget_class, "conversation.copy-message", "s",
                                   action_copy_message);
+  gtk_widget_class_install_action(widget_class, "conversation.copy-text", "s",
+                                  action_copy_text);
+  gtk_widget_class_install_action(widget_class, "conversation.delete-message", "(sb)",
+                                  action_delete_message);
   gtk_widget_class_install_action(widget_class, "conversation.share-reference", "s",
                                   action_share_reference);
   gtk_widget_class_install_action(widget_class, "conversation.repost-reference", "s",
@@ -3332,6 +3484,12 @@ gh_conversation_view_init(GhConversationView *self)
   g_signal_connect_swapped(self->compact_breakpoint, "unapply", G_CALLBACK(on_compact_unapply),
                            self);
   g_signal_connect_swapped(self->link_dialog, "response", G_CALLBACK(on_link_response), self);
+  g_signal_connect_swapped(self->delete_dialog, "response", G_CALLBACK(on_delete_response),
+                           self);
+  GtkEventController *keys = gtk_event_controller_key_new();
+  gtk_event_controller_set_propagation_phase(keys, GTK_PHASE_CAPTURE);
+  g_signal_connect(keys, "key-pressed", G_CALLBACK(on_list_key_pressed), self);
+  gtk_widget_add_controller(GTK_WIDGET(self->message_list), keys);
   g_signal_connect_swapped(self->preview_dialog, "response", G_CALLBACK(on_preview_response),
                            self);
   g_signal_connect_object(adw_style_manager_get_default(), "notify::high-contrast",

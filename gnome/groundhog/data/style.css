@@ -66,9 +66,10 @@
   color: alpha(currentColor, 0.7);
 }
 
+/* The same space on all four sides around the content (owner request). */
 .message-bubble {
   border-radius: 18px;
-  padding: 6px 12px;
+  padding: 10px;
 }
 
 .message-bubble.incoming {

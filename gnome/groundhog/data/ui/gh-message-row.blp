@@ -8,7 +8,9 @@ using Adw 1;
 // cannot conceal a destination; only visible raw addresses are links.
 // Nothing is loaded from the web until "Show Preview" is chosen (charter
 // §2.1, D13). gh-message-row.c aligns the parts (end for your own messages),
-// sets the run classes and composes the accessible text.
+// sets the run classes and composes the accessible text. Right-click, long
+// press, Menu or Shift+F10 open the bubble's own menu (Copy, Copy Message,
+// Add Reaction, Delete), built there in place of the label's default one.
 template $GhMessageRow: Widget {
   layout-manager: BoxLayout {
     orientation: vertical;
@@ -65,14 +67,6 @@ template $GhMessageRow: Widget {
         styles [
           "groundhog-message-body",
         ]
-      }
-
-      Button copy_button {
-        icon-name: "edit-copy-symbolic";
-        halign: end;
-        action-name: "conversation.copy-message";
-        tooltip-text: _("Copy message. The clipboard may be visible to other applications.");
-        styles ["flat", "groundhog-copy-button"]
       }
 
       // A NIP-88 poll (kind 1068): the card shows the question, option
