@@ -38,6 +38,20 @@ template_child(gpointer widget, GType type, const char *name)
   return child;
 }
 
+/* Whether widget or a descendant is a search button (the old search toggle). */
+static gboolean
+has_search_button(GtkWidget *widget)
+{
+  if (GTK_IS_BUTTON(widget) &&
+      g_strcmp0(gtk_button_get_icon_name(GTK_BUTTON(widget)), "system-search-symbolic") == 0)
+    return TRUE;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (has_search_button(child))
+      return TRUE;
+  return FALSE;
+}
+
 static void
 assert_status_page(GtkWidget *page)
 {
@@ -100,12 +114,16 @@ test_sidebar_page_structure(void)
   assert_label(stack, "Conversation list status");
 
   /* Header controls: every icon-only button has a tooltip and a label. */
-  GtkWidget *search = template_child(page, GH_TYPE_SIDEBAR_PAGE, "search_button");
+  GtkWidget *search = template_child(page, GH_TYPE_SIDEBAR_PAGE, "search_entry");
   GtkWidget *new_button = template_child(page, GH_TYPE_SIDEBAR_PAGE, "new_button");
   GtkWidget *menu = template_child(page, GH_TYPE_SIDEBAR_PAGE, "primary_button");
   GtkWidget *back = template_child(page, GH_TYPE_SIDEBAR_PAGE, "back_button");
-  assert_label(search, "Search Conversations");
-  g_assert_cmpstr(gtk_widget_get_tooltip_text(search), ==, "Search Conversations");
+  /* The search entry is always part of the sidebar, not behind a toggle;
+   * no header button toggles it. */
+  g_assert_true(GTK_IS_SEARCH_ENTRY(search));
+  g_assert_true(gtk_widget_get_visible(search));
+  assert_label(search, "Search conversations");
+  g_assert_false(has_search_button(GTK_WIDGET(gh_sidebar_page_get_header(page))));
   assert_label(new_button, "New Message");
   g_assert_cmpstr(gtk_widget_get_tooltip_text(new_button), ==, "New Message");
   g_assert_cmpstr(gtk_actionable_get_action_name(GTK_ACTIONABLE(new_button)), ==,
@@ -412,13 +430,12 @@ test_window_structure(void)
   g_assert_true(GTK_IS_SHORTCUTS_WINDOW(
     gtk_application_window_get_help_overlay(GTK_APPLICATION_WINDOW(window))));
 
-  /* Ctrl+F's action reveals the search bar. */
-  GtkSearchBar *bar = template_child(gh_window_get_sidebar(window), GH_TYPE_SIDEBAR_PAGE,
-                                     "search_bar");
-  g_assert_false(gtk_search_bar_get_search_mode(bar));
+  /* The entry is always shown; type-to-search captures the window's keys. */
+  GtkSearchEntry *entry = template_child(gh_window_get_sidebar(window), GH_TYPE_SIDEBAR_PAGE,
+                                         "search_entry");
+  g_assert_true(gtk_widget_get_visible(GTK_WIDGET(entry)));
   g_action_group_activate_action(actions, "search", NULL);
-  g_assert_true(gtk_search_bar_get_search_mode(bar));
-  g_assert_true(gtk_search_bar_get_key_capture_widget(bar) == GTK_WIDGET(window));
+  g_assert_true(gtk_search_entry_get_key_capture_widget(entry) == GTK_WIDGET(window));
 
   gtk_window_destroy(GTK_WINDOW(window));
 }

@@ -347,7 +347,13 @@ struct _GhMlsService {
 
 enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, PROP_KEY_PACKAGE_HELD, N_PROPS };
 static GParamSpec *props[N_PROPS];
-enum { SIGNAL_INVITE_RECEIVED, SIGNAL_GROUP_ADDED, SIGNAL_INVITE_REFUSED, N_SIGNALS };
+enum {
+  SIGNAL_INVITE_RECEIVED,
+  SIGNAL_GROUP_ADDED,
+  SIGNAL_INVITE_REFUSED,
+  SIGNAL_INVITES_CHANGED,
+  N_SIGNALS
+};
 static guint signals[N_SIGNALS];
 
 static void gh_mls_service_list_model_init(GListModelInterface *iface);
@@ -6399,6 +6405,7 @@ gh_mls_service_dismiss_refused_invite(GhMlsService *self, const gchar *wrapper_i
                           "Could not forget the invitation");
       return FALSE;
     }
+    g_signal_emit(self, signals[SIGNAL_INVITES_CHANGED], 0);
     return TRUE;
   }
   g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No such invitation");
@@ -6615,6 +6622,7 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
      * for it is looked at again (review M1). A failed Welcome never asks
      * for a rotation itself. */
     key_package_maybe_publish(self);
+    g_signal_emit(self, signals[SIGNAL_INVITES_CHANGED], 0);
     return NULL;
   }
   g_autofree gchar *gid_hex = to_hex(joined->mls_group_id.data, joined->mls_group_id.len);
@@ -6657,6 +6665,7 @@ gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrapper_id, GError
   key_package_rotate(self, used == MARMOT_KEY_PACKAGE_PROFILE_ADOPTED
                              ? GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED
                              : GH_MLS_KEY_PACKAGE_FORMAT_LEGACY);
+  g_signal_emit(self, signals[SIGNAL_INVITES_CHANGED], 0);
   return group;
 }
 
@@ -6674,6 +6683,7 @@ gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id, GErro
     return marmot_fail(self, err, "The invitation could not be declined", error);
   /* A replacement held for pending invitations, looked at again. */
   key_package_maybe_publish(self);
+  g_signal_emit(self, signals[SIGNAL_INVITES_CHANGED], 0);
   return TRUE;
 }
 
@@ -9771,6 +9781,9 @@ gh_mls_service_class_init(GhMlsServiceClass *klass)
   signals[SIGNAL_INVITE_REFUSED] =
     g_signal_new("invite-refused", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_INVITES_CHANGED] =
+    g_signal_new("invites-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 0);
   signals[SIGNAL_GROUP_ADDED] =
     g_signal_new("group-added", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, GH_TYPE_MLS_GROUP);

@@ -16,7 +16,7 @@ G_BEGIN_DECLS
  * models, row factories, titles and the conversation view. It never touches
  * GSettings or the signer. */
 
-/* The sidebar navigation page (charter §7.5): header, search bar, status
+/* The sidebar navigation page (charter §7.5): header, search entry, status
  * banner and a stack whose pages are "conversations" (the Message Requests
  * entry and the list), "empty", "no-results", "error", plus any account
  * page added from C. Properties: "selected" (the selected item, read-only),
@@ -25,7 +25,7 @@ G_BEGIN_DECLS
  * conversations) and "show-previews" (rows may show message text; default
  * FALSE, see gh_conversation_list_attach()). The action
  * "sidebar.show-requests" (boolean parameter) switches the list; Escape
- * clears/closes search first, then leaves Message Requests. */
+ * clears the search first, then leaves Message Requests. */
 #define GH_TYPE_SIDEBAR_PAGE (gh_sidebar_page_get_type())
 G_DECLARE_FINAL_TYPE(GhSidebarPage, gh_sidebar_page, GH, SIDEBAR_PAGE, AdwNavigationPage)
 
@@ -62,11 +62,8 @@ void gh_sidebar_page_set_models(GhSidebarPage *self, GListModel *conversations,
  * the list itself. */
 void gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count);
 guint gh_sidebar_page_get_invitations(GhSidebarPage *self);
-/* Shows the Group Invitations entry even with none pending (mls-groups-bunker):
- * while the account has no encrypted group on this device, the dialog says
- * why groups joined elsewhere are missing and whether this device can be
- * invited. */
-void gh_sidebar_page_set_invitations_entry(GhSidebarPage *self, gboolean shown);
+/* Whether the Group Invitations entry shows (only with invitations counted;
+ * the main menu's "Group Invitations…" item opens the dialog at any time). */
 gboolean gh_sidebar_page_get_invitations_entry_visible(GhSidebarPage *self);
 /* The selected item of the visible list; borrowed, NULL for none. */
 gpointer gh_sidebar_page_get_selected(GhSidebarPage *self);
@@ -81,9 +78,9 @@ gboolean gh_sidebar_page_select_relative(GhSidebarPage *self, gint delta);
  * shows. */
 gboolean gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item);
 
-/* Reveals the search bar and focuses its entry. */
+/* Focuses the sidebar's search entry (always shown). */
 void gh_sidebar_page_start_search(GhSidebarPage *self);
-/* Typing into widget starts a search (GtkSearchBar key capture). */
+/* Typing into widget starts a search (GtkSearchEntry key capture). */
 void gh_sidebar_page_set_key_capture_widget(GhSidebarPage *self, GtkWidget *widget);
 const gchar *gh_sidebar_page_get_search_text(GhSidebarPage *self);
 

@@ -681,7 +681,8 @@ G_DECLARE_FINAL_TYPE(GhMlsService, gh_mls_service, GH, MLS_SERVICE, GObject)
  * resumes pending Commits, Welcomes and sends, and starts once the account
  * is active and online. The service is a GListModel of GhMlsGroup, oldest
  * first. Signals: "invite-received" (gchar *wrapper_id), "group-added"
- * (GhMlsGroup). */
+ * (GhMlsGroup), "invites-changed" (an invitation was accepted, declined or
+ * dismissed here, or an accept attempt used it up). */
 GhMlsService *gh_mls_service_new(const GhMlsServiceConfig *config, GError **error);
 #ifdef GH_MLS_TEST_HOOKS
 /* Test hook (nostrc-0bdg re-review A3): the received-invitation list cannot
