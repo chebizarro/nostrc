@@ -48,7 +48,7 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-info-dialog gh-conversation-info-person
   gh-group-join-page gh-group-info-dialog gh-group-member-row gh-new-group-page
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
-  gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-dialog
+  gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-page
   gh-blocked-page gh-blocked-row gh-conversation-menu
   gh-attachment-card gh-attachment-sheet gh-create-poll-dialog
   gh-voice-bubble)
@@ -2528,7 +2528,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
   # incompatibility and exits 77 (XFAIL), which SKIP_RETURN_CODE reports as
   # Skipped, never Passed. Groundhog is linked as shipped (the UI library and
   # the service, no test hooks); -gui runs mdk-invites-groundhog through the
-  # real invitations dialog (77 without a display). The driver's redacted
+  # real invitations panel (77 without a display). The driver's redacted
   # wire vectors land in ${CMAKE_BINARY_DIR}/mdk011-interop-artifacts.
   option(BUILD_MDK011_INTEROP
          "Build and run the Groundhog/MDK 0.11 (adopted profile) interop matrix (needs Docker)" OFF)
@@ -2868,7 +2868,7 @@ endif()
 # contacts, the per-person KeyPackage check with libmarmot's account-proof
 # test, Owner/Admin roles, the honest words), GhMlsInviteePicker, the
 # "Encrypted Group" page of New Group (GhMlsNewGroupPage), GhMlsGroupInfoDialog
-# and GhMlsInvitesDialog; gh-mls-ui.c attaches them to the window (the
+# and the Group Invitations panel (GhMlsInvitesPage); gh-mls-ui.c attaches them to the window (the
 # composer delegate, win.group-invitations and the sidebar entry, Group Info,
 # the header's member count, "Unable to decrypt N messages yet"). The
 # executable attaches it with GH_FEATURE_ENCRYPTED_GROUPS=1 (gh-features.h);
@@ -2877,7 +2877,7 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
   message(STATUS "Groundhog encrypted-group UI: enabled")
   set(GROUNDHOG_MLS_UI_SOURCES src/mls/gh-mls-invitee.c src/ui/gh-mls-copy.c
     src/ui/gh-mls-invitee-picker.c src/ui/gh-mls-new-group-page.c
-    src/ui/gh-mls-group-info-dialog.c src/ui/gh-mls-invites-dialog.c
+    src/ui/gh-mls-group-info-dialog.c src/ui/gh-mls-invites-page.c
     src/ui/gh-create-poll-dialog.c src/ui/gh-poll-card.c)
   add_library(groundhog-mls-ui STATIC ${GROUNDHOG_MLS_UI_SOURCES})
   target_include_directories(groundhog-mls-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
@@ -2913,7 +2913,7 @@ if (TARGET groundhog-mls-service AND TARGET groundhog-group-ui)
     # Admin from the group's admin order, and the composer's reasons.
     # --gui: on a real window, New Group's encrypted page end to end (checks,
     # the enrollment states with Try Again, create, the invitee accepts in
-    # the invitations dialog), sending and receiving through the composer
+    # the invitations panel), sending and receiving through the composer
     # delegate, Group Info (badges, admin add and remove, rename, leave with
     # its copy), the header's member count, "Unable to decrypt N messages
     # yet", the row's lock glyph; it self-skips (77) without a display.

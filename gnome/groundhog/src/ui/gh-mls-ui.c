@@ -13,7 +13,7 @@
 #include "gh-features.h"
 #include "gh-mls-copy.h"
 #include "gh-mls-group-info-dialog.h"
-#include "gh-mls-invites-dialog.h"
+#include "gh-mls-invites-page.h"
 #include "gh-mls-new-group-page.h"
 #include "gh-recipient.h"
 #include "gh-send-ui.h"
@@ -224,7 +224,7 @@ sync_invitations(MlsUi *ui)
   /* An invitation that could not be opened is counted too: it waits for the
    * user to read it (and ask again), not silently dropped. */
   ui->invitations = (invites ? invites->len : 0) + (refused ? refused->len : 0);
-  /* Only these show the entry; the dialog's "This Device" explanation is
+  /* Only these show the entry; the panel's "This Device" explanation is
    * reachable from the main menu's Group Invitations item. */
   gh_sidebar_page_set_invitations(gh_window_get_sidebar(ui->window), ui->invitations);
 }
@@ -250,6 +250,20 @@ on_invite_refused(MlsUi *ui)
   adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), toast);
 }
 
+/* Accepted in the panel: the panels close and the group opens. */
+static void
+on_joined(GhWindow *window, GhMlsGroup *group)
+{
+  gh_window_close_panels(window);
+  open_group(window, group);
+  const gchar *name = gh_mls_group_get_name(group);
+  g_autofree gchar *title = g_strdup_printf(_("You joined “%s”"),
+                                            name && *name ? name : _("Unnamed Group"));
+  adw_toast_overlay_add_toast(gh_window_get_toasts(window), adw_toast_new(title));
+}
+
+/* win.group-invitations (the sidebar entry, the main menu, a new
+ * invitation's toast): the Group Invitations panel, over the list. */
 static void
 on_invites(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
@@ -260,11 +274,18 @@ on_invites(GSimpleAction *action, GVariant *parameter, gpointer data)
   context_of(ui, &context);
   if (!context.service)
     return;
-  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
-  g_signal_connect_object(dialog, "open-group", G_CALLBACK(open_group), ui->window,
+  AdwNavigationPage *open = gh_sidebar_page_get_panel(gh_window_get_sidebar(ui->window));
+  if (GH_IS_MLS_INVITES_PAGE(open)) {
+    /* Already showing: only bring the sidebar back (collapsed). */
+    AdwNavigationSplitView *split = gh_window_get_split(ui->window);
+    if (adw_navigation_split_view_get_collapsed(split))
+      adw_navigation_split_view_set_show_content(split, FALSE);
+    return;
+  }
+  GhMlsInvitesPage *page = gh_mls_invites_page_new(&context);
+  g_signal_connect_object(page, "open-group", G_CALLBACK(on_joined), ui->window,
                           G_CONNECT_SWAPPED);
-  g_signal_connect_swapped(dialog, "closed", G_CALLBACK(sync_invitations), ui);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
+  gh_window_push_panel(ui->window, ADW_NAVIGATION_PAGE(page));
 }
 
 /* ---- the service ---------------------------------------------------------------------- */

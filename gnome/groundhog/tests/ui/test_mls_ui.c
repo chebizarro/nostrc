@@ -38,7 +38,7 @@
 #include "gh-mls-copy.h"
 #include "gh-mls-group-info-dialog.h"
 #include "gh-mls-invitee-picker.h"
-#include "gh-mls-invites-dialog.h"
+#include "gh-mls-invites-page.h"
 #include "gh-mls-new-group-page.h"
 #include "gh-test-escape.h"
 #include "gh-mls-ui.h"
@@ -858,12 +858,6 @@ visible_dialog(GhWindow *window)
   return adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
 }
 
-static gboolean
-no_dialog(gpointer window)
-{
-  return visible_dialog(window) == NULL;
-}
-
 /* The window's render node once it has one: a frame under load may still
  * have nothing to snapshot (its first draw after a size change). */
 static GskRenderNode *
@@ -1067,9 +1061,9 @@ status_title(gpointer page)
 }
 
 static const gchar *
-invites_toast(gpointer dialog)
+invites_toast(gpointer page)
 {
-  return gh_mls_invites_dialog_get_last_toast(dialog);
+  return gh_mls_invites_page_get_last_toast(page);
 }
 
 typedef struct {
@@ -1114,6 +1108,82 @@ static gboolean
 invitations_entry_hidden(gpointer data)
 {
   return !gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(data));
+}
+
+static gboolean
+split_collapsed(gpointer split)
+{
+  return adw_navigation_split_view_get_collapsed(split);
+}
+
+/* After win.group-invitations (the sidebar entry's, the main menu's and a
+ * new invitation's toast's action): the Group Invitations panel slid over
+ * the conversation list, on screen, keyboard in it. */
+static GhMlsInvitesPage *
+invitations_shown(GhWindow *window)
+{
+  AdwNavigationPage *panel = gh_sidebar_page_get_panel(gh_window_get_sidebar(window));
+  g_assert_true(GH_IS_MLS_INVITES_PAGE(panel));
+  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)));
+  AdwNavigationView *navigation = gh_sidebar_page_get_navigation(gh_window_get_sidebar(window));
+  AdwNavigationPage *under = adw_navigation_view_get_previous_page(navigation, panel);
+  g_assert_cmpstr(adw_navigation_page_get_tag(under), ==, "conversations");
+  spin_until(is_mapped, panel, "the Group Invitations panel shown");
+  GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
+  /* On the list (a row), not on a button nor inside a selectable label. */
+  g_assert_true(focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(panel)));
+  g_assert_true(GTK_IS_LIST_BOX_ROW(focus));
+  return GH_MLS_INVITES_PAGE(panel);
+}
+
+static GhMlsInvitesPage *
+open_invitations(GhWindow *window)
+{
+  g_action_group_activate_action(G_ACTION_GROUP(window), "group-invitations", NULL);
+  return invitations_shown(window);
+}
+
+/* The sidebar's "Group Invitations" entry, pressed. */
+static GhMlsInvitesPage *
+open_invitations_entry(GhWindow *window)
+{
+  GtkWidget *entry = GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(gh_window_get_sidebar(window)), GH_TYPE_SIDEBAR_PAGE, "invitations_button"));
+  g_assert_true(gtk_widget_get_mapped(entry));
+  g_signal_emit_by_name(entry, "clicked");
+  return invitations_shown(window);
+}
+
+/* The mapped button under widget whose action is action, or NULL. */
+static GtkWidget *
+action_button(GtkWidget *widget, const gchar *action)
+{
+  if (GTK_IS_BUTTON(widget) && gtk_widget_get_mapped(widget) &&
+      g_strcmp0(gtk_actionable_get_action_name(GTK_ACTIONABLE(widget)), action) == 0)
+    return widget;
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GtkWidget *found = action_button(c, action);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+/* Focuses button, as Tab would, and clicks it. */
+static void
+press_focused(GtkWindow *window, GtkWidget *button)
+{
+  g_assert_nonnull(button);
+  g_assert_true(gtk_widget_grab_focus(button));
+  g_assert_true(gtk_window_get_focus(window) == button);
+  g_signal_emit_by_name(button, "clicked");
+}
+
+static GtkWidget *
+invites_empty_row(GhMlsInvitesPage *page)
+{
+  return GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(page), GH_TYPE_MLS_INVITES_PAGE,
+                                                  "empty_row"));
 }
 
 /* Whether model (or a section or submenu of it) has an item for action. */
@@ -1374,22 +1444,20 @@ test_gui_new_group(void)
   GhWindow *bob_window = app_window(bob, NULL);
   InvitationsWait one = { bob_window, 1 };
   spin_until(invitations_are, &one, "Bob's invitations entry");
-  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
-  AdwDialog *invites = visible_dialog(bob_window);
-  g_assert_true(GH_IS_MLS_INVITES_DIALOG(invites));
-  spin_until(gh_test_dialog_shown, invites, "the invitations shown");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 1);
+  GhMlsInvitesPage *invites = open_invitations(bob_window);
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(invites), ==, 1);
   g_autofree gchar *wrapper = the_invite(bob, ALICE);
   const gchar *title = NULL, *subtitle = NULL;
-  g_assert_true(gh_mls_invites_dialog_describe(GH_MLS_INVITES_DIALOG(invites), wrapper, &title,
-                                               &subtitle));
+  g_assert_true(gh_mls_invites_page_describe(invites, wrapper, &title, &subtitle));
   g_assert_cmpstr(title, ==, "Book Club");
   g_assert_nonnull(strstr(subtitle, "not in your contacts"));   /* Bob never wrote Alice */
   g_assert_nonnull(strstr(subtitle, "2 members"));
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
-  gtk_widget_activate_action(GTK_WIDGET(invites), "mls-invites.accept", "s", wrapper);
-  wait_text(invites_toast, invites, "You joined “Book Club”");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 0);
+  /* Accept, with the keyboard on the Accept button the row takes with it
+   * (the libadwaita 1.5 focus crash's path): the panels close and the group
+   * opens, with the window's "You joined". */
+  press_focused(GTK_WINDOW(bob_window), action_button(GTK_WIDGET(invites), "mls-invites.accept"));
+  spin_until(no_flow, bob_window, "the invitations closed");
   InvitationsWait zero = { bob_window, 0 };
   spin_until(invitations_are, &zero, "Bob's invitations entry gone");
   /* The entry goes when nothing waits. */
@@ -1397,15 +1465,12 @@ test_gui_new_group(void)
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   g_assert_nonnull(gb);
   /* An adopted Welcome (as shipped), listed and accepted in the
-   * invitations dialog. */
+   * invitations panel. */
   g_assert_cmpint(gh_mls_group_get_adopted(gb), ==, GH_MLS_ADOPTED_KEY_PACKAGES);
   wait_live(gb);
   wait_message(bob, room, "Hello, Book Club");
 
-  /* The toast's Open shows Bob the group; Bob answers, Alice reads it. */
-  gtk_widget_activate_action(GTK_WIDGET(invites), "mls-invites.open", "s",
-                             gh_mls_group_get_group_id(gb));
-  spin_until(no_dialog, bob_window, "the invitations closed");
+  /* Bob is shown the group; Bob answers, Alice reads it. */
   GhConversation *bob_conversation = gh_conversation_store_lookup(bob->model, room);
   ShownWait bob_shown = { bob_window, bob_conversation };
   spin_until(is_shown, &bob_shown, "Bob's group shown");
@@ -1416,57 +1481,6 @@ test_gui_new_group(void)
   close_window(bob_window);
   close_window(window);
   gh_test_release(nip29);
-  world_down(&w);
-}
-
-/* ---- standalone invites dialog (regression for libadwaita 1.5 focus crash) -------------- */
-
-/* Accepting an invitation in a standalone GhMlsInvitesDialog (presented with
- * NULL parent, as the interop GUI test does) used to crash on Linux/Xvfb with
- * libadwaita 1.5: refresh() removed the row from the preferences group, the
- * row and its accept button were finalized, and GTK's post-action focus
- * handling hit the dead widget (gtk_widget_get_can_focus assertion failure).
- * The fix defers the old rows' final unref to idle; this test exercises the
- * exact code path that crashed. */
-static void
-test_gui_invites_standalone(void)
-{
-  World w;
-  const guint keys[] = { ALICE, BOB };
-  world_up(&w, keys, G_N_ELEMENTS(keys));
-  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
-  wait_published(&w, keys, G_N_ELEMENTS(keys));
-  accept_contact(alice, BOB);
-
-  /* Alice creates a group with Bob. */
-  GhMlsGroup *ga = create_group(alice, "Standalone", (const guint[]){ BOB }, 1);
-  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
-  (void)room;
-
-  /* Bob receives the invitation. */
-  spin_until(has_invite, bob, "Bob's invitation");
-  g_autofree gchar *wrapper = the_invite(bob, ALICE);
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
-
-  /* Bob accepts in a standalone dialog (no parent window): the crash path. */
-  GhMlsUiContext context = { .service = bob->service, .accounts = bob->accounts,
-                              .model = bob->model, .settings = bob->settings };
-  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
-  adw_dialog_present(ADW_DIALOG(dialog), NULL);
-  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 1);
-
-  /* Accept: the row is removed from the group inside the action handler.
-   * Before the fix, this crashed on Linux/Xvfb. */
-  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.accept", "s", wrapper);
-  wait_text(invites_toast, dialog, "You joined \xe2\x80\x9cStandalone\xe2\x80\x9d");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
-
-  /* Close and drain: the deferred unref fires during drain(). */
-  adw_dialog_force_close(ADW_DIALOG(dialog));
-  drain();
-
-  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 1);
   world_down(&w);
 }
 
@@ -1493,6 +1507,19 @@ save_root_png(GtkWidget *widget, const gchar *name)
   g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s", path);
+}
+
+/* save_root_png() of window once a frame with its current state is drawn. */
+static void
+painted_png(GhWindow *window, const gchar *name)
+{
+  drain();
+  FramePainted painted = { GTK_WIDGET(window), 0 };
+  painted.from = gdk_frame_clock_get_frame_counter(
+    gtk_widget_get_frame_clock(GTK_WIDGET(window)));
+  gtk_widget_queue_draw(GTK_WIDGET(window));
+  spin_until(frame_painted_redraw, &painted, "the window painted");
+  save_root_png(GTK_WIDGET(window), name);
 }
 
 static gboolean
@@ -1569,31 +1596,27 @@ test_gui_refused_invitation(void)
   WelcomeWait processed = { bob, g_ptr_array_index(wraps, 0) };
   spin_until(welcome_processed, &processed, "Bob's verdict on the Welcome");
 
-  GhMlsUiContext context = { .service = bob->service, .accounts = bob->accounts,
-                              .model = bob->model, .settings = bob->settings };
-  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
-  adw_dialog_present(ADW_DIALOG(dialog), NULL);
-  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
-  drain();
-  save_root_png(GTK_WIDGET(dialog), "refused-invitation");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(dialog), ==, 1);
+  GhWindow *first_window = app_window(bob, NULL);
+  GhMlsInvitesPage *page = open_invitations(first_window);
+  painted_png(first_window, "refused-invitation");
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(page), ==, 0);
+  g_assert_cmpuint(gh_mls_invites_page_get_n_refused(page), ==, 1);
   const gchar *title = NULL, *subtitle = NULL;
-  g_assert_true(gh_mls_invites_dialog_describe(dialog, g_ptr_array_index(wraps, 0),
-                                               &title, &subtitle));
+  g_assert_true(gh_mls_invites_page_describe(page, g_ptr_array_index(wraps, 0),
+                                             &title, &subtitle));
   g_assert_nonnull(strstr(title, "Invitation from "));
   g_assert_cmpstr(subtitle, ==,
                   "Made for a key this device doesn\u2019t have. Ask them to invite you again.");
 
   /* This device's own invitation key is published: a new invitation works. */
-  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(dialog), ==,
+  g_assert_cmpstr(gh_mls_invites_page_get_key_status(page), ==,
                   "Published. Invitations made for this device can be opened here.");
 
-  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.dismiss", "s",
-                             (const gchar *)g_ptr_array_index(wraps, 0));
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(dialog), ==, 0);
-  adw_dialog_force_close(ADW_DIALOG(dialog));
-  drain();
+  /* Dismiss, from the keyboard: the list updates in place. */
+  press_focused(GTK_WINDOW(first_window), action_button(GTK_WIDGET(page), "mls-invites.dismiss"));
+  g_assert_cmpuint(gh_mls_invites_page_get_n_refused(page), ==, 0);
+  g_assert_true(visible_flow(first_window) == ADW_NAVIGATION_PAGE(page));
+  close_window(first_window);
 
   /* mls-groups-bunker, the owner's store: the refusal came before refusals
    * were listed (only libmarmot's failed record is left, its wrap seen).
@@ -1615,32 +1638,31 @@ test_gui_refused_invitation(void)
   /* The search entry is always part of the sidebar. */
   g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(gtk_widget_get_template_child(
     GTK_WIDGET(gh_window_get_sidebar(bob_window)), GH_TYPE_SIDEBAR_PAGE, "search_entry"))));
-  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
-  AdwDialog *earlier = visible_dialog(bob_window);
-  g_assert_true(GH_IS_MLS_INVITES_DIALOG(earlier));
-  spin_until(gh_test_dialog_shown, earlier, "the invitations shown again");
-  drain();
-  save_root_png(GTK_WIDGET(earlier), "earlier-refusal");
-  GhMlsInvitesDialog *again = GH_MLS_INVITES_DIALOG(earlier);
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(again), ==, 0);
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(again), ==, 1);
-  g_assert_true(gh_mls_invites_dialog_describe(again, g_ptr_array_index(wraps, 0), &title,
-                                               &subtitle));
+  GhMlsInvitesPage *again = open_invitations_entry(bob_window);
+  painted_png(bob_window, "earlier-refusal");
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(again), ==, 0);
+  g_assert_cmpuint(gh_mls_invites_page_get_n_refused(again), ==, 1);
+  g_assert_true(gh_mls_invites_page_describe(again, g_ptr_array_index(wraps, 0), &title,
+                                             &subtitle));
   g_assert_cmpstr(title, ==, "An earlier invitation (sender not recorded)");
   g_assert_cmpstr(subtitle, ==,
                   "Made for a key this device doesn\u2019t have. Ask them to invite you again.");
-  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(again), ==,
+  g_assert_cmpstr(gh_mls_invites_page_get_key_status(again), ==,
                   "Published. Invitations made for this device can be opened here.");
   gtk_widget_activate_action(GTK_WIDGET(again), "mls-invites.dismiss", "s",
                              (const gchar *)g_ptr_array_index(wraps, 0));
-  /* The last one dismissed: the entry goes at once, while the dialog is
-   * still open (no group on this device changes nothing). */
+  /* The last one dismissed: the entry goes at once, while the panel stays,
+   * with its empty state (no group on this device changes nothing). */
   g_assert_cmpuint(gh_sidebar_page_get_invitations(gh_window_get_sidebar(bob_window)), ==, 0);
   g_assert_false(
     gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
-  adw_dialog_force_close(earlier);
-  drain();
+  g_assert_true(visible_flow(bob_window) == ADW_NAVIGATION_PAGE(again));
+  g_assert_true(gtk_widget_get_visible(invites_empty_row(again)));
+  painted_png(bob_window, "panel-empty");
+  /* Escape returns to the list, without the entry. */
+  gh_test_press_escape(GTK_WINDOW(bob_window));
+  spin_until(no_flow, bob_window, "the list again");
   g_assert_false(
     gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
   painted.from = gdk_frame_clock_get_frame_counter(
@@ -1656,15 +1678,94 @@ test_gui_refused_invitation(void)
     gtk_widget_get_template_child(GTK_WIDGET(gh_window_get_sidebar(bob_window)),
                                   GH_TYPE_SIDEBAR_PAGE, "primary_button"))),
     "win.group-invitations"));
-  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
-  AdwDialog *from_menu = visible_dialog(bob_window);
-  g_assert_true(GH_IS_MLS_INVITES_DIALOG(from_menu));
-  spin_until(gh_test_dialog_shown, from_menu, "the invitations shown from the menu");
-  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(GH_MLS_INVITES_DIALOG(from_menu)), ==,
+  GhMlsInvitesPage *from_menu = open_invitations(bob_window);
+  g_assert_cmpstr(gh_mls_invites_page_get_key_status(from_menu), ==,
                   "Published. Invitations made for this device can be opened here.");
-  adw_dialog_force_close(from_menu);
-  drain();
+  g_assert_true(gtk_widget_get_visible(invites_empty_row(from_menu)));
+  /* The header's back button returns too. */
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(from_menu));
+  spin_until(no_flow, bob_window, "the list again");
   close_window(bob_window);
+  world_down(&w);
+}
+
+/* ---- --gui: the Group Invitations panel ------------------------------------------------- */
+
+/* The panel slides over the conversation list from the sidebar entry and
+ * from win.group-invitations (the main menu's item and a new invitation's
+ * toast), leaves the open conversation as it is, returns on Escape, works
+ * collapsed, and a Decline updates it in place: the entry goes, the panel
+ * stays with its empty state. PNGs with GROUNDHOG_SCREENSHOT_PREFIX. */
+static void
+test_gui_invites_panel(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  const gchar *peers[] = { hex[ALICE], NULL };
+  g_autoptr(GError) error = NULL;
+  GhConversation *dm = gh_conversation_store_open_room(bob->model, peers, &error);
+  g_assert_no_error(error);
+  GhWindow *window = app_window(bob, NULL);
+  AdwNavigationSplitView *split = gh_window_get_split(window);
+  g_assert_true(gh_window_open_item(window, dm));
+  ShownWait shown = { window, dm };
+  spin_until(is_shown, &shown, "Bob's conversation with Alice shown");
+
+  create_group(alice, "Garden", (const guint[]){ BOB }, 1);
+  spin_until(has_invite, bob, "Bob's invitation");
+  InvitationsWait one = { window, 1 };
+  spin_until(invitations_are, &one, "Bob's invitations entry");
+  g_autofree gchar *wrapper = the_invite(bob, ALICE);
+
+  /* The sidebar entry: the panel, the conversation still shown beside it. */
+  GhMlsInvitesPage *page = open_invitations_entry(window);
+  g_assert_true(shows(window, dm));
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(page), ==, 1);
+  const gchar *title = NULL, *subtitle = NULL;
+  g_assert_true(gh_mls_invites_page_describe(page, wrapper, &title, &subtitle));
+  g_assert_cmpstr(title, ==, "Garden");
+  g_assert_false(gtk_widget_get_visible(invites_empty_row(page)));
+  painted_png(window, "panel-wide");
+  /* Opening it again keeps the one panel. */
+  g_assert_true(open_invitations(window) == page);
+  gh_test_press_escape(GTK_WINDOW(window));
+  spin_until(no_flow, window, "the list again");
+  g_assert_true(shows(window, dm));
+
+  /* Collapsed, from the open conversation: win.group-invitations (the main
+   * menu's item, a new invitation's toast) brings the sidebar back. */
+  gtk_window_set_default_size(GTK_WINDOW(window), 360, 600);
+  spin_until(split_collapsed, split, "the collapsed layout");
+  /* The breakpoint's own frame (it moves a lost focus) before acting. */
+  FramePainted resized = { GTK_WIDGET(window), 0 };
+  resized.from = gdk_frame_clock_get_frame_counter(
+    gtk_widget_get_frame_clock(GTK_WIDGET(window)));
+  spin_until(frame_painted_redraw, &resized, "the collapsed layout drawn");
+  g_assert_true(gh_window_open_item(window, dm));
+  drain();
+  g_assert_true(adw_navigation_split_view_get_show_content(split));
+  page = open_invitations(window);
+  g_assert_false(adw_navigation_split_view_get_show_content(split));
+  painted_png(window, "panel-narrow");
+
+  /* Decline, from the keyboard: nothing joined, the list updates in place,
+   * the entry goes, the panel stays with its empty state. */
+  press_focused(GTK_WINDOW(window), action_button(GTK_WIDGET(page), "mls-invites.decline"));
+  wait_text(invites_toast, page, "Invitation declined");
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(page), ==, 0);
+  g_assert_true(gtk_widget_get_visible(invites_empty_row(page)));
+  g_assert_true(visible_flow(window) == ADW_NAVIGATION_PAGE(page));
+  spin_until(invitations_entry_hidden, window, "Bob's invitations entry hidden");
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
+  painted_png(window, "panel-declined-narrow");
+  gh_test_press_escape(GTK_WINDOW(window));
+  spin_until(no_flow, window, "the list again");
+
+  close_window(window);
   world_down(&w);
 }
 
@@ -2777,7 +2878,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/new-group-format-changed",
                     test_gui_new_group_format_changed);
 #endif
-    g_test_add_func("/groundhog/mls-ui-gui/invites-standalone", test_gui_invites_standalone);
+    g_test_add_func("/groundhog/mls-ui-gui/invites-panel", test_gui_invites_panel);
     g_test_add_func("/groundhog/mls-ui-gui/refused-invitation", test_gui_refused_invitation);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);

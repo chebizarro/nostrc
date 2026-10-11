@@ -23,8 +23,8 @@
  *  mdk-invites-groundhog: MDK 0.11 finds Groundhog's adopted KeyPackage
  *    through its kind 10002 write relays -- per slot, passing over the newer
  *    MDK 0.8 one -- admits it and invites Alice (nostrc-8u53); the invitation
- *    is listed as the invitations dialog shows it and accepted (with --gui:
- *    in GhMlsInvitesDialog itself); kind 445 both ways (nostrc-lse9, an
+ *    is listed as the invitations panel shows it and accepted (with --gui:
+ *    in GhMlsInvitesPage itself); kind 445 both ways (nostrc-lse9, an
  *    MDK-made group); the join's replacement is confirmed, retires the old
  *    adopted key only, and is what MDK finds next.
  *  adopted-welcome: an adopted Welcome for another device of Alice's account
@@ -61,8 +61,7 @@
 #include "gh-voice-player.h"
 #endif
 #include "gh-mls-invitee.h"
-#include "gh-mls-invites-dialog.h"
-#include "gh-test-dialog.h"
+#include "gh-mls-invites-page.h"
 #include "nostrc-test-gdk-frame.h"
 
 extern void groundhog_register_resource(void);
@@ -74,7 +73,7 @@ enum { DAVE = STRANGER };
 
 
 static MdkDriver driver;
-/* --gui: mdk-invites-groundhog accepts in GhMlsInvitesDialog. */
+/* --gui: mdk-invites-groundhog accepts in GhMlsInvitesPage. */
 static gboolean gui_mode;
 
 /* ---- XFAIL bookkeeping ------------------------------------------------------------- */
@@ -992,21 +991,29 @@ test_groundhog_invites_mdk(void)
 
 /* ---- MDK 0.11 invites Groundhog --------------------------------------------------- */
 
-typedef struct {
-  GhMlsInvitesDialog *dialog;
-  const gchar *text;
-} ToastWait;
+static gboolean
+panel_mapped(gpointer page)
+{
+  return gtk_widget_get_mapped(GTK_WIDGET(page));
+}
+
+static void
+on_joined(GhMlsInvitesPage *page, GhMlsGroup *group, gpointer data)
+{
+  (void)page;
+  g_set_object((GhMlsGroup **)data, group);
+}
 
 static gboolean
-toast_is(gpointer data)
+joined(gpointer data)
 {
-  ToastWait *wait = data;
-  return g_strcmp0(gh_mls_invites_dialog_get_last_toast(wait->dialog), wait->text) == 0;
+  return *(GhMlsGroup **)data != NULL;
 }
 
 /* Alice accepts her one invitation, from Carol, to the group `name` of two:
- * as the invitations dialog lists it (with --gui, in GhMlsInvitesDialog,
- * which accepts it), else through the service calls the dialog makes. */
+ * as the invitations panel lists it (with --gui, in GhMlsInvitesPage, shown
+ * in a window's navigation view, which accepts it), else through the
+ * service calls the panel makes. */
 static GhMlsGroup *
 accept_from_carol(App *alice, const gchar *name)
 {
@@ -1030,21 +1037,27 @@ accept_from_carol(App *alice, const gchar *name)
   }
   GhMlsUiContext context = { .service = alice->service, .accounts = alice->accounts,
                              .model = alice->model, .settings = alice->settings };
-  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
-  adw_dialog_present(ADW_DIALOG(dialog), NULL);
-  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 1);
+  GhMlsInvitesPage *page = gh_mls_invites_page_new(&context);
+  GtkWidget *window = adw_window_new();
+  AdwNavigationView *navigation = ADW_NAVIGATION_VIEW(adw_navigation_view_new());
+  adw_navigation_view_add(navigation, adw_navigation_page_new(gtk_label_new(""), "List"));
+  adw_window_set_content(ADW_WINDOW(window), GTK_WIDGET(navigation));
+  gtk_window_present(GTK_WINDOW(window));
+  adw_navigation_view_push(navigation, ADW_NAVIGATION_PAGE(page));
+  spin_until(panel_mapped, page, "the invitations shown");
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(page), ==, 1);
   const gchar *title = NULL, *subtitle = NULL;
-  g_assert_true(gh_mls_invites_dialog_describe(dialog, invite->wrapper_id, &title, &subtitle));
-  g_test_message("The invitations dialog: \"%s\", \"%s\"", title, subtitle);
+  g_assert_true(gh_mls_invites_page_describe(page, invite->wrapper_id, &title, &subtitle));
+  g_test_message("The invitations panel: \"%s\", \"%s\"", title, subtitle);
   g_assert_cmpstr(title, ==, name);
   g_assert_nonnull(strstr(subtitle, "2 members"));
-  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.accept", "s", invite->wrapper_id);
-  g_autofree gchar *joined = g_strdup_printf("You joined “%s”", name);
-  ToastWait toast = { dialog, joined };
-  spin_until(toast_is, &toast, "the dialog's \"You joined\"");
-  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  g_autoptr(GhMlsGroup) opened = NULL;
+  g_signal_connect(page, "open-group", G_CALLBACK(on_joined), &opened);
+  gtk_widget_activate_action(GTK_WIDGET(page), "mls-invites.accept", "s", invite->wrapper_id);
+  spin_until(joined, &opened, "the panel's \"open-group\"");
+  g_assert_cmpstr(gh_mls_group_get_name(opened), ==, name);
+  g_assert_cmpuint(gh_mls_invites_page_get_n_invites(page), ==, 0);
+  gtk_window_destroy(GTK_WINDOW(window));
   drain();
   alice->invites = 0;
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(alice->service)), ==, 1);
@@ -2683,7 +2696,7 @@ test_polls(void)
 int
 main(int argc, char **argv)
 {
-  /* --gui: mdk-invites-groundhog accepts in the real invitations dialog. */
+  /* --gui: mdk-invites-groundhog accepts in the real invitations panel. */
   gui_mode = argc > 1 && g_str_equal(argv[1], "--gui");
   if (gui_mode) {
     argv[1] = argv[0];

@@ -2,42 +2,86 @@ using Gtk 4.0;
 using Adw 1;
 
 // One pending invitation to an encrypted group (charter §7.9 "shown like
-// requests", PD-8; nostrc-9xf5), filled by gh-mls-invites-dialog.c: the
+// requests", PD-8; nostrc-9xf5), filled by gh-mls-invites-page.c: the
 // group's name as the inviter's Welcome claims it (plain text, never
 // markup), who invited (a contact's cached name, else the short npub with
 // "not in your contacts": nothing is looked up) and how many members it
-// had, with Decline and Accept. Nothing is joined until Accept.
-template $GhMlsInviteRow: Adw.ActionRow {
+// had, with Decline and Accept. Nothing is joined until Accept. The
+// buttons sit under the words so both read in the sidebar's width.
+template $GhMlsInviteRow: Adw.PreferencesRow {
   use-markup: false;
-  title-lines: 1;
-  subtitle-lines: 2;
-
-  [prefix]
-  Adw.Avatar avatar {
-    size: 40;
-    show-initials: true;
-    accessible-role: presentation;
+  activatable: false;
+  accessibility {
+    labelled-by: title_label;
+    described-by: subtitle_label;
   }
 
-  [suffix]
-  Box {
-    spacing: 6;
-    valign: center;
+  child: Box {
+    orientation: vertical;
+    spacing: 10;
+    margin-top: 10;
+    margin-bottom: 10;
+    margin-start: 12;
+    margin-end: 12;
 
-    Button decline_button {
-      label: _("_Decline");
-      use-underline: true;
-      action-name: "mls-invites.decline";
+    Box {
+      spacing: 12;
+
+      Adw.Avatar avatar {
+        size: 40;
+        show-initials: true;
+        valign: center;
+        accessible-role: presentation;
+      }
+
+      Box {
+        orientation: vertical;
+        valign: center;
+        spacing: 2;
+        hexpand: true;
+
+        Label title_label {
+          xalign: 0;
+          wrap: true;
+          wrap-mode: word_char;
+          lines: 2;
+          ellipsize: end;
+        }
+
+        Label subtitle_label {
+          xalign: 0;
+          wrap: true;
+          wrap-mode: word_char;
+          lines: 3;
+          ellipsize: end;
+
+          styles [
+            "caption",
+            "dim-label",
+          ]
+        }
+      }
     }
 
-    Button accept_button {
-      label: _("_Accept");
-      use-underline: true;
-      action-name: "mls-invites.accept";
+    Box {
+      spacing: 6;
+      halign: end;
 
-      styles [
-        "suggested-action",
-      ]
+      Button decline_button {
+        label: _("_Decline");
+        use-underline: true;
+        action-name: "mls-invites.decline";
+      }
+
+      Button accept_button {
+        label: _("_Accept");
+        use-underline: true;
+        action-name: "mls-invites.accept";
+
+        styles [
+          "suggested-action",
+        ]
+      }
     }
-  }
+  };
 }

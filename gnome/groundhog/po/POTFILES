@@ -27,7 +27,7 @@ data/ui/gh-mls-group-info-dialog.blp
 data/ui/gh-mls-invite-row.blp
 data/ui/gh-mls-invitee-picker.blp
 data/ui/gh-mls-invitee-row.blp
-data/ui/gh-mls-invites-dialog.blp
+data/ui/gh-mls-invites-page.blp
 data/ui/gh-mls-member-row.blp
 data/ui/gh-mls-new-group-page.blp
 data/ui/gh-mls-relay-row.blp
@@ -84,7 +84,7 @@ src/ui/gh-message-row.c
 src/ui/gh-mls-copy.c
 src/ui/gh-mls-group-info-dialog.c
 src/ui/gh-mls-invitee-picker.c
-src/ui/gh-mls-invites-dialog.c
+src/ui/gh-mls-invites-page.c
 src/ui/gh-mls-new-group-page.c
 src/ui/gh-mls-ui.c
 src/ui/gh-new-group-page.c
