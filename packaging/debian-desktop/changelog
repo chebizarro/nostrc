@@ -1,3 +1,28 @@
+groundhog (0.12.0~alpha7-1) unstable; urgency=medium
+
+  * Shared nostr-gtk components ported from gnostr: Markdown, link
+    cards, media viewer and video player, NIP-34 issue form, NIP-21
+    references and a repost/quote card.
+  * Markdown tables render as real tables, also inside code fences;
+    code blocks keep their columns and scroll sideways.
+  * Link previews: images only for image links, gnostr-style cards,
+    approvals remembered for the session.
+  * NIP-46 signers: one relay connection per session and pipelined
+    requests (backlogs decrypt about 8x faster); messages that waited
+    for a signer are decrypted once it is ready, whichever signer the
+    account uses.
+  * Encrypted groups: invitations that cannot be opened are listed with
+    an explanation; Group Invitations is a sidebar panel.
+  * Signal-style sidebar: New Message, New Group, Join Group and Add
+    Contact slide in as panels; the conversation search is always shown.
+  * Message bubbles: even padding, a message menu with Copy Message,
+    Add Reaction, Delete for Me and Delete for Everyone (private
+    conversations).
+  * Faster opening of long conversations.
+  * Release packages for aarch64 too, including Arch Linux ARM.
+
+ -- Biz <chebizarro@protonmail.com>  Sun, 11 Oct 2026 12:00:00 +0000
+
 groundhog (0.12.0~alpha6-1) unstable; urgency=medium
 
   * Fixes: reactions on every conversation type, full NIP-29 group

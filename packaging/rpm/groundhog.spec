@@ -5,19 +5,19 @@
 # it includes the nostrdb and nsync submodules, which GitHub's tag archives
 # leave out. To build from a checkout:
 #
-#   scripts/make-desktop-source-archive.sh 0.12.0-alpha6 ~/rpmbuild/SOURCES
+#   scripts/make-desktop-source-archive.sh 0.12.0-alpha7 ~/rpmbuild/SOURCES
 #   rpmbuild -ba packaging/rpm/groundhog.spec
 #
 # nsync: Fedora has no nsync package (nostrc-dd5y); the copy in third_party/
 # is linked statically and declared as bundled. `--with system_nsync` uses a
 # packaged one instead.
 
-%global upstream_version 0.12.0-alpha6
+%global upstream_version 0.12.0-alpha7
 %bcond_with system_nsync
 
 Name:           groundhog
 Version:        0.12.0
-Release:        0.6.alpha6%{?dist}
+Release:        0.7.alpha7%{?dist}
 Summary:        Private messaging on Nostr for GNOME (alpha)
 License:        MIT
 URL:            https://github.com/chebizarro/nostrc
@@ -178,6 +178,23 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
+* Sun Oct 11 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.7.alpha7
+- Shared nostr-gtk components ported from gnostr (Markdown, link cards,
+  media viewer, NIP-34 issue form, NIP-21 references, repost/quote card).
+- Markdown tables render as tables, also inside code fences; code blocks
+  scroll sideways instead of wrapping.
+- Link previews: images only for image links, gnostr-style cards,
+  approvals remembered for the session.
+- NIP-46: one relay connection per session, pipelined requests; waiting
+  messages decrypt once the account's signer is ready.
+- Encrypted groups: unopenable invitations are explained; Group
+  Invitations is a sidebar panel.
+- Signal-style sidebar panels for New Message, New Group, Join Group and
+  Add Contact; persistent conversation search.
+- Message menu with Copy Message, Add Reaction, Delete for Me and Delete
+  for Everyone (private conversations); even bubble padding.
+- aarch64 release packages, including Arch Linux ARM.
+
 * Sat Oct 10 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.6.alpha6
 - Fixes: reactions on every conversation type, full NIP-29 group
   history, "Note to Self" title.
