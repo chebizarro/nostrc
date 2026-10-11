@@ -123,6 +123,25 @@ void gh_conversation_view_set_reaction_func(GhConversationView *self,
                                             GhConversationViewReactFunc func,
                                             gpointer user_data,
                                             GDestroyNotify destroy);
+/* Delete for Me / Delete for Everyone (groundhog/bubble-menu): the bubble's
+ * menu offers them where gh_conversation_view_can_delete_message() says so
+ * (a callback is set, the conversation is a NIP-17 one of the message's
+ * account, and, for everyone, the message is your own and reached someone),
+ * asks for confirmation, then calls @func with the message. @func deletes it
+ * from the store and the model and, for everyone, sends a NIP-09 deletion
+ * request; FALSE with @error shows "Couldn't delete the message". */
+typedef gboolean (*GhConversationViewDeleteFunc)(GhConversation *conversation,
+                                                 GhMessage *message,
+                                                 gboolean for_everyone,
+                                                 gpointer user_data,
+                                                 GError **error);
+void gh_conversation_view_set_delete_func(GhConversationView *self,
+                                          GhConversationViewDeleteFunc func,
+                                          gpointer user_data,
+                                          GDestroyNotify destroy);
+gboolean gh_conversation_view_can_delete_message(GhConversationView *self,
+                                                 GhMessage *message,
+                                                 gboolean for_everyone);
 gboolean gh_conversation_view_get_compact(GhConversationView *self);
 /* The visible timeline: a GListModel (and GtkSectionModel) of GhTimelineItem:
  * the conversation's messages and, after the messages written at or before

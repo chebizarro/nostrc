@@ -61,8 +61,9 @@ struct _GhMessageRow {
   GhReactionBar *reaction_bar; /* on the meta line, only while there are reactions */
   GhReactionSummary *reaction_summary; /* owned even while the bar is absent */
   GtkButton *react_button;
-  GtkButton *copy_button;
-  GhReactionPicker *picker;    /* W26 slice B: quick-reaction popover */
+  GhReactionPicker *picker;
+  GtkPopoverMenu *menu;        /* the bubble's menu, built anew for each popup */
+  gchar *menu_selection;       /* the selected text when the menu opened, or NULL */    /* W26 slice B: quick-reaction popover */
   GtkBox *preview_box;
   /* Built on first use (ensure_reference); NULL for most rows. */
   GtkBox *reference_box;
@@ -1346,22 +1347,6 @@ update_all(GhMessageRow *self)
     const gchar *rumor = gh_message_get_rumor_id(message);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", rumor);
   }
-  gboolean can_copy = message && !self->undecryptable && !withdrawn &&
-    gh_message_get_kind(message) != GH_MESSAGE_MLS_POLL_VOTE_KIND &&
-    (gh_message_get_expires_at(message) == 0 ||
-     gh_message_get_expires_at(message) > g_get_real_time() / G_USEC_PER_SEC);
-  gtk_widget_set_visible(GTK_WIDGET(self->copy_button), can_copy);
-  if (can_copy) {
-    gboolean link = gh_message_get_kind(message) == GH_NIP17_FILE_KIND;
-    const gchar *label = link ? _("Copy Link") : _("Copy message");
-    gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s",
-                                     gh_message_get_rumor_id(message));
-    gtk_widget_set_tooltip_text(GTK_WIDGET(self->copy_button),
-      link ? _("Copy Link. The clipboard may be visible to other applications.")
-           : _("Copy message. The clipboard may be visible to other applications."));
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->copy_button),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
-  }
   gh_delivery_indicator_set_message(self->delivery, message);
   update_runs(self);
   update_expiry(self);
@@ -1425,20 +1410,177 @@ show_picker(GhMessageRow *self, gdouble x, gdouble y)
   gtk_popover_popup(GTK_POPOVER(self->picker));
 }
 
+/* ---- the bubble's menu ------------------------------------------------------------ */
+
+/* The text selected in a selectable label under @root (the body, a table
+ * cell, a code block), or NULL. GTK keeps one selection per label. */
+static gchar *
+selected_text(GtkWidget *root)
+{
+  int start = 0, end = 0;
+  if (GTK_IS_LABEL(root) && gtk_label_get_selectable(GTK_LABEL(root)) &&
+      gtk_label_get_selection_bounds(GTK_LABEL(root), &start, &end) && start != end) {
+    const gchar *text = gtk_label_get_text(GTK_LABEL(root));
+    glong length = g_utf8_strlen(text, -1);
+    start = CLAMP(start, 0, length);
+    end = CLAMP(end, start, length);
+    const gchar *from = g_utf8_offset_to_pointer(text, start);
+    const gchar *to = g_utf8_offset_to_pointer(text, end);
+    return to > from ? g_strndup(from, to - from) : NULL;
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    if (GTK_IS_POPOVER(child) || !gtk_widget_get_visible(child))
+      continue;
+    gchar *text = selected_text(child);
+    if (text)
+      return text;
+  }
+  return NULL;
+}
+
+/* "Copy Message" (or "Copy Link" for a file) when the message's text can be
+ * copied: the same messages, and the same text, as the view's
+ * conversation.copy-message; NULL otherwise. */
+static const gchar *
+copy_message_label(GhMessageRow *self)
+{
+  GhMessage *message = self->message;
+  if (!message || self->undecryptable || gh_message_get_withdrawn(message) ||
+      gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_VOTE_KIND ||
+      (gh_message_get_expires_at(message) > 0 &&
+       gh_message_get_expires_at(message) <= g_get_real_time() / G_USEC_PER_SEC))
+    return NULL;
+  return gh_message_get_kind(message) == GH_NIP17_FILE_KIND ? _("Copy _Link")
+                                                           : _("Copy _Message");
+}
+
+static void
+append_targeted(GMenu *menu, const gchar *label, const gchar *action, GVariant *target)
+{
+  g_autoptr(GMenuItem) item = g_menu_item_new(label, NULL);
+  g_menu_item_set_action_and_target_value(item, action, target);
+  g_menu_append_item(menu, item);
+}
+
+static void
+append_section(GMenu *menu, GMenu *section)
+{
+  if (g_menu_model_get_n_items(G_MENU_MODEL(section)) > 0)
+    g_menu_append_section(menu, NULL, G_MENU_MODEL(section));
+  g_object_unref(section);
+}
+
+/* The menu for the bound message, as it is now: Copy only with a selection;
+ * nothing that edits text (the bubble is read-only); Delete only where the
+ * view can do it (gh_conversation_view_can_delete_message()). */
+static GMenuModel *
+build_menu(GhMessageRow *self)
+{
+  GMenu *menu = g_menu_new();
+  const gchar *rumor = gh_message_get_rumor_id(self->message);
+  GMenu *copy = g_menu_new();
+  if (self->menu_selection)
+    g_menu_append(copy, _("_Copy"), "message.copy-selection");
+  const gchar *copy_label = copy_message_label(self);
+  if (copy_label && rumor)
+    append_targeted(copy, copy_label, "conversation.copy-message", g_variant_new_string(rumor));
+  append_section(menu, copy);
+  GMenu *react = g_menu_new();
+  if (rumor && gtk_widget_get_visible(GTK_WIDGET(self->react_button)) &&
+      gtk_widget_is_sensitive(GTK_WIDGET(self->react_button)))
+    g_menu_append(react, _("Add _Reaction…"), "message.react");
+  append_section(menu, react);
+  GMenu *remove = g_menu_new();
+  if (rumor && self->view &&
+      gh_conversation_view_can_delete_message(self->view, self->message, FALSE))
+    append_targeted(remove, _("_Delete for Me…"), "conversation.delete-message",
+                    g_variant_new("(sb)", rumor, FALSE));
+  if (rumor && self->view &&
+      gh_conversation_view_can_delete_message(self->view, self->message, TRUE))
+    append_targeted(remove, _("Delete for _Everyone…"), "conversation.delete-message",
+                    g_variant_new("(sb)", rumor, TRUE));
+  append_section(menu, remove);
+  return G_MENU_MODEL(menu);
+}
+
+gboolean
+gh_message_row_popup_menu(GhMessageRow *self, gdouble x, gdouble y)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE_ROW(self), FALSE);
+  if (!self->message || !gtk_widget_get_mapped(GTK_WIDGET(self->bubble)))
+    return FALSE;
+  g_free(self->menu_selection);
+  self->menu_selection = selected_text(GTK_WIDGET(self->bubble));
+  g_autoptr(GMenuModel) model = build_menu(self);
+  if (g_menu_model_get_n_items(model) == 0)
+    return FALSE;
+  /* A new popover each time: the macOS backend cannot present a popup
+   * surface again while the last one is still going away. */
+  if (self->menu)
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->menu));
+  self->menu = GTK_POPOVER_MENU(gtk_popover_menu_new_from_model(model));
+  gtk_widget_set_name(GTK_WIDGET(self->menu), "message_menu");
+  gtk_widget_set_halign(GTK_WIDGET(self->menu), GTK_ALIGN_START);
+  gtk_popover_set_has_arrow(GTK_POPOVER(self->menu), FALSE);
+  gtk_widget_set_parent(GTK_WIDGET(self->menu), GTK_WIDGET(self->bubble));
+  GdkRectangle rect = { 0, 0, gtk_widget_get_width(GTK_WIDGET(self->bubble)),
+                        gtk_widget_get_height(GTK_WIDGET(self->bubble)) };
+  if (x >= 0 && y >= 0)
+    rect = (GdkRectangle){ (int)x, (int)y, 1, 1 };
+  gtk_popover_set_pointing_to(GTK_POPOVER(self->menu), &rect);
+  gtk_popover_popup(GTK_POPOVER(self->menu));
+  return TRUE;
+}
+
+gboolean
+gh_message_row_popup_menu_for_focus(GhMessageRow *self, GtkWidget *focus)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE_ROW(self), FALSE);
+  /* The avatar has its own menu (the sender's picture). */
+  if (focus && (focus == GTK_WIDGET(self->avatar) ||
+                gtk_widget_is_ancestor(focus, GTK_WIDGET(self->avatar))))
+    return FALSE;
+  return gh_message_row_popup_menu(self, -1, -1);
+}
+
+GtkPopover *
+gh_message_row_get_menu(GhMessageRow *self)
+{
+  g_return_val_if_fail(GH_IS_MESSAGE_ROW(self), NULL);
+  return self->menu ? GTK_POPOVER(self->menu) : NULL;
+}
+
+static void
+action_copy_selection(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name; (void)parameter;
+  GhMessageRow *self = GH_MESSAGE_ROW(widget);
+  if (self->menu_selection)
+    gtk_widget_activate_action(widget, "conversation.copy-text", "s", self->menu_selection);
+}
+
+static void
+action_react(GtkWidget *widget, const char *name, GVariant *parameter)
+{
+  (void)name; (void)parameter;
+  show_picker(GH_MESSAGE_ROW(widget), -1, -1);
+}
+
 static void
 on_secondary_pressed(GtkGestureClick *gesture, gint n_press, gdouble x, gdouble y,
                      GhMessageRow *self)
 {
   (void)n_press;
-  show_picker(self, x, y);
   gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+  gh_message_row_popup_menu(self, x, y);
 }
 
 static void
 on_long_pressed(GtkGestureLongPress *gesture, gdouble x, gdouble y, GhMessageRow *self)
 {
-  show_picker(self, x, y);
   gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED);
+  gh_message_row_popup_menu(self, x, y);
 }
 
 static gboolean
@@ -1592,6 +1734,8 @@ gh_message_row_unroot(GtkWidget *widget)
   GhMessageRow *self = GH_MESSAGE_ROW(widget);
   if (self->avatar_menu)
     gtk_popover_popdown(self->avatar_menu);
+  if (self->menu)
+    gtk_popover_popdown(GTK_POPOVER(self->menu));
   if (self->view) {
     g_signal_handlers_disconnect_by_func(self->view, on_preview_changed, self);
     g_signal_handlers_disconnect_by_func(self->view, on_render_changed, self);
@@ -1618,6 +1762,8 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
     return;
   if (self->avatar_menu)
     gtk_popover_popdown(self->avatar_menu);
+  if (self->menu)
+    gtk_popover_popdown(GTK_POPOVER(self->menu));
   if (self->message) {
     g_signal_handlers_disconnect_by_data(self->message, self);
     clear_web_controls(self);
@@ -1843,6 +1989,11 @@ gh_message_row_dispose(GObject *object)
     gh_widget_unparent_unfocused(GTK_WIDGET(self->avatar_menu));
     self->avatar_menu = NULL;
   }
+  if (self->menu) {
+    gh_widget_unparent_unfocused(GTK_WIDGET(self->menu));
+    self->menu = NULL;
+  }
+  g_clear_pointer(&self->menu_selection, g_free);
   if (self->reply_button) {
     gtk_widget_unparent(GTK_WIDGET(self->reply_button));
     self->reply_button = NULL;
@@ -1947,7 +2098,6 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, body_label);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, react_button);
-  gtk_widget_class_bind_template_child(widget_class, GhMessageRow, copy_button);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, preview_box);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, bubble_line);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, avatar);
@@ -1962,6 +2112,9 @@ gh_message_row_class_init(GhMessageRowClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, attachment_slot);
   gtk_widget_class_bind_template_child(widget_class, GhMessageRow, poll_slot);
   gtk_widget_class_set_css_name(widget_class, "groundhog-message");
+  gtk_widget_class_install_action(widget_class, "message.copy-selection", NULL,
+                                  action_copy_selection);
+  gtk_widget_class_install_action(widget_class, "message.react", NULL, action_react);
 }
 
 static void
@@ -1977,15 +2130,18 @@ gh_message_row_init(GhMessageRow *self)
    * again, e.g. when the window collapses) before a message is bound names
    * none, so GTK never meets a target-less "s" action. */
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->retry_button), "s", "");
-  gtk_actionable_set_action_target(GTK_ACTIONABLE(self->copy_button), "s", "");
   self->run_start = TRUE;
-  /* Right-click and long-press on the bubble show the reaction picker. */
+  /* Right-click and long-press anywhere on the bubble, its text included,
+   * open the bubble's menu: caught before the labels' own gestures, so
+   * GTK's Cut / Paste / Delete / Insert Emoji menu never shows. */
   GtkGesture *click = gtk_gesture_click_new();
   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), GDK_BUTTON_SECONDARY);
+  gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(click), GTK_PHASE_CAPTURE);
   g_signal_connect(click, "pressed", G_CALLBACK(on_secondary_pressed), self);
   gtk_widget_add_controller(GTK_WIDGET(self->bubble), GTK_EVENT_CONTROLLER(click));
   GtkGesture *hold = gtk_gesture_long_press_new();
   gtk_gesture_single_set_touch_only(GTK_GESTURE_SINGLE(hold), TRUE);
+  gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(hold), GTK_PHASE_CAPTURE);
   g_signal_connect(hold, "pressed", G_CALLBACK(on_long_pressed), self);
   gtk_widget_add_controller(GTK_WIDGET(self->bubble), GTK_EVENT_CONTROLLER(hold));
   gtk_widget_set_focusable(GTK_WIDGET(self->avatar), TRUE);

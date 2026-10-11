@@ -199,6 +199,19 @@ Adw.AlertDialog link_dialog {
   ]
 }
 
+// The bubble menu's Delete for Me / Delete for Everyone; heading, body and
+// the delete label are set per request by gh-conversation-view.c.
+Adw.AlertDialog delete_dialog {
+  heading: _("Delete for Me?");
+  default-response: "delete-cancel";
+  close-response: "delete-cancel";
+
+  responses [
+    delete-cancel: _("_Cancel"),
+    delete-confirm: _("_Delete") destructive,
+  ]
+}
+
 Adw.AlertDialog preview_dialog {
   heading: _("Show Link Preview?");
   default-response: "preview-cancel";

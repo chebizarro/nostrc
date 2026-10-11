@@ -331,6 +331,103 @@ row_for(GhConversationView *view, GhMessage *message)
   return item_row(item);
 }
 
+
+/* ---- the bubble's menu (groundhog/bubble-menu) ---------------------------------------------- */
+
+/* Every item label of a menu model, sections flattened, in order. */
+static void
+menu_collect(GMenuModel *model, GPtrArray *labels, GPtrArray *actions, GPtrArray *targets)
+{
+  for (int i = 0; i < g_menu_model_get_n_items(model); i++) {
+    GMenuModel *section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION);
+    if (section) {
+      menu_collect(section, labels, actions, targets);
+      g_object_unref(section);
+      continue;
+    }
+    gchar *label = NULL, *action = NULL;
+    g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+    g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_ACTION, "s", &action);
+    g_ptr_array_add(labels, label);
+    g_ptr_array_add(actions, action);
+    g_ptr_array_add(targets, g_menu_model_get_item_attribute_value(model, i,
+                                                                   G_MENU_ATTRIBUTE_TARGET, NULL));
+  }
+}
+
+static gboolean popover_mapped(gpointer data);
+
+static gboolean popover_unmapped(gpointer data);
+
+/* Closes a popover and waits until it has gone: macOS cannot present a
+ * popup again while its surface is still hiding. */
+static void
+close_popover(gpointer popover)
+{
+  gtk_popover_popdown(GTK_POPOVER(popover));
+  spin_until(popover_unmapped, popover);
+}
+
+/* Opens the row's bubble menu (as right-click, long press and Menu do) and
+ * returns it, shown. */
+static GtkPopover *
+open_menu(GhMessageRow *row)
+{
+  g_assert_true(gh_message_row_popup_menu(row, -1, -1));
+  GtkPopover *menu = gh_message_row_get_menu(row);
+  g_assert_true(GTK_IS_POPOVER_MENU(menu));
+  spin_until(popover_mapped, menu);
+  /* Drawn once before anything closes it (macOS thaws its surface then). */
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  return menu;
+}
+
+/* The open menu's labels joined with "|". */
+static gchar *
+menu_labels(GtkPopover *menu)
+{
+  g_autoptr(GPtrArray) labels = g_ptr_array_new_with_free_func(g_free);
+  g_autoptr(GPtrArray) actions = g_ptr_array_new_with_free_func(g_free);
+  g_autoptr(GPtrArray) targets = g_ptr_array_new();
+  menu_collect(gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(menu)), labels, actions, targets);
+  for (guint i = 0; i < targets->len; i++)
+    if (g_ptr_array_index(targets, i))
+      g_variant_unref(g_ptr_array_index(targets, i));
+  g_ptr_array_add(labels, NULL);
+  return g_strjoinv("|", (gchar **)labels->pdata);
+}
+
+/* Chooses @label in the open menu: its action, with its target, from the
+ * menu (where its items look actions up), then the menu closes. */
+static void
+menu_choose(GtkPopover *menu, const gchar *label)
+{
+  g_autoptr(GPtrArray) labels = g_ptr_array_new_with_free_func(g_free);
+  g_autoptr(GPtrArray) actions = g_ptr_array_new_with_free_func(g_free);
+  g_autoptr(GPtrArray) targets = g_ptr_array_new();
+  menu_collect(gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(menu)), labels, actions, targets);
+  for (guint i = 0; i < labels->len; i++) {
+    if (g_strcmp0(g_ptr_array_index(labels, i), label) != 0)
+      continue;
+    GVariant *target = g_ptr_array_index(targets, i);
+    close_popover(menu);
+    g_assert_true(gtk_widget_activate_action_variant(GTK_WIDGET(menu),
+                                                     g_ptr_array_index(actions, i), target));
+    for (guint j = 0; j < targets->len; j++)
+      if (g_ptr_array_index(targets, j))
+        g_variant_unref(g_ptr_array_index(targets, j));
+    return;
+  }
+  g_error("no \"%s\" in the bubble menu", label);
+}
+
+/* Copy Message from the row's menu. */
+static void
+copy_message(GhMessageRow *row)
+{
+  menu_choose(open_menu(row), "Copy _Message");
+}
+
 typedef struct {
   GhConversationView *view;
   GhMessage *message;
@@ -984,9 +1081,8 @@ test_markdown_copy_identity(Fixture *f, gconstpointer data)
   g_assert_nonnull(strstr(gtk_label_get_label(body), "<b>Hello</b>"));
   g_assert_nonnull(strstr(gtk_label_get_text(body),
                           "site (https://example.com/x)"));
-  GtkWidget *copy = row_child(row, "copy_button");
-  g_assert_true(shown(copy));
-  click(copy);
+  g_assert_null(row_child(row, "copy_button"));
+  copy_message(row);
   g_assert_cmpstr(f->copied, ==, gtk_label_get_text(body));
   g_free(f->copied);
   f->copied = NULL;
@@ -3437,7 +3533,7 @@ test_markdown_table_real(Fixture *f, gconstpointer data)
   assert_cells_inside_bubble(row, 1);
   maybe_save_table_png(f, "after-700");
   /* Copy keeps the whole message as text. */
-  click(row_child(row, "copy_button"));
+  copy_message(row);
   g_assert_nonnull(f->copied);
   g_assert_nonnull(strstr(f->copied, "All cron jobs now on gpt-5.6-sol"));
   g_assert_nonnull(strstr(f->copied, "LN Node Daily"));
@@ -3555,7 +3651,7 @@ assert_p40_table(Fixture *f, GhMessage *message, const gchar *shot)
   maybe_save_table_png(f, shot);
   /* Copy gives the text as shown, the table as tab-separated rows. */
   g_clear_pointer(&f->copied, g_free);
-  click(row_child(row, "copy_button"));
+  copy_message(row);
   g_assert_cmpstr(f->copied, ==,
                   "Both servers are up and humming:\n\nFinal stack on dual P40s:\n\n"
                   "Port\tModel\tVRAM\tSpeed\n"
@@ -3756,7 +3852,7 @@ assert_fenced_bot(Fixture *f, int width, const char *shot)
   assert_no_table_syntax(GTK_WIDGET(row));
   /* Copy gives the table as it was written. */
   g_clear_pointer(&f->copied, g_free);
-  click(row_child(row, "copy_button"));
+  copy_message(row);
   g_assert_cmpstr(f->copied, ==,
                   "Muse Glimmer IQ3_M + dflash speculator \xe2\x80\x94 loaded and running on port 8080:\n\n"
                   "| Metric     | Value                          |\n"
@@ -3902,7 +3998,7 @@ assert_code_block(Fixture *f, int width, const char *shot)
   g_assert_cmpint(gtk_widget_get_height(bubble), <, 300);
   /* Copy gives the code as written. */
   g_clear_pointer(&f->copied, g_free);
-  click(row_child(row, "copy_button"));
+  copy_message(row);
   g_assert_cmpstr(f->copied, ==, "Run this:\n\n" LONG_CODE_LINE "\n\n  ls -la   | grep  x\n\nDone.");
 }
 
@@ -4606,8 +4702,8 @@ test_message_action_accessibility(void)
   g_autoptr(GhMessage) message = rumor(2, to, noon_today(), "plain", NULL);
   GhMessageRow *row = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
   gh_message_row_set_message(row, message);
-  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "copy_button")),
-                                      GTK_ACCESSIBLE_PROPERTY_LABEL, "Copy message");
+  /* Copy Message lives in the bubble's menu now, not on a button. */
+  g_assert_null(row_child(row, "copy_button"));
   gtk_test_accessible_assert_property(GTK_ACCESSIBLE(row_child(row, "react_button")),
                                       GTK_ACCESSIBLE_PROPERTY_LABEL, "Add Reaction");
   /* The reference actions' names are checked with test_reference_card: a
@@ -4976,6 +5072,364 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   g_ptr_array_unref(web.asked);
 }
 
+/* ---- bubble padding (owner request, groundhog/bubble-menu) ------------------------- */
+
+/* The space between a bubble's edge and its content, per side (start, top,
+ * end, bottom), from the bounds of its visible children. */
+static void
+bubble_insets(GhMessageRow *row, double insets[4])
+{
+  /* In the bubble line's coordinates: the bubble's own bounds include its
+   * padding and border, which its coordinate system starts inside. */
+  GtkWidget *bubble = row_child(row, "bubble");
+  GtkWidget *line = gtk_widget_get_parent(bubble);
+  graphene_rect_t outer;
+  g_assert_true(gtk_widget_compute_bounds(bubble, line, &outer));
+  double left = G_MAXDOUBLE, top = G_MAXDOUBLE, right = 0, bottom = 0;
+  for (GtkWidget *c = gtk_widget_get_first_child(bubble); c; c = gtk_widget_get_next_sibling(c)) {
+    if (!gtk_widget_get_visible(c) || !gtk_widget_get_child_visible(c) || GTK_IS_POPOVER(c) ||
+        gtk_widget_get_height(c) == 0)
+      continue;
+    graphene_rect_t b;
+    g_assert_true(gtk_widget_compute_bounds(c, line, &b));
+    left = MIN(left, b.origin.x);
+    top = MIN(top, b.origin.y);
+    right = MAX(right, b.origin.x + b.size.width);
+    bottom = MAX(bottom, b.origin.y + b.size.height);
+  }
+  insets[0] = left - outer.origin.x;
+  insets[1] = top - outer.origin.y;
+  insets[2] = outer.origin.x + outer.size.width - right;
+  insets[3] = outer.origin.y + outer.size.height - bottom;
+}
+
+static gboolean
+bubbles_laid_out(gpointer data)
+{
+  GPtrArray *rows = data;
+  for (guint i = 0; i < rows->len; i++) {
+    GtkWidget *bubble = row_child(g_ptr_array_index(rows, i), "bubble");
+    if (!gtk_widget_get_mapped(bubble) || gtk_widget_get_height(bubble) == 0)
+      return FALSE;
+  }
+  return TRUE;
+}
+
+static void
+maybe_save_bubble_png(Fixture *f, GtkWidget *popover, const char *stage)
+{
+  const char *prefix = g_getenv("GROUNDHOG_BUBBLE_SHOTS");
+  if (!prefix)
+    return;
+  drain_idle();
+  gboolean painted = FALSE;
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(GTK_WIDGET(f->window));
+  gulong handler = g_signal_connect(clock, "after-paint", G_CALLBACK(on_table_painted), &painted);
+  gtk_widget_queue_draw(GTK_WIDGET(f->window));
+  spin_until(is_true, &painted);
+  g_signal_handler_disconnect(clock, handler);
+  if (popover)
+    gtk_test_widget_wait_for_draw(popover);
+  g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, stage);
+  save_png_path(GTK_WIDGET(f->window), popover, path);
+}
+
+static gboolean
+refuse_delete(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
+              gpointer data, GError **error)
+{
+  (void)conversation; (void)message; (void)for_everyone; (void)data;
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "refused");
+  return FALSE;
+}
+
+/* Text, a table, a code block, a link, own and others' bubbles, with a
+ * reaction: the same padding on all four sides of every bubble, wide and
+ * compact. */
+static void
+test_bubble_padding(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  GhMessage *text = add_dm(f->store, 2, 1, t, "Hi! Are you around later?");
+  GhMessage *table = add_dm(f->store, 2, 1, t + 60, bot_table_body);
+  GhMessage *own = add_dm(f->store, 1, 2, t + 120, "Yes, after five.");
+  GhMessage *code = add_dm(f->store, 1, 2, t + 180,
+                           "Run this:\n\n```sh\nls -la | grep x\n```\nDone.");
+  GhMessage *link = add_dm(f->store, 2, 1, t + 240, "See https://example.com/a");
+  GhConversation *conversation = room_of(f->store, text);
+  gh_conversation_accept(conversation);
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+  g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(own),
+    "padding-reaction", hex[2], "\xf0\x9f\x91\x8d", now_seconds(), gh_message_get_room_id(own));
+  g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
+  gh_conversation_view_set_reaction_store(f->view, reactions);
+  static const int widths[] = { 760, 360 };
+  for (guint w = 0; w < G_N_ELEMENTS(widths); w++) {
+    show(f, conversation, widths[w], 900);
+    GhMessage *messages[] = { text, table, own, code, link };
+    g_autoptr(GPtrArray) rows = g_ptr_array_new();
+    for (guint i = 0; i < G_N_ELEMENTS(messages); i++)
+      g_ptr_array_add(rows, row_for(f->view, messages[i]));
+    spin_until(row_has_table, g_ptr_array_index(rows, 1));
+    spin_until(bubbles_laid_out, rows);
+    drain_idle();
+    maybe_save_bubble_png(f, NULL, w == 0 ? "wide" : "compact");
+    for (guint i = 0; i < rows->len; i++) {
+      double insets[4];
+      bubble_insets(g_ptr_array_index(rows, i), insets);
+      g_test_message("row %u insets %.1f %.1f %.1f %.1f", i, insets[0], insets[1], insets[2],
+                     insets[3]);
+      for (guint side = 0; side < 4; side++)
+        g_assert_cmpfloat_with_epsilon(insets[side], 10, 0.5);
+    }
+  }
+  /* The bubble's menu, with a selection and Delete offered (evidence). */
+  if (g_getenv("GROUNDHOG_BUBBLE_SHOTS")) {
+    show(f, conversation, 760, 900);
+    gh_conversation_view_set_delete_func(f->view, refuse_delete, NULL, NULL);
+    GhMessageRow *row = row_for(f->view, own);
+    g_autoptr(GPtrArray) shown_rows = g_ptr_array_new();
+    g_ptr_array_add(shown_rows, row);
+    spin_until(bubbles_laid_out, shown_rows);
+    gtk_label_select_region(GTK_LABEL(row_child(row, "body_label")), 0, 4);
+    GtkPopover *menu = open_menu(row);
+    maybe_save_bubble_png(f, GTK_WIDGET(menu), "menu");
+    close_popover(menu);
+    gh_conversation_view_set_delete_func(f->view, NULL, NULL, NULL);
+  }
+  gh_conversation_view_set_reaction_store(f->view, NULL);
+}
+
+/* The bubble's own menu: no Cut, Paste, Delete or Insert Emoji; Copy only
+ * with a selection (the selected text), Copy Message (the whole message),
+ * Add Reaction; opened by right-click and by Menu / Shift+F10. */
+static GtkEventController *
+find_controller(GtkWidget *widget, GType type, GtkPropagationPhase phase)
+{
+  g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(widget);
+  for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+    g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
+    if (G_TYPE_CHECK_INSTANCE_TYPE(controller, type) &&
+        gtk_event_controller_get_propagation_phase(controller) == phase &&
+        (!GTK_IS_GESTURE_CLICK(controller) ||
+         gtk_gesture_single_get_button(GTK_GESTURE_SINGLE(controller)) == GDK_BUTTON_SECONDARY))
+      return controller;
+  }
+  return NULL;
+}
+
+static void
+take_copied(Fixture *f, const gchar *expected)
+{
+  g_assert_cmpstr(f->copied, ==, expected);
+  g_clear_pointer(&f->copied, g_free);
+}
+
+static gboolean
+press_menu_key(Fixture *f, guint keyval, GdkModifierType state)
+{
+  GtkWidget *list = GTK_WIDGET(gh_conversation_view_get_message_list(f->view));
+  GtkEventController *keys = find_controller(list, GTK_TYPE_EVENT_CONTROLLER_KEY,
+                                             GTK_PHASE_CAPTURE);
+  g_assert_nonnull(keys);
+  gboolean handled = FALSE;
+  g_signal_emit_by_name(keys, "key-pressed", keyval, 0, state, &handled);
+  return handled;
+}
+
+static void
+test_bubble_menu(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  GhMessage *incoming = add_dm(f->store, 2, 1, t, "Incoming words");
+  GhMessage *own = add_dm(f->store, 1, 2, t + 60, "Hello there, friend");
+  GhConversation *conversation = room_of(f->store, own);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 700, 600);
+  GhMessageRow *row = row_for(f->view, own);
+  GtkLabel *body = row_child(row, "body_label");
+
+  /* No selection: no Copy; nothing that edits text. */
+  GtkPopover *menu = open_menu(row);
+  g_autofree gchar *plain = menu_labels(menu);
+  g_assert_cmpstr(plain, ==, "Copy _Message|Add _Reaction…");
+  menu_choose(menu, "Copy _Message");
+  take_copied(f, "Hello there, friend");
+
+  /* A selection: Copy copies just it; Copy Message still the whole. */
+  gtk_label_select_region(body, 6, 11);
+  menu = open_menu(row);
+  g_autofree gchar *selected = menu_labels(menu);
+  g_assert_cmpstr(selected, ==, "_Copy|Copy _Message|Add _Reaction…");
+  menu_choose(menu, "_Copy");
+  take_copied(f, "there");
+  gtk_label_select_region(body, 6, 11);
+  menu_choose(open_menu(row), "Copy _Message");
+  take_copied(f, "Hello there, friend");
+
+  /* Right-click on the bubble, caught before the label's own gesture. */
+  GtkWidget *bubble = row_child(row, "bubble");
+  GtkEventController *click = find_controller(bubble, GTK_TYPE_GESTURE_CLICK, GTK_PHASE_CAPTURE);
+  g_assert_nonnull(click);
+  g_signal_emit_by_name(click, "pressed", 1, 4.0, 4.0);
+  menu = gh_message_row_get_menu(row);
+  spin_until(popover_mapped, menu);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  close_popover(menu);
+  g_assert_nonnull(find_controller(bubble, GTK_TYPE_GESTURE_LONG_PRESS, GTK_PHASE_CAPTURE));
+
+  /* Shift+F10 and Menu with the text focused, and on the list item. */
+  gtk_widget_grab_focus(GTK_WIDGET(body));
+  g_assert_true(press_menu_key(f, GDK_KEY_F10, GDK_SHIFT_MASK));
+  menu = gh_message_row_get_menu(row);
+  spin_until(popover_mapped, menu);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  close_popover(menu);
+  g_assert_false(press_menu_key(f, GDK_KEY_F10, 0));
+  GtkWidget *item = item_for(f->view, incoming);
+  gtk_widget_grab_focus(item);
+  g_assert_true(gtk_widget_has_focus(item));
+  g_assert_true(press_menu_key(f, GDK_KEY_Menu, 0));
+  GhMessageRow *incoming_row = row_for(f->view, incoming);
+  GtkPopover *incoming_menu = gh_message_row_get_menu(incoming_row);
+  g_assert_nonnull(incoming_menu);
+  spin_until(popover_mapped, incoming_menu);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(incoming_menu));
+
+  /* Add Reaction opens the picker. */
+  menu_choose(incoming_menu, "Add _Reaction…");
+  g_autoptr(GPtrArray) pickers = g_ptr_array_new();
+  collect(GTK_WIDGET(incoming_row), GH_TYPE_REACTION_PICKER, pickers);
+  g_assert_cmpuint(pickers->len, ==, 1);
+  spin_until(popover_mapped, g_ptr_array_index(pickers, 0));
+  close_popover(g_ptr_array_index(pickers, 0));
+}
+
+typedef struct {
+  GhConversationStore *store;
+  guint calls;
+  gchar *rumor_id;
+  gboolean for_everyone;
+  gboolean refuse;
+} DeleteCall;
+
+static gboolean
+capture_delete(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
+               gpointer data, GError **error)
+{
+  DeleteCall *call = data;
+  g_assert_cmpstr(gh_conversation_get_room_id(conversation), ==,
+                  gh_message_get_room_id(message));
+  call->calls++;
+  g_free(call->rumor_id);
+  call->rumor_id = g_strdup(gh_message_get_rumor_id(message));
+  call->for_everyone = for_everyone;
+  if (call->refuse) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "refused");
+    return FALSE;
+  }
+  /* As gh_store_conversations_delete_message() does to the model. */
+  g_assert_true(gh_conversation_store_remove_message(call->store, call->rumor_id));
+  return TRUE;
+}
+
+static gboolean
+row_gone(gpointer data)
+{
+  gpointer *args = data;
+  return item_for(args[0], args[1]) == NULL;
+}
+
+static void
+confirm_delete(Fixture *f, GhMessageRow *row, const gchar *label, const gchar *heading,
+               const gchar *response)
+{
+  menu_choose(open_menu(row), label);
+  AdwAlertDialog *dialog = view_child(f->view, "delete_dialog");
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, heading);
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(dialog, "delete-confirm"), ==,
+                  ADW_RESPONSE_DESTRUCTIVE);
+  g_signal_emit_by_name(dialog, "response", response);
+  close_dialog(ADW_DIALOG(dialog));
+}
+
+static void
+test_bubble_delete(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  GhMessage *incoming = add_dm(f->store, 2, 1, t, "Incoming words");
+  GhMessage *own = add_dm(f->store, 1, 2, t + 60, "Mine to take back");
+  GhMessage *keep = add_dm(f->store, 2, 1, t + 120, "Keep this one");
+  GhConversation *conversation = room_of(f->store, own);
+  gh_conversation_accept(conversation);
+  DeleteCall call = { .store = f->store };
+  gh_conversation_view_set_delete_func(f->view, capture_delete, &call, NULL);
+  show(f, conversation, 700, 600);
+  g_autofree gchar *own_id = g_strdup(gh_message_get_rumor_id(own));
+  g_autofree gchar *incoming_id = g_strdup(gh_message_get_rumor_id(incoming));
+
+  /* Own (sent) messages: for me or for everyone; others': for me only. */
+  GtkPopover *menu = open_menu(row_for(f->view, own));
+  g_autofree gchar *own_labels = menu_labels(menu);
+  g_assert_cmpstr(own_labels, ==,
+                  "Copy _Message|Add _Reaction…|_Delete for Me…|Delete for _Everyone…");
+  close_popover(menu);
+  menu = open_menu(row_for(f->view, incoming));
+  g_autofree gchar *incoming_labels = menu_labels(menu);
+  g_assert_cmpstr(incoming_labels, ==, "Copy _Message|Add _Reaction…|_Delete for Me…");
+  close_popover(menu);
+  g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
+  g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));
+
+  /* Cancel deletes nothing. */
+  confirm_delete(f, row_for(f->view, own), "Delete for _Everyone…", "Delete for Everyone?",
+                 "delete-cancel");
+  g_assert_cmpuint(call.calls, ==, 0);
+
+  /* A failure leaves the message. */
+  call.refuse = TRUE;
+  confirm_delete(f, row_for(f->view, incoming), "_Delete for Me…", "Delete for Me?",
+                 "delete-confirm");
+  g_assert_cmpuint(call.calls, ==, 1);
+  g_assert_nonnull(item_for(f->view, incoming));
+  call.refuse = FALSE;
+
+  /* Confirmed: the callback gets the message and the choice; it leaves. */
+  confirm_delete(f, row_for(f->view, own), "Delete for _Everyone…", "Delete for Everyone?",
+                 "delete-confirm");
+  g_assert_cmpuint(call.calls, ==, 2);
+  g_assert_cmpstr(call.rumor_id, ==, own_id);
+  g_assert_true(call.for_everyone);
+  gpointer own_args[] = { f->view, own };
+  spin_until(row_gone, own_args);
+  confirm_delete(f, row_for(f->view, incoming), "_Delete for Me…", "Delete for Me?",
+                 "delete-confirm");
+  g_assert_cmpuint(call.calls, ==, 3);
+  g_assert_cmpstr(call.rumor_id, ==, incoming_id);
+  g_assert_false(call.for_everyone);
+  gpointer incoming_args[] = { f->view, incoming };
+  spin_until(row_gone, incoming_args);
+  g_assert_nonnull(item_for(f->view, keep));
+
+  /* A stale request (the message went meanwhile) does nothing. */
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.delete-message", "(sb)",
+                             own_id, FALSE);
+  g_assert_false(dialog_presented(view_child(f->view, "delete_dialog")));
+
+  /* Without a delete callback nothing offers Delete. */
+  gh_conversation_view_set_delete_func(f->view, NULL, NULL, NULL);
+  menu = open_menu(row_for(f->view, keep));
+  g_autofree gchar *none = menu_labels(menu);
+  g_assert_cmpstr(none, ==, "Copy _Message|Add _Reaction…");
+  close_popover(menu);
+  g_free(call.rumor_id);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5005,6 +5459,9 @@ main(int argc, char **argv)
   ADD("delivery-indicator", test_delivery_indicator);
   ADD("links", test_links);
   ADD("markdown-copy-identity", test_markdown_copy_identity);
+  ADD("bubble-padding", test_bubble_padding);
+  ADD("bubble-menu", test_bubble_menu);
+  ADD("bubble-delete", test_bubble_delete);
   ADD("markdown-table-real", test_markdown_table_real);
   ADD("markdown-table-compact", test_markdown_table_compact);
   ADD("markdown-table-tight", test_markdown_table_tight);
