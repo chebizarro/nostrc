@@ -29,6 +29,10 @@
 /* Bubble text width caps (charter §7.6): 60 characters, 32 when compact. */
 #define BODY_CHARS 60
 #define BODY_CHARS_COMPACT 32
+/* A link preview card's width (nostrc-8xfib.3): gnostr's media card, as
+ * wide as a full bubble, whatever little the page names. */
+#define OG_CARD_WIDTH 380
+#define OG_CARD_WIDTH_COMPACT 260
 
 struct _GhMessageRow {
   GtkWidget parent_instance;
@@ -81,7 +85,8 @@ struct _GhMessageRow {
   GhMessage *message;
   GhConversationView *view; /* the enclosing view while rooted; not a reference */
   GBinding *compact_binding;
-  gchar *preview_uri;       /* the first previewable link, or NULL */
+  gchar *preview_uri;       /* the first page link (a preview card), or NULL */
+  gchar *image_uri;         /* the first image link (nostrc-p15n5.4), or NULL */
   gchar *summary;
   gboolean run_start;
   gboolean run_end;
@@ -296,6 +301,9 @@ update_width(GhMessageRow *self)
     gtk_label_set_max_width_chars(self->preview_title, chars);
   if (self->preview_text)
     gtk_label_set_max_width_chars(self->preview_text, chars);
+  if (self->og_card)
+    gtk_widget_set_size_request(GTK_WIDGET(self->og_card),
+                                self->compact ? OG_CARD_WIDTH_COMPACT : OG_CARD_WIDTH, -1);
 }
 
 /* The avatar: the sender's name (initials) and loaded picture, at the end
@@ -539,14 +547,14 @@ on_remote_image_pressed(GtkGestureClick *gesture, gint n_press, gdouble x,
                         gdouble y, GhMessageRow *self)
 {
   (void)gesture; (void)n_press; (void)x; (void)y;
-  if (!self->view || !self->message || !self->preview_uri) return;
+  if (!self->view || !self->message || !self->image_uri) return;
   GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
   GdkTexture *texture = gh_conversation_view_get_web_texture(self->view, self->message,
                                                                GH_WEB_IMAGE, &state);
   if (state != GH_LINK_PREVIEW_LOADED || !texture) return;
   GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
   GnMediaViewer *viewer = gn_media_viewer_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
-  const gchar *urls[] = { self->preview_uri, NULL };
+  const gchar *urls[] = { self->image_uri, NULL };
   gn_media_viewer_set_gallery(viewer, urls, 0);
   gn_media_viewer_set_texture(viewer, 0, texture);
   gtk_window_present(GTK_WINDOW(viewer));
@@ -574,14 +582,16 @@ update_web_images(GhMessageRow *self)
   /* The preference (or an earlier allow for this sender) loads without a
    * click; the buttons below stay for what is not loaded. */
   if (available) {
-    if (self->preview_uri) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_IMAGE);
+    if (self->image_uri)
+      gh_conversation_view_auto_load(self->view, self->message, GH_WEB_IMAGE);
     if (picture) gh_conversation_view_auto_load(self->view, self->message, GH_WEB_PICTURE);
   }
   GhLinkPreviewState image_state = GH_LINK_PREVIEW_NONE;
   GdkTexture *texture = available
     ? gh_conversation_view_get_web_texture(self->view, self->message, GH_WEB_IMAGE,
                                            &image_state) : NULL;
-  gboolean has_image = available && self->preview_uri;
+  /* Only an image link is a linked image; a page link has a preview card. */
+  gboolean has_image = available && self->image_uri;
   gboolean ask_image = has_image &&
     image_state != GH_LINK_PREVIEW_LOADED && image_state != GH_LINK_PREVIEW_LOADING;
   gboolean failed = image_state == GH_LINK_PREVIEW_FAILED;
@@ -720,6 +730,11 @@ update_preview(GhMessageRow *self)
     if (!self->og_card) {
       self->og_card = gn_og_preview_card_new();
       gtk_widget_set_name(GTK_WIDGET(self->og_card), "og_card");
+      /* gnostr's card: artwork at the start, then title, description and
+       * site (owner report: the stacked card was a tiny box). */
+      gn_og_preview_card_set_layout(self->og_card, GN_OG_PREVIEW_LAYOUT_COMPACT);
+      gtk_widget_set_size_request(GTK_WIDGET(self->og_card),
+                                  self->compact ? OG_CARD_WIDTH_COMPACT : OG_CARD_WIDTH, -1);
       gtk_box_append(self->preview_box, GTK_WIDGET(self->og_card));
       g_signal_connect(self->og_card, "image-load-requested",
                        G_CALLBACK(on_og_image_requested), self);
@@ -743,7 +758,9 @@ update_preview(GhMessageRow *self)
     gtk_box_remove(self->preview_box, GTK_WIDGET(self->og_card));
     self->og_card = NULL;
   }
-  set_class(GTK_WIDGET(self->preview_box), "card", state == GH_LINK_PREVIEW_LOADED);
+  /* The card draws its own frame; the box frames only the other states'
+   * text. */
+  set_class(GTK_WIDGET(self->preview_box), "card", FALSE);
 }
 
 static void
@@ -944,12 +961,14 @@ static void
 refresh_preview_uri(GhMessageRow *self)
 {
   g_clear_pointer(&self->preview_uri, g_free);
+  g_clear_pointer(&self->image_uri, g_free);
   if (!self->view || !self->message || self->undecryptable ||
       gh_message_get_withdrawn(self->message) ||
       !gtk_widget_get_visible(GTK_WIDGET(self->body_label)))
     return;
   self->preview_uri = g_strdup(gh_conversation_view_get_preview_uri(self->view,
                                                                      self->message));
+  self->image_uri = g_strdup(gh_conversation_view_get_image_uri(self->view, self->message));
 }
 
 static void
@@ -985,6 +1004,7 @@ update_all(GhMessageRow *self)
   arrange_meta(self, outgoing, FALSE);
 
   g_clear_pointer(&self->preview_uri, g_free);
+  g_clear_pointer(&self->image_uri, g_free);
 
   /* nostrc-zjkv: reply header — show "Replying to npub1…" when the message
    * has a reply-target event id. The button's action target is the reply-to
@@ -1446,7 +1466,7 @@ gh_message_row_set_message(GhMessageRow *self, GhMessage *message)
       optional |= GH_OPEN_ATTACHMENT;
     if (gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_KIND)
       optional |= GH_OPEN_POLL;
-    if (self->preview_uri) optional |= GH_OPEN_LINK;
+    if (self->preview_uri || self->image_uri) optional |= GH_OPEN_LINK;
 #ifdef GROUNDHOG_HAVE_VOICE
     if (self->voice_bubble && gtk_widget_get_visible(GTK_WIDGET(self->voice_slot)))
       optional |= GH_OPEN_AUDIO;
@@ -1654,6 +1674,7 @@ gh_message_row_finalize(GObject *object)
 {
   GhMessageRow *self = GH_MESSAGE_ROW(object);
   g_free(self->preview_uri);
+  g_free(self->image_uri);
   g_free(self->summary);
   G_OBJECT_CLASS(gh_message_row_parent_class)->finalize(object);
 }

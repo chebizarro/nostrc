@@ -422,6 +422,8 @@ void gn_og_preview_card_set_layout(GnOgPreviewCard *self, GnOgPreviewLayout layo
     gtk_widget_set_name(self->compact_box, "og_card");
     gtk_widget_add_css_class(self->compact_box, "og-preview-card");
     gtk_widget_set_hexpand(self->compact_box, TRUE);
+    /* Artwork follows the card's rounded corners. */
+    gtk_widget_set_overflow(self->compact_box, GTK_OVERFLOW_HIDDEN);
     self->compact_overlay = gtk_overlay_new();
     gtk_widget_set_size_request(self->compact_overlay, 120, -1);
     self->compact_text = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);

@@ -1190,6 +1190,7 @@ typedef struct {
   GnNostrReferenceCardRole reference_role;
   gchar *reference_original; /* verified embedded original of a repost */
   gchar *preview_uri;
+  gchar *image_uri;
   gsize bytes;
   gboolean pending;
 } RenderEntry;
@@ -1204,6 +1205,7 @@ typedef struct {
 typedef struct {
   GnMarkdownDocument *document;
   gchar *preview_uri;
+  gchar *image_uri;
 } RenderResult;
 
 static void
@@ -1212,6 +1214,7 @@ render_result_free(RenderResult *result)
   if (!result) return;
   gn_markdown_document_free(result->document);
   g_free(result->preview_uri);
+  g_free(result->image_uri);
   g_free(result);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(RenderResult, render_result_free)
@@ -1225,6 +1228,7 @@ render_entry_free(RenderEntry *entry)
   gn_nostr_reference_free(entry->reference_descriptor);
   g_free(entry->reference_original);
   g_free(entry->preview_uri);
+  g_free(entry->image_uri);
   g_free(entry);
 }
 
@@ -1292,7 +1296,8 @@ render_entry_size(RenderEntry *entry)
   return strlen(entry->markup) +
          (entry->reference_uri ? strlen(entry->reference_uri) : 0) +
          (entry->reference_original ? strlen(entry->reference_original) : 0) +
-         (entry->preview_uri ? strlen(entry->preview_uri) : 0);
+         (entry->preview_uri ? strlen(entry->preview_uri) : 0) +
+         (entry->image_uri ? strlen(entry->image_uri) : 0);
 }
 
 static void
@@ -1332,6 +1337,7 @@ render_worker(GTask *task, gpointer source, gpointer task_data, GCancellable *ca
   RenderResult *result = g_new0(RenderResult, 1);
   result->document = gn_markdown_parse(job->body, -1);
   result->preview_uri = gh_link_policy_dup_preview_uri(job->body);
+  result->image_uri = gh_link_policy_dup_image_uri(job->body);
   g_task_return_pointer(task, result, (GDestroyNotify)render_result_free);
 }
 
@@ -1359,7 +1365,9 @@ render_worker_done(GObject *source, GAsyncResult *result, gpointer data)
     render_entry_collect_reference(entry, rendered->document, job->body);
   }
   g_free(entry->preview_uri);
+  g_free(entry->image_uri);
   entry->preview_uri = g_steal_pointer(&rendered->preview_uri);
+  entry->image_uri = g_steal_pointer(&rendered->image_uri);
   entry->bytes = render_entry_size(entry);
   self->render_bytes += entry->bytes;
   /* A budgeted parser must not silently drop message text. The full escaped
@@ -1390,6 +1398,7 @@ render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager
   if (eager && strlen(body ? body : "") <= RENDER_WORKER_THRESHOLD) {
     g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(body, -1);
     entry->preview_uri = gh_link_policy_dup_preview_uri(body);
+    entry->image_uri = gh_link_policy_dup_image_uri(body);
     if (!document->truncated) {
       g_autofree gchar *formatted = gh_link_policy_format_markdown(document,
                                                                    self->render_account);
@@ -1460,6 +1469,15 @@ gh_conversation_view_get_preview_uri(GhConversationView *self, GhMessage *messag
   g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
   RenderEntry *entry = render_cache_ensure(self, message, FALSE);
   return entry ? entry->preview_uri : NULL;
+}
+
+const gchar *
+gh_conversation_view_get_image_uri(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry ? entry->image_uri : NULL;
 }
 
 void
@@ -2050,6 +2068,10 @@ on_web_fetched(GObject *source, GAsyncResult *answer, gpointer data)
         g_free(preview->site_name);
         preview->site_name = g_steal_pointer(&result->site_name);
         g_set_object(&preview->texture, result->texture);
+      } else {
+        /* Why, for the debug log (owner report: GitHub answered HTTP 503). */
+        g_debug("web content %s for %s failed: %s", gh_web_content_setting(preview->kind),
+                preview->uri, error ? error->message : "no result");
       }
       set_preview_state(self, closure->rumor_id, result ? GH_LINK_PREVIEW_LOADED : GH_LINK_PREVIEW_FAILED);
       g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
@@ -2147,6 +2169,10 @@ show_preview(GhConversationView *self, const gchar *rumor_id)
     : kind == GH_WEB_OG_IMAGE
       ? g_strdup(metadata && metadata->state == GH_LINK_PREVIEW_LOADED
                    ? metadata->image_url : NULL)
+      /* nostrc-p15n5.4: an image link loads as an image, any other link
+       * as a page preview; never the other way (a page fetched as an image
+       * failed with "The image couldn't be loaded"). */
+      : kind == GH_WEB_IMAGE ? gh_link_policy_dup_image_uri(gh_message_get_content(message))
       : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
   if (!uri)
     return;
@@ -2439,7 +2465,7 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     return;
   g_autofree gchar *uri = kind == GH_WEB_PICTURE
     ? gh_conversation_view_dup_picture_uri(self, message)
-    : gh_link_policy_dup_preview_uri(gh_message_get_content(message));
+    : gh_link_policy_dup_image_uri(gh_message_get_content(message));
   if (!uri)
     return;
   g_autofree gchar *sender_key = g_strdup_printf("%u:%s", kind, gh_message_get_sender(message));

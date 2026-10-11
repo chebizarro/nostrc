@@ -491,14 +491,44 @@ gh_link_policy_can_preview(const gchar *uri)
   return ok;
 }
 
-gchar *
-gh_link_policy_dup_preview_uri(const gchar *text)
+gboolean
+gh_link_policy_is_image_uri(const gchar *uri)
+{
+  static const gchar *const extensions[] = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif" };
+  if (!gh_link_policy_can_preview(uri))
+    return FALSE;
+  g_autoptr(GUri) parsed = g_uri_parse(uri, G_URI_FLAGS_ENCODED | G_URI_FLAGS_PARSE_RELAXED, NULL);
+  const gchar *path = parsed ? g_uri_get_path(parsed) : NULL;
+  if (!path)
+    return FALSE;
+  g_autofree gchar *lower = g_ascii_strdown(path, -1);
+  for (guint i = 0; i < G_N_ELEMENTS(extensions); i++)
+    if (g_str_has_suffix(lower, extensions[i]))
+      return TRUE;
+  return FALSE;
+}
+
+static gchar *
+first_web_link(const gchar *text, gboolean image)
 {
   g_autoptr(GPtrArray) links = gh_link_policy_find_links(text);
   for (guint i = 0; i < links->len; i++) {
     GhLink *link = g_ptr_array_index(links, i);
-    if (link->kind == GH_LINK_KIND_WEB && gh_link_policy_can_preview(link->uri))
+    if (link->kind == GH_LINK_KIND_WEB && gh_link_policy_can_preview(link->uri) &&
+        gh_link_policy_is_image_uri(link->uri) == image)
       return g_strdup(link->uri);
   }
   return NULL;
+}
+
+gchar *
+gh_link_policy_dup_preview_uri(const gchar *text)
+{
+  return first_web_link(text, FALSE);
+}
+
+gchar *
+gh_link_policy_dup_image_uri(const gchar *text)
+{
+  return first_web_link(text, TRUE);
 }
