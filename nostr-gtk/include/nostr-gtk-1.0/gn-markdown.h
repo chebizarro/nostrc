@@ -85,6 +85,11 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length);
  * no block structure, used for the text of block tokens. */
 GnMarkdownDocument *gn_markdown_parse_inline(const gchar *input, gssize length);
 void gn_markdown_document_free(GnMarkdownDocument *document);
+/* Why lines of input with a pipe are not a GFM table, for a debug log: the
+ * first candidate header line and what its next line lacks (line numbers,
+ * cell counts and code points only, never the text). NULL when the input
+ * has a table or no line with a pipe. Free with g_free(). */
+gchar *gn_markdown_explain_no_table(const gchar *input, gssize length);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnMarkdownDocument, gn_markdown_document_free)
 
 G_END_DECLS
