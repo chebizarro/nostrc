@@ -4505,6 +4505,19 @@ item_gone(gpointer data)
   return item_for(wait->view, wait->message) == NULL;
 }
 
+/* The latest rows, where the web messages are (the view's own opening
+ * position is not what these tests are about). */
+static void
+owner_to_latest(Fixture *f, GhMessage *message)
+{
+  GtkListView *list = gh_conversation_view_get_message_list(f->view);
+  gtk_list_view_scroll_to(list, timeline_length(f->view) - 1, GTK_LIST_SCROLL_NONE, NULL);
+  gtk_adjustment_set_value(vadjustment(f->view), gtk_adjustment_get_upper(vadjustment(f->view)));
+  spin_until(at_bottom, f->view);
+  VisibleRowWait visible = { f->view, message };
+  spin_until(row_visible, &visible);
+}
+
 static void
 owner_click(Fixture *f, GhMessage *message, const gchar *name)
 {
@@ -4569,7 +4582,7 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   gh_conversation_view_enable_web_content(f->view, &transport, &web);
   AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
   VisibleRowWait page_visible = { f->view, page };
-  spin_until(row_visible, &page_visible);
+  owner_to_latest(f, page);
 
   owner_click(f, page, "preview_button");
   owner_allow(f);
@@ -4607,14 +4620,14 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
 
   /* Back: everything allowed is shown again, nothing asked or fetched. */
   gh_conversation_view_set_conversation(f->view, conversation);
-  spin_until(row_visible, &page_visible);
+  owner_to_latest(f, page);
   owner_shows_loaded(f, page, image, 4, &web);
   owner_screenshot(f, "3-back");
 
   /* Through no conversation (a Message Request opened in between). */
   gh_conversation_view_set_conversation(f->view, NULL);
   gh_conversation_view_set_conversation(f->view, conversation);
-  spin_until(row_visible, &page_visible);
+  owner_to_latest(f, page);
   owner_shows_loaded(f, page, image, 4, &web);
 
   /* Recycled: scrolled far up (the rows go to other messages) and back. */
@@ -4623,10 +4636,7 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   gtk_adjustment_set_value(vadjustment(f->view), 0);
   spin_until(scrolled_up, f->view);
   spin_until(item_gone, &page_visible);
-  gtk_list_view_scroll_to(list, timeline_length(f->view) - 1, GTK_LIST_SCROLL_NONE, NULL);
-  gtk_adjustment_set_value(vadjustment(f->view), gtk_adjustment_get_upper(vadjustment(f->view)));
-  spin_until(at_bottom, f->view);
-  spin_until(row_visible, &page_visible);
+  owner_to_latest(f, page);
   owner_shows_loaded(f, page, image, 4, &web);
 
   /* The slow image's next tap loads it, without a second question. */
