@@ -327,6 +327,13 @@ durably records the binding `client_pubkey → agent_id` (table
   time and resolve only while it matches the agent's CURRENT identity —
   `agent/rotate-key`, revocation + reprovisioning, or re-adoption under a new
   key all invalidate old bindings (no resurrection of prior authority).
+  Custody checks the original binding again inside the key-store lock and,
+  for persistent keys, the SQLite writer transaction, so a revoke/re-adopt
+  between request lookup and execution cannot use the replacement identity.
+- **Spent-secret uniqueness:** a new pending secret may not match another
+  pending secret or any spent pairing-secret hash. Spent hashes remain as
+  tombstones after revocation or re-pairing; old bunker URIs cannot become
+  fresh pairing credentials for a replacement agent.
 - **Suspension precedence:** the daemon's live deny list is checked on every
   path (pairing, reconnect, per-request) before policy evaluation — a
   suspended agent's bound clients are refused immediately.
@@ -359,6 +366,8 @@ follows the same rules as above for the life of that process:
   against: `agent/revoke`, `agent/rotate-key`, a key restore, or revoking
   and re-adopting the same `agent_id` (even with the same key) all
   invalidate them and drop them at once.
+- Spent secret hashes remain in memory until process exit even when a binding
+  is dropped, preventing a later adopt/reissue from reusing an old URI.
 - `agent/rotate-key` leaves no pending secret, as in persistent mode;
   `agent/reissue-connect` (provisioner or self-service) mints a fresh one,
   returned in a bunker URI, and the earlier pending secret stops working. A
