@@ -326,6 +326,13 @@ if (BUILD_TESTING)
     set_tests_properties(nip55l_dbus_contract PROPERTIES
       LABELS "nip55l;signer;integration;dbus"
       TIMEOUT 120)
+    if (TARGET gnostr-secret)
+      add_test(NAME nip55l_fake_secret_service_contract
+        COMMAND test_nip55l_dbus_contract --fake-secret-service-contract)
+      set_tests_properties(nip55l_fake_secret_service_contract PROPERTIES
+        LABELS "nip55l;signer;integration;dbus;libsecret"
+        TIMEOUT 120)
+    endif()
     # nostrc-oauv: a check that fails with the daemon and private bus up ends
     # the test at once. Without the test's exit teardown the orphaned
     # dbus-daemon kept ctest's output open until the timeout, and on macOS
