@@ -38,8 +38,16 @@ on:
 
 jobs:
   build-appimage:
-    name: Build and smoke test gnostr AppImage
-    runs-on: ubuntu-24.04
+    name: Build and smoke test gnostr AppImage (${{ matrix.arch }})
+    # Native builds per architecture; the aarch64 AppImage uses the aarch64
+    # linuxdeploy and appimagetool from the same releases.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -118,10 +126,10 @@ jobs:
         run: |
           mkdir -p appimage-tools
           cd appimage-tools
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-${{ matrix.arch }}.AppImage
           wget -q https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh appimagetool-x86_64.AppImage
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage
+          chmod +x linuxdeploy-${{ matrix.arch }}.AppImage linuxdeploy-plugin-gtk.sh appimagetool-${{ matrix.arch }}.AppImage
 
       - name: Build AppImage
         env:
@@ -150,7 +158,7 @@ jobs:
             plugin_args+=(--library "$plugin")
           done < <(find AppDir/usr/share/gnostr/plugins -type f -name '*.so' -print0)
 
-          ./appimage-tools/linuxdeploy-x86_64.AppImage \
+          ./appimage-tools/linuxdeploy-${{ matrix.arch }}.AppImage \
             --appdir AppDir \
             --desktop-file AppDir/usr/share/applications/org.gnostr.gnostr.desktop \
             --executable AppDir/usr/bin/gnostr \
@@ -169,8 +177,8 @@ jobs:
           VERSION="${{ inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           VERSION="${VERSION//\//-}"
-          ./appimage-tools/appimagetool-x86_64.AppImage \
-            AppDir "gnostr-${VERSION}-x86_64.AppImage"
+          ./appimage-tools/appimagetool-${{ matrix.arch }}.AppImage \
+            AppDir "gnostr-${VERSION}-${{ matrix.arch }}.AppImage"
           mkdir -p dist
           mv gnostr-*.AppImage dist/
 
@@ -211,6 +219,6 @@ jobs:
       - name: Upload gnostr AppImage
         uses: actions/upload-artifact@v4
         with:
-          name: appimage-gnostr
+          name: appimage-gnostr-${{ matrix.arch }}
           path: dist/*.AppImage
           if-no-files-found: error
