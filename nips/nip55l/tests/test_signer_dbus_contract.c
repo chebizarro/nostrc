@@ -83,6 +83,7 @@
 #include <nostr-utils.h>
 #include <nostr/nip19/nip19.h>
 #include <nostr/nip44/nip44.h>
+#include <nostr/nip55l/error.h>
 
 #ifdef NIP55L_TEST_HAVE_LIBSECRET
 #include <libsecret/secret.h>
@@ -2682,6 +2683,9 @@ struct Fss {
   gboolean fail_all;
   gboolean duplicate_label;
   gboolean flip_label;
+  gboolean mismatched_npub;
+  gboolean mismatched_key_id;
+  gboolean mismatched_uppercase_key_id;
   gboolean flipped;
   GPtrArray *items;      /* FssItem* */
   GHashTable *sessions;  /* open session paths */
@@ -2865,10 +2869,16 @@ static int fake_secret_service(int argc, char **argv) {
   Fss f = { 0 };
   f.plain_ok = g_strcmp0(argv[1], "plain") == 0 ||
                g_strcmp0(argv[1], "duplicate-label") == 0 ||
-               g_strcmp0(argv[1], "flip-label") == 0;
+               g_strcmp0(argv[1], "flip-label") == 0 ||
+               g_strcmp0(argv[1], "mismatched-npub") == 0 ||
+               g_strcmp0(argv[1], "mismatched-key-id") == 0 ||
+               g_strcmp0(argv[1], "mismatched-uppercase-key-id") == 0;
   f.fail_all = g_strcmp0(argv[1], "fail") == 0;
   f.duplicate_label = g_strcmp0(argv[1], "duplicate-label") == 0;
   f.flip_label = g_strcmp0(argv[1], "flip-label") == 0;
+  f.mismatched_npub = g_strcmp0(argv[1], "mismatched-npub") == 0;
+  f.mismatched_key_id = g_strcmp0(argv[1], "mismatched-key-id") == 0;
+  f.mismatched_uppercase_key_id = g_strcmp0(argv[1], "mismatched-uppercase-key-id") == 0;
   f.items = g_ptr_array_new();
   f.sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   f.node = g_dbus_node_info_new_for_xml(fss_xml, &err);
@@ -2888,7 +2898,19 @@ static int fake_secret_service(int argc, char **argv) {
   }
   gchar uid_buf[32];
   g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-  for (int i = 2; i < argc; i++) {
+  char *forged_npub = NULL;
+  if (f.mismatched_npub || f.mismatched_key_id || f.mismatched_uppercase_key_id) {
+    /* argv[3] identifies an unstored key: only argv[2] becomes an item. */
+    CHECK(argc >= 4);
+    char *forged_pk = nostr_key_get_public(argv[3]);
+    uint8_t forged_pk_bytes[32];
+    CHECK(forged_pk && nostr_hex2bin(forged_pk_bytes, forged_pk, 32));
+    CHECK(nostr_nip19_encode_npub(forged_pk_bytes, &forged_npub) == 0 && forged_npub);
+    free(forged_pk);
+  }
+  char *forged_upper = forged_npub ? g_ascii_strup(forged_npub, -1) : NULL;
+  for (int i = 2; i < ((f.mismatched_npub || f.mismatched_key_id ||
+                        f.mismatched_uppercase_key_id) ? 3 : argc); i++) {
     char *pk_hex = nostr_key_get_public(argv[i]);
     uint8_t pk[32];
     char *npub = NULL;
@@ -2903,8 +2925,11 @@ static int fake_secret_service(int argc, char **argv) {
     it->attrs = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
     g_hash_table_insert(it->attrs, (gpointer)"xdg:schema", g_strdup(GNOSTR_SECRET_SCHEMA_NAME));
     g_hash_table_insert(it->attrs, (gpointer)"key_id",
-                        g_strdup(f.duplicate_label && i < 4 ? "shared-id" : npub));
-    g_hash_table_insert(it->attrs, (gpointer)"npub", g_strdup(npub));
+                        g_strdup(f.mismatched_uppercase_key_id ? forged_upper :
+                                 f.mismatched_key_id ? forged_npub :
+                                 f.duplicate_label && i < 4 ? "shared-id" : npub));
+    g_hash_table_insert(it->attrs, (gpointer)"npub",
+                        g_strdup(f.mismatched_npub ? forged_npub : npub));
     g_hash_table_insert(it->attrs, (gpointer)"owner_uid", g_strdup(uid_buf));
     g_hash_table_insert(it->attrs, (gpointer)"hardware", g_strdup("false"));
     g_hash_table_insert(it->attrs, (gpointer)"curve", g_strdup("secp256k1"));
@@ -2922,6 +2947,8 @@ static int fake_secret_service(int argc, char **argv) {
     free(pk_hex);
     free(npub);
   }
+  free(forged_npub);
+  g_free(forged_upper);
   /* Objects first, then the name: a client that sees the name finds them. */
   GVariant *r = g_dbus_connection_call_sync(f.bus, "org.freedesktop.DBus", "/org/freedesktop/DBus",
       "org.freedesktop.DBus", "RequestName", g_variant_new("(su)", FSS_NAME, 4u),
@@ -3078,6 +3105,36 @@ static void run_identity_store_phase(void) {
     expect_identity_error(&ctx, "unknown label", ERR_NO_KEY);
     expect_signs_as(&ctx, "Stored Label", stored.pk_hex);
     expect_signs_as(&ctx, "", stored.pk_hex);
+    ctx_teardown(&ctx);
+  }
+
+  /* An npub or hex pubkey must not accept a stored secret under a forged
+   * npub attribute, nor under the key_id fallback. These calls bypass the
+   * D-Bus normalizer and exercise the public in-process resolver directly. */
+  for (int mismatch = 0; mismatch < 3; mismatch++) {
+    FakeSecrets fs = { .mode = mismatch == 0 ? "mismatched-npub" :
+                                mismatch == 1 ? "mismatched-key-id" :
+                                                "mismatched-uppercase-key-id",
+                       .stored_sk = stored.sk_hex, .other_sk = other.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    char *resolved = NULL;
+    CHECK(nostr_nip55l_resolve_npub(other.npub, &resolved) == NOSTR_SIGNER_ERROR_NOT_FOUND);
+    CHECK(resolved == NULL);
+    CHECK(nostr_nip55l_resolve_npub(other.pk_hex, &resolved) == NOSTR_SIGNER_ERROR_NOT_FOUND);
+    CHECK(resolved == NULL);
+    char *upper_npub = g_ascii_strup(other.npub, -1);
+    CHECK(nostr_nip55l_resolve_npub(upper_npub, &resolved) == NOSTR_SIGNER_ERROR_INVALID_ARG);
+    CHECK(resolved == NULL);
+    char *signed_json = NULL;
+    CHECK(nostr_nip55l_sign_event_json(
+        "{\"kind\":1,\"created_at\":0,\"tags\":[],\"content\":\"forged\"}",
+        mismatch == 2 ? upper_npub : other.npub,
+        "contract-test", &signed_json) ==
+        (mismatch == 2 ? NOSTR_SIGNER_ERROR_INVALID_ARG : NOSTR_SIGNER_ERROR_NOT_FOUND));
+    CHECK(signed_json == NULL);
+    g_free(upper_npub);
     ctx_teardown(&ctx);
   }
 
