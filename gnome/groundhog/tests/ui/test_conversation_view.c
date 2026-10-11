@@ -1143,6 +1143,17 @@ test_reference_card(Fixture *f, gconstpointer data)
   GhMessageRow *embedded_row = row_for(f->view, embedded_message);
   g_assert_cmpint(card_state(embedded_row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
   g_assert_cmpstr(text_of(card_part(embedded_row, "reference-content")), ==, "the original note");
+  /* nostrc-boq9.5: the card shows the repost, so the bubble never shows its
+   * NIP-18 JSON: no body line once resolved, a plain sentence until then. */
+  g_assert_false(shown(row_child(embedded_row, "body_label")));
+  g_assert_null(strchr(text_of(row_child(embedded_row, "body_label")), '{'));
+  g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
+  g_assert_true(shown(row_child(repost_row, "body_label")));
+  g_assert_cmpstr(text_of(row_child(repost_row, "body_label")), ==,
+                  "The reposted note isn't available on this device.");
+  /* A mention keeps its text. */
+  g_assert_true(shown(row_child(row, "body_label")));
+  g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, uri);
 
   /* A resolver that can fetch offers Find on Relays; binding never fetches. */
   g_autoptr(TestResolver) resolver = g_object_new(TEST_TYPE_RESOLVER, NULL);
@@ -1162,6 +1173,19 @@ test_reference_card(Fixture *f, gconstpointer data)
   drain_idle();
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
   g_assert_true(shown(row_child(row, "public_actions")));
+  /* The plain repost resolves from the cache too; its line goes. */
+  repost_row = row_for(f->view, repost_message);
+  g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
+  g_assert_false(shown(row_child(repost_row, "body_label")));
+  g_assert_true(shown(row_child(row, "body_label")));
+  /* Without the cache it is unresolved again and the line returns. */
+  gh_conversation_view_set_reference_resolver(f->view, NULL);
+  drain_idle();
+  repost_row = row_for(f->view, repost_message);
+  g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
+  g_assert_true(shown(row_child(repost_row, "body_label")));
+  gh_conversation_view_set_reference_resolver(f->view, GN_NOSTR_REFERENCE_RESOLVER(resolver));
+  drain_idle();
   g_assert_cmpuint(resolver->fetches, ==, 1);
   g_assert_cmpuint(f->fetches, ==, 0);
   gh_conversation_view_set_reference_resolver(f->view, NULL);

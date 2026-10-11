@@ -1276,6 +1276,13 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
     entry->reference_role = repost->quote ? GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE
                                           : GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
     entry->reference_original = g_steal_pointer(&repost->original_json);
+    /* A repost's content is NIP-18 JSON, never text for people
+     * (nostrc-boq9.5). The card shows the note; the row hides this line
+     * once the card has resolved it and shows it only while it can't. */
+    if (!repost->quote) {
+      g_free(entry->markup);
+      entry->markup = g_markup_escape_text(_("The reposted note isn't available on this device."), -1);
+    }
   }
 }
 

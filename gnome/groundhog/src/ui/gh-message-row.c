@@ -88,6 +88,8 @@ struct _GhMessageRow {
   gboolean show_sender;
   gboolean compact;
   gboolean undecryptable;
+  GnNostrReferenceCardRole reference_role;
+  gboolean body_hidden_for_repost; /* the card shows the reposted note */
   gboolean has_reply;   /* nostrc-zjkv: the message has a reply_to_id */
   gint meta_side;       /* the side the meta line is arranged for: 0 incoming, 1 own */
 };
@@ -818,9 +820,30 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
 
 /* Repost and Quote… need the note in the verified local cache (the
  * card may also have resolved from a repost's embedded original). */
+/* A resolved repost card replaces the body line (nostrc-boq9.5), as
+ * gnostr's kind-6 rows show the original instead of the repost's JSON.
+ * Only a line this hid is shown again; update_all() decides the rest. */
+static void
+update_repost_body(GhMessageRow *self)
+{
+  gboolean hide = self->reference_card && self->message &&
+    gtk_widget_get_visible(GTK_WIDGET(self->reference_box)) &&
+    self->reference_role == GN_NOSTR_REFERENCE_CARD_ROLE_REPOST &&
+    gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED;
+  if (hide && !self->body_hidden_for_repost &&
+      gtk_widget_get_visible(GTK_WIDGET(self->body_label))) {
+    gtk_widget_set_visible(GTK_WIDGET(self->body_label), FALSE);
+    self->body_hidden_for_repost = TRUE;
+  } else if (!hide && self->body_hidden_for_repost) {
+    gtk_widget_set_visible(GTK_WIDGET(self->body_label), TRUE);
+    self->body_hidden_for_repost = FALSE;
+  }
+}
+
 static void
 update_public_actions(GhMessageRow *self)
 {
+  update_repost_body(self);
   if (!self->reference_card)
     return;
   const GnNostrReference *reference = gn_nostr_reference_card_get_reference(self->reference_card);
@@ -883,6 +906,7 @@ update_reference(GhMessageRow *self)
   if (!reference && !self->reference_box)
     return;
   ensure_reference(self);
+  self->reference_role = reference ? role : GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
   gtk_widget_set_visible(GTK_WIDGET(self->reference_box), reference != NULL);
   /* The card only consults the resolver's verified local cache here. */
   gn_nostr_reference_card_set_resolver(self->reference_card, reference
@@ -1076,6 +1100,7 @@ update_all(GhMessageRow *self)
   gtk_widget_set_visible(GTK_WIDGET(self->poll_slot), is_poll);
   if (is_poll) show_body = FALSE;
   gtk_widget_set_visible(GTK_WIDGET(self->body_label), show_body);
+  self->body_hidden_for_repost = FALSE;
   if (!message) {
     gtk_label_set_text(self->body_label, "");
     gtk_label_set_text(self->sender_label, "");
