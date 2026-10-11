@@ -13,7 +13,8 @@ mode=${1:?all|daemon}
 install=${CRAFT_PART_INSTALL:?run from snapcraft}
 
 # Ubuntu 24.04's blueprint-compiler is older than the .blp files need.
-python3 -m pip install --break-system-packages -q blueprint-compiler==0.22.2
+# --no-deps: PyGObject comes from python3-gi (a pip build needs girepository).
+python3 -m pip install --break-system-packages -q --no-deps blueprint-compiler==0.22.2
 
 scripts/ci/configure-release.sh build \
   -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR=lib -DNOSTR_USE_SYSTEM_NSYNC=OFF

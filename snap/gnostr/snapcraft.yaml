@@ -32,6 +32,7 @@ parts:
       - pkg-config
       - git
       - python3-pip
+      - python3-gi
       - libjansson-dev
       - libwebsockets-dev
       - libssl-dev

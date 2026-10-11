@@ -30,6 +30,7 @@ parts:
       - pkg-config
       - git
       - python3-pip
+      - python3-gi
       - libgtk-4-dev
       - libadwaita-1-dev
       - libjson-glib-dev

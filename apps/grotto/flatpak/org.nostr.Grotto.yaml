@@ -72,6 +72,8 @@ modules:
       - glib-compile-schemas /app/share/glib-2.0/schemas/
       # D-Bus service file (Flatpak-specific with /app/bin path)
       - install -Dm644 apps/grotto/flatpak/org.nostr.Signer.service /app/share/dbus-1/services/org.nostr.Signer.service
+      # The desktop file is D-Bus activatable: export its service too.
+      - install -Dm644 build/apps/grotto/org.nostr.Grotto.service /app/share/dbus-1/services/org.nostr.Grotto.service
     sources:
       - type: dir
         path: ../../..
