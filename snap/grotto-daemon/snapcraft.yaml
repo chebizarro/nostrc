@@ -45,6 +45,9 @@ parts:
       - libsecp256k1-dev
       - libsodium-dev
       - libcurl4-openssl-dev
+      - libxml2-dev
+      - librsvg2-dev
+      - libgdk-pixbuf-2.0-dev
     stage-packages:
       - libglib2.0-0t64
       - libjansson4
