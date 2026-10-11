@@ -1708,17 +1708,33 @@ test_gui_window(void)
 
 /* ---- screenshots (opt-in evidence) ----------------------------------------------------- */
 
+/* The window's render node once it has one: a frame under load may still
+ * have nothing to snapshot (its first draw after a size change). */
+static GskRenderNode *
+window_node(GtkWidget *window)
+{
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  return gtk_snapshot_free_to_node(snapshot);
+}
+
+static gboolean
+window_has_node(gpointer window)
+{
+  g_autoptr(GskRenderNode) node = window_node(window);
+  return node != NULL;
+}
+
 static void
 save_png_as(GtkWidget *window, const char *dir, const char *prefix, const char *name)
 {
   drain();
   gtk_test_widget_wait_for_draw(window);
   drain();
-  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
-  GtkSnapshot *snapshot = gtk_snapshot_new();
-  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
-                         gdk_paintable_get_intrinsic_height(paintable));
-  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  gh_test_spin_until(window_has_node, window);
+  g_autoptr(GskRenderNode) node = window_node(window);
   g_assert_nonnull(node);
   graphene_rect_t bounds;
   gsk_render_node_get_bounds(node, &bounds);

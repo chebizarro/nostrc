@@ -864,6 +864,25 @@ no_dialog(gpointer window)
   return visible_dialog(window) == NULL;
 }
 
+/* The window's render node once it has one: a frame under load may still
+ * have nothing to snapshot (its first draw after a size change). */
+static GskRenderNode *
+window_node(GtkWidget *window)
+{
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  return gtk_snapshot_free_to_node(snapshot);
+}
+
+static gboolean
+window_has_node(gpointer window)
+{
+  g_autoptr(GskRenderNode) node = window_node(window);
+  return node != NULL;
+}
+
 /* With GROUNDHOG_TEST_SCREENSHOTS=<dir>: the window as
  * <dir>/groundhog-group-contact-panels-<name>.png. */
 static void
@@ -875,11 +894,8 @@ save_shot(GhWindow *window, const gchar *name)
   drain();
   gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
   drain();
-  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(GTK_WIDGET(window));
-  GtkSnapshot *snapshot = gtk_snapshot_new();
-  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
-                         gdk_paintable_get_intrinsic_height(paintable));
-  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  spin_until(window_has_node, window, "the window drawn");
+  g_autoptr(GskRenderNode) node = window_node(GTK_WIDGET(window));
   g_assert_nonnull(node);
   graphene_rect_t bounds;
   gsk_render_node_get_bounds(node, &bounds);
