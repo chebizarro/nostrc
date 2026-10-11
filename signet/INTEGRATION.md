@@ -327,13 +327,16 @@ durably records the binding `client_pubkey → agent_id` (table
   time and resolve only while it matches the agent's CURRENT identity —
   `agent/rotate-key`, revocation + reprovisioning, or re-adoption under a new
   key all invalidate old bindings (no resurrection of prior authority).
-  Custody checks the original binding again inside the key-store lock and,
-  for persistent keys, the SQLite writer transaction, so a revoke/re-adopt
-  between request lookup and execution cannot use the replacement identity.
+  Custody checks the original binding again inside the key-store lock. For
+  persistent keys, sign/encrypt/decrypt also hold a SQLite writer transaction;
+  get_public_key and WebAuthn hold the SQLite connection mutex instead. A
+  revoke/re-adopt between request lookup and execution cannot use the
+  replacement identity.
 - **Spent-secret uniqueness:** a new pending secret may not match another
   pending secret or any spent pairing-secret hash. Spent hashes remain as
   tombstones after revocation or re-pairing; old bunker URIs cannot become
-  fresh pairing credentials for a replacement agent.
+  fresh pairing credentials for a replacement agent. Tombstones do not expire;
+  indexed hash lookups keep issuance cost independent of their count.
 - **Suspension precedence:** the daemon's live deny list is checked on every
   path (pairing, reconnect, per-request) before policy evaluation — a
   suspended agent's bound clients are refused immediately.

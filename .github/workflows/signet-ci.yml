@@ -21,7 +21,7 @@ on:
 
 jobs:
   build-and-test:
-    name: signet • ${{ matrix.build_type }} • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }}
+    name: signet • ${{ matrix.build_type }} • passkeys=${{ matrix.passkeys }} • sqlcipher=${{ matrix.sqlcipher }} • hooks=${{ matrix.test_hooks || 'OFF' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -30,6 +30,12 @@ jobs:
         sqlcipher: [ 'OFF', 'ON' ]
         build_type: [ 'Debug' ]
         include:
+          # Exercise binding-race and forced-secret regressions in one test
+          # build; the Release configuration below keeps hooks disabled.
+          - passkeys: 'ON'
+            sqlcipher: 'OFF'
+            build_type: 'Debug'
+            test_hooks: 'ON'
           # fp-52iq: assurance comes from running tests the way the project is
           # shipped. Release optimizes signet_core and defines NDEBUG, so cover
           # the shipped configuration too instead of testing Debug only.
@@ -65,6 +71,7 @@ jobs:
             -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF -DBUILD_RELAYD=OFF \
             -DSIGNET_ENABLE=ON -DBUILD_TESTING=ON \
             -DSIGNET_ENABLE_PASSKEYS=${{ matrix.passkeys }} \
+            -DSIGNET_ENABLE_TEST_HOOKS=${{ matrix.test_hooks || 'OFF' }} \
             -DSIGNET_USE_SQLCIPHER=${{ matrix.sqlcipher }}
 
       - name: Build
