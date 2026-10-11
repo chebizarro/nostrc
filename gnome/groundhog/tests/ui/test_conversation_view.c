@@ -1482,6 +1482,8 @@ test_sender_scoped_consent(Fixture *f, gconstpointer data)
                                   "https://sender-two.example/two", NULL);
   GhMessage *other_sender = add_to(f->store, 3, to_ab, t + 120,
                                    "https://sender-three.example/one", NULL);
+  GhMessage *unasked = add_to(f->store, 2, to_ac, t + 240,
+                              "https://sender-two.example/three", NULL);
   GhConversation *conversation = room_of(f->store, first);
   g_assert_true(room_of(f->store, other_sender) == conversation);
   gh_conversation_accept(conversation);
@@ -1516,7 +1518,9 @@ test_sender_scoped_consent(Fixture *f, gconstpointer data)
   close_dialog(ADW_DIALOG(dialog));
 
   /* A different conversation cannot inherit the first one's setting, even
-   * though the global switch is now on. Returning also asks afresh. */
+   * though the global switch is now on. Returning keeps what was loaded
+   * (owner report) but forgets "don't ask again": the sender's next link
+   * asks afresh. */
   GhMessage *different = add_dm(f->store, 4, 1, t + 180,
                                 "https://sender-four.example/one");
   GhConversation *different_room = room_of(f->store, different);
@@ -1529,8 +1533,9 @@ test_sender_scoped_consent(Fixture *f, gconstpointer data)
   g_signal_emit_by_name(dialog, "response", "preview-cancel");
   close_dialog(ADW_DIALOG(dialog));
   gh_conversation_view_set_conversation(f->view, conversation);
+  g_assert_cmpint(preview_state(f, same_sender), ==, GH_LINK_PREVIEW_LOADED);
   gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.show-preview", "s",
-                             gh_message_get_rumor_id(same_sender));
+                             gh_message_get_rumor_id(unasked));
   spin_until(dialog_presented, dialog);
   g_assert_cmpuint(f->fetches, ==, 2);
   g_signal_emit_by_name(dialog, "response", "preview-cancel");
@@ -4493,6 +4498,168 @@ test_owner_link_previews(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   g_ptr_array_unref(web.asked);
 }
 
+static gboolean
+item_gone(gpointer data)
+{
+  VisibleRowWait *wait = data;
+  return item_for(wait->view, wait->message) == NULL;
+}
+
+static void
+owner_click(Fixture *f, GhMessage *message, const gchar *name)
+{
+  GtkWidget *widget = row_child(row_for(f->view, message), name);
+  if (!widget)
+    g_error("no %s under \"%s\"", name, gh_message_get_content(message));
+  click(widget);
+}
+
+static void
+owner_shows_loaded(Fixture *f, GhMessage *page, GhMessage *image, guint asked, OwnerWeb *web)
+{
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  drain_idle();
+  g_assert_false(dialog_presented(dialog));
+  g_assert_cmpuint(web->asked->len, ==, asked);
+  GhMessageRow *row = row_for(f->view, page);
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_true(shown(row_child(row, "og_image")));
+  g_assert_false(shown(row_child(row, "preview_button")));
+  g_assert_false(shown(row_child(row, "og_load_image")));
+  row = row_for(f->view, image);
+  g_assert_true(shown(row_child(row, "remote_image")));
+  g_assert_false(shown(row_child(row, "image_button")));
+}
+
+/* Owner report (groundhog/remember-consent): "the app doesn't remember when
+ * you've approved to show images/content if you change messages". Through
+ * the real view, rows and GhNetHttp: a page card, its artwork and a linked
+ * image are allowed once; leaving the conversation (for another one, or for
+ * none), coming back and scrolling the rows out and in again shows them all
+ * with no second question and no second request. An allowed load that was
+ * still running when the conversation was left loads on its next tap
+ * without asking. Charter §2.1: "don't ask again" still ends with the
+ * conversation, and turning Web Content off forgets everything. */
+static void
+test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
+{
+  g_settings_set_string(f->settings, "network-mode", "none");
+  OwnerWeb web = { gh_net_http_new(f->settings), blossom_fixture_new(),
+                   g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free),
+                   g_ptr_array_new_with_free_func(g_free) };
+  g_autoptr(GBytes) github = github_page(64 * 1024);
+  g_autoptr(GBytes) art = fixture_bytes("github-og-image.png");
+  owner_serve(&web, "github.com", github);
+  owner_serve(&web, "opengraph.githubassets.com", art);
+  owner_serve(&web, "image.nostr.build", art);
+  owner_serve(&web, "slow.example", art);
+  gint64 t = noon_today() - 400 * 600;
+  fill(f->store, t, 300);
+  GhMessage *page = add_dm(f->store, 2, 1, t + 300 * 600, OWNER_GITHUB);
+  GhMessage *image = add_dm(f->store, 2, 1, t + 301 * 600, "https://image.nostr.build/ab12cd.png");
+  GhMessage *slow = add_dm(f->store, 2, 1, t + 302 * 600, "https://slow.example/later.png");
+  GhConversation *conversation = room_of(f->store, page);
+  gh_conversation_accept(conversation);
+  gh_conversation_mark_read(conversation);
+  GhMessage *elsewhere = add_dm(f->store, 3, 1, t, "https://image.nostr.build/ab12cd.png");
+  GhConversation *other = room_of(f->store, elsewhere);
+  gh_conversation_accept(other);
+  show(f, conversation, 640, 1100);
+  static const GhHttpTransport transport = { owner_web_get, owner_web_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, &web);
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  VisibleRowWait page_visible = { f->view, page };
+  spin_until(row_visible, &page_visible);
+
+  owner_click(f, page, "preview_button");
+  owner_allow(f);
+  StateWait loaded = { f, page, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &loaded);
+  owner_click(f, page, "og_load_image");
+  owner_allow(f);
+  OgWait art_wait = { f, page };
+  spin_until(og_image_loaded, &art_wait);
+  owner_click(f, image, "image_button");
+  owner_allow(f);
+  WebWait image_wait = { f, image, GH_WEB_IMAGE };
+  spin_until(web_loaded, &image_wait);
+  g_assert_cmpuint(web.asked->len, ==, 3);
+  owner_shows_loaded(f, page, image, 3, &web);
+  owner_screenshot(f, "1-allowed");
+
+  /* The slow image: allowed, and left before it arrived. */
+  blossom_fixture_set_hold(web.server, TRUE);
+  owner_click(f, slow, "image_button");
+  owner_allow(f);
+  spin_until(web_held, web.server);
+  g_assert_cmpuint(web.asked->len, ==, 4);
+
+  /* Another conversation: the same image URL there is its own question. */
+  gh_conversation_view_set_conversation(f->view, other);
+  blossom_fixture_release_held(web.server);
+  blossom_fixture_set_hold(web.server, FALSE);
+  drain_idle();
+  owner_click(f, elsewhere, "image_button");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  owner_screenshot(f, "2-other-conversation");
+
+  /* Back: everything allowed is shown again, nothing asked or fetched. */
+  gh_conversation_view_set_conversation(f->view, conversation);
+  spin_until(row_visible, &page_visible);
+  owner_shows_loaded(f, page, image, 4, &web);
+  owner_screenshot(f, "3-back");
+
+  /* Through no conversation (a Message Request opened in between). */
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_set_conversation(f->view, conversation);
+  spin_until(row_visible, &page_visible);
+  owner_shows_loaded(f, page, image, 4, &web);
+
+  /* Recycled: scrolled far up (the rows go to other messages) and back. */
+  GtkListView *list = gh_conversation_view_get_message_list(f->view);
+  gtk_list_view_scroll_to(list, 0, GTK_LIST_SCROLL_NONE, NULL);
+  gtk_adjustment_set_value(vadjustment(f->view), 0);
+  spin_until(scrolled_up, f->view);
+  spin_until(item_gone, &page_visible);
+  gtk_list_view_scroll_to(list, timeline_length(f->view) - 1, GTK_LIST_SCROLL_NONE, NULL);
+  gtk_adjustment_set_value(vadjustment(f->view), gtk_adjustment_get_upper(vadjustment(f->view)));
+  spin_until(at_bottom, f->view);
+  spin_until(row_visible, &page_visible);
+  owner_shows_loaded(f, page, image, 4, &web);
+
+  /* The slow image's next tap loads it, without a second question. */
+  GtkWidget *button = row_child(row_for(f->view, slow), "image_button");
+  g_assert_true(shown(button));
+  click(button);
+  drain_idle();
+  g_assert_false(dialog_presented(dialog));
+  WebWait slow_wait = { f, slow, GH_WEB_IMAGE };
+  spin_until(web_loaded, &slow_wait);
+  g_assert_cmpuint(web.asked->len, ==, 5);
+  owner_screenshot(f, "4-recycled");
+
+  /* Turning Web Content off still forgets all of it (charter §2.1). */
+  g_settings_set_boolean(f->settings, "load-remote-images", TRUE);
+  g_settings_set_boolean(f->settings, "load-remote-images", FALSE);
+  drain_idle();
+  g_assert_false(web_loaded(&image_wait));
+  owner_click(f, image, "image_button");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-cancel");
+  close_dialog(ADW_DIALOG(dialog));
+  g_assert_cmpuint(web.asked->len, ==, 5);
+
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  g_settings_reset(f->settings, "load-remote-images");
+  drain_idle();
+  g_object_unref(web.http);
+  blossom_fixture_free(web.server);
+  g_hash_table_unref(web.hosts);
+  g_ptr_array_unref(web.asked);
+}
 
 int
 main(int argc, char **argv)
@@ -4553,6 +4720,7 @@ main(int argc, char **argv)
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
   ADD("web-preview-github-card", test_web_preview_github_card);
   ADD("owner-link-previews", test_owner_link_previews);
+  ADD("owner-remembered-consent", test_owner_remembered_consent);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-fixture",
                   test_web_preview_github_fixture);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-live",
