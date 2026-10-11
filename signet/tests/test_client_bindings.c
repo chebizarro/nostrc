@@ -100,6 +100,22 @@ static void test_store_binding_lifecycle(void) {
   SignetStore *st = signet_store_open(&scfg);
   CHECK(st != NULL);
 
+  /* Secret reuse checks must stay indexed even as spent tombstones grow. */
+  const char *secret_queries[] = {
+      "EXPLAIN QUERY PLAN SELECT 1 FROM agents WHERE connect_secret = ? LIMIT 1;",
+      "EXPLAIN QUERY PLAN SELECT 1 FROM agent_clients WHERE bound_secret_hash = ? LIMIT 1;",
+      "EXPLAIN QUERY PLAN SELECT 1 FROM spent_connect_secrets WHERE secret_hash = ? LIMIT 1;"};
+  for (size_t i = 0; i < G_N_ELEMENTS(secret_queries); i++) {
+    sqlite3_stmt *plan = NULL;
+    CHECK(sqlite3_prepare_v2(signet_store_get_db(st), secret_queries[i],
+                             -1, &plan, NULL) == SQLITE_OK);
+    CHECK(sqlite3_bind_text(plan, 1, "digest", -1, SQLITE_STATIC) == SQLITE_OK);
+    CHECK(sqlite3_step(plan) == SQLITE_ROW);
+    const char *detail = (const char *)sqlite3_column_text(plan, 3);
+    CHECK(detail && strstr(detail, "USING") && strstr(detail, "INDEX"));
+    sqlite3_finalize(plan);
+  }
+
   /* Bindings resolve only against a live agent whose CURRENT identity
    * matches the pinned pubkey — create the agent row first. */
   char a_sk[65], a_pk[65];

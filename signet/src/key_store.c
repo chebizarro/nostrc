@@ -184,21 +184,9 @@ static bool signet_cache_secret_hash_in_use(SignetKeyStore *ks,
         sodium_memcmp(e->connect_secret_hash, hash, 64) == 0)
       return true;
   }
-  /* Spent secrets remain valid only for their original bound client. Never
-   * let a pending secret resurrect that authority for another agent. */
-  g_hash_table_iter_init(&it, ks->ephemeral_bindings);
-  while (g_hash_table_iter_next(&it, NULL, &v)) {
-    const SignetEphemeralBinding *b = v;
-    if (b->secret_hash[0] && sodium_memcmp(b->secret_hash, hash, 64) == 0)
-      return true;
-  }
-  g_hash_table_iter_init(&it, ks->spent_secret_hashes);
-  gpointer k;
-  while (g_hash_table_iter_next(&it, &k, NULL)) {
-    const char *spent = k;
-    if (sodium_memcmp(spent, hash, 64) == 0) return true;
-  }
-  return false;
+  /* Every consumed binding secret is retained in this hash index even after
+   * revoke/rotate drops the binding. Never resurrect an old bunker URI. */
+  return g_hash_table_contains(ks->spent_secret_hashes, hash);
 }
 
 /* Cache-only: make @secret the pending one-time connect secret of @e (which
