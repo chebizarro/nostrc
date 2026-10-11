@@ -353,7 +353,7 @@ static int test_invalid_event_json(void) {
 }
 
 /* Test 8: Sign event with specific identity (via env, not stored key) */
-static int test_sign_with_identity(const char *sk_hex, const char *expected_pk_hex) {
+static int test_sign_with_identity(const char *expected_pk_hex) {
     TEST_START("Sign with explicit identity");
 
     int64_t now = (int64_t)time(NULL);
@@ -361,9 +361,9 @@ static int test_sign_with_identity(const char *sk_hex, const char *expected_pk_h
     char *event_json = make_event_json_with_pubkey(1, "identity test", now, expected_pk_hex);
     if (!event_json) TEST_FAIL("failed to create event JSON");
 
-    /* Pass the secret key hex as current_user (identity) */
+    /* The environment provisions the key; the selector is its public key. */
     char *signature = NULL;
-    int rc = nostr_nip55l_sign_event(event_json, sk_hex, "test-app", &signature);
+    int rc = nostr_nip55l_sign_event(event_json, expected_pk_hex, "test-app", &signature);
     if (rc != 0) {
         free(event_json);
         TEST_FAIL("sign with identity failed");
@@ -528,7 +528,7 @@ int main(void) {
     test_nip44_unicode(pk_hex);
     test_get_relays();
     test_invalid_event_json();
-    test_sign_with_identity(sk_hex, pk_hex);
+    test_sign_with_identity(pk_hex);
     test_large_message_encryption(pk_hex);
     test_empty_message(pk_hex);
     test_invalid_peer_pubkey();

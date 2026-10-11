@@ -64,7 +64,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (nip44_base64_encode(tail, tail_len, &pt_b64) != 0 || !pt_b64) return 0;
 
     char *ct = NULL;
-    int rc = nostr_nip55l_nip44_encrypt_b64(pt_b64, g_b_pk, g_a_sk, &ct);
+    setenv("NOSTR_SIGNER_SECKEY_HEX", g_a_sk, 1);
+    int rc = nostr_nip55l_nip44_encrypt_b64(pt_b64, g_b_pk, g_a_pk, &ct);
     if (rc != 0) {
       if (ct) abort(); /* API contract on failure */
       free(pt_b64);
@@ -73,7 +74,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     if (!ct) abort();
 
     char *back_b64 = NULL;
-    rc = nostr_nip55l_nip44_decrypt_b64(ct, g_a_pk, g_b_sk, &back_b64);
+    setenv("NOSTR_SIGNER_SECKEY_HEX", g_b_sk, 1);
+    rc = nostr_nip55l_nip44_decrypt_b64(ct, g_a_pk, g_b_pk, &back_b64);
     free(ct);
     if (rc != 0 || !back_b64) {
       free(pt_b64);
@@ -98,7 +100,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     memcpy(ct, tail, tail_len);
     ct[tail_len] = '\0';
     char *out = NULL;
-    int rc = nostr_nip55l_nip44_decrypt_b64(ct, g_a_pk, g_b_sk, &out);
+    setenv("NOSTR_SIGNER_SECKEY_HEX", g_b_sk, 1);
+    int rc = nostr_nip55l_nip44_decrypt_b64(ct, g_a_pk, g_b_pk, &out);
     if (rc == 0) {
       if (!out) abort();
       free(out);
@@ -118,7 +121,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
     memcpy(b64, tail, tail_len);
     b64[tail_len] = '\0';
     char *ct = NULL;
-    int rc = nostr_nip55l_nip44_encrypt_b64(b64, g_b_pk, g_a_sk, &ct);
+    setenv("NOSTR_SIGNER_SECKEY_HEX", g_a_sk, 1);
+    int rc = nostr_nip55l_nip44_encrypt_b64(b64, g_b_pk, g_a_pk, &ct);
     if (rc == 0) {
       if (!ct) abort();
       free(ct);

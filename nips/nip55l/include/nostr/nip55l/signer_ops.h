@@ -33,16 +33,15 @@ int nostr_nip55l_get_public_key(char **out_npub);
 /* npub of the key that `current_user` selects, i.e. the key sign/encrypt/
  * decrypt would use for the same selector (empty = the active identity).
  * This is the canonical identity the daemon's ACL is keyed on: the selector
- * itself may be empty, a key_id, an npub or even a secret key. NOT_FOUND /
+ * itself may be empty, a key_id, an npub, or a 64-hex public key. An
+ * nsec selector is rejected. NOT_FOUND /
  * INVALID_KEY when no key matches (no Secret Service at all counts as an
  * empty store); BACKEND when the key store is there but cannot be read.
  * Caller frees *out_npub with free(). */
 int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
 /* Normalise an identity selector supplied by another process (the D-Bus
- * daemon's callers, nostrc-a4w5). The in-process resolver also accepts a
- * raw secret (64-hex or nsec) as a selector; a caller over the bus must not
- * be able to do that - a hex *pubkey* passed by mistake would be used as a
- * private key. This never interprets its input as key material:
+ * daemon's callers, nostrc-a4w5). The in-process resolver follows the same
+ * rules: selectors never provide secret-key material.
  *   NULL / ""   -> "" (the active identity)
  *   nsec1...    -> NOSTR_SIGNER_ERROR_INVALID_ARG
  *   64-hex      -> an x-only public key, i.e. the same as its npub
@@ -87,7 +86,7 @@ int nostr_nip55l_sign_event_json(const char *event_json,
  * has already computed the message hash and needs a raw Schnorr signature
  * without the event serialization/hashing that sign_event performs.
  * @hash_hex: 64-character hex string representing the 32-byte hash to sign
- * @current_user: identity selector (npub, key_id, nsec, hex, or NULL)
+ * @current_user: identity selector (npub, key_id, hex public key, or NULL)
  * @out_signature: receives newly allocated 128-char hex Schnorr signature
  * Caller frees *out_signature with free(). */
 int nostr_nip55l_sign_hash(const char *hash_hex,

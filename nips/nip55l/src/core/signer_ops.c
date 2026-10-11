@@ -437,16 +437,27 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
   return 0;
 }
 
-/* Resolve a secret key for the current user. Accepts:
- * - 64-hex seckey
- * - nsec1... bech32
- * - env NOSTR_SIGNER_SECKEY_HEX or NOSTR_SIGNER_NSEC (fallbacks)
+/* Resolve a secret key for an identity selector. Key material enters only
+ * through StoreKey, the environment, or the key store. A 64-hex selector is
+ * an x-only public key, never a secret key; nsec selectors are invalid.
  * On success, returns newly allocated 64-hex in *out_sk_hex. NOT_FOUND /
  * INVALID_KEY when no key matches; BACKEND when the key store cannot be read
  * (see "Key store reads").
  */
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_sk_hex=NULL;
+  if (current_user && strncmp(current_user, "nsec1", 5) == 0)
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  if (is_hex_64(current_user)) {
+    uint8_t pk[32];
+    char *npub = NULL;
+    if (!nostr_hex2bin(pk, current_user, sizeof pk) ||
+        nostr_nip19_encode_npub(pk, &npub) != 0 || !npub)
+      return NOSTR_SIGNER_ERROR_BACKEND;
+    int rc = resolve_seckey_hex(npub, out_sk_hex);
+    free(npub);
+    return rc;
+  }
   /* nostrc-7g9d: honour the in-process cache before the env/libsecret path
    * so a key freshly stored via StoreKey is visible immediately. When the
    * caller supplies a specific selector (identity) we only match if the
@@ -532,13 +543,6 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     }
 #endif
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
-  }
-  if (is_hex_64(cand)) { *out_sk_hex = strdup(cand); return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND; }
-  if (strncmp(cand, "nsec1", 5)==0) {
-    uint8_t sk[32]; if (nostr_nip19_decode_nsec(cand, sk)!=0) return NOSTR_SIGNER_ERROR_INVALID_KEY;
-    *out_sk_hex = bin_to_hex(sk, 32);
-    secure_wipe(sk, sizeof sk);
-    return *out_sk_hex?0:NOSTR_SIGNER_ERROR_BACKEND;
   }
   /* An npub selects exactly that identity, never another key: the
    * environment key's, else a stored one (nostrc-a4w5). */

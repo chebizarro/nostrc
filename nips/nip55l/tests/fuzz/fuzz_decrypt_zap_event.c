@@ -24,6 +24,7 @@ static void ensure_key(void) {
   if (g_sk_hex) return;
   g_sk_hex = nostr_key_generate_private();
   if (!g_sk_hex) abort();
+  setenv("NOSTR_SIGNER_SECKEY_HEX", g_sk_hex, 1);
 }
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size);
@@ -36,7 +37,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   memcpy(js, data, size);
   js[size] = '\0';
   char *out = NULL;
-  int rc = nostr_nip55l_decrypt_zap_event(js, g_sk_hex, &out);
+  int rc = nostr_nip55l_decrypt_zap_event(js, NULL, &out);
   if (rc == 0) {
     if (!out) abort();
     free(out);
