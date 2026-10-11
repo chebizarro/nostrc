@@ -353,6 +353,47 @@ send_auth(gpointer data, const gchar *signed_event_json, gpointer user_data,
   return TRUE;
 }
 
+static void
+on_event_written(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GhGnostrHandle *handle = data;
+  g_autoptr(GError) error = NULL;
+  if (!gh_relay_gnostr_write_finish(result, &error) && !handle->closed) {
+    g_autofree gchar *detail = g_strdup_printf("EVENT write failed: %s",
+                                               error->message);
+    gh_relay_scope_notice(handle->scope, handle->url, GH_RELAY_NOTICE_ERROR,
+                           NULL, FALSE, detail);
+  }
+  handle_unref(handle);
+}
+
+/* The scope's own connection, never a new one (gh-relay-scope.h). */
+static gboolean
+send_event(gpointer data, const gchar *signed_event_json, gpointer user_data,
+           GError **error)
+{
+  (void)user_data;
+  GhGnostrHandle *handle = data;
+  NostrRelay *core = handle->relay ? gnostr_relay_get_core_relay(handle->relay) : NULL;
+  if (handle->closed || handle->connect_pending || !core ||
+      !nostr_relay_is_established(core)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        "relay connection not established");
+    return FALSE;
+  }
+  g_autofree gchar *frame = gh_relay_gnostr_event_frame("EVENT", signed_event_json);
+  if (!frame) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                        "event parse failed");
+    return FALSE;
+  }
+  g_atomic_int_inc(&handle->refs); /* held by the write */
+  gh_relay_gnostr_write_async(handle->relay, frame, handle->cancellable,
+                              on_event_written, handle);
+  return TRUE;
+}
+
 /* The relay CLOSED the REQ; issue a fresh one on the same connection. */
 static void
 resubscribe(gpointer data, gpointer user_data)
@@ -388,4 +429,8 @@ const GhRelayTransport gh_relay_gnostr_transport = {
 const GhRelayAuthTransport gh_relay_gnostr_auth_transport = {
   .send_auth = send_auth,
   .resubscribe = resubscribe,
+};
+
+const GhRelayWriteTransport gh_relay_gnostr_write_transport = {
+  .send_event = send_event,
 };

@@ -445,6 +445,19 @@ send_auth_frame(SoupHandle *handle, const gchar *signed_event_json, GError **err
   return TRUE;
 }
 
+static gboolean
+send_event_frame(SoupHandle *handle, const gchar *signed_event_json, GError **error)
+{
+  g_autofree gchar *frame = gh_relay_gnostr_event_frame("EVENT", signed_event_json);
+  if (handle->closed || !frame || !ws_open(handle)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED,
+                        "EVENT frame not sendable");
+    return FALSE;
+  }
+  send_text(handle, frame);
+  return TRUE;
+}
+
 /* ---- public ---------------------------------------------------------------------- */
 
 gpointer
@@ -488,6 +501,12 @@ gboolean
 gh_relay_soup_scope_send_auth(gpointer data, const gchar *signed_event_json, GError **error)
 {
   return send_auth_frame(data, signed_event_json, error);
+}
+
+gboolean
+gh_relay_soup_scope_send_event(gpointer data, const gchar *signed_event_json, GError **error)
+{
+  return send_event_frame(data, signed_event_json, error);
 }
 
 /* The relay CLOSED the REQ; issue a fresh one on the same connection. */
@@ -575,6 +594,13 @@ vt_scope_resubscribe(gpointer handle, gpointer data)
   gh_relay_soup_scope_resubscribe(handle);
 }
 
+static gboolean
+vt_scope_send_event(gpointer handle, const gchar *json, gpointer data, GError **error)
+{
+  (void)data;
+  return gh_relay_soup_scope_send_event(handle, json, error);
+}
+
 static gpointer
 vt_publish_open(GhRelayPublish *publish, const gchar *url, const gchar *event_json,
                 gpointer data, GError **error)
@@ -610,3 +636,4 @@ const GhRelayPublishTransport gh_relay_soup_publish_transport = { vt_publish_ope
                                                                   vt_publish_close };
 const GhRelayPublishAuthTransport gh_relay_soup_publish_auth_transport = { vt_publish_send_auth,
                                                                            vt_publish_resend };
+const GhRelayWriteTransport gh_relay_soup_write_transport = { vt_scope_send_event };

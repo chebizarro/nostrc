@@ -2736,6 +2736,22 @@ if (TARGET groundhog-net AND TARGET groundhog-relay AND NOT GROUNDHOG_WITHOUT_TO
     target_link_libraries(test-groundhog-nip46-nak PRIVATE groundhog-net-relay)
     target_compile_definitions(test-groundhog-nip46-nak PRIVATE GROUNDHOG_NIP46_NET_TEST=1)
   endif()
+  # Bulk NIP-17 decrypt through `nak bunker` on the app's own path: the real
+  # account controller, relay lists and DM inbox, every connection through the
+  # network-mode dispatcher. Throughput and signer-relay connections
+  # (relogin-signer-groups). Exit 77 (skipped) without nak.
+  if (TARGET test-groundhog-nip46-nak AND TARGET groundhog-dm-inbox AND TARGET nostr_nip59_core)
+    add_executable(test-groundhog-nip46-inbox-nak tests/app/test_nip46_inbox_nak.c)
+    target_include_directories(test-groundhog-nip46-inbox-nak PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/relay)
+    target_link_libraries(test-groundhog-nip46-inbox-nak PRIVATE groundhog-dm-inbox
+      groundhog-net-relay nostr_nip59_core PkgConfig::GROUNDHOG_RELAY_WIRE_TEST)
+    target_compile_options(test-groundhog-nip46-inbox-nak PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-groundhog-nip46-inbox-nak groundhog-test-schemas)
+    add_test(NAME groundhog-nip46-inbox-nak COMMAND test-groundhog-nip46-inbox-nak)
+    set_tests_properties(groundhog-nip46-inbox-nak PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+  endif()
   if (TEST groundhog-relay-wire)
     set_tests_properties(groundhog-relay-wire PROPERTIES TIMEOUT 60)
   endif()

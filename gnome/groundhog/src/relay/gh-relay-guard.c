@@ -251,6 +251,7 @@ gh_relay_guard_install(GSettings *settings)
     g_atomic_int_set(&refusing, 1);
   gh_relay_scope_set_default_transport(settings ? &gh_relay_guard_transport : NULL,
                                        settings ? &gh_relay_guard_auth_transport : NULL, NULL);
+  gh_relay_scope_set_default_write_transport(settings ? &gh_relay_guard_write_transport : NULL);
   gh_relay_publish_set_default_transport(settings ? &gh_relay_guard_publish_transport : NULL,
                                          settings ? &gh_relay_guard_publish_auth_transport : NULL,
                                          NULL);
@@ -319,6 +320,20 @@ guard_scope_send_auth(gpointer data, const gchar *json, gpointer transport_data,
     return FALSE;
   }
   return handle->direct_auth->send_auth(handle->inner, json, NULL, error);
+}
+
+/* Only the GNostrRelay direct transport can write on a scope connection. */
+static gboolean
+guard_scope_send_event(gpointer data, const gchar *json, gpointer transport_data,
+                       GError **error)
+{
+  (void)transport_data;
+  GuardHandle *handle = data;
+  if (!handle->inner || handle->direct != &gh_relay_gnostr_transport) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
+    return FALSE;
+  }
+  return gh_relay_gnostr_write_transport.send_event(handle->inner, json, NULL, error);
 }
 
 static void
@@ -392,3 +407,4 @@ const GhRelayPublishTransport gh_relay_guard_publish_transport = { guard_publish
 const GhRelayPublishAuthTransport gh_relay_guard_publish_auth_transport = {
   guard_publish_send_auth, guard_publish_resend
 };
+const GhRelayWriteTransport gh_relay_guard_write_transport = { guard_scope_send_event };

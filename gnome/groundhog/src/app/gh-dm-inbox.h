@@ -76,6 +76,12 @@ typedef enum {
 #define GH_DM_INBOX_QUEUE_LIMIT      1024
 /* Unwraps waiting on the signer at once (each may be a visible approval). */
 #define GH_DM_INBOX_MAX_IN_FLIGHT    4
+/* With a remote (NIP-46) signer nothing is shown per decrypt and each one is
+ * a relay round trip: a backfill keeps this many unwraps in flight, which the
+ * NIP-46 session pipelines over its one connection per relay (bounded and
+ * paced there). One at a time made a 900-message backfill take a quarter of
+ * an hour. */
+#define GH_DM_INBOX_REMOTE_IN_FLIGHT 12
 
 typedef struct {
   guint received;   /* verified kind-1059 events delivered (each relay's copy) */

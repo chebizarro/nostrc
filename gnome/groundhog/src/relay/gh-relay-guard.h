@@ -53,6 +53,7 @@ void gh_relay_guard_install(GSettings *settings);
 /* The guard's vtables (transport_data unused). */
 extern const GhRelayTransport gh_relay_guard_transport;
 extern const GhRelayAuthTransport gh_relay_guard_auth_transport;
+extern const GhRelayWriteTransport gh_relay_guard_write_transport;
 extern const GhRelayPublishTransport gh_relay_guard_publish_transport;
 extern const GhRelayPublishAuthTransport gh_relay_guard_publish_auth_transport;
 

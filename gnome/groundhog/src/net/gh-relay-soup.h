@@ -49,6 +49,9 @@ void gh_relay_soup_scope_close(gpointer handle);
 gboolean gh_relay_soup_scope_send_auth(gpointer handle, const gchar *signed_event_json,
                                        GError **error);
 void gh_relay_soup_scope_resubscribe(gpointer handle);
+/* ["EVENT",...] on the scope handle's live WebSocket (GhRelayWriteTransport). */
+gboolean gh_relay_soup_scope_send_event(gpointer handle, const gchar *signed_event_json,
+                                        GError **error);
 
 gpointer gh_relay_soup_publish_open(GhRelayPublish *publish, const gchar *url,
                                     const gchar *event_json, GProxyResolver *resolver,
@@ -64,6 +67,7 @@ gboolean gh_relay_soup_publish_resend(gpointer handle, GError **error);
  * themselves (NT-10 parity). */
 extern const GhRelayTransport gh_relay_soup_transport;
 extern const GhRelayAuthTransport gh_relay_soup_auth_transport;
+extern const GhRelayWriteTransport gh_relay_soup_write_transport;
 extern const GhRelayPublishTransport gh_relay_soup_publish_transport;
 extern const GhRelayPublishAuthTransport gh_relay_soup_publish_auth_transport;
 

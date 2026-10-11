@@ -281,10 +281,20 @@ refresh(GhDmInbox *self)
 
 static void unwrap_done(GObject *source, GAsyncResult *result, gpointer data);
 
+static guint
+effective_in_flight(GhDmInbox *self)
+{
+  if (self->accounts &&
+      gh_account_controller_get_active_backend(self->accounts) == GH_SIGNER_BACKEND_NIP46)
+    return MAX(self->max_in_flight, GH_DM_INBOX_REMOTE_IN_FLIGHT);
+  return self->max_in_flight;
+}
+
 static void
 pump(GhDmInbox *self)
 {
-  while (self->counters.in_flight < self->max_in_flight && !g_queue_is_empty(&self->queue)) {
+  guint limit = effective_in_flight(self);
+  while (self->counters.in_flight < limit && !g_queue_is_empty(&self->queue)) {
     Job *job = g_queue_pop_head(&self->queue);
     UnwrapCall *call = g_new0(UnwrapCall, 1);
     g_weak_ref_init(&call->inbox, self);
