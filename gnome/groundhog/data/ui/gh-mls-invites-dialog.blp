@@ -7,7 +7,9 @@ using Adw 1;
 // first, following "invite-received". Like a message request, nothing is
 // joined, fetched or looked up until the user accepts: Accept joins the
 // group (its conversation is listed and read), Decline forgets the
-// invitation.
+// invitation. An invitation that arrived but could not be opened (made
+// for a key this device does not have: relogin-signer-groups) is listed
+// under refused_group, with Dismiss only: nothing here can open it.
 template $GhMlsInvitesDialog: Adw.Dialog {
   title: _("Group Invitations");
   content-width: 460;
@@ -28,6 +30,13 @@ template $GhMlsInvitesDialog: Adw.Dialog {
             // Rows from C.
             Adw.PreferencesGroup invites_group {
               description: _("Nothing is joined until you accept. For someone you haven’t accepted as a contact, only their public key is shown and nothing is looked up about them.");
+            }
+
+            // Rows from C; hidden while empty.
+            Adw.PreferencesGroup refused_group {
+              title: _("Could Not Be Opened");
+              description: _("These invitations were made for a key this device doesn’t have, for example one from another device or from before this account’s messages were forgotten here. Ask the sender to invite you again.");
+              visible: false;
             }
           };
         }

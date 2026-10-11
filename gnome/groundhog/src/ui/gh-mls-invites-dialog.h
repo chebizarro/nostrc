@@ -20,8 +20,15 @@ G_BEGIN_DECLS
  * which emits "open-group" (GhMlsGroup) and closes the dialog. The dialog
  * closes when its service goes (account switch).
  *
+ * Invitations that arrived but could not be opened
+ * (gh_mls_service_list_refused_invites(), live through "invite-refused") are
+ * listed under "Could Not Be Opened": who sent it (as above) and why --
+ * made for a key this device doesn't have, so only a new invitation can
+ * work -- with Dismiss (gh_mls_service_dismiss_refused_invite()).
+ *
  * Actions (widget actions): mls-invites.accept (s: wrapper id),
- * mls-invites.decline (s: wrapper id), mls-invites.open (s: group id).
+ * mls-invites.decline (s: wrapper id), mls-invites.open (s: group id),
+ * mls-invites.dismiss (s: wrapper id of a refused invitation).
  */
 #define GH_TYPE_MLS_INVITES_DIALOG (gh_mls_invites_dialog_get_type())
 G_DECLARE_FINAL_TYPE(GhMlsInvitesDialog, gh_mls_invites_dialog, GH, MLS_INVITES_DIALOG,
@@ -29,9 +36,11 @@ G_DECLARE_FINAL_TYPE(GhMlsInvitesDialog, gh_mls_invites_dialog, GH, MLS_INVITES_
 
 GhMlsInvitesDialog *gh_mls_invites_dialog_new(const GhMlsUiContext *context);
 
-/* For tests: the listed invitations, a row's title and subtitle by wrapper
- * id (FALSE: not listed), and the last toast's text. */
+/* For tests: the listed invitations (and refused ones), a row's title and
+ * subtitle by wrapper id, refused rows included (FALSE: not listed), and
+ * the last toast's text. */
 guint gh_mls_invites_dialog_get_n_invites(GhMlsInvitesDialog *self);
+guint gh_mls_invites_dialog_get_n_refused(GhMlsInvitesDialog *self);
 gboolean gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id,
                                         const gchar **title, const gchar **subtitle);
 const gchar *gh_mls_invites_dialog_get_last_toast(GhMlsInvitesDialog *self);

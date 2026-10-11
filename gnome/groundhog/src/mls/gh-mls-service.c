@@ -36,6 +36,9 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
 #define KEY_PACKAGE_CURSOR "mls/key-package"
 #define KEY_PACKAGE_RELAY_SET "gh/key-package-write-relays"
 #define KEY_PACKAGE_CANDIDATE_RELAYS "gh/key-package-candidate-relays"
+/* Invitations that could not be opened, one per line:
+ * "<wrapper hex> <inviter hex> <created_at> <0|1 key missing>". */
+#define REFUSED_WELCOMES "gh/refused-welcomes"
 #define MAX_KEY_PACKAGE_CANDIDATE_RELAYS 256
 #define KEY_PACKAGE_RELAY_SETTLE_MS 100
 #define KEY_PACKAGE_RELAY_MAX_WAIT_MS 1000
@@ -341,7 +344,7 @@ struct _GhMlsService {
 
 enum { PROP_0, PROP_KEY_PACKAGE_STATE, PROP_IDENTITY_STATE, PROP_KEY_PACKAGE_HELD, N_PROPS };
 static GParamSpec *props[N_PROPS];
-enum { SIGNAL_INVITE_RECEIVED, SIGNAL_GROUP_ADDED, N_SIGNALS };
+enum { SIGNAL_INVITE_RECEIVED, SIGNAL_GROUP_ADDED, SIGNAL_INVITE_REFUSED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 static void gh_mls_service_list_model_init(GListModelInterface *iface);
@@ -1146,6 +1149,16 @@ gh_mls_invite_free(GhMlsInvite *invite)
   g_free(invite->inviter);
   g_free(invite->group_name);
   g_strfreev(invite->relays);
+  g_free(invite);
+}
+
+void
+gh_mls_refused_invite_free(GhMlsRefusedInvite *invite)
+{
+  if (!invite)
+    return;
+  g_free(invite->wrapper_id);
+  g_free(invite->inviter);
   g_free(invite);
 }
 
@@ -6219,6 +6232,115 @@ welcomes_pump(GhMlsGroup *group)
 
 /* ---- Welcomes in: the inbox sink and invitations -------------------------------------- */
 
+/* The stored refused invitations; NULL on a storage failure. */
+static GPtrArray *
+refused_load(GhMlsService *self, GError **error)
+{
+  GPtrArray *out = g_ptr_array_new_with_free_func((GDestroyNotify)gh_mls_refused_invite_free);
+  guint8 *stored = NULL;
+  size_t len = 0;
+  MarmotError err = self->storage->mls_load(self->storage->ctx, REFUSED_WELCOMES,
+                                           self->account_key, 32, &stored, &len);
+  if (err == MARMOT_ERR_STORAGE_NOT_FOUND)
+    return out;
+  if (err != MARMOT_OK) {
+    free(stored);
+    g_ptr_array_unref(out);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Could not read the invitations that could not be opened (%d)", err);
+    return NULL;
+  }
+  g_autofree gchar *text = g_strndup((const gchar *)stored, len);
+  free(stored);
+  g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
+  for (guint i = 0; lines[i]; i++) {
+    g_auto(GStrv) f = g_strsplit(lines[i], " ", 4);
+    if (g_strv_length(f) != 4 || !lower_hex64(f[0]) || !lower_hex64(f[1]))
+      continue;
+    GhMlsRefusedInvite *invite = g_new0(GhMlsRefusedInvite, 1);
+    invite->wrapper_id = g_strdup(f[0]);
+    invite->inviter = g_strdup(f[1]);
+    invite->created_at = g_ascii_strtoll(f[2], NULL, 10);
+    invite->key_missing = g_str_equal(f[3], "1");
+    g_ptr_array_add(out, invite);
+  }
+  return out;
+}
+
+static gboolean
+refused_save(GhMlsService *self, GPtrArray *invites)
+{
+  while (invites->len > GH_MLS_REFUSED_INVITES_MAX)
+    g_ptr_array_remove_index(invites, 0);   /* the oldest go first */
+  if (invites->len == 0) {
+    MarmotError err = self->storage->mls_delete(self->storage->ctx, REFUSED_WELCOMES,
+                                               self->account_key, 32);
+    return err == MARMOT_OK || err == MARMOT_ERR_STORAGE_NOT_FOUND;
+  }
+  g_autoptr(GString) text = g_string_new(NULL);
+  for (guint i = 0; i < invites->len; i++) {
+    GhMlsRefusedInvite *invite = g_ptr_array_index(invites, i);
+    g_string_append_printf(text, "%s%s %s %" G_GINT64_FORMAT " %d", i ? "\n" : "",
+                           invite->wrapper_id, invite->inviter, invite->created_at,
+                           invite->key_missing ? 1 : 0);
+  }
+  return self->storage->mls_store(self->storage->ctx, REFUSED_WELCOMES, self->account_key, 32,
+                                  (const guint8 *)text->str, text->len) == MARMOT_OK;
+}
+
+/* Inside the Welcome's transaction: the refusal is said, not just logged. */
+static gboolean
+refused_record(GhMlsService *self, const GhNip17Message *welcome, MarmotError err)
+{
+  if (!welcome->sender_pubkey || !lower_hex64(welcome->sender_pubkey))
+    return TRUE;
+  g_autoptr(GPtrArray) invites = refused_load(self, NULL);
+  if (!invites)
+    return FALSE;
+  for (guint i = 0; i < invites->len; i++)
+    if (g_str_equal(((GhMlsRefusedInvite *)g_ptr_array_index(invites, i))->wrapper_id,
+                    welcome->wrap_id))
+      return TRUE;
+  GhMlsRefusedInvite *invite = g_new0(GhMlsRefusedInvite, 1);
+  invite->wrapper_id = g_strdup(welcome->wrap_id);
+  invite->inviter = g_strdup(welcome->sender_pubkey);
+  invite->created_at = welcome->created_at;
+  invite->key_missing = err == MARMOT_ERR_KEY_NOT_FOUND;
+  g_ptr_array_add(invites, invite);
+  return refused_save(self, invites);
+}
+
+GPtrArray *
+gh_mls_service_list_refused_invites(GhMlsService *self, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), NULL);
+  return refused_load(self, error);
+}
+
+gboolean
+gh_mls_service_dismiss_refused_invite(GhMlsService *self, const gchar *wrapper_id,
+                                      GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  g_autoptr(GPtrArray) invites = refused_load(self, error);
+  if (!invites)
+    return FALSE;
+  for (guint i = 0; i < invites->len; i++) {
+    GhMlsRefusedInvite *invite = g_ptr_array_index(invites, i);
+    if (g_strcmp0(invite->wrapper_id, wrapper_id) != 0)
+      continue;
+    g_ptr_array_remove_index(invites, i);
+    if (!refused_save(self, invites)) {
+      g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                          "Could not forget the invitation");
+      return FALSE;
+    }
+    return TRUE;
+  }
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "No such invitation");
+  return FALSE;
+}
+
 static gboolean
 welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_url,
              GError **error)
@@ -6247,6 +6369,12 @@ welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_ur
   }
   /* When the Welcome was made (its seal-authenticated rumor's created_at,
    * bounded): the joined group is read from then (review M3). */
+  if (err != MARMOT_OK && !refused_record(self, welcome, err)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not record an invitation that could not be opened");
+    gh_store_rollback(self->store);
+    return FALSE;
+  }
   g_autofree gchar *time_scope = welcome_time_scope(wrapper);
   gint64 made = CLAMP(welcome->created_at, 1, now_s(self));
   if ((err == MARMOT_OK &&
@@ -6258,8 +6386,11 @@ welcome_sink(gpointer data, const GhNip17Message *welcome, const gchar *relay_ur
   }
   if (err == MARMOT_OK)
     g_signal_emit(self, signals[SIGNAL_INVITE_RECEIVED], 0, welcome->wrap_id);
-  else
-    g_debug("Groundhog refused an encrypted-group invitation: %s", marmot_error_string(err));
+  else {
+    g_message("Groundhog could not open an encrypted-group invitation: %s",
+              marmot_error_string(err));
+    g_signal_emit(self, signals[SIGNAL_INVITE_REFUSED], 0, welcome->wrap_id);
+  }
   return TRUE;
 }
 
@@ -9567,6 +9698,9 @@ gh_mls_service_class_init(GhMlsServiceClass *klass)
   g_object_class_install_properties(object_class, N_PROPS, props);
   signals[SIGNAL_INVITE_RECEIVED] =
     g_signal_new("invite-received", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                 NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_INVITE_REFUSED] =
+    g_signal_new("invite-refused", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                  NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_GROUP_ADDED] =
     g_signal_new("group-added", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,

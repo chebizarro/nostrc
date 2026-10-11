@@ -1336,6 +1336,129 @@ test_gui_invites_standalone(void)
   world_down(&w);
 }
 
+/* ---- --gui: an invitation that could not be opened (relogin-signer-groups) ---------------- */
+
+/* Opt-in evidence: GROUNDHOG_SCREENSHOT_PREFIX=/tmp/x saves /tmp/x-<name>.png. */
+static void
+save_root_png(GtkWidget *widget, const gchar *name)
+{
+  const gchar *prefix = g_getenv("GROUNDHOG_SCREENSHOT_PREFIX");
+  if (!prefix || !*prefix)
+    return;
+  GtkWidget *root = GTK_WIDGET(gtk_widget_get_root(widget));
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(root);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  graphene_rect_t bounds;
+  gsk_render_node_get_bounds(node, &bounds);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(root));
+  g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
+  g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, name);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+  g_test_message("saved %s", path);
+}
+
+static gboolean
+inbox_withheld(gpointer data)
+{
+  WireRelay *relay = data;
+  return relay->withheld && g_hash_table_size(relay->withheld) > 0;
+}
+
+typedef struct { App *app; const gchar *wrap_id; } WelcomeWait;
+
+static gboolean
+welcome_processed(gpointer data)
+{
+  WelcomeWait *wait = data;
+  return wait->app->store && processed_welcome(wait->app, wait->wrap_id, NULL, NULL);
+}
+
+static void
+wipe_dir(const gchar *path)
+{
+  GDir *dir = g_dir_open(path, 0, NULL);
+  if (dir) {
+    const gchar *name;
+    while ((name = g_dir_read_name(dir))) {
+      g_autofree gchar *child = g_build_filename(path, name, NULL);
+      if (g_file_test(child, G_FILE_TEST_IS_DIR) && !g_file_test(child, G_FILE_TEST_IS_SYMLINK))
+        wipe_dir(child);
+      g_remove(child);
+    }
+    g_dir_close(dir);
+  }
+}
+
+/* The owner's case: an invitation made for a KeyPackage whose private key
+ * the account's store on this device does not have (here: the store was
+ * started afresh after the KeyPackage was published; in the field also a
+ * KeyPackage from another device or app). libmarmot refuses the Welcome
+ * ("matching key not found"); it used to be only a debug line and the
+ * invitations stayed "No Invitations". Now it is listed as one that could
+ * not be opened, with its cause and Dismiss, and counted in the sidebar. */
+static void
+test_gui_refused_invitation(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+
+  /* Alice invites Bob with his current KeyPackage; the Welcome waits on
+   * Bob's inbox relay. */
+  w.x.withhold_new = TRUE;
+  GhMlsGroup *group = create_group(alice, "Book Club", (const guint[]){ BOB }, 1);
+  g_assert_nonnull(group);
+  spin_until(inbox_withheld, &w.x, "Alice's Welcome on Bob's inbox relay");
+  w.x.withhold_new = FALSE;
+  g_autoptr(GPtrArray) wraps = g_ptr_array_new_with_free_func(g_free);
+  GHashTableIter iter;
+  gpointer id;
+  g_hash_table_iter_init(&iter, w.x.withheld);
+  while (g_hash_table_iter_next(&iter, &id, NULL))
+    g_ptr_array_add(wraps, g_strdup(id));
+  g_assert_cmpuint(wraps->len, ==, 1);
+
+  /* Bob's store on this device starts empty: the KeyPackage's key is gone. */
+  app_store_down(bob);
+  wipe_dir(bob->data_dir);
+  app_store_up(bob);
+  spin_until(key_package_published, bob, "Bob's new KeyPackage");
+
+  wire_relay_release(&w.x, g_ptr_array_index(wraps, 0));
+  WelcomeWait processed = { bob, g_ptr_array_index(wraps, 0) };
+  spin_until(welcome_processed, &processed, "Bob's verdict on the Welcome");
+
+  GhMlsUiContext context = { .service = bob->service, .accounts = bob->accounts,
+                              .model = bob->model, .settings = bob->settings };
+  GhMlsInvitesDialog *dialog = gh_mls_invites_dialog_new(&context);
+  adw_dialog_present(ADW_DIALOG(dialog), NULL);
+  spin_until(gh_test_dialog_shown, dialog, "the invitations shown");
+  drain();
+  save_root_png(GTK_WIDGET(dialog), "refused-invitation");
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(dialog), ==, 0);
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(dialog), ==, 1);
+  const gchar *title = NULL, *subtitle = NULL;
+  g_assert_true(gh_mls_invites_dialog_describe(dialog, g_ptr_array_index(wraps, 0),
+                                               &title, &subtitle));
+  g_assert_nonnull(strstr(title, "Invitation from "));
+  g_assert_cmpstr(subtitle, ==,
+                  "Made for a key this device doesn\u2019t have. Ask them to invite you again.");
+
+  gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.dismiss", "s",
+                             (const gchar *)g_ptr_array_index(wraps, 0));
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(dialog), ==, 0);
+  adw_dialog_force_close(ADW_DIALOG(dialog));
+  drain();
+  world_down(&w);
+}
+
 /* ---- --gui: the build's own flag --------------------------------------------------------- */
 
 /* A widget of type titled title that is on screen, or NULL. */
@@ -2438,6 +2561,7 @@ main(int argc, char **argv)
                     test_gui_new_group_format_changed);
 #endif
     g_test_add_func("/groundhog/mls-ui-gui/invites-standalone", test_gui_invites_standalone);
+    g_test_add_func("/groundhog/mls-ui-gui/refused-invitation", test_gui_refused_invitation);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

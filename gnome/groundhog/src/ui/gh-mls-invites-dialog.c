@@ -52,9 +52,11 @@ struct _GhMlsInvitesDialog {
   AdwToastOverlay *toasts;
   GtkStack *stack;
   AdwPreferencesGroup *invites_group;
+  AdwPreferencesGroup *refused_group;
 
   GhMlsUiContext context;   /* service weak-watched, the others referenced */
   GPtrArray *rows;          /* GhMlsInviteRow in invites_group */
+  GPtrArray *refused_rows;  /* AdwActionRow in refused_group ("wrapper-id" data) */
   gchar *last_toast;
 };
 
@@ -81,6 +83,48 @@ drop_stale_rows(gpointer data)
   return G_SOURCE_REMOVE;
 }
 
+/* "Could Not Be Opened": invitations libmarmot refused, said as such. */
+static void
+add_refused_rows(GhMlsInvitesDialog *self)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) refused = self->context.service
+    ? gh_mls_service_list_refused_invites(self->context.service, &error) : NULL;
+  if (error)
+    g_message("Groundhog could not list the invitations it could not open: %s",
+              error->message);
+  for (guint i = 0; refused && i < refused->len; i++) {
+    GhMlsRefusedInvite *invite = g_ptr_array_index(refused, i);
+    gboolean contact = gh_mls_is_contact(self->context.model, invite->inviter);
+    const gchar *name = contact && self->context.display_name
+      ? self->context.display_name(invite->inviter, self->context.names_data) : NULL;
+    g_autofree gchar *npub = gh_recipient_npub_short(invite->inviter);
+    const gchar *who = name && *name ? name : npub;
+    AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+    g_autofree gchar *title = g_strdup_printf(_("Invitation from %s"), who);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+    adw_action_row_set_subtitle(row, invite->key_missing
+      ? _("Made for a key this device doesn’t have. Ask them to invite you again.")
+      : _("It could not be read. Ask them to invite you again."));
+    GtkWidget *icon = gtk_image_new_from_icon_name("dialog-warning-symbolic");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(icon), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                   _("Could not be opened"), -1);
+    adw_action_row_add_prefix(row, icon);
+    GtkWidget *dismiss = gtk_button_new_with_mnemonic(_("_Dismiss"));
+    gtk_widget_set_valign(dismiss, GTK_ALIGN_CENTER);
+    gtk_actionable_set_action_name(GTK_ACTIONABLE(dismiss), "mls-invites.dismiss");
+    gtk_actionable_set_action_target(GTK_ACTIONABLE(dismiss), "s", invite->wrapper_id);
+    g_autofree gchar *dismiss_label = g_strdup_printf(_("Dismiss the invitation from %s"), who);
+    gtk_accessible_update_property(GTK_ACCESSIBLE(dismiss), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                   dismiss_label, -1);
+    adw_action_row_add_suffix(row, dismiss);
+    g_object_set_data_full(G_OBJECT(row), "wrapper-id", g_strdup(invite->wrapper_id), g_free);
+    adw_preferences_group_add(self->refused_group, GTK_WIDGET(row));
+    g_ptr_array_add(self->refused_rows, row);
+  }
+}
+
 static void
 refresh(GhMlsInvitesDialog *self)
 {
@@ -91,7 +135,7 @@ refresh(GhMlsInvitesDialog *self)
    * failed".  Clearing the root's focus first prevents the stale callback.
    * Ref old rows too, then drop the refs on the next idle, so GTK's
    * post-unparent bookkeeping can still inspect them safely. */
-  if (self->rows->len > 0) {
+  if (self->rows->len > 0 || self->refused_rows->len > 0) {
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
     if (root)
       gtk_root_set_focus(root, NULL);
@@ -106,6 +150,17 @@ refresh(GhMlsInvitesDialog *self)
       adw_preferences_group_remove(self->invites_group, row);
     }
     g_ptr_array_set_size(self->rows, 0);
+  }
+  if (self->refused_rows->len > 0) {
+    if (!stale)
+      stale = g_ptr_array_new();
+    for (guint i = 0; i < self->refused_rows->len; i++) {
+      GtkWidget *row = g_ptr_array_index(self->refused_rows, i);
+      g_object_ref(row);
+      g_ptr_array_add(stale, row);
+      adw_preferences_group_remove(self->refused_group, row);
+    }
+    g_ptr_array_set_size(self->refused_rows, 0);
   }
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) invites = self->context.service
@@ -157,7 +212,11 @@ refresh(GhMlsInvitesDialog *self)
     adw_preferences_group_add(self->invites_group, GTK_WIDGET(row));
     g_ptr_array_add(self->rows, row);
   }
-  gtk_stack_set_visible_child_name(self->stack, self->rows->len > 0 ? "list" : "empty");
+  add_refused_rows(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->invites_group), self->rows->len > 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->refused_group), self->refused_rows->len > 0);
+  gtk_stack_set_visible_child_name(self->stack,
+    self->rows->len > 0 || self->refused_rows->len > 0 ? "list" : "empty");
   if (stale)
     g_idle_add(drop_stale_rows, stale);
 }
@@ -210,6 +269,20 @@ action_decline(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
+action_dismiss(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(widget);
+  if (!self->context.service)
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!gh_mls_service_dismiss_refused_invite(self->context.service,
+                                             g_variant_get_string(parameter, NULL), &error))
+    g_message("Groundhog could not dismiss an invitation: %s", error->message);
+  refresh(self);
+}
+
+static void
 action_open(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
@@ -250,6 +323,8 @@ gh_mls_invites_dialog_new(const GhMlsUiContext *context)
   g_object_ref(context->model);
   g_signal_connect_object(context->service, "invite-received", G_CALLBACK(refresh), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(context->service, "invite-refused", G_CALLBACK(refresh), self,
+                          G_CONNECT_SWAPPED);
   refresh(self);
   return self;
 }
@@ -261,6 +336,13 @@ gh_mls_invites_dialog_get_n_invites(GhMlsInvitesDialog *self)
   return self->rows->len;
 }
 
+guint
+gh_mls_invites_dialog_get_n_refused(GhMlsInvitesDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), 0);
+  return self->refused_rows->len;
+}
+
 gboolean
 gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id,
                                const gchar **title, const gchar **subtitle)
@@ -269,6 +351,16 @@ gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id
   for (guint i = 0; i < self->rows->len; i++) {
     GhMlsInviteRow *row = g_ptr_array_index(self->rows, i);
     if (g_strcmp0(row->wrapper_id, wrapper_id) != 0)
+      continue;
+    if (title)
+      *title = adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row));
+    if (subtitle)
+      *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(row));
+    return TRUE;
+  }
+  for (guint i = 0; i < self->refused_rows->len; i++) {
+    GtkWidget *row = g_ptr_array_index(self->refused_rows, i);
+    if (g_strcmp0(g_object_get_data(G_OBJECT(row), "wrapper-id"), wrapper_id) != 0)
       continue;
     if (title)
       *title = adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row));
@@ -304,6 +396,7 @@ gh_mls_invites_dialog_finalize(GObject *object)
 {
   GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(object);
   g_ptr_array_unref(self->rows);
+  g_ptr_array_unref(self->refused_rows);
   g_free(self->last_toast);
   G_OBJECT_CLASS(gh_mls_invites_dialog_parent_class)->finalize(object);
 }
@@ -323,14 +416,17 @@ gh_mls_invites_dialog_class_init(GhMlsInvitesDialogClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, toasts);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, stack);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, invites_group);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, refused_group);
   gtk_widget_class_install_action(widget_class, "mls-invites.accept", "s", action_accept);
   gtk_widget_class_install_action(widget_class, "mls-invites.decline", "s", action_decline);
   gtk_widget_class_install_action(widget_class, "mls-invites.open", "s", action_open);
+  gtk_widget_class_install_action(widget_class, "mls-invites.dismiss", "s", action_dismiss);
 }
 
 static void
 gh_mls_invites_dialog_init(GhMlsInvitesDialog *self)
 {
   self->rows = g_ptr_array_new();
+  self->refused_rows = g_ptr_array_new();
   gtk_widget_init_template(GTK_WIDGET(self));
 }
