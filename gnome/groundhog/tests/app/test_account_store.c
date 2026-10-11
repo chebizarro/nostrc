@@ -16,6 +16,7 @@
 #include "gh-reaction-store.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
+#include "gh-send-ui.h"
 #include "gh-conversation-private.h"
 #include "gh-inbox-resolver.h"
 #include "gh-nip17-inbox.h"
@@ -237,6 +238,7 @@ typedef struct {
   gint64 list_time;
   gboolean with_outbox;
   gboolean remote;
+  gboolean grotto_first; /* remote: start on Grotto for the remote's own npub */
   TestBunker bunker;
   /* The stack: what one Groundhog process owns. */
   GhAccountController *accounts;
@@ -378,7 +380,7 @@ stack_up(Fixture *f)
     gh_account_controller_set_session_factory_for_test(f->accounts, remote_session, f);
     gh_test_spin_until(listed, f->accounts);
     g_assert_true(gh_account_controller_select_backend(f->accounts,
-      GH_SIGNER_BACKEND_NIP46, npub[2], NULL));
+      f->grotto_first ? GH_SIGNER_BACKEND_GROTTO : GH_SIGNER_BACKEND_NIP46, npub[2], NULL));
   } else {
     f->accounts = gh_account_controller_new_full(f->settings, f->bus.client, fake_list, NULL);
     gh_test_spin_until(listed, f->accounts);
@@ -1999,6 +2001,225 @@ test_reactions_switch_view(void)
   fixture_down(&f);
 }
 
+static gboolean
+two_locked(gpointer data)
+{
+  return gh_dm_inbox_get_locked(data) == 2;
+}
+
+static gboolean
+remote_signer_callable(gpointer data)
+{
+  return gh_account_controller_can_call_signer(data);
+}
+
+typedef struct {
+  GtkWidget *row;
+  GtkWidget *label;
+  const gchar *text; /* NULL: hidden */
+} BannerWait;
+
+static gboolean
+banner_is(gpointer data)
+{
+  BannerWait *wait = data;
+  if (!wait->text)
+    return !gtk_widget_get_visible(wait->row);
+  return gtk_widget_get_visible(wait->row) &&
+         g_strcmp0(gtk_label_get_text(GTK_LABEL(wait->label)), wait->text) == 0;
+}
+
+/* Opt-in evidence: GROUNDHOG_TEST_SCREENSHOTS=<dir> renders the window to
+ * <dir>/<name>.png offscreen; the assertions hold either way. */
+static void
+save_window_png(GhWindow *window, const gchar *name)
+{
+  const gchar *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (!dir)
+    return;
+  drain();
+  GtkWidget *widget = GTK_WIDGET(window);
+  gtk_test_widget_wait_for_draw(widget);
+  GdkPaintable *paintable = gtk_widget_paintable_new(widget);
+  int width = gtk_widget_get_width(widget), height = gtk_widget_get_height(widget);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, width, height);
+  g_object_unref(paintable);
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(widget));
+  g_autoptr(GdkTexture) texture =
+    gsk_renderer_render_texture(renderer, node, &GRAPHENE_RECT_INIT(0, 0, width, height));
+  g_autofree gchar *file = g_strconcat(name, ".png", NULL);
+  g_autofree gchar *path = g_build_filename(dir, file, NULL);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+  g_test_message("saved %s (%dx%d)", path, width, height);
+}
+
+/* The owner's flow (one-store-per-npub): one npub used with Grotto, then
+ * with a remote signer. Grotto's approval agent is not running, so its
+ * session leaves the inbox wraps locked ("Waiting for Grotto to unlock").
+ * After the switch the same npub has the same store (rooms, groups, MLS
+ * state), no banner names Grotto, and the wraps -- including the copy the
+ * relays deliver before the remote signer is ready -- are decrypted by the
+ * remote signer once it is ready, with no Unlock click and no further Grotto
+ * call. gui: the same through a window attached as the executable attaches
+ * it (gh_send_ui_attach drives the banner). */
+static void
+switch_grotto_to_remote(gboolean gui)
+{
+  Fixture f = { .remote = TRUE, .grotto_first = TRUE, .with_outbox = gui };
+  fixture_up(&f, 2);
+  stack_up(&f);
+  g_assert_cmpint(gh_account_controller_get_active_backend(f.accounts), ==,
+                  GH_SIGNER_BACKEND_GROTTO);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpstr(gh_account_store_get_account(f.store), ==, hex[2]);
+  g_autofree gchar *db = store_db_path(&f, 2);
+  g_assert_true(g_file_test(db, G_FILE_TEST_IS_REGULAR));
+  GhStore *store = gh_account_store_get_store(f.store);
+  g_autoptr(GError) error = NULL;
+  gint64 mls_id = 0, found = 0;
+  const gchar *mls_key = "00112233445566778899aabbccddeeff";
+  g_assert_true(gh_store_ensure_conversation(store, GH_STORE_BACKEND_MLS, mls_key,
+                                             GH_STORE_REQUEST_ACCEPTED, &mls_id, &error));
+  g_assert_true(gh_store_set_cursor(store, "mls-kp-test", "", 1700000123, &error));
+  g_assert_no_error(error);
+
+  GhWindow *window = NULL;
+  GhConversationView *view = NULL;
+  BannerWait banner = { 0 };
+  g_autofree gchar *room = room_of(1, 2);
+  publish_inbox_list(&f, 2);
+  Req *req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  if (gui) {
+    /* An earlier message Grotto did unlock, so the room is there to open. */
+    g_autofree gchar *earlier = craft_wrap(1, 2, now - 120, "Earlier, unlocked by Grotto",
+                                           NULL);
+    gh_relay_scope_event(req->scope, INBOX_A, earlier);
+    RoomWait listed_room = { f.model, room };
+    gh_test_spin_until(room_listed, &listed_room);
+    gh_conversation_accept(gh_conversation_store_lookup(f.model, room));
+    window = window_up(&f);
+    GhSendUiConfig send = {
+      .accounts = f.accounts,
+      .conversations = f.model,
+      .account_store = f.store,
+      .inbox = f.inbox,
+      .settings = f.settings,
+    };
+    gh_send_ui_attach(window, &send);
+    view = view_of(window);
+    gh_window_open_item(window, gh_conversation_store_lookup(f.model, room));
+    drain();
+    banner.row = (GtkWidget *)gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW,
+                                               "locked_row");
+    banner.label = (GtkWidget *)gtk_widget_get_template_child(GTK_WIDGET(view), GH_TYPE_CONVERSATION_VIEW,
+                                                 "locked_label");
+    g_assert_nonnull(banner.row);
+    g_assert_false(gtk_widget_get_visible(banner.row));
+  }
+
+  /* Grotto cannot unlock: its approval agent is not running. */
+  f.signer.no_agent = TRUE;
+  g_autofree gchar *first = craft_wrap(1, 2, now - 60, CANARY " first", NULL);
+  g_autofree gchar *second = craft_wrap(1, 2, now - 50, CANARY " second", NULL);
+  gh_relay_scope_event(req->scope, INBOX_A, first);
+  gh_relay_scope_event(req->scope, INBOX_A, second);
+  gh_test_spin_until(two_locked, f.inbox);
+  g_assert_true(gh_dm_inbox_signer_is_grotto(f.inbox));
+  g_assert_cmpuint(gh_dm_inbox_get_remote_backlog(f.inbox), ==, 0);
+  guint grotto_calls = f.signer.calls;
+  g_assert_cmpuint(grotto_calls, >=, 2);
+  if (gui) {
+    banner.text = "Waiting for Grotto to unlock 2 messages";
+    gh_test_spin_until(banner_is, &banner);
+    save_window_png(window, "groundhog-one-store-per-npub-1-grotto-locked");
+  }
+
+  /* Switch the same npub to its remote signer. */
+  g_assert_true(gh_account_controller_select_backend(f.accounts, GH_SIGNER_BACKEND_NIP46,
+                                                     npub[2], &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(settle(&f), ==, GH_ACCOUNT_STORE_OPEN);
+  g_assert_cmpint(gh_account_controller_get_active_backend(f.accounts), ==,
+                  GH_SIGNER_BACKEND_NIP46);
+  /* One npub, one store: the same file, the same key item, nothing new. */
+  g_assert_cmpstr(gh_account_store_get_account(f.store), ==, hex[2]);
+  g_autofree gchar *db_after = store_db_path(&f, 2);
+  g_assert_cmpstr(db_after, ==, db);
+  g_assert_cmpuint(fake_secret_count(f.secret, hex[2]), ==, 1);
+  g_autofree gchar *accounts_dir = g_build_filename(f.data_dir, "groundhog", "accounts", NULL);
+  g_autoptr(GDir) dir = g_dir_open(accounts_dir, 0, &error);
+  g_assert_no_error(error);
+  guint n_dirs = 0;
+  while (g_dir_read_name(dir))
+    n_dirs++;
+  g_assert_cmpuint(n_dirs, ==, 1);
+  store = gh_account_store_get_store(f.store);
+  g_assert_true(gh_store_find_conversation(store, GH_STORE_BACKEND_MLS, mls_key,
+                                           &found, &error));
+  g_assert_no_error(error);
+  g_assert_cmpint(found, ==, mls_id);
+  gint64 cursor = 0;
+  g_assert_true(gh_store_get_cursor(store, "mls-kp-test", "", &cursor, &error));
+  g_assert_cmpint(cursor, ==, 1700000123);
+
+  /* The relays deliver before the remote signer is ready: the wraps wait,
+   * pending, for it -- not locked, and never under a Grotto banner. */
+  g_assert_false(gh_account_controller_can_call_signer(f.accounts));
+  publish_inbox_list(&f, 2);
+  req = open_req(&f.rec, INBOX_A);
+  g_assert_nonnull(req);
+  gh_relay_scope_event(req->scope, INBOX_A, first);
+  gh_test_run_until_idle();
+  g_assert_false(gh_dm_inbox_signer_is_grotto(f.inbox));
+  g_assert_cmpuint(gh_dm_inbox_get_locked(f.inbox), ==, 0);
+  g_assert_cmpuint(gh_dm_inbox_get_remote_backlog(f.inbox), ==, 2);
+  g_assert_cmpuint(f.bunker.publishes->len, ==, 0);
+  if (gui) {
+    gh_window_open_item(window, gh_conversation_store_lookup(f.model, room));
+    banner.text = NULL;
+    gh_test_spin_until(banner_is, &banner);
+    save_window_png(window, "groundhog-one-store-per-npub-2-remote-connecting");
+  }
+
+  /* Ready: both drain through the remote signer (seal and rumor each). */
+  bunker_eose(&f.bunker);
+  gh_test_spin_until(remote_signer_callable, f.accounts);
+  for (guint i = 1; i <= 4; i++)
+    reply_remote_decrypt(&f, i);
+  RoomWait listed_room = { f.model, room };
+  gh_test_spin_until(room_listed, &listed_room);
+  GhConversation *conversation = gh_conversation_store_lookup(f.model, room);
+  MessagesWait messages = { conversation, gui ? 3 : 2 };
+  gh_test_spin_until(messages_reached, &messages);
+  gh_test_run_until_idle();
+  g_assert_cmpuint(gh_dm_inbox_get_locked(f.inbox), ==, 0);
+  g_assert_cmpuint(gh_dm_inbox_get_remote_backlog(f.inbox), ==, 0);
+  g_assert_cmpuint(f.signer.calls, ==, grotto_calls);
+  if (gui) {
+    g_assert_false(gtk_widget_get_visible(banner.row));
+    save_window_png(window, "groundhog-one-store-per-npub-3-remote-drained");
+    window_down(window);
+  }
+  fixture_down(&f);
+}
+
+static void
+test_switch_grotto_to_remote_same_npub(void)
+{
+  switch_grotto_to_remote(FALSE);
+}
+
+static void
+test_switch_grotto_to_remote_window(void)
+{
+  switch_grotto_to_remote(TRUE);
+}
+
 typedef struct {
   GhConversation *room;
   GhConversationView *view;
@@ -2366,6 +2587,8 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/account-store-gui/start-fresh-dialog", test_start_fresh_dialog);
     g_test_add_func("/groundhog/account-store-gui/reactions-switch-view",
                     test_reactions_switch_view);
+    g_test_add_func("/groundhog/account-store-gui/switch-grotto-to-remote-window",
+                    test_switch_grotto_to_remote_window);
     int status = g_test_run();
     gh_test_remove_tree(xdg_root);
     return status;
@@ -2374,6 +2597,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/account-store/open-receive-restore", test_open_receive_restore);
   g_test_add_func("/groundhog/account-store/remote-cache-gate-offline-restart",
                   test_remote_cache_gate_and_offline_restart);
+  g_test_add_func("/groundhog/account-store/switch-grotto-to-remote-same-npub",
+                  test_switch_grotto_to_remote_same_npub);
   g_test_add_func("/groundhog/account-store/remote-relogin-same-account",
                   test_remote_relogin_same_account);
   g_test_add_func("/groundhog/account-store/remote-memory-only-refused",

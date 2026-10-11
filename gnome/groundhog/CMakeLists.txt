@@ -1858,6 +1858,12 @@ if (TARGET groundhog-account-store AND GROUNDHOG_OUTBOX_SOURCES AND
       src/app/gh-app-outbox.c tests/store/fake-secret.c ${GROUNDHOG_OUTBOX_SOURCES}
       ${GROUNDHOG_DM_SEND_SOURCES} ${GROUNDHOG_EXPIRY_SOURCES} ${GROUNDHOG_DIRECTORY_SOURCES}
       src/app/gh-nip17-envelope.c)
+    # The account-store window tests attach the send UI as the executable
+    # does (the locked-messages banner across a signer switch).
+    if (TARGET test-groundhog-account-store)
+      target_sources(test-groundhog-account-store PRIVATE src/app/gh-send-ui.c
+        src/app/gh-account-ui.c ${GROUNDHOG_DIRECTORY_SOURCES})
+    endif()
     # UX-7, OB-1 (UI side), UX-1/UX-2 for the composer, nostrc-qp24.8.1, and
     # every G12 seam wired: the widget alone (keys, bounds, compact, disabled
     # reasons), then the application's wiring on a real account stack (mock
@@ -3582,7 +3588,7 @@ if (TARGET groundhog-account AND TARGET groundhog-nip46-session AND
     groundhog-net)
   target_compile_options(groundhog-nip46-pair-dialog PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-nip46-pair-dialog)
-  foreach(ui_target test-groundhog-account-ui test-groundhog-onboarding test-groundhog-composer
+  foreach(ui_target test-groundhog-account-ui test-groundhog-onboarding test-groundhog-composer test-groundhog-account-store
                     test-groundhog-e2e-dm test-groundhog-attachment-ui)
     if (TARGET ${ui_target})
       target_link_libraries(${ui_target} PRIVATE groundhog-nip46-pair-dialog)

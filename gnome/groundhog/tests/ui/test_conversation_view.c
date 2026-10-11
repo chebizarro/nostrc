@@ -3070,17 +3070,22 @@ test_states(Fixture *f, gconstpointer data)
   GtkWidget *locked = view_child(f->view, "locked_row");
   GtkWidget *unlock = view_child(f->view, "unlock_button");
   g_assert_false(shown(locked));
-  gh_conversation_view_set_locked_messages(f->view, 12);
+  gh_conversation_view_set_locked_messages(f->view, 12, TRUE);
   g_assert_true(shown(locked));
   g_assert_cmpstr(text_of(view_child(f->view, "locked_label")), ==,
                   "Waiting for Grotto to unlock 12 messages");
   g_assert_true(gtk_widget_get_focusable(unlock));
   click(unlock);
   g_assert_cmpuint(f->unlocks, ==, 1);
-  gh_conversation_view_set_locked_messages(f->view, 1);
+  gh_conversation_view_set_locked_messages(f->view, 1, TRUE);
   g_assert_cmpstr(text_of(view_child(f->view, "locked_label")), ==,
                   "Waiting for Grotto to unlock 1 message");
-  gh_conversation_view_set_locked_messages(f->view, 0);
+  /* Another signer (a remote signer): the copy never names Grotto. */
+  gh_conversation_view_set_locked_messages(f->view, 3, FALSE);
+  g_assert_true(shown(locked));
+  g_assert_cmpstr(text_of(view_child(f->view, "locked_label")), ==,
+                  "Your signer hasn’t unlocked 3 messages");
+  gh_conversation_view_set_locked_messages(f->view, 0, FALSE);
   g_assert_false(shown(locked));
 
   /* 13: an encrypted-group message that cannot be decrypted yet. */

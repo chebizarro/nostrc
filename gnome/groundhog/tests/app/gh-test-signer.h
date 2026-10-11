@@ -195,6 +195,8 @@ typedef struct {
   gboolean hold;
   gboolean hold_key_packages; /* park kind 30443 signatures, not enrollment/auth */
   gboolean deny;      /* answer every call with ApprovalDenied */
+  gboolean no_agent;  /* answer every call with NoApprovalAgent (Grotto's agent is
+                       * not running, as on a Mac without it) */
   /* NIP04Decrypt(ciphertext, peer hex, account secret hex) -> plaintext or
    * NULL; unset, NIP04Decrypt fails (keeps nip04 out of other tests' links). */
   gchar *(*nip04_decrypt)(const gchar *ciphertext, const gchar *peer, const gchar *secret);
@@ -218,6 +220,11 @@ gh_test_signer_answer(GhTestSigner *mock, GDBusMethodInvocation *invocation)
                 &input, &peer, &npub);
   /* SignEvent(event, npub, app) names the account second. */
   const gchar *secret = gh_test_signer_secret(mock, g_str_equal(method, "SignEvent") ? peer : npub);
+  if (mock->no_agent) {
+    g_dbus_method_invocation_return_dbus_error(invocation,
+      "org.nostr.Signer.Error.NoApprovalAgent", "test: no approval agent");
+    return;
+  }
   if (mock->deny || !secret) {
     g_dbus_method_invocation_return_dbus_error(invocation,
       "org.nostr.Signer.Error.ApprovalDenied", "test denial");

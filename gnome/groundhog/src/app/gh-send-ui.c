@@ -811,7 +811,8 @@ static void
 on_inbox_changed(GhComposer *composer)
 {
   GhSendUi *ui = ui_of(composer);
-  gh_conversation_view_set_locked_messages(ui->view, gh_dm_inbox_get_locked(ui->inbox));
+  gh_conversation_view_set_locked_messages(ui->view, gh_dm_inbox_get_locked(ui->inbox),
+                                           gh_dm_inbox_signer_is_grotto(ui->inbox));
 }
 
 static void

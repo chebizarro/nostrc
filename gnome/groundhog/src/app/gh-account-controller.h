@@ -119,6 +119,13 @@ GhSignerAvailability gh_account_controller_get_signer_availability(GhAccountCont
 GhSignerBackend gh_account_controller_get_active_backend(GhAccountController *self);
 GhRemoteSignerState gh_account_controller_get_remote_state(GhAccountController *self);
 gboolean gh_account_controller_is_remote_storage_ready(GhAccountController *self);
+/* Whether a signer call made now reaches the active account's signer: a
+ * signer is bound and, for a remote signer, its encrypted storage is open
+ * and it is ready (or offline, where requests queue). FALSE while a remote
+ * signer is still loading its credential or connecting: a call would fail
+ * at once with GH_SIGNER_ERROR_UNAVAILABLE. "changed" is emitted whenever
+ * this can change. */
+gboolean gh_account_controller_can_call_signer(GhAccountController *self);
 /* Stale generations are ignored. Only a matching remote account can open the gate. */
 void gh_account_controller_set_remote_storage_ready(GhAccountController *self,
                                                     guint64 generation,
