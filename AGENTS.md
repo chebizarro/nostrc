@@ -2,8 +2,6 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
-> **Context recovery**: Run `gt prime` after compaction, clear, or a new session — it injects full Refinery/Gastown context. Check the mail queue with `gt mq list`; process the next item with `gt mq process`.
-
 ## Quick Reference
 
 ```bash
@@ -135,53 +133,6 @@ ctest --test-dir _build --output-on-failure
 
 All tests must pass before push.
 
-### 3. Peer Review (REQUIRED)
-
-Before pushing, get another agent to review your changes:
-
-1. **Create diff summary:**
-   ```bash
-   git diff HEAD~1 --stat
-   git log -1 --pretty=format:"%s%n%b"
-   ```
-
-2. **Send for review:**
-   ```bash
-   gt mail send nostrc/<other-agent> -s "Review: <bead-id>" \
-     -m "<description of changes and diff summary>" --type review
-   ```
-
-3. **Wait for approval** - Do NOT push until you receive APPROVED
-
-4. **Push only after approval:**
-   ```bash
-   git push
-   ```
-
-### Reviewer Responsibilities
-
-When you receive a review request:
-
-1. Read the diff and description
-2. Check for:
-   - Code correctness
-   - Obvious bugs or regressions
-   - Pattern consistency with codebase
-   - Missing error handling
-3. Reply with either:
-   - `APPROVED` - Author can push
-   - `REQUEST CHANGES: <details>` - Author must address feedback
-
-```bash
-# Approve
-gt mail send nostrc/<author> -s "Re: Review: <bead-id> APPROVED" -m "LGTM"
-
-# Request changes
-gt mail send nostrc/<author> -s "Re: Review: <bead-id>" -m "REQUEST CHANGES: <feedback>"
-```
-
----
-
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
@@ -212,12 +163,9 @@ gt mail send nostrc/<author> -s "Re: Review: <bead-id>" -m "REQUEST CHANGES: <fe
 
 ## Enforcement
 
-Violations of the pre-push requirements will result in:
-1. **Broken builds**: Immediate revert and reassignment
-2. **Skipped peer review**: Commit flagged for post-hoc review, pattern noted
-3. **Repeated violations**: Escalation to Mayor
+Violations of the pre-push requirements result in immediate revert and reassignment.
 
-The pre-push hook blocks pushes that fail its static checks; CI (path-scoped per component) verifies builds and tests. Peer review is enforced by process - agents are expected to follow the workflow.
+The pre-push hook blocks pushes that fail its static checks; CI (path-scoped per component) verifies builds and tests.
 
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
