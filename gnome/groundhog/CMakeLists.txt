@@ -2316,7 +2316,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     target_link_libraries(test-groundhog-two-instance-acceptance PRIVATE
       nostrc-test-bus nostr nip19 nostr_nip44_core marmot PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
     target_compile_options(test-groundhog-two-instance-acceptance PRIVATE -Wall -Wextra -Werror)
-    add_dependencies(test-groundhog-two-instance-acceptance groundhog)
+    add_dependencies(test-groundhog-two-instance-acceptance groundhog groundhog-test-schemas)
     if (UNIX AND NOT APPLE)
       find_program(GROUNDHOG_XVFB_RUN xvfb-run)
     endif()
@@ -2328,7 +2328,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
         COMMAND test-groundhog-two-instance-acceptance)
     endif()
     set_tests_properties(groundhog-two-instance-acceptance PROPERTIES TIMEOUT 300
-      ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
+      ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;SECRET_SERVICE_PYTHON=${Python3_EXECUTABLE};GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
 
     add_executable(test-groundhog-two-instance-remote-acceptance
       tests/app/test_two_instance_acceptance.c)
@@ -2342,7 +2342,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST PkgConfig::GROUNDHOG_GIO)
     target_compile_options(test-groundhog-two-instance-remote-acceptance PRIVATE -Wall -Wextra -Werror)
     target_compile_definitions(test-groundhog-two-instance-remote-acceptance PRIVATE GH_TEST_REMOTE_VARIANT=1)
-    add_dependencies(test-groundhog-two-instance-remote-acceptance groundhog)
+    add_dependencies(test-groundhog-two-instance-remote-acceptance groundhog groundhog-test-schemas)
     if (GROUNDHOG_XVFB_RUN)
       add_test(NAME groundhog-two-instance-remote-acceptance
         COMMAND ${GROUNDHOG_XVFB_RUN} -a $<TARGET_FILE:test-groundhog-two-instance-remote-acceptance>)
@@ -2351,7 +2351,7 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
         COMMAND test-groundhog-two-instance-remote-acceptance)
     endif()
     set_tests_properties(groundhog-two-instance-remote-acceptance PROPERTIES TIMEOUT 300
-      ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
+      ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;SECRET_SERVICE_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/app/test_secret_service.py;SECRET_SERVICE_PYTHON=${Python3_EXECUTABLE};GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};G_DEBUG=fatal-criticals")
 
     # NIP-88 poll model unit tests (nostrc-efa8): parse/validate, create,
     # vote, change vote, closed poll, bounds, malformed, privacy.
