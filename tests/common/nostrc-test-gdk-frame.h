@@ -38,13 +38,26 @@
 #define NOSTRC_TEST_GDK_FRAME_DOMAIN "Gdk"
 #define NOSTRC_TEST_GDK_FRAME_MESSAGE "gdk_frame_timings_presented() called on skipped frame"
 
+/* The same frame clock's other timing artefact (nostrc-lz0sp): when the
+ * main loop falls behind the display link (a loaded machine, e.g. parallel
+ * ctest), Quartz reports the same frame presented twice and GTK warns
+ * "Duplicate call to gdk_frame_timings_presented() with different values:
+ * presentation time is %lld.%lldms off from expected". Only the number
+ * varies, so the message is matched by its fixed prefix and suffix. */
+#define NOSTRC_TEST_GDK_DUP_PREFIX                                                         \
+  "Duplicate call to gdk_frame_timings_presented() with different values: presentation " \
+  "time is "
+#define NOSTRC_TEST_GDK_DUP_SUFFIX "ms off from expected"
+
 static G_GNUC_UNUSED gboolean
 nostrc_test_is_gdk_frame_warning(const gchar *domain, GLogLevelFlags level, const gchar *message)
 {
   return (level & G_LOG_LEVEL_WARNING) && g_strcmp0(domain, NOSTRC_TEST_GDK_FRAME_DOMAIN) == 0 &&
          message != NULL &&
          (strcmp(message, NOSTRC_TEST_GDK_FRAME_MESSAGE) == 0 ||
-          strcmp(message, NOSTRC_TEST_GDK_FRAME_MESSAGE ".") == 0);
+          strcmp(message, NOSTRC_TEST_GDK_FRAME_MESSAGE ".") == 0 ||
+          (g_str_has_prefix(message, NOSTRC_TEST_GDK_DUP_PREFIX) &&
+           g_str_has_suffix(message, NOSTRC_TEST_GDK_DUP_SUFFIX)));
 }
 
 /* The writer function: called for every structured and legacy log message.
