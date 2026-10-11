@@ -96,8 +96,12 @@ when the signer is not the maintainer.
    GLib core library (`libnostr-software`) hold all parsing, trust, sync,
    download and verification. Front ends — the Capuchin app, the apt bridge, the
    GNOME Software plugin and a CLI — contain no protocol logic.
-3. **Ubuntu goes through apt, not snap.** The apt bridge is the only route that
-   reaches App Center and gives `apt upgrade` / unattended-upgrades for free.
+3. **Ubuntu goes through apt, not snap.** The apt bridge is the only route
+   that can reach App Center and lets `apt upgrade` and (with a packaged
+   origin policy, §4.1) unattended-upgrades deliver updates. App Center
+   *discovery* is conditional on spike S1; if S1 fails, apt, the CLI and
+   Capuchin are the supported Ubuntu routes and no App Center browsing is
+   promised.
 4. **Accept what is deployed, label it.** The parser accepts deployed
    out-of-spec usage (debs, archives, extra tags) and records conformance
    flags. Published `.deb` assets are supported (decided, Q2); because they run
@@ -143,11 +147,20 @@ under `include/nostr/nip82/`, CTest suite). No I/O.
   Accept legacy kind 1063 assets read-only.
 - **Validate links:** release `i` == app `d`; asset `i` == release `i`;
   `d` == `<i>@<version>`; asset ids in release `e` tags; **same pubkey across
-  app, release and asset** unless an Appendix E `p` attribution says otherwise
-  (reported, not silently accepted).
+  app, release and asset**. A `p` or `zap` tag never confers authority: an
+  installable app–release–asset chain must use one authorized signing key
+  throughout (or, later, an explicitly verified delegation from that key);
+  otherwise the events are shown as unlinked attribution only.
+- **Identifier encoding:** one validated, collision-resistant encoding of
+  (full publisher pubkey, `d`) into Debian package names (lowercase
+  `[a-z0-9+.-]`), filesystem path segments and non-native AppStream ids,
+  using the full pubkey (or its bech32 form), never a short prefix. Unsafe or
+  colliding mappings are rejected, not rewritten silently.
 - **Version ordering:** Appendix D comparator, and a mapping to dpkg version
   syntax (`1.0.0-alpha` → `1.0.0~alpha`) so apt ordering agrees with NIP-82
-  ordering; property tests check both orders agree.
+  ordering; property tests check both orders agree, including numeric
+  prerelease identifiers and build metadata (which SemVer ignores for
+  ordering).
 - **Platform / MIME:** host platform id (`linux-x86_64`, `linux-aarch64`, …),
   `f`-tag matching, MIME → install method enum (`FLATPAK_BUNDLE`, `APPIMAGE`,
   `ELF`, `DEB`†, `ARCHIVE`†; † = out of spec).
@@ -169,8 +182,21 @@ under `include/nostr/nip82/`, CTest suite). No I/O.
 - **NsCatalog** — owns a `GNostrPool` and a nostrdb cache directory.
   - *Trusted sync:* one subscription `{kinds:[32267,30063,3063], authors:[trusted…]}`
     plus `{kinds:[5], authors:[trusted…]}` for NIP-09 yanks; catch-up to EOSE,
-    then stays live. Reconnect with backoff re-issues subscriptions with
-    `since` = last seen `created_at` − skew.
+    then stays live. On reconnect, subscriptions are re-issued with `since`
+    only as an optimization: a bounded, paginated reconciliation of each
+    trusted author's history (`until`/`limit` walk) runs after reconnect and
+    on trust changes, so late-published older events are not lost; events
+    dated implausibly far in the future are never used as cursor input.
+  - *Per-relay state:* EOSE, `CLOSED` reasons and NIP-42 `AUTH` are tracked
+    per relay; catch-up is complete when every reachable relay reached EOSE.
+    A UI refresh returns an "offline/partial" result on cancellation or a
+    caller deadline **without** closing the REQ; subscriptions stay live.
+    Subscriptions are re-issued when the trusted-author set or relay list
+    changes.
+  - *Ancillary events:* narrowly scoped subscriptions (authors = trusted
+    publishers, with EOSE handling and signature checks) for kind 0 profiles,
+    kind 10002 NIP-65 relay lists, kind 10063 Blossom server lists, and kind
+    30000 maintainer rosters (§7).
   - *Discovery:* on demand, `{kinds:[32267], #f:[<host platform>]}` and NIP-50
     `search` for keyword search; results are untrusted until policy says
     otherwise.
@@ -189,9 +215,18 @@ under `include/nostr/nip82/`, CTest suite). No I/O.
   - `unknown`: discoverable in search with a warning, not installable without
     adding the key.
   - Root-executing assets (`.deb`) are installable from `developer` and
-    `porter` keys, but the first install of each package name shows the
-    administrator-setup confirmation; a per-publisher "don't ask again" grant
-    (`allow-root`) is recorded. Auto-update of root-executing packages happens
+        `porter` keys, but the first install shows the administrator-setup
+    confirmation. The approval is **identity-bound**: (publisher pubkey,
+    NIP-82 app id, deb `Package` name, install source). A change of publisher
+    key or package identity requires a new approval; each pass-through Debian `Package` name
+    is **reserved** for one approved (publisher, app id) identity; a second
+    identity using that name is rejected unless the user performs an explicit
+    source migration, so apt can never treat one publisher's higher version
+    as an update to another's. A per-publisher "don't ask
+    again" grant (`allow-root`) is recorded the same way. Before admission,
+    deb control metadata is inspected (`Package`, `Version`, `Architecture`,
+    `Provides`, `Breaks`, `Conflicts`, `Replaces`) and checked against the
+    authorized app, the host architecture and the NIP-82 release. Auto-update of root-executing packages happens
     only for packages already confirmed once — including debs republished by
     porter keys (decided, Q7).
   - Rollback guard: never offer a version ordered below the installed one;
@@ -202,6 +237,12 @@ under `include/nostr/nip82/`, CTest suite). No I/O.
   tag, then the same hash on the publisher's BUD-03 server list (kind 10063)
   via `nostr_blossom_url_download()`; enforces `size` and a configurable
   ceiling; writes to a temp file and renames only after the hash matches.
+  **Privileged hand-off:** before any path-based privileged install
+  (PackageKit `InstallFiles`, Flatpak system helper), the verified bytes are
+  copied to an immutable, root-owned staging directory (via `nostr-software-stage`, §4.1), re-hashed there, and only that protected path
+  is passed to the installer; it is removed after completion. Without the apt
+  bridge, deb updates follow the same path: new release event → fetch →
+  verify → staged `InstallFiles`, only for identity-approved packages.
 - **NsAppstreamWriter** — maps NIP-82 to AppStream (§5) as DEP-11 YAML (apt)
   and AppStream catalog XML (GNOME Software / `swcatalog`).
 - **NsInstaller** — a set of `NsBackend` implementations (interface modelled
@@ -220,8 +261,10 @@ under `include/nostr/nip82/`, CTest suite). No I/O.
 
 ### 3.3 `nostr-software` CLI
 
-`list`, `search`, `show`, `fetch --verify`, `trust add|remove|list`,
-`export-appstream`. Used for operations, CI smoke tests and as the reference
+`list`, `search`, `show`, `fetch --verify`, `install` / `update` /
+`remove` (including the identity-bound root-install approval prompt for
+debs), `trust add|remove|list`, `export-appstream`. `install` ships with the
+core, **before** the apt bridge, so first installs never depend on Capuchin. Used for operations, CI smoke tests and as the reference
 consumer of the library before any store integration lands.
 
 ## 4. Front ends
@@ -242,24 +285,69 @@ maintains a local signed apt repository:
 /etc/apt/preferences.d/nostr-software             (pin priority 100)
 ```
 
-- **Repository key.** Generated on first start; private key readable only by
-  the service user. The signature attests "this machine's policy approved
-  it", nothing more — the root of trust is the Nostr publisher key plus hash.
+- **Split service: sync vs. signer/admission.** The local repository key is
+  a root-install trust boundary (apt executes what it signs), so it is not
+  held by the network-facing process. `nostr-software-sync` (network,
+  unprivileged, sandboxed) only fetches events and blobs into a spool.
+  `nostr-software-admit` (no network, separate user, owns the private key)
+  **independently** re-verifies event signatures, the app–release–asset
+  chain, hashes, identity-bound approvals, control fields and monotonic
+  versions, then writes immutable pool files and publishes indexes
+  atomically as **versioned snapshots**: each admission writes a complete
+  `snapshots/<n>/` tree (pool links + signed `dists/`), then atomically
+  switches the `current` symlink to it. Index files are published under
+  immutable `by-hash/SHA256/` paths (`Acquire-By-Hash: yes` in `Release`) and
+  pool paths are stable, content-addressed and shared across snapshots, so
+  an apt client that read an older `InRelease` still finds every file it
+  references; old by-hash entries and snapshots are retained for a grace
+  period. CI runs `apt update` concurrently with publication. Only the public repo
+  tree is readable/traversable by `_apt`; the private key lives outside it.
+  `Release` carries a bounded `Valid-Until`, renewed by the admitter.
+- **Bootstrap.** The `nostr-software-apt` package's postinst creates the
+  service users, generates the key, and installs the root-owned
+  `.sources` (with `Signed-By:` pointing at the public keyring),
+  `preferences.d` pin and unattended-upgrades origin policy; the services
+  never write under `/etc`.
+- **Staging helper `nostr-software-stage`.** A separately packaged,
+  polkit-gated (`org.nostr.software.stage`) helper, installed with
+  `libnostr-software` and therefore available on PackageKit-only systems
+  without the apt bridge. It creates the root-owned staging file with
+  `O_EXCL`/`O_NOFOLLOW` in a root-only directory, copies from the caller's
+  verified file descriptor, re-hashes against the expected `x` value, returns
+  the protected path, and deletes it after the install transaction finishes
+  (or on timeout of the caller's transaction, never of a relay REQ).
+- **First installs go through Capuchin or the CLI.** Because only approved
+  packages enter the index, App Center and GNOME Software cannot *initiate*
+  the first install of a Nostr deb; they see it only after Capuchin or
+  `nostr-software install` recorded the approval (updates then flow through
+  any apt front end). An App Center–initiated approval flow is out of scope
+  unless S1 finds a supported hook. S1 tests exactly this gated workflow.
+- **Approval enforcement.** Only packages with a persisted, identity-bound
+  root-install approval (§3.2) enter the apt index, so every apt entry point
+  (apt, App Center, GNOME Software, unattended-upgrades) is covered by the
+  same policy. Approved updates must keep that identity and pass the version
+  and control-field checks.
 - **Pass-through debs** (out of spec, accepted per Q2): included for
-  `developer` and `porter` publishers once the package has been confirmed
-  (§6). Rejected if the package `Package:` name collides with a
+  `developer` and `porter` publishers once the package has an identity-bound
+  approval (§3.2). apt orders by the deb's **internal** `Version`, so the
+  admitter rejects a deb whose `Version` does not correspond to the NIP-82
+  release `version`, or whose `Architecture` does not match the host. Rejected if the package `Package:` name collides with a
   package in the distro archive, or if it declares `Replaces`/`Conflicts` on
   archive packages, unless explicitly overridden. The pin priority stops a
   Nostr package from silently replacing an archive package.
 - **Wrapper debs** (spec-conformant assets): static ELF and AppImage assets
-  are wrapped into generated `nostr-sw-<app-id>` packages with **no
-  maintainer scripts**, installing to `/opt/nostr-software/<app-id>/` with a
+  are wrapped into generated `nostr-sw-<encoded publisher+app id>` packages
+  (§3.1 encoding) with **no
+  maintainer scripts**, installing to `/opt/nostr-software/<encoded identity>/` with a
   `/usr/bin` symlink (ELF) or desktop file + icon (AppImage, extracted at
   build time). gzip archives are wrapped only when the asset names an
   `executable` path and the publisher policy allows archives.
 - **Flatpak assets** are skipped here (handled by GNOME Software or the CLI).
-- **Updates** arrive as a new release event → repo regenerated → normal apt
-  update/upgrade and unattended-upgrades pick them up. A NIP-09 deletion
+- **Updates** arrive as a new release event → admitted → indexes
+  republished → normal `apt update`/`upgrade`. unattended-upgrades does not
+  admit arbitrary local origins, so the package ships an
+  `Unattended-Upgrade::Origins-Pattern` entry for the local origin (tested in
+  CI); this implements the auto-update decision (Q7). A NIP-09 deletion
   removes the version from the repo index (it does not uninstall).
 - **Trust administration** through `nostr-software trust …` behind polkit
   (`org.nostr.software.manage-trust`), or drop-in files under
@@ -278,7 +366,10 @@ Out-of-tree plugin against `gnome-software-dev`, built per distro release
 | `setup_async` | open `NsCatalog`, start trusted sync |
 | `refresh_metadata_async` | ensure catch-up reached EOSE; no polling |
 | `list_apps_async` | keyword search (NIP-50 / cache), category via `t` tags, installed list |
-| `refine_async` | fill description, icons, screenshots, releases, licence, developer name (kind 0), "verified" quirk for `developer`-tier keys |
+| `refine_async` | fill description, icons, screenshots, releases, licence, developer name (kind 0), publisher trust tier shown in the description/developer field; GNOME
+Software's "verified" indicator is **not** set merely because a key is
+user-trusted (only for a project-roster-verified nostrc maintainer, if at
+all) |
 | `install_apps_async` / `update_apps_async` / `uninstall_apps_async` | Flatpak bundle via libflatpak, AppImage via `NsInstaller` |
 | `url_to_app_async` | `nostr:naddr1…` pointing at a 32267 → app page |
 | `install/enable/disable/remove_repository_async` | the catalog relay appears as a repository in Software Repositories |
@@ -378,7 +469,7 @@ planned.
 
 | NIP-82 | AppStream |
 |---|---|
-| 32267 `d` | `<id>`; non-reverse-DNS ids (e.g. `jq`) become `nostr.<pubkey8>.<d>` to avoid collisions |
+| 32267 `d` | Canonical encoded identity (§3.1, full publisher pubkey) for every generated id. A native AppStream id equal to `d` is preserved only when `d` is reverse-DNS **and** the publisher is the single authorized source for it (developer key or roster-mapped maintainer); otherwise, or on any collision between publishers, the encoded id is used and the native id is recorded as `<custom>` only |
 | asset MIME | `type`: Flatpak/AppImage/deb with icon → `desktop-application`; ELF/archive → `console-application` (with `<provides><binary>`) |
 | `name`, `summary` | `<name>`, `<summary>` |
 | content (markdown) | `<description>` (paragraphs/lists only; links and images dropped) |
@@ -407,9 +498,14 @@ planned.
   administrator-setup confirmation for debs as developer keys.
 - **Rollback/freeze:** monotonic version rule, `min_allowed_version`, warning
   when a trusted publisher's newest release is far older than its app event.
-- **Key compromise:** no key rotation in NIP-82; mitigation is fast
-  revocation (remove from trust, NIP-09 yanks honoured) — tracked as an open
-  spec issue.
+- **Key compromise and revocation:** NIP-82 has no key rotation. Removing a
+  key from trust, or listing it in a signed out-of-band **denylist** shipped
+  with the packages and refreshable from the roster authority, takes effect
+  immediately: new installs and updates are blocked and affected entries are
+  removed from generated apt indexes and catalogs (installed software is
+  flagged, not uninstalled). NIP-09 yanks are honoured but are not a
+  compromise response, since the compromised key can stop issuing them.
+  Rotation is tracked as an open spec issue.
 - **Network:** relays and Blossom servers are untrusted transports; metadata
   fetches leak interest in apps to relays (documented; Tor/proxy settings
   inherited from the system).
@@ -427,16 +523,21 @@ role Zapstore's indexer plays).
   bunker, never by a key held in CI. The release workflow builds the assets,
   uploads them to Blossom and produces unsigned 3063/30063/32267 events for
   the maintainer to sign; publishing checks every relay `OK`.
-- **Maintainer set.** The project key publishes a NIP-51 set (kind 30000,
-  `d=nostrc-maintainers`) listing current maintainer pubkeys, with a mapping
-  of which maintainers may sign which app id. Trusting the project key lets
-  clients accept nostrc apps from any listed maintainer for that app id;
+- **Maintainer roster (roster-authority key).** A dedicated, offline
+  **roster-authority key**, separate from the porter project key, publishes a
+  NIP-51 set (kind 30000, `d=nostrc-maintainers`) listing maintainer
+  pubkeys, plus a signed app-id → maintainer mapping (format to be specified
+  in its bead) and the denylist (§6). Trusting the roster authority
+  lets clients accept a nostrc app only from a maintainer mapped to that app
+  id. The roster authority is explicitly a trust root for nostrc's own apps;
   removing a maintainer from the set revokes them for new releases.
   Appendix E `p` tags credit co-maintainers.
 - **Project key (porter).** Signs ported apps only, with Appendix E `p`
   attribution to the upstream author (and their `zap` split where known) and
   `repository`/`commit` tags pinning the exact upstream source. It never signs
-  nostrc's own apps, so a compromise of one cannot impersonate the other. Held
+  nostrc's own apps or the roster, so its compromise cannot authorize a
+  maintainer or impersonate a nostrc app (a roster-authority compromise can,
+  which is why that key is the most tightly held). Held
   offline (hardware or an offline Grotto profile); CI never sees it.
 - **Assets:** Flatpak bundle, AppImage and `.deb` (accepted per Q2) for each
   release; AppStream ids match the app's `d` tag.
@@ -459,10 +560,17 @@ role Zapstore's indexer plays).
 - **S1 — App Center visibility (1–2 days).** Ubuntu 26.04 VM, local signed apt
   repo with DEP-11: does App Center list and install an *uninstalled*
   third-party desktop app? If not, the apt bridge still delivers apt updates
-  and GNOME Software on Debian, but App Center discovery is lost.
+  and GNOME Software on Debian, but App Center discovery is lost. The test uses
+  the real gated workflow (approve in Capuchin/CLI → package admitted →
+  visible/updatable in App Center). **Go/no-go** for any App Center claim in
+  docs and release notes.
 - **S2 — GNOME Software ownership (2–3 days).** Fedora 4x VM: install a
   `.flatpak` bundle from a plugin; check double listing, update ownership and
   runtime resolution.
+- **S2 acceptance criteria:** no duplicate listing; one owner for install
+  and update; runtime acquisition works or fails clearly; both link routes
+  (`appstream:` from the dispatcher and `nostr:naddr` via `url_to_app`)
+  reach the same app page. Failing S2 → plugin is not shipped.
 - **S3 — Relay behaviour (½ day).** Confirm NIP-50 search support, REQ limits,
   AUTH requirements and EOSE timing on relay.zapstore.dev with the exact
   filters `nips/nip82` emits.
