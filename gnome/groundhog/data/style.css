@@ -95,6 +95,21 @@
   color: @accent_fg_color;
 }
 
+/* A Markdown table in a message (nostrc-p15n5.1): a grid of cells with a
+ * header rule and row rules in the bubble's own colours. */
+.groundhog-message-table > label {
+  padding: 4px 12px 4px 0;
+  border-bottom: 1px solid alpha(currentColor, 0.15);
+}
+
+.groundhog-message-table > label.header {
+  border-bottom: 1px solid alpha(currentColor, 0.45);
+}
+
+.groundhog-message-table > label.last-row {
+  border-bottom: none;
+}
+
 .groundhog-undecryptable,
 .groundhog-withdrawn {
   font-style: italic;

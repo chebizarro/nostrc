@@ -1185,6 +1185,7 @@ schedule_midnight(GhConversationView *self)
 typedef struct {
   gchar *id;
   gchar *markup;
+  GPtrArray *blocks;     /* GnMarkdownPangoBlock; NULL without a table */
   gchar *reference_uri;
   GnNostrReference *reference_descriptor;
   GnNostrReferenceCardRole reference_role;
@@ -1221,6 +1222,7 @@ render_entry_free(RenderEntry *entry)
 {
   g_free(entry->id);
   g_free(entry->markup);
+  g_clear_pointer(&entry->blocks, g_ptr_array_unref);
   g_free(entry->reference_uri);
   gn_nostr_reference_free(entry->reference_descriptor);
   g_free(entry->reference_original);
@@ -1280,6 +1282,7 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
      * (nostrc-boq9.5). The card shows the note; the row hides this line
      * once the card has resolved it and shows it only while it can't. */
     if (!repost->quote) {
+      g_clear_pointer(&entry->blocks, g_ptr_array_unref);
       g_free(entry->markup);
       entry->markup = g_markup_escape_text(_("The reposted note isn't available on this device."), -1);
     }
@@ -1287,9 +1290,34 @@ render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *doc
 }
 
 static gsize
+render_blocks_size(GPtrArray *blocks)
+{
+  gsize size = 0;
+  for (guint i = 0; blocks && i < blocks->len; i++) {
+    GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
+    size += sizeof *block + (block->markup ? strlen(block->markup) : 0);
+    for (gchar **cell = block->cells; cell && *cell; cell++)
+      size += strlen(*cell) + sizeof *cell;
+  }
+  return size;
+}
+
+/* Formats a parsed message into the entry: its markup and, with a table,
+ * its blocks (the row lays a table out as a grid of cells). */
+static void
+render_entry_format(RenderEntry *entry, const GnMarkdownDocument *document,
+                    const gchar *account)
+{
+  g_free(entry->markup);
+  entry->markup = gh_link_policy_format_markdown(document, account);
+  g_clear_pointer(&entry->blocks, g_ptr_array_unref);
+  entry->blocks = gh_link_policy_format_markdown_blocks(document, account);
+}
+
+static gsize
 render_entry_size(RenderEntry *entry)
 {
-  return strlen(entry->markup) +
+  return strlen(entry->markup) + render_blocks_size(entry->blocks) +
          (entry->reference_uri ? strlen(entry->reference_uri) : 0) +
          (entry->reference_original ? strlen(entry->reference_original) : 0) +
          (entry->preview_uri ? strlen(entry->preview_uri) : 0);
@@ -1353,9 +1381,7 @@ render_worker_done(GObject *source, GAsyncResult *result, gpointer data)
     return;
   self->render_bytes -= entry->bytes;
   if (!rendered->document->truncated) {
-    g_autofree gchar *markup = gh_link_policy_format_markdown(rendered->document, job->account);
-    g_free(entry->markup);
-    entry->markup = g_steal_pointer(&markup);
+    render_entry_format(entry, rendered->document, job->account);
     render_entry_collect_reference(entry, rendered->document, job->body);
   }
   g_free(entry->preview_uri);
@@ -1391,10 +1417,7 @@ render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager
     g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(body, -1);
     entry->preview_uri = gh_link_policy_dup_preview_uri(body);
     if (!document->truncated) {
-      g_autofree gchar *formatted = gh_link_policy_format_markdown(document,
-                                                                   self->render_account);
-      g_free(entry->markup);
-      entry->markup = g_steal_pointer(&formatted);
+      render_entry_format(entry, document, self->render_account);
       render_entry_collect_reference(entry, document, body);
     }
   } else {
@@ -1428,6 +1451,15 @@ gh_conversation_view_get_render_markup(GhConversationView *self, GhMessage *mess
   g_return_val_if_fail(GH_IS_MESSAGE(message), "");
   RenderEntry *entry = render_cache_ensure(self, message, FALSE);
   return entry ? entry->markup : NULL;
+}
+
+GPtrArray *
+gh_conversation_view_get_render_blocks(GhConversationView *self, GhMessage *message)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), NULL);
+  g_return_val_if_fail(GH_IS_MESSAGE(message), NULL);
+  RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+  return entry ? entry->blocks : NULL;
 }
 
 gboolean

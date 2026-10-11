@@ -3183,6 +3183,7 @@ test_day_format(void)
   g_assert_cmpstr(other_year, ==, expected_year);
 }
 
+
 /* ---- screenshots (opt-in evidence) ------------------------------------------------------ */
 
 /* The window as drawn, plus an open popover (a surface of its own) where
@@ -3223,6 +3224,251 @@ save_png(GtkWidget *window, GtkWidget *popover, const char *dir, const char *nam
   g_autofree char *path = g_strdup_printf("%s/groundhog-g12-%s.png", dir, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s (%dx%d)", path, width, height);
+}
+
+/* nostrc-p15n5.1 (owner report): a bot's kind-14 DM with a GFM table, as
+ * sent (padded cells, long delimiter runs, leading blank lines, a table
+ * right after a line of text), through the real GhMessageRow. */
+static const gchar *const bot_table_body =
+  "\n\nAll cron jobs now on gpt-5.6-sol \xe2\x9c\x85\n"
+  "\n"
+  "| Job                 | Was (broken)              | Now                                                               |\n"
+  "| ------------------- | ------------------------- | ----------------------------------------------------------------- |\n"
+  "| LN Node Alert (2hr) | openai/gpt-5.4-mini (401) | gpt-5.6-sol \xe2\x80\x94 manually triggered run just succeeded and delivered |\n"
+  "| LN Node Daily       | openai/gpt-5.4-mini       | gpt-5.6-sol                                                       |\n";
+
+static const gchar *const bot_table_tight_body =
+  "Summary:\r\n"
+  "| Job | Was (broken) | Now |  \r\n"
+  "| --- | --- | --- |\r\n"
+  "| LN Node Daily | openai/gpt-5.4-mini | gpt-5.6-sol |\r\n";
+
+static void
+on_table_painted(GdkFrameClock *clock, gboolean *painted)
+{
+  (void)clock;
+  *painted = TRUE;
+}
+
+static gboolean
+is_true(gpointer data)
+{
+  return *(gboolean *)data;
+}
+
+static void
+maybe_save_table_png(Fixture *f, const char *name)
+{
+  const char *dir = g_getenv("GROUNDHOG_TABLE_SCREENSHOTS");
+  if (!dir) return;
+  drain_idle();
+  gboolean painted = FALSE;
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(GTK_WIDGET(f->window));
+  gulong handler = g_signal_connect(clock, "after-paint", G_CALLBACK(on_table_painted), &painted);
+  gtk_widget_queue_draw(GTK_WIDGET(f->window));
+  spin_until(is_true, &painted);
+  g_signal_handler_disconnect(clock, handler);
+  save_png(GTK_WIDGET(f->window), NULL, dir, name);
+}
+
+static GtkWidget *
+find_type(GtkWidget *root, GType type)
+{
+  if (G_TYPE_CHECK_INSTANCE_TYPE(root, type))
+    return root;
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *found = find_type(child, type);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+/* The row's table grid once rendered (the body is parsed off the bind path). */
+static GtkGrid *
+row_table(GhMessageRow *row)
+{
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  if (!blocks || !gtk_widget_get_visible(blocks))
+    return NULL;
+  GtkWidget *grid = find_type(blocks, GTK_TYPE_GRID);
+  return grid ? GTK_GRID(grid) : NULL;
+}
+
+static gboolean
+row_has_table(gpointer data)
+{
+  return row_table(GH_MESSAGE_ROW(data)) != NULL;
+}
+
+static const gchar *
+cell_text(GtkGrid *grid, int column, int row)
+{
+  GtkWidget *cell = gtk_grid_get_child_at(grid, column, row);
+  g_assert_true(GTK_IS_LABEL(cell));
+  return gtk_label_get_text(GTK_LABEL(cell));
+}
+
+/* No label of the body shows Markdown table syntax or a monospace grid. */
+static void
+assert_no_table_syntax(GtkWidget *root)
+{
+  if (GTK_IS_LABEL(root)) {
+    const gchar *text = gtk_label_get_text(GTK_LABEL(root));
+    g_assert_null(strstr(text, "|"));
+    g_assert_null(strstr(text, "\xe2\x94\x82")); /* │ */
+    g_assert_null(strstr(text, "---"));
+    g_assert_null(strstr(text, "\xe2\x94\x80")); /* ─ */
+  }
+  for (GtkWidget *child = gtk_widget_get_first_child(root); child;
+       child = gtk_widget_get_next_sibling(child))
+    assert_no_table_syntax(child);
+}
+
+static void
+assert_bot_table(GhMessageRow *row, const gchar *intro)
+{
+  spin_until(row_has_table, row);
+  GtkLabel *body = row_child(row, "body_label");
+  g_assert_cmpstr(gtk_label_get_text(body), ==, intro);
+  GtkGrid *grid = row_table(row);
+  g_assert_cmpstr(cell_text(grid, 0, 0), ==, "Job");
+  g_assert_cmpstr(cell_text(grid, 1, 0), ==, "Was (broken)");
+  g_assert_cmpstr(cell_text(grid, 2, 0), ==, "Now");
+  g_assert_true(gtk_widget_has_css_class(gtk_grid_get_child_at(grid, 0, 0), "header"));
+  g_assert_null(gtk_grid_get_child_at(grid, 3, 0));
+  g_assert_true(gtk_label_get_selectable(GTK_LABEL(gtk_grid_get_child_at(grid, 0, 1))));
+  assert_no_table_syntax(GTK_WIDGET(row));
+}
+
+/* Every cell of a body row lies inside the bubble: nothing is cut off. */
+static gboolean
+table_mapped(gpointer data)
+{
+  GtkGrid *grid = row_table(GH_MESSAGE_ROW(data));
+  return grid && gtk_widget_get_mapped(GTK_WIDGET(grid)) &&
+         gtk_widget_get_width(GTK_WIDGET(grid)) > 0;
+}
+
+static void
+assert_cells_inside_bubble(GhMessageRow *row, int table_row)
+{
+  spin_until(table_mapped, row);
+  drain_idle();
+  GtkGrid *grid = row_table(row);
+  GtkWidget *bubble = row_child(row, "bubble");
+  graphene_rect_t cell_bounds;
+  for (int c = 0; c < 3; c++) {
+    GtkWidget *cell = gtk_grid_get_child_at(grid, c, table_row);
+    g_assert_true(gtk_widget_get_mapped(cell));
+    g_assert_true(gtk_widget_compute_bounds(cell, bubble, &cell_bounds));
+    g_assert_cmpfloat(cell_bounds.origin.x, >=, 0);
+    g_assert_cmpfloat(cell_bounds.origin.x + cell_bounds.size.width, <=,
+                      gtk_widget_get_width(bubble));
+  }
+  /* The bubble fits the view: the table never widens the conversation. */
+  GtkWidget *view = gtk_widget_get_ancestor(bubble, GH_TYPE_CONVERSATION_VIEW);
+  graphene_rect_t bubble_bounds;
+  g_assert_true(gtk_widget_compute_bounds(bubble, view, &bubble_bounds));
+  g_assert_cmpfloat(bubble_bounds.origin.x + bubble_bounds.size.width, <=,
+                    gtk_widget_get_width(view));
+  int view_min = 0;
+  gtk_widget_measure(view, GTK_ORIENTATION_HORIZONTAL, -1, &view_min, NULL, NULL, NULL);
+  g_assert_cmpint(view_min, <=, gtk_widget_get_width(view));
+  /* The bubble is as tall as its content, not stretched by measuring. */
+  g_assert_cmpint(gtk_widget_get_height(bubble), <, 600);
+}
+
+static gboolean
+view_is_compact(gpointer data)
+{
+  return gh_conversation_view_get_compact(GH_CONVERSATION_VIEW(data));
+}
+
+static void
+test_markdown_table_real(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), bot_table_body);
+  show(f, room_of(f->store, message), 700, 600);
+  GhMessageRow *row = row_for(f->view, message);
+  assert_bot_table(row, "All cron jobs now on gpt-5.6-sol \xe2\x9c\x85");
+  GtkGrid *grid = row_table(row);
+  g_assert_cmpstr(cell_text(grid, 0, 1), ==, "LN Node Alert (2hr)");
+  g_assert_cmpstr(cell_text(grid, 1, 1), ==, "openai/gpt-5.4-mini (401)");
+  g_assert_cmpstr(cell_text(grid, 2, 1), ==,
+                  "gpt-5.6-sol \xe2\x80\x94 manually triggered run just succeeded and delivered");
+  g_assert_cmpstr(cell_text(grid, 0, 2), ==, "LN Node Daily");
+  g_assert_cmpstr(cell_text(grid, 1, 2), ==, "openai/gpt-5.4-mini");
+  g_assert_cmpstr(cell_text(grid, 2, 2), ==, "gpt-5.6-sol");
+  g_assert_null(gtk_grid_get_child_at(grid, 0, 3));
+  assert_cells_inside_bubble(row, 1);
+  maybe_save_table_png(f, "after-700");
+  /* Copy keeps the whole message as text. */
+  click(row_child(row, "copy_button"));
+  g_assert_nonnull(f->copied);
+  g_assert_nonnull(strstr(f->copied, "All cron jobs now on gpt-5.6-sol"));
+  g_assert_nonnull(strstr(f->copied, "LN Node Daily"));
+  g_assert_nonnull(strstr(f->copied, "manually triggered run"));
+}
+
+/* Compact width: the cells wrap narrower; still a table, still inside. */
+static void
+test_markdown_table_compact(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), bot_table_body);
+  show(f, room_of(f->store, message), 360, 600);
+  spin_until(view_is_compact, f->view);
+  GhMessageRow *row = row_for(f->view, message);
+  assert_bot_table(row, "All cron jobs now on gpt-5.6-sol \xe2\x9c\x85");
+  assert_cells_inside_bubble(row, 1);
+  maybe_save_table_png(f, "after-compact");
+}
+
+/* CRLF lines, trailing spaces and a table straight after a line of text. */
+static void
+test_markdown_table_tight(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), bot_table_tight_body);
+  show(f, room_of(f->store, message), 700, 600);
+  GhMessageRow *row = row_for(f->view, message);
+  assert_bot_table(row, "Summary:");
+  GtkGrid *grid = row_table(row);
+  g_assert_cmpstr(cell_text(grid, 0, 1), ==, "LN Node Daily");
+  g_assert_null(gtk_grid_get_child_at(grid, 0, 2));
+}
+
+/* A body that starts with a table has no empty line above it, alignment
+ * follows the delimiter row, and a row rebound to plain text has no table. */
+static void
+test_markdown_table_only(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *table = add_dm(f->store, 2, 1, noon_today(),
+                            "| Job | Was (broken) | Now |\n| :-- | --: | :-: |\n"
+                            "| LN Node Daily | openai/gpt-5.4-mini | gpt-5.6-sol |\n\nafter");
+  GhMessage *plain = add_dm(f->store, 2, 1, noon_today() + 1, "plain | text");
+  show(f, room_of(f->store, table), 700, 600);
+  GhMessageRow *row = row_for(f->view, table);
+  spin_until(row_has_table, row);
+  GtkWidget *body = row_child(row, "body_label");
+  g_assert_false(gtk_widget_get_child_visible(body));
+  GtkGrid *grid = row_table(row);
+  g_assert_cmpfloat(gtk_label_get_xalign(GTK_LABEL(gtk_grid_get_child_at(grid, 1, 1))), ==, 1.0);
+  g_assert_cmpfloat(gtk_label_get_xalign(GTK_LABEL(gtk_grid_get_child_at(grid, 2, 1))), ==, 0.5);
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  GtkWidget *last = gtk_widget_get_last_child(blocks);
+  g_assert_true(GTK_IS_LABEL(last));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(last)), ==, "after");
+  gh_message_row_set_message(row, plain);
+  drain_idle();
+  g_assert_true(gtk_widget_get_child_visible(body));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(body)), ==, "plain | text");
+  g_assert_false(gtk_widget_get_visible(blocks));
+  g_assert_null(gtk_widget_get_first_child(blocks));
 }
 
 typedef struct {
@@ -3936,6 +4182,10 @@ main(int argc, char **argv)
   ADD("delivery-indicator", test_delivery_indicator);
   ADD("links", test_links);
   ADD("markdown-copy-identity", test_markdown_copy_identity);
+  ADD("markdown-table-real", test_markdown_table_real);
+  ADD("markdown-table-compact", test_markdown_table_compact);
+  ADD("markdown-table-tight", test_markdown_table_tight);
+  ADD("markdown-table-only", test_markdown_table_only);
   ADD("reference-card", test_reference_card);
   ADD("share-reference", test_share_reference);
   ADD("link-previews", test_link_previews);
