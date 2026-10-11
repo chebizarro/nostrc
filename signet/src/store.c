@@ -850,6 +850,15 @@ writer_schema_done:
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);",
                      NULL, NULL, NULL);
+  /* Older agent_clients tables gain bound_secret_hash above; create its index
+   * only after that migration, not in SIGNET_SCHEMA_SQL. */
+  if (sqlite3_exec(store->db,
+      "CREATE INDEX IF NOT EXISTS idx_agent_clients_bound_secret_hash "
+      "ON agent_clients(bound_secret_hash) WHERE bound_secret_hash IS NOT NULL;",
+      NULL, NULL, NULL) != SQLITE_OK) {
+    signet_store_close(store);
+    return NULL;
+  }
   if (sqlite3_exec(store->db,
       "INSERT OR IGNORE INTO spent_connect_secrets(secret_hash) "
       "SELECT bound_secret_hash FROM agent_clients WHERE bound_secret_hash IS NOT NULL;",
@@ -1552,7 +1561,7 @@ static int signet_store_put_agent_ex_unchecked(SignetStore *store,
 }
 
 /* A spent pairing secret is still a credential for its bound client. Check
- * both pending plaintext secrets and spent hashes inside the writer
+ * indexed pending plaintext, bound hashes, and spent hashes inside the writer
  * transaction; no concurrent pairing can slip between this check and write.
  * The connection mutex is held by the caller. */
 static int signet_store_secret_in_use(SignetStore *store, const char *secret) {
@@ -1560,9 +1569,9 @@ static int signet_store_secret_in_use(SignetStore *store, const char *secret) {
   char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
   if (!hash) return -1;
   const char *queries[] = {
-      "SELECT connect_secret FROM agents WHERE connect_secret IS NOT NULL;",
-      "SELECT bound_secret_hash FROM agent_clients WHERE bound_secret_hash IS NOT NULL;",
-      "SELECT secret_hash FROM spent_connect_secrets;"};
+      "SELECT 1 FROM agents WHERE connect_secret = ? LIMIT 1;",
+      "SELECT 1 FROM agent_clients WHERE bound_secret_hash = ? LIMIT 1;",
+      "SELECT 1 FROM spent_connect_secrets WHERE secret_hash = ? LIMIT 1;"};
   int result = 0;
   for (size_t i = 0; i < G_N_ELEMENTS(queries) && result == 0; i++) {
     sqlite3_stmt *stmt = NULL;
@@ -1570,19 +1579,15 @@ static int signet_store_secret_in_use(SignetStore *store, const char *secret) {
       result = -1;
       break;
     }
-    int step;
-    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
-      const char *value = (const char *)sqlite3_column_text(stmt, 0);
-      char *pending_hash = i == 0 && value
-          ? g_compute_checksum_for_string(G_CHECKSUM_SHA256, value, -1) : NULL;
-      const char *candidate = i == 0 ? pending_hash : value;
-      if (!candidate) result = -1;
-      else if (strlen(candidate) == 64 && sodium_memcmp(candidate, hash, 64) == 0)
-        result = 1;
-      if (pending_hash) { sodium_memzero(pending_hash, strlen(pending_hash)); g_free(pending_hash); }
-      if (result != 0) break;
+    if (sqlite3_bind_text(stmt, 1, i == 0 ? secret : hash, -1,
+                          SQLITE_TRANSIENT) != SQLITE_OK) {
+      sqlite3_finalize(stmt);
+      result = -1;
+      break;
     }
-    if (result == 0 && step != SQLITE_DONE) result = -1;
+    int step = sqlite3_step(stmt);
+    if (step == SQLITE_ROW) result = 1;
+    else if (step != SQLITE_DONE) result = -1;
     sqlite3_finalize(stmt);
   }
   sodium_memzero(hash, strlen(hash));
