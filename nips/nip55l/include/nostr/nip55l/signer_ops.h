@@ -49,8 +49,8 @@ int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub);
  *   npub1...    -> must name a known identity: the active one (-> "") or a
  *                  stored one whose key has exactly this npub; else
  *                  NOSTR_SIGNER_ERROR_NOT_FOUND
- *   otherwise   -> a key_id / label that must match a stored identity;
- *                  NOSTR_SIGNER_ERROR_NOT_FOUND if it does not
+ *   otherwise   -> a key_id / label that must match exactly one stored item;
+ *                  NOSTR_SIGNER_ERROR_NOT_FOUND if absent or ambiguous
  * A key store that cannot be read is NOSTR_SIGNER_ERROR_BACKEND, never
  * NOT_FOUND: the store may hold the identity (nostrc-f6l29).
  * On success *out_selector is the selector to pass to the other calls and

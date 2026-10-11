@@ -570,7 +570,7 @@ static int perform(const Call *c, const char *claimed_app_id){
       return_string(inv, out, TRUE);
       return 0;
     case OP_GET_PUBLIC_KEY:
-      rc = nostr_nip55l_get_public_key(&out);
+      rc = nostr_nip55l_resolve_npub(c->selector, &out);
       if (rc != 0 || !out) { free(out); rc = rc ? rc : NOSTR_SIGNER_ERROR_BACKEND; return_no_key(inv, c->op, rc); return rc; }
       return_string(inv, out, FALSE);
       return 0;
@@ -734,7 +734,6 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
    * never read as key material (a 64-hex is a pubkey, nsec is refused) and
    * an npub/hex must name a known identity exactly (nostrc-a4w5). */
   g_autofree char *npub_m = NULL;
-  g_autofree char *sel_m = NULL;
   if (op_info[op].has_identity) {
     char *np = NULL, *ns = NULL;
     int rc = nostr_nip55l_normalize_selector(selector, &ns, &np);
@@ -746,10 +745,11 @@ static void gate(const Reply *invocation, const SignerCaller *base, const char *
     }
     if (rc != 0 || !np || !ns) { free(np); free(ns); return_no_key(invocation, op, rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND); return; }
     npub_m = g_strdup(np);
-    sel_m = g_strdup(ns);
     free(np);
     if (ns) { memset(ns, 0, strlen(ns)); free(ns); }
-    selector = sel_m;
+    /* The label or active selector may change before perform(), including
+     * on an auto-grant. Pin execution and approval rechecks to this npub. */
+    selector = npub_m;
   }
 
   Call call = { op, (gchar *)(peer_lc ? peer_lc : a), (gchar *)b, (gchar *)selector, *invocation };

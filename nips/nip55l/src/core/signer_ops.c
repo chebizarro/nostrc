@@ -122,6 +122,94 @@ static int env_seckey_hex(char **out_sk_hex){
   return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 }
 
+#ifdef NIP55L_HAVE_KEYCHAIN
+/* Inspect metadata before reading a secret: account is the key id, comment
+ * covers legacy labels. A non-npub selector must identify one Keychain item. */
+static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_hex){
+  CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
+  CFStringRef wanted = CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8);
+  if (!q || !service || !wanted) {
+    if (q) CFRelease(q);
+    if (service) CFRelease(service);
+    if (wanted) CFRelease(wanted);
+    return NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
+  CFDictionarySetValue(q, kSecAttrService, service);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
+  CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
+  CFDictionarySetValue(q, kSecReturnPersistentRef, kCFBooleanTrue);
+  CFTypeRef result = NULL;
+  OSStatus st = SecItemCopyMatching(q, &result);
+  CFRelease(q);
+  CFRelease(service);
+  if (st != errSecSuccess || !result) {
+    if (result) CFRelease(result);
+    CFRelease(wanted);
+    return st == errSecItemNotFound ? NOSTR_SIGNER_ERROR_NOT_FOUND : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  if (CFGetTypeID(result) != CFArrayGetTypeID()) {
+    CFRelease(result);
+    CFRelease(wanted);
+    return NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  CFTypeRef persistent_ref = NULL;
+  int matches = 0;
+  CFArrayRef items = (CFArrayRef)result;
+  for (CFIndex i = 0; i < CFArrayGetCount(items); i++) {
+    CFTypeRef value = CFArrayGetValueAtIndex(items, i);
+    if (!value || CFGetTypeID(value) != CFDictionaryGetTypeID()) continue;
+    CFDictionaryRef item = (CFDictionaryRef)value;
+    CFTypeRef account = CFDictionaryGetValue(item, kSecAttrAccount);
+    CFTypeRef comment = CFDictionaryGetValue(item, kSecAttrComment);
+    int account_match = account && CFGetTypeID(account) == CFStringGetTypeID() &&
+      CFStringCompare((CFStringRef)account, wanted, 0) == kCFCompareEqualTo;
+    int comment_match = comment && CFGetTypeID(comment) == CFStringGetTypeID() &&
+      CFStringCompare((CFStringRef)comment, wanted, 0) == kCFCompareEqualTo;
+    if (account_match || comment_match) {
+      persistent_ref = CFDictionaryGetValue(item, kSecValuePersistentRef);
+      if (++matches > 1) break;
+    }
+  }
+  CFRelease(wanted);
+  if (matches != 1 || !persistent_ref || CFGetTypeID(persistent_ref) != CFDataGetTypeID()) {
+    CFRelease(result);
+    return matches > 1 || matches == 0 ? NOSTR_SIGNER_ERROR_NOT_FOUND : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
+    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  if (!q) { CFRelease(result); return NOSTR_SIGNER_ERROR_BACKEND; }
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecValuePersistentRef, persistent_ref);
+  CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+  CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
+  CFTypeRef secret = NULL;
+  st = SecItemCopyMatching(q, &secret);
+  CFRelease(q);
+  CFRelease(result);
+  if (st != errSecSuccess || !secret) {
+    if (secret) CFRelease(secret);
+    return st == errSecItemNotFound ? NOSTR_SIGNER_ERROR_NOT_FOUND : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  int rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+  if (CFGetTypeID(secret) == CFDataGetTypeID()) {
+    CFDataRef data = (CFDataRef)secret;
+    const UInt8 *bytes = CFDataGetBytePtr(data);
+    CFIndex len = CFDataGetLength(data);
+    if (bytes && len == 32) {
+      *out_sk_hex = bin_to_hex(bytes, 32);
+      rc = *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+    }
+    if (bytes && len > 0) secure_wipe((void *)bytes, (size_t)len);
+  }
+  CFRelease(secret);
+  return rc;
+}
+#endif
+
 #ifdef NIP55L_HAVE_LIBSECRET
 #include <gio/gio.h>
 /* Grotto's chosen identity (GSettings org.nostr.Grotto default-identity),
@@ -280,6 +368,38 @@ static int store_lookup_sk_hex(const char *attr, const char *value, char **out_s
   return rc;
 }
 
+/* A local selector may be either key_id or label. Inspect each item once so
+ * an item with both attributes equal to the selector is not counted twice. */
+static int store_unique_selector_sk_hex(const char *selector, char **out_sk_hex){
+  SecretService *service = NULL;
+  int rc = store_service(&service);
+  if (rc != 0) return rc;
+  GHashTable *all = g_hash_table_new(g_str_hash, g_str_equal);
+  GList *items = NULL;
+  rc = store_search(service, all, &items);
+  g_hash_table_unref(all);
+  SecretItem *match = NULL;
+  int matches = 0;
+  for (GList *l = items; rc == 0 && l; l = l->next) {
+    SecretItem *item = SECRET_ITEM(l->data);
+    GHashTable *attrs = secret_item_get_attributes(item);
+    if (!attrs) { rc = NOSTR_SIGNER_ERROR_BACKEND; break; }
+    gboolean selected = g_strcmp0(g_hash_table_lookup(attrs, "key_id"), selector) == 0 ||
+                        g_strcmp0(g_hash_table_lookup(attrs, "label"), selector) == 0;
+    g_hash_table_unref(attrs);
+    if (selected) {
+      match = item;
+      if (++matches > 1) break;
+    }
+  }
+  if (rc == 0)
+    rc = matches == 1 ? store_item_sk_hex(service, match, out_sk_hex)
+                      : NOSTR_SIGNER_ERROR_NOT_FOUND;
+  g_list_free_full(items, g_object_unref);
+  g_object_unref(service);
+  return rc;
+}
+
 /* The secret key of the first identity item linked to this login user. */
 static int store_owned_sk_hex(char **out_sk_hex){
   gchar uid_buf[32];
@@ -430,16 +550,16 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
     if (is_env) return env_seckey_hex(out_sk_hex);
   }
 #ifdef NIP55L_HAVE_LIBSECRET
-  /* An explicit key_id, npub or label must name a stored identity exactly. */
+  /* An explicit key_id or label must name one item, not the first match. */
   {
-    int rc_l = store_lookup_sk_hex("key_id", cand, out_sk_hex);
+    if (!sel_is_npub) return store_unique_selector_sk_hex(cand, out_sk_hex);
+    int rc_l = store_lookup_sk_hex("npub", cand, out_sk_hex);
     if (rc_l == NOSTR_SIGNER_ERROR_NOT_FOUND)
-      rc_l = store_lookup_sk_hex("npub", cand, out_sk_hex);
-    if (rc_l == NOSTR_SIGNER_ERROR_NOT_FOUND && !sel_is_npub)
-      rc_l = store_lookup_sk_hex("label", cand, out_sk_hex);
+      rc_l = store_lookup_sk_hex("key_id", cand, out_sk_hex);
     return rc_l;
   }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
+  if (!sel_is_npub) return keychain_unique_selector_sk_hex(cand, out_sk_hex);
   /* Treat current_user as identity selector when provided */
   {
     CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
