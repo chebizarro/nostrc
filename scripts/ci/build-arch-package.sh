@@ -34,6 +34,7 @@ cp "$archive" "$work/"
 # PKGBUILD at the archive that is actually here so makepkg never downloads.
 sed -i "s/^_version=.*/_version=${version}/" "$work/PKGBUILD"
 chown -R build "$work"
-su build -c "cd $work && makepkg -s --noconfirm"
+# Arch Linux ARM's makepkg.conf defaults to .pkg.tar.xz; ship .zst on both.
+su build -c "cd $work && PKGDEST=$work PKGEXT=.pkg.tar.zst makepkg -s --noconfirm"
 mkdir -p "$out"
 cp "$work"/*.pkg.tar.zst "$out/"

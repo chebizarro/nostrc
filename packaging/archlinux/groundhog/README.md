@@ -21,6 +21,9 @@ docker run --rm --platform linux/arm64 -v /tmp/gh:/w -v "$PWD/scripts/ci:/ci:ro"
 
 Install with `pacman -U groundhog-*.pkg.tar.zst grotto-*.pkg.tar.zst`
 (`grotto` is only needed for local, Grotto-backed accounts).
+Run `pacman -Syu` first: the packages are built against current Arch
+(Linux ARM) libraries, and a partially upgraded root (new `gtk4`, old
+`glib2`) fails with `undefined symbol: g_timeout_source_new_ns`.
 
 ## Arch Linux ARM on Android (Termux proot-distro, chroot)
 
