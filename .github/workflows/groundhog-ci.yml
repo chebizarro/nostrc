@@ -368,10 +368,19 @@ jobs:
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
             libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
-            gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi \
+            gettext dbus-bin blueprint-compiler gnome-keyring xvfb xauth python3-gi curl \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
             gstreamer1.0-plugins-bad gstreamer1.0-libav
+          # libsecret is stripped on Noble; LSan needs the matching build-id
+          # symbols to match only secret_collection_signal (nostrc-eixk6).
+          version="$(dpkg-query -W -f='${Version}' libsecret-1-0)"
+          arch="$(dpkg --print-architecture)"
+          curl --fail --location --retry 3 \
+            "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
+            --output /tmp/libsecret-dbgsym.ddeb
+          sudo dpkg-deb --extract /tmp/libsecret-dbgsym.ddeb /
+          rm /tmp/libsecret-dbgsym.ddeb
 
       - name: Configure with ASAN and UBSAN
         run: |
