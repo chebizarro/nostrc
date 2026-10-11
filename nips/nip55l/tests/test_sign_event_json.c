@@ -3,8 +3,8 @@
  * The org.nostr.Signer.SignEvent method now returns the complete signed
  * event JSON (id, pubkey, created_at, kind, tags, content, sig). This
  * exercises the underlying helper the D-Bus dispatch calls
- * (nostr_nip55l_sign_event_json) with an explicit hex-selector identity, so
- * the test never reaches libsecret, the Keychain, or a session bus.
+ * (nostr_nip55l_sign_event_json) with a key provisioned via the environment,
+ * so the test never reaches libsecret, the Keychain, or a session bus.
  *
  * Asserts:
  *   - The reply is a JSON object (not a bare 128-hex signature).
@@ -34,9 +34,9 @@
     fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); \
   } } while (0)
 
-static char *sign_or_die(const char *tmpl, const char *sk_selector) {
+static char *sign_or_die(const char *tmpl, const char *selector) {
   char *out = NULL;
-  int rc = nostr_nip55l_sign_event_json(tmpl, sk_selector, "test", &out);
+  int rc = nostr_nip55l_sign_event_json(tmpl, selector, "test", &out);
   if (rc != 0 || !out) {
     fprintf(stderr, "sign_event_json failed: rc=%d out=%s\n", rc, out ? out : "(null)");
     exit(1);
@@ -62,6 +62,7 @@ int main(void) {
   CHECK(sk_hex);
   char *pk_hex = nostr_key_get_public(sk_hex);
   CHECK(pk_hex);
+  CHECK(setenv("NOSTR_SIGNER_SECKEY_HEX", sk_hex, 1) == 0);
 
   /* Template with the caller's own pubkey and a real timestamp. */
   int64_t now = (int64_t)time(NULL);
@@ -70,7 +71,7 @@ int main(void) {
     "{\"kind\":1,\"created_at\":%lld,\"pubkey\":\"%s\","
     "\"tags\":[[\"e\",\"aa\"]],\"content\":\"hello \\\"world\\\"\"}",
     (long long)now, pk_hex);
-  char *out_a = sign_or_die(tmpl_a, sk_hex);
+  char *out_a = sign_or_die(tmpl_a, pk_hex);
   assert_verified_signed_event(out_a, pk_hex, 1, now);
   free(out_a);
 
@@ -85,7 +86,7 @@ int main(void) {
     /* Deliberately wrong pubkey (all zeros). */
     "0000000000000000000000000000000000000000000000000000000000000000");
   int64_t before = (int64_t)time(NULL);
-  char *out_b = sign_or_die(tmpl_b, sk_hex);
+  char *out_b = sign_or_die(tmpl_b, pk_hex);
   /* pubkey overwritten to the signing key's; created_at filled with now. */
   assert_verified_signed_event(out_b, pk_hex, 22242, before);
   free(out_b);
@@ -93,10 +94,11 @@ int main(void) {
   /* Malformed JSON is refused with the invalid-JSON code, not silently
    * signed as an empty event. */
   char *out_c = NULL;
-  int rc = nostr_nip55l_sign_event_json("{not json", sk_hex, "test", &out_c);
+  int rc = nostr_nip55l_sign_event_json("{not json", pk_hex, "test", &out_c);
   CHECK(rc == NOSTR_SIGNER_ERROR_INVALID_JSON);
   CHECK(out_c == NULL);
 
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   free(sk_hex); free(pk_hex);
   printf("test_nip55l_sign_event_json: PASS\n");
   return 0;

@@ -55,13 +55,15 @@ static void roundtrip_width(const char *a_sk, const char *a_pk,
   CHECK(nip44_base64_encode(blob, width, &pt_b64) == 0 && pt_b64);
 
   char *payload = NULL;
-  int rc = nostr_nip55l_nip44_encrypt_b64(pt_b64, b_pk, a_sk, &payload);
+  CHECK(setenv("NOSTR_SIGNER_SECKEY_HEX", a_sk, 1) == 0);
+  int rc = nostr_nip55l_nip44_encrypt_b64(pt_b64, b_pk, a_pk, &payload);
   CHECK(rc == 0 && payload);
   free(pt_b64);
 
   /* The recipient recovers the exact bytes, at the exact width. */
   char *out_b64 = NULL;
-  rc = nostr_nip55l_nip44_decrypt_b64(payload, a_pk, b_sk, &out_b64);
+  CHECK(setenv("NOSTR_SIGNER_SECKEY_HEX", b_sk, 1) == 0);
+  rc = nostr_nip55l_nip44_decrypt_b64(payload, a_pk, b_pk, &out_b64);
   CHECK(rc == 0 && out_b64);
 
   char *expect_b64 = NULL;
@@ -108,20 +110,23 @@ int main(void) {
    * characters outside the alphabet would turn a typo into a shorter
    * plaintext — a blob of the wrong width, encrypted and delivered. */
   char *payload = NULL;
-  CHECK(nostr_nip55l_nip44_encrypt_b64("AAAA AAAA", b_pk, a_sk, &payload) != 0);
+  CHECK(setenv("NOSTR_SIGNER_SECKEY_HEX", a_sk, 1) == 0);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AAAA AAAA", b_pk, a_pk, &payload) != 0);
   CHECK(payload == NULL);
-  CHECK(nostr_nip55l_nip44_encrypt_b64("AAA", b_pk, a_sk, &payload) != 0);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AAA", b_pk, a_pk, &payload) != 0);
   CHECK(payload == NULL);
-  CHECK(nostr_nip55l_nip44_encrypt_b64("AA=A", b_pk, a_sk, &payload) != 0);
+  CHECK(nostr_nip55l_nip44_encrypt_b64("AA=A", b_pk, a_pk, &payload) != 0);
   CHECK(payload == NULL);
   printf("  ok: a malformed base64 plaintext is refused, not truncated\n");
 
   /* An unopenable ciphertext is an error, never an empty plaintext. */
   char *out = NULL;
-  CHECK(nostr_nip55l_nip44_decrypt_b64("not-a-payload", a_pk, b_sk, &out) != 0);
+  CHECK(setenv("NOSTR_SIGNER_SECKEY_HEX", b_sk, 1) == 0);
+  CHECK(nostr_nip55l_nip44_decrypt_b64("not-a-payload", a_pk, b_pk, &out) != 0);
   CHECK(out == NULL);
   printf("  ok: a malformed payload is refused\n");
 
+  unsetenv("NOSTR_SIGNER_SECKEY_HEX");
   free(a_sk); free(b_sk); free(a_pk); free(b_pk);
   printf("test_nip55l_nip44_b64: PASS\n");
   return 0;

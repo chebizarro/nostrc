@@ -253,7 +253,7 @@ if (BUILD_TESTING)
 
   # Core contract tests for the D1.a / D2 landings: SignEvent returns the
   # complete signed event JSON, GetRelays reads explicit per-user config only.
-  # Keys are passed as explicit hex/nsec selectors so no test reaches
+  # Tests provision throwaway keys via the environment so no test reaches
   # libsecret, the Keychain, or a session bus. Fuzz harnesses and the
   # real-service D-Bus contract test wire below (nostrc-tf3b).
   foreach(t sign_event_json getrelays)
@@ -263,6 +263,12 @@ if (BUILD_TESTING)
     add_test(NAME nip55l_${t} COMMAND test_nip55l_${t})
     set_tests_properties(nip55l_${t} PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
   endforeach()
+
+  add_executable(test_nip55l_selector_safety ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selector_safety.c)
+  target_link_libraries(test_nip55l_selector_safety PRIVATE nostr_nip55l_core nostr nip19)
+  target_compile_options(test_nip55l_selector_safety PRIVATE -Wall -Wextra -Werror)
+  add_test(NAME nip55l_selector_safety COMMAND test_nip55l_selector_safety)
+  set_tests_properties(nip55l_selector_safety PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
 
   # macOS Keychain import of pre-e5nz GNostr client keys (nostrc-de9h). The
   # migration is compiled into the test with NIP55L_KEYCHAIN_TEST_HOOKS so it
