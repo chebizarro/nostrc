@@ -526,6 +526,11 @@ static const char *SIGNET_SCHEMA_SQL =
   "  revoked_at INTEGER"
   ");"
   "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);"
+  /* A client may later re-pair or be revoked. Keep spent hashes independently
+   * so no previously issued bunker URI can ever become a fresh credential. */
+  "CREATE TABLE IF NOT EXISTS spent_connect_secrets ("
+  "  secret_hash TEXT PRIMARY KEY NOT NULL"
+  ");"
 
   /* v4: persisted provisioner authorization policy. The state row
    * distinguishes an intentionally empty/revoked set from never-seeded state. */
@@ -845,6 +850,13 @@ writer_schema_done:
   (void)sqlite3_exec(store->db,
                      "CREATE INDEX IF NOT EXISTS idx_agent_clients_agent ON agent_clients(agent_id);",
                      NULL, NULL, NULL);
+  if (sqlite3_exec(store->db,
+      "INSERT OR IGNORE INTO spent_connect_secrets(secret_hash) "
+      "SELECT bound_secret_hash FROM agent_clients WHERE bound_secret_hash IS NOT NULL;",
+      NULL, NULL, NULL) != SQLITE_OK) {
+    signet_store_close(store);
+    return NULL;
+  }
 
   /* v3.2: DB-level pubkey uniqueness (one agent per custody key). Safe now
    * that put_agent_ex upserts with ON CONFLICT(agent_id) instead of OR
@@ -1398,7 +1410,7 @@ bool signet_store_is_open(const SignetStore *store) {
   return store && store->open && store->db;
 }
 
-int signet_store_put_agent_ex(SignetStore *store,
+static int signet_store_put_agent_ex_unchecked(SignetStore *store,
                               const char *agent_id,
                               const uint8_t *secret_key,
                               size_t secret_key_len,
@@ -1537,6 +1549,69 @@ int signet_store_put_agent_ex(SignetStore *store,
   if (xerr == SQLITE_CONSTRAINT_UNIQUE || xerr == SQLITE_CONSTRAINT_PRIMARYKEY)
     return 1;
   return -1;
+}
+
+/* A spent pairing secret is still a credential for its bound client. Check
+ * both pending plaintext secrets and spent hashes inside the writer
+ * transaction; no concurrent pairing can slip between this check and write.
+ * The connection mutex is held by the caller. */
+static int signet_store_secret_in_use(SignetStore *store, const char *secret) {
+  if (!secret || !secret[0]) return 0;
+  char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, secret, -1);
+  if (!hash) return -1;
+  const char *queries[] = {
+      "SELECT connect_secret FROM agents WHERE connect_secret IS NOT NULL;",
+      "SELECT bound_secret_hash FROM agent_clients WHERE bound_secret_hash IS NOT NULL;",
+      "SELECT secret_hash FROM spent_connect_secrets;"};
+  int result = 0;
+  for (size_t i = 0; i < G_N_ELEMENTS(queries) && result == 0; i++) {
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(store->db, queries[i], -1, &stmt, NULL) != SQLITE_OK) {
+      result = -1;
+      break;
+    }
+    int step;
+    while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+      const char *value = (const char *)sqlite3_column_text(stmt, 0);
+      char *pending_hash = i == 0 && value
+          ? g_compute_checksum_for_string(G_CHECKSUM_SHA256, value, -1) : NULL;
+      const char *candidate = i == 0 ? pending_hash : value;
+      if (!candidate) result = -1;
+      else if (strlen(candidate) == 64 && sodium_memcmp(candidate, hash, 64) == 0)
+        result = 1;
+      if (pending_hash) { sodium_memzero(pending_hash, strlen(pending_hash)); g_free(pending_hash); }
+      if (result != 0) break;
+    }
+    if (result == 0 && step != SQLITE_DONE) result = -1;
+    sqlite3_finalize(stmt);
+  }
+  sodium_memzero(hash, strlen(hash));
+  g_free(hash);
+  return result;
+}
+
+int signet_store_put_agent_ex(SignetStore *store, const char *agent_id,
+                              const uint8_t *secret_key, size_t secret_key_len,
+                              const char *connect_secret, const char *pubkey_hex,
+                              const char *provenance, int64_t now) {
+  if (!store || !store->open || !store->db) return -1;
+  sqlite3_mutex_enter(sqlite3_db_mutex(store->db));
+  int rc = -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) == SQLITE_OK) {
+    int used = signet_store_secret_in_use(store, connect_secret);
+    if (used == 0)
+      rc = signet_store_put_agent_ex_unchecked(store, agent_id, secret_key,
+                                                secret_key_len, connect_secret,
+                                                pubkey_hex, provenance, now);
+    else rc = used;
+    if (sqlite3_exec(store->db, rc == 0 ? "COMMIT;" : "ROLLBACK;",
+                     NULL, NULL, NULL) != SQLITE_OK) {
+      (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+      rc = -1;
+    }
+  }
+  sqlite3_mutex_leave(sqlite3_db_mutex(store->db));
+  return rc;
 }
 
 int signet_store_put_agent(SignetStore *store,
@@ -1950,6 +2025,7 @@ int signet_store_bind_client(SignetStore *store,
   }
   char *hash = signet_store_secret_hash(pairing_secret);
   int rc = signet_store_bind_client_stmt(store, agent_id, apk, canonical, hash, now);
+  if (hash) sodium_memzero(hash, strlen(hash));
   g_free(hash);
   return rc;
 }
@@ -1995,6 +2071,7 @@ int signet_store_lookup_client_binding(SignetStore *store,
   char *hash_copy = (out_bound_secret_hash && bsh) ? g_strdup(bsh) : NULL;
   sqlite3_finalize(stmt);
   if (!copy) {
+    if (hash_copy) sodium_memzero(hash_copy, strlen(hash_copy));
     g_free(hash_copy);
     return -1;
   }
@@ -2016,7 +2093,7 @@ int signet_store_lookup_client_binding(SignetStore *store,
 
   *out_agent_id = copy;
   if (out_bound_secret_hash) *out_bound_secret_hash = hash_copy;
-  else g_free(hash_copy);
+  else { if (hash_copy) sodium_memzero(hash_copy, strlen(hash_copy)); g_free(hash_copy); }
   return 0;
 }
 
@@ -2633,7 +2710,7 @@ int signet_store_consume_connect_secret(SignetStore *store,
   return (changes > 0) ? 0 : 1; /* 1 = not found or already consumed */
 }
 
-int signet_store_reissue_connect_secret(SignetStore *store,
+static int signet_store_reissue_connect_secret_unchecked(SignetStore *store,
                                         const char *agent_id,
                                         const char *connect_secret,
                                         int64_t now) {
@@ -2657,6 +2734,27 @@ int signet_store_reissue_connect_secret(SignetStore *store,
 
   if (rc != SQLITE_DONE) return -1;
   return (changes > 0) ? 0 : 1; /* 1 = agent not found */
+}
+
+int signet_store_reissue_connect_secret(SignetStore *store, const char *agent_id,
+                                        const char *connect_secret, int64_t now) {
+  if (!store || !store->open || !store->db) return -1;
+  sqlite3_mutex_enter(sqlite3_db_mutex(store->db));
+  int rc = -1;
+  if (sqlite3_exec(store->db, "BEGIN IMMEDIATE;", NULL, NULL, NULL) == SQLITE_OK) {
+    int used = signet_store_secret_in_use(store, connect_secret);
+    if (used == 0)
+      rc = signet_store_reissue_connect_secret_unchecked(store, agent_id,
+                                                          connect_secret, now);
+    else rc = used == 1 ? -1 : used;
+    if (sqlite3_exec(store->db, rc == 0 ? "COMMIT;" : "ROLLBACK;",
+                     NULL, NULL, NULL) != SQLITE_OK) {
+      (void)sqlite3_exec(store->db, "ROLLBACK;", NULL, NULL, NULL);
+      rc = -1;
+    }
+  }
+  sqlite3_mutex_leave(sqlite3_db_mutex(store->db));
+  return rc;
 }
 
 /* Shared transactional body for consume-by-value. When bind_client_pubkey is
@@ -2803,6 +2901,19 @@ static int signet_store_consume_connect_secret_value_internal(
     int brc = signet_store_bind_client_stmt(store, agent_copy,
                                             (agent_pk_copy && agent_pk_copy[0]) ? agent_pk_copy : NULL,
                                             client_canonical, hash, now);
+    if (brc == 0 && hash) {
+      sqlite3_stmt *spent = NULL;
+      if (sqlite3_prepare_v2(store->db,
+          "INSERT OR IGNORE INTO spent_connect_secrets(secret_hash) VALUES(?);",
+          -1, &spent, NULL) != SQLITE_OK) {
+        brc = -1;
+      } else {
+        sqlite3_bind_text(spent, 1, hash, -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(spent) != SQLITE_DONE) brc = -1;
+        sqlite3_finalize(spent);
+      }
+    }
+    if (hash) sodium_memzero(hash, strlen(hash));
     g_free(hash);
     if (brc != 0) {
       g_free(agent_copy);

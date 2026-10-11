@@ -23,6 +23,7 @@
 #include <time.h>
 
 #include <glib.h>
+#include <sqlite3.h>
 
 /* libnostr */
 #include <nostr-keys.h>
@@ -64,6 +65,12 @@ static void signet_ephemeral_binding_free(gpointer p) {
   }
   sodium_memzero(b, sizeof(*b));
   g_free(b);
+}
+
+static void signet_secret_hash_free(gpointer p) {
+  if (!p) return;
+  sodium_memzero(p, strlen((const char *)p));
+  g_free(p);
 }
 
 static atomic_uint_fast64_t signet_cache_next_generation = 1;
@@ -111,7 +118,7 @@ static SignetCacheEntry *signet_cache_entry_new(const uint8_t *sk, int64_t loade
 static void signet_cache_entry_free(gpointer p) {
   if (!p) return;
   SignetCacheEntry *e = (SignetCacheEntry *)p;
-  sodium_memzero(e->secret_key, 32);
+  sodium_memzero(e, sizeof(*e));
   sodium_free(e);
 }
 
@@ -126,8 +133,26 @@ struct SignetKeyStore {
   /* Cache-only NIP-46 bindings: canonical client pubkey (gchar*) →
    * SignetEphemeralBinding*. Unused when a persistent store is open. */
   GHashTable *ephemeral_bindings;
+  /* Spent hashes outlive bindings, which are dropped on revoke/rotate. */
+  GHashTable *spent_secret_hashes;
   GMutex mu;
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  char *test_next_reissue_secret;
+#endif
 };
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+void signet_key_store_test_next_reissue_secret(SignetKeyStore *ks, const char *secret) {
+  if (!ks) return;
+  g_mutex_lock(&ks->mu);
+  if (ks->test_next_reissue_secret) {
+    sodium_memzero(ks->test_next_reissue_secret, strlen(ks->test_next_reissue_secret));
+    g_free(ks->test_next_reissue_secret);
+  }
+  ks->test_next_reissue_secret = secret ? g_strdup(secret) : NULL;
+  g_mutex_unlock(&ks->mu);
+}
+#endif
 
 /* SHA-256 hex of a connect secret, the same digest the persistent store
  * records as bound_secret_hash. */
@@ -159,6 +184,20 @@ static bool signet_cache_secret_hash_in_use(SignetKeyStore *ks,
         sodium_memcmp(e->connect_secret_hash, hash, 64) == 0)
       return true;
   }
+  /* Spent secrets remain valid only for their original bound client. Never
+   * let a pending secret resurrect that authority for another agent. */
+  g_hash_table_iter_init(&it, ks->ephemeral_bindings);
+  while (g_hash_table_iter_next(&it, NULL, &v)) {
+    const SignetEphemeralBinding *b = v;
+    if (b->secret_hash[0] && sodium_memcmp(b->secret_hash, hash, 64) == 0)
+      return true;
+  }
+  g_hash_table_iter_init(&it, ks->spent_secret_hashes);
+  gpointer k;
+  while (g_hash_table_iter_next(&it, &k, NULL)) {
+    const char *spent = k;
+    if (sodium_memcmp(spent, hash, 64) == 0) return true;
+  }
   return false;
 }
 
@@ -170,6 +209,8 @@ static bool signet_cache_set_pending_secret(SignetKeyStore *ks, SignetCacheEntry
                                             const char *secret) {
   char hash[65];
   bool ok = signet_connect_secret_hash(secret, hash) &&
+            !(e->connect_secret_hash[0] &&
+              sodium_memcmp(e->connect_secret_hash, hash, 64) == 0) &&
             !signet_cache_secret_hash_in_use(ks, e, hash);
   if (ok) memcpy(e->connect_secret_hash, hash, 65);
   sodium_memzero(hash, sizeof(hash));
@@ -206,9 +247,12 @@ SignetKeyStore *signet_key_store_new(SignetAuditLogger *audit,
                                      g_free, signet_cache_entry_free);
   ks->ephemeral_bindings = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                                  signet_ephemeral_binding_free);
-  if (!ks->cache || !ks->ephemeral_bindings) {
+  ks->spent_secret_hashes = g_hash_table_new_full(g_str_hash, g_str_equal,
+                                                    signet_secret_hash_free, NULL);
+  if (!ks->cache || !ks->ephemeral_bindings || !ks->spent_secret_hashes) {
     if (ks->cache) g_hash_table_destroy(ks->cache);
     if (ks->ephemeral_bindings) g_hash_table_destroy(ks->ephemeral_bindings);
+    if (ks->spent_secret_hashes) g_hash_table_destroy(ks->spent_secret_hashes);
     g_mutex_clear(&ks->mu);
     free(ks);
     return NULL;
@@ -265,6 +309,16 @@ void signet_key_store_free(SignetKeyStore *ks) {
     g_hash_table_destroy(ks->ephemeral_bindings);
     ks->ephemeral_bindings = NULL;
   }
+  if (ks->spent_secret_hashes) {
+    g_hash_table_destroy(ks->spent_secret_hashes);
+    ks->spent_secret_hashes = NULL;
+  }
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (ks->test_next_reissue_secret) {
+    sodium_memzero(ks->test_next_reissue_secret, strlen(ks->test_next_reissue_secret));
+    g_free(ks->test_next_reissue_secret);
+  }
+#endif
 
   if (ks->store) {
     signet_store_close(ks->store);
@@ -922,6 +976,165 @@ static bool signet_ks_canonical_pubkey(const char *pubkey_hex, char out[65]) {
   return true;
 }
 
+typedef struct {
+  SignetStore *store;
+  const char *agent_id;
+  const char *client;
+  const char *secret_hash;
+  SignetKeyStoreCustodyFn fn;
+  void *data;
+} SignetBoundCustody;
+
+static int signet_bound_custody_callback(const uint8_t key[32], void *data) {
+  SignetBoundCustody *work = data;
+  char *current_agent = NULL, *current_hash = NULL;
+  int rc = signet_store_lookup_client_binding(work->store, work->client,
+                                               (int64_t)time(NULL),
+                                               &current_agent, &current_hash);
+  bool hash_matches = (!current_hash && !work->secret_hash) ||
+      (current_hash && work->secret_hash &&
+       strlen(current_hash) == 64 && strlen(work->secret_hash) == 64 &&
+       sodium_memcmp(current_hash, work->secret_hash, 64) == 0);
+  bool valid = rc == 0 && g_strcmp0(current_agent, work->agent_id) == 0 &&
+               hash_matches;
+  g_free(current_agent);
+  if (current_hash) { sodium_memzero(current_hash, strlen(current_hash)); g_free(current_hash); }
+  return valid ? work->fn(key, work->data) : -3;
+}
+
+int signet_key_store_with_bound_session(SignetKeyStore *ks, const char *agent_id,
+                                        const char *client_pubkey,
+                                        const char *bound_secret_hash,
+                                        uint64_t generation,
+                                        int (*fn)(void *), void *data) {
+  if (!ks || !agent_id || !client_pubkey || !fn) return -1;
+  char client[65];
+  if (!signet_ks_canonical_pubkey(client_pubkey, client)) return -3;
+  g_mutex_lock(&ks->mu);
+  int rc = -3;
+  if (ks->store) {
+    /* FIDO may start its own store transaction, so hold the connection mutex
+     * (not a nested writer transaction) across validation and callback. */
+    sqlite3 *db = signet_store_get_db(ks->store);
+    if (db) {
+      sqlite3_mutex_enter(sqlite3_db_mutex(db));
+      char *current_agent = NULL, *current_hash = NULL;
+      int lookup = signet_store_lookup_client_binding(ks->store, client,
+          (int64_t)time(NULL), &current_agent, &current_hash);
+      bool hash_matches = (!current_hash && !bound_secret_hash) ||
+          (current_hash && bound_secret_hash && strlen(current_hash) == 64 &&
+           strlen(bound_secret_hash) == 64 &&
+           sodium_memcmp(current_hash, bound_secret_hash, 64) == 0);
+      if (lookup == 0 && g_strcmp0(current_agent, agent_id) == 0 && hash_matches)
+        rc = fn(data);
+      g_free(current_agent);
+      if (current_hash) { sodium_memzero(current_hash, strlen(current_hash)); g_free(current_hash); }
+      sqlite3_mutex_leave(sqlite3_db_mutex(db));
+    }
+  } else {
+    const SignetEphemeralBinding *b = g_hash_table_lookup(ks->ephemeral_bindings, client);
+    const SignetCacheEntry *e = g_hash_table_lookup(ks->cache, agent_id);
+    if (b && e && generation != 0 && b->generation == generation &&
+        e->generation == generation && g_strcmp0(b->agent_id, agent_id) == 0)
+      rc = fn(data);
+  }
+  g_mutex_unlock(&ks->mu);
+  return rc;
+}
+
+static int signet_key_store_with_bound_key_impl(SignetKeyStore *ks, const char *agent_id,
+                                    const char *client_pubkey,
+                                    const char *bound_secret_hash,
+                                    uint64_t generation,
+                                    bool legacy_only,
+                                    SignetKeyStoreCustodyFn fn, void *user_data) {
+  if (!ks || !agent_id || !client_pubkey || !fn) return -1;
+  char client[65];
+  if (!signet_ks_canonical_pubkey(client_pubkey, client)) return -3;
+  /* Lock order: ks->mu -> SQLite connection mutex/transaction. Never call
+   * back into the key store from fn. Entry/binding pointers never escape. */
+  g_mutex_lock(&ks->mu);
+  int rc = -3;
+  if (ks->store) {
+    SignetBoundCustody work = {ks->store, agent_id, client,
+                               bound_secret_hash, fn, user_data};
+    rc = signet_store_writer_sign(ks->store, agent_id,
+                                  legacy_only ? NULL : client,
+                                  signet_bound_custody_callback, &work);
+  } else {
+    const SignetEphemeralBinding *b = g_hash_table_lookup(ks->ephemeral_bindings, client);
+    const SignetCacheEntry *e = g_hash_table_lookup(ks->cache, agent_id);
+    if (b && e && generation != 0 && b->generation == generation &&
+        e->generation == generation && g_strcmp0(b->agent_id, agent_id) == 0)
+      rc = fn(e->secret_key, user_data);
+  }
+  g_mutex_unlock(&ks->mu);
+  return rc;
+}
+
+int signet_key_store_with_bound_key(SignetKeyStore *ks, const char *agent_id,
+                                    const char *client_pubkey,
+                                    const char *bound_secret_hash,
+                                    uint64_t generation,
+                                    SignetKeyStoreCustodyFn fn, void *user_data) {
+  return signet_key_store_with_bound_key_impl(ks, agent_id, client_pubkey,
+      bound_secret_hash, generation, false, fn, user_data);
+}
+
+int signet_key_store_crypt_bound(SignetKeyStore *ks, const char *agent_id,
+                                 const char *client_pubkey,
+                                 const char *bound_secret_hash,
+                                 uint64_t generation, const char *method,
+                                 const char *peer_pubkey, const char *input,
+                                 char **out_result) {
+  if (out_result) *out_result = NULL;
+  if (!method || !peer_pubkey || !input || !out_result) return -1;
+  SignetCryptoWork work = {.method = method, .peer = peer_pubkey, .input = input};
+  bool legacy_only = g_str_has_prefix(method, "nip04_");
+  int rc = signet_key_store_with_bound_key_impl(ks, agent_id, client_pubkey,
+      bound_secret_hash, generation, legacy_only,
+      signet_key_store_crypto_callback, &work);
+  if (rc != 0) {
+    if (work.result) { sodium_memzero(work.result, work.result_len); g_free(work.result); }
+    return rc;
+  }
+  *out_result = work.result;
+  return 0;
+}
+
+typedef struct {
+  SignetKeyStore *ks;
+  const char *agent_id;
+  char *out;
+} SignetBoundPubkeyWork;
+
+static int signet_bound_pubkey_callback(void *data) {
+  SignetBoundPubkeyWork *w = data;
+  if (w->ks->store) {
+    SignetAgentMeta meta = {0};
+    int rc = signet_store_get_agent_meta(w->ks->store, w->agent_id, &meta);
+    if (rc == 0 && meta.pubkey && strlen(meta.pubkey) == 64)
+      memcpy(w->out, meta.pubkey, 65);
+    signet_agent_meta_clear(&meta);
+    return w->out[0] ? 0 : -1;
+  }
+  const SignetCacheEntry *e = g_hash_table_lookup(w->ks->cache, w->agent_id);
+  if (!e) return -1;
+  memcpy(w->out, e->pubkey_hex, 65);
+  return 0;
+}
+
+int signet_key_store_get_bound_pubkey(SignetKeyStore *ks, const char *agent_id,
+                                      const char *client_pubkey,
+                                      const char *bound_secret_hash,
+                                      uint64_t generation, char out[65]) {
+  if (!out) return -1;
+  out[0] = '\0';
+  SignetBoundPubkeyWork work = {ks, agent_id, out};
+  return signet_key_store_with_bound_session(ks, agent_id, client_pubkey,
+      bound_secret_hash, generation, signet_bound_pubkey_callback, &work);
+}
+
 int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
                                            const char *connect_secret,
                                            const char *client_pubkey_hex,
@@ -971,6 +1184,7 @@ int signet_key_store_ephemeral_pair_client(SignetKeyStore *ks,
   /* Consume and bind together: the secret is single-use, and a re-pair of an
    * already bound client key replaces its earlier binding. */
   sodium_memzero(match->connect_secret_hash, sizeof(match->connect_secret_hash));
+  g_hash_table_add(ks->spent_secret_hashes, g_strdup(hash));
   g_hash_table_replace(ks->ephemeral_bindings, g_strdup(client), b);
   g_mutex_unlock(&ks->mu);
   sodium_memzero(hash, sizeof(hash));
@@ -990,9 +1204,11 @@ unsigned int signet_key_store_ephemeral_binding_count(SignetKeyStore *ks) {
 int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
                                              const char *client_pubkey_hex,
                                              char **out_agent_id,
-                                             char **out_bound_secret_hash) {
+                                             char **out_bound_secret_hash,
+                                             uint64_t *out_generation) {
   if (out_agent_id) *out_agent_id = NULL;
   if (out_bound_secret_hash) *out_bound_secret_hash = NULL;
+  if (out_generation) *out_generation = 0;
   if (!ks || !out_agent_id) return -1;
 
   char client[65];
@@ -1022,6 +1238,7 @@ int signet_key_store_ephemeral_lookup_client(SignetKeyStore *ks,
 
   *out_agent_id = g_strdup(b->agent_id);
   if (out_bound_secret_hash) *out_bound_secret_hash = g_strdup(b->secret_hash);
+  if (out_generation) *out_generation = b->generation;
   g_mutex_unlock(&ks->mu);
   return 0;
 }
@@ -1052,6 +1269,14 @@ int signet_key_store_reissue_connect_secret(SignetKeyStore *ks,
   char *pk_hex = NULL;
 
   g_mutex_lock(&ks->mu);
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (ks->test_next_reissue_secret) {
+    g_strlcpy(connect_secret, ks->test_next_reissue_secret, sizeof(connect_secret));
+    sodium_memzero(ks->test_next_reissue_secret, strlen(ks->test_next_reissue_secret));
+    g_free(ks->test_next_reissue_secret);
+    ks->test_next_reissue_secret = NULL;
+  }
+#endif
 
   /* The agent must exist. With a store, load the record so we can derive the
    * identity pubkey even for legacy rows without a populated pubkey column;

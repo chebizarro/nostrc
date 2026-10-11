@@ -286,6 +286,7 @@ endif
 signetd_cargs = []
 if get_option('signet_enable_test_hooks')
   signetd_cargs += '-DSIGNET_ENABLE_TEST_HOOKS=1'
+  add_project_arguments('-DSIGNET_ENABLE_TEST_HOOKS=1', language: 'c')
 endif
 
 signet_core = static_library('signet_core',
