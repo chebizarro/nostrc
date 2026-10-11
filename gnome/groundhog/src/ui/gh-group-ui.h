@@ -3,7 +3,7 @@
 
 #include "gh-conversation-list.h"
 #include "gh-group-info-dialog.h"
-#include "gh-new-group-dialog.h"
+#include "gh-new-group-page.h"
 #include "gh-window.h"
 
 G_BEGIN_DECLS
@@ -13,9 +13,11 @@ G_BEGIN_DECLS
  * item G20b), over the open store's GhNip29Service (which follows the
  * account store: none while no store is open):
  *
- *  - win.join-group and win.new-group (the main menu) present
- *    GhGroupJoinDialog and GhNewGroupDialog; each is enabled while a service
- *    exists, and "Open Group" opens the group's conversation in the window.
+ *  - win.join-group and win.new-group (New Message's rows) slide the
+ *    sidebar to GhGroupJoinPage and GhNewGroupPage, pushed over New Message
+ *    (gh_window_push_flow()); each is enabled while a service exists, and
+ *    "Open Group" returns the sidebar to the list and opens the group's
+ *    conversation in the window, focused.
  *  - The composer (gh_send_ui_set_delegate()): a relay group's messages go
  *    to gh_nip29_service_send() (the durable NIP-29 outbox: listed at once,
  *    honest status), never the NIP-17 outbox; Retry is the outbox's retry;
@@ -54,10 +56,10 @@ typedef struct {
  * (it replaces the window's history source). */
 void gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config);
 
-/* qp24.13 part 2: called with each New Group dialog before it is presented,
- * e.g. to add the encrypted page (gh_new_group_dialog_add_encrypted_page()).
+/* qp24.13 part 2: called with each New Group page before it is pushed,
+ * e.g. to add the encrypted page (gh_new_group_page_add_encrypted_page()).
  * NULL clears; user_data is borrowed until replaced or the window goes. */
-typedef void (*GhGroupUiNewGroupFunc)(GhWindow *window, GhNewGroupDialog *dialog,
+typedef void (*GhGroupUiNewGroupFunc)(GhWindow *window, GhNewGroupPage *dialog,
                                       gpointer user_data);
 void gh_group_ui_set_new_group_extension(GhWindow *window, GhGroupUiNewGroupFunc func,
                                          gpointer user_data);

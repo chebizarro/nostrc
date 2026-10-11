@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 // New Group (charter §7.9; item G20b, qp24.13 part 2), driven by
-// gh-new-group-dialog.c. "type": the chooser, stating the difference up
+// gh-new-group-page.c. "type": the chooser, stating the difference up
 // front (§2.2 surface 3); it is the first page only when the encrypted page
 // (gh-mls-new-group-page.blp, tag "encrypted") was added, else the dialog
 // starts at "form": encrypted groups are never a disabled placeholder.
@@ -13,11 +13,12 @@ using Adw 1;
 // (gh_group_create_copy(): waiting for the signer, creating, created and
 // waiting for its details until the relay's own 39000 arrives, or not
 // created with the relay's reason: most relays don't let people create
-// groups). Relay text is plain text.
-template $GhNewGroupDialog: Adw.Dialog {
+// groups). Relay text is plain text. A sidebar panel pushed over New
+// Message (gh_window_push_flow()): the first step's Back (new-group.close)
+// or Escape returns to it; Escape on a later step goes one step back.
+template $GhNewGroupPage: Adw.NavigationPage {
+  tag: "new-group";
   title: _("New Group");
-  content-width: 440;
-  content-height: 640;
 
   child: Adw.NavigationView navigation {
     Adw.NavigationPage type_page {
@@ -26,7 +27,21 @@ template $GhNewGroupDialog: Adw.Dialog {
 
       child: Adw.ToolbarView {
         [top]
-        Adw.HeaderBar {}
+        Adw.HeaderBar {
+          // The root of this view: Back leaves the page.
+          show-back-button: false;
+
+          [start]
+          Button {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back to New Message");
+            action-name: "new-group.close";
+
+            accessibility {
+              label: _("Back to New Message");
+            }
+          }
+        }
 
         content: Adw.PreferencesPage {
           Adw.PreferencesGroup {
@@ -80,7 +95,21 @@ template $GhNewGroupDialog: Adw.Dialog {
 
       child: Adw.ToolbarView {
         [top]
-        Adw.HeaderBar {}
+        Adw.HeaderBar {
+          // Shown only while the form is the root (no encrypted page):
+          // Back leaves the page. Otherwise the header's own back button
+          // returns to the chooser.
+          [start]
+          Button form_back_button {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back to New Message");
+            action-name: "new-group.close";
+
+            accessibility {
+              label: _("Back to New Message");
+            }
+          }
+        }
 
         content: Adw.PreferencesPage {
           Adw.PreferencesGroup {

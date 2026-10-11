@@ -9,7 +9,7 @@ G_BEGIN_DECLS
  * The NIP-29 relay-group UI's words and decisions (privacy charter §7.5,
  * §7.7, §7.9, §7.10, §7.15 #18; item G20b), GTK-free so they are tested
  * without a display against the local NIP-29 relay. The dialogs
- * (gh-group-join-dialog, gh-group-info-dialog, gh-new-group-dialog) and the
+ * (gh-group-join-page, gh-group-info-dialog, gh-new-group-page) and the
  * composer glue (gh-group-ui.c) show exactly these strings.
  *
  * Honesty rules (P4): a relay group is never called encrypted; its relay's
@@ -91,7 +91,7 @@ void gh_group_state_copy_free(GhGroupStateCopy *copy);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhGroupStateCopy, gh_group_state_copy_free)
 
 /* What a join means now (charter §7.10 "join states have distinct copy":
- * pending review, denied, already a member, closed), for the Join dialog and
+ * pending review, denied, already a member, closed), for Join Group and
  * the Membership row of Group Info. request is the room's last request
  * (gh_nip29_room_dup_request_op(); nullable): its WAITING_FOR_SIGNER says
  * so, and DUPLICATE (or already_member: the room was MEMBER before the user

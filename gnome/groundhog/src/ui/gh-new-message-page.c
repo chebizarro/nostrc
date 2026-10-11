@@ -1279,8 +1279,8 @@ on_escape(GtkWidget *widget, GVariant *args, gpointer data)
   return TRUE;
 }
 
-/* The window action each action row runs (the same dialogs the main menu
- * opened before); a row shows only while its action exists. */
+/* The window action each action row runs (its flow slides in over the
+ * panel); a row shows only while its action exists. */
 static const struct {
   const gchar *action;
   gsize row_offset;
@@ -1320,20 +1320,17 @@ on_window_action_changed(GhNewMessagePage *self)
   sync_action_rows(self);
 }
 
-/* Leaves the panel, then runs the action on the window: what it opens (a
- * dialog, then the new conversation) shows over the conversation list. */
+/* Runs the action on the window: its flow (gh_window_push_flow()) slides
+ * in over this panel, and Back returns here. */
 static void
 on_action_row_activated(GhNewMessagePage *self, AdwActionRow *row)
 {
   for (guint i = 0; i < G_N_ELEMENTS(action_rows); i++) {
     if (action_row(self, i) != GTK_WIDGET(row) || !self->window_actions)
       continue;
-    g_autoptr(GObject) keep = g_object_ref(G_OBJECT(self->window_actions));
-    GActionGroup *group = G_ACTION_GROUP(keep);
     const gchar *action = action_rows[i].action;
-    gh_new_message_page_close(self);
-    if (g_action_group_get_action_enabled(group, action))
-      g_action_group_activate_action(group, action, NULL);
+    if (g_action_group_get_action_enabled(self->window_actions, action))
+      g_action_group_activate_action(self->window_actions, action, NULL);
     return;
   }
 }
@@ -1661,12 +1658,16 @@ present_panel(GhWindow *window, gpointer data)
 {
   Attachment *attachment = data;
   GhSidebarPage *sidebar = gh_window_get_sidebar(window);
-  AdwNavigationPage *panel = gh_sidebar_page_get_panel(sidebar);
-  /* Already open: bring it to the screen and its entry. */
+  AdwNavigationView *navigation = gh_sidebar_page_get_navigation(sidebar);
+  AdwNavigationPage *panel = adw_navigation_view_find_page(navigation, "new-message");
+  /* Already open (maybe under a flow it started): bring it to the screen
+   * and its entry. */
   if (GH_IS_NEW_MESSAGE_PAGE(panel)) {
     AdwNavigationSplitView *split = gh_window_get_split(window);
     if (adw_navigation_split_view_get_collapsed(split))
       adw_navigation_split_view_set_show_content(split, FALSE);
+    if (adw_navigation_view_get_visible_page(navigation) != panel)
+      adw_navigation_view_pop_to_page(navigation, panel);
     gh_new_message_page_focus_entry(GH_NEW_MESSAGE_PAGE(panel));
     return;
   }
@@ -1708,9 +1709,12 @@ sync_enabled(GhWindow *window, GParamSpec *pspec, GhConversationStore *conversat
   (void)pspec;
   gboolean enabled = gh_conversation_store_get_account(conversations) != NULL;
   gh_window_set_new_message_enabled(window, enabled);
-  /* A panel opened for the account that left goes with it. */
-  if (!enabled && GH_IS_NEW_MESSAGE_PAGE(gh_sidebar_page_get_panel(gh_window_get_sidebar(window))))
-    gh_sidebar_page_close_panel(gh_window_get_sidebar(window));
+  /* A panel opened for the account that left goes with it, and the flows
+   * it started over it. */
+  GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+  if (!enabled && adw_navigation_view_find_page(gh_sidebar_page_get_navigation(sidebar),
+                                                "new-message"))
+    gh_sidebar_page_close_panel(sidebar);
 }
 
 void

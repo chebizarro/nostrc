@@ -6,10 +6,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GhNewGroupDialog" parent="AdwDialog">
+  <template class="GhNewGroupPage" parent="AdwNavigationPage">
+    <property name="tag">new-group</property>
     <property name="title" translatable="yes">New Group</property>
-    <property name="content-width">440</property>
-    <property name="content-height">640</property>
     <property name="child">
       <object class="AdwNavigationView" id="navigation">
         <child>
@@ -19,7 +18,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="child">
               <object class="AdwToolbarView">
                 <child type="top">
-                  <object class="AdwHeaderBar"></object>
+                  <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <child type="start">
+                      <object class="GtkButton">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Back to New Message</property>
+                        <property name="action-name">new-group.close</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Back to New Message</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
                 </child>
                 <property name="content">
                   <object class="AdwPreferencesPage">
@@ -82,7 +93,18 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="child">
               <object class="AdwToolbarView">
                 <child type="top">
-                  <object class="AdwHeaderBar"></object>
+                  <object class="AdwHeaderBar">
+                    <child type="start">
+                      <object class="GtkButton" id="form_back_button">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Back to New Message</property>
+                        <property name="action-name">new-group.close</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Back to New Message</property>
+                        </accessibility>
+                      </object>
+                    </child>
+                  </object>
                 </child>
                 <property name="content">
                   <object class="AdwPreferencesPage">

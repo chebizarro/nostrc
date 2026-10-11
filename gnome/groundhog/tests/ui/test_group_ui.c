@@ -13,12 +13,16 @@
  * the service refusing what is denied; creating a group (accepted and named,
  * or refused and dropped); older history from the store after a restart.
  *
- * --gui: the dialogs on a real window (Join Group through each answer, Group
- * Info for an admin and a member with Leave and Remove, New Group accepted
- * and refused), the group row's glyph and accessible label, and the window
- * glue (win.join-group, the composer delegate, Group Info). It exits 77
- * without a display. With GROUNDHOG_TEST_SCREENSHOTS=<dir> it also renders
- * the dialogs to <dir>/groundhog-g20b-*.png.
+ * --gui: on a real window, the Join Group and New Group sidebar panels
+ * (Join Group through each answer, New Group accepted and refused), the
+ * Group Info dialog for an admin and a member with Leave and Remove, the
+ * group row's glyph and accessible label, the window glue (win.join-group,
+ * the composer delegate, Group Info), and both flows from the real New
+ * Message panel: pushed over it with the first field focused, Back and
+ * Escape one level, joining and creating close the panels and open the
+ * group, and the collapsed layout. It exits 77 without a display. With
+ * GROUNDHOG_TEST_SCREENSHOTS=<dir> it also renders them to
+ * <dir>/groundhog-g20b-*.png and <dir>/groundhog-group-contact-panels-*.png.
  *
  * Waits iterate the main context; their deadlines are failure bounds only. */
 #include "gh-conversation-list.h"
@@ -28,12 +32,16 @@
 #include "nostrc-test-gdk-frame.h"
 #include "gh-group-copy.h"
 #include "gh-group-info-dialog.h"
-#include "gh-group-join-dialog.h"
+#include "gh-group-join-page.h"
 #include "gh-group-ui.h"
-#include "gh-new-group-dialog.h"
+#if GH_TEST_HAVE_NEW_MESSAGE
+#include "gh-new-message-page.h"
+#endif
+#include "gh-new-group-page.h"
 #include "gh-shell.h"
 #include "gh-store-nip29.h"
 #include "gh-test-dialog.h"
+#include "gh-test-escape.h"
 #include "gh-test-signer.h"
 #include "group-send-stub.h"
 #include "nip29-relay.h"
@@ -1131,13 +1139,13 @@ title_is(gpointer data)
 static const gchar *
 join_title(gpointer dialog)
 {
-  return gh_group_join_dialog_get_status_title(dialog);
+  return gh_group_join_page_get_status_title(dialog);
 }
 
 static const gchar *
 new_title(gpointer dialog)
 {
-  return gh_new_group_dialog_get_status_title(dialog);
+  return gh_new_group_page_get_status_title(dialog);
 }
 
 #define wait_join_title(dialog, value) \
@@ -1209,6 +1217,22 @@ flag_set(gpointer data)
   return *(gboolean *)data;
 }
 
+/* Slides the window's sidebar to page (a flow panel) and waits until it is
+ * on screen, as a user sees it first. */
+static void
+push_page(GtkWindow *window, gpointer page)
+{
+  gh_window_push_flow(GH_WINDOW(window), ADW_NAVIGATION_PAGE(page));
+  gh_test_spin_until(is_mapped, page);
+}
+
+/* The sidebar's visible panel (NULL: the conversation list). */
+static AdwNavigationPage *
+visible_panel(GtkWindow *window)
+{
+  return gh_sidebar_page_get_panel(gh_window_get_sidebar(GH_WINDOW(window)));
+}
+
 static void
 on_open_group(GObject *dialog, GhNip29Room *room, GhNip29Room **out)
 {
@@ -1244,88 +1268,88 @@ test_gui_join(void)
   nope->join_policy = NIP29_JOIN_DENY;
   GtkWindow *window = test_window();
 
-  GhGroupJoinDialog *dialog = g_object_ref_sink(gh_group_join_dialog_new(f.service));
+  GhGroupJoinPage *dialog = g_object_ref_sink(gh_group_join_page_new(f.service));
   GhNip29Room *opened = NULL;
-  gboolean closed = FALSE;
   g_signal_connect(dialog, "open-group", G_CALLBACK(on_open_group), &opened);
-  g_signal_connect(dialog, "closed", G_CALLBACK(on_closed), &closed);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, dialog);
+  push_page(window, dialog);
   /* What joining means is on screen before anything is sent. */
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW,
                              "Not end-to-end encrypted"));
 
   /* A bad address: said in place, nothing contacts the relay. */
-  gh_group_join_dialog_set_address(dialog, "groups.example.com");
+  gh_group_join_page_set_address(dialog, "groups.example.com");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
   drain();
-  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "error_label"));
-  g_assert_null(gh_group_join_dialog_get_room(dialog));
+  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "error_label"));
+  g_assert_null(gh_group_join_page_get_room(dialog));
   g_assert_cmpuint(relay.reqs, ==, 0);
   g_assert_cmpuint(relay.events_seen, ==, 0);
   /* The direct-connection consent copy (no Tor session here). */
   g_assert_nonnull(find_type(GTK_WIDGET(dialog), ADW_TYPE_ACTION_ROW,
                              "Joining contacts the group’s relay"));
-  AdwActionRow *contact = child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "contact_row");
+  AdwActionRow *contact = child_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "contact_row");
   g_assert_cmpstr(adw_action_row_get_subtitle(contact), ==, gh_group_contact_copy(FALSE, FALSE));
 
   /* A .onion group outside Tor: refused with the reason, nothing queued. */
-  gh_group_join_dialog_set_address(
+  gh_group_join_page_set_address(
     dialog, "ws://abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvw.onion'abc");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
   drain();
-  GtkLabel *join_error = child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "error_label");
+  GtkLabel *join_error = child_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "error_label");
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(join_error)));
   g_assert_nonnull(strstr(gtk_label_get_text(join_error), "only be reached through Tor"));
-  g_assert_null(gh_group_join_dialog_get_room(dialog));
+  g_assert_null(gh_group_join_page_get_room(dialog));
 
   /* Pending review, then admitted: Open Group opens it. */
   g_autofree gchar *review_ref = reference(&relay, "review", NULL);
-  gh_group_join_dialog_set_address(dialog, review_ref);
+  gh_group_join_page_set_address(dialog, review_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
-  g_assert_nonnull(gh_group_join_dialog_get_room(dialog));
-  g_assert_false(visible_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "error_label"));
+  g_assert_nonnull(gh_group_join_page_get_room(dialog));
+  g_assert_false(visible_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "error_label"));
   wait_join_title(dialog, "Waiting for an Admin");
-  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "open_button"));
+  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "open_button"));
   nip29_admit(&relay, review, hex_alice);
   wait_join_title(dialog, "You're In");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.open", NULL));
-  gh_test_spin_until(flag_set, &closed);
-  g_assert_true(opened == gh_group_join_dialog_get_room(dialog));
+  g_assert_true(opened == gh_group_join_page_get_room(dialog));
   g_clear_object(&opened);
+  /* Back (join.close) leaves the page. */
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.close", NULL));
+  drain();
+  g_assert_null(visible_panel(window));
   g_object_unref(dialog);
 
   /* Invite only: a code field, then in. */
-  dialog = g_object_ref_sink(gh_group_join_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, dialog);
+  dialog = g_object_ref_sink(gh_group_join_page_new(f.service));
+  push_page(window, dialog);
   g_autofree gchar *vip_ref = reference(&relay, "vip", NULL);
-  gh_group_join_dialog_set_address(dialog, vip_ref);
+  gh_group_join_page_set_address(dialog, vip_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
   wait_join_title(dialog, "Invite Only");
-  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "code_list"));
-  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG,
+  g_assert_true(visible_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "code_list"));
+  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_GROUP_JOIN_PAGE,
                                               "retry_code_row")), "letmein");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.retry", NULL));
   wait_join_title(dialog, "You're In");
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(dialog);
 
   /* Declined, with the relay's words; already a member when asked again. */
-  dialog = g_object_ref_sink(gh_group_join_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, dialog);
+  dialog = g_object_ref_sink(gh_group_join_page_new(f.service));
+  push_page(window, dialog);
   g_autofree gchar *nope_ref = reference(&relay, "nope", NULL);
-  gh_group_join_dialog_set_address(dialog, nope_ref);
+  gh_group_join_page_set_address(dialog, nope_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
   wait_join_title(dialog, "Request Declined");
-  GtkLabel *description = child_of(dialog, GH_TYPE_GROUP_JOIN_DIALOG, "status_description");
+  GtkLabel *description = child_of(dialog, GH_TYPE_GROUP_JOIN_PAGE, "status_description");
   g_assert_nonnull(strstr(gtk_label_get_text(description), "“You may not join this group”"));
   g_assert_false(gtk_label_get_use_markup(description));
-  gh_group_join_dialog_set_address(dialog, vip_ref);
+  gh_group_join_page_set_address(dialog, vip_ref);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "join.join", NULL));
   wait_join_title(dialog, "Already a Member");
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(dialog);
 
   gtk_window_destroy(window);
@@ -1490,57 +1514,59 @@ test_gui_new_group(void)
   nip29_relay_init(&strict);
   GtkWindow *window = test_window();
 
-  GhNewGroupDialog *dialog = g_object_ref_sink(gh_new_group_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, dialog);
+  GhNewGroupPage *dialog = g_object_ref_sink(gh_new_group_page_new(f.service));
+  push_page(window, dialog);
   /* Without an encrypted page (review M1, charter §7.9): the relay form
    * first and alone, no chooser, and choosing an encrypted group does
    * nothing. */
-  AdwNavigationView *navigation = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "navigation");
+  AdwNavigationView *navigation = child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "navigation");
   g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
                   ==, "form");
   g_autoptr(GListModel) pages = adw_navigation_view_get_navigation_stack(navigation);
   g_assert_cmpuint(g_list_model_get_n_items(pages), ==, 1);
-  g_assert_null(gh_new_group_dialog_get_encrypted_page(dialog));
+  g_assert_null(gh_new_group_page_get_encrypted_page(dialog));
+  /* The form is the root: its own Back leaves New Group. */
+  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "form_back_button"));
   gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.choose-encrypted", NULL);
   drain();
   g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(navigation)),
                   ==, "form");
-  AdwEntryRow *relay_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "relay_row");
-  AdwEntryRow *name_row = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "name_row");
+  AdwEntryRow *relay_row = child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "relay_row");
+  AdwEntryRow *name_row = child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "name_row");
   gtk_editable_set_text(GTK_EDITABLE(relay_row), "ws://groups.example.com");
   gtk_editable_set_text(GTK_EDITABLE(name_row), "Book Club");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.create", NULL));
-  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "error_label"));
-  g_assert_null(gh_new_group_dialog_get_room(dialog));
+  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "error_label"));
+  g_assert_null(gh_new_group_page_get_room(dialog));
 
   gtk_editable_set_text(GTK_EDITABLE(relay_row), relay.url);
-  adw_switch_row_set_active(child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "private_switch"), TRUE);
+  adw_switch_row_set_active(child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "private_switch"), TRUE);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.create", NULL));
-  g_assert_false(visible_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "error_label"));
-  GhNip29Room *room = gh_new_group_dialog_get_room(dialog);
+  g_assert_false(visible_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "error_label"));
+  GhNip29Room *room = gh_new_group_page_get_room(dialog);
   g_assert_nonnull(room);
   wait_new_title(dialog, "Group Created");
   wait_name(room, "Book Club");
   g_assert_true(gh_nip29_room_get_is_private(room));
-  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "open_button"));
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "open_button"));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(dialog);
 
-  dialog = g_object_ref_sink(gh_new_group_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, dialog);
-  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "relay_row")),
+  dialog = g_object_ref_sink(gh_new_group_page_new(f.service));
+  push_page(window, dialog);
+  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "relay_row")),
                         strict.url);
-  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "name_row")),
+  gtk_editable_set_text(GTK_EDITABLE(child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "name_row")),
                         "Nope");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-group.create", NULL));
   wait_new_title(dialog, "Group Not Created");
-  GtkLabel *description = child_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "status_description");
+  GtkLabel *description = child_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "status_description");
   g_assert_nonnull(strstr(gtk_label_get_text(description),
                           "“Group creation is not allowed here”"));
-  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_DIALOG, "back_button"));
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  g_assert_true(visible_of(dialog, GH_TYPE_NEW_GROUP_PAGE, "back_button"));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(dialog);
 
   gtk_window_destroy(window);
@@ -1664,12 +1690,15 @@ test_gui_window(void)
   g_autofree gchar *reason = delegate->reason(conversation, data);
   g_assert_nonnull(strstr(reason, "You left this group"));
 
-  /* The menu's Join Group presents the dialog. */
+  /* win.join-group slides the sidebar to Join Group (no New Message in
+   * this window: over the list). */
   g_action_group_activate_action(G_ACTION_GROUP(window), "join-group", NULL);
-  visible = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
-  g_assert_true(GH_IS_GROUP_JOIN_DIALOG(visible));
-  gh_test_spin_until(gh_test_dialog_shown, visible);
-  adw_dialog_force_close(visible);
+  AdwNavigationPage *panel = visible_panel(GTK_WINDOW(window));
+  g_assert_true(GH_IS_GROUP_JOIN_PAGE(panel));
+  gh_test_spin_until(is_mapped, panel);
+  gh_window_close_panels(window);
+  drain();
+  g_assert_null(visible_panel(GTK_WINDOW(window)));
 
   gtk_window_destroy(GTK_WINDOW(window));
   drain();
@@ -1679,25 +1708,47 @@ test_gui_window(void)
 
 /* ---- screenshots (opt-in evidence) ----------------------------------------------------- */
 
-static void
-save_png(GtkWidget *window, const char *dir, const char *name)
+/* The window's render node once it has one: a frame under load may still
+ * have nothing to snapshot (its first draw after a size change). */
+static GskRenderNode *
+window_node(GtkWidget *window)
 {
-  drain();
-  gtk_test_widget_wait_for_draw(window);
-  drain();
   g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
   GtkSnapshot *snapshot = gtk_snapshot_new();
   gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
                          gdk_paintable_get_intrinsic_height(paintable));
-  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  return gtk_snapshot_free_to_node(snapshot);
+}
+
+static gboolean
+window_has_node(gpointer window)
+{
+  g_autoptr(GskRenderNode) node = window_node(window);
+  return node != NULL;
+}
+
+static void
+save_png_as(GtkWidget *window, const char *dir, const char *prefix, const char *name)
+{
+  drain();
+  gtk_test_widget_wait_for_draw(window);
+  drain();
+  gh_test_spin_until(window_has_node, window);
+  g_autoptr(GskRenderNode) node = window_node(window);
   g_assert_nonnull(node);
   graphene_rect_t bounds;
   gsk_render_node_get_bounds(node, &bounds);
   GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
   g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
-  g_autofree char *path = g_strdup_printf("%s/groundhog-g20b-%s.png", dir, name);
+  g_autofree char *path = g_strdup_printf("%s/%s-%s.png", dir, prefix, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s", path);
+}
+
+static void
+save_png(GtkWidget *window, const char *dir, const char *name)
+{
+  save_png_as(window, dir, "groundhog-g20b", name);
 }
 
 static void
@@ -1731,23 +1782,23 @@ test_gui_screenshots(void)
   adw_dialog_force_close(ADW_DIALOG(info));
   g_object_unref(info);
 
-  GhGroupJoinDialog *join = g_object_ref_sink(gh_group_join_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(join), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, join);
+  GhGroupJoinPage *join = g_object_ref_sink(gh_group_join_page_new(f.service));
+  push_page(window, join);
   save_png(GTK_WIDGET(window), dir, "join");
   g_autofree gchar *review_ref = reference(&relay, "review", NULL);
-  gh_group_join_dialog_set_address(join, review_ref);
+  gh_group_join_page_set_address(join, review_ref);
   gtk_widget_activate_action(GTK_WIDGET(join), "join.join", NULL);
   wait_join_title(join, "Waiting for an Admin");
   save_png(GTK_WIDGET(window), dir, "join-pending");
-  adw_dialog_force_close(ADW_DIALOG(join));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(join);
 
-  GhNewGroupDialog *create = g_object_ref_sink(gh_new_group_dialog_new(f.service));
-  adw_dialog_present(ADW_DIALOG(create), GTK_WIDGET(window));
-  gh_test_spin_until(gh_test_dialog_shown, create);
+  GhNewGroupPage *create = g_object_ref_sink(gh_new_group_page_new(f.service));
+  push_page(window, create);
   save_png(GTK_WIDGET(window), dir, "new-group");
-  adw_dialog_force_close(ADW_DIALOG(create));
+  gh_window_close_panels(GH_WINDOW(window));
+  drain();
   g_object_unref(create);
 
   gtk_window_destroy(window);
@@ -1755,6 +1806,203 @@ test_gui_screenshots(void)
   fixture_down(&f);
   nip29_relay_clear(&relay);
 }
+
+#if GH_TEST_HAVE_NEW_MESSAGE
+/* ---- the flows as sidebar panels over New Message (the real window) ------------------- */
+
+static gboolean
+focus_in(GtkWindow *window, gpointer widget)
+{
+  GtkWidget *focus = gtk_window_get_focus(window);
+  return focus && (focus == widget || gtk_widget_is_ancestor(focus, widget));
+}
+
+static gboolean
+split_collapsed(gpointer split)
+{
+  return adw_navigation_split_view_get_collapsed(split);
+}
+
+/* Opens New Message (Ctrl+N's action), then runs its row for a flow; the
+ * flow is pushed over it, mapped, and returned. */
+static AdwNavigationPage *
+flow_from_new_message(GtkWindow *window, const char *row, GType type)
+{
+  g_action_group_activate_action(G_ACTION_GROUP(window), "new-message", NULL);
+  drain();
+  AdwNavigationPage *panel = visible_panel(window);
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(panel));
+  gh_test_spin_until(is_mapped, panel);
+  adw_action_row_activate(child_of(panel, GH_TYPE_NEW_MESSAGE_PAGE, row));
+  drain();
+  AdwNavigationPage *flow = visible_panel(window);
+  g_assert_true(G_TYPE_CHECK_INSTANCE_TYPE(flow, type));
+  AdwNavigationView *navigation = gh_sidebar_page_get_navigation(
+    gh_window_get_sidebar(GH_WINDOW(window)));
+  g_assert_true(adw_navigation_view_get_previous_page(navigation, flow) == panel);
+  gh_test_spin_until(is_mapped, flow);
+  return flow;
+}
+
+/* New Group and Join Group from New Message's rows, through the real
+ * window: each slides in over New Message with its first field focused and
+ * the conversation pane unchanged; Back and Escape return one level (Escape
+ * on a later step to the step before); joining and creating against the
+ * NIP-29 relay fixture close the panels and open the group, focused; in the
+ * collapsed layout win.join-group brings the sidebar back. PNGs:
+ * groundhog-group-contact-panels-*.png in GROUNDHOG_TEST_SCREENSHOTS, or a
+ * temporary directory removed afterwards. */
+static void
+test_gui_panels(void)
+{
+  const char *shots = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  g_autofree gchar *tmp = NULL;
+  if (!shots || !*shots) {
+    g_autoptr(GError) error = NULL;
+    tmp = g_dir_make_tmp("groundhog-group-contact-panels-XXXXXX", &error);
+    g_assert_no_error(error);
+    shots = tmp;
+  }
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  relay.allow_create = TRUE;
+  nip29_add_group(&relay, "open", "Open House");
+  GtkWindow *window = test_window();
+  GhWindow *ghw = GH_WINDOW(window);
+  gh_conversation_list_attach(ghw, f.model, NULL);
+  GhNewMessageConfig new_message = { .conversations = f.model };
+  gh_new_message_attach(ghw, &new_message);
+  GhGroupUiConfig config = { .conversations = f.model, .service = fixture_service,
+                             .service_data = &f };
+  gh_group_ui_attach(ghw, &config);
+  gh_status_set_account_active(gh_window_get_status(ghw), TRUE);
+  drain();
+  AdwNavigationSplitView *split = gh_window_get_split(ghw);
+  GhContentPage *content = gh_window_get_content(ghw);
+  g_assert_false(adw_navigation_split_view_get_collapsed(split));
+
+  /* Join Group: over New Message, the address focused; Escape returns. */
+  AdwNavigationPage *flow = flow_from_new_message(window, "join_group_row",
+                                                  GH_TYPE_GROUP_JOIN_PAGE);
+  g_assert_true(focus_in(window, child_of(flow, GH_TYPE_GROUP_JOIN_PAGE, "address_row")));
+  g_assert_false(gh_content_page_get_conversation_shown(content));
+  save_png_as(GTK_WIDGET(window), shots, "groundhog-group-contact-panels", "join-wide");
+  gh_test_press_escape(window);
+  drain();
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(visible_panel(window)));
+
+  /* Again: Join; Escape on the status step goes back to the address, Join
+   * shows the status again, and Open Group closes the panels and opens the
+   * group. */
+  flow = flow_from_new_message(window, "join_group_row", GH_TYPE_GROUP_JOIN_PAGE);
+  GhGroupJoinPage *join = GH_GROUP_JOIN_PAGE(flow);
+  AdwNavigationView *steps = child_of(join, GH_TYPE_GROUP_JOIN_PAGE, "navigation");
+  g_autofree gchar *open_ref = reference(&relay, "open", NULL);
+  gh_group_join_page_set_address(join, open_ref);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(join), "join.join", NULL));
+  wait_join_title(join, "You're In");
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(steps)), ==,
+                  "status");
+  save_png_as(GTK_WIDGET(window), shots, "groundhog-group-contact-panels", "join-status-wide");
+  GtkWidget *open_button = child_of(join, GH_TYPE_GROUP_JOIN_PAGE, "open_button");
+  gtk_widget_grab_focus(open_button);
+  gh_test_press_escape(window);
+  drain();
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(steps)), ==,
+                  "entry");
+  g_assert_true(visible_panel(window) == flow);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(join), "join.join", NULL));
+  drain();
+  g_assert_cmpstr(adw_navigation_page_get_tag(adw_navigation_view_get_visible_page(steps)), ==,
+                  "status");
+  GhNip29Room *joined = gh_group_join_page_get_room(join);
+  GhConversation *open_house = gh_conversation_store_lookup(f.model,
+                                                            gh_nip29_room_get_room_id(joined));
+  g_assert_nonnull(open_house);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(join), "join.open", NULL));
+  drain();
+  g_assert_null(visible_panel(window));
+  g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(ghw)) == open_house);
+  g_assert_true(gh_content_page_get_conversation_shown(content));
+  g_assert_true(focus_in(window, content));
+
+  /* New Group: the relay form (no encrypted page in this window), the
+   * relay focused, the conversation still shown; its Back returns. */
+  flow = flow_from_new_message(window, "new_group_row", GH_TYPE_NEW_GROUP_PAGE);
+  GhNewGroupPage *create = GH_NEW_GROUP_PAGE(flow);
+  g_assert_true(focus_in(window, child_of(create, GH_TYPE_NEW_GROUP_PAGE, "relay_row")));
+  g_assert_true(gh_content_page_get_conversation_shown(content));
+  save_png_as(GTK_WIDGET(window), shots, "groundhog-group-contact-panels", "new-group-wide");
+  g_signal_emit_by_name(child_of(create, GH_TYPE_NEW_GROUP_PAGE, "form_back_button"), "clicked");
+  drain();
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(visible_panel(window)));
+
+  /* Create it: the relay accepts; Open Group closes the panels and opens it. */
+  flow = flow_from_new_message(window, "new_group_row", GH_TYPE_NEW_GROUP_PAGE);
+  create = GH_NEW_GROUP_PAGE(flow);
+  gtk_editable_set_text(GTK_EDITABLE(child_of(create, GH_TYPE_NEW_GROUP_PAGE, "relay_row")),
+                        relay.url);
+  gtk_editable_set_text(GTK_EDITABLE(child_of(create, GH_TYPE_NEW_GROUP_PAGE, "name_row")),
+                        "Book Club");
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(create), "new-group.create", NULL));
+  wait_new_title(create, "Group Created");
+  save_png_as(GTK_WIDGET(window), shots, "groundhog-group-contact-panels",
+              "new-group-created-wide");
+  GhConversation *club = gh_conversation_store_lookup(
+    f.model, gh_nip29_room_get_room_id(gh_new_group_page_get_room(create)));
+  g_assert_nonnull(club);
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(create), "new-group.open", NULL));
+  drain();
+  g_assert_null(visible_panel(window));
+  g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(ghw)) == club);
+  g_assert_true(focus_in(window, content));
+
+  /* Collapsed, from an open conversation: win.join-group (any entry point)
+   * brings the sidebar back with Join Group over New Message; Back returns
+   * to New Message, Escape there to the list. */
+  gtk_window_set_default_size(window, 360, 600);
+  drain();
+  gh_test_spin_until(split_collapsed, split);
+  g_assert_true(gh_window_open_item(ghw, club));
+  drain();
+  g_assert_true(adw_navigation_split_view_get_show_content(split));
+  g_action_group_activate_action(G_ACTION_GROUP(window), "join-group", NULL);
+  drain();
+  g_assert_false(adw_navigation_split_view_get_show_content(split));
+  flow = visible_panel(window);
+  g_assert_true(GH_IS_GROUP_JOIN_PAGE(flow));
+  AdwNavigationView *sidebar_nav = gh_sidebar_page_get_navigation(gh_window_get_sidebar(ghw));
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(adw_navigation_view_get_previous_page(sidebar_nav, flow)));
+  gh_test_spin_until(is_mapped, flow);
+  g_assert_true(focus_in(window, child_of(flow, GH_TYPE_GROUP_JOIN_PAGE, "address_row")));
+  save_png_as(GTK_WIDGET(window), shots, "groundhog-group-contact-panels", "join-narrow");
+  g_signal_emit_by_name(child_of(flow, GH_TYPE_GROUP_JOIN_PAGE, "back_button"), "clicked");
+  drain();
+  AdwNavigationPage *panel = visible_panel(window);
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(panel));
+  gh_test_spin_until(is_mapped, panel);
+  gh_new_message_page_focus_entry(GH_NEW_MESSAGE_PAGE(panel));
+  gh_test_press_escape(window);
+  drain();
+  g_assert_null(visible_panel(window));
+
+  gtk_window_destroy(window);
+  drain();
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+  if (tmp) {
+    g_autoptr(GDir) d = g_dir_open(tmp, 0, NULL);
+    const gchar *name;
+    while (d && (name = g_dir_read_name(d))) {
+      g_autofree gchar *path = g_build_filename(tmp, name, NULL);
+      g_unlink(path);
+    }
+    g_rmdir(tmp);
+  }
+}
+#endif
 
 /* ---- main ------------------------------------------------------------------------------- */
 
@@ -1803,6 +2051,9 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/group-ui-gui/new-group", test_gui_new_group);
     g_test_add_func("/groundhog/group-ui-gui/window", test_gui_window);
     g_test_add_func("/groundhog/group-ui-gui/screenshots", test_gui_screenshots);
+#if GH_TEST_HAVE_NEW_MESSAGE
+    g_test_add_func("/groundhog/group-ui-gui/panels", test_gui_panels);
+#endif
   } else {
     g_test_init(&argc, &argv, NULL);
     gh_test_bus_up(&shared_bus);

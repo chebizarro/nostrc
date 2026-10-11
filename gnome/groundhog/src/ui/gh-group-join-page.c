@@ -1,12 +1,13 @@
-#include "gh-group-join-dialog.h"
+#include "gh-group-join-page.h"
 
 #include "gh-group-copy.h"
 #include "gh-net-session.h"
+#include "gh-shell.h"
 
 #include <glib/gi18n.h>
 
-struct _GhGroupJoinDialog {
-  AdwDialog parent_instance;
+struct _GhGroupJoinPage {
+  AdwNavigationPage parent_instance;
   AdwNavigationView *navigation;
   AdwEntryRow *address_row;
   AdwEntryRow *code_row;
@@ -20,6 +21,7 @@ struct _GhGroupJoinDialog {
   GtkWidget *open_button;
   GtkWidget *retry_button;
   AdwActionRow *contact_row;
+  GtkWidget *back_button;
 
   GhNip29Service *service; /* weak */
   GhNip29Room *room;
@@ -30,10 +32,10 @@ struct _GhGroupJoinDialog {
 enum { SIGNAL_OPEN_GROUP, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-G_DEFINE_FINAL_TYPE(GhGroupJoinDialog, gh_group_join_dialog, ADW_TYPE_DIALOG)
+G_DEFINE_FINAL_TYPE(GhGroupJoinPage, gh_group_join_page, ADW_TYPE_NAVIGATION_PAGE)
 
 static void
-show_error(GhGroupJoinDialog *self, const gchar *message)
+show_error(GhGroupJoinPage *self, const gchar *message)
 {
   gtk_label_set_text(self->error_label, message ? message : "");
   gtk_widget_set_visible(GTK_WIDGET(self->error_label), message != NULL);
@@ -43,7 +45,7 @@ show_error(GhGroupJoinDialog *self, const gchar *message)
 }
 
 static void
-sync_status(GhGroupJoinDialog *self)
+sync_status(GhGroupJoinPage *self)
 {
   if (!self->room)
     return;
@@ -81,13 +83,13 @@ sync_status(GhGroupJoinDialog *self)
 }
 
 static void
-on_op_changed(GhGroupJoinDialog *self)
+on_op_changed(GhGroupJoinPage *self)
 {
   sync_status(self); /* the signer's approval shows as it happens */
 }
 
 static void
-watch_room(GhGroupJoinDialog *self, GhNip29Room *room)
+watch_room(GhGroupJoinPage *self, GhNip29Room *room)
 {
   if (self->room == room)
     return;
@@ -111,7 +113,7 @@ join_error(const GError *error)
 
 /* Asks the service to join (the network is contacted from here on). */
 static gboolean
-ask(GhGroupJoinDialog *self, const gchar *relay, const gchar *group_id, const gchar *code)
+ask(GhGroupJoinPage *self, const gchar *relay, const gchar *group_id, const gchar *code)
 {
   if (!self->service)
     return FALSE;
@@ -159,7 +161,7 @@ action_join(GtkWidget *widget, const gchar *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  GhGroupJoinDialog *self = GH_GROUP_JOIN_DIALOG(widget);
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(widget);
   g_autofree gchar *relay = NULL, *group_id = NULL, *link_code = NULL;
   g_autoptr(GError) error = NULL;
   if (!gh_group_parse_reference(gtk_editable_get_text(GTK_EDITABLE(self->address_row)), &relay,
@@ -179,7 +181,7 @@ action_retry(GtkWidget *widget, const gchar *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  GhGroupJoinDialog *self = GH_GROUP_JOIN_DIALOG(widget);
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(widget);
   if (!self->room)
     return;
   g_autofree gchar *code = gtk_widget_get_visible(self->code_list)
@@ -196,28 +198,70 @@ action_open(GtkWidget *widget, const gchar *name, GVariant *parameter)
 {
   (void)name;
   (void)parameter;
-  GhGroupJoinDialog *self = GH_GROUP_JOIN_DIALOG(widget);
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(widget);
   if (!self->room)
     return;
   g_autoptr(GhNip29Room) room = g_object_ref(self->room);
-  adw_dialog_close(ADW_DIALOG(self));
   g_signal_emit(self, signals[SIGNAL_OPEN_GROUP], 0, room);
+}
+
+static void
+action_close(GtkWidget *widget, const gchar *name, GVariant *parameter)
+{
+  (void)name;
+  (void)parameter;
+  gh_group_join_page_close(GH_GROUP_JOIN_PAGE(widget));
+}
+
+void
+gh_group_join_page_close(GhGroupJoinPage *self)
+{
+  g_return_if_fail(GH_IS_GROUP_JOIN_PAGE(self));
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(self));
+}
+
+/* Escape: from the status page back to the address, else out of the page
+ * (to New Message). */
+static gboolean
+on_escape(GtkWidget *widget, GVariant *args, gpointer data)
+{
+  (void)args;
+  (void)data;
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(widget);
+  if (adw_navigation_view_get_previous_page(
+        self->navigation, adw_navigation_view_get_visible_page(self->navigation)))
+    adw_navigation_view_pop(self->navigation);
+  else
+    gh_group_join_page_close(self);
+  return TRUE;
+}
+
+/* The address takes focus when the page shows on it (charter §7.14). */
+static void
+gh_group_join_page_shown(AdwNavigationPage *page)
+{
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(page);
+  AdwNavigationPage *visible = adw_navigation_view_get_visible_page(self->navigation);
+  if (g_strcmp0(adw_navigation_page_get_tag(visible), "entry") == 0)
+    gtk_widget_grab_focus(GTK_WIDGET(self->address_row));
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_group_join_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_group_join_page_parent_class)->shown(page);
 }
 
 static void
 on_service_gone(gpointer data, GObject *where)
 {
-  GhGroupJoinDialog *self = data;
+  GhGroupJoinPage *self = data;
   (void)where;
   self->service = NULL;
-  adw_dialog_force_close(ADW_DIALOG(self));
+  gh_group_join_page_close(self);
 }
 
-GhGroupJoinDialog *
-gh_group_join_dialog_new(GhNip29Service *service)
+GhGroupJoinPage *
+gh_group_join_page_new(GhNip29Service *service)
 {
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(service), NULL);
-  GhGroupJoinDialog *self = g_object_new(GH_TYPE_GROUP_JOIN_DIALOG, NULL);
+  GhGroupJoinPage *self = g_object_new(GH_TYPE_GROUP_JOIN_PAGE, NULL);
   self->service = service;
   g_object_weak_ref(G_OBJECT(service), on_service_gone, self);
   g_signal_connect_object(gh_nip29_service_get_outbox(service), "op-changed",
@@ -226,36 +270,36 @@ gh_group_join_dialog_new(GhNip29Service *service)
 }
 
 void
-gh_group_join_dialog_set_address(GhGroupJoinDialog *self, const gchar *address)
+gh_group_join_page_set_address(GhGroupJoinPage *self, const gchar *address)
 {
-  g_return_if_fail(GH_IS_GROUP_JOIN_DIALOG(self));
+  g_return_if_fail(GH_IS_GROUP_JOIN_PAGE(self));
   gtk_editable_set_text(GTK_EDITABLE(self->address_row), address ? address : "");
 }
 
 GhNip29Room *
-gh_group_join_dialog_get_room(GhGroupJoinDialog *self)
+gh_group_join_page_get_room(GhGroupJoinPage *self)
 {
-  g_return_val_if_fail(GH_IS_GROUP_JOIN_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_GROUP_JOIN_PAGE(self), NULL);
   return self->room;
 }
 
 const gchar *
-gh_group_join_dialog_get_status_title(GhGroupJoinDialog *self)
+gh_group_join_page_get_status_title(GhGroupJoinPage *self)
 {
-  g_return_val_if_fail(GH_IS_GROUP_JOIN_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_GROUP_JOIN_PAGE(self), NULL);
   return gtk_label_get_text(self->status_title);
 }
 
 static void
-on_address_activated(GhGroupJoinDialog *self)
+on_address_activated(GhGroupJoinPage *self)
 {
   gtk_widget_activate_action(GTK_WIDGET(self), "join.join", NULL);
 }
 
 static void
-gh_group_join_dialog_dispose(GObject *object)
+gh_group_join_page_dispose(GObject *object)
 {
-  GhGroupJoinDialog *self = GH_GROUP_JOIN_DIALOG(object);
+  GhGroupJoinPage *self = GH_GROUP_JOIN_PAGE(object);
   if (self->service) {
     g_object_weak_unref(G_OBJECT(self->service), on_service_gone, self);
     self->service = NULL;
@@ -263,30 +307,33 @@ gh_group_join_dialog_dispose(GObject *object)
   if (self->room)
     g_signal_handlers_disconnect_by_data(self->room, self);
   g_clear_object(&self->room);
-  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_GROUP_JOIN_DIALOG);
-  G_OBJECT_CLASS(gh_group_join_dialog_parent_class)->dispose(object);
+  /* navigation is both the page's child and a bound template child. */
+  adw_navigation_page_set_child(ADW_NAVIGATION_PAGE(object), NULL);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_GROUP_JOIN_PAGE);
+  G_OBJECT_CLASS(gh_group_join_page_parent_class)->dispose(object);
 }
 
 static void
-gh_group_join_dialog_finalize(GObject *object)
+gh_group_join_page_finalize(GObject *object)
 {
-  g_free(GH_GROUP_JOIN_DIALOG(object)->announced);
-  G_OBJECT_CLASS(gh_group_join_dialog_parent_class)->finalize(object);
+  g_free(GH_GROUP_JOIN_PAGE(object)->announced);
+  G_OBJECT_CLASS(gh_group_join_page_parent_class)->finalize(object);
 }
 
 static void
-gh_group_join_dialog_class_init(GhGroupJoinDialogClass *klass)
+gh_group_join_page_class_init(GhGroupJoinPageClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  object_class->dispose = gh_group_join_dialog_dispose;
-  object_class->finalize = gh_group_join_dialog_finalize;
+  object_class->dispose = gh_group_join_page_dispose;
+  object_class->finalize = gh_group_join_page_finalize;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_group_join_page_shown;
   signals[SIGNAL_OPEN_GROUP] = g_signal_new("open-group", G_TYPE_FROM_CLASS(klass),
                                             G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE,
                                             1, GH_TYPE_NIP29_ROOM);
   gtk_widget_class_set_template_from_resource(widget_class,
-                                              "/org/nostr/Groundhog/ui/gh-group-join-dialog.ui");
-#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhGroupJoinDialog, name)
+                                              "/org/nostr/Groundhog/ui/gh-group-join-page.ui");
+#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhGroupJoinPage, name)
   BIND(navigation);
   BIND(address_row);
   BIND(code_row);
@@ -300,21 +347,24 @@ gh_group_join_dialog_class_init(GhGroupJoinDialogClass *klass)
   BIND(open_button);
   BIND(retry_button);
   BIND(contact_row);
+  BIND(back_button);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "join.join", NULL, action_join);
   gtk_widget_class_install_action(widget_class, "join.open", NULL, action_open);
   gtk_widget_class_install_action(widget_class, "join.retry", NULL, action_retry);
+  gtk_widget_class_install_action(widget_class, "join.close", NULL, action_close);
+  gtk_widget_class_add_binding(widget_class, GDK_KEY_Escape, 0, on_escape, NULL);
 }
 
 static void
-sync_contact_copy(GhGroupJoinDialog *self)
+sync_contact_copy(GhGroupJoinPage *self)
 {
   adw_action_row_set_subtitle(self->contact_row,
                               gh_group_contact_copy(FALSE, gh_group_network_is_tor()));
 }
 
 static void
-gh_group_join_dialog_init(GhGroupJoinDialog *self)
+gh_group_join_page_init(GhGroupJoinPage *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   sync_contact_copy(self);

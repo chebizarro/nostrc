@@ -595,6 +595,20 @@ gh_sidebar_page_close_panel(GhSidebarPage *self)
 }
 
 void
+gh_sidebar_panel_leave(AdwNavigationPage *panel)
+{
+  g_return_if_fail(ADW_IS_NAVIGATION_PAGE(panel));
+  GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(panel));
+  GtkWidget *outer = parent ? gtk_widget_get_ancestor(parent, ADW_TYPE_NAVIGATION_VIEW) : NULL;
+  if (!outer)
+    return;
+  AdwNavigationPage *previous = adw_navigation_view_get_previous_page(ADW_NAVIGATION_VIEW(outer),
+                                                                      panel);
+  if (previous)
+    adw_navigation_view_pop_to_page(ADW_NAVIGATION_VIEW(outer), previous);
+}
+
+void
 gh_sidebar_page_start_search(GhSidebarPage *self)
 {
   g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));

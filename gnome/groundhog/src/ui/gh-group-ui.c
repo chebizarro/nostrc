@@ -3,8 +3,8 @@
 #include "gh-composer.h"
 #include "gh-conversation-view.h"
 #include "gh-group-copy.h"
-#include "gh-group-join-dialog.h"
-#include "gh-new-group-dialog.h"
+#include "gh-group-join-page.h"
+#include "gh-new-group-page.h"
 #include "gh-send-ui.h"
 #include "gh-store.h"
 #include "gh-store-nip29.h"
@@ -290,7 +290,7 @@ reset_latest(GhConversation *conversation, GError **error, gpointer data)
   return ui->reset_latest && ui->reset_latest(conversation, error, ui->load_older_data);
 }
 
-/* ---- dialogs ------------------------------------------------------------------------------ */
+/* ---- the New Group and Join Group panels ------------------------------------------------- */
 
 static void
 open_room(GhWindow *window, GhNip29Room *room)
@@ -305,6 +305,24 @@ open_room(GhWindow *window, GhNip29Room *room)
                                                 "answered")));
 }
 
+/* A flow finished (Open Group): the sidebar returns to the list, focus to
+ * the group opened. */
+static void
+finish_flow(GhWindow *window)
+{
+  gh_window_close_panels(window);
+  GhContentPage *content = gh_window_get_content(window);
+  if (gh_content_page_get_conversation_shown(content))
+    gh_content_page_focus_conversation(content);
+}
+
+static void
+on_joined_open(GhWindow *window, GhNip29Room *room)
+{
+  open_room(window, room);
+  finish_flow(window);
+}
+
 static void
 on_join(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
@@ -314,10 +332,10 @@ on_join(GSimpleAction *action, GVariant *parameter, gpointer data)
   GhNip29Service *service = current(ui);
   if (!service)
     return;
-  GhGroupJoinDialog *dialog = gh_group_join_dialog_new(service);
-  g_signal_connect_object(dialog, "open-group", G_CALLBACK(open_room), ui->window,
+  GhGroupJoinPage *page = gh_group_join_page_new(service);
+  g_signal_connect_object(page, "open-group", G_CALLBACK(on_joined_open), ui->window,
                           G_CONNECT_SWAPPED);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
+  gh_window_push_flow(ui->window, ADW_NAVIGATION_PAGE(page));
 }
 
 static void
@@ -329,12 +347,14 @@ on_new(GSimpleAction *action, GVariant *parameter, gpointer data)
   GhNip29Service *service = current(ui);
   if (!service)
     return;
-  GhNewGroupDialog *dialog = gh_new_group_dialog_new(service);
-  g_signal_connect_object(dialog, "open-group", G_CALLBACK(open_room), ui->window,
+  GhNewGroupPage *page = gh_new_group_page_new(service);
+  g_signal_connect_object(page, "open-group", G_CALLBACK(open_room), ui->window,
+                          G_CONNECT_SWAPPED);
+  g_signal_connect_object(page, "finished", G_CALLBACK(finish_flow), ui->window,
                           G_CONNECT_SWAPPED);
   if (ui->extend_new)
-    ui->extend_new(ui->window, dialog, ui->extend_new_data);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
+    ui->extend_new(ui->window, page, ui->extend_new_data);
+  gh_window_push_flow(ui->window, ADW_NAVIGATION_PAGE(page));
 }
 
 gboolean

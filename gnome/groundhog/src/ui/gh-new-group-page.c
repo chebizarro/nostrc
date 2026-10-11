@@ -1,12 +1,13 @@
-#include "gh-new-group-dialog.h"
+#include "gh-new-group-page.h"
 
 #include "gh-group-copy.h"
 #include "gh-net-session.h"
+#include "gh-shell.h"
 
 #include <glib/gi18n.h>
 
-struct _GhNewGroupDialog {
-  AdwDialog parent_instance;
+struct _GhNewGroupPage {
+  AdwNavigationPage parent_instance;
   AdwNavigationView *navigation;
   AdwEntryRow *relay_row;
   AdwEntryRow *name_row;
@@ -21,6 +22,8 @@ struct _GhNewGroupDialog {
   GtkWidget *open_button;
   GtkWidget *back_button;
   AdwActionRow *contact_row;
+  GtkWidget *form_back_button;
+  GtkWidget *encrypted_choice;
 
   GhNip29Service *service; /* weak */
   AdwNavigationPage *encrypted_page; /* qp24.13 part 2: added, or NULL */
@@ -29,13 +32,13 @@ struct _GhNewGroupDialog {
   gchar *announced;
 };
 
-enum { SIGNAL_OPEN_GROUP, N_SIGNALS };
+enum { SIGNAL_OPEN_GROUP, SIGNAL_FINISHED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-G_DEFINE_FINAL_TYPE(GhNewGroupDialog, gh_new_group_dialog, ADW_TYPE_DIALOG)
+G_DEFINE_FINAL_TYPE(GhNewGroupPage, gh_new_group_page, ADW_TYPE_NAVIGATION_PAGE)
 
 static void
-show_error(GhNewGroupDialog *self, const gchar *message)
+show_error(GhNewGroupPage *self, const gchar *message)
 {
   gtk_label_set_text(self->error_label, message ? message : "");
   gtk_widget_set_visible(GTK_WIDGET(self->error_label), message != NULL);
@@ -45,7 +48,7 @@ show_error(GhNewGroupDialog *self, const gchar *message)
 }
 
 static void
-sync_status(GhNewGroupDialog *self)
+sync_status(GhNewGroupPage *self)
 {
   if (!self->room)
     return;
@@ -111,7 +114,7 @@ action_create(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
   if (!self->service)
     return;
   g_autoptr(GError) error = NULL;
@@ -159,12 +162,81 @@ action_open(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
   if (!self->room)
     return;
   g_autoptr(GhNip29Room) room = g_object_ref(self->room);
-  adw_dialog_close(ADW_DIALOG(self));
+  g_object_ref(self);
   g_signal_emit(self, signals[SIGNAL_OPEN_GROUP], 0, room);
+  g_signal_emit(self, signals[SIGNAL_FINISHED], 0);
+  g_object_unref(self);
+}
+
+/* The encrypted page opened its group: New Group is done. */
+static void
+on_encrypted_opened(GhNewGroupPage *self)
+{
+  g_signal_emit(self, signals[SIGNAL_FINISHED], 0);
+}
+
+static void
+action_close(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  gh_new_group_page_close(GH_NEW_GROUP_PAGE(widget));
+}
+
+void
+gh_new_group_page_close(GhNewGroupPage *self)
+{
+  g_return_if_fail(GH_IS_NEW_GROUP_PAGE(self));
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(self));
+}
+
+/* Escape: one step back inside New Group (status to form, form or the
+ * encrypted page to the chooser), else out of it (to New Message). */
+static gboolean
+on_escape(GtkWidget *widget, GVariant *args, gpointer data)
+{
+  (void)args;
+  (void)data;
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
+  if (adw_navigation_view_get_previous_page(
+        self->navigation, adw_navigation_view_get_visible_page(self->navigation)))
+    adw_navigation_view_pop(self->navigation);
+  else
+    gh_new_group_page_close(self);
+  return TRUE;
+}
+
+/* The first field of the inner page showing takes focus (charter §7.14):
+ * the chooser's first row, or the relay. */
+static void
+focus_first(GhNewGroupPage *self)
+{
+  AdwNavigationPage *visible = adw_navigation_view_get_visible_page(self->navigation);
+  const gchar *tag = visible ? adw_navigation_page_get_tag(visible) : NULL;
+  if (g_strcmp0(tag, "type") == 0)
+    gtk_widget_grab_focus(self->encrypted_choice);
+  else if (g_strcmp0(tag, "form") == 0)
+    gtk_widget_grab_focus(GTK_WIDGET(self->relay_row));
+}
+
+static void
+on_inner_pushed(GhNewGroupPage *self)
+{
+  AdwNavigationPage *visible = adw_navigation_view_get_visible_page(self->navigation);
+  if (g_strcmp0(adw_navigation_page_get_tag(visible), "form") == 0)
+    gtk_widget_grab_focus(GTK_WIDGET(self->relay_row));
+}
+
+static void
+gh_new_group_page_shown(AdwNavigationPage *page)
+{
+  focus_first(GH_NEW_GROUP_PAGE(page));
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_new_group_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_new_group_page_parent_class)->shown(page);
 }
 
 static void
@@ -172,7 +244,7 @@ action_back(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
   adw_navigation_view_pop_to_tag(self->navigation, "form");
 }
 
@@ -181,7 +253,7 @@ action_choose_relay(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
   adw_navigation_view_push_by_tag(self->navigation, "form");
 }
 
@@ -190,15 +262,15 @@ action_choose_encrypted(GtkWidget *widget, const gchar *action, GVariant *parame
 {
   (void)action;
   (void)parameter;
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(widget);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(widget);
   if (self->encrypted_page)
     adw_navigation_view_push(self->navigation, self->encrypted_page);
 }
 
 void
-gh_new_group_dialog_add_encrypted_page(GhNewGroupDialog *self, AdwNavigationPage *page)
+gh_new_group_page_add_encrypted_page(GhNewGroupPage *self, AdwNavigationPage *page)
 {
-  g_return_if_fail(GH_IS_NEW_GROUP_DIALOG(self));
+  g_return_if_fail(GH_IS_NEW_GROUP_PAGE(self));
   g_return_if_fail(ADW_IS_NAVIGATION_PAGE(page));
   g_return_if_fail(self->encrypted_page == NULL);
   self->encrypted_page = page;
@@ -206,18 +278,22 @@ gh_new_group_dialog_add_encrypted_page(GhNewGroupDialog *self, AdwNavigationPage
   adw_navigation_view_add(self->navigation, page);
   static const gchar *const root[] = { "type" };
   adw_navigation_view_replace_with_tags(self->navigation, root, 1);
+  gtk_widget_set_visible(self->form_back_button, FALSE); /* the form is pushed now */
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-group.choose-encrypted", TRUE);
+  if (g_signal_lookup("open-group", G_OBJECT_TYPE(page)))
+    g_signal_connect_object(page, "open-group", G_CALLBACK(on_encrypted_opened), self,
+                            G_CONNECT_SWAPPED | G_CONNECT_AFTER);
 }
 
 AdwNavigationPage *
-gh_new_group_dialog_get_encrypted_page(GhNewGroupDialog *self)
+gh_new_group_page_get_encrypted_page(GhNewGroupPage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_GROUP_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_NEW_GROUP_PAGE(self), NULL);
   return self->encrypted_page;
 }
 
 static void
-on_op_changed(GhNewGroupDialog *self)
+on_op_changed(GhNewGroupPage *self)
 {
   sync_status(self);
 }
@@ -225,17 +301,17 @@ on_op_changed(GhNewGroupDialog *self)
 static void
 on_service_gone(gpointer data, GObject *where)
 {
-  GhNewGroupDialog *self = data;
+  GhNewGroupPage *self = data;
   (void)where;
   self->service = NULL;
-  adw_dialog_force_close(ADW_DIALOG(self));
+  gh_new_group_page_close(self);
 }
 
-GhNewGroupDialog *
-gh_new_group_dialog_new(GhNip29Service *service)
+GhNewGroupPage *
+gh_new_group_page_new(GhNip29Service *service)
 {
   g_return_val_if_fail(GH_IS_NIP29_SERVICE(service), NULL);
-  GhNewGroupDialog *self = g_object_new(GH_TYPE_NEW_GROUP_DIALOG, NULL);
+  GhNewGroupPage *self = g_object_new(GH_TYPE_NEW_GROUP_PAGE, NULL);
   self->service = service;
   g_object_weak_ref(G_OBJECT(service), on_service_gone, self);
   g_signal_connect_object(gh_nip29_service_get_outbox(service), "op-changed",
@@ -244,29 +320,29 @@ gh_new_group_dialog_new(GhNip29Service *service)
 }
 
 GhNip29Room *
-gh_new_group_dialog_get_room(GhNewGroupDialog *self)
+gh_new_group_page_get_room(GhNewGroupPage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_GROUP_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_NEW_GROUP_PAGE(self), NULL);
   return self->room;
 }
 
 const gchar *
-gh_new_group_dialog_get_status_title(GhNewGroupDialog *self)
+gh_new_group_page_get_status_title(GhNewGroupPage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_GROUP_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_NEW_GROUP_PAGE(self), NULL);
   return gtk_label_get_text(self->status_title);
 }
 
 static void
-on_activated(GhNewGroupDialog *self)
+on_activated(GhNewGroupPage *self)
 {
   gtk_widget_activate_action(GTK_WIDGET(self), "new-group.create", NULL);
 }
 
 static void
-gh_new_group_dialog_dispose(GObject *object)
+gh_new_group_page_dispose(GObject *object)
 {
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(object);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(object);
   if (self->service) {
     g_object_weak_unref(G_OBJECT(self->service), on_service_gone, self);
     self->service = NULL;
@@ -274,32 +350,38 @@ gh_new_group_dialog_dispose(GObject *object)
   if (self->room)
     g_signal_handlers_disconnect_by_data(self->room, self);
   g_clear_object(&self->room);
-  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_NEW_GROUP_DIALOG);
-  G_OBJECT_CLASS(gh_new_group_dialog_parent_class)->dispose(object);
+  /* navigation is both the page's child and a bound template child. */
+  adw_navigation_page_set_child(ADW_NAVIGATION_PAGE(object), NULL);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_NEW_GROUP_PAGE);
+  G_OBJECT_CLASS(gh_new_group_page_parent_class)->dispose(object);
 }
 
 static void
-gh_new_group_dialog_finalize(GObject *object)
+gh_new_group_page_finalize(GObject *object)
 {
-  GhNewGroupDialog *self = GH_NEW_GROUP_DIALOG(object);
+  GhNewGroupPage *self = GH_NEW_GROUP_PAGE(object);
   g_free(self->relay_url);
   g_free(self->announced);
-  G_OBJECT_CLASS(gh_new_group_dialog_parent_class)->finalize(object);
+  G_OBJECT_CLASS(gh_new_group_page_parent_class)->finalize(object);
 }
 
 static void
-gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
+gh_new_group_page_class_init(GhNewGroupPageClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  object_class->dispose = gh_new_group_dialog_dispose;
-  object_class->finalize = gh_new_group_dialog_finalize;
+  object_class->dispose = gh_new_group_page_dispose;
+  object_class->finalize = gh_new_group_page_finalize;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_new_group_page_shown;
   signals[SIGNAL_OPEN_GROUP] = g_signal_new("open-group", G_TYPE_FROM_CLASS(klass),
                                             G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE,
                                             1, GH_TYPE_NIP29_ROOM);
+  signals[SIGNAL_FINISHED] = g_signal_new("finished", G_TYPE_FROM_CLASS(klass),
+                                          G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE,
+                                          0);
   gtk_widget_class_set_template_from_resource(widget_class,
-                                              "/org/nostr/Groundhog/ui/gh-new-group-dialog.ui");
-#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhNewGroupDialog, name)
+                                              "/org/nostr/Groundhog/ui/gh-new-group-page.ui");
+#define BIND(name) gtk_widget_class_bind_template_child(widget_class, GhNewGroupPage, name)
   BIND(navigation);
   BIND(relay_row);
   BIND(name_row);
@@ -314,6 +396,8 @@ gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
   BIND(open_button);
   BIND(back_button);
   BIND(contact_row);
+  BIND(form_back_button);
+  BIND(encrypted_choice);
 #undef BIND
   gtk_widget_class_install_action(widget_class, "new-group.create", NULL, action_create);
   gtk_widget_class_install_action(widget_class, "new-group.open", NULL, action_open);
@@ -322,17 +406,19 @@ gh_new_group_dialog_class_init(GhNewGroupDialogClass *klass)
                                   action_choose_relay);
   gtk_widget_class_install_action(widget_class, "new-group.choose-encrypted", NULL,
                                   action_choose_encrypted);
+  gtk_widget_class_install_action(widget_class, "new-group.close", NULL, action_close);
+  gtk_widget_class_add_binding(widget_class, GDK_KEY_Escape, 0, on_escape, NULL);
 }
 
 static void
-sync_contact_copy(GhNewGroupDialog *self)
+sync_contact_copy(GhNewGroupPage *self)
 {
   adw_action_row_set_subtitle(self->contact_row,
                               gh_group_contact_copy(TRUE, gh_group_network_is_tor()));
 }
 
 static void
-gh_new_group_dialog_init(GhNewGroupDialog *self)
+gh_new_group_page_init(GhNewGroupPage *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   sync_contact_copy(self);
@@ -350,4 +436,5 @@ gh_new_group_dialog_init(GhNewGroupDialog *self)
   g_signal_connect_swapped(self->relay_row, "entry-activated", G_CALLBACK(on_activated), self);
   g_signal_connect_swapped(self->name_row, "entry-activated", G_CALLBACK(on_activated), self);
   g_signal_connect_swapped(self->about_row, "entry-activated", G_CALLBACK(on_activated), self);
+  g_signal_connect_swapped(self->navigation, "pushed", G_CALLBACK(on_inner_pushed), self);
 }

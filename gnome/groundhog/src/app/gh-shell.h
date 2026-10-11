@@ -88,6 +88,11 @@ void gh_sidebar_page_push_panel(GhSidebarPage *self, AdwNavigationPage *panel);
 void gh_sidebar_page_close_panel(GhSidebarPage *self);
 AdwNavigationPage *gh_sidebar_page_get_panel(GhSidebarPage *self);
 
+/* Leaves panel (a page pushed onto a navigation view, such as a flow pushed
+ * over New Message): pops it and anything over it, back to the page under
+ * it. A no-op when panel is not in a navigation view or is its root. */
+void gh_sidebar_panel_leave(AdwNavigationPage *panel);
+
 /* Focuses the sidebar's search entry (always shown). */
 void gh_sidebar_page_start_search(GhSidebarPage *self);
 /* Typing into widget starts a search (GtkSearchEntry key capture). */

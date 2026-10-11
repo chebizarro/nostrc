@@ -468,14 +468,6 @@ action_create(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
-close_dialog(GhMlsNewGroupPage *self)
-{
-  GtkWidget *dialog = gtk_widget_get_ancestor(GTK_WIDGET(self), ADW_TYPE_DIALOG);
-  if (dialog)
-    adw_dialog_close(ADW_DIALOG(dialog));
-}
-
-static void
 action_open(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
@@ -485,9 +477,20 @@ action_open(GtkWidget *widget, const gchar *action, GVariant *parameter)
     return;
   g_autoptr(GhMlsGroup) group = g_object_ref(self->group);
   g_object_ref(self);
-  close_dialog(self);
   g_signal_emit(self, signals[SIGNAL_OPEN_GROUP], 0, group);
   g_object_unref(self);
+}
+
+/* Shown (pushed from New Group's chooser): focus the name while the form
+ * shows (charter §7.14). */
+static void
+gh_mls_new_group_page_shown(AdwNavigationPage *page)
+{
+  GhMlsNewGroupPage *self = GH_MLS_NEW_GROUP_PAGE(page);
+  if (g_strcmp0(gtk_stack_get_visible_child_name(self->stack), "form") == 0)
+    gtk_widget_grab_focus(GTK_WIDGET(self->name_row));
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_mls_new_group_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_mls_new_group_page_parent_class)->shown(page);
 }
 
 static void
@@ -660,6 +663,7 @@ gh_mls_new_group_page_class_init(GhMlsNewGroupPageClass *klass)
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   object_class->dispose = gh_mls_new_group_page_dispose;
   object_class->finalize = gh_mls_new_group_page_finalize;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_mls_new_group_page_shown;
   signals[SIGNAL_OPEN_GROUP] = g_signal_new("open-group", G_TYPE_FROM_CLASS(klass),
                                             G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                             G_TYPE_NONE, 1, GH_TYPE_MLS_GROUP);

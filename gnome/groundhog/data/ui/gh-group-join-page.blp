@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 // Join Group (charter §7.9, §7.10 "join states have distinct copy", §7.15
-// #18; item G20b), driven by gh-group-join-dialog.c. "entry": the group's
+// #18; item G20b), driven by gh-group-join-page.c. "entry": the group's
 // address (host'group-id or a nostr: link, gh_group_parse_reference()) and
 // an optional invite code, and what joining means before anything is sent:
 // the group is not end-to-end encrypted and the relay learns who asks.
@@ -10,11 +10,12 @@ using Adw 1;
 // honest words (gh_group_join_copy(): asking, waiting for the signer,
 // waiting for an admin, you're in, already a member, declined, invite only,
 // not sent), with Open Group, an invite code to try again, or Try Again.
-// Relay text is plain text.
-template $GhGroupJoinDialog: Adw.Dialog {
+// Relay text is plain text. A sidebar panel pushed over New Message
+// (gh_window_push_flow()): Back on "entry" (join.close) or Escape returns to
+// it; from "status", to "entry".
+template $GhGroupJoinPage: Adw.NavigationPage {
+  tag: "join-group";
   title: _("Join Group");
-  content-width: 440;
-  content-height: 600;
 
   child: Adw.NavigationView navigation {
     Adw.NavigationPage entry_page {
@@ -23,7 +24,21 @@ template $GhGroupJoinDialog: Adw.Dialog {
 
       child: Adw.ToolbarView {
         [top]
-        Adw.HeaderBar {}
+        Adw.HeaderBar {
+          // "entry" is the root of this view: Back leaves the page.
+          show-back-button: false;
+
+          [start]
+          Button back_button {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back to New Message");
+            action-name: "join.close";
+
+            accessibility {
+              label: _("Back to New Message");
+            }
+          }
+        }
 
         content: Adw.PreferencesPage {
           Adw.PreferencesGroup {

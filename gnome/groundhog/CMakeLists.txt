@@ -44,9 +44,9 @@ set(GROUNDHOG_BLUEPRINTS
   gh-conversation-view gh-message-row gh-message-reference gh-message-list-item gh-day-separator
   gh-delivery-indicator gh-delivery-details gh-preferences-dialog gh-composer
   gh-requests-view gh-new-message-page gh-new-message-row gh-recipient-chip
-  gh-add-contact-dialog
+  gh-add-contact-page
   gh-conversation-info-dialog gh-conversation-info-person
-  gh-group-join-dialog gh-group-info-dialog gh-group-member-row gh-new-group-dialog
+  gh-group-join-page gh-group-info-dialog gh-group-member-row gh-new-group-page
   gh-mls-invitee-row gh-mls-invitee-picker gh-mls-relay-row gh-mls-new-group-page
   gh-mls-member-row gh-mls-group-info-dialog gh-mls-invite-row gh-mls-invites-dialog
   gh-blocked-page gh-blocked-row gh-conversation-menu
@@ -1979,7 +1979,7 @@ if (TARGET groundhog-conversation-ui AND TARGET groundhog-recipient)
   target_link_libraries(groundhog-conversation-ui PUBLIC groundhog-recipient)
 endif()
 if (TARGET groundhog-conversation-ui AND TARGET groundhog-net AND GROUNDHOG_DM_SEND_SOURCES)
-  add_library(groundhog-new-message STATIC src/ui/gh-new-message-page.c src/ui/gh-add-contact-dialog.c)
+  add_library(groundhog-new-message STATIC src/ui/gh-new-message-page.c src/ui/gh-add-contact-page.c)
   target_link_libraries(groundhog-new-message PUBLIC groundhog-conversation-ui groundhog-net)
   target_compile_options(groundhog-new-message PRIVATE -Wall -Wextra -Werror)
   # gh-inbox-resolver.c (the directory's interface) is one of the
@@ -2793,16 +2793,16 @@ endif()
 # §8.2 G20b) over G20a's GhNip29Service: gh-group-copy.c (GTK-free: group
 # references, the honest join/create/read copy, the composer's "closed to
 # you" reason, admin gating from the relay-signed 39001/39003),
-# GhGroupJoinDialog, GhGroupInfoDialog (+ GhGroupMemberRow) and
-# GhNewGroupDialog (the relay part); gh-group-ui.c attaches them to the
+# GhGroupJoinPage, GhGroupInfoDialog (+ GhGroupMemberRow) and
+# GhNewGroupPage (the relay part); gh-group-ui.c attaches them to the
 # window (win.join-group, win.new-group, the composer delegate for relay
 # groups, Group Info as the conversation-info group handler, older history
 # from the store). Group rows get their kind glyph in gh-conversation-row.c.
 if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
     TARGET groundhog-recipient AND TARGET groundhog-privacy-summary)
   message(STATUS "Groundhog NIP-29 group UI: enabled")
-  set(GROUNDHOG_GROUP_UI_SOURCES src/ui/gh-group-copy.c src/ui/gh-group-join-dialog.c
-    src/ui/gh-group-info-dialog.c src/ui/gh-new-group-dialog.c)
+  set(GROUNDHOG_GROUP_UI_SOURCES src/ui/gh-group-copy.c src/ui/gh-group-join-page.c
+    src/ui/gh-group-info-dialog.c src/ui/gh-new-group-page.c)
   add_library(groundhog-group-ui STATIC ${GROUNDHOG_GROUP_UI_SOURCES})
   target_include_directories(groundhog-group-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
   target_link_libraries(groundhog-group-ui PUBLIC groundhog-nip29-service
@@ -2826,10 +2826,12 @@ if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
     # "closed to you" reasons, retry, leave, admin gating from the relay's
     # 39001/39003 (and the service refusing what is denied), creating a
     # group (accepted, refused and dropped), older history from the store.
-    # --gui: the dialogs themselves (Join, Group Info, New Group), the group
-    # row's glyph and label, and the window glue (actions, the composer
-    # delegate, Group Info) on a real window; it self-skips (77) without a
-    # display. With GROUNDHOG_TEST_SCREENSHOTS=<dir> it renders the dialogs.
+    # --gui: the Join Group and New Group panels and the Group Info dialog,
+    # the group row's glyph and label, the window glue (actions, the
+    # composer delegate, Group Info) on a real window, and both flows pushed
+    # over the real New Message panel (Back, Escape, completing, collapsed);
+    # it self-skips (77) without a display. With
+    # GROUNDHOG_TEST_SCREENSHOTS=<dir> it renders them.
     add_executable(test-groundhog-group-ui tests/ui/test_group_ui.c
       tests/ui/group-send-stub.c src/ui/gh-group-ui.c)
     target_include_directories(test-groundhog-group-ui PRIVATE
@@ -2838,6 +2840,14 @@ if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
     target_link_libraries(test-groundhog-group-ui PRIVATE groundhog-group-ui
       PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
     target_compile_options(test-groundhog-group-ui PRIVATE -Wall -Wextra -Werror)
+    if (TARGET groundhog-new-message)
+      # The flows as sidebar panels over the real New Message panel.
+      target_sources(test-groundhog-group-ui PRIVATE src/app/gh-inbox-resolver.c)
+      target_link_libraries(test-groundhog-group-ui PRIVATE groundhog-new-message)
+      target_compile_definitions(test-groundhog-group-ui PRIVATE GH_TEST_HAVE_NEW_MESSAGE=1)
+    else()
+      target_compile_definitions(test-groundhog-group-ui PRIVATE GH_TEST_HAVE_NEW_MESSAGE=0)
+    endif()
     groundhog_store_link_sqlcipher_first(test-groundhog-group-ui)
     add_dependencies(test-groundhog-group-ui groundhog-test-schemas)
     add_test(NAME groundhog-group-ui COMMAND test-groundhog-group-ui)

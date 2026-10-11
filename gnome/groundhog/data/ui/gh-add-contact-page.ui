@@ -6,10 +6,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GhAddContactDialog" parent="AdwDialog">
+  <template class="GhAddContactPage" parent="AdwNavigationPage">
+    <property name="tag">add-contact</property>
     <property name="title" translatable="yes">Add Contact</property>
-    <property name="content-width">400</property>
-    <property name="content-height">-1</property>
     <property name="child">
       <object class="AdwToolbarView">
         <child type="top">
