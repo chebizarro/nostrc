@@ -273,17 +273,8 @@ template $GhSidebarPage: Adw.NavigationPage {
 menu primary_menu {
   // New Group, Join Group and Add Contact are rows of the New Message
   // panel (gh-new-message-page.blp), the one place they start from.
-  section {
-    // Encrypted-group invitations (gh-mls-ui.c), also when none wait: the
-    // panel's "This Device" section says why groups joined on another
-    // device or app are not here. The sidebar entry shows only with some.
-    item {
-      label: _("Group _Invitations…");
-      action: "win.group-invitations";
-      hidden-when: "action-missing";
-    }
-  }
-
+  // Group Invitations opens from the sidebar entry (shown only while some
+  // wait) and from a new invitation's toast; it has no menu item.
   section {
     item {
       label: _("_Preferences");

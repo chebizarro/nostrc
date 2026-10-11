@@ -62,8 +62,7 @@ void gh_sidebar_page_set_models(GhSidebarPage *self, GListModel *conversations,
  * the list itself. */
 void gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count);
 guint gh_sidebar_page_get_invitations(GhSidebarPage *self);
-/* Whether the Group Invitations entry shows (only with invitations counted;
- * the main menu's "Group Invitations…" item opens the dialog at any time). */
+/* Whether the Group Invitations entry shows (only with invitations counted). */
 gboolean gh_sidebar_page_get_invitations_entry_visible(GhSidebarPage *self);
 /* The selected item of the visible list; borrowed, NULL for none. */
 gpointer gh_sidebar_page_get_selected(GhSidebarPage *self);

@@ -1670,20 +1670,21 @@ test_gui_refused_invitation(void)
   gtk_widget_queue_draw(GTK_WIDGET(bob_window));
   spin_until(frame_painted_redraw, &painted, "the window painted without the entry");
   save_root_png(GTK_WIDGET(bob_window), "sidebar-no-entry");
-  /* The dialog, with its "This Device" explanation, stays reachable from
-   * the main menu's Group Invitations item. */
+  /* No main-menu item: the panel opens from the sidebar entry (only while
+   * invitations wait) and from a new invitation's toast, through the same
+   * window action. */
   g_assert_true(g_action_group_get_action_enabled(G_ACTION_GROUP(bob_window),
                                                   "group-invitations"));
-  g_assert_true(menu_has_action(gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(
+  g_assert_false(menu_has_action(gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(
     gtk_widget_get_template_child(GTK_WIDGET(gh_window_get_sidebar(bob_window)),
                                   GH_TYPE_SIDEBAR_PAGE, "primary_button"))),
     "win.group-invitations"));
-  GhMlsInvitesPage *from_menu = open_invitations(bob_window);
-  g_assert_cmpstr(gh_mls_invites_page_get_key_status(from_menu), ==,
+  GhMlsInvitesPage *from_action = open_invitations(bob_window);
+  g_assert_cmpstr(gh_mls_invites_page_get_key_status(from_action), ==,
                   "Published. Invitations made for this device can be opened here.");
-  g_assert_true(gtk_widget_get_visible(invites_empty_row(from_menu)));
+  g_assert_true(gtk_widget_get_visible(invites_empty_row(from_action)));
   /* The header's back button returns too. */
-  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(from_menu));
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(from_action));
   spin_until(no_flow, bob_window, "the list again");
   close_window(bob_window);
   world_down(&w);

@@ -20,8 +20,7 @@ G_BEGIN_DECLS
  *    adds the "Encrypted Group" page (GhMlsNewGroupPage) to each New Group page while
  *    a service exists; Open Group opens its conversation.
  *  - Invitations: the sidebar's "Group Invitations · N" entry
- *    (gh_sidebar_page_set_invitations()), the main menu's item and a new
- *    invitation's toast run win.group-invitations, which slides the sidebar
+ *    (gh_sidebar_page_set_invitations()) and a new invitation's toast run win.group-invitations, which slides the sidebar
  *    to the Group Invitations panel (GhMlsInvitesPage); a new invitation is
  *    a toast with View, never a notification with a name (PD-8). Nothing
  *    joins before Accept; Accept closes the panels and opens the group.

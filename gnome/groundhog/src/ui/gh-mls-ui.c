@@ -224,8 +224,8 @@ sync_invitations(MlsUi *ui)
   /* An invitation that could not be opened is counted too: it waits for the
    * user to read it (and ask again), not silently dropped. */
   ui->invitations = (invites ? invites->len : 0) + (refused ? refused->len : 0);
-  /* Only these show the entry; the panel's "This Device" explanation is
-   * reachable from the main menu's Group Invitations item. */
+  /* Only these show the entry (and so the panel, with its "This Device"
+   * explanation): nothing waiting, nothing to open. */
   gh_sidebar_page_set_invitations(gh_window_get_sidebar(ui->window), ui->invitations);
 }
 
@@ -262,8 +262,7 @@ on_joined(GhWindow *window, GhMlsGroup *group)
   adw_toast_overlay_add_toast(gh_window_get_toasts(window), adw_toast_new(title));
 }
 
-/* win.group-invitations (the sidebar entry, the main menu, a new
- * invitation's toast): the Group Invitations panel, over the list. */
+/* win.group-invitations (the sidebar entry, a new invitation's toast): the Group Invitations panel, over the list. */
 static void
 on_invites(GSimpleAction *action, GVariant *parameter, gpointer data)
 {

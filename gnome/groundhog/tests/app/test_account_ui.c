@@ -205,17 +205,10 @@ assert_account_widgets(GhWindow *window)
                                                                     GH_TYPE_SIDEBAR_PAGE,
                                                                     "primary_button"));
   GMenuModel *primary = gtk_menu_button_get_menu_model(button);
-  /* Account, then Group Invitations (New Group, Join Group and Add Contact
-   * are rows of the New Message panel), Preferences and Shortcuts, Quit. */
-  g_assert_cmpint(g_menu_model_get_n_items(primary), ==, 4);
-  g_autoptr(GMenuModel) groups_section = g_menu_model_get_item_link(primary, 1,
-                                                                    G_MENU_LINK_SECTION);
-  g_assert_nonnull(groups_section);
-  g_assert_cmpint(g_menu_model_get_n_items(groups_section), ==, 1);
-  g_autofree char *groups_action = NULL;
-  g_assert_true(g_menu_model_get_item_attribute(groups_section, 0, G_MENU_ATTRIBUTE_ACTION, "s",
-                                                &groups_action));
-  g_assert_cmpstr(groups_action, ==, "win.group-invitations");
+  /* Account, then Preferences and Shortcuts, Quit: New Group, Join Group
+   * and Add Contact are rows of the New Message panel, and Group
+   * Invitations opens from the sidebar entry. */
+  g_assert_cmpint(g_menu_model_get_n_items(primary), ==, 3);
   g_autoptr(GMenuModel) account_section = g_menu_model_get_item_link(primary, 0,
                                                                      G_MENU_LINK_SECTION);
   g_assert_nonnull(account_section);
