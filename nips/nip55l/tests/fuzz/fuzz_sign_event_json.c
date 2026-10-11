@@ -56,11 +56,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   const uint8_t *body = data + 1;
   size_t body_len = size - 1;
   const char *selector = NULL;
-  switch (data[0] % 4) {
-    case 0: selector = ""; break;
-    case 1: selector = g_npub; break;
-    case 2: selector = g_pk_hex; break;
-    case 3: selector = g_nsec; break; /* rejected, never key material */
+  switch (data[0] % 8) {
+    case 0: case 1: case 2: selector = ""; break;
+    case 3: case 4: selector = g_npub; break;
+    case 5: case 6: selector = g_pk_hex; break;
+    case 7: selector = g_nsec; break; /* rejected, never key material */
   }
 
   /* Signer takes a NUL-terminated string; copy the tail out. */

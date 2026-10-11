@@ -77,14 +77,22 @@ grotto package.
 
 ## Key resolution order
 
-The daemon resolves the signing key in this order:
+`current_user` is an identity selector, never key material. An `npub1...`
+selector or 64-hex x-only **public** key selects that identity; a `key_id`
+or label selects one matching stored item. `nsec1...` selectors are rejected.
+For an npub or hex public key, the resolved secret must derive to that npub,
+even if a key-store attribute says otherwise.
 
-1. `current_user` parameter (64-hex or `nsec1...`)
-2. Env `NOSTR_SIGNER_SECKEY_HEX` (64-hex)
-3. Env `NOSTR_SIGNER_NSEC` (`nsec1...`)
-4. Secret Service (libsecret), attribute `account="default"` (or specified)
+With an empty selector, the signer uses a freshly stored in-process key, then
+`NOSTR_SIGNER_SECKEY_HEX` or `NOSTR_SIGNER_NSEC`, then the key store's
+user-linked identity, Grotto's chosen default, or its sole stored identity.
+An explicit npub/hex selector checks the cached key, the environment key,
+then the key store for that identity. A key_id or label must match exactly one
+stored item; it does not fall back to the environment key.
 
-If none are found: returns NOT_FOUND.
+An absent identity returns `NOT_FOUND` (D-Bus `NoKeyConfigured`); an unreadable
+key store returns `BACKEND` (D-Bus `Internal`). Secret keys enter through
+`StoreKey`, the environment, or the key store, not through selectors.
 
 ## Access control (0.4.0)
 
