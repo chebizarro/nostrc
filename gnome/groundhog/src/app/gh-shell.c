@@ -9,9 +9,7 @@ struct _GhSidebarPage {
   AdwHeaderBar *header;
   AdwWindowTitle *window_title;
   GtkButton *back_button;
-  GtkToggleButton *search_button;
   GtkButton *new_button;
-  GtkSearchBar *search_bar;
   GtkSearchEntry *search_entry;
   GtkWidget *empty_new_button;
   AdwBanner *status_banner;
@@ -38,7 +36,6 @@ struct _GhSidebarPage {
   gboolean updating_search;
   gboolean show_previews;
   guint invitations;             /* pending encrypted-group invitations */
-  gboolean invitations_entry;    /* show the entry even with none pending */
 };
 
 enum {
@@ -101,15 +98,13 @@ update_page(GhSidebarPage *self)
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   gtk_widget_set_visible(GTK_WIDGET(self->invitations_button),
                          !self->show_requests && !*self->search_text &&
-                         (self->invitations > 0 || self->invitations_entry));
+                         self->invitations > 0);
   g_autofree gchar *invitations = g_strdup_printf("%u", self->invitations);
   gtk_label_set_text(self->invitations_count, invitations);
-  gtk_widget_set_visible(GTK_WIDGET(self->invitations_count), self->invitations > 0);
-  g_autofree gchar *invitations_label = self->invitations > 0
-    ? g_strdup_printf(g_dngettext(NULL, "Group Invitations, %u invitation",
-                                  "Group Invitations, %u invitations", self->invitations),
-                      self->invitations)
-    : g_strdup(_("Group Invitations, none waiting"));
+  g_autofree gchar *invitations_label =
+    g_strdup_printf(g_dngettext(NULL, "Group Invitations, %u invitation",
+                                "Group Invitations, %u invitations", self->invitations),
+                    self->invitations);
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->invitations_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, invitations_label, -1);
   gtk_stack_set_visible_child_name(self->stack,
@@ -186,20 +181,11 @@ on_search_changed(GhSidebarPage *self)
   update_page(self);
 }
 
-/* Escape and closing the search toggle have the same, immediate result. */
+/* Escape clears the search; the entry stays (always shown) and keeps focus. */
 static void
 on_stop_search(GhSidebarPage *self)
 {
   gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
-  gtk_search_bar_set_search_mode(self->search_bar, FALSE);
-  gtk_widget_grab_focus(GTK_WIDGET(self->search_button));
-}
-
-static void
-on_search_mode_changed(GhSidebarPage *self)
-{
-  if (!gtk_search_bar_get_search_mode(self->search_bar))
-    gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
 }
 
 static void
@@ -209,15 +195,15 @@ show_requests_action(GtkWidget *widget, const char *action_name, GVariant *param
   gh_sidebar_page_set_show_requests(GH_SIDEBAR_PAGE(widget), g_variant_get_boolean(parameter));
 }
 
-/* Escape leaves Message Requests; otherwise it propagates (search bar,
- * collapsed navigation). */
+/* Escape clears a search, else leaves Message Requests; otherwise it
+ * propagates (collapsed navigation). */
 static gboolean
 leave_requests(GtkWidget *widget, GVariant *args, gpointer data)
 {
   GhSidebarPage *self = GH_SIDEBAR_PAGE(widget);
   (void)args;
   (void)data;
-  if (gtk_search_bar_get_search_mode(self->search_bar) || *self->search_text) {
+  if (*self->search_text) {
     on_stop_search(self);
     return TRUE;
   }
@@ -318,8 +304,6 @@ gh_sidebar_page_class_init(GhSidebarPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, header);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, window_title);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, back_button);
-  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_button);
-  gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_bar);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, search_entry);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, empty_new_button);
   gtk_widget_class_bind_template_child(widget_class, GhSidebarPage, status_banner);
@@ -356,13 +340,10 @@ gh_sidebar_page_init(GhSidebarPage *self)
   g_signal_connect_swapped(self->selection, "notify::selected-item",
                            G_CALLBACK(on_selected_item), self);
   gtk_list_view_set_model(self->list, GTK_SELECTION_MODEL(self->selection));
-  gtk_search_bar_connect_entry(self->search_bar, GTK_EDITABLE(self->search_entry));
   g_signal_connect_swapped(self->search_entry, "notify::text",
                            G_CALLBACK(on_search_changed), self);
   g_signal_connect_swapped(self->search_entry, "stop-search",
                            G_CALLBACK(on_stop_search), self);
-  g_signal_connect_swapped(self->search_bar, "notify::search-mode-enabled",
-                           G_CALLBACK(on_search_mode_changed), self);
   update_page(self);
 }
 
@@ -483,17 +464,6 @@ gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count)
   update_page(self);
 }
 
-void
-gh_sidebar_page_set_invitations_entry(GhSidebarPage *self, gboolean shown)
-{
-  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
-  shown = !!shown;
-  if (self->invitations_entry == shown)
-    return;
-  self->invitations_entry = shown;
-  update_page(self);
-}
-
 gboolean
 gh_sidebar_page_get_invitations_entry_visible(GhSidebarPage *self)
 {
@@ -575,7 +545,6 @@ gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item)
   if (!found && *self->search_text) {
     /* A search hides it. Clearing the entry reports "" at once. */
     gtk_editable_set_text(GTK_EDITABLE(self->search_entry), "");
-    gtk_search_bar_set_search_mode(self->search_bar, FALSE);
     found = find_item(self->conversations, item, &position) ||
             (request = find_item(self->requests, item, &position));
   }
@@ -591,7 +560,6 @@ void
 gh_sidebar_page_start_search(GhSidebarPage *self)
 {
   g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
-  gtk_search_bar_set_search_mode(self->search_bar, TRUE);
   gtk_widget_grab_focus(GTK_WIDGET(self->search_entry));
 }
 
@@ -599,7 +567,7 @@ void
 gh_sidebar_page_set_key_capture_widget(GhSidebarPage *self, GtkWidget *widget)
 {
   g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
-  gtk_search_bar_set_key_capture_widget(self->search_bar, widget);
+  gtk_search_entry_set_key_capture_widget(self->search_entry, widget);
 }
 
 const gchar *
@@ -632,7 +600,7 @@ gh_sidebar_page_set_show_requests(GhSidebarPage *self, gboolean show_requests)
   if (self->conversations)
     gtk_single_selection_set_model(self->selection,
                                    show_requests ? self->requests : self->conversations);
-  /* At 360 px the header also holds the account, search and menu buttons
+  /* At 360 px the header also holds the account and menu buttons
    * and the window controls: in Message Requests the back button replaces
    * New Message, and the title is short. */
   gtk_widget_set_visible(GTK_WIDGET(self->back_button), show_requests);
@@ -647,7 +615,7 @@ gh_sidebar_page_set_show_requests(GhSidebarPage *self, gboolean show_requests)
    * but never pull it in from elsewhere. */
   if (focus_within)
     gtk_widget_grab_focus(show_requests ? GTK_WIDGET(self->list)
-                                        : GTK_WIDGET(self->search_button));
+                                        : GTK_WIDGET(self->search_entry));
 }
 
 gboolean

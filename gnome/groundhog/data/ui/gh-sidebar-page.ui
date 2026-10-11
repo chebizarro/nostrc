@@ -24,15 +24,6 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </accessibility>
               </object>
             </child>
-            <child type="start">
-              <object class="GtkToggleButton" id="search_button">
-                <property name="icon-name">system-search-symbolic</property>
-                <property name="tooltip-text" translatable="yes">Search Conversations</property>
-                <accessibility>
-                  <property name="label" translatable="yes">Search Conversations</property>
-                </accessibility>
-              </object>
-            </child>
             <property name="title-widget">
               <object class="AdwWindowTitle" id="window_title">
                 <property name="title">Groundhog</property>
@@ -62,9 +53,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           </object>
         </child>
         <child type="top">
-          <object class="GtkSearchBar" id="search_bar">
-            <property name="search-mode-enabled" bind-source="search_button" bind-property="active" bind-flags="sync-create|bidirectional"/>
-            <property name="child">
+          <object class="GtkBox" id="search_box">
+            <property name="margin-start">6</property>
+            <property name="margin-end">6</property>
+            <property name="margin-bottom">6</property>
+            <child>
               <object class="GtkSearchEntry" id="search_entry">
                 <property name="placeholder-text" translatable="yes">Search titles or npubs</property>
                 <property name="tooltip-text" translatable="yes">Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.</property>
@@ -73,7 +66,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   <property name="label" translatable="yes">Search conversations</property>
                 </accessibility>
               </object>
-            </property>
+            </child>
           </object>
         </child>
         <child type="top">
@@ -284,6 +277,11 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <item>
         <attribute name="label" translatable="yes">_Add Contact…</attribute>
         <attribute name="action">win.add-contact</attribute>
+        <attribute name="hidden-when">action-missing</attribute>
+      </item>
+      <item>
+        <attribute name="label" translatable="yes">Group _Invitations…</attribute>
+        <attribute name="action">win.group-invitations</attribute>
         <attribute name="hidden-when">action-missing</attribute>
       </item>
     </section>

@@ -1,8 +1,8 @@
 using Gtk 4.0;
 using Adw 1;
 
-// Sidebar navigation page (charter §7.4, §7.5): header with search, new
-// message and the main menu; the search bar; the one status banner (from
+// Sidebar navigation page (charter §7.4, §7.5): header with new message
+// and the main menu; the search entry, always shown (Ctrl+F focuses it); the one status banner (from
 // GhStatus); and the stack that shows the conversation list or its empty,
 // no-results and error states. Account-state pages (gh-account-ui.blp) or
 // the onboarding_unavailable page below are added to the stack from C. The list's
@@ -25,16 +25,6 @@ template $GhSidebarPage: Adw.NavigationPage {
 
         accessibility {
           label: _("Back to Conversations");
-        }
-      }
-
-      [start]
-      ToggleButton search_button {
-        icon-name: "system-search-symbolic";
-        tooltip-text: _("Search Conversations");
-
-        accessibility {
-          label: _("Search Conversations");
         }
       }
 
@@ -68,10 +58,12 @@ template $GhSidebarPage: Adw.NavigationPage {
     }
 
     [top]
-    SearchBar search_bar {
-      search-mode-enabled: bind search_button.active bidirectional;
+    Box search_box {
+      margin-start: 6;
+      margin-end: 6;
+      margin-bottom: 6;
 
-      child: SearchEntry search_entry {
+      SearchEntry search_entry {
         placeholder-text: _("Search titles or npubs");
         tooltip-text: _("Search conversation titles, request subjects and participant npubs on this device. Message text is not searched.");
         hexpand: true;
@@ -79,7 +71,7 @@ template $GhSidebarPage: Adw.NavigationPage {
         accessibility {
           label: _("Search conversations");
         }
-      };
+      }
     }
 
     // Title, button and visibility follow the window's GhStatus.
@@ -285,6 +277,15 @@ menu primary_menu {
     item {
       label: _("_Add Contact…");
       action: "win.add-contact";
+      hidden-when: "action-missing";
+    }
+
+    // Encrypted-group invitations (gh-mls-ui.c), also when none wait: the
+    // dialog's "This Device" section says why groups joined on another
+    // device or app are not here. The sidebar entry shows only with some.
+    item {
+      label: _("Group _Invitations…");
+      action: "win.group-invitations";
       hidden-when: "action-missing";
     }
   }

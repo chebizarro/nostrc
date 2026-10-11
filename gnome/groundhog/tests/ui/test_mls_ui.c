@@ -1043,10 +1043,39 @@ frame_painted(gpointer data)
          wait->from + 1;
 }
 
+/* As frame_painted, asking for a frame each time it is polled: a window
+ * with nothing changing draws one frame for a queue_draw and stops. */
+static gboolean
+frame_painted_redraw(gpointer data)
+{
+  FramePainted *wait = data;
+  if (frame_painted(wait))
+    return TRUE;
+  gtk_widget_queue_draw(wait->widget);
+  return FALSE;
+}
+
 static gboolean
 invitations_entry_hidden(gpointer data)
 {
   return !gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(data));
+}
+
+/* Whether model (or a section or submenu of it) has an item for action. */
+static gboolean
+menu_has_action(GMenuModel *model, const gchar *action)
+{
+  for (gint i = 0; model && i < g_menu_model_get_n_items(model); i++) {
+    g_autofree gchar *name = NULL;
+    if (g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_ACTION, "s", &name) &&
+        g_strcmp0(name, action) == 0)
+      return TRUE;
+    g_autoptr(GMenuModel) section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION);
+    g_autoptr(GMenuModel) submenu = g_menu_model_get_item_link(model, i, G_MENU_LINK_SUBMENU);
+    if (menu_has_action(section, action) || menu_has_action(submenu, action))
+      return TRUE;
+  }
+  return FALSE;
 }
 
 static gboolean
@@ -1286,7 +1315,7 @@ test_gui_new_group(void)
   g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 0);
   InvitationsWait zero = { bob_window, 0 };
   spin_until(invitations_are, &zero, "Bob's invitations entry gone");
-  /* With a group here, the entry goes when nothing waits (mls-groups-bunker). */
+  /* The entry goes when nothing waits. */
   spin_until(invitations_entry_hidden, bob_window, "Bob's invitations entry hidden");
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   g_assert_nonnull(gb);
@@ -1491,9 +1520,8 @@ test_gui_refused_invitation(void)
 
   /* mls-groups-bunker, the owner's store: the refusal came before refusals
    * were listed (only libmarmot's failed record is left, its wrap seen).
-   * The next start lists it, sender unknown; the window keeps the Group
-   * Invitations entry while no encrypted group is on this device, and the
-   * dialog says why groups joined elsewhere are missing. */
+   * The next start lists it, sender unknown, and the window counts it in
+   * the Group Invitations entry. */
   forget_refusal_list(bob);
   app_restart(bob);
   spin_until(key_package_published, bob, "Bob's KeyPackage after the restart");
@@ -1507,6 +1535,9 @@ test_gui_refused_invitation(void)
   gtk_widget_queue_draw(GTK_WIDGET(bob_window));
   spin_until(frame_painted, &painted, "the window painted with the entry");
   save_root_png(GTK_WIDGET(bob_window), "sidebar-entry");
+  /* The search entry is always part of the sidebar. */
+  g_assert_true(gtk_widget_get_mapped(GTK_WIDGET(gtk_widget_get_template_child(
+    GTK_WIDGET(gh_window_get_sidebar(bob_window)), GH_TYPE_SIDEBAR_PAGE, "search_entry"))));
   g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
   AdwDialog *earlier = visible_dialog(bob_window);
   g_assert_true(GH_IS_MLS_INVITES_DIALOG(earlier));
@@ -1525,13 +1556,37 @@ test_gui_refused_invitation(void)
                   "Published. Invitations made for this device can be opened here.");
   gtk_widget_activate_action(GTK_WIDGET(again), "mls-invites.dismiss", "s",
                              (const gchar *)g_ptr_array_index(wraps, 0));
+  /* The last one dismissed: the entry goes at once, while the dialog is
+   * still open (no group on this device changes nothing). */
+  g_assert_cmpuint(gh_sidebar_page_get_invitations(gh_window_get_sidebar(bob_window)), ==, 0);
+  g_assert_false(
+    gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(bob->service)), ==, 0);
   adw_dialog_force_close(earlier);
   drain();
-  /* Nothing waits, and still no group here: the entry stays (above the
-   * conversations; this account has none, so the empty page shows). */
-  InvitationsWait none = { bob_window, 0 };
-  spin_until(invitations_are, &none, "the refusal dismissed");
-  g_assert_true(gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
+  g_assert_false(
+    gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
+  painted.from = gdk_frame_clock_get_frame_counter(
+    gtk_widget_get_frame_clock(GTK_WIDGET(bob_window)));
+  gtk_widget_queue_draw(GTK_WIDGET(bob_window));
+  spin_until(frame_painted_redraw, &painted, "the window painted without the entry");
+  save_root_png(GTK_WIDGET(bob_window), "sidebar-no-entry");
+  /* The dialog, with its "This Device" explanation, stays reachable from
+   * the main menu's Group Invitations item. */
+  g_assert_true(g_action_group_get_action_enabled(G_ACTION_GROUP(bob_window),
+                                                  "group-invitations"));
+  g_assert_true(menu_has_action(gtk_menu_button_get_menu_model(GTK_MENU_BUTTON(
+    gtk_widget_get_template_child(GTK_WIDGET(gh_window_get_sidebar(bob_window)),
+                                  GH_TYPE_SIDEBAR_PAGE, "primary_button"))),
+    "win.group-invitations"));
+  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
+  AdwDialog *from_menu = visible_dialog(bob_window);
+  g_assert_true(GH_IS_MLS_INVITES_DIALOG(from_menu));
+  spin_until(gh_test_dialog_shown, from_menu, "the invitations shown from the menu");
+  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(GH_MLS_INVITES_DIALOG(from_menu)), ==,
+                  "Published. Invitations made for this device can be opened here.");
+  adw_dialog_force_close(from_menu);
+  drain();
   close_window(bob_window);
   world_down(&w);
 }
@@ -2618,6 +2673,12 @@ main(int argc, char **argv)
     }
     adw_init();
     groundhog_register_resource();
+    /* The app's stylesheet, as main.c loads it, so screenshots show the app. */
+    g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
+    gtk_css_provider_load_from_resource(css, "/org/nostr/Groundhog/style.css");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+                                               GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
     g_test_init(&argc, &argv, NULL);
     nostrc_test_tolerate_gdk_frame_warning();

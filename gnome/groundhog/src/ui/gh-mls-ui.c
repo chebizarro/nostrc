@@ -224,11 +224,9 @@ sync_invitations(MlsUi *ui)
   /* An invitation that could not be opened is counted too: it waits for the
    * user to read it (and ask again), not silently dropped. */
   ui->invitations = (invites ? invites->len : 0) + (refused ? refused->len : 0);
+  /* Only these show the entry; the dialog's "This Device" explanation is
+   * reachable from the main menu's Group Invitations item. */
   gh_sidebar_page_set_invitations(gh_window_get_sidebar(ui->window), ui->invitations);
-  /* No encrypted group here yet: the entry stays, so the dialog can say why
-   * groups joined on another device or app are not here. */
-  gh_sidebar_page_set_invitations_entry(gh_window_get_sidebar(ui->window),
-    service && g_list_model_get_n_items(G_LIST_MODEL(service)) == 0);
 }
 
 static void
@@ -304,6 +302,7 @@ sync_service(MlsUi *ui)
       g_object_weak_ref(G_OBJECT(service), on_watched_gone, ui);
       g_signal_connect_swapped(service, "invite-received", G_CALLBACK(on_invite_received), ui);
       g_signal_connect_swapped(service, "invite-refused", G_CALLBACK(on_invite_refused), ui);
+      g_signal_connect_swapped(service, "invites-changed", G_CALLBACK(sync_invitations), ui);
       g_signal_connect_swapped(service, "items-changed", G_CALLBACK(on_groups_changed), ui);
     }
   }

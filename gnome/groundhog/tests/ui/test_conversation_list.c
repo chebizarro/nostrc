@@ -715,15 +715,13 @@ test_search_requests_empty(Fixture *f, gconstpointer data)
   g_assert_false(gtk_widget_get_visible(invitations));
   gtk_editable_set_text(entry, "");
   g_assert_true(gtk_widget_get_visible(invitations));
-  /* mls-groups-bunker: with no encrypted group on this device the entry
-   * stays when nothing waits, without a count. */
+  /* The entry shows only with invitations counted, with the count. */
   GtkWidget *count = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "invitations_count");
-  gh_sidebar_page_set_invitations_entry(f->sidebar, TRUE);
+  g_assert_true(gtk_widget_get_visible(count));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(count)), ==, "2");
   gh_sidebar_page_set_invitations(f->sidebar, 0);
-  g_assert_true(gtk_widget_get_visible(invitations));
-  g_assert_false(gtk_widget_get_visible(count));
-  gh_sidebar_page_set_invitations_entry(f->sidebar, FALSE);
   g_assert_false(gtk_widget_get_visible(invitations));
+  g_assert_false(gh_sidebar_page_get_invitations_entry_visible(f->sidebar));
 }
 
 static gboolean is_collapsed_with_rows(gpointer data);
@@ -740,8 +738,6 @@ test_search_clear_and_focus(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.search", NULL));
   g_assert_false(gh_window_get_content_visible(f->window));
   GtkWidget *entry = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry");
-  GtkSearchBar *bar = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_bar");
-  GtkToggleButton *toggle = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_button");
   GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(f->window));
   g_assert_true(focus == entry || gtk_widget_is_ancestor(focus, entry));
   gtk_editable_set_text(GTK_EDITABLE(entry), "book");
@@ -751,15 +747,20 @@ test_search_clear_and_focus(Fixture *f, gconstpointer data)
   g_signal_emit_by_name(entry, "stop-search");
   g_assert_cmpstr(gtk_editable_get_text(GTK_EDITABLE(entry)), ==, "");
   g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "");
-  g_assert_false(gtk_search_bar_get_search_mode(bar));
-  g_assert_false(gtk_toggle_button_get_active(toggle));
+  /* The entry stays, for the next search. */
+  g_assert_true(gtk_widget_get_visible(entry));
   g_assert_true(gh_sidebar_page_get_show_requests(f->sidebar));
   g_assert_cmpuint(g_list_model_get_n_items(list_model(f->sidebar)), ==, 2);
   gh_sidebar_page_set_show_requests(f->sidebar, FALSE);
   gh_sidebar_page_start_search(f->sidebar);
   gtk_editable_set_text(GTK_EDITABLE(entry), "book");
   g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "book");
-  gtk_toggle_button_set_active(toggle, FALSE);
+  /* From the list, Ctrl+F returns focus to the entry; Escape clears it. */
+  gtk_widget_grab_focus(GTK_WIDGET(gh_sidebar_page_get_list(f->sidebar)));
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.search", NULL));
+  focus = gtk_window_get_focus(GTK_WINDOW(f->window));
+  g_assert_true(focus == entry || gtk_widget_is_ancestor(focus, entry));
+  g_signal_emit_by_name(entry, "stop-search");
   g_assert_cmpstr(gh_sidebar_page_get_search_text(f->sidebar), ==, "");
   GhConversation *const all[] = { f->ab, f->ac };
   assert_list(f, all, 2);
@@ -1083,8 +1084,8 @@ test_collapsed_360x294(Fixture *f, gconstpointer data)
   /* Ctrl+F brings the list (with its search) back on screen. */
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(f->window), "win.search", NULL));
   g_assert_false(adw_navigation_split_view_get_show_content(split));
-  g_assert_true(gtk_search_bar_get_search_mode(
-    template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_bar")));
+  g_assert_true(gtk_widget_get_visible(
+    template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry")));
   drain_idle();
   assert_fits(f);
 
