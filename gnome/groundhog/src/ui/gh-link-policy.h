@@ -56,6 +56,11 @@ gchar *gh_link_policy_to_mention_markup(const gchar *text, const gchar *account_
  * that raw address. The document can be parsed off the UI thread. */
 gchar *gh_link_policy_format_markdown(const GnMarkdownDocument *document,
                                       const gchar *account_pubkey);
+/* The same formatting split into GnMarkdownPangoBlock text and table
+ * blocks, or NULL when the document has no table (its markup is then the
+ * whole of gh_link_policy_format_markdown()). */
+GPtrArray *gh_link_policy_format_markdown_blocks(const GnMarkdownDocument *document,
+                                                 const gchar *account_pubkey);
 gchar *gh_link_policy_to_markdown_markup(const gchar *text,
                                          const gchar *account_pubkey);
 

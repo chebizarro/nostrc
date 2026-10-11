@@ -33,6 +33,11 @@
  * wide as a full bubble, whatever little the page names. */
 #define OG_CARD_WIDTH 380
 #define OG_CARD_WIDTH_COMPACT 260
+/* A Markdown table's width in characters (nostrc-p15n5.1): its columns
+ * share it. Narrower than the body: a column cannot shrink below its width. */
+#define TABLE_CHARS 56
+#define TABLE_CHARS_COMPACT 27
+#define TABLE_CELL_MIN_CHARS 4
 
 struct _GhMessageRow {
   GtkWidget parent_instance;
@@ -41,6 +46,10 @@ struct _GhMessageRow {
   GtkLabel *reply_label;
   GtkBox *bubble;
   GtkLabel *body_label;
+  /* After body_label, built on first use: a body with a Markdown table is
+   * laid out as blocks; body_label shows the text before the first table,
+   * this box the tables (grids of cells) and the text after them. */
+  GtkBox *body_blocks;
   GtkBox *voice_slot;      /* W27 voice: shown instead of attachment_slot */
   GtkWidget *voice_bubble;  /* GhVoiceBubble, created on demand */
   GtkBox *attachment_slot;
@@ -284,11 +293,15 @@ set_class(GtkWidget *widget, const gchar *name, gboolean on)
     gtk_widget_remove_css_class(widget, name);
 }
 
+static void refresh_body_markup(GhMessageRow *self);
+
 static void
 update_width(GhMessageRow *self)
 {
   gint chars = self->compact ? BODY_CHARS_COMPACT : BODY_CHARS;
   gtk_label_set_max_width_chars(self->body_label, chars);
+  if (self->body_blocks && gtk_widget_get_first_child(GTK_WIDGET(self->body_blocks)))
+    refresh_body_markup(self);
 #ifdef GROUNDHOG_HAVE_VOICE
   if (self->voice_bubble)
     gh_voice_bubble_set_compact(GH_VOICE_BUBBLE(self->voice_bubble), self->compact);
@@ -938,15 +951,153 @@ update_reference(GhMessageRow *self)
   gtk_actionable_set_action_target(GTK_ACTIONABLE(self->quote_reference_button), "s", id);
 }
 
+static gboolean on_activate_link(GhMessageRow *self, const gchar *uri);
+
+/* The blocks follow the body: hidden with it (a repost card, a poll). */
+static void
+sync_body_blocks_visible(GhMessageRow *self)
+{
+  if (self->body_blocks)
+    gtk_widget_set_visible(GTK_WIDGET(self->body_blocks),
+                           gtk_widget_get_visible(GTK_WIDGET(self->body_label)) &&
+                           gtk_widget_get_first_child(GTK_WIDGET(self->body_blocks)) != NULL);
+}
+
+static void
+clear_body_blocks(GhMessageRow *self)
+{
+  gtk_widget_set_child_visible(GTK_WIDGET(self->body_label), TRUE);
+  if (!self->body_blocks)
+    return;
+  GtkWidget *child;
+  while ((child = gtk_widget_get_first_child(GTK_WIDGET(self->body_blocks))))
+    gtk_box_remove(self->body_blocks, child);
+  sync_body_blocks_visible(self);
+}
+
+static GtkLabel *
+body_block_label(GhMessageRow *self, const gchar *markup, gint chars)
+{
+  GtkLabel *label = GTK_LABEL(gtk_label_new(NULL));
+  gtk_label_set_markup(label, markup);
+  gtk_label_set_selectable(label, TRUE);
+  gtk_label_set_wrap(label, TRUE);
+  gtk_label_set_wrap_mode(label, PANGO_WRAP_WORD_CHAR);
+  gtk_label_set_xalign(label, 0);
+  gtk_label_set_max_width_chars(label, chars);
+  g_signal_connect_object(label, "activate-link", G_CALLBACK(on_activate_link), self,
+                          G_CONNECT_SWAPPED);
+  gh_bidi_label_follow_content(label);
+  return label;
+}
+
+/* A GFM table as a real table: a grid of wrapping, selectable cells with a
+ * header row. Each column gets a fixed width in characters (its widest
+ * cell, or a fair share of the bubble's width when the table is wider than
+ * that; water-filling), so its cells wrap there and the grid's height for
+ * a width is consistent. No scroller: a wrapping label in one is measured
+ * at its narrowest and the bubble grows very tall. */
+static GtkWidget *
+body_table(GhMessageRow *self, const GnMarkdownPangoBlock *block)
+{
+  GtkGrid *grid = GTK_GRID(gtk_grid_new());
+  gtk_widget_add_css_class(GTK_WIDGET(grid), "groundhog-message-table");
+  gtk_widget_set_halign(GTK_WIDGET(grid), GTK_ALIGN_START);
+  guint columns = block->columns;
+  g_autofree gint *widths = g_new0(gint, columns);
+  g_autofree GtkLabel **labels = g_new0(GtkLabel *, (gsize)block->rows * columns);
+  for (guint r = 0; r < block->rows; r++) {
+    for (guint c = 0; c < columns; c++) {
+      const gchar *cell = block->cells[r * columns + c];
+      gboolean header = block->header && r == 0;
+      g_autofree gchar *markup = header ? g_strdup_printf("<b>%s</b>", cell) : NULL;
+      GtkLabel *label = body_block_label(self, header ? markup : cell, 1);
+      labels[r * columns + c] = label;
+      widths[c] = MAX(widths[c], (gint)g_utf8_strlen(gtk_label_get_text(label), -1));
+      gtk_widget_add_css_class(GTK_WIDGET(label), header ? "header" : "cell");
+      if (r + 1 == block->rows)
+        gtk_widget_add_css_class(GTK_WIDGET(label), "last-row");
+      gtk_label_set_yalign(label, 0);
+      guint align = block->aligns[c];
+      gtk_label_set_xalign(label, align == GN_MARKDOWN_ALIGN_RIGHT ? 1.0f
+                                : align == GN_MARKDOWN_ALIGN_CENTER ? 0.5f : 0.0f);
+      gtk_grid_attach(grid, GTK_WIDGET(label), (int)c, (int)r, 1, 1);
+    }
+  }
+  /* A cell's padding takes about two characters of the budget. */
+  gint budget = (self->compact ? TABLE_CHARS_COMPACT : TABLE_CHARS) - 2 * (gint)(columns - 1);
+  budget = MAX(budget, (gint)columns * TABLE_CELL_MIN_CHARS);
+  g_autofree gboolean *fixed = g_new0(gboolean, columns);
+  for (guint settled = 0; settled < columns;) {
+    gint share = budget / (gint)(columns - settled);
+    guint before = settled;
+    for (guint c = 0; c < columns; c++) {
+      if (!fixed[c] && widths[c] <= share) {
+        fixed[c] = TRUE;
+        budget -= MAX(widths[c], 1);
+        settled++;
+      }
+    }
+    if (settled == before) {
+      for (guint c = 0; c < columns; c++)
+        if (!fixed[c])
+          widths[c] = MAX(share, TABLE_CELL_MIN_CHARS);
+      break;
+    }
+  }
+  for (guint k = 0; k < block->rows * columns; k++) {
+    gint chars = MAX(widths[k % columns], 1);
+    gtk_label_set_width_chars(labels[k], chars);
+    gtk_label_set_max_width_chars(labels[k], chars);
+  }
+  return GTK_WIDGET(grid);
+}
+
+/* Shows the rendered blocks of a body with a table (see body_blocks). */
+static void
+show_body_blocks(GhMessageRow *self, GPtrArray *blocks)
+{
+  if (!self->body_blocks) {
+    self->body_blocks = GTK_BOX(gtk_box_new(GTK_ORIENTATION_VERTICAL, 6));
+    gtk_widget_set_name(GTK_WIDGET(self->body_blocks), "body_blocks");
+    gtk_widget_add_css_class(GTK_WIDGET(self->body_blocks), "groundhog-message-body");
+    gtk_box_insert_child_after(self->bubble, GTK_WIDGET(self->body_blocks),
+                               GTK_WIDGET(self->body_label));
+  }
+  gint chars = self->compact ? BODY_CHARS_COMPACT : BODY_CHARS;
+  guint i = 0;
+  const GnMarkdownPangoBlock *first = g_ptr_array_index(blocks, 0);
+  if (first->kind == GN_MARKDOWN_PANGO_BLOCK_TEXT) {
+    gtk_label_set_markup(self->body_label, first->markup);
+    i = 1;
+  } else {
+    /* The body starts with a table: the empty label takes no room. */
+    gtk_label_set_text(self->body_label, "");
+    gtk_widget_set_child_visible(GTK_WIDGET(self->body_label), FALSE);
+  }
+  for (; i < blocks->len; i++) {
+    const GnMarkdownPangoBlock *block = g_ptr_array_index(blocks, i);
+    GtkWidget *widget = block->kind == GN_MARKDOWN_PANGO_BLOCK_TABLE
+      ? body_table(self, block) : GTK_WIDGET(body_block_label(self, block->markup, chars));
+    gtk_box_append(self->body_blocks, widget);
+  }
+  sync_body_blocks_visible(self);
+}
+
 static void
 refresh_body_markup(GhMessageRow *self)
 {
+  clear_body_blocks(self);
   if (!self->message || self->undecryptable || gh_message_get_withdrawn(self->message))
     return;
   const gchar *body = gh_message_get_content(self->message);
   const gchar *cached = self->view
     ? gh_conversation_view_get_render_markup(self->view, self->message) : NULL;
-  if (cached) {
+  GPtrArray *blocks = cached
+    ? gh_conversation_view_get_render_blocks(self->view, self->message) : NULL;
+  if (blocks && blocks->len) {
+    show_body_blocks(self, blocks);
+  } else if (cached) {
     gtk_label_set_markup(self->body_label, cached);
   } else {
     /* Even a body larger than the cache budget must remain visible. */
@@ -1121,6 +1272,7 @@ update_all(GhMessageRow *self)
   if (is_poll) show_body = FALSE;
   gtk_widget_set_visible(GTK_WIDGET(self->body_label), show_body);
   self->body_hidden_for_repost = FALSE;
+  clear_body_blocks(self);
   if (!message) {
     gtk_label_set_text(self->body_label, "");
     gtk_label_set_text(self->sender_label, "");
@@ -1811,6 +1963,8 @@ gh_message_row_init(GhMessageRow *self)
   self->summary = g_strdup("");
   g_signal_connect_swapped(self->body_label, "activate-link", G_CALLBACK(on_activate_link),
                            self);
+  g_signal_connect_swapped(self->body_label, "notify::visible",
+                           G_CALLBACK(sync_body_blocks_visible), self);
   update_width(self);
   update_all(self);
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE

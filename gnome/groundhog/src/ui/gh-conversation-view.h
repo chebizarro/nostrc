@@ -134,6 +134,11 @@ GtkListView *gh_conversation_view_get_message_list(GhConversationView *self);
  * A cache miss schedules rendering; list-row bind never parses Markdown. */
 const gchar *gh_conversation_view_get_render_markup(GhConversationView *self,
                                                      GhMessage *message);
+/* Borrowed GnMarkdownPangoBlock text and table blocks of the message's
+ * rendered markup, or NULL when it has no table (or is not rendered yet):
+ * the row then shows the markup in its one body label. */
+GPtrArray *gh_conversation_view_get_render_blocks(GhConversationView *self,
+                                                  GhMessage *message);
 const gchar *gh_conversation_view_get_preview_uri(GhConversationView *self,
                                                 GhMessage *message);
 /* The message's first image link (what "Load Linked Image" loads), or NULL;

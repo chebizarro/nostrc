@@ -207,6 +207,41 @@ worst_case_timing(void)
   g_string_free(big, TRUE);
 }
 
+/* Blocks: text around a table, the table as cells (nostrc-p15n5.1). */
+static void
+table_blocks(void)
+{
+  const char *text =
+    "\n\nAll cron jobs now on gpt-5.6-sol\n\n"
+    "| Job                 | Now          |\n"
+    "| ------------------- | -----------: |\n"
+    "| LN Node Daily       | **gpt-5.6**  |\n"
+    "\nafter";
+  g_autoptr(GnMarkdownDocument) doc = gn_markdown_parse(text, -1);
+  g_autoptr(GPtrArray) blocks = gn_markdown_pango_format_blocks(doc, NULL);
+  g_assert_true(gn_markdown_pango_blocks_have_table(blocks));
+  g_assert_cmpuint(blocks->len, ==, 3);
+  GnMarkdownPangoBlock *intro = g_ptr_array_index(blocks, 0);
+  g_assert_cmpint(intro->kind, ==, GN_MARKDOWN_PANGO_BLOCK_TEXT);
+  g_assert_cmpstr(intro->markup, ==, "All cron jobs now on gpt-5.6-sol");
+  GnMarkdownPangoBlock *table = g_ptr_array_index(blocks, 1);
+  g_assert_cmpint(table->kind, ==, GN_MARKDOWN_PANGO_BLOCK_TABLE);
+  g_assert_cmpuint(table->columns, ==, 2);
+  g_assert_cmpuint(table->rows, ==, 2);
+  g_assert_true(table->header);
+  g_assert_cmpstr(table->cells[0], ==, "Job");
+  g_assert_cmpstr(table->cells[2], ==, "LN Node Daily");
+  g_assert_cmpstr(table->cells[3], ==, "<b>gpt-5.6</b>");
+  g_assert_null(table->cells[4]);
+  g_assert_cmpuint(table->aligns[1], ==, GN_MARKDOWN_ALIGN_RIGHT);
+  GnMarkdownPangoBlock *after = g_ptr_array_index(blocks, 2);
+  g_assert_cmpstr(after->markup, ==, "after");
+  g_autoptr(GnMarkdownDocument) plain = gn_markdown_parse("no | table", -1);
+  g_autoptr(GPtrArray) one = gn_markdown_pango_format_blocks(plain, NULL);
+  g_assert_false(gn_markdown_pango_blocks_have_table(one));
+  g_assert_cmpuint(one->len, ==, 1);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -220,5 +255,6 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-gtk/markdown-pango/truncated-fallback", truncated_fallback);
   g_test_add_func("/nostr-gtk/markdown-pango/images-and-plain", images_and_plain);
   g_test_add_func("/nostr-gtk/markdown-pango/worst-case-timing", worst_case_timing);
+  g_test_add_func("/nostr-gtk/markdown-pango/table-blocks", table_blocks);
   return g_test_run();
 }

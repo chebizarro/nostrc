@@ -57,6 +57,35 @@ typedef struct {
 gchar *gn_markdown_pango_format(const GnMarkdownDocument *document,
                                 const GnMarkdownPangoOptions *options);
 
+typedef enum {
+  GN_MARKDOWN_PANGO_BLOCK_TEXT = 0,
+  GN_MARKDOWN_PANGO_BLOCK_TABLE,
+} GnMarkdownPangoBlockKind;
+
+/* One block of a document laid out by the host: text as markup, or a GFM
+ * table as cells, so a host can show it as a real table (a grid of labels)
+ * instead of a monospace grid inside a wrapping paragraph. */
+typedef struct {
+  GnMarkdownPangoBlockKind kind;
+  gchar *markup;   /* TEXT: markup, without leading or trailing blank lines */
+  guint columns;   /* TABLE: columns per row (>= 1) */
+  guint rows;      /* TABLE: rows, the header row included */
+  gboolean header; /* TABLE: row 0 is a header row (its cells are not bold) */
+  gchar **cells;   /* TABLE: rows * columns cell markups, row-major, NULL-ended */
+  guint *aligns;   /* TABLE: a GnMarkdownAlign per column */
+} GnMarkdownPangoBlock;
+
+void gn_markdown_pango_block_free(GnMarkdownPangoBlock *block);
+
+/* The FULL-mode formatting of @document (max_chars is ignored) split into
+ * text and table blocks, in order; empty text between blocks is dropped.
+ * Returns a GPtrArray of GnMarkdownPangoBlock that frees its elements. */
+GPtrArray *gn_markdown_pango_format_blocks(const GnMarkdownDocument *document,
+                                           const GnMarkdownPangoOptions *options);
+
+/* Whether any block of @blocks (nullable) is a table. */
+gboolean gn_markdown_pango_blocks_have_table(GPtrArray *blocks);
+
 /* Parses @text and formats it. When the parser's input or token budget is
  * reached, the whole text is shown escaped instead (never silently cut). */
 gchar *gn_markdown_pango_from_text(const gchar *text,

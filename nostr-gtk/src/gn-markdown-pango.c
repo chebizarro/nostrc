@@ -13,6 +13,7 @@ typedef struct {
   const GnMarkdownPangoOptions *options;
   gboolean summary;
   gboolean prev_space;  /* summary: last emitted visible char was a space */
+  GPtrArray *blocks;    /* format_blocks: tables become blocks of their own */
 } Ctx;
 
 static void
@@ -279,6 +280,44 @@ heading_size(guint level)
   }
 }
 
+/* Ends the text block being written to @out (blank lines around it
+ * dropped; an empty one is not kept) and starts the next. */
+static void
+flush_text_block(GString *out, Ctx *ctx)
+{
+  gsize start = 0, end = out->len;
+  while (start < end && out->str[start] == '\n') start++;
+  while (end > start && out->str[end - 1] == '\n') end--;
+  if (end > start) {
+    GnMarkdownPangoBlock *block = g_new0(GnMarkdownPangoBlock, 1);
+    block->kind = GN_MARKDOWN_PANGO_BLOCK_TEXT;
+    block->markup = g_strndup(out->str + start, end - start);
+    g_ptr_array_add(ctx->blocks, block);
+  }
+  g_string_truncate(out, 0);
+}
+
+/* A GFM table as a block of cells for a host that lays them out itself. */
+static guint
+table_block(GString *out, const GnMarkdownDocument *document, guint start, Ctx *ctx)
+{
+  flush_text_block(out, ctx);
+  const GnMarkdownToken *first = g_ptr_array_index(document->tokens, start);
+  guint columns = MAX(first->columns, 1);
+  GnMarkdownPangoBlock *block = g_new0(GnMarkdownPangoBlock, 1);
+  block->kind = GN_MARKDOWN_PANGO_BLOCK_TABLE;
+  block->columns = columns;
+  block->header = first->ordered;
+  block->aligns = g_new0(guint, columns);
+  GPtrArray *cells = g_ptr_array_new();
+  guint end = collect_table(document, start, columns, cells, block->aligns, ctx);
+  block->rows = cells->len / columns;
+  g_ptr_array_add(cells, NULL);
+  block->cells = (gchar **)g_ptr_array_free(cells, FALSE);
+  g_ptr_array_add(ctx->blocks, block);
+  return end;
+}
+
 static void
 format_full(GString *out, const GnMarkdownDocument *document, Ctx *ctx)
 {
@@ -290,7 +329,8 @@ format_full(GString *out, const GnMarkdownDocument *document, Ctx *ctx)
     const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
     const gchar *value = token->text ? token->text : "";
     if (token->kind == GN_MARKDOWN_TABLE_CELL) {
-      i = format_table(out, document, i, ctx);
+      i = ctx->blocks ? table_block(out, document, i, ctx)
+                      : format_table(out, document, i, ctx);
       continue;
     }
     if (is_code_line(document, i)) {
@@ -425,7 +465,7 @@ gn_markdown_pango_format(const GnMarkdownDocument *document,
 {
   if (!document || !document->tokens)
     return g_strdup("");
-  Ctx ctx = { options ? options : &default_options, FALSE, FALSE };
+  Ctx ctx = { options ? options : &default_options, FALSE, FALSE, NULL };
   ctx.summary = ctx.options->mode == GN_MARKDOWN_PANGO_SUMMARY;
   GString *out = g_string_sized_new(document->source ? strlen(document->source) + 64 : 64);
   if (ctx.summary)
@@ -434,6 +474,41 @@ gn_markdown_pango_format(const GnMarkdownDocument *document,
     format_full(out, document, &ctx);
   cap_markup(out, ctx.options->max_chars);
   return g_string_free(out, FALSE);
+}
+
+void
+gn_markdown_pango_block_free(GnMarkdownPangoBlock *block)
+{
+  if (!block)
+    return;
+  g_free(block->markup);
+  g_strfreev(block->cells);
+  g_free(block->aligns);
+  g_free(block);
+}
+
+GPtrArray *
+gn_markdown_pango_format_blocks(const GnMarkdownDocument *document,
+                                const GnMarkdownPangoOptions *options)
+{
+  GPtrArray *blocks = g_ptr_array_new_with_free_func((GDestroyNotify)gn_markdown_pango_block_free);
+  if (!document || !document->tokens)
+    return blocks;
+  Ctx ctx = { options ? options : &default_options, FALSE, FALSE, blocks };
+  g_autoptr(GString) out = g_string_new(NULL);
+  format_full(out, document, &ctx);
+  flush_text_block(out, &ctx);
+  return blocks;
+}
+
+gboolean
+gn_markdown_pango_blocks_have_table(GPtrArray *blocks)
+{
+  for (guint i = 0; blocks && i < blocks->len; i++)
+    if (((GnMarkdownPangoBlock *)g_ptr_array_index(blocks, i))->kind ==
+        GN_MARKDOWN_PANGO_BLOCK_TABLE)
+      return TRUE;
+  return FALSE;
 }
 
 gchar *

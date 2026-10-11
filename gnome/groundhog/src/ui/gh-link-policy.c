@@ -386,17 +386,33 @@ format_policy_text(GString *out, const gchar *text, gpointer account_pubkey)
   return TRUE;
 }
 
+#define POLICY_OPTIONS(account) {                                         \
+    .mode = GN_MARKDOWN_PANGO_FULL,                                       \
+    .flags = GN_MARKDOWN_PANGO_GLYPH_BLOCKS | GN_MARKDOWN_PANGO_TABLE_GRID, \
+    .format_text = format_policy_text,                                    \
+    .user_data = (gpointer)(account),                                     \
+  }
+
 gchar *
 gh_link_policy_format_markdown(const GnMarkdownDocument *document,
                                const gchar *account_pubkey)
 {
-  const GnMarkdownPangoOptions options = {
-    .mode = GN_MARKDOWN_PANGO_FULL,
-    .flags = GN_MARKDOWN_PANGO_GLYPH_BLOCKS | GN_MARKDOWN_PANGO_TABLE_GRID,
-    .format_text = format_policy_text,
-    .user_data = (gpointer)account_pubkey,
-  };
+  const GnMarkdownPangoOptions options = POLICY_OPTIONS(account_pubkey);
   return gn_markdown_pango_format(document, &options);
+}
+
+GPtrArray *
+gh_link_policy_format_markdown_blocks(const GnMarkdownDocument *document,
+                                      const gchar *account_pubkey)
+{
+  gboolean table = FALSE;
+  for (guint i = 0; document && i < document->tokens->len && !table; i++)
+    table = ((GnMarkdownToken *)g_ptr_array_index(document->tokens, i))->kind ==
+            GN_MARKDOWN_TABLE_CELL;
+  if (!table)
+    return NULL;
+  const GnMarkdownPangoOptions options = POLICY_OPTIONS(account_pubkey);
+  return gn_markdown_pango_format_blocks(document, &options);
 }
 
 gchar *
