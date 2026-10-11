@@ -715,6 +715,15 @@ test_search_requests_empty(Fixture *f, gconstpointer data)
   g_assert_false(gtk_widget_get_visible(invitations));
   gtk_editable_set_text(entry, "");
   g_assert_true(gtk_widget_get_visible(invitations));
+  /* mls-groups-bunker: with no encrypted group on this device the entry
+   * stays when nothing waits, without a count. */
+  GtkWidget *count = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, "invitations_count");
+  gh_sidebar_page_set_invitations_entry(f->sidebar, TRUE);
+  gh_sidebar_page_set_invitations(f->sidebar, 0);
+  g_assert_true(gtk_widget_get_visible(invitations));
+  g_assert_false(gtk_widget_get_visible(count));
+  gh_sidebar_page_set_invitations_entry(f->sidebar, FALSE);
+  g_assert_false(gtk_widget_get_visible(invitations));
 }
 
 static gboolean is_collapsed_with_rows(gpointer data);

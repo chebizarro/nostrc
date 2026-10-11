@@ -145,5 +145,18 @@ MarmotStorage *gh_store_marmot_new(GhStore *store, GError **error);
  * gh_store_marmot_new(). */
 GError *gh_store_marmot_take_error(MarmotStorage *storage);
 
+/* A Welcome libmarmot refused when it arrived: a failed processed-welcome
+ * record with no invitation (mls_welcomes row) behind it. A Welcome that was
+ * pending first and failed only when accepted is not one. */
+typedef struct {
+  guint8 wrapper_id[32];
+  gint64 processed_at;
+  gchar *reason;   /* libmarmot's failure reason, or NULL */
+} GhStoreMarmotRefusedWelcome;
+
+void gh_store_marmot_refused_welcome_free(GhStoreMarmotRefusedWelcome *welcome);
+/* Oldest first; NULL with error on a storage failure. */
+GPtrArray *gh_store_marmot_list_refused_welcomes(MarmotStorage *storage, GError **error);
+
 G_END_DECLS
 #endif

@@ -38,6 +38,7 @@ struct _GhSidebarPage {
   gboolean updating_search;
   gboolean show_previews;
   guint invitations;             /* pending encrypted-group invitations */
+  gboolean invitations_entry;    /* show the entry even with none pending */
 };
 
 enum {
@@ -99,12 +100,16 @@ update_page(GhSidebarPage *self)
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->requests_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, label, -1);
   gtk_widget_set_visible(GTK_WIDGET(self->invitations_button),
-                         !self->show_requests && !*self->search_text && self->invitations > 0);
+                         !self->show_requests && !*self->search_text &&
+                         (self->invitations > 0 || self->invitations_entry));
   g_autofree gchar *invitations = g_strdup_printf("%u", self->invitations);
   gtk_label_set_text(self->invitations_count, invitations);
-  g_autofree gchar *invitations_label = g_strdup_printf(
-    g_dngettext(NULL, "Group Invitations, %u invitation", "Group Invitations, %u invitations",
-                self->invitations), self->invitations);
+  gtk_widget_set_visible(GTK_WIDGET(self->invitations_count), self->invitations > 0);
+  g_autofree gchar *invitations_label = self->invitations > 0
+    ? g_strdup_printf(g_dngettext(NULL, "Group Invitations, %u invitation",
+                                  "Group Invitations, %u invitations", self->invitations),
+                      self->invitations)
+    : g_strdup(_("Group Invitations, none waiting"));
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->invitations_button),
                                  GTK_ACCESSIBLE_PROPERTY_LABEL, invitations_label, -1);
   gtk_stack_set_visible_child_name(self->stack,
@@ -476,6 +481,24 @@ gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count)
     return;
   self->invitations = count;
   update_page(self);
+}
+
+void
+gh_sidebar_page_set_invitations_entry(GhSidebarPage *self, gboolean shown)
+{
+  g_return_if_fail(GH_IS_SIDEBAR_PAGE(self));
+  shown = !!shown;
+  if (self->invitations_entry == shown)
+    return;
+  self->invitations_entry = shown;
+  update_page(self);
+}
+
+gboolean
+gh_sidebar_page_get_invitations_entry_visible(GhSidebarPage *self)
+{
+  g_return_val_if_fail(GH_IS_SIDEBAR_PAGE(self), FALSE);
+  return gtk_widget_get_visible(GTK_WIDGET(self->invitations_button));
 }
 
 guint

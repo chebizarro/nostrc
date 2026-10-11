@@ -637,7 +637,7 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsInvite, gh_mls_invite_free)
  * GH_MLS_REFUSED_INVITES_MAX, newest kept. */
 typedef struct {
   gchar *wrapper_id;   /* the gift wrap's id (hex) */
-  gchar *inviter;      /* hex: the seal's signer */
+  gchar *inviter;      /* hex: the seal's signer; NULL when unknown (recorded before 2a689c901) */
   gint64 created_at;   /* the Welcome's rumor created_at */
   gboolean key_missing;/* MARMOT_ERR_KEY_NOT_FOUND: no private key for it here */
 } GhMlsRefusedInvite;

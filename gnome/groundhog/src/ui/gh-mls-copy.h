@@ -37,6 +37,12 @@ typedef struct {
 
 GhMlsIdentityCopy gh_mls_identity_copy(GhMlsIdentityState state);
 
+/* This device's invitation key (its KeyPackage) in plain words: whether
+ * invitations made for this device can reach it, else why not (the account
+ * proof's state when nothing is published). Static. */
+const gchar *gh_mls_device_key_copy(GhMlsKeyPackageState state, gboolean held,
+                                    GhMlsIdentityState identity);
+
 /* A failed create, add, remove, rename or accept, in plain words (transfer
  * full). */
 gchar *gh_mls_error_copy(const GError *error);

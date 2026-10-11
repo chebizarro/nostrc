@@ -225,6 +225,10 @@ sync_invitations(MlsUi *ui)
    * user to read it (and ask again), not silently dropped. */
   ui->invitations = (invites ? invites->len : 0) + (refused ? refused->len : 0);
   gh_sidebar_page_set_invitations(gh_window_get_sidebar(ui->window), ui->invitations);
+  /* No encrypted group here yet: the entry stays, so the dialog can say why
+   * groups joined on another device or app are not here. */
+  gh_sidebar_page_set_invitations_entry(gh_window_get_sidebar(ui->window),
+    service && g_list_model_get_n_items(G_LIST_MODEL(service)) == 0);
 }
 
 static void
