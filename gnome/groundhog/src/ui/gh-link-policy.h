@@ -88,8 +88,20 @@ gchar *gh_link_policy_dup_host(const gchar *uri);
  * (charter §2.1 fetches previews over https only). */
 gboolean gh_link_policy_can_preview(const gchar *uri);
 
-/* The first link of @text that can be previewed, or NULL. */
+/* Whether @uri names an image file: a previewable address whose path ends in
+ * an image file name extension (.png, .jpg, .jpeg, .gif, .webp, .avif;
+ * nostrc-p15n5.4). Only such a link offers "Load Linked Image"; any other
+ * page gets a link preview card. Nothing is fetched to decide. */
+gboolean gh_link_policy_is_image_uri(const gchar *uri);
+
+/* The first link of @text that can be previewed as a page (a link preview
+ * card), or NULL: image links are not pages. With several, the first is the
+ * one previewed, as it is the one read first. */
 gchar *gh_link_policy_dup_preview_uri(const gchar *text);
+
+/* The first image link of @text (gh_link_policy_is_image_uri()), or NULL:
+ * the one "Load Linked Image" loads. */
+gchar *gh_link_policy_dup_image_uri(const gchar *text);
 
 G_END_DECLS
 #endif

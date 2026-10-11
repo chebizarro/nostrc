@@ -1450,10 +1450,8 @@ test_link_previews(Fixture *f, gconstpointer data)
   spin_until(state_is, &loaded);
   GtkWidget *card = row_child(row, "og_card");
   g_assert_true(shown(card));
-  GtkWidget *card_title = gtk_widget_get_first_child(card);
-  GtkWidget *card_description = gtk_widget_get_next_sibling(card_title);
-  g_assert_cmpstr(text_of(card_title), ==, "Second Story");
-  g_assert_cmpstr(text_of(card_description), ==, "What happened next");
+  g_assert_cmpstr(text_of(row_child(row, "og_title")), ==, "Second Story");
+  g_assert_cmpstr(text_of(row_child(row, "og_description")), ==, "What happened next");
   g_assert_false(shown(button));
 
   /* Allowed now: a tap fetches without asking; a failure can be retried. */
@@ -1604,7 +1602,8 @@ test_web_consent(Fixture *f, gconstpointer data)
   }
   g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
   blossom_fixture_put_blob(server, hash, body);
-  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s", blossom_fixture_port(server), hash);
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s%s", blossom_fixture_port(server), hash,
+                                          kind == GH_WEB_IMAGE ? ".png" : "");
   GhMessage *message = add_dm(f->store, 2, 1, noon_today(), uri);
   GhConversation *conversation = room_of(f->store, message);
   show(f, conversation, 700, 700);
@@ -1782,18 +1781,31 @@ test_web_preview_github_fixture(void)
   g_assert_null(gn_og_metadata_get_site_name(ranked));
 }
 
-/* The real page, only with GROUNDHOG_TEST_LIVE_NET set (it reaches GitHub):
- * the production path, public address check, redirects and the prefix. */
+typedef struct { gboolean done; GhWebResult *result; GError *error; } LiveLoad;
 static void
 on_live_loaded(GObject *source, GAsyncResult *answer, gpointer data)
 {
-  GhWebResult **out = data;
-  g_autoptr(GError) error = NULL;
-  *out = gh_web_content_load_finish(GH_WEB_CONTENT(source), answer, &error);
-  g_assert_no_error(error);
+  LiveLoad *load = data;
+  load->result = gh_web_content_load_finish(GH_WEB_CONTENT(source), answer, &load->error);
+  load->done = TRUE;
 }
-static gboolean live_done(gpointer data) { return *(GhWebResult **)data != NULL; }
 
+/* GhNetHttp's own timeout bounds each load. */
+static GhWebResult *
+live_load(GhWebContent *web, const gchar *uri, GhWebKind kind)
+{
+  LiveLoad load = { 0 };
+  gh_web_content_load_async(web, uri, kind, NULL, on_live_loaded, &load);
+  while (!load.done)
+    g_main_context_iteration(NULL, TRUE);
+  if (load.error)
+    g_test_message("%s: %s", uri, load.error->message);
+  g_assert_no_error(load.error);
+  return load.result;
+}
+
+/* The owner's links, through the production path (GhWebContent on GhNetHttp:
+ * public address check, redirects, the prefix read, the image decode). */
 static void
 test_web_preview_github_live(void)
 {
@@ -1803,14 +1815,17 @@ test_web_preview_github_live(void)
   }
   g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
   g_autoptr(GhWebContent) web = gh_web_content_new(settings, NULL, NULL);
-  GhWebResult *result = NULL;
-  gh_web_content_load_async(web, "https://github.com/chebizarro/nostrc/blob/"
-    "3251ba66dfa1d994109269690a1839ae7a1fd712/docs/proposals/55L.md", GH_WEB_PREVIEW, NULL,
-    on_live_loaded, &result);
-  spin_until(live_done, &result);
+  GhWebResult *result = live_load(web, "https://github.com/chebizarro/nostrc/blob/"
+    "3251ba66dfa1d994109269690a1839ae7a1fd712/docs/proposals/55L.md", GH_WEB_PREVIEW);
   g_assert_true(g_str_has_prefix(result->title, "nostrc/docs/proposals/55L.md"));
   g_assert_cmpstr(result->site_name, ==, "GitHub");
   g_assert_nonnull(result->image_url);
+  GhWebResult *art = live_load(web, result->image_url, GH_WEB_OG_IMAGE);
+  g_assert_nonnull(art->texture);
+  gh_web_result_free(art);
+  gh_web_result_free(result);
+  result = live_load(web, "https://www.govdeals.com/en/asset/4565/1084", GH_WEB_PREVIEW);
+  g_assert_nonnull(result->title);
   gh_web_result_free(result);
 }
 
@@ -1920,7 +1935,7 @@ test_link_image_viewer(Fixture *f, gconstpointer data)
   g_autoptr(GBytes) body = g_bytes_new_static(gif, sizeof gif);
   g_autofree gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
   blossom_fixture_put_blob(server, hash, body);
-  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s",
+  g_autofree gchar *uri = g_strdup_printf("https://127.0.0.1:%u/%s.gif",
                                           blossom_fixture_port(server), hash);
   for (guint channel = 0; channel < 2; channel++) {
     GhMessage *message = NULL;
@@ -3188,7 +3203,7 @@ test_day_format(void)
 /* The window as drawn, plus an open popover (a surface of its own) where
  * it sits, like a screenshot of the screen. */
 static void
-save_png(GtkWidget *window, GtkWidget *popover, const char *dir, const char *name)
+save_png_path(GtkWidget *window, GtkWidget *popover, const char *path)
 {
   GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
   int width = gdk_surface_get_width(surface);
@@ -3220,9 +3235,15 @@ save_png(GtkWidget *window, GtkWidget *popover, const char *dir, const char *nam
   GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
   g_autoptr(GdkTexture) texture =
     gsk_renderer_render_texture(renderer, node, &GRAPHENE_RECT_INIT(0, 0, width, height));
-  g_autofree char *path = g_strdup_printf("%s/groundhog-g12-%s.png", dir, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s (%dx%d)", path, width, height);
+}
+
+static void
+save_png(GtkWidget *window, GtkWidget *popover, const char *dir, const char *name)
+{
+  g_autofree char *path = g_strdup_printf("%s/groundhog-g12-%s.png", dir, name);
+  save_png_path(window, popover, path);
 }
 
 typedef struct {
@@ -3907,6 +3928,181 @@ test_message_action_accessibility(void)
   g_object_unref(agent);
 }
 
+/* ---- owner report: link previews in a real DM (nostrc-p15n5.4/.7, 8xfib.3) ---------- */
+
+/* Every https address a test names is served by the local fixture: the
+ * host picks the blob. The request itself is the production prefix GET
+ * through GhNetHttp (only https becomes loopback http). */
+typedef struct {
+  GhNetHttp *http;
+  BlossomFixture *server;
+  GHashTable *hosts; /* host -> sha256 */
+  GPtrArray *asked;  /* every address fetched, in order */
+} OwnerWeb;
+
+static void
+owner_web_get(gpointer data, const gchar *uri, gsize limit, GCancellable *cancel,
+              GAsyncReadyCallback callback, gpointer user_data)
+{
+  OwnerWeb *web = data;
+  g_ptr_array_add(web->asked, g_strdup(uri));
+  g_autofree gchar *host = gh_link_policy_dup_host(uri);
+  const gchar *hash = g_hash_table_lookup(web->hosts, host);
+  g_assert_nonnull(hash);
+  g_autofree gchar *local = g_strdup_printf("http://127.0.0.1:%u/%s",
+                                            blossom_fixture_port(web->server), hash);
+  gh_net_http_get_accept_prefix_async(web->http, local, "*/*", limit, cancel, callback,
+                                      user_data);
+}
+static GBytes *owner_web_finish(gpointer data, GAsyncResult *result, GError **error)
+{ return gh_net_http_get_finish(((OwnerWeb *)data)->http, result, error); }
+
+static void
+owner_serve(OwnerWeb *web, const gchar *host, GBytes *body)
+{
+  gchar *hash = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, body);
+  blossom_fixture_put_blob(web->server, hash, body);
+  g_hash_table_insert(web->hosts, g_strdup(host), hash);
+}
+
+static GBytes *
+fixture_bytes(const gchar *name)
+{
+  g_autofree gchar *path = g_build_filename(GH_TEST_FIXTURES, name, NULL);
+  gchar *data = NULL;
+  gsize length = 0;
+  g_assert_true(g_file_get_contents(path, &data, &length, NULL));
+  return g_bytes_new_take(data, length);
+}
+
+static void
+owner_allow(Fixture *f)
+{
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+}
+
+typedef struct { Fixture *f; GhMessage *message; } OgWait;
+static gboolean
+og_image_loaded(gpointer data)
+{
+  OgWait *wait = data;
+  GhLinkPreviewState state = GH_LINK_PREVIEW_NONE;
+  gh_conversation_view_get_web_texture(wait->f->view, wait->message, GH_WEB_OG_IMAGE, &state);
+  return state == GH_LINK_PREVIEW_LOADED || state == GH_LINK_PREVIEW_FAILED;
+}
+
+static void
+owner_screenshot(Fixture *f, const gchar *stage)
+{
+  const gchar *prefix = g_getenv("GROUNDHOG_LINK_PREVIEW_SHOTS");
+  if (!prefix)
+    return;
+  drain_idle();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, stage);
+  save_png_path(GTK_WIDGET(f->window), NULL, path);
+}
+
+#define OWNER_GITHUB "https://github.com/chebizarro/nostrc/blob/" \
+  "3251ba66dfa1d994109269690a1839ae7a1fd712/docs/proposals/55L.md"
+#define OWNER_GITHUB_OG "https://opengraph.githubassets.com/" \
+  "c1717a7e4551fcfb8cc27d27af67a11025da56a7e77a235deff67bee07798a37/chebizarro/nostrc"
+
+/* The owner's DM, through GhConversationView and GhMessageRow: a GitHub
+ * permalink alone, several GovDeals listings, and a real image link. Only the
+ * image link offers "Load Linked Image"; each page's card shows its title,
+ * description and site, and after a second consent its og:image. */
+static void
+test_owner_link_previews(Fixture *f, G_GNUC_UNUSED gconstpointer data)
+{
+  g_settings_set_string(f->settings, "network-mode", "none");
+  OwnerWeb web = { gh_net_http_new(f->settings), blossom_fixture_new(),
+                   g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free),
+                   g_ptr_array_new_with_free_func(g_free) };
+  g_autoptr(GBytes) github = github_page(400 * 1024);
+  g_autoptr(GBytes) github_art = fixture_bytes("github-og-image.png");
+  g_autoptr(GBytes) govdeals = fixture_bytes("govdeals-asset.html");
+  owner_serve(&web, "github.com", github);
+  owner_serve(&web, "opengraph.githubassets.com", github_art);
+  owner_serve(&web, "www.govdeals.com", govdeals);
+  owner_serve(&web, "image.nostr.build", github_art);
+  gint64 t = noon_today();
+  GhMessage *permalink = add_dm(f->store, 2, 1, t, OWNER_GITHUB);
+  GhMessage *listings = add_dm(f->store, 2, 1, t + 60,
+    "Look at these:\nhttps://www.govdeals.com/en/asset/4565/1084\n"
+    "https://www.govdeals.com/en/asset/4565/1085\nhttps://www.govdeals.com/en/asset/4565/1086");
+  G_GNUC_UNUSED GhMessage *picture = add_dm(f->store, 2, 1, t + 120, "https://image.nostr.build/ab12cd.png");
+  GhConversation *conversation = room_of(f->store, permalink);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 640, 1100);
+  static const GhHttpTransport transport = { owner_web_get, owner_web_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, &web);
+  drain_idle();
+  owner_screenshot(f, "1-offered");
+
+  /* (a) Only an image link is a linked image. */
+  GhMessageRow *row = row_for(f->view, permalink);
+  g_assert_false(shown(row_child(row, "image_button")));
+  g_assert_false(shown(row_child(row, "web_error")));
+  g_assert_false(shown(row_child(row_for(f->view, listings), "image_button")));
+  g_assert_true(shown(row_child(row_for(f->view, picture), "image_button")));
+  g_assert_false(shown(row_child(row_for(f->view, picture), "preview_button")));
+
+  /* The GitHub page: consent, one GET, a full card. */
+  click(row_child(row, "preview_button"));
+  owner_allow(f);
+  StateWait loaded = { f, permalink, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &loaded);
+  row = row_for(f->view, permalink);
+  g_assert_cmpuint(web.asked->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(web.asked, 0), ==, OWNER_GITHUB);
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_true(g_str_has_prefix(text_of(row_child(row, "og_title")),
+                                 "nostrc/docs/proposals/55L.md"));
+  g_assert_true(g_str_has_prefix(text_of(row_child(row, "og_description")), "A C library"));
+  g_assert_cmpstr(text_of(row_child(row, "og_site")), ==, "GitHub \xc2\xb7 github.com");
+  g_assert_false(shown(row_child(row, "preview_text")));
+  /* Its artwork: a second consent, then fetched through the transport. */
+  g_assert_true(shown(row_child(row, "og_load_image")));
+  click(row_child(row, "og_load_image"));
+  owner_allow(f);
+  OgWait art = { f, permalink };
+  spin_until(og_image_loaded, &art);
+  row = row_for(f->view, permalink);
+  g_assert_cmpuint(web.asked->len, ==, 2);
+  g_assert_cmpstr(g_ptr_array_index(web.asked, 1), ==, OWNER_GITHUB_OG);
+  g_assert_true(shown(row_child(row, "og_image")));
+  g_assert_false(shown(row_child(row, "og_load_image")));
+
+  /* (b) GovDeals: the first listing is the card's; its page names only a
+   * <title>, so the card is that title and the site. */
+  row = row_for(f->view, listings);
+  click(row_child(row, "preview_button"));
+  owner_allow(f);
+  StateWait listed = { f, listings, GH_LINK_PREVIEW_LOADED };
+  spin_until(state_is, &listed);
+  row = row_for(f->view, listings);
+  g_assert_cmpuint(web.asked->len, ==, 3);
+  g_assert_cmpstr(g_ptr_array_index(web.asked, 2), ==,
+                  "https://www.govdeals.com/en/asset/4565/1084");
+  g_assert_true(shown(row_child(row, "og_card")));
+  g_assert_false(shown(row_child(row, "image_button")));
+  g_assert_false(shown(row_child(row, "web_error")));
+  owner_screenshot(f, "2-loaded");
+
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  drain_idle();
+  g_object_unref(web.http);
+  blossom_fixture_free(web.server);
+  g_hash_table_unref(web.hosts);
+  g_ptr_array_unref(web.asked);
+}
+
+
 int
 main(int argc, char **argv)
 {
@@ -3958,6 +4154,7 @@ main(int argc, char **argv)
   }
   ADD("web-allow-covers-sender", test_web_allow_covers_sender);
   ADD("web-preview-github-card", test_web_preview_github_card);
+  ADD("owner-link-previews", test_owner_link_previews);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-fixture",
                   test_web_preview_github_fixture);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-live",

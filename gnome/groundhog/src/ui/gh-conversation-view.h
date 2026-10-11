@@ -136,6 +136,10 @@ const gchar *gh_conversation_view_get_render_markup(GhConversationView *self,
                                                      GhMessage *message);
 const gchar *gh_conversation_view_get_preview_uri(GhConversationView *self,
                                                 GhMessage *message);
+/* The message's first image link (what "Load Linked Image" loads), or NULL;
+ * nostrc-p15n5.4. */
+const gchar *gh_conversation_view_get_image_uri(GhConversationView *self,
+                                                GhMessage *message);
 /* Borrowed offline NIP-21/NIP-18 descriptor from the render cache, parsed
  * off the row-bind path; no relay lookup. @role and @verified_original (a
  * repost's embedded original that verified) feed GnNostrReferenceCard. */

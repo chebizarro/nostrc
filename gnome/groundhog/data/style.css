@@ -204,6 +204,33 @@ groundhog-reaction-bar > flowbox > flowboxchild {
   padding: 8px 12px;
 }
 
+/* Link preview cards (GnOgPreviewCard, compact skin): gnostr's media card
+ * in libadwaita colours (nostrc-8xfib.3). */
+.groundhog-link-preview .og-preview-card {
+  border-radius: 12px;
+  background-color: @card_bg_color;
+  box-shadow: 0 0 0 1px alpha(@card_shade_color, 0.6), 0 1px 3px alpha(@card_shade_color, 0.6);
+}
+
+.groundhog-link-preview .og-preview-image {
+  background-color: alpha(currentColor, 0.05);
+  min-height: 84px;
+}
+
+.groundhog-link-preview .og-preview-title {
+  font-weight: 600;
+}
+
+.groundhog-link-preview .og-preview-description {
+  font-size: smaller;
+  opacity: 0.75;
+}
+
+.groundhog-link-preview .og-preview-site {
+  font-size: smaller;
+  opacity: 0.55;
+}
+
 /* A round pill: as wide as its icon (plus the unread count when shown),
  * never GTK's default button width with the chevron pushed left. */
 .groundhog-jump-button {

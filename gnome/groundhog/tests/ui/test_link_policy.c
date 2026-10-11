@@ -233,6 +233,17 @@ test_preview_eligibility(void)
   g_autofree gchar *host = gh_link_policy_dup_host("https://Sub.Example.COM:8443/x");
   g_assert_cmpstr(host, ==, "sub.example.com");
   g_assert_null(gh_link_policy_dup_host("nostr:npub1qqqqqqqq"));
+  /* nostrc-p15n5.4: only an image file name is a linked image. */
+  g_assert_true(gh_link_policy_is_image_uri("https://image.nostr.build/ab12.png"));
+  g_assert_true(gh_link_policy_is_image_uri("https://i.example/A.JPEG?w=600#top"));
+  g_assert_true(gh_link_policy_is_image_uri("https://i.example/cat.webp"));
+  g_assert_false(gh_link_policy_is_image_uri("https://github.com/chebizarro/nostrc/blob/"
+                                              "3251ba66dfa1d994109269690a1839ae7a1fd712/docs/"
+                                              "proposals/55L.md"));
+  g_assert_false(gh_link_policy_is_image_uri("https://www.govdeals.com/en/asset/4565/1084"));
+  g_assert_false(gh_link_policy_is_image_uri("https://example.com/?file=x.png"));
+  g_assert_false(gh_link_policy_is_image_uri("http://example.com/a.png"));
+  g_assert_false(gh_link_policy_is_image_uri(NULL));
 }
 
 static const gchar *
