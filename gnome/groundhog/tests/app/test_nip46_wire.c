@@ -135,12 +135,51 @@ test_wire(void)
   wait_until(finished, &result);
   g_assert_no_error(result.error);
   g_assert_cmpstr(result.text, ==, signer_pubkey);
-  g_assert_cmpuint(relay.auth_ok, >=, 2); /* REQ and private publish channel */
+  /* The request went out on the listening REQ's own authenticated
+   * connection: one connection and one AUTH for the session, not a dial
+   * (and an AUTH) per request. */
+  g_assert_cmpuint(relay.connections->len, ==, 1);
+  g_assert_cmpuint(relay.auth_ok, ==, 1);
   for (guint i = 0; i < relay.auth_pubkeys->len; i++)
     g_assert_cmpstr(g_ptr_array_index(relay.auth_pubkeys, i), ==,
                     gh_nip46_session_get_client_pubkey(session));
   gh_nip46_session_cancel(session);
   g_assert_false(gh_nip46_session_is_ready(session));
+  g_free(result.text);
+  free(signer_pubkey);
+  free(signer_secret);
+  relay_clear(&relay);
+}
+
+/* A relay that rate-limits the first requests: the session backs off and
+ * sends again on the same connection; no extra connection is dialled. */
+static void
+test_rate_limited_same_connection(void)
+{
+  WireRelay relay = { .serve = TRUE, .record = TRUE, .nack_events = 2,
+                      .nack_message = "rate-limited: slow down" };
+  relay_init(&relay);
+  char *signer_secret = nostr_key_generate_private();
+  char *signer_pubkey = nostr_key_get_public(signer_secret);
+  const gchar *relays[] = { relay.url, NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip46Session) session = gh_nip46_session_new(CLIENT_SECRET,
+    signer_pubkey, relays, NULL, NULL, NULL, NULL, NULL, &error);
+  g_assert_no_error(error);
+  gh_nip46_session_start(session);
+  wait_until(ready, session);
+  Result result = { 0 };
+  gh_nip46_session_call_async(session, "get_public_key", NULL, 0, NULL,
+                              completed, &result);
+  wait_until(received, &relay);
+  g_assert_cmpuint(relay.nacked, ==, 2);
+  inject_public_key_reply(&relay, signer_secret, signer_pubkey,
+                          gh_nip46_session_get_client_pubkey(session));
+  wait_until(finished, &result);
+  g_assert_no_error(result.error);
+  g_assert_cmpstr(result.text, ==, signer_pubkey);
+  g_assert_cmpuint(relay.connections->len, ==, 1);
+  gh_nip46_session_cancel(session);
   g_free(result.text);
   free(signer_pubkey);
   free(signer_secret);
@@ -293,6 +332,8 @@ int main(int argc, char **argv)
 {
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/nip46/wire-local-relay", test_wire);
+  g_test_add_func("/groundhog/nip46/rate-limited-same-connection",
+                  test_rate_limited_same_connection);
   g_test_add_func("/groundhog/nip46/auth-refused-relay-isolated", test_auth_refused_relay_isolated);
   g_test_add_func("/groundhog/nip46/auth-all-relays-refused", test_auth_all_relays_refused);
 #ifdef GROUNDHOG_NIP46_TOR_TEST

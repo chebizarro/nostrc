@@ -23,7 +23,21 @@ GQuark gh_nip46_session_error_quark(void);
 
 /* All methods and callbacks run on the construction thread's main context.
  * The secret is copied, never logged, and wiped at disposal. @relays is a
- * NULL-terminated list of one to four explicit signer relay URLs. */
+ * NULL-terminated list of one to four explicit signer relay URLs.
+ *
+ * Transport (relogin-signer-groups): the session holds ONE connection per
+ * signer relay for its lifetime, the one its listening REQ uses, and writes
+ * every request on it (gh_relay_scope_send_event()) when the scope transport
+ * can write (the app's: GNostrRelay, or the network dispatcher incl. Tor);
+ * the relay's OK on that connection is the request's delivery. Requests are
+ * pipelined: up to 16 in flight, paced 20 ms apart, the pace doubling (to
+ * 2 s) on every "rate-limited:" OK and recovering on accepted ones; a
+ * rate-limited request is re-sent on the same connection up to three times.
+ * Only a request no session connection could deliver (refused, lost before
+ * its OK, or no live connection) falls back to a GhRelayPublish of its own
+ * (publish_transport; dial, NIP-42 AUTH and bounded retries). A scope
+ * transport without the write half (tests' recording transports) always
+ * publishes that way. */
 GhNip46Session *gh_nip46_session_new(const gchar *client_secret_hex,
                                      const gchar *remote_signer_pubkey_hex,
                                      const gchar *const *relays,

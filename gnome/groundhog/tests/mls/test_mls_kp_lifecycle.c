@@ -639,6 +639,28 @@ withheld_some(gpointer data)
   return relay->withheld && g_hash_table_size(relay->withheld) > 0;
 }
 
+static guint refused_signals;
+
+static void
+on_refused(GhMlsService *service, const gchar *wrapper_id, gpointer data)
+{
+  (void)service; (void)wrapper_id; (void)data;
+  refused_signals++;
+}
+
+static void
+assert_refused_invite(App *app, const gchar *wrapper_id, guint inviter)
+{
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) refused = gh_mls_service_list_refused_invites(app->service, &error);
+  g_assert_no_error(error);
+  g_assert_cmpuint(refused->len, ==, 1);
+  GhMlsRefusedInvite *invite = g_ptr_array_index(refused, 0);
+  g_assert_cmpstr(invite->wrapper_id, ==, wrapper_id);
+  g_assert_cmpstr(invite->inviter, ==, hex[inviter]);
+  g_assert_true(invite->key_missing);
+}
+
 /* The delayed-Welcome trade-off, both sides. */
 static void
 test_delayed_welcome(void)
@@ -700,6 +722,8 @@ test_delayed_welcome(void)
   g_assert_cmpint(cursor_now, >, 0);
   guint published_before = n_key_packages(&w.w, BOB);
   bob->invites = 0;
+  refused_signals = 0;
+  g_signal_connect(bob->service, "invite-refused", G_CALLBACK(on_refused), NULL);
   g_autoptr(GPtrArray) wraps = withheld_ids(&w.x);
   g_assert_cmpuint(wraps->len, ==, 1);
   release_withheld(&w.x);
@@ -713,8 +737,13 @@ test_delayed_welcome(void)
     g_autofree gchar *reason = NULL;
     g_assert_true(processed_welcome(bob, g_ptr_array_index(wraps, 0), &state, &reason));
     g_assert_cmpint(state, ==, MARMOT_WELCOME_STATE_FAILED);
+    g_assert_cmpuint(refused_signals, ==, 1);
     g_assert_cmpstr(reason, ==, "matching KeyPackage private key not found");
     g_assert_cmpuint(bob->invites, ==, 0);
+    /* Not listed, but not silent either (relogin-signer-groups): it is kept
+     * as an invitation that could not be opened, said with its cause, and
+     * survives a restart until dismissed. */
+    assert_refused_invite(bob, g_ptr_array_index(wraps, 0), CAROL);
   } else {
     spin_until(invites_at_least, &one, "Carol's delayed invitation");
     g_autofree gchar *delayed = invite_from(bob, CAROL);
@@ -730,6 +759,16 @@ test_delayed_welcome(void)
   g_assert_true(has_init_key(bob, ref_now));
   drain();
   g_assert_cmpuint(n_key_packages(&w.w, BOB), ==, published_before);
+  if (kp_format == GH_MLS_KEY_PACKAGE_FORMAT_ADOPTED) {
+    app_restart(bob);
+    assert_refused_invite(bob, g_ptr_array_index(wraps, 0), CAROL);
+    g_assert_true(gh_mls_service_dismiss_refused_invite(bob->service,
+                                                        g_ptr_array_index(wraps, 0), &error));
+    g_assert_no_error(error);
+    g_autoptr(GPtrArray) after = gh_mls_service_list_refused_invites(bob->service, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(after->len, ==, 0);
+  }
   (void)carol;
   world_down(&w);
 }

@@ -189,6 +189,7 @@ gh_relay_net_install(GhNetSession *session)
   }
   gh_relay_scope_set_default_transport(session ? &gh_relay_net_transport : NULL,
                                        session ? &gh_relay_net_auth_transport : NULL, NULL);
+  gh_relay_scope_set_default_write_transport(session ? &gh_relay_net_write_transport : NULL);
   gh_relay_publish_set_default_transport(session ? &gh_relay_net_publish_transport : NULL,
                                          session ? &gh_relay_net_publish_auth_transport : NULL,
                                          NULL);
@@ -272,6 +273,20 @@ net_scope_send_auth(gpointer data, const gchar *json, gpointer transport_data, G
     : gh_relay_gnostr_auth_transport.send_auth(handle->inner, json, NULL, error);
 }
 
+static gboolean
+net_scope_send_event(gpointer data, const gchar *json, gpointer transport_data, GError **error)
+{
+  (void)transport_data;
+  NetHandle *handle = data;
+  if (!handle->inner) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_CONNECTED, "relay not connected");
+    return FALSE;
+  }
+  return handle->inner_soup
+    ? gh_relay_soup_scope_send_event(handle->inner, json, error)
+    : gh_relay_gnostr_write_transport.send_event(handle->inner, json, NULL, error);
+}
+
 static void
 net_scope_resubscribe(gpointer data, gpointer transport_data)
 {
@@ -335,3 +350,4 @@ const GhRelayAuthTransport gh_relay_net_auth_transport = { net_scope_send_auth,
 const GhRelayPublishTransport gh_relay_net_publish_transport = { net_publish_open, net_close };
 const GhRelayPublishAuthTransport gh_relay_net_publish_auth_transport = { net_publish_send_auth,
                                                                           net_publish_resend };
+const GhRelayWriteTransport gh_relay_net_write_transport = { net_scope_send_event };

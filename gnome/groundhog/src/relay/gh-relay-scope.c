@@ -53,6 +53,7 @@ struct _GhRelayScope {
   NostrFilters *filters;
   GhRelayTransport transport;
   GhRelayAuthTransport auth_transport;
+  GhRelayWriteTransport write_transport;
   gpointer transport_data;
   GhRelayScopeFunc callback;
   gpointer user_data;
@@ -75,6 +76,9 @@ static GhRelayTransport default_transport;
 static GhRelayAuthTransport default_auth;
 static gpointer default_data;
 static gboolean default_set;
+static GhRelayWriteTransport default_write;
+static GhEndpoint *active_endpoint(GhRelayScope *scope, const gchar *url);
+static gboolean default_write_set;
 
 /* Forgets the connection's NIP-42 state and drops a pending AUTH; a held
  * CLOSED is superseded by whatever ended the connection. */
@@ -186,6 +190,8 @@ gh_relay_scope_set_default_transport(const GhRelayTransport *transport,
   default_set = transport != NULL;
   memset(&default_transport, 0, sizeof default_transport);
   memset(&default_auth, 0, sizeof default_auth);
+  memset(&default_write, 0, sizeof default_write);
+  default_write_set = FALSE;
   default_data = NULL;
   if (transport) {
     default_transport = *transport;
@@ -202,19 +208,67 @@ gh_relay_scope_new(guint64 generation, NostrFilters *filters,
 {
   GhRelayTransport transport = gh_relay_gnostr_transport;
   GhRelayAuthTransport auth = gh_relay_gnostr_auth_transport;
+  GhRelayWriteTransport write = gh_relay_gnostr_write_transport;
   gpointer data = NULL;
   g_mutex_lock(&default_lock);
   if (default_set) {
     transport = default_transport;
     auth = default_auth;
     data = default_data;
+    if (default_write_set)
+      write = default_write;
+    else
+      memset(&write, 0, sizeof write);
   }
   g_mutex_unlock(&default_lock);
   GhRelayScope *scope = gh_relay_scope_new_with_transport(generation, filters, &transport,
                                                           data, callback, user_data);
   if (scope && auth.send_auth)
     scope->auth_transport = auth;
+  if (scope)
+    scope->write_transport = write;
   return scope;
+}
+
+void
+gh_relay_scope_set_default_write_transport(const GhRelayWriteTransport *write)
+{
+  g_mutex_lock(&default_lock);
+  memset(&default_write, 0, sizeof default_write);
+  default_write_set = write != NULL && write->send_event != NULL;
+  if (default_write_set)
+    default_write = *write;
+  g_mutex_unlock(&default_lock);
+}
+
+void
+gh_relay_scope_set_write_transport(GhRelayScope *scope, const GhRelayWriteTransport *write)
+{
+  g_return_if_fail(scope != NULL);
+  if (write && write->send_event)
+    scope->write_transport = *write;
+  else
+    memset(&scope->write_transport, 0, sizeof scope->write_transport);
+}
+
+gboolean
+gh_relay_scope_send_event(GhRelayScope *scope, const gchar *url,
+                          const gchar *signed_event_json, GError **error)
+{
+  g_return_val_if_fail(scope != NULL && signed_event_json != NULL, FALSE);
+  if (!scope->write_transport.send_event) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "relay scope cannot write events");
+    return FALSE;
+  }
+  GhEndpoint *endpoint = active_endpoint(scope, url);
+  if (!endpoint) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                        "relay not open in this scope");
+    return FALSE;
+  }
+  return scope->write_transport.send_event(endpoint->handle, signed_event_json,
+                                           scope->transport_data, error);
 }
 
 void

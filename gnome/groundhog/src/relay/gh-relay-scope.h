@@ -154,6 +154,21 @@ typedef struct {
   void (*resubscribe)(gpointer handle, gpointer user_data);
 } GhRelayAuthTransport;
 
+/* Optional write half of the transport seam, on the same handles and
+ * user_data (nostrc relogin-signer-groups): send_event writes
+ * ["EVENT",signed_event_json] on the handle's CURRENT connection, the one
+ * carrying the scope's REQ, and fails (G_IO_ERROR_NOT_CONNECTED) while there
+ * is none; it never dials. The relay's OK comes back as GH_RELAY_NOTICE_OK
+ * and a lost connection as GH_RELAY_NOTICE_DISCONNECTED, so a caller that
+ * needs an answer per request (the NIP-46 client) keeps one connection per
+ * relay for its whole session instead of one per request. Only for events
+ * of the scope's own identity: a write shares the REQ's connection, its AUTH
+ * identity and its Tor isolation. */
+typedef struct {
+  gboolean (*send_event)(gpointer handle, const gchar *signed_event_json,
+                         gpointer user_data, GError **error);
+} GhRelayWriteTransport;
+
 GhRelayScope *gh_relay_scope_new(guint64 account_generation,
                                  NostrFilters *filters,
                                  GhRelayScopeFunc callback,
@@ -206,6 +221,22 @@ gboolean gh_relay_scope_set_url_auth(GhRelayScope *scope, const gchar *url,
 /* Internal, before start; both functions or NULL. */
 void gh_relay_scope_set_auth_transport(GhRelayScope *scope,
                                        const GhRelayAuthTransport *auth);
+
+/* Before or after start: the write half (NULL: none). gh_relay_scope_new()
+ * installs the default one (gh_relay_scope_set_default_write_transport()). */
+void gh_relay_scope_set_write_transport(GhRelayScope *scope,
+                                        const GhRelayWriteTransport *write);
+/* Writes a signed event on url's current connection (see
+ * GhRelayWriteTransport). FALSE with G_IO_ERROR_NOT_SUPPORTED without a
+ * write half, G_IO_ERROR_NOT_FOUND for a URL not in the scope (or not
+ * opened), G_IO_ERROR_NOT_CONNECTED while url has no live connection. */
+gboolean gh_relay_scope_send_event(GhRelayScope *scope, const gchar *url,
+                                   const gchar *signed_event_json, GError **error);
+/* The write half gh_relay_scope_new() gives every scope; reset to the
+ * GNostrRelay one by gh_relay_scope_set_default_transport(), so an
+ * installer sets it after the transport. NULL: scopes get none. */
+void gh_relay_scope_set_default_write_transport(const GhRelayWriteTransport *write);
+extern const GhRelayWriteTransport gh_relay_gnostr_write_transport;
 
 /* The GNostrRelay (libnostr/libwebsockets) transport: direct connections
  * only, with local DNS. */

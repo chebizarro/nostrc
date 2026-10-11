@@ -219,7 +219,11 @@ sync_invitations(MlsUi *ui)
 {
   GhMlsService *service = current(ui);
   g_autoptr(GPtrArray) invites = service ? gh_mls_service_list_invites(service, NULL) : NULL;
-  ui->invitations = invites ? invites->len : 0;
+  g_autoptr(GPtrArray) refused = service ? gh_mls_service_list_refused_invites(service, NULL)
+                                         : NULL;
+  /* An invitation that could not be opened is counted too: it waits for the
+   * user to read it (and ask again), not silently dropped. */
+  ui->invitations = (invites ? invites->len : 0) + (refused ? refused->len : 0);
   gh_sidebar_page_set_invitations(gh_window_get_sidebar(ui->window), ui->invitations);
 }
 
@@ -229,6 +233,16 @@ on_invite_received(MlsUi *ui)
   sync_invitations(ui);
   /* PD-8: no name, whoever sent it; the list shows only a stranger's npub. */
   AdwToast *toast = adw_toast_new(_("New invitation to an encrypted group"));
+  adw_toast_set_button_label(toast, _("_View"));
+  adw_toast_set_action_name(toast, "win.group-invitations");
+  adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), toast);
+}
+
+static void
+on_invite_refused(MlsUi *ui)
+{
+  sync_invitations(ui);
+  AdwToast *toast = adw_toast_new(_("An invitation to an encrypted group could not be opened"));
   adw_toast_set_button_label(toast, _("_View"));
   adw_toast_set_action_name(toast, "win.group-invitations");
   adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), toast);
@@ -285,6 +299,7 @@ sync_service(MlsUi *ui)
     if (service) {
       g_object_weak_ref(G_OBJECT(service), on_watched_gone, ui);
       g_signal_connect_swapped(service, "invite-received", G_CALLBACK(on_invite_received), ui);
+      g_signal_connect_swapped(service, "invite-refused", G_CALLBACK(on_invite_refused), ui);
       g_signal_connect_swapped(service, "items-changed", G_CALLBACK(on_groups_changed), ui);
     }
   }

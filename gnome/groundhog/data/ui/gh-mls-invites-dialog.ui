@@ -30,6 +30,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="description" translatable="yes">Nothing is joined until you accept. For someone you haven’t accepted as a contact, only their public key is shown and nothing is looked up about them.</property>
                           </object>
                         </child>
+                        <child>
+                          <object class="AdwPreferencesGroup" id="refused_group">
+                            <property name="title" translatable="yes">Could Not Be Opened</property>
+                            <property name="description" translatable="yes">These invitations were made for a key this device doesn’t have, for example one from another device or from before this account’s messages were forgotten here. Ask the sender to invite you again.</property>
+                            <property name="visible">false</property>
+                          </object>
+                        </child>
                       </object>
                     </property>
                   </object>

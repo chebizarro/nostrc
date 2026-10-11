@@ -45,6 +45,7 @@ void gh_relay_net_install(GhNetSession *session);
  * installs them as the defaults. */
 extern const GhRelayTransport gh_relay_net_transport;
 extern const GhRelayAuthTransport gh_relay_net_auth_transport;
+extern const GhRelayWriteTransport gh_relay_net_write_transport;
 extern const GhRelayPublishTransport gh_relay_net_publish_transport;
 extern const GhRelayPublishAuthTransport gh_relay_net_publish_auth_transport;
 

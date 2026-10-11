@@ -627,6 +627,26 @@ typedef struct {
 void gh_mls_invite_free(GhMlsInvite *invite);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsInvite, gh_mls_invite_free)
 
+/* An invitation that arrived but could not be opened (relogin-signer-groups):
+ * libmarmot refused its Welcome. Most often (key_missing) it was made for a
+ * KeyPackage whose private key this device does not have -- one published
+ * by another device or app, or by an earlier store of this account that was
+ * forgotten or started fresh, or one retired since -- and nothing on this
+ * device can ever open it: only a new invitation can. Kept in the account's
+ * store (so it is said after a restart too) until dismissed; at most
+ * GH_MLS_REFUSED_INVITES_MAX, newest kept. */
+typedef struct {
+  gchar *wrapper_id;   /* the gift wrap's id (hex) */
+  gchar *inviter;      /* hex: the seal's signer */
+  gint64 created_at;   /* the Welcome's rumor created_at */
+  gboolean key_missing;/* MARMOT_ERR_KEY_NOT_FOUND: no private key for it here */
+} GhMlsRefusedInvite;
+
+#define GH_MLS_REFUSED_INVITES_MAX 32
+
+void gh_mls_refused_invite_free(GhMlsRefusedInvite *invite);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsRefusedInvite, gh_mls_refused_invite_free)
+
 /* Whether the account may look pubkey (hex) up to invite it (PT-8). */
 typedef gboolean (*GhMlsConsentFunc)(const gchar *pubkey, gpointer data);
 
@@ -940,6 +960,12 @@ GhMlsGroup *gh_mls_service_accept_invite(GhMlsService *self, const gchar *wrappe
                                          GError **error);
 gboolean gh_mls_service_decline_invite(GhMlsService *self, const gchar *wrapper_id,
                                        GError **error);
+/* Invitations that could not be opened (GhMlsRefusedInvite), oldest first;
+ * "invite-refused" (wrapper id) is emitted as one is recorded. Transfer full. */
+GPtrArray *gh_mls_service_list_refused_invites(GhMlsService *self, GError **error);
+/* Forgets one (the user read it). NOT_FOUND when not listed. */
+gboolean gh_mls_service_dismiss_refused_invite(GhMlsService *self, const gchar *wrapper_id,
+                                               GError **error);
 
 /* Store-backed directional paging of an open encrypted-group conversation. */
 gboolean gh_mls_service_load_older(GhMlsService *self, GhConversation *conversation,

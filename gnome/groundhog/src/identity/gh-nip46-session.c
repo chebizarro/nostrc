@@ -15,7 +15,18 @@
 #define MAX_INTERACTIVE 64
 #define MAX_BULK 256
 #define MAX_RETAINED (8 * 1024 * 1024)
-#define MAX_IN_FLIGHT 4
+/* Requests sent and not yet answered. Bulk decrypts (an inbox backfill) are
+ * pipelined over the session's one connection per relay; the bound and the
+ * pacing below keep a signer and its relay from being flooded. */
+#define MAX_IN_FLIGHT 16
+/* Pacing between request publishes; doubled (up to PACE_MAX_MS) on every
+ * relay "rate-limited:" OK, and halved back on every accepted request. */
+#define PACE_MIN_MS 20
+#define PACE_MAX_MS 2000
+/* A request refused as rate-limited on the session connection is sent again
+ * after the paced backoff, at most this many times, before the per-request
+ * publish (with its own bounded retries) takes over. */
+#define SCOPE_RATE_RETRIES 3
 #define PUBLISH_SECONDS 30
 #define APPROVAL_SECONDS 330
 #define AUTH_URL_SECONDS 600
@@ -53,6 +64,13 @@ struct _Pending {
   gboolean in_flight;
   gboolean accepted;
   gboolean auth_opened;
+  /* Sent as event_id on the session's own relay connections (the scope's),
+   * awaiting the relays' OKs on scope_urls; NULL when sent by a publish. */
+  gchar *event_id;
+  gchar *event_json;
+  GPtrArray *scope_urls;
+  guint rate_retries;
+  gboolean rate_limited;
 };
 
 struct _GhNip46Session {
@@ -85,6 +103,9 @@ struct _GhNip46Session {
   guint64 generation;
   guint in_flight;
   guint pace_source;
+  guint pace_ms;
+  GHashTable *by_event;        /* event id -> Pending sent on the scope */
+  guint scope_sends;           /* requests written on the session connections */
   guint publish_seconds;
   guint approval_seconds;
   guint auth_url_seconds;
@@ -117,6 +138,7 @@ static guint64 next_generation = 1;
 
 static void pump(GhNip46Session *self);
 static void finish_pending(Pending *p, gchar *value, GError *error);
+static void start_publish(GhNip46Session *self, Pending *p, const gchar *event);
 
 static guint
 attach_source(GhNip46Session *self, GSource *source, GSourceFunc callback,
@@ -175,6 +197,10 @@ pending_free(Pending *p)
   remove_source(p->session, p->timer);
   if (p->cancel_handler) g_cancellable_disconnect(p->cancellable, p->cancel_handler);
   if (p->publish) { gh_relay_publish_cancel(p->publish); gh_relay_publish_unref(p->publish); }
+  if (p->event_id) g_hash_table_remove(p->session->by_event, p->event_id);
+  g_free(p->event_id);
+  g_free(p->event_json);
+  if (p->scope_urls) g_ptr_array_unref(p->scope_urls);
   g_clear_object(&p->cancellable);
   g_clear_object(&p->task);
   g_free(p->id);
@@ -372,8 +398,8 @@ decrypt_json(GhNip46Session *self, const gchar *peer, const gchar *ciphertext)
 }
 
 static gchar *
-signed_envelope(GhNip46Session *self, const gchar *peer,
-                const gchar *plaintext, gboolean response)
+signed_envelope_id(GhNip46Session *self, const gchar *peer,
+                   const gchar *plaintext, gboolean response, gchar **id_out)
 {
   char *ciphertext = encrypt_json(self, peer, plaintext);
   NostrEvent *event = NULL;
@@ -381,12 +407,25 @@ signed_envelope(GhNip46Session *self, const gchar *peer,
   if (ciphertext && (response ?
       nostr_nip46_build_response_event(self->client_pubkey, peer, ciphertext, &event) :
       nostr_nip46_build_request_event(self->client_pubkey, peer, ciphertext, &event)) == 0) {
-    if (nostr_event_sign(event, self->secret) == 0)
+    if (nostr_event_sign(event, self->secret) == 0) {
       json = nostr_event_serialize_compact(event);
+      if (json && id_out) {
+        char *id = nostr_event_get_id(event);
+        *id_out = id ? g_strdup(id) : NULL;
+        free(id);
+      }
+    }
   }
   nostr_event_free(event);
   free(ciphertext);
   return json;
+}
+
+static gchar *
+signed_envelope(GhNip46Session *self, const gchar *peer,
+                const gchar *plaintext, gboolean response)
+{
+  return signed_envelope_id(self, peer, plaintext, response, NULL);
 }
 
 static gboolean
@@ -466,6 +505,89 @@ publish_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
 }
 
 static void
+start_publish(GhNip46Session *self, Pending *p, const gchar *event)
+{
+  GError *error = NULL;
+  GhRelayPublish *publish = event ?
+    (self->publish_transport.open ? gh_relay_publish_new_with_transport(
+       self->generation, event, &self->publish_transport, self->transport_data,
+       publish_update, publish_done, p, &error) :
+     gh_relay_publish_new(self->generation, event, publish_update, publish_done, p, &error)) : NULL;
+  if (!publish) {
+    g_clear_error(&error);
+    finish_pending(p, NULL, g_error_new_literal(GH_NIP46_SESSION_ERROR,
+      GH_NIP46_SESSION_ERROR_UNAVAILABLE, "Could not prepare signer request"));
+    return;
+  }
+  if (self->publish_auth.send_auth)
+    gh_relay_publish_set_auth_transport(publish, &self->publish_auth);
+  gh_relay_publish_set_account_signer(publish, self->auth_signer, NULL);
+  for (guint i = 0; i < self->relays->len; i++) {
+    const gchar *url = g_ptr_array_index(self->relays, i);
+    gh_relay_publish_add_url(publish, url, NULL);
+    gh_relay_publish_set_url_auth(publish, url, GH_RELAY_AUTH_ACCOUNT, NULL);
+  }
+  gh_relay_publish_set_deadline(publish, self->publish_seconds);
+  gh_relay_publish_set_retries(publish, PUBLISH_RETRIES, self->retry_base_ms);
+  p->publish = publish;
+  /* Room for the backoff of the bounded rate-limit/reconnect retries. */
+  set_timer(p, self->publish_seconds + 1 +
+               (self->retry_base_ms * PUBLISH_RETRY_BACKOFF_UNITS + 999) / 1000);
+  if (!gh_relay_publish_start(publish, &error)) {
+    g_clear_error(&error);
+    finish_pending(p, NULL, g_error_new_literal(GH_NIP46_SESSION_ERROR,
+      GH_NIP46_SESSION_ERROR_UNAVAILABLE, "No signer relay accepted the request"));
+  }
+}
+
+/* Writes the request on every relay connection the session's listening
+ * scope already holds: one connection per relay for the whole session, the
+ * one the reply comes back on, instead of a dial per request. TRUE when at
+ * least one relay took the frame; the relays' OKs arrive as scope notices. */
+static gboolean
+send_on_scope(GhNip46Session *self, Pending *p)
+{
+  if (!self->scope || !p->event_json || !p->event_id) return FALSE;
+  if (!p->scope_urls) p->scope_urls = g_ptr_array_new_with_free_func(g_free);
+  g_ptr_array_set_size(p->scope_urls, 0);
+  for (guint i = 0; i < self->relays->len; i++) {
+    const gchar *url = g_ptr_array_index(self->relays, i);
+    if (gh_relay_scope_send_event(self->scope, url, p->event_json, NULL))
+      g_ptr_array_add(p->scope_urls, g_strdup(url));
+  }
+  if (p->scope_urls->len == 0) return FALSE;
+  if (!g_hash_table_contains(self->by_event, p->event_id))
+    g_hash_table_insert(self->by_event, p->event_id, p);
+  self->scope_sends++;
+  p->rate_limited = FALSE;
+  set_timer(p, self->publish_seconds + 1);
+  return TRUE;
+}
+
+/* The session connections could not deliver the request (every relay that
+ * took it refused it, or dropped before its OK): hand it to a per-request
+ * publish, which dials, authenticates and retries on its own. */
+static void
+fall_back_to_publish(GhNip46Session *self, Pending *p)
+{
+  if (p->event_id) {
+    g_hash_table_remove(self->by_event, p->event_id);
+    g_clear_pointer(&p->event_id, g_free);
+  }
+  g_clear_pointer(&p->scope_urls, g_ptr_array_unref);
+  g_autofree gchar *event = g_steal_pointer(&p->event_json);
+  start_publish(self, p, event);
+}
+
+static void
+schedule_pace(GhNip46Session *self)
+{
+  if (!self->pace_source)
+    self->pace_source = attach_source(self, g_timeout_source_new(self->pace_ms),
+                                      pace_done, self, NULL);
+}
+
+static void
 pump(GhNip46Session *self)
 {
   if (self->cancelled || !self->listening ||
@@ -474,45 +596,99 @@ pump(GhNip46Session *self)
     Pending *p = g_queue_pop_head(!g_queue_is_empty(&self->interactive) ?
                                     &self->interactive : &self->bulk);
     if (!p) return;
-    gchar *event = signed_envelope(self, self->remote_pubkey, p->json, FALSE);
-    GError *error = NULL;
-    GhRelayPublish *publish = event ?
-      (self->publish_transport.open ? gh_relay_publish_new_with_transport(
-         self->generation, event, &self->publish_transport, self->transport_data,
-         publish_update, publish_done, p, &error) :
-       gh_relay_publish_new(self->generation, event, publish_update, publish_done, p, &error)) : NULL;
-    free(event);
-    if (!publish) {
-      g_clear_error(&error);
+    /* Cancelled while queued: never sent (its cancel idle may not have run
+     * yet, and a request the caller already gave up on must not reach the
+     * signer). */
+    if (p->cancellable && g_cancellable_is_cancelled(p->cancellable)) {
       finish_pending(p, NULL, g_error_new_literal(GH_NIP46_SESSION_ERROR,
-        GH_NIP46_SESSION_ERROR_UNAVAILABLE, "Could not prepare signer request"));
+        GH_NIP46_SESSION_ERROR_CANCELLED, "Signer request was cancelled"));
       continue;
     }
-    if (self->publish_auth.send_auth)
-      gh_relay_publish_set_auth_transport(publish, &self->publish_auth);
-    gh_relay_publish_set_account_signer(publish, self->auth_signer, NULL);
-    for (guint i = 0; i < self->relays->len; i++) {
-      const gchar *url = g_ptr_array_index(self->relays, i);
-      gh_relay_publish_add_url(publish, url, NULL);
-      gh_relay_publish_set_url_auth(publish, url, GH_RELAY_AUTH_ACCOUNT, NULL);
-    }
-    gh_relay_publish_set_deadline(publish, self->publish_seconds);
-    gh_relay_publish_set_retries(publish, PUBLISH_RETRIES, self->retry_base_ms);
-    p->publish = publish;
+    g_autofree gchar *id = NULL;
+    gchar *event = signed_envelope_id(self, self->remote_pubkey, p->json, FALSE, &id);
     p->in_flight = TRUE;
     self->in_flight++;
-    /* Room for the backoff of the bounded rate-limit/reconnect retries. */
-    set_timer(p, self->publish_seconds + 1 +
-                 (self->retry_base_ms * PUBLISH_RETRY_BACKOFF_UNITS + 999) / 1000);
-    if (!gh_relay_publish_start(publish, &error)) {
-      g_clear_error(&error);
-      finish_pending(p, NULL, g_error_new_literal(GH_NIP46_SESSION_ERROR,
-        GH_NIP46_SESSION_ERROR_UNAVAILABLE, "No signer relay accepted the request"));
+    if (event && id) {
+      p->event_json = g_strdup(event);
+      p->event_id = g_steal_pointer(&id);
+      if (!send_on_scope(self, p)) {
+        g_clear_pointer(&p->event_id, g_free);
+        g_clear_pointer(&p->event_json, g_free);
+        start_publish(self, p, event);
+      }
+    } else {
+      start_publish(self, p, NULL);
     }
-    self->pace_source = attach_source(self, g_timeout_source_new(150),
-                                      pace_done, self, NULL);
+    free(event);
+    schedule_pace(self);
     return;
   }
+}
+
+static gboolean
+scope_resend(gpointer data)
+{
+  /* data: a strong ref on the session plus the request id. */
+  PublishFailure *again = data;
+  GhNip46Session *self = again->session;
+  Pending *p = g_hash_table_lookup(self->pending, again->id);
+  if (!self->cancelled && p && p->event_id && !p->accepted && !send_on_scope(self, p))
+    fall_back_to_publish(self, p);
+  g_object_unref(again->session);
+  g_free(again->id);
+  g_free(again);
+  return G_SOURCE_REMOVE;
+}
+
+/* A relay answered (or lost) a request written on the session connection. */
+static void
+scope_request_outcome(GhNip46Session *self, const gchar *url, const gchar *event_id,
+                      gboolean accepted, gboolean answered, const gchar *message)
+{
+  Pending *p = event_id ? g_hash_table_lookup(self->by_event, event_id) : NULL;
+  if (!p || !p->scope_urls) return;
+  guint index;
+  if (!g_ptr_array_find_with_equal_func(p->scope_urls, url, g_str_equal, &index)) return;
+  g_ptr_array_remove_index(p->scope_urls, index);
+  if (accepted) {
+    self->pace_ms = MAX(PACE_MIN_MS, self->pace_ms / 2);
+    if (!p->accepted) {
+      note_delivered(self);
+      p->accepted = TRUE;
+      if (!p->auth_opened) set_timer(p, self->approval_seconds);
+    }
+    return;
+  }
+  if (answered && gh_relay_ok_prefix_classify(message) == GH_RELAY_OK_PREFIX_RATE_LIMITED) {
+    p->rate_limited = TRUE;
+    self->pace_ms = MIN(PACE_MAX_MS, MAX(self->pace_ms * 2, PACE_MIN_MS * 4));
+  }
+  if (p->accepted || p->scope_urls->len > 0) return;
+  if (p->rate_limited && p->rate_retries < SCOPE_RATE_RETRIES) {
+    p->rate_retries++;
+    PublishFailure *again = g_new0(PublishFailure, 1);
+    again->session = g_object_ref(self);
+    again->id = g_strdup(p->id);
+    attach_source(self, g_timeout_source_new(self->pace_ms * (1u << p->rate_retries)),
+                  scope_resend, again, NULL);
+    return;
+  }
+  fall_back_to_publish(self, p);
+}
+
+/* The relay's connection is gone: no OK will come on it for what it took. */
+static void
+scope_url_lost(GhNip46Session *self, const gchar *url)
+{
+  g_autoptr(GList) waiting = g_hash_table_get_values(self->by_event);
+  g_autoptr(GPtrArray) ids = g_ptr_array_new_with_free_func(g_free);
+  for (GList *item = waiting; item; item = item->next) {
+    Pending *p = item->data;
+    if (p->scope_urls && g_ptr_array_find_with_equal_func(p->scope_urls, url, g_str_equal, NULL))
+      g_ptr_array_add(ids, g_strdup(p->event_id));
+  }
+  for (guint i = 0; i < ids->len; i++)
+    scope_request_outcome(self, url, g_ptr_array_index(ids, i), FALSE, FALSE, NULL);
 }
 
 static void
@@ -763,6 +939,15 @@ scope_update_inner(GhRelayScope *scope, const GhRelayUpdate *update, gpointer da
     schedule_pump(self);
     return;
   }
+  if (update->notice == GH_RELAY_NOTICE_OK) {
+    scope_request_outcome(self, update->url, update->event_id, update->accepted, TRUE,
+                          update->detail);
+    return;
+  }
+  if (update->notice == GH_RELAY_NOTICE_DISCONNECTED ||
+      update->notice == GH_RELAY_NOTICE_ERROR)
+    scope_url_lost(self, update->url);
+  if (self->cancelled) return;
   if (update->notice == GH_RELAY_NOTICE_DISCONNECTED ||
       update->notice == GH_RELAY_NOTICE_CLOSED ||
       update->notice == GH_RELAY_NOTICE_ERROR) {
@@ -897,6 +1082,7 @@ gh_nip46_session_finalize(GObject *object)
   g_main_context_unref(self->context);
   g_hash_table_unref(self->ready_urls);
   g_hash_table_unref(self->pending);
+  g_hash_table_unref(self->by_event);
   G_OBJECT_CLASS(gh_nip46_session_parent_class)->finalize(object);
 }
 
@@ -931,6 +1117,8 @@ gh_nip46_session_init(GhNip46Session *self)
   self->relays = g_ptr_array_new_with_free_func(g_free);
   self->ready_urls = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   self->pending = g_hash_table_new(g_str_hash, g_str_equal);
+  self->by_event = g_hash_table_new(g_str_hash, g_str_equal);
+  self->pace_ms = PACE_MIN_MS;
   self->oneway_publishes = g_ptr_array_new_with_free_func((GDestroyNotify)gh_relay_publish_unref);
   g_queue_init(&self->interactive);
   g_queue_init(&self->bulk);
