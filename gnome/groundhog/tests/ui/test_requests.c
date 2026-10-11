@@ -23,12 +23,23 @@
  *    limit copy, secrets refused, note to self, Ctrl+N and opening the room;
  *    a blocked person's room is unblocked by starting it, said beforehand;
  *    a cancelled check round's late answers don't end the next round;
+ *  - the New Message panel through the real window: the header's + slides
+ *    the sidebar to it (entry focused), Back and Escape slide back, the
+ *    search filters the contacts and hides the actions, Enter takes the
+ *    first match, an npub gives its exact row, New Group / Join Group / Add
+ *    Contact rows run the window's actions (Add Contact's real dialog),
+ *    choosing a contact opens the DM, and in the collapsed (360x294) layout
+ *    New Message leaves an open conversation for the panel; PNGs of the
+ *    chat list, the panel (wide, narrow) and a filtered search
+ *    (groundhog-new-chat-panel-*.png, in GROUNDHOG_TEST_SCREENSHOTS or a
+ *    temporary directory removed afterwards);
  *  - with GROUNDHOG_TEST_SCREENSHOTS=<dir>, PNGs of both (wide and 360x294).
  * Waits iterate the main context against a deadline; they never sleep. */
+#include "gh-add-contact-dialog.h"
 #include "gh-contact-directory.h"
 #include "gh-conversation-list.h"
 #include "gh-conversation-view.h"
-#include "gh-new-message-dialog.h"
+#include "gh-new-message-page.h"
 #include "gh-recipient.h"
 #include "gh-requests-view.h"
 #include "gh-store-conversations.h"
@@ -893,18 +904,18 @@ on_search_changed(void)
   search_changes++;
 }
 
-static GhNewMessageDialog *
+static GhNewMessagePage *
 open_dialog(Fixture *f)
 {
   g_assert_true(g_action_group_get_action_enabled(G_ACTION_GROUP(f->window), "new-message"));
   g_action_group_activate_action(G_ACTION_GROUP(f->window), "new-message", NULL);
   drain();
-  AdwDialog *dialog = adw_application_window_get_visible_dialog(
-    ADW_APPLICATION_WINDOW(f->window));
-  g_assert_true(GH_IS_NEW_MESSAGE_DIALOG(dialog));
-  g_signal_connect(template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "entry"), "search-changed",
+  /* The sidebar slid to the New Message panel. */
+  AdwNavigationPage *dialog = gh_sidebar_page_get_panel(gh_window_get_sidebar(f->window));
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(dialog));
+  g_signal_connect(template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "entry"), "search-changed",
                    G_CALLBACK(on_search_changed), NULL);
-  return GH_NEW_MESSAGE_DIALOG(dialog);
+  return GH_NEW_MESSAGE_PAGE(dialog);
 }
 
 static gboolean
@@ -914,9 +925,9 @@ searched(gpointer data)
 }
 
 static void
-type_into(GhNewMessageDialog *dialog, const gchar *text)
+type_into(GhNewMessagePage *dialog, const gchar *text)
 {
-  GtkEditable *entry = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "entry");
+  GtkEditable *entry = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "entry");
   guint before = search_changes;
   gtk_editable_set_text(entry, text);
   gh_test_spin_until(searched, GUINT_TO_POINTER(before));
@@ -924,9 +935,9 @@ type_into(GhNewMessageDialog *dialog, const gchar *text)
 }
 
 static GhNewMessageItem *
-suggestion(GhNewMessageDialog *dialog, guint i)
+suggestion(GhNewMessagePage *dialog, guint i)
 {
-  GListModel *model = gh_new_message_dialog_get_suggestions(dialog);
+  GListModel *model = gh_new_message_page_get_suggestions(dialog);
   g_assert_cmpuint(i, <, g_list_model_get_n_items(model));
   GhNewMessageItem *item = g_list_model_get_item(model, i);
   g_object_unref(item); /* the model keeps it */
@@ -934,9 +945,9 @@ suggestion(GhNewMessageDialog *dialog, guint i)
 }
 
 static void
-choose(GhNewMessageDialog *dialog, guint i)
+choose(GhNewMessagePage *dialog, guint i)
 {
-  GtkListBox *results = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "results");
+  GtkListBox *results = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "results");
   GtkListBoxRow *row = gtk_list_box_get_row_at_index(results, (int)i);
   g_assert_nonnull(row);
   g_signal_emit_by_name(results, "row-activated", row);
@@ -944,22 +955,22 @@ choose(GhNewMessageDialog *dialog, guint i)
 }
 
 static guint
-n_recipients(GhNewMessageDialog *dialog)
+n_recipients(GhNewMessagePage *dialog)
 {
-  return g_list_model_get_n_items(gh_new_message_dialog_get_recipients(dialog));
+  return g_list_model_get_n_items(gh_new_message_page_get_recipients(dialog));
 }
 
 static void
-press_enter(GhNewMessageDialog *dialog)
+press_enter(GhNewMessagePage *dialog)
 {
-  g_signal_emit_by_name(template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "entry"), "activate");
+  g_signal_emit_by_name(template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "entry"), "activate");
   drain();
 }
 
 static GhNewMessageItem *
-person(GhNewMessageDialog *dialog, const gchar *pubkey)
+person(GhNewMessagePage *dialog, const gchar *pubkey)
 {
-  GListModel *model = gh_new_message_dialog_get_people(dialog);
+  GListModel *model = gh_new_message_page_get_people(dialog);
   for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
     g_autoptr(GhNewMessageItem) item = g_list_model_get_item(model, i);
     if (g_strcmp0(gh_new_message_item_get_pubkey(item), pubkey) == 0)
@@ -972,7 +983,7 @@ person(GhNewMessageDialog *dialog, const gchar *pubkey)
 static gboolean
 people_checked(gpointer data)
 {
-  GListModel *model = gh_new_message_dialog_get_people(data);
+  GListModel *model = gh_new_message_page_get_people(data);
   for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
     g_autoptr(GhNewMessageItem) item = g_list_model_get_item(model, i);
     if (gh_new_message_item_get_busy(item))
@@ -992,7 +1003,7 @@ test_gui_new_message_consent(void)
   deliver(&f, dave, TRUE, T0 - 300, "hi Dave", NULL); /* a contact */
   f.http.answer = g_strdup_printf("{\"names\":{\"bob\":\"%s\"}}", bob->pk);
   attach_window(&f, TRUE);
-  GhNewMessageDialog *dialog = open_dialog(&f);
+  GhNewMessagePage *dialog = open_dialog(&f);
   guint reqs = f.rec.reqs->len;
 
   /* Empty: Note to Self and the people you talk to (local). */
@@ -1004,7 +1015,7 @@ test_gui_new_message_consent(void)
 
   /* An address gives a consent row naming its host; nothing is fetched. */
   type_into(dialog, "Bob@Example.com");
-  GListModel *suggestions = gh_new_message_dialog_get_suggestions(dialog);
+  GListModel *suggestions = gh_new_message_page_get_suggestions(dialog);
   g_assert_cmpuint(g_list_model_get_n_items(suggestions), ==, 1);
   GhNewMessageItem *lookup = suggestion(dialog, 0);
   g_assert_cmpint(gh_new_message_item_get_kind(lookup), ==, GH_NEW_MESSAGE_ITEM_LOOKUP);
@@ -1023,7 +1034,7 @@ test_gui_new_message_consent(void)
                   "https://example.com/.well-known/nostr.json?name=bob");
   g_assert_cmpuint(n_recipients(dialog), ==, 1);
   g_autoptr(GhNewMessageItem) chip = g_list_model_get_item(
-    gh_new_message_dialog_get_recipients(dialog), 0);
+    gh_new_message_page_get_recipients(dialog), 0);
   g_assert_cmpstr(gh_new_message_item_get_pubkey(chip), ==, bob->pk);
   g_assert_cmpstr(gh_new_message_item_get_title(chip), ==, "bob@example.com");
 
@@ -1046,7 +1057,7 @@ test_gui_new_message_consent(void)
   g_autofree gchar *grouped = gh_recipient_npub_grouped(carol->pk);
   g_assert_cmpstr(gh_new_message_item_get_subtitle(person(dialog, carol->pk)), ==, grouped);
   g_assert_cmpstr(gh_new_message_item_get_status(person(dialog, bob->pk)), ==, "Not checked");
-  AdwActionRow *check = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "check_row");
+  AdwActionRow *check = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "check_row");
   g_assert_cmpstr(adw_action_row_get_subtitle(check), ==,
                   "Asks your discovery relays (discovery-a.test.invalid, "
                   "discovery-b.test.invalid) for their message relays. Those relays learn "
@@ -1054,7 +1065,7 @@ test_gui_new_message_consent(void)
   g_assert_cmpuint(f.rec.reqs->len, ==, reqs);
   /* Honest about what a room means (P4, W17): it sends, one wrap per
    * person, and everyone sees who else is in it. */
-  GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "start_note");
+  GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "start_note");
   g_assert_nonnull(strstr(gtk_label_get_text(note),
                           "Each message is encrypted separately for each person"));
   g_assert_nonnull(strstr(gtk_label_get_text(note), "can see who else is in it"));
@@ -1102,7 +1113,7 @@ test_gui_new_message_consent(void)
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(opened)), ==, 0);
   g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(f.window)) == opened);
   g_assert_true(gh_content_page_get_conversation_shown(gh_window_get_content(f.window)));
-  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window)));
+  g_assert_null(gh_sidebar_page_get_panel(gh_window_get_sidebar(f.window)));
   g_assert_cmpuint(f.http.urls->len, ==, 1);
   fixture_down(&f);
 }
@@ -1113,8 +1124,8 @@ test_gui_new_message_limit(void)
   Fixture f;
   fixture_up(&f, FALSE);
   attach_window(&f, TRUE);
-  GhNewMessageDialog *dialog = open_dialog(&f);
-  GtkWidget *limit = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "limit_label");
+  GhNewMessagePage *dialog = open_dialog(&f);
+  GtkWidget *limit = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "limit_label");
   g_assert_false(gtk_widget_get_visible(limit));
   for (guint i = 0; i < GH_CONVERSATION_MAX_PEERS; i++) {
     type_into(dialog, people[i].npub);
@@ -1128,8 +1139,8 @@ test_gui_new_message_limit(void)
     /* The release configuration points to groups instead (charter §7.9). */
     GhNewMessageConfig config = new_message_config(&f);
     config.encrypted_groups = TRUE;
-    GhNewMessageDialog *groups = g_object_ref_sink(gh_new_message_dialog_new(&config));
-    g_assert_cmpstr(label_text(groups, GH_TYPE_NEW_MESSAGE_DIALOG, "limit_label"), ==,
+    GhNewMessagePage *groups = g_object_ref_sink(gh_new_message_page_new(&config));
+    g_assert_cmpstr(label_text(groups, GH_TYPE_NEW_MESSAGE_PAGE, "limit_label"), ==,
                     LIMIT_COPY_GROUPS);
     g_object_unref(groups);
   }
@@ -1153,7 +1164,7 @@ test_gui_new_message_limit(void)
   drain();
   g_assert_cmpuint(n_recipients(dialog), ==, GH_CONVERSATION_MAX_PEERS - 1);
   g_assert_false(gtk_widget_get_visible(limit));
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  gh_new_message_page_close(dialog);
   fixture_down(&f);
 }
 
@@ -1163,9 +1174,9 @@ test_gui_new_message_refusals_and_note_to_self(void)
   Fixture f;
   fixture_up(&f, FALSE);
   attach_window(&f, TRUE);
-  GhNewMessageDialog *dialog = open_dialog(&f);
-  GtkLabel *error_label = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "input_error");
-  GtkEditable *entry = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "entry");
+  GhNewMessagePage *dialog = open_dialog(&f);
+  GtkLabel *error_label = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "input_error");
+  GtkEditable *entry = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "entry");
 
   /* A secret key is never kept: the entry is emptied and says why. */
   type_into(dialog, "nsec1vl029mgpspedva04g90vltkh6fvh240zqtv9k0t9af8935ke9laqsnlfe5");
@@ -1175,7 +1186,7 @@ test_gui_new_message_refusals_and_note_to_self(void)
   g_assert_cmpuint(n_recipients(dialog), ==, 0);
   type_into(dialog, "note1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq");
   g_assert_true(gtk_widget_get_visible(GTK_WIDGET(error_label)));
-  g_assert_cmpuint(g_list_model_get_n_items(gh_new_message_dialog_get_suggestions(dialog)), ==,
+  g_assert_cmpuint(g_list_model_get_n_items(gh_new_message_page_get_suggestions(dialog)), ==,
                    0);
   type_into(dialog, "");
 
@@ -1210,7 +1221,7 @@ test_gui_new_message_refusals_and_note_to_self(void)
   g_assert_nonnull(self_room);
   g_assert_cmpuint(g_strv_length((gchar **)gh_conversation_get_peers(self_room)), ==, 0);
   g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(f.window)) == self_room);
-  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window)));
+  g_assert_null(gh_sidebar_page_get_panel(gh_window_get_sidebar(f.window)));
   /* Opening it again reuses the room. */
   GError *error = NULL;
   g_assert_true(gh_conversation_store_open_room(f.model, NULL, &error) == self_room);
@@ -1238,13 +1249,13 @@ test_gui_new_message_unblocks(void)
   g_assert_true(gh_store_conversations_set_blocked(f.delegate, room, TRUE, &error));
   g_assert_no_error(error);
   attach_window(&f, TRUE);
-  GhNewMessageDialog *dialog = open_dialog(&f);
+  GhNewMessagePage *dialog = open_dialog(&f);
   type_into(dialog, v->npub);
   press_enter(dialog);
   g_assert_cmpuint(n_recipients(dialog), ==, 1);
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
   drain();
-  GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "start_note");
+  GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "start_note");
   g_assert_true(g_str_has_prefix(gtk_label_get_text(note),
                                  "You blocked this conversation. Starting it unblocks it"));
   g_assert_true(blocked(&f, v)); /* nothing changes before Start */
@@ -1257,7 +1268,7 @@ test_gui_new_message_unblocks(void)
   g_assert_false(gh_conversation_get_is_request(opened));
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(opened)), ==, 2);
   g_assert_true(gh_sidebar_page_get_selected(gh_window_get_sidebar(f.window)) == opened);
-  g_assert_null(adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window)));
+  g_assert_null(gh_sidebar_page_get_panel(gh_window_get_sidebar(f.window)));
   /* Their next message is listed again. */
   g_assert_cmpint(deliver(&f, v, FALSE, T0 + 10, "welcome back", NULL), ==,
                   GH_CONVERSATION_ADD_NEW);
@@ -1265,9 +1276,9 @@ test_gui_new_message_unblocks(void)
 }
 
 static GtkWidget *
-check_spinner(GhNewMessageDialog *dialog)
+check_spinner(GhNewMessagePage *dialog)
 {
-  return template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "check_spinner");
+  return template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "check_spinner");
 }
 
 /* The inbox check across rounds (W15 review non-blocking #8): going back and
@@ -1281,14 +1292,14 @@ test_gui_new_message_check_rounds(void)
   fixture_up(&f, TRUE);
   const Person *bob = &people[10], *carol = &people[11];
   attach_window(&f, TRUE);
-  GhNewMessageDialog *dialog = open_dialog(&f);
+  GhNewMessagePage *dialog = open_dialog(&f);
   type_into(dialog, bob->npub);
   press_enter(dialog);
   type_into(dialog, carol->npub);
   press_enter(dialog);
-  AdwNavigationView *navigation = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG,
+  AdwNavigationView *navigation = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE,
                                                  "navigation");
-  AdwActionRow *check = template_child(dialog, GH_TYPE_NEW_MESSAGE_DIALOG, "check_row");
+  AdwActionRow *check = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "check_row");
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
   drain();
   adw_action_row_activate(check); /* round 1: two checks */
@@ -1323,14 +1334,14 @@ test_gui_new_message_check_rounds(void)
   g_assert_false(gtk_widget_get_visible(check_spinner(dialog)));
   g_assert_cmpstr(gh_new_message_item_get_status(person(dialog, carol->pk)), ==,
                   "Hasn't set up private messaging yet");
-  adw_dialog_force_close(ADW_DIALOG(dialog));
+  gh_new_message_page_close(dialog);
   fixture_down(&f);
 }
 
 /* ---- screenshots (opt-in evidence) ------------------------------------------------ */
 
 static void
-save_png(GtkWidget *window, const char *dir, const char *name)
+save_png_as(GtkWidget *window, const char *dir, const char *prefix, const char *name)
 {
   g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(window);
   GtkSnapshot *snapshot = gtk_snapshot_new();
@@ -1342,9 +1353,15 @@ save_png(GtkWidget *window, const char *dir, const char *name)
   gsk_render_node_get_bounds(node, &bounds);
   GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
   g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
-  g_autofree char *path = g_strdup_printf("%s/groundhog-g18-%s.png", dir, name);
+  g_autofree char *path = g_strdup_printf("%s/%s-%s.png", dir, prefix, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s", path);
+}
+
+static void
+save_png(GtkWidget *window, const char *dir, const char *name)
+{
+  save_png_as(window, dir, "groundhog-g18", name);
 }
 
 static void
@@ -1387,7 +1404,7 @@ test_gui_screenshots(void)
     g_autofree gchar *requests = g_strdup_printf("requests-%s", size_names[s]);
     shoot(&f, dir, requests);
 
-    GhNewMessageDialog *dialog = open_dialog(&f);
+    GhNewMessagePage *dialog = open_dialog(&f);
     g_autofree gchar *empty = g_strdup_printf("new-message-%s", size_names[s]);
     shoot(&f, dir, empty);
     type_into(dialog, people[2].npub);
@@ -1405,10 +1422,243 @@ test_gui_screenshots(void)
     g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
     g_autofree gchar *confirm = g_strdup_printf("new-message-confirm-%s", size_names[s]);
     shoot(&f, dir, confirm);
-    adw_dialog_force_close(ADW_DIALOG(dialog));
+    gh_new_message_page_close(dialog);
     fixture_down(&f);
   }
   g_log_set_always_fatal(fatal);
+}
+
+/* ---- GUI: the New Message panel (Signal's "New chat") -------------------------------- */
+
+static void
+count_activation(GSimpleAction *action, GVariant *parameter, gpointer data)
+{
+  (void)action;
+  (void)parameter;
+  (*(guint *)data)++;
+}
+
+static GtkWidget *
+panel_child(GhNewMessagePage *panel, const char *name)
+{
+  return template_child(panel, GH_TYPE_NEW_MESSAGE_PAGE, name);
+}
+
+static gboolean
+focus_in(GhWindow *window, GtkWidget *widget)
+{
+  GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window));
+  return focus && (focus == widget || gtk_widget_is_ancestor(focus, widget));
+}
+
+static gboolean
+widget_mapped(gpointer widget)
+{
+  return gtk_widget_get_mapped(widget);
+}
+
+static gboolean
+split_collapsed(gpointer split)
+{
+  return adw_navigation_split_view_get_collapsed(split);
+}
+
+static GhNewMessagePage *
+visible_panel(Fixture *f)
+{
+  AdwNavigationPage *panel = gh_sidebar_page_get_panel(gh_window_get_sidebar(f->window));
+  return GH_IS_NEW_MESSAGE_PAGE(panel) ? GH_NEW_MESSAGE_PAGE(panel) : NULL;
+}
+
+static void
+shoot_panel(Fixture *f, const char *dir, const char *name)
+{
+  drain();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  save_png_as(GTK_WIDGET(f->window), dir, "groundhog-new-chat-panel", name);
+}
+
+static void
+test_gui_new_chat_panel(void)
+{
+  const char *shots = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  g_autofree gchar *tmp = NULL;
+  if (!shots || !*shots) {
+    g_autoptr(GError) error = NULL;
+    tmp = g_dir_make_tmp("groundhog-new-chat-panel-XXXXXX", &error);
+    g_assert_no_error(error);
+    shots = tmp;
+  }
+  Fixture f;
+  fixture_up(&f, TRUE);
+  const Person *dave = &people[2], *erin = &people[3], *frank = &people[4];
+  deliver(&f, dave, TRUE, T0 - 300, "hi Dave", NULL);   /* contacts */
+  deliver(&f, erin, TRUE, T0 - 600, "hi Erin", NULL);
+  attach_window(&f, TRUE);
+  /* The actions the panel offers are the window's: the real Add Contact,
+   * and recorders for the group actions (their dialogs have their own
+   * suites, test_group_ui.c and test_mls_ui.c). */
+  guint new_groups = 0, joins = 0;
+  const GActionEntry group_actions[] = {
+    { "new-group", count_activation, NULL, NULL, NULL, { 0 } },
+    { "join-group", count_activation, NULL, NULL, NULL, { 0 } },
+  };
+  g_action_map_add_action_entries(G_ACTION_MAP(f.window), &group_actions[0], 1, &new_groups);
+  g_action_map_add_action_entries(G_ACTION_MAP(f.window), &group_actions[1], 1, &joins);
+  GhAddContactConfig add_contact = { .conversations = f.model, .nip05 = f.nip05 };
+  gh_add_contact_attach(f.window, &add_contact);
+  drain();
+  GhSidebarPage *sidebar = gh_window_get_sidebar(f.window);
+  AdwNavigationSplitView *split = gh_window_get_split(f.window);
+  GtkWidget *list_search = template_child(sidebar, GH_TYPE_SIDEBAR_PAGE, "search_entry");
+  g_assert_null(visible_panel(&f));
+  shoot_panel(&f, shots, "chat-list-wide");
+
+  /* The header's + slides the sidebar to the panel, entry focused; the
+   * conversation pane is untouched. */
+  g_signal_emit_by_name(template_child(sidebar, GH_TYPE_SIDEBAR_PAGE, "new_button"), "clicked");
+  drain();
+  GhNewMessagePage *panel = visible_panel(&f);
+  g_assert_nonnull(panel);
+  g_assert_cmpstr(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(panel)), ==, "New Message");
+  g_assert_false(gtk_widget_get_mapped(list_search)); /* the list's search stays on its page */
+  GtkWidget *entry = panel_child(panel, "entry");
+  g_assert_true(focus_in(f.window, entry));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "actions")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "new_group_row")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "join_group_row")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "add_contact_row")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "contacts_heading")));
+  g_assert_false(gtk_widget_get_visible(panel_child(panel, "next_button"))); /* nobody chosen */
+  /* Note to Self, then the two contacts. */
+  GListModel *suggestions = gh_new_message_page_get_suggestions(panel);
+  g_assert_cmpuint(g_list_model_get_n_items(suggestions), ==, 3);
+  g_assert_cmpint(gh_new_message_item_get_kind(suggestion(panel, 1)), ==,
+                  GH_NEW_MESSAGE_ITEM_CONTACT);
+  g_assert_cmpstr(gh_new_message_item_get_pubkey(suggestion(panel, 1)), ==, dave->pk);
+  g_assert_cmpstr(gh_new_message_item_get_pubkey(suggestion(panel, 2)), ==, erin->pk);
+  shoot_panel(&f, shots, "panel-wide");
+
+  /* The back button slides back to the list. */
+  g_signal_emit_by_name(panel_child(panel, "back_button"), "clicked");
+  drain();
+  g_assert_null(visible_panel(&f));
+  g_assert_true(gtk_widget_get_mapped(list_search));
+
+  /* Ctrl+N's action opens a fresh one; Escape in the entry (stop-search)
+   * slides back too. */
+  g_action_group_activate_action(G_ACTION_GROUP(f.window), "new-message", NULL);
+  drain();
+  panel = visible_panel(&f);
+  g_assert_nonnull(panel);
+  g_signal_connect(panel_child(panel, "entry"), "search-changed", G_CALLBACK(on_search_changed),
+                   NULL);
+  g_signal_emit_by_name(panel_child(panel, "entry"), "stop-search");
+  drain();
+  g_assert_null(visible_panel(&f));
+
+  /* Search filters the contacts (local only) and hides the actions; Enter
+   * takes the first match. */
+  panel = open_dialog(&f);
+  guint reqs = f.rec.reqs->len;
+  g_autofree gchar *erin_part = g_strndup(erin->npub + 5, 12);
+  type_into(panel, erin_part);
+  g_assert_cmpuint(g_list_model_get_n_items(gh_new_message_page_get_suggestions(panel)), ==, 1);
+  g_assert_cmpstr(gh_new_message_item_get_pubkey(suggestion(panel, 0)), ==, erin->pk);
+  g_assert_false(gtk_widget_get_visible(panel_child(panel, "actions")));
+  g_assert_false(gtk_widget_get_visible(panel_child(panel, "contacts_heading")));
+  shoot_panel(&f, shots, "search-wide");
+  press_enter(panel);
+  g_assert_cmpuint(n_recipients(panel), ==, 1);
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "next_button")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "actions")));
+
+  /* A pasted npub gives its exact row, offline. */
+  type_into(panel, frank->npub);
+  g_assert_cmpuint(g_list_model_get_n_items(gh_new_message_page_get_suggestions(panel)), ==, 1);
+  g_assert_cmpint(gh_new_message_item_get_kind(suggestion(panel, 0)), ==,
+                  GH_NEW_MESSAGE_ITEM_PUBKEY);
+  g_assert_cmpstr(gh_new_message_item_get_pubkey(suggestion(panel, 0)), ==, frank->pk);
+  press_enter(panel);
+  g_assert_cmpuint(n_recipients(panel), ==, 2);
+  g_assert_cmpuint(f.rec.reqs->len, ==, reqs); /* nothing was asked */
+  g_assert_cmpuint(f.http.urls->len, ==, 0);
+  gh_new_message_page_close(panel);
+  drain();
+  g_assert_null(visible_panel(&f));
+
+  /* Choosing a contact opens the DM: Next, Start, and the conversation is
+   * selected and shown, the panel gone, focus in the conversation. */
+  panel = open_dialog(&f);
+  choose(panel, 1); /* Dave */
+  g_assert_cmpuint(n_recipients(panel), ==, 1);
+  g_assert_true(focus_in(f.window, panel_child(panel, "entry")));
+  press_enter(panel); /* Enter in the empty entry: Next */
+  g_assert_true(adw_navigation_view_get_visible_page(
+                  ADW_NAVIGATION_VIEW(panel_child(panel, "navigation"))) ==
+                ADW_NAVIGATION_PAGE(panel_child(panel, "confirm_page")));
+  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(panel), "new-message.start", NULL));
+  drain();
+  GhConversation *dave_room = room_of(&f, dave);
+  g_assert_nonnull(dave_room);
+  g_assert_null(visible_panel(&f));
+  g_assert_true(gh_sidebar_page_get_selected(sidebar) == dave_room);
+  GhContentPage *content = gh_window_get_content(f.window);
+  g_assert_true(gh_content_page_get_conversation_shown(content));
+  g_assert_true(gh_conversation_view_get_conversation(
+    GH_CONVERSATION_VIEW(gh_content_page_get_view(content))) == dave_room);
+  g_assert_true(focus_in(f.window, GTK_WIDGET(content)));
+
+  /* Collapsed: New Message from an open conversation brings the sidebar
+   * back with the panel; Back returns to the list. */
+  resize(&f, 360, 294);
+  gh_test_spin_until(split_collapsed, split); /* the breakpoint applies on a later frame */
+  g_assert_true(gh_window_open_item(f.window, dave_room));
+  drain();
+  g_assert_true(adw_navigation_split_view_get_show_content(split));
+  g_action_group_activate_action(G_ACTION_GROUP(f.window), "new-message", NULL);
+  drain();
+  g_assert_false(adw_navigation_split_view_get_show_content(split));
+  panel = visible_panel(&f);
+  g_assert_nonnull(panel);
+  gh_test_spin_until(widget_mapped, panel); /* the sidebar maps on a later frame */
+  g_assert_true(focus_in(f.window, panel_child(panel, "entry")));
+  shoot_panel(&f, shots, "panel-narrow");
+  g_signal_emit_by_name(panel_child(panel, "back_button"), "clicked");
+  drain();
+  g_assert_null(visible_panel(&f));
+  g_assert_true(gtk_widget_get_mapped(list_search));
+
+  /* Each action row leaves the panel and runs the window's action (last:
+   * Add Contact's real dialog stays open until the window goes). */
+  panel = open_dialog(&f);
+  adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "new_group_row")));
+  drain();
+  g_assert_cmpuint(new_groups, ==, 1);
+  g_assert_null(visible_panel(&f));
+  panel = open_dialog(&f);
+  adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "join_group_row")));
+  drain();
+  g_assert_cmpuint(joins, ==, 1);
+  g_assert_null(visible_panel(&f));
+  /* A row whose action the window lacks is not offered. */
+  g_action_map_remove_action(G_ACTION_MAP(f.window), "join-group");
+  panel = open_dialog(&f);
+  g_assert_false(gtk_widget_get_visible(panel_child(panel, "join_group_row")));
+  g_assert_true(gtk_widget_get_visible(panel_child(panel, "new_group_row")));
+  gh_new_message_page_close(panel);
+  drain();
+
+  panel = open_dialog(&f);
+  adw_action_row_activate(ADW_ACTION_ROW(panel_child(panel, "add_contact_row")));
+  drain();
+  g_assert_null(visible_panel(&f));
+  AdwDialog *added = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(f.window));
+  g_assert_true(GH_IS_ADD_CONTACT_DIALOG(added)); /* closed with the window */
+  fixture_down(&f);
+  if (tmp) {
+    rm_rf(tmp);
+  }
 }
 
 int
@@ -1477,6 +1727,7 @@ main(int argc, char **argv)
                     test_gui_new_message_unblocks);
     g_test_add_func("/groundhog/requests/gui/new-message-check-rounds",
                     test_gui_new_message_check_rounds);
+    g_test_add_func("/groundhog/requests/gui/new-chat-panel", test_gui_new_chat_panel);
     g_test_add_func("/groundhog/requests/gui/screenshots", test_gui_screenshots);
   } else {
     g_test_add_func("/groundhog/requests/accept-delete-block-persist",

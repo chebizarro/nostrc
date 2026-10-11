@@ -78,6 +78,16 @@ gboolean gh_sidebar_page_select_relative(GhSidebarPage *self, gint delta);
  * shows. */
 gboolean gh_sidebar_page_select_item(GhSidebarPage *self, gpointer item);
 
+/* The sidebar's own navigation view (charter §7.9): its root page, tagged
+ * "conversations", holds everything above; a panel such as New Message
+ * (gh-new-message-page.h) slides in over it and Back returns. push_panel()
+ * closes any panel first; close_panel() returns to the list (no-op when it
+ * shows); get_panel() is the visible panel, NULL while the list shows. */
+AdwNavigationView *gh_sidebar_page_get_navigation(GhSidebarPage *self);
+void gh_sidebar_page_push_panel(GhSidebarPage *self, AdwNavigationPage *panel);
+void gh_sidebar_page_close_panel(GhSidebarPage *self);
+AdwNavigationPage *gh_sidebar_page_get_panel(GhSidebarPage *self);
+
 /* Focuses the sidebar's search entry (always shown). */
 void gh_sidebar_page_start_search(GhSidebarPage *self);
 /* Typing into widget starts a search (GtkSearchEntry key capture). */

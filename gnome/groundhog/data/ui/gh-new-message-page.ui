@@ -6,11 +6,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 -->
 <interface>
   <requires lib="gtk" version="4.0"/>
-  <template class="GhNewMessageDialog" parent="AdwDialog">
+  <template class="GhNewMessagePage" parent="AdwNavigationPage">
+    <property name="tag">new-message</property>
     <property name="title" translatable="yes">New Message</property>
-    <property name="content-width">420</property>
-    <property name="content-height">520</property>
-    <property name="focus-widget">entry</property>
     <property name="child">
       <object class="AdwNavigationView" id="navigation">
         <child>
@@ -21,8 +19,20 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               <object class="AdwToolbarView">
                 <child type="top">
                   <object class="AdwHeaderBar">
+                    <property name="show-back-button">false</property>
+                    <child type="start">
+                      <object class="GtkButton" id="back_button">
+                        <property name="icon-name">go-previous-symbolic</property>
+                        <property name="tooltip-text" translatable="yes">Back to Conversations</property>
+                        <property name="action-name">new-message.close</property>
+                        <accessibility>
+                          <property name="label" translatable="yes">Back to Conversations</property>
+                        </accessibility>
+                      </object>
+                    </child>
                     <child type="end">
                       <object class="GtkButton" id="next_button">
+                        <property name="visible">false</property>
                         <property name="label" translatable="yes">_Next</property>
                         <property name="use-underline">true</property>
                         <property name="action-name">new-message.next</property>
@@ -41,8 +51,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkSearchEntry" id="entry">
                         <property name="placeholder-text" translatable="yes">Name, npub or nostr: address</property>
                         <property name="hexpand">true</property>
-                        <property name="margin-start">12</property>
-                        <property name="margin-end">12</property>
+                        <property name="margin-start">6</property>
+                        <property name="margin-end">6</property>
                         <property name="margin-bottom">6</property>
                         <accessibility>
                           <property name="label" translatable="yes">Name, npub or nostr: address</property>
@@ -104,14 +114,90 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="GtkListBox" id="results">
+                              <object class="GtkListBox" id="actions">
                                 <property name="selection-mode">0</property>
                                 <style>
                                   <class name="boxed-list"/>
+                                  <class name="groundhog-new-message-actions"/>
                                 </style>
                                 <accessibility>
-                                  <property name="label" translatable="yes">Suggestions</property>
+                                  <property name="label" translatable="yes">Start Something Else</property>
                                 </accessibility>
+                                <child>
+                                  <object class="AdwActionRow" id="new_group_row">
+                                    <property name="activatable">true</property>
+                                    <property name="title" translatable="yes">New Group</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">system-users-symbolic</property>
+                                        <property name="valign">3</property>
+                                        <property name="accessible-role">43</property>
+                                        <style>
+                                          <class name="groundhog-new-message-icon"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="join_group_row">
+                                    <property name="activatable">true</property>
+                                    <property name="title" translatable="yes">Join Group</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">network-workgroup-symbolic</property>
+                                        <property name="valign">3</property>
+                                        <property name="accessible-role">43</property>
+                                        <style>
+                                          <class name="groundhog-new-message-icon"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="AdwActionRow" id="add_contact_row">
+                                    <property name="activatable">true</property>
+                                    <property name="title" translatable="yes">Add Contact</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">contact-new-symbolic</property>
+                                        <property name="valign">3</property>
+                                        <property name="accessible-role">43</property>
+                                        <style>
+                                          <class name="groundhog-new-message-icon"/>
+                                        </style>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkBox" id="contacts_box">
+                                <property name="orientation">1</property>
+                                <property name="spacing">6</property>
+                                <child>
+                                  <object class="GtkLabel" id="contacts_heading">
+                                    <property name="label" translatable="yes">Contacts</property>
+                                    <property name="xalign">0</property>
+                                    <property name="accessible-role">43</property>
+                                    <style>
+                                      <class name="heading"/>
+                                    </style>
+                                  </object>
+                                </child>
+                                <child>
+                                  <object class="GtkListBox" id="results">
+                                    <property name="selection-mode">0</property>
+                                    <style>
+                                      <class name="boxed-list"/>
+                                    </style>
+                                    <accessibility>
+                                      <property name="label" translatable="yes">Contacts</property>
+                                    </accessibility>
+                                  </object>
+                                </child>
                               </object>
                             </child>
                             <child>

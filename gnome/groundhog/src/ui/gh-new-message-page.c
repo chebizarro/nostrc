@@ -1,4 +1,5 @@
-#include "gh-new-message-dialog.h"
+#include "gh-new-message-page.h"
+#include "gh-conversation-list.h"
 #include "gh-net-session.h"
 
 #include "gh-recipient.h"
@@ -16,6 +17,7 @@ struct _GhNewMessageItem {
   gchar *title;
   gchar *subtitle;
   gchar *avatar_text;   /* NULL: no avatar */
+  GdkPaintable *picture; /* consented profile picture, or NULL */
   gboolean show_initials;
   gchar *icon_name;     /* NULL: no icon */
   gboolean busy;
@@ -32,6 +34,7 @@ enum {
   ITEM_PROP_AVATAR_TEXT,
   ITEM_PROP_SHOW_AVATAR,
   ITEM_PROP_SHOW_INITIALS,
+  ITEM_PROP_PICTURE,
   ITEM_PROP_ICON_NAME,
   ITEM_PROP_SHOW_ICON,
   ITEM_PROP_BUSY,
@@ -87,6 +90,13 @@ item_set_busy(GhNewMessageItem *self, gboolean busy)
     return;
   self->busy = busy;
   g_object_notify_by_pspec(G_OBJECT(self), item_props[ITEM_PROP_BUSY]);
+}
+
+static void
+item_set_picture(GhNewMessageItem *self, GdkPaintable *picture)
+{
+  if (g_set_object(&self->picture, picture))
+    g_object_notify_by_pspec(G_OBJECT(self), item_props[ITEM_PROP_PICTURE]);
 }
 
 static void
@@ -167,6 +177,9 @@ gh_new_message_item_get_property(GObject *object, guint id, GValue *value, GPara
   case ITEM_PROP_SHOW_INITIALS:
     g_value_set_boolean(value, self->show_initials);
     break;
+  case ITEM_PROP_PICTURE:
+    g_value_set_object(value, self->picture);
+    break;
   case ITEM_PROP_ICON_NAME:
     g_value_set_string(value, self->icon_name);
     break;
@@ -197,6 +210,7 @@ gh_new_message_item_finalize(GObject *object)
   g_free(self->title);
   g_free(self->subtitle);
   g_free(self->avatar_text);
+  g_clear_object(&self->picture);
   g_free(self->icon_name);
   g_free(self->status);
   g_free(self->pubkey);
@@ -217,6 +231,8 @@ gh_new_message_item_class_init(GhNewMessageItemClass *klass)
   item_props[ITEM_PROP_SHOW_AVATAR] = g_param_spec_boolean("show-avatar", NULL, NULL, FALSE, ro);
   item_props[ITEM_PROP_SHOW_INITIALS] =
     g_param_spec_boolean("show-initials", NULL, NULL, FALSE, ro);
+  item_props[ITEM_PROP_PICTURE] =
+    g_param_spec_object("picture", NULL, NULL, GDK_TYPE_PAINTABLE, ro);
   item_props[ITEM_PROP_ICON_NAME] = g_param_spec_string("icon-name", NULL, NULL, NULL, ro);
   item_props[ITEM_PROP_SHOW_ICON] = g_param_spec_boolean("show-icon", NULL, NULL, FALSE, ro);
   item_props[ITEM_PROP_BUSY] = g_param_spec_boolean("busy", NULL, NULL, FALSE, ro);
@@ -421,16 +437,23 @@ create_chip(gpointer item, gpointer data)
   return g_object_new(GH_TYPE_RECIPIENT_CHIP, "item", item, NULL);
 }
 
-/* ---- GhNewMessageDialog ------------------------------------------------------- */
+/* ---- GhNewMessagePage ------------------------------------------------------- */
 
-struct _GhNewMessageDialog {
-  AdwDialog parent_instance;
+struct _GhNewMessagePage {
+  AdwNavigationPage parent_instance;
   AdwNavigationView *navigation;
   AdwNavigationPage *confirm_page;
   GtkSearchEntry *entry;
+  GtkWidget *next_button;
   GtkFlowBox *chips;
   GtkLabel *limit_label;
   GtkLabel *input_error;
+  GtkListBox *actions;
+  AdwActionRow *new_group_row;
+  AdwActionRow *join_group_row;
+  AdwActionRow *add_contact_row;
+  GtkWidget *contacts_box;
+  GtkWidget *contacts_heading;
   GtkListBox *results;
   GtkListBox *people;
   AdwActionRow *check_row;
@@ -444,21 +467,22 @@ struct _GhNewMessageDialog {
   GCancellable *cancellable; /* lookups and checks; cancelled on close */
   guint checks_pending;
   guint check_round; /* reset_cancellable() starts a new one */
+  GActionGroup *window_actions; /* the root's, while rooted (not ref'd) */
 };
 
 enum { SIGNAL_STARTED, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-G_DEFINE_FINAL_TYPE(GhNewMessageDialog, gh_new_message_dialog, ADW_TYPE_DIALOG)
+G_DEFINE_FINAL_TYPE(GhNewMessagePage, gh_new_message_page, ADW_TYPE_NAVIGATION_PAGE)
 
 static const gchar *
-account_of(GhNewMessageDialog *self)
+account_of(GhNewMessagePage *self)
 {
   return gh_conversation_store_get_account(self->config.conversations);
 }
 
 static const gchar *
-name_of(GhNewMessageDialog *self, const gchar *pubkey)
+name_of(GhNewMessagePage *self, const gchar *pubkey)
 {
   const gchar *name = self->config.display_name
                         ? self->config.display_name(self->config.names_data, pubkey) : NULL;
@@ -466,7 +490,7 @@ name_of(GhNewMessageDialog *self, const gchar *pubkey)
 }
 
 static const gchar *
-claimed_nip05_of(GhNewMessageDialog *self, const gchar *pubkey)
+claimed_nip05_of(GhNewMessagePage *self, const gchar *pubkey)
 {
   const gchar *nip05 = self->config.claimed_nip05
                          ? self->config.claimed_nip05(self->config.names_data, pubkey) : NULL;
@@ -490,7 +514,7 @@ settings_string(GSettings *settings, const gchar *key, const gchar *fallback)
  * matching the schema default. The caller still falls back to NIP-17 when
  * the peer has no usable KeyPackage. */
 static gboolean
-default_dm_is_marmot(GhNewMessageDialog *self)
+default_dm_is_marmot(GhNewMessagePage *self)
 {
   g_autofree gchar *protocol = settings_string(self->config.settings,
                                                 "default-dm-protocol", "marmot");
@@ -500,7 +524,7 @@ default_dm_is_marmot(GhNewMessageDialog *self)
 /* The host names of the configured discovery relays, ", "-joined; NULL
  * when there are none. */
 static gchar *
-discovery_hosts(GhNewMessageDialog *self)
+discovery_hosts(GhNewMessagePage *self)
 {
   GSettings *settings = self->config.settings;
   if (!settings)
@@ -524,7 +548,7 @@ discovery_hosts(GhNewMessageDialog *self)
 }
 
 static gboolean
-is_recipient(GhNewMessageDialog *self, const gchar *pubkey)
+is_recipient(GhNewMessagePage *self, const gchar *pubkey)
 {
   guint n = g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
   for (guint i = 0; i < n; i++) {
@@ -536,13 +560,13 @@ is_recipient(GhNewMessageDialog *self, const gchar *pubkey)
 }
 
 static gboolean
-recipients_full(GhNewMessageDialog *self)
+recipients_full(GhNewMessagePage *self)
 {
   return g_list_model_get_n_items(G_LIST_MODEL(self->recipients)) >= GH_CONVERSATION_MAX_PEERS;
 }
 
 static void
-show_error(GhNewMessageDialog *self, const gchar *message)
+show_error(GhNewMessagePage *self, const gchar *message)
 {
   gtk_label_set_text(self->input_error, message ? message : "");
   gtk_widget_set_visible(GTK_WIDGET(self->input_error), message != NULL);
@@ -554,7 +578,7 @@ show_error(GhNewMessageDialog *self, const gchar *message)
 /* A person row: their cached name if any, else the short npub; the avatar
  * shows initials of a name only (never of an npub). */
 static GhNewMessageItem *
-person_item(GhNewMessageDialog *self, GhNewMessageItemKind kind, const gchar *pubkey,
+person_item(GhNewMessagePage *self, GhNewMessageItemKind kind, const gchar *pubkey,
             const gchar *label)
 {
   const gchar *name = name_of(self, pubkey);
@@ -564,6 +588,11 @@ person_item(GhNewMessageDialog *self, GhNewMessageItemKind kind, const gchar *pu
   item->pubkey = g_strdup(pubkey);
   item->avatar_text = g_strdup(name ? name : title);
   item->show_initials = name != NULL;
+  /* W32: a picture only with the contact's consent (the cache decides). */
+  if (self->config.picture)
+    item->picture = self->config.picture(self->config.picture_data, pubkey);
+  if (item->picture)
+    g_object_ref(item->picture);
   return item;
 }
 
@@ -571,7 +600,7 @@ person_item(GhNewMessageDialog *self, GhNewMessageItemKind kind, const gchar *pu
 
 /* The peers of accepted conversations, most recent first, each once. */
 static GPtrArray *
-contacts(GhNewMessageDialog *self)
+contacts(GhNewMessagePage *self)
 {
   GPtrArray *found = g_ptr_array_new_with_free_func(g_free);
   GListModel *rooms = G_LIST_MODEL(self->config.conversations);
@@ -589,7 +618,7 @@ contacts(GhNewMessageDialog *self)
 }
 
 static gboolean
-contact_matches(GhNewMessageDialog *self, const gchar *pubkey, const gchar *needle)
+contact_matches(GhNewMessagePage *self, const gchar *pubkey, const gchar *needle)
 {
   if (!needle || !*needle)
     return TRUE;
@@ -607,7 +636,7 @@ contact_matches(GhNewMessageDialog *self, const gchar *pubkey, const gchar *need
 }
 
 static void
-add_contact_rows(GhNewMessageDialog *self, GPtrArray *rows, const gchar *needle,
+add_contact_rows(GhNewMessagePage *self, GPtrArray *rows, const gchar *needle,
                  const gchar *exact_nip05)
 {
   g_autoptr(GPtrArray) people = contacts(self);
@@ -645,7 +674,7 @@ note_to_self_item(void)
 }
 
 static GhNewMessageItem *
-lookup_item(GhNewMessageDialog *self, const GhRecipientInput *input)
+lookup_item(GhNewMessagePage *self, const GhRecipientInput *input)
 {
   g_autofree gchar *title = g_strdup_printf(_("Look up %s"), input->nip05);
   GhNewMessageItem *item = item_new(GH_NEW_MESSAGE_ITEM_LOOKUP, title, NULL);
@@ -677,7 +706,7 @@ lookup_item(GhNewMessageDialog *self, const GhRecipientInput *input)
 }
 
 static void
-rebuild_suggestions(GhNewMessageDialog *self)
+rebuild_suggestions(GhNewMessagePage *self)
 {
   g_autoptr(GhRecipientInput) input =
     gh_recipient_input_parse(gtk_editable_get_text(GTK_EDITABLE(self->entry)));
@@ -734,7 +763,15 @@ rebuild_suggestions(GhNewMessageDialog *self)
   g_list_store_splice(self->suggestions, 0,
                       g_list_model_get_n_items(G_LIST_MODEL(self->suggestions)),
                       rows->pdata, rows->len);
-  gtk_widget_set_visible(GTK_WIDGET(self->results), rows->len > 0);
+  /* Like Signal's New chat: the actions while not searching, then the
+   * contacts; a search shows only what matches. */
+  const gboolean searching = input->kind != GH_RECIPIENT_INPUT_EMPTY;
+  const gboolean any_action = gtk_widget_get_visible(GTK_WIDGET(self->new_group_row)) ||
+                              gtk_widget_get_visible(GTK_WIDGET(self->join_group_row)) ||
+                              gtk_widget_get_visible(GTK_WIDGET(self->add_contact_row));
+  gtk_widget_set_visible(GTK_WIDGET(self->actions), !searching && any_action);
+  gtk_widget_set_visible(self->contacts_heading, !searching);
+  gtk_widget_set_visible(self->contacts_box, rows->len > 0);
   /* Never keep a secret key in the entry, or on screen (this rebuilds the
    * suggestions for the empty entry). */
   if (input->kind == GH_RECIPIENT_INPUT_SECRET)
@@ -742,18 +779,19 @@ rebuild_suggestions(GhNewMessageDialog *self)
 }
 
 static void
-update_recipients(GhNewMessageDialog *self)
+update_recipients(GhNewMessagePage *self)
 {
   guint n = g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
   gtk_widget_set_visible(GTK_WIDGET(self->chips), n > 0);
   gtk_widget_set_visible(GTK_WIDGET(self->limit_label), n >= GH_CONVERSATION_MAX_PEERS);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-message.next", n > 0);
+  gtk_widget_set_visible(self->next_button, n > 0);
   rebuild_suggestions(self);
 }
 
 /* FALSE when the limit or a duplicate refuses it. */
 static gboolean
-add_recipient(GhNewMessageDialog *self, const gchar *pubkey, const gchar *label)
+add_recipient(GhNewMessagePage *self, const gchar *pubkey, const gchar *label)
 {
   if (!gh_recipient_is_pubkey(pubkey) || g_strcmp0(pubkey, account_of(self)) == 0 ||
       is_recipient(self, pubkey))
@@ -779,17 +817,17 @@ add_recipient(GhNewMessageDialog *self, const gchar *pubkey, const gchar *label)
 
 /* Complete a conversation start: emit the signal and close. */
 static void
-finish_start(GhNewMessageDialog *self, GhConversation *room)
+finish_start(GhNewMessagePage *self, GhConversation *room)
 {
-  g_autoptr(GhNewMessageDialog) keep = g_object_ref(self);
+  g_autoptr(GhNewMessagePage) keep = g_object_ref(self);
   g_autoptr(GhConversation) started = g_object_ref(room);
   g_cancellable_cancel(self->cancellable);
   g_signal_emit(self, signals[SIGNAL_STARTED], 0, started);
-  adw_dialog_close(ADW_DIALOG(self));
+  gh_new_message_page_close(self);
 }
 
 static void
-start_nip17(GhNewMessageDialog *self, GStrv peers)
+start_nip17(GhNewMessagePage *self, GStrv peers)
 {
   g_autoptr(GError) error = NULL;
   GhConversation *room = gh_conversation_store_open_room(self->config.conversations,
@@ -809,7 +847,7 @@ static void
 marmot_dm_done(GObject *source, GAsyncResult *result, gpointer data)
 {
   (void)source;
-  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(data);
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(data);
   /* The conversation was created by the MLS service; the result is a
    * GhConversation for the new Marmot DM. On failure (no KeyPackage,
    * mixed profile, cancelled, etc.) fall back to NIP-17. */
@@ -851,7 +889,7 @@ marmot_dm_done(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-start(GhNewMessageDialog *self, gboolean note_to_self)
+start(GhNewMessagePage *self, gboolean note_to_self)
 {
   g_autoptr(GStrvBuilder) builder = g_strv_builder_new();
   guint n = note_to_self ? 0 : g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
@@ -881,13 +919,13 @@ start(GhNewMessageDialog *self, gboolean note_to_self)
 /* ---- NIP-05 lookup (consent row) -------------------------------------------- */
 
 typedef struct {
-  GhNewMessageDialog *self;
+  GhNewMessagePage *self;
   GhNewMessageItem *item;
   guint round; /* the check round it belongs to */
 } Pending;
 
 static Pending *
-pending_new(GhNewMessageDialog *self, GhNewMessageItem *item)
+pending_new(GhNewMessagePage *self, GhNewMessageItem *item)
 {
   Pending *pending = g_new0(Pending, 1);
   pending->self = g_object_ref(self);
@@ -929,7 +967,7 @@ on_looked_up(GObject *source, GAsyncResult *result, gpointer data)
     pending_free(pending);
     return;
   }
-  GhNewMessageDialog *self = pending->self;
+  GhNewMessagePage *self = pending->self;
   GhNewMessageItem *item = pending->item;
   item_set_busy(item, FALSE);
   if (!pubkey) {
@@ -945,7 +983,7 @@ on_looked_up(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-look_up(GhNewMessageDialog *self, GhNewMessageItem *item)
+look_up(GhNewMessagePage *self, GhNewMessageItem *item)
 {
   if (item->busy || !item->enabled || !self->config.nip05)
     return;
@@ -962,7 +1000,7 @@ look_up(GhNewMessageDialog *self, GhNewMessageItem *item)
 /* ---- the confirm page and the inbox check (consent row) ---------------------- */
 
 static void
-update_check_row(GhNewMessageDialog *self, gboolean done)
+update_check_row(GhNewMessagePage *self, gboolean done)
 {
   g_autofree gchar *hosts = discovery_hosts(self);
   g_autofree gchar *subtitle = NULL;
@@ -1006,7 +1044,7 @@ on_checked(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) error = NULL;
   g_autoptr(GhInboxResult) inbox =
     gh_inbox_resolver_resolve_finish(GH_INBOX_RESOLVER(source), result, &error);
-  GhNewMessageDialog *self = pending->self;
+  GhNewMessagePage *self = pending->self;
   GhNewMessageItem *item = pending->item;
   /* A cancelled round's late answer counts for nothing: the count is the
    * current round's (reset_cancellable() zeroed it for the next one). */
@@ -1026,7 +1064,7 @@ on_checked(GObject *source, GAsyncResult *result, gpointer data)
 }
 
 static void
-on_check_activated(GhNewMessageDialog *self)
+on_check_activated(GhNewMessagePage *self)
 {
   if (!self->config.inboxes || self->checks_pending)
     return;
@@ -1049,7 +1087,7 @@ on_check_activated(GhNewMessageDialog *self)
 }
 
 static void
-reset_cancellable(GhNewMessageDialog *self)
+reset_cancellable(GhNewMessagePage *self)
 {
   g_cancellable_cancel(self->cancellable);
   g_clear_object(&self->cancellable);
@@ -1061,7 +1099,7 @@ reset_cancellable(GhNewMessageDialog *self)
 static void
 on_next(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
-  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(widget);
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(widget);
   (void)action;
   (void)parameter;
   guint n = g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
@@ -1112,13 +1150,13 @@ on_start(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
   (void)parameter;
-  start(GH_NEW_MESSAGE_DIALOG(widget), FALSE);
+  start(GH_NEW_MESSAGE_PAGE(widget), FALSE);
 }
 
 static void
 on_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
-  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(widget);
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(widget);
   (void)action;
   const gchar *pubkey = g_variant_get_string(parameter, NULL);
   guint n = g_list_model_get_n_items(G_LIST_MODEL(self->recipients));
@@ -1138,7 +1176,7 @@ on_remove(GtkWidget *widget, const gchar *action, GVariant *parameter)
 
 /* What choosing a row does. Only the LOOKUP row contacts anything. */
 static void
-activate_item(GhNewMessageDialog *self, GhNewMessageItem *item)
+activate_item(GhNewMessagePage *self, GhNewMessageItem *item)
 {
   if (!item->enabled)
     return;
@@ -1160,7 +1198,7 @@ activate_item(GhNewMessageDialog *self, GhNewMessageItem *item)
 }
 
 static void
-on_row_activated(GhNewMessageDialog *self, GtkListBoxRow *row)
+on_row_activated(GhNewMessagePage *self, GtkListBoxRow *row)
 {
   gint index = gtk_list_box_row_get_index(row);
   if (index < 0)
@@ -1173,46 +1211,234 @@ on_row_activated(GhNewMessageDialog *self, GtkListBoxRow *row)
 
 /* Enter adds an exact or a local match; it never looks anything up. */
 static void
-on_entry_activate(GhNewMessageDialog *self)
+on_entry_activate(GhNewMessagePage *self)
 {
-  if (!*gtk_editable_get_text(GTK_EDITABLE(self->entry)))
+  if (!*gtk_editable_get_text(GTK_EDITABLE(self->entry))) {
+    /* With people chosen, Enter goes on to the confirm page. */
+    if (g_list_model_get_n_items(G_LIST_MODEL(self->recipients)))
+      gtk_widget_activate_action(GTK_WIDGET(self), "new-message.next", NULL);
     return;
+  }
   g_autoptr(GhNewMessageItem) first = g_list_model_get_item(G_LIST_MODEL(self->suggestions), 0);
   if (first && (first->kind == GH_NEW_MESSAGE_ITEM_PUBKEY ||
                 first->kind == GH_NEW_MESSAGE_ITEM_CONTACT))
     activate_item(self, first);
 }
 
-GListModel *
-gh_new_message_dialog_get_suggestions(GhNewMessageDialog *self)
+/* ---- the panel: back, Escape and the actions ------------------------------- */
+
+/* The navigation view the panel was pushed onto (the sidebar's), or NULL. */
+static AdwNavigationView *
+outer_navigation(GhNewMessagePage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_MESSAGE_DIALOG(self), NULL);
+  GtkWidget *parent = gtk_widget_get_parent(GTK_WIDGET(self));
+  return parent ? ADW_NAVIGATION_VIEW(gtk_widget_get_ancestor(parent, ADW_TYPE_NAVIGATION_VIEW))
+                : NULL;
+}
+
+void
+gh_new_message_page_close(GhNewMessagePage *self)
+{
+  g_return_if_fail(GH_IS_NEW_MESSAGE_PAGE(self));
+  g_cancellable_cancel(self->cancellable);
+  AdwNavigationView *outer = outer_navigation(self);
+  if (!outer)
+    return;
+  /* Whatever is pushed over the panel goes with it. */
+  AdwNavigationPage *previous = adw_navigation_view_get_previous_page(outer,
+                                                                      ADW_NAVIGATION_PAGE(self));
+  if (previous)
+    adw_navigation_view_pop_to_page(outer, previous);
+}
+
+/* Back: from the confirm page to "pick", else out of the panel. */
+static void
+go_back(GhNewMessagePage *self)
+{
+  AdwNavigationPage *visible = adw_navigation_view_get_visible_page(self->navigation);
+  if (visible == self->confirm_page)
+    adw_navigation_view_pop(self->navigation);
+  else
+    gh_new_message_page_close(self);
+}
+
+static void
+on_close(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  gh_new_message_page_close(GH_NEW_MESSAGE_PAGE(widget));
+}
+
+static gboolean
+on_escape(GtkWidget *widget, GVariant *args, gpointer data)
+{
+  (void)args;
+  (void)data;
+  go_back(GH_NEW_MESSAGE_PAGE(widget));
+  return TRUE;
+}
+
+/* The window action each action row runs (the same dialogs the main menu
+ * opened before); a row shows only while its action exists. */
+static const struct {
+  const gchar *action;
+  gsize row_offset;
+} action_rows[] = {
+  { "new-group", G_STRUCT_OFFSET(GhNewMessagePage, new_group_row) },
+  { "join-group", G_STRUCT_OFFSET(GhNewMessagePage, join_group_row) },
+  { "add-contact", G_STRUCT_OFFSET(GhNewMessagePage, add_contact_row) },
+};
+
+static GtkWidget *
+action_row(GhNewMessagePage *self, guint i)
+{
+  return GTK_WIDGET(G_STRUCT_MEMBER(AdwActionRow *, self, action_rows[i].row_offset));
+}
+
+static void
+sync_action_rows(GhNewMessagePage *self)
+{
+  gboolean any = FALSE;
+  for (guint i = 0; i < G_N_ELEMENTS(action_rows); i++) {
+    GActionGroup *group = self->window_actions;
+    gboolean has = group && g_action_group_has_action(group, action_rows[i].action);
+    gtk_widget_set_visible(action_row(self, i), has);
+    gtk_widget_set_sensitive(action_row(self, i),
+                             has && g_action_group_get_action_enabled(group,
+                                                                       action_rows[i].action));
+    any |= has;
+  }
+  /* Nothing to offer: no empty boxed list. */
+  gtk_widget_set_visible(GTK_WIDGET(self->actions),
+                         any && !*gtk_editable_get_text(GTK_EDITABLE(self->entry)));
+}
+
+static void
+on_window_action_changed(GhNewMessagePage *self)
+{
+  sync_action_rows(self);
+}
+
+/* Leaves the panel, then runs the action on the window: what it opens (a
+ * dialog, then the new conversation) shows over the conversation list. */
+static void
+on_action_row_activated(GhNewMessagePage *self, AdwActionRow *row)
+{
+  for (guint i = 0; i < G_N_ELEMENTS(action_rows); i++) {
+    if (action_row(self, i) != GTK_WIDGET(row) || !self->window_actions)
+      continue;
+    g_autoptr(GObject) keep = g_object_ref(G_OBJECT(self->window_actions));
+    GActionGroup *group = G_ACTION_GROUP(keep);
+    const gchar *action = action_rows[i].action;
+    gh_new_message_page_close(self);
+    if (g_action_group_get_action_enabled(group, action))
+      g_action_group_activate_action(group, action, NULL);
+    return;
+  }
+}
+
+static void
+gh_new_message_page_root(GtkWidget *widget)
+{
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(widget);
+  GTK_WIDGET_CLASS(gh_new_message_page_parent_class)->root(widget);
+  GtkRoot *root = gtk_widget_get_root(widget);
+  self->window_actions = G_IS_ACTION_GROUP(root) ? G_ACTION_GROUP(root) : NULL;
+  if (self->window_actions) {
+    static const gchar *const changes[] = { "action-added", "action-removed",
+                                            "action-enabled-changed" };
+    for (guint i = 0; i < G_N_ELEMENTS(changes); i++)
+      g_signal_connect_object(self->window_actions, changes[i],
+                              G_CALLBACK(on_window_action_changed), self, G_CONNECT_SWAPPED);
+  }
+  sync_action_rows(self);
+}
+
+/* Taken out of the window (Back, Escape, started, or the window closed):
+ * nothing asked for continues. */
+static void
+gh_new_message_page_unroot(GtkWidget *widget)
+{
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(widget);
+  if (self->window_actions)
+    g_signal_handlers_disconnect_by_data(self->window_actions, self);
+  self->window_actions = NULL;
+  if (self->cancellable)
+    g_cancellable_cancel(self->cancellable);
+  GTK_WIDGET_CLASS(gh_new_message_page_parent_class)->unroot(widget);
+}
+
+void
+gh_new_message_page_focus_entry(GhNewMessagePage *self)
+{
+  g_return_if_fail(GH_IS_NEW_MESSAGE_PAGE(self));
+  if (adw_navigation_view_get_visible_page(self->navigation) != self->confirm_page)
+    gtk_widget_grab_focus(GTK_WIDGET(self->entry));
+}
+
+static void
+gh_new_message_page_shown(AdwNavigationPage *page)
+{
+  gh_new_message_page_focus_entry(GH_NEW_MESSAGE_PAGE(page));
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_new_message_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_new_message_page_parent_class)->shown(page);
+}
+
+gboolean
+gh_new_message_page_add_recipient(GhNewMessagePage *self, const gchar *pubkey)
+{
+  g_return_val_if_fail(GH_IS_NEW_MESSAGE_PAGE(self), FALSE);
+  return add_recipient(self, pubkey, NULL);
+}
+
+void
+gh_new_message_page_update_picture(GhNewMessagePage *self, const gchar *pubkey)
+{
+  g_return_if_fail(GH_IS_NEW_MESSAGE_PAGE(self));
+  if (!self->config.picture || !pubkey)
+    return;
+  GListStore *stores[] = { self->suggestions, self->recipients, self->people_items };
+  for (guint s = 0; s < G_N_ELEMENTS(stores); s++) {
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(stores[s]));
+    for (guint i = 0; i < n; i++) {
+      g_autoptr(GhNewMessageItem) item = g_list_model_get_item(G_LIST_MODEL(stores[s]), i);
+      if (g_strcmp0(item->pubkey, pubkey) == 0)
+        item_set_picture(item, self->config.picture(self->config.picture_data, pubkey));
+    }
+  }
+}
+
+GListModel *
+gh_new_message_page_get_suggestions(GhNewMessagePage *self)
+{
+  g_return_val_if_fail(GH_IS_NEW_MESSAGE_PAGE(self), NULL);
   return G_LIST_MODEL(self->suggestions);
 }
 
 GListModel *
-gh_new_message_dialog_get_recipients(GhNewMessageDialog *self)
+gh_new_message_page_get_recipients(GhNewMessagePage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_MESSAGE_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_NEW_MESSAGE_PAGE(self), NULL);
   return G_LIST_MODEL(self->recipients);
 }
 
 GListModel *
-gh_new_message_dialog_get_people(GhNewMessageDialog *self)
+gh_new_message_page_get_people(GhNewMessagePage *self)
 {
-  g_return_val_if_fail(GH_IS_NEW_MESSAGE_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_NEW_MESSAGE_PAGE(self), NULL);
   return G_LIST_MODEL(self->people_items);
 }
 
-GhNewMessageDialog *
-gh_new_message_dialog_new(const GhNewMessageConfig *config)
+GhNewMessagePage *
+gh_new_message_page_new(const GhNewMessageConfig *config)
 {
   g_return_val_if_fail(config != NULL, NULL);
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(config->conversations), NULL);
   g_return_val_if_fail(!config->inboxes || GH_IS_INBOX_RESOLVER(config->inboxes), NULL);
   g_return_val_if_fail(!config->nip05 || GH_IS_NIP05(config->nip05), NULL);
   g_return_val_if_fail(!config->settings || G_IS_SETTINGS(config->settings), NULL);
-  GhNewMessageDialog *self = g_object_new(GH_TYPE_NEW_MESSAGE_DIALOG, NULL);
+  GhNewMessagePage *self = g_object_new(GH_TYPE_NEW_MESSAGE_PAGE, NULL);
   self->config = *config;
   g_object_ref(config->conversations);
   if (config->inboxes)
@@ -1232,19 +1458,9 @@ gh_new_message_dialog_new(const GhNewMessageConfig *config)
 }
 
 static void
-gh_new_message_dialog_closed(AdwDialog *dialog)
+gh_new_message_page_dispose(GObject *object)
 {
-  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(dialog);
-  /* Nothing asked for continues once the dialog is gone. */
-  g_cancellable_cancel(self->cancellable);
-  if (ADW_DIALOG_CLASS(gh_new_message_dialog_parent_class)->closed)
-    ADW_DIALOG_CLASS(gh_new_message_dialog_parent_class)->closed(dialog);
-}
-
-static void
-gh_new_message_dialog_dispose(GObject *object)
-{
-  GhNewMessageDialog *self = GH_NEW_MESSAGE_DIALOG(object);
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(object);
   if (self->cancellable)
     g_cancellable_cancel(self->cancellable);
   if (self->results) {
@@ -1252,9 +1468,9 @@ gh_new_message_dialog_dispose(GObject *object)
     gtk_list_box_bind_model(self->people, NULL, NULL, NULL, NULL);
     gtk_flow_box_bind_model(self->chips, NULL, NULL, NULL, NULL);
   }
-  /* navigation is both the dialog's child and a bound template child. */
-  adw_dialog_set_child(ADW_DIALOG(self), NULL);
-  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_NEW_MESSAGE_DIALOG);
+  /* navigation is both the page's child and a bound template child. */
+  adw_navigation_page_set_child(ADW_NAVIGATION_PAGE(self), NULL);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_NEW_MESSAGE_PAGE);
   g_clear_object(&self->config.conversations);
   g_clear_object(&self->config.inboxes);
   g_clear_object(&self->config.nip05);
@@ -1263,40 +1479,54 @@ gh_new_message_dialog_dispose(GObject *object)
   g_clear_object(&self->recipients);
   g_clear_object(&self->people_items);
   g_clear_object(&self->cancellable);
-  G_OBJECT_CLASS(gh_new_message_dialog_parent_class)->dispose(object);
+  G_OBJECT_CLASS(gh_new_message_page_parent_class)->dispose(object);
 }
 
 static void
-gh_new_message_dialog_class_init(GhNewMessageDialogClass *klass)
+gh_new_message_page_class_init(GhNewMessagePageClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  object_class->dispose = gh_new_message_dialog_dispose;
-  ADW_DIALOG_CLASS(klass)->closed = gh_new_message_dialog_closed;
+  object_class->dispose = gh_new_message_page_dispose;
+  widget_class->root = gh_new_message_page_root;
+  widget_class->unroot = gh_new_message_page_unroot;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_new_message_page_shown;
   signals[SIGNAL_STARTED] =
     g_signal_new("conversation-started", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
                  NULL, NULL, G_TYPE_NONE, 1, GH_TYPE_CONVERSATION);
   g_type_ensure(GH_TYPE_NEW_MESSAGE_ITEM);
   gtk_widget_class_set_template_from_resource(widget_class,
-                                              "/org/nostr/Groundhog/ui/gh-new-message-dialog.ui");
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, navigation);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, confirm_page);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, entry);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, chips);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, limit_label);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, input_error);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, results);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, people);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, check_row);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, check_spinner);
-  gtk_widget_class_bind_template_child(widget_class, GhNewMessageDialog, start_note);
+                                              "/org/nostr/Groundhog/ui/gh-new-message-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, navigation);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, confirm_page);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, entry);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, next_button);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, chips);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, limit_label);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, input_error);
+  /* Bound so tests and assistive checks can reach it by name. */
+  gtk_widget_class_bind_template_child_full(widget_class, "back_button", FALSE, 0);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, actions);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, new_group_row);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, join_group_row);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, add_contact_row);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, contacts_box);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, contacts_heading);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, results);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, people);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, check_row);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, check_spinner);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, start_note);
   gtk_widget_class_install_action(widget_class, "new-message.next", NULL, on_next);
   gtk_widget_class_install_action(widget_class, "new-message.start", NULL, on_start);
   gtk_widget_class_install_action(widget_class, "new-message.remove", "s", on_remove);
+  gtk_widget_class_install_action(widget_class, "new-message.close", NULL, on_close);
+  /* Escape goes back (a focused search entry turns it into stop-search). */
+  gtk_widget_class_add_binding(widget_class, GDK_KEY_Escape, 0, on_escape, NULL);
 }
 
 static void
-gh_new_message_dialog_init(GhNewMessageDialog *self)
+gh_new_message_page_init(GhNewMessagePage *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->suggestions = g_list_store_new(GH_TYPE_NEW_MESSAGE_ITEM);
@@ -1316,6 +1546,11 @@ gh_new_message_dialog_init(GhNewMessageDialog *self)
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(self->check_row, "activated", G_CALLBACK(on_check_activated), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(self->entry, "stop-search", G_CALLBACK(go_back), self,
+                          G_CONNECT_SWAPPED);
+  for (guint i = 0; i < G_N_ELEMENTS(action_rows); i++)
+    g_signal_connect_object(action_row(self, i), "activated",
+                            G_CALLBACK(on_action_row_activated), self, G_CONNECT_SWAPPED);
   gtk_widget_action_set_enabled(GTK_WIDGET(self), "new-message.next", FALSE);
 }
 
@@ -1324,8 +1559,10 @@ gh_new_message_dialog_init(GhNewMessageDialog *self)
 typedef struct {
   GhNewMessageConfig config;
   GhWindow *window;        /* the attachment is the window's data */
-  GWeakRef started;        /* the conversation the open dialog started */
+  GWeakRef started;        /* the conversation the open panel started */
   guint focus_idle;
+  AdwNavigationView *navigation; /* the sidebar's (weak) */
+  gulong popped_id;
 } Attachment;
 
 static void
@@ -1333,6 +1570,11 @@ attachment_free(gpointer data)
 {
   Attachment *attachment = data;
   g_clear_handle_id(&attachment->focus_idle, g_source_remove);
+  if (attachment->navigation) {
+    g_clear_signal_handler(&attachment->popped_id, attachment->navigation);
+    g_object_remove_weak_pointer(G_OBJECT(attachment->navigation),
+                                 (gpointer *)&attachment->navigation);
+  }
   g_weak_ref_clear(&attachment->started);
   g_clear_object(&attachment->config.conversations);
   g_clear_object(&attachment->config.inboxes);
@@ -1357,32 +1599,78 @@ focus_started(gpointer data)
 }
 
 static void
-on_started(GhNewMessageDialog *dialog, GhConversation *conversation, Attachment *attachment)
+on_started(GhNewMessagePage *page, GhConversation *conversation, Attachment *attachment)
 {
-  (void)dialog;
+  (void)page;
   if (gh_window_open_item(attachment->window, conversation))
     g_weak_ref_set(&attachment->started, conversation);
 }
 
-/* After the dialog handed focus back to where it was (AdwDialog does that
- * as it closes), move it into the started conversation. */
+/* After the panel slid away (focus left with it), move focus into the
+ * started conversation. */
 static void
-on_closed(GhNewMessageDialog *dialog, Attachment *attachment)
+on_popped(AdwNavigationView *navigation, AdwNavigationPage *page, Attachment *attachment)
 {
-  (void)dialog;
+  (void)navigation;
+  if (!GH_IS_NEW_MESSAGE_PAGE(page))
+    return;
   g_autoptr(GhConversation) started = g_weak_ref_get(&attachment->started);
   if (started && !attachment->focus_idle)
     attachment->focus_idle = g_idle_add(focus_started, attachment);
 }
 
+/* The consented picture the conversation list's cache has (W32). */
+static GdkPaintable *
+window_picture(gpointer data, const gchar *pubkey)
+{
+  GdkTexture *texture = gh_conversation_list_get_picture(GH_WINDOW(data), pubkey);
+  return texture ? GDK_PAINTABLE(texture) : NULL;
+}
+
+/* Slides the sidebar to a new New Message panel, with recipient (hex,
+ * nullable) chosen; the list leaves the screen in the collapsed layout too. */
+static GhNewMessagePage *
+open_panel(Attachment *attachment, const GhNewMessageConfig *config, const gchar *recipient)
+{
+  GhWindow *window = attachment->window;
+  GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+  AdwNavigationSplitView *split = gh_window_get_split(window);
+  if (adw_navigation_split_view_get_collapsed(split))
+    adw_navigation_split_view_set_show_content(split, FALSE);
+  GhNewMessageConfig with_pictures = *config;
+  if (!with_pictures.picture) {
+    with_pictures.picture = window_picture;
+    with_pictures.picture_data = window;
+  }
+  GhNewMessagePage *page = gh_new_message_page_new(&with_pictures);
+  if (recipient)
+    gh_new_message_page_add_recipient(page, recipient);
+  g_signal_connect(page, "conversation-started", G_CALLBACK(on_started), attachment);
+  GhPictureCache *pictures = gh_conversation_list_get_picture_cache(window);
+  if (pictures)
+    g_signal_connect_object(pictures, "picture-changed",
+                            G_CALLBACK(gh_new_message_page_update_picture), page,
+                            G_CONNECT_SWAPPED);
+  gh_sidebar_page_push_panel(sidebar, ADW_NAVIGATION_PAGE(page));
+  gh_new_message_page_focus_entry(page);
+  return page;
+}
+
 static void
-present_dialog(GhWindow *window, gpointer data)
+present_panel(GhWindow *window, gpointer data)
 {
   Attachment *attachment = data;
-  GhNewMessageDialog *dialog = gh_new_message_dialog_new(&attachment->config);
-  g_signal_connect(dialog, "conversation-started", G_CALLBACK(on_started), attachment);
-  g_signal_connect_after(dialog, "closed", G_CALLBACK(on_closed), attachment);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
+  GhSidebarPage *sidebar = gh_window_get_sidebar(window);
+  AdwNavigationPage *panel = gh_sidebar_page_get_panel(sidebar);
+  /* Already open: bring it to the screen and its entry. */
+  if (GH_IS_NEW_MESSAGE_PAGE(panel)) {
+    AdwNavigationSplitView *split = gh_window_get_split(window);
+    if (adw_navigation_split_view_get_collapsed(split))
+      adw_navigation_split_view_set_show_content(split, FALSE);
+    gh_new_message_page_focus_entry(GH_NEW_MESSAGE_PAGE(panel));
+    return;
+  }
+  open_panel(attachment, &attachment->config, NULL);
 }
 
 static void
@@ -1411,19 +1699,18 @@ open_uri(GSimpleAction *action, GVariant *parameter, gpointer data)
   /* A nostr: person link explicitly starts NIP-17, regardless of the user's
    * preferred protocol. No KeyPackage lookup or contact acceptance on open. */
   config.create_marmot_dm = NULL;
-  GhNewMessageDialog *dialog = gh_new_message_dialog_new(&config);
-  add_recipient(dialog, input->pubkey, NULL);
-  g_signal_connect(dialog, "conversation-started", G_CALLBACK(on_started), attachment);
-  g_signal_connect_after(dialog, "closed", G_CALLBACK(on_closed), attachment);
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(attachment->window));
+  open_panel(attachment, &config, input->pubkey);
 }
 
 static void
 sync_enabled(GhWindow *window, GParamSpec *pspec, GhConversationStore *conversations)
 {
   (void)pspec;
-  gh_window_set_new_message_enabled(window,
-                                    gh_conversation_store_get_account(conversations) != NULL);
+  gboolean enabled = gh_conversation_store_get_account(conversations) != NULL;
+  gh_window_set_new_message_enabled(window, enabled);
+  /* A panel opened for the account that left goes with it. */
+  if (!enabled && GH_IS_NEW_MESSAGE_PAGE(gh_sidebar_page_get_panel(gh_window_get_sidebar(window))))
+    gh_sidebar_page_close_panel(gh_window_get_sidebar(window));
 }
 
 void
@@ -1442,10 +1729,14 @@ gh_new_message_attach(GhWindow *window, const GhNewMessageConfig *config)
     g_object_ref(config->nip05);
   if (config->settings)
     g_object_ref(config->settings);
-  gh_window_set_new_message_handler(window, present_dialog, attachment, attachment_free);
+  gh_window_set_new_message_handler(window, present_panel, attachment, attachment_free);
   g_signal_connect_object(config->conversations, "notify::account", G_CALLBACK(sync_enabled),
                           window, G_CONNECT_SWAPPED);
   sync_enabled(window, NULL, config->conversations);
+  attachment->navigation = gh_sidebar_page_get_navigation(gh_window_get_sidebar(window));
+  g_object_add_weak_pointer(G_OBJECT(attachment->navigation), (gpointer *)&attachment->navigation);
+  attachment->popped_id = g_signal_connect(attachment->navigation, "popped",
+                                           G_CALLBACK(on_popped), attachment);
   g_autoptr(GSimpleAction) uri_action = g_simple_action_new("message-uri", G_VARIANT_TYPE_STRING);
   g_signal_connect(uri_action, "activate", G_CALLBACK(open_uri), attachment);
   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(uri_action));

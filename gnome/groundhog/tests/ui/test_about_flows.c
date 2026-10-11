@@ -1,5 +1,5 @@
 #include "gh-about-dialog.h"
-#include "gh-new-message-dialog.h"
+#include "gh-new-message-page.h"
 #include "gh-issue-adapters.h"
 #include <nostr-gtk-1.0/gn-nip34-issue-fields.h>
 #include "gh-diagnostics.h"
@@ -81,9 +81,10 @@ message_uri(const char *uri, const char *expected, gboolean via_application)
     g_signal_emit_by_name(about, "activate-link", uri, &handled);
     g_assert_true(handled);
   }
-  AdwDialog *dialog = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
-  g_assert_true(GH_IS_NEW_MESSAGE_DIALOG(dialog));
-  GListModel *recipients = gh_new_message_dialog_get_recipients(GH_NEW_MESSAGE_DIALOG(dialog));
+  /* The link slid the sidebar to New Message with its person chosen. */
+  AdwNavigationPage *dialog = gh_sidebar_page_get_panel(gh_window_get_sidebar(window));
+  g_assert_true(GH_IS_NEW_MESSAGE_PAGE(dialog));
+  GListModel *recipients = gh_new_message_page_get_recipients(GH_NEW_MESSAGE_PAGE(dialog));
   g_assert_cmpuint(g_list_model_get_n_items(recipients), ==, 1);
   g_autoptr(GhNewMessageItem) item = g_list_model_get_item(recipients, 0);
   g_assert_cmpstr(gh_new_message_item_get_pubkey(item), ==, expected);

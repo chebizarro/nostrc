@@ -1,22 +1,26 @@
 using Gtk 4.0;
 using Adw 1;
 
-// New Message (charter §7.9, §2 PD-2, §8.2 G18): an Adw.Dialog (a bottom
-// sheet at the 360x294 minimum) with two pages. "pick": the search entry
-// matches the people you already talk to (local only); a pasted npub,
-// nprofile or nostr: address gives an exact row, checked offline; a
-// name@domain address gives a consent row that names the host it would
-// contact, and nothing is looked up until that row is chosen. Chosen people
-// are chips (up to 10). "confirm": each person's npub in groups of four and
-// whether they can receive private messages, which is checked only when the
-// consent row that names the discovery relays is chosen. Rows are
-// gh-new-message-row.blp, chips gh-recipient-chip.blp; gh-new-message-dialog.c
-// fills them and runs the "new-message.*" actions.
-template $GhNewMessageDialog: Adw.Dialog {
+// New Message (charter §7.9, §2 PD-2, §8.2 G18): a panel the sidebar slides
+// to (gh_sidebar_page_push_panel(), like Signal's "New chat"), so it works
+// in the split and the collapsed layouts alike. Its own navigation view has
+// two pages. "pick": the back button and the search entry (focused on
+// open), the actions that start something else (New Group, Join Group, Add
+// Contact: the window's win.* actions, each row shown only while its action
+// exists), then Contacts. The entry matches the people you already talk to
+// (local only); a pasted npub, nprofile or nostr: address gives an exact
+// row, checked offline; a name@domain address gives a consent row that names
+// the host it would contact, and nothing is looked up until that row is
+// chosen. Chosen people are chips (up to 10). "confirm": each person's npub
+// in groups of four and whether they can receive private messages, which is
+// checked only when the consent row that names the discovery relays is
+// chosen. Rows are gh-new-message-row.blp, chips gh-recipient-chip.blp;
+// gh-new-message-page.c fills them and runs the "new-message.*" actions.
+// Escape or Back returns to the conversation list (from "confirm", to
+// "pick").
+template $GhNewMessagePage: Adw.NavigationPage {
+  tag: "new-message";
   title: _("New Message");
-  content-width: 420;
-  content-height: 520;
-  focus-widget: entry;
 
   child: Adw.NavigationView navigation {
     Adw.NavigationPage pick_page {
@@ -26,8 +30,25 @@ template $GhNewMessageDialog: Adw.Dialog {
       child: Adw.ToolbarView {
         [top]
         Adw.HeaderBar {
+          // The panel's own back button: "pick" is the root of this view,
+          // and Back leaves the panel (the sidebar's view).
+          show-back-button: false;
+
+          [start]
+          Button back_button {
+            icon-name: "go-previous-symbolic";
+            tooltip-text: _("Back to Conversations");
+            action-name: "new-message.close";
+
+            accessibility {
+              label: _("Back to Conversations");
+            }
+          }
+
           [end]
+          // Shown once someone is chosen (gh-new-message-page.c).
           Button next_button {
+            visible: false;
             label: _("_Next");
             use-underline: true;
             action-name: "new-message.next";
@@ -46,8 +67,8 @@ template $GhNewMessageDialog: Adw.Dialog {
           child: SearchEntry entry {
             placeholder-text: _("Name, npub or nostr: address");
             hexpand: true;
-            margin-start: 12;
-            margin-end: 12;
+            margin-start: 6;
+            margin-end: 6;
             margin-bottom: 6;
 
             accessibility {
@@ -109,15 +130,93 @@ template $GhNewMessageDialog: Adw.Dialog {
                 ]
               }
 
-              ListBox results {
+              // Hidden while searching, and each row while its action is
+              // missing (gh-new-message-page.c).
+              ListBox actions {
                 selection-mode: none;
 
                 styles [
                   "boxed-list",
+                  "groundhog-new-message-actions",
                 ]
 
                 accessibility {
-                  label: _("Suggestions");
+                  label: _("Start Something Else");
+                }
+
+                Adw.ActionRow new_group_row {
+                  activatable: true;
+                  title: _("New Group");
+
+                  [prefix]
+                  Image {
+                    icon-name: "system-users-symbolic";
+                    valign: center;
+                    accessible-role: presentation;
+
+                    styles [
+                      "groundhog-new-message-icon",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow join_group_row {
+                  activatable: true;
+                  title: _("Join Group");
+
+                  [prefix]
+                  Image {
+                    icon-name: "network-workgroup-symbolic";
+                    valign: center;
+                    accessible-role: presentation;
+
+                    styles [
+                      "groundhog-new-message-icon",
+                    ]
+                  }
+                }
+
+                Adw.ActionRow add_contact_row {
+                  activatable: true;
+                  title: _("Add Contact");
+
+                  [prefix]
+                  Image {
+                    icon-name: "contact-new-symbolic";
+                    valign: center;
+                    accessible-role: presentation;
+
+                    styles [
+                      "groundhog-new-message-icon",
+                    ]
+                  }
+                }
+              }
+
+              Box contacts_box {
+                orientation: vertical;
+                spacing: 6;
+
+                Label contacts_heading {
+                  label: _("Contacts");
+                  xalign: 0;
+                  accessible-role: presentation;
+
+                  styles [
+                    "heading",
+                  ]
+                }
+
+                ListBox results {
+                  selection-mode: none;
+
+                  styles [
+                    "boxed-list",
+                  ]
+
+                  accessibility {
+                    label: _("Contacts");
+                  }
                 }
               }
 
