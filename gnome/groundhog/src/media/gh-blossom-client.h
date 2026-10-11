@@ -12,7 +12,8 @@ G_BEGIN_DECLS
  * Tor (a fresh circuit per request: charter §4.3 "Media ... random per
  * fetch"), the https-only rule (http only to .onion in Tor mode, or to a
  * loopback test server), no redirects, cookies, cache or TLS resumption all
- * hold. Only ciphertext ever passes through here.
+ * hold. Only ciphertext passes through here, except a file the user chose
+ * to publish with a public issue (gh_blossom_client_upload_public_async()).
  *
  * Servers (D6). The blossom-servers setting, empty by default: with no
  * server, an upload fails with GH_BLOSSOM_ERROR_NO_SERVER before anything is
@@ -157,6 +158,19 @@ void gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *co
                                           const guint8 upload_key[32],
                                           GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data);
+
+/* As upload_on_servers_async(), for a file that is meant to be public (a
+ * NIP-34 issue attachment; gh-issue-uploader.h): bytes are sent as they are,
+ * not encrypted. The servers get the public rule of upload_keyed_async():
+ * only those with a public host are contacted, over a public-only
+ * connection; with none left, GH_BLOSSOM_ERROR_NO_SERVER before any
+ * request. Authorization as for upload_async() (a throwaway key, the
+ * account only for a server it consented to). Finishes with
+ * gh_blossom_client_upload_finish(). */
+void gh_blossom_client_upload_public_async(GhBlossomClient *self, const gchar *const *servers,
+                                           GBytes *bytes, const gchar *sha256_hex,
+                                           GCancellable *cancellable,
+                                           GAsyncReadyCallback callback, gpointer user_data);
 
 /* The servers of a list someone else named that this client may contact:
  * http(s) URLs whose host is public (as for downloads; any host with

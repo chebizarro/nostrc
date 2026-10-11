@@ -38,9 +38,22 @@ Where this charter tightens the plan, the tightening is called out and the plan 
   same nostrc repository announcement as gnostr (`30617`, owner Biz, `d=nostrc`)
   using the same libnip34 issue builder. No diagnostics are collected by default;
   local sanitized aggregates can be enabled in Preferences. An issue includes
-  them only after an explicit preview and Publish. Groundhog never uploads logs
-  or attachments; attachment URLs, if supplied, are manual text references.
-  It never adds conversation data automatically.
+  them only after an explicit preview and Publish. Attachment URLs may be
+  supplied as manual text references. It never adds conversation data
+  automatically.
+  *(Amended 2026-10-10, owner decision, nostrc-8xfib.5.)* Files the user
+  attaches are uploaded only by `GhIssueUploader` (`src/net/gh-issue-uploader.c`,
+  the only uploader the `issue-services` privacy rule allows), and only to the
+  account's own attachment servers (`blossom-servers`, empty by default; no
+  built-in server is substituted, and without one the form says that files
+  cannot be attached). Only servers with a public host are used, over a
+  public-only connection, through `GhBlossomClient`/`GhNetHttp` (network mode,
+  Tor, no redirects). Nothing is selected by default; before any request a
+  consent dialog names the server(s) and every file, and says the files become
+  public. JPEG/PNG metadata is stripped (D6), the 25 MiB cap applies, the bytes
+  are not encrypted (the issue is public), and the upload authorization is a
+  throwaway key unless the account consented to that server. The resulting
+  addresses are then shown in the review before Publish.
 - The editable relay list starts with the user's discovery settings (empty
   when unconfigured). There is no implicit repository lookup or hidden relay
   fallback. Review shows the exact title/body, normalized relays, account

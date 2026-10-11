@@ -5,6 +5,9 @@
 #include "gh-inbox-setup.h"
 #include "gh-relay-publish.h"
 #include <glib/gi18n.h>
+#if GH_ISSUE_UPLOADS
+#include "gh-issue-uploader.h"
+#endif
 
 /* gnostr targets this same kind-30617 announcement. */
 #define REPO_OWNER "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400"
@@ -250,15 +253,23 @@ account_changed(GhAccountController *accounts, GnNip34IssueView *view)
 }
 
 GnNip34IssueView *
-gh_issue_dialog_new(GhAccountController *accounts, GSettings *settings)
+gh_issue_dialog_new(GhAccountController *accounts, GSettings *settings, GhBlossomClient *blossom)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
   g_autoptr(GnIssueTarget) target = gn_issue_target_new(REPO_OWNER, REPO_ID, NULL, NULL);
   g_autoptr(GnIssuePublisher) publisher = gh_issue_publisher_new(accounts);
-  /* No resolver and no uploader: no lookup, no files (privacy charter). */
-  GnNip34IssueView *view = gn_nip34_issue_view_new(target, publisher, NULL, NULL);
-  gn_nip34_issue_view_set_intro(view,
-    _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm. Groundhog does not upload files; add web links instead."));
+#if GH_ISSUE_UPLOADS
+  /* Only GhIssueUploader, over GhNet (privacy rule issue-services). */
+  g_autoptr(GnIssueUploader) uploader = gh_issue_uploader_new(blossom);
+#else
+  (void)blossom;
+  GnIssueUploader *uploader = NULL;
+#endif
+  /* No resolver: no lookup (privacy charter). */
+  GnNip34IssueView *view = gn_nip34_issue_view_new(target, publisher, NULL, uploader);
+  gn_nip34_issue_view_set_intro(view, uploader
+    ? _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm. Attached files are public: anyone can download them. Photo location and other metadata is removed from JPEG and PNG images, but other files can contain hidden details. Files are not encrypted, and the server can see your IP address unless you use Tor.")
+    : _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm. You have no attachment server, so files cannot be attached; add web links instead. Groundhog asks you to choose a server the first time you send a file in a conversation."));
   const gchar *labels[] = { "bug", "groundhog", NULL };
   gn_nip34_issue_view_set_required_labels(view, labels);
   if (settings) {

@@ -528,7 +528,7 @@ upload_next(GTask *task)
 
 static void upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
                          const gchar *const *servers, const guint8 *upload_key,
-                         GCancellable *cancellable, GAsyncReadyCallback callback,
+                         gboolean public_only, GCancellable *cancellable, GAsyncReadyCallback callback,
                          gpointer user_data);
 
 void
@@ -538,7 +538,7 @@ gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const 
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(ciphertext != NULL && sha256_hex != NULL);
-  upload_start(self, ciphertext, sha256_hex, NULL, NULL, cancellable, callback, user_data);
+  upload_start(self, ciphertext, sha256_hex, NULL, NULL, FALSE, cancellable, callback, user_data);
 }
 
 void
@@ -549,7 +549,7 @@ gh_blossom_client_upload_on_servers_async(GhBlossomClient *self, const gchar *co
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL);
-  upload_start(self, ciphertext, sha256_hex, servers, NULL, cancellable, callback, user_data);
+  upload_start(self, ciphertext, sha256_hex, servers, NULL, FALSE, cancellable, callback, user_data);
 }
 
 void
@@ -561,14 +561,25 @@ gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *const *
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL &&
                    upload_key != NULL);
-  upload_start(self, ciphertext, sha256_hex, servers, upload_key, cancellable, callback,
+  upload_start(self, ciphertext, sha256_hex, servers, upload_key, TRUE, cancellable, callback,
                user_data);
+}
+
+void
+gh_blossom_client_upload_public_async(GhBlossomClient *self, const gchar *const *servers,
+                                      GBytes *bytes, const gchar *sha256_hex,
+                                      GCancellable *cancellable, GAsyncReadyCallback callback,
+                                      gpointer user_data)
+{
+  g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
+  g_return_if_fail(servers != NULL && bytes != NULL && sha256_hex != NULL);
+  upload_start(self, bytes, sha256_hex, servers, NULL, TRUE, cancellable, callback, user_data);
 }
 
 static void
 upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
-             const gchar *const *servers, const guint8 *upload_key, GCancellable *cancellable,
-             GAsyncReadyCallback callback, gpointer user_data)
+             const gchar *const *servers, const guint8 *upload_key, gboolean public_only,
+             GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_source_tag(task, gh_blossom_client_upload_async);
@@ -601,8 +612,11 @@ upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
       return;
     }
     memcpy(upload->upload_key.ptr, upload_key, 32);
-    /* Servers someone else named (a group's): public addresses only, as for
-     * every download of a URL someone else chose (W25 review M1). */
+  }
+  if (public_only) {
+    /* Servers someone else named (a group's), or a file whose address goes
+     * into a public issue: public addresses only, as for every download of a
+     * URL someone else chose (W25 review M1). */
     upload->public_only = !self->allow_private_hosts;
     g_auto(GStrv) usable = gh_blossom_client_dup_public_servers(self, servers);
     g_strfreev(upload->servers);

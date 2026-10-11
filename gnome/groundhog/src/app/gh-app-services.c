@@ -1875,8 +1875,17 @@ on_report_issue(GSimpleAction *action, GVariant *parameter, gpointer data)
   (void)parameter;
   GhAppServices *self = data;
   GtkWindow *window = gtk_application_get_active_window(self->app);
-  if (window)
-    gn_nip34_issue_view_present(gh_issue_dialog_new(self->accounts, self->settings), GTK_WIDGET(window));
+  if (!window)
+    return;
+  /* Files go only to the open store's attachment client, whose servers the
+   * user chose (none: the form offers no files). */
+#if GROUNDHOG_HAVE_ATTACHMENTS
+  GhBlossomClient *blossom = gh_attachments_get_client(self->attachments);
+#else
+  GhBlossomClient *blossom = NULL;
+#endif
+  gn_nip34_issue_view_present(gh_issue_dialog_new(self->accounts, self->settings, blossom),
+                              GTK_WIDGET(window));
 }
 #endif
 
