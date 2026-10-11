@@ -2653,6 +2653,7 @@ static const char fss_xml[] =
   "<node>"
   " <interface name='org.freedesktop.Secret.Service'>"
   "  <method name='TestSetFailure'><arg type='b' direction='in'/></method>"
+  "  <method name='TestWasFlipped'><arg type='b' direction='out'/></method>"
   "  <method name='OpenSession'><arg type='s' direction='in'/><arg type='v' direction='in'/>"
   "   <arg type='v' direction='out'/><arg type='o' direction='out'/></method>"
   "  <method name='SearchItems'><arg type='a{ss}' direction='in'/>"
@@ -2679,6 +2680,9 @@ typedef struct { Fss *fss; char *path; GHashTable *attrs; char *secret; } FssIte
 struct Fss {
   gboolean plain_ok;
   gboolean fail_all;
+  gboolean duplicate_label;
+  gboolean flip_label;
+  gboolean flipped;
   GPtrArray *items;      /* FssItem* */
   GHashTable *sessions;  /* open session paths */
   guint next_session;
@@ -2701,6 +2705,15 @@ static FssItem *fss_find(Fss *f, const char *path) {
   return NULL;
 }
 
+static void fss_flip_label_after_secret(Fss *f) {
+  if (!f->flip_label || f->flipped) return;
+  FssItem *first = g_ptr_array_index(f->items, 0);
+  FssItem *second = g_ptr_array_index(f->items, 1);
+  g_hash_table_replace(first->attrs, (gpointer)"label", g_strdup(""));
+  g_hash_table_replace(second->attrs, (gpointer)"label", g_strdup("Stored Label"));
+  f->flipped = TRUE;
+}
+
 static void fss_session_call(GDBusConnection *c, const gchar *sender, const gchar *path,
                              const gchar *iface, const gchar *method, GVariant *params,
                              GDBusMethodInvocation *inv, gpointer ud) {
@@ -2717,6 +2730,10 @@ static void fss_service_call(GDBusConnection *c, const gchar *sender, const gcha
   if (g_strcmp0(method, "TestSetFailure") == 0) {
     g_variant_get(params, "(b)", &f->fail_all);
     g_dbus_method_invocation_return_value(inv, NULL);
+    return;
+  }
+  if (g_strcmp0(method, "TestWasFlipped") == 0) {
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", f->flipped));
     return;
   }
   if (f->fail_all) {
@@ -2778,6 +2795,7 @@ static void fss_service_call(GDBusConnection *c, const gchar *sender, const gcha
       if (it) g_variant_builder_add(&out, "{o@(oayays)}", it->path, fss_secret(it, session));
     }
     g_variant_iter_free(paths);
+    fss_flip_label_after_secret(f);
     g_dbus_method_invocation_return_value(inv, g_variant_new("(a{o(oayays)})", &out));
   } else {
     g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod", method);
@@ -2810,7 +2828,9 @@ static void fss_item_call(GDBusConnection *c, const gchar *sender, const gchar *
                                                "no such session");
     return;
   }
-  g_dbus_method_invocation_return_value(inv, g_variant_new("(@(oayays))", fss_secret(it, session)));
+  GVariant *secret = g_variant_new("(@(oayays))", fss_secret(it, session));
+  fss_flip_label_after_secret(it->fss);
+  g_dbus_method_invocation_return_value(inv, secret);
 }
 
 static GVariant *fss_item_prop(GDBusConnection *c, const gchar *sender, const gchar *path,
@@ -2843,8 +2863,12 @@ static int fake_secret_service(int argc, char **argv) {
   const char *addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
   if (argc < 2 || !addr) { g_printerr("fake-secret-service: usage/bus\n"); return 1; }
   Fss f = { 0 };
-  f.plain_ok = g_strcmp0(argv[1], "plain") == 0;
+  f.plain_ok = g_strcmp0(argv[1], "plain") == 0 ||
+               g_strcmp0(argv[1], "duplicate-label") == 0 ||
+               g_strcmp0(argv[1], "flip-label") == 0;
   f.fail_all = g_strcmp0(argv[1], "fail") == 0;
+  f.duplicate_label = g_strcmp0(argv[1], "duplicate-label") == 0;
+  f.flip_label = g_strcmp0(argv[1], "flip-label") == 0;
   f.items = g_ptr_array_new();
   f.sessions = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   f.node = g_dbus_node_info_new_for_xml(fss_xml, &err);
@@ -2878,14 +2902,16 @@ static int fake_secret_service(int argc, char **argv) {
     it->secret = g_strdup(argv[i]);
     it->attrs = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
     g_hash_table_insert(it->attrs, (gpointer)"xdg:schema", g_strdup(GNOSTR_SECRET_SCHEMA_NAME));
-    g_hash_table_insert(it->attrs, (gpointer)"key_id", g_strdup(npub));
+    g_hash_table_insert(it->attrs, (gpointer)"key_id",
+                        g_strdup(f.duplicate_label && i < 4 ? "shared-id" : npub));
     g_hash_table_insert(it->attrs, (gpointer)"npub", g_strdup(npub));
     g_hash_table_insert(it->attrs, (gpointer)"owner_uid", g_strdup(uid_buf));
     g_hash_table_insert(it->attrs, (gpointer)"hardware", g_strdup("false"));
     g_hash_table_insert(it->attrs, (gpointer)"curve", g_strdup("secp256k1"));
     g_hash_table_insert(it->attrs, (gpointer)"origin", g_strdup("software"));
     g_hash_table_insert(it->attrs, (gpointer)"label",
-                        g_strdup(i < 4 ? "Stored Label" : ""));
+                        g_strdup(f.duplicate_label && i < 4 ? "Work" :
+                                 i == 2 ? "Stored Label" : ""));
     g_ptr_array_add(f.items, it);
     if (!g_dbus_connection_register_object(f.bus, it->path,
             g_dbus_node_info_lookup_interface(f.node, "org.freedesktop.Secret.Item"),
@@ -2908,7 +2934,7 @@ static int fake_secret_service(int argc, char **argv) {
   return 0;
 }
 
-typedef struct { const char *mode; const char *stored_sk; } FakeSecrets;
+typedef struct { const char *mode; const char *stored_sk; const char *other_sk; } FakeSecrets;
 
 /* Pre-daemon hook: the fake Secret Service holding a stored key (twice, as
  * a key with two items) and a copy of the fixture's environment key. */
@@ -2916,7 +2942,11 @@ static void fake_secrets_pre_daemon(Ctx *ctx, gpointer data) {
   const FakeSecrets *fs = data;
   GError *err = NULL;
   char *exe = self_exe();
-  if (fs->stored_sk)
+  if (fs->stored_sk && fs->other_sk)
+    ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
+                                    "--fake-secret-service", fs->mode, fs->stored_sk,
+                                    fs->other_sk, ctx->sk_hex, NULL);
+  else if (fs->stored_sk)
     ctx->secrets = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_SILENCE, &err, exe,
                                     "--fake-secret-service", fs->mode, fs->stored_sk,
                                     fs->stored_sk, ctx->sk_hex, NULL);
@@ -3019,7 +3049,7 @@ static void run_identity_store_phase(void) {
    * refused (it crashed the daemon in libsecret's session fallback); the
    * stored key signs by selector over the plain session. */
   {
-    FakeSecrets fs = { "plain", stored.sk_hex };
+    FakeSecrets fs = { .mode = "plain", .stored_sk = stored.sk_hex };
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
@@ -3051,10 +3081,45 @@ static void run_identity_store_phase(void) {
     ctx_teardown(&ctx);
   }
 
+  /* An ambiguous label or key id must not select whichever item arrives first. */
+  {
+    FakeSecrets fs = { .mode = "duplicate-label", .stored_sk = stored.sk_hex,
+                       .other_sk = other.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    expect_identity_error(&ctx, "Work", ERR_NO_KEY);
+    expect_identity_error(&ctx, "shared-id", ERR_NO_KEY);
+    expect_signs_as(&ctx, stored.npub, stored.pk_hex);
+    expect_signs_as(&ctx, other.npub, other.pk_hex);
+    ctx_teardown(&ctx);
+  }
+
+  /* The label moves from one item to another after the first secret read.
+   * An auto-grant must sign with the identity checked by the grant, not the
+   * new owner of the label. */
+  {
+    FakeSecrets fs = { .mode = "flip-label", .stored_sk = stored.sk_hex,
+                       .other_sk = other.sk_hex };
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
+                   fake_secrets_pre_daemon, &fs);
+    expect_signs_as(&ctx, "Stored Label", stored.pk_hex);
+    GVariant *r = g_dbus_connection_call_sync(ctx.bus, FSS_NAME, FSS_PATH,
+        "org.freedesktop.Secret.Service", "TestWasFlipped", NULL,
+        G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &err);
+    CHECK(r != NULL);
+    gboolean flipped = FALSE;
+    g_variant_get(r, "(b)", &flipped);
+    CHECK(flipped);
+    g_variant_unref(r);
+    ctx_teardown(&ctx);
+  }
+
   /* An unknown label must not pick the environment key even if the store is
    * empty. Empty selector still means the active identity. */
   {
-    FakeSecrets fs = { "plain", NULL };
+    FakeSecrets fs = { .mode = "plain" };
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
@@ -3069,7 +3134,7 @@ static void run_identity_store_phase(void) {
   /* Fail the readable store after ApprovalRequested but before approval.
    * This is a backend outage, not an identity change or approval denial. */
   {
-    FakeSecrets fs = { "plain", stored.sk_hex };
+    FakeSecrets fs = { .mode = "plain", .stored_sk = stored.sk_hex };
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
@@ -3103,7 +3168,7 @@ static void run_identity_store_phase(void) {
    * which is Internal, not NoKeyConfigured (nostrc-f6l29). The environment
    * key still signs. */
   {
-    FakeSecrets fs = { "none", stored.sk_hex };
+    FakeSecrets fs = { .mode = "none", .stored_sk = stored.sk_hex };
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
@@ -3130,7 +3195,7 @@ static void run_identity_store_phase(void) {
    * identities it holds. ListIdentities fails, and so does every selector
    * other than the environment key's, with Internal (nostrc-f6l29). */
   {
-    FakeSecrets fs = { "fail", stored.sk_hex };
+    FakeSecrets fs = { .mode = "fail", .stored_sk = stored.sk_hex };
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, IDENTITY_GRANTS, &TRUST_UI,
                    fake_secrets_pre_daemon, &fs);
