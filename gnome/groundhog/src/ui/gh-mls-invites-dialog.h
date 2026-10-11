@@ -43,6 +43,8 @@ guint gh_mls_invites_dialog_get_n_invites(GhMlsInvitesDialog *self);
 guint gh_mls_invites_dialog_get_n_refused(GhMlsInvitesDialog *self);
 gboolean gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id,
                                         const gchar **title, const gchar **subtitle);
+/* The "This Device" Invitation Key row's text (gh_mls_device_key_copy()). */
+const gchar *gh_mls_invites_dialog_get_key_status(GhMlsInvitesDialog *self);
 const gchar *gh_mls_invites_dialog_get_last_toast(GhMlsInvitesDialog *self);
 
 G_END_DECLS

@@ -62,6 +62,12 @@ void gh_sidebar_page_set_models(GhSidebarPage *self, GListModel *conversations,
  * the list itself. */
 void gh_sidebar_page_set_invitations(GhSidebarPage *self, guint count);
 guint gh_sidebar_page_get_invitations(GhSidebarPage *self);
+/* Shows the Group Invitations entry even with none pending (mls-groups-bunker):
+ * while the account has no encrypted group on this device, the dialog says
+ * why groups joined elsewhere are missing and whether this device can be
+ * invited. */
+void gh_sidebar_page_set_invitations_entry(GhSidebarPage *self, gboolean shown);
+gboolean gh_sidebar_page_get_invitations_entry_visible(GhSidebarPage *self);
 /* The selected item of the visible list; borrowed, NULL for none. */
 gpointer gh_sidebar_page_get_selected(GhSidebarPage *self);
 void gh_sidebar_page_unselect(GhSidebarPage *self);

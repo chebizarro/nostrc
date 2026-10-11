@@ -39,6 +39,9 @@ G_DEFINE_QUARK(gh-mls-service-error-quark, gh_mls_service_error)
 /* Invitations that could not be opened, one per line:
  * "<wrapper hex> <inviter hex> <created_at> <0|1 key missing>". */
 #define REFUSED_WELCOMES "gh/refused-welcomes"
+/* Set once the refusals libmarmot recorded before REFUSED_WELCOMES existed
+ * were listed there (refused_import_earlier()). */
+#define REFUSED_WELCOMES_IMPORTED "gh/refused-welcomes-imported"
 #define MAX_KEY_PACKAGE_CANDIDATE_RELAYS 256
 #define KEY_PACKAGE_RELAY_SETTLE_MS 100
 #define KEY_PACKAGE_RELAY_MAX_WAIT_MS 1000
@@ -6255,11 +6258,13 @@ refused_load(GhMlsService *self, GError **error)
   g_auto(GStrv) lines = g_strsplit(text, "\n", -1);
   for (guint i = 0; lines[i]; i++) {
     g_auto(GStrv) f = g_strsplit(lines[i], " ", 4);
-    if (g_strv_length(f) != 4 || !lower_hex64(f[0]) || !lower_hex64(f[1]))
+    /* "-": the inviter is unknown (a refusal recorded before this list). */
+    if (g_strv_length(f) != 4 || !lower_hex64(f[0]) ||
+        (!lower_hex64(f[1]) && !g_str_equal(f[1], "-")))
       continue;
     GhMlsRefusedInvite *invite = g_new0(GhMlsRefusedInvite, 1);
     invite->wrapper_id = g_strdup(f[0]);
-    invite->inviter = g_strdup(f[1]);
+    invite->inviter = g_str_equal(f[1], "-") ? NULL : g_strdup(f[1]);
     invite->created_at = g_ascii_strtoll(f[2], NULL, 10);
     invite->key_missing = g_str_equal(f[3], "1");
     g_ptr_array_add(out, invite);
@@ -6281,7 +6286,8 @@ refused_save(GhMlsService *self, GPtrArray *invites)
   for (guint i = 0; i < invites->len; i++) {
     GhMlsRefusedInvite *invite = g_ptr_array_index(invites, i);
     g_string_append_printf(text, "%s%s %s %" G_GINT64_FORMAT " %d", i ? "\n" : "",
-                           invite->wrapper_id, invite->inviter, invite->created_at,
+                           invite->wrapper_id, invite->inviter ? invite->inviter : "-",
+                           invite->created_at,
                            invite->key_missing ? 1 : 0);
   }
   return self->storage->mls_store(self->storage->ctx, REFUSED_WELCOMES, self->account_key, 32,
@@ -6308,6 +6314,64 @@ refused_record(GhMlsService *self, const GhNip17Message *welcome, MarmotError er
   invite->key_missing = err == MARMOT_ERR_KEY_NOT_FOUND;
   g_ptr_array_add(invites, invite);
   return refused_save(self, invites);
+}
+
+/* Before REFUSED_WELCOMES existed (2a689c901) a refused Welcome left only
+ * libmarmot's failed processed-welcome record, and its wrap was seen: it is
+ * never delivered again, so nothing said it had come. Lists those once, with
+ * the inviter unknown (libmarmot keeps no sender for a refusal); a dismissal
+ * afterwards sticks. */
+static gboolean
+refused_import_earlier(GhMlsService *self, GError **error)
+{
+  guint8 *marker = NULL;
+  size_t marker_len = 0;
+  MarmotError err = self->storage->mls_load(self->storage->ctx, REFUSED_WELCOMES_IMPORTED,
+                                           self->account_key, 32, &marker, &marker_len);
+  free(marker);
+  if (err == MARMOT_OK)
+    return TRUE;
+  if (err != MARMOT_ERR_STORAGE_NOT_FOUND) {
+    drop_stale_error(self);
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Could not read whether earlier refusals were listed (%d)", err);
+    return FALSE;
+  }
+  g_autoptr(GPtrArray) earlier = gh_store_marmot_list_refused_welcomes(self->storage, error);
+  if (!earlier)
+    return FALSE;
+  if (!gh_store_begin(self->store, error))
+    return FALSE;
+  g_autoptr(GPtrArray) invites = refused_load(self, error);
+  if (!invites) {
+    gh_store_rollback(self->store);
+    return FALSE;
+  }
+  for (guint i = 0; i < earlier->len; i++) {
+    GhStoreMarmotRefusedWelcome *welcome = g_ptr_array_index(earlier, i);
+    g_autofree gchar *wrapper_id = to_hex(welcome->wrapper_id, 32);
+    gboolean listed = FALSE;
+    for (guint j = 0; j < invites->len && !listed; j++)
+      listed = g_str_equal(((GhMlsRefusedInvite *)g_ptr_array_index(invites, j))->wrapper_id,
+                           wrapper_id);
+    if (listed)
+      continue;
+    GhMlsRefusedInvite *invite = g_new0(GhMlsRefusedInvite, 1);
+    invite->wrapper_id = g_steal_pointer(&wrapper_id);
+    invite->created_at = welcome->processed_at;
+    invite->key_missing = welcome->reason && strstr(welcome->reason, "key not found");
+    g_ptr_array_add(invites, invite);
+  }
+  if (!refused_save(self, invites) ||
+      self->storage->mls_store(self->storage->ctx, REFUSED_WELCOMES_IMPORTED,
+                               self->account_key, 32, (const guint8 *)"1", 1) != MARMOT_OK) {
+    drop_stale_error(self);
+    gh_store_rollback(self->store);
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                        "Could not list the earlier invitations that could not be opened");
+    return FALSE;
+  }
+  return gh_store_commit(self->store, error);
 }
 
 GPtrArray *
@@ -9220,6 +9284,11 @@ gh_mls_service_new(const GhMlsServiceConfig *config, GError **error)
     marmot_group_free(groups[i]);
   }
   free(groups);
+  /* Not fatal: the groups work without the list of earlier refusals. */
+  g_autoptr(GError) import_error = NULL;
+  if (!refused_import_earlier(self, &import_error))
+    g_message("Groundhog could not list its earlier unopenable invitations: %s",
+              import_error->message);
 
   if (config->inbox) {
     self->inbox = g_object_ref(config->inbox);

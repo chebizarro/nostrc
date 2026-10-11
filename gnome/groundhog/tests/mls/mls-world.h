@@ -1114,6 +1114,24 @@ processed_welcome(App *app, const gchar *wrap_id, gint *state, gchar **reason)
   return found;
 }
 
+/* The store as a build before the refusal list left it: no list, no import
+ * marker; libmarmot's failed processed-welcome record stays. */
+static G_GNUC_UNUSED void
+forget_refusal_list(App *app)
+{
+  g_autoptr(GError) error = NULL;
+  MarmotStorage *storage = gh_store_marmot_new(app->store, &error);
+  g_assert_no_error(error);
+  guint8 account[32];
+  g_assert_true(nostr_hex2bin(account, hex[app->key], sizeof account));
+  const char *labels[] = { "gh/refused-welcomes", "gh/refused-welcomes-imported" };
+  for (guint i = 0; i < G_N_ELEMENTS(labels); i++) {
+    MarmotError err = storage->mls_delete(storage->ctx, labels[i], account, 32);
+    g_assert_true(err == MARMOT_OK || err == MARMOT_ERR_STORAGE_NOT_FOUND);
+  }
+  marmot_storage_free(storage);
+}
+
 /* Forward: defined below. */
 static G_GNUC_UNUSED GhMlsKeyPackageFormat key_package_format(NostrEvent *event);
 

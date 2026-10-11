@@ -50,7 +50,8 @@ gh_mls_invite_row_init(GhMlsInviteRow *self)
 struct _GhMlsInvitesDialog {
   AdwDialog parent_instance;
   AdwToastOverlay *toasts;
-  GtkStack *stack;
+  AdwActionRow *key_row;
+  GtkWidget *empty_row;
   AdwPreferencesGroup *invites_group;
   AdwPreferencesGroup *refused_group;
 
@@ -95,13 +96,18 @@ add_refused_rows(GhMlsInvitesDialog *self)
               error->message);
   for (guint i = 0; refused && i < refused->len; i++) {
     GhMlsRefusedInvite *invite = g_ptr_array_index(refused, i);
-    gboolean contact = gh_mls_is_contact(self->context.model, invite->inviter);
+    /* No inviter: refused before Groundhog listed refusals, and libmarmot
+     * keeps no sender for one. */
+    gboolean contact = invite->inviter &&
+                       gh_mls_is_contact(self->context.model, invite->inviter);
     const gchar *name = contact && self->context.display_name
       ? self->context.display_name(invite->inviter, self->context.names_data) : NULL;
-    g_autofree gchar *npub = gh_recipient_npub_short(invite->inviter);
-    const gchar *who = name && *name ? name : npub;
+    g_autofree gchar *npub = invite->inviter ? gh_recipient_npub_short(invite->inviter) : NULL;
+    const gchar *who = name && *name ? name : npub ? npub : _("an unknown sender");
     AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
-    g_autofree gchar *title = g_strdup_printf(_("Invitation from %s"), who);
+    g_autofree gchar *title = invite->inviter
+      ? g_strdup_printf(_("Invitation from %s"), who)
+      : g_strdup(_("An earlier invitation (sender not recorded)"));
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
     adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
     adw_action_row_set_subtitle(row, invite->key_missing
@@ -213,12 +219,23 @@ refresh(GhMlsInvitesDialog *self)
     g_ptr_array_add(self->rows, row);
   }
   add_refused_rows(self);
-  gtk_widget_set_visible(GTK_WIDGET(self->invites_group), self->rows->len > 0);
+  gtk_widget_set_visible(self->empty_row, self->rows->len == 0);
   gtk_widget_set_visible(GTK_WIDGET(self->refused_group), self->refused_rows->len > 0);
-  gtk_stack_set_visible_child_name(self->stack,
-    self->rows->len > 0 || self->refused_rows->len > 0 ? "list" : "empty");
   if (stale)
     g_idle_add(drop_stale_rows, stale);
+}
+
+/* This device's invitation key, live while the dialog is shown. */
+static void
+sync_key(GhMlsInvitesDialog *self)
+{
+  GhMlsService *service = self->context.service;
+  if (!service)
+    return;
+  adw_action_row_set_subtitle(self->key_row,
+    gh_mls_device_key_copy(gh_mls_service_get_key_package_state(service),
+                           gh_mls_service_get_key_package_held(service),
+                           gh_mls_service_get_identity_state(service)));
 }
 
 static void
@@ -325,6 +342,13 @@ gh_mls_invites_dialog_new(const GhMlsUiContext *context)
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(context->service, "invite-refused", G_CALLBACK(refresh), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(context->service, "notify::key-package-state", G_CALLBACK(sync_key),
+                          self, G_CONNECT_SWAPPED);
+  g_signal_connect_object(context->service, "notify::key-package-held", G_CALLBACK(sync_key),
+                          self, G_CONNECT_SWAPPED);
+  g_signal_connect_object(context->service, "notify::identity-state", G_CALLBACK(sync_key),
+                          self, G_CONNECT_SWAPPED);
+  sync_key(self);
   refresh(self);
   return self;
 }
@@ -372,6 +396,13 @@ gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id
 }
 
 const gchar *
+gh_mls_invites_dialog_get_key_status(GhMlsInvitesDialog *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), NULL);
+  return adw_action_row_get_subtitle(self->key_row);
+}
+
+const gchar *
 gh_mls_invites_dialog_get_last_toast(GhMlsInvitesDialog *self)
 {
   g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), NULL);
@@ -414,7 +445,8 @@ gh_mls_invites_dialog_class_init(GhMlsInvitesDialogClass *klass)
   gtk_widget_class_set_template_from_resource(
     widget_class, "/org/nostr/Groundhog/ui/gh-mls-invites-dialog.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, toasts);
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, stack);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, key_row);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, empty_row);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, invites_group);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, refused_group);
   gtk_widget_class_install_action(widget_class, "mls-invites.accept", "s", action_accept);

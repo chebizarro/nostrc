@@ -75,19 +75,19 @@ gh_mls_identity_copy(GhMlsIdentityState state)
     copy.description = _("They work only for the active account while it’s connected.");
     break;
   case GH_MLS_IDENTITY_WAITING:
-    copy.title = _("Waiting for approval in Grotto…");
+    copy.title = _("Waiting for approval in your signer…");
     copy.description = _("Approve the request so this device can take part in encrypted groups "
                          "as you. It is asked once each time Groundhog starts.");
     copy.busy = TRUE;
     break;
   case GH_MLS_IDENTITY_DECLINED:
-    copy.title = _("Declined in Grotto");
-    copy.description = _("Encrypted groups on this device need your approval in Grotto.");
+    copy.title = _("Declined in your signer");
+    copy.description = _("Encrypted groups on this device need your approval in your signer.");
     copy.can_retry = TRUE;
     break;
   case GH_MLS_IDENTITY_FAILED:
   default:
-    copy.title = _("Grotto couldn’t approve this device");
+    copy.title = _("Your signer couldn’t approve this device");
     copy.description = _("It failed or returned something Groundhog didn’t ask for.");
     copy.can_retry = TRUE;
     break;
@@ -122,7 +122,7 @@ gh_mls_error_copy(const GError *error)
       return g_strdup(_("Encrypted groups work only for the active account while it’s "
                         "online."));
     case GH_MLS_SERVICE_ERROR_NOT_ENROLLED:
-      return g_strdup(_("Approve this device in Grotto first."));
+      return g_strdup(_("Approve this device in your signer first."));
     case GH_MLS_SERVICE_ERROR_NEEDS_UPDATE:
       return g_strdup(_("Someone uses an app that can’t prove their account, and you only join "
                         "groups where every member’s app proves their account. Nothing was "
@@ -448,4 +448,37 @@ gh_mls_fallback_note(const gchar *who)
   /* Translators: %s is a person's name or npub. */
   return g_strdup_printf(_("%s’s app doesn’t support encrypted-group messages "
                            "yet, so this chat uses NIP-17."), who);
+}
+
+const gchar *
+gh_mls_device_key_copy(GhMlsKeyPackageState state, gboolean held, GhMlsIdentityState identity)
+{
+  switch (state) {
+  case GH_MLS_KEY_PACKAGE_PUBLISHED:
+    return held ? _("Published. Invitations made for this device can be opened here. A new key "
+                    "waits until you answer the invitations below.")
+                : _("Published. Invitations made for this device can be opened here.");
+  case GH_MLS_KEY_PACKAGE_PUBLISHING:
+    return _("Publishing this device’s invitation key…");
+  case GH_MLS_KEY_PACKAGE_NO_RELAYS:
+    return _("Not published: your account has no relay list naming where you publish, so nobody "
+             "can invite this device. Set up your relays in Preferences.");
+  case GH_MLS_KEY_PACKAGE_FAILED:
+    return _("Couldn’t be published right now, so people may not be able to invite this "
+             "device. Groundhog tries again.");
+  case GH_MLS_KEY_PACKAGE_NONE:
+  default:
+    break;
+  }
+  switch (identity) {
+  case GH_MLS_IDENTITY_WAITING:
+    return _("Not published yet: waiting for your signer to approve this device.");
+  case GH_MLS_IDENTITY_DECLINED:
+    return _("Not published: this device was declined in your signer.");
+  case GH_MLS_IDENTITY_FAILED:
+    return _("Not published: your signer couldn’t approve this device.");
+  default:
+    return _("Not published yet: it is published once this account is online and its signer "
+             "answers.");
+  }
 }

@@ -386,9 +386,9 @@ test_copy(void)
   g_assert_false(waiting.ready);
   g_assert_true(waiting.busy);
   g_assert_false(waiting.can_retry);
-  g_assert_cmpstr(waiting.title, ==, "Waiting for approval in Grotto…");
+  g_assert_cmpstr(waiting.title, ==, "Waiting for approval in your signer…");
   GhMlsIdentityCopy declined = gh_mls_identity_copy(GH_MLS_IDENTITY_DECLINED);
-  g_assert_cmpstr(declined.title, ==, "Declined in Grotto");
+  g_assert_cmpstr(declined.title, ==, "Declined in your signer");
   g_assert_true(declined.can_retry);
   g_assert_false(declined.busy);
   g_assert_true(gh_mls_identity_copy(GH_MLS_IDENTITY_FAILED).can_retry);
@@ -1029,6 +1029,32 @@ invitations_are(gpointer data)
   return gh_sidebar_page_get_invitations(gh_window_get_sidebar(wait->window)) == wait->count;
 }
 
+typedef struct {
+  GtkWidget *widget;
+  gint64 from;
+} FramePainted;
+
+/* A frame after `from` was drawn (a screenshot needs a render node). */
+static gboolean
+frame_painted(gpointer data)
+{
+  FramePainted *wait = data;
+  return gdk_frame_clock_get_frame_counter(gtk_widget_get_frame_clock(wait->widget)) >
+         wait->from + 1;
+}
+
+static gboolean
+invitations_entry_hidden(gpointer data)
+{
+  return !gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(data));
+}
+
+static gboolean
+invitations_entry_shown(gpointer data)
+{
+  return gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(data));
+}
+
 static gboolean
 shows(GhWindow *window, GhConversation *conversation)
 {
@@ -1260,6 +1286,8 @@ test_gui_new_group(void)
   g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(GH_MLS_INVITES_DIALOG(invites)), ==, 0);
   InvitationsWait zero = { bob_window, 0 };
   spin_until(invitations_are, &zero, "Bob's invitations entry gone");
+  /* With a group here, the entry goes when nothing waits (mls-groups-bunker). */
+  spin_until(invitations_entry_hidden, bob_window, "Bob's invitations entry hidden");
   GhMlsGroup *gb = gh_mls_service_lookup(bob->service, room);
   g_assert_nonnull(gb);
   /* An adopted Welcome (as shipped), listed and accepted in the
@@ -1451,11 +1479,60 @@ test_gui_refused_invitation(void)
   g_assert_cmpstr(subtitle, ==,
                   "Made for a key this device doesn\u2019t have. Ask them to invite you again.");
 
+  /* This device's own invitation key is published: a new invitation works. */
+  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(dialog), ==,
+                  "Published. Invitations made for this device can be opened here.");
+
   gtk_widget_activate_action(GTK_WIDGET(dialog), "mls-invites.dismiss", "s",
                              (const gchar *)g_ptr_array_index(wraps, 0));
   g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(dialog), ==, 0);
   adw_dialog_force_close(ADW_DIALOG(dialog));
   drain();
+
+  /* mls-groups-bunker, the owner's store: the refusal came before refusals
+   * were listed (only libmarmot's failed record is left, its wrap seen).
+   * The next start lists it, sender unknown; the window keeps the Group
+   * Invitations entry while no encrypted group is on this device, and the
+   * dialog says why groups joined elsewhere are missing. */
+  forget_refusal_list(bob);
+  app_restart(bob);
+  spin_until(key_package_published, bob, "Bob's KeyPackage after the restart");
+  GhWindow *bob_window = app_window(bob, NULL);
+  spin_until(invitations_entry_shown, bob_window, "Bob's Group Invitations entry");
+  InvitationsWait one = { bob_window, 1 };
+  spin_until(invitations_are, &one, "the earlier refusal counted");
+  FramePainted painted = { GTK_WIDGET(bob_window), 0 };
+  painted.from = gdk_frame_clock_get_frame_counter(
+    gtk_widget_get_frame_clock(GTK_WIDGET(bob_window)));
+  gtk_widget_queue_draw(GTK_WIDGET(bob_window));
+  spin_until(frame_painted, &painted, "the window painted with the entry");
+  save_root_png(GTK_WIDGET(bob_window), "sidebar-entry");
+  g_action_group_activate_action(G_ACTION_GROUP(bob_window), "group-invitations", NULL);
+  AdwDialog *earlier = visible_dialog(bob_window);
+  g_assert_true(GH_IS_MLS_INVITES_DIALOG(earlier));
+  spin_until(gh_test_dialog_shown, earlier, "the invitations shown again");
+  drain();
+  save_root_png(GTK_WIDGET(earlier), "earlier-refusal");
+  GhMlsInvitesDialog *again = GH_MLS_INVITES_DIALOG(earlier);
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_invites(again), ==, 0);
+  g_assert_cmpuint(gh_mls_invites_dialog_get_n_refused(again), ==, 1);
+  g_assert_true(gh_mls_invites_dialog_describe(again, g_ptr_array_index(wraps, 0), &title,
+                                               &subtitle));
+  g_assert_cmpstr(title, ==, "An earlier invitation (sender not recorded)");
+  g_assert_cmpstr(subtitle, ==,
+                  "Made for a key this device doesn\u2019t have. Ask them to invite you again.");
+  g_assert_cmpstr(gh_mls_invites_dialog_get_key_status(again), ==,
+                  "Published. Invitations made for this device can be opened here.");
+  gtk_widget_activate_action(GTK_WIDGET(again), "mls-invites.dismiss", "s",
+                             (const gchar *)g_ptr_array_index(wraps, 0));
+  adw_dialog_force_close(earlier);
+  drain();
+  /* Nothing waits, and still no group here: the entry stays (above the
+   * conversations; this account has none, so the empty page shows). */
+  InvitationsWait none = { bob_window, 0 };
+  spin_until(invitations_are, &none, "the refusal dismissed");
+  g_assert_true(gh_sidebar_page_get_invitations_entry_visible(gh_window_get_sidebar(bob_window)));
+  close_window(bob_window);
   world_down(&w);
 }
 
@@ -2418,25 +2495,25 @@ test_gui_enrollment(void)
   adw_dialog_set_child(dialog, GTK_WIDGET(navigation));
   adw_dialog_present(dialog, GTK_WIDGET(window));
   spin_until(gh_test_dialog_shown, dialog, "the page shown");
-  wait_text(identity_title, page, "Waiting for approval in Grotto…");
+  wait_text(identity_title, page, "Waiting for approval in your signer…");
   GtkWidget *retry = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(page),
                                                               GH_TYPE_MLS_NEW_GROUP_PAGE,
                                                               "retry_identity_button"));
   g_assert_false(gtk_widget_get_visible(retry));
   gh_mls_new_group_page_set_name(page, "Waiting");
-  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Grotto first.");
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in your signer first.");
 
   /* Declined: said so, with Try Again. */
   w.signer.deny = TRUE;
   gh_test_signer_release_all(&w.signer);
-  wait_text(identity_title, page, "Declined in Grotto");
+  wait_text(identity_title, page, "Declined in your signer");
   g_assert_true(gtk_widget_get_visible(retry));
-  g_assert_cmpstr(create_reason(page), ==, "Approve this device in Grotto first.");
+  g_assert_cmpstr(create_reason(page), ==, "Approve this device in your signer first.");
 
   /* Try Again asks once more; approved, the row goes and Create only needs
    * people. */
   gtk_widget_activate_action(GTK_WIDGET(page), "mls-new.retry-identity", NULL);
-  wait_text(identity_title, page, "Waiting for approval in Grotto…");
+  wait_text(identity_title, page, "Waiting for approval in your signer…");
   spin_until(a_proof_held, &w.signer, "the new proof request");
   w.signer.deny = FALSE;
   w.signer.hold = FALSE;

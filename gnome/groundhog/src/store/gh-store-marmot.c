@@ -2113,6 +2113,64 @@ gh_store_marmot_new(GhStore *store, GError **error)
   return storage;
 }
 
+void
+gh_store_marmot_refused_welcome_free(GhStoreMarmotRefusedWelcome *welcome)
+{
+  if (!welcome)
+    return;
+  g_free(welcome->reason);
+  g_free(welcome);
+}
+
+GPtrArray *
+gh_store_marmot_list_refused_welcomes(MarmotStorage *storage, GError **error)
+{
+  g_return_val_if_fail(storage != NULL, NULL);
+  g_return_val_if_fail(storage->destroy == ghm_destroy, NULL);
+  GhStoreMarmot *self = storage->ctx;
+  GPtrArray *out =
+    g_ptr_array_new_with_free_func((GDestroyNotify)gh_store_marmot_refused_welcome_free);
+  sqlite3_stmt *stmt = NULL;
+  MarmotError err = MARMOT_OK;
+  gboolean has_row = FALSE;
+  TRY(check_readable(self));
+  TRY(prepare(self,
+    "SELECT p.wrapper_event_id, p.processed_at, p.failure_reason "
+    "FROM mls_processed_welcomes p "
+    "WHERE p.state = ?1 AND NOT EXISTS "
+    "(SELECT 1 FROM mls_welcomes w WHERE w.wrapper_event_id = p.wrapper_event_id) "
+    "ORDER BY p.processed_at, p.wrapper_event_id", &stmt));
+  BIND(sqlite3_bind_int(stmt, 1, MARMOT_WELCOME_STATE_FAILED));
+  for (;;) {
+    TRY(step_row(self, stmt, &has_row, "Listing refused MLS welcomes"));
+    if (!has_row)
+      break;
+    if (sqlite3_column_type(stmt, 0) != SQLITE_BLOB || sqlite3_column_bytes(stmt, 0) != 32) {
+      err = corrupt(self, stmt, 0);
+      goto out;
+    }
+    GhStoreMarmotRefusedWelcome *welcome = g_new0(GhStoreMarmotRefusedWelcome, 1);
+    memcpy(welcome->wrapper_id, sqlite3_column_blob(stmt, 0), 32);
+    welcome->processed_at = sqlite3_column_int64(stmt, 1);
+    const unsigned char *reason = sqlite3_column_text(stmt, 2);
+    welcome->reason = reason ? g_strdup((const gchar *)reason) : NULL;
+    g_ptr_array_add(out, welcome);
+  }
+out:
+  sqlite3_finalize(stmt);
+  if (err != MARMOT_OK) {
+    g_ptr_array_unref(out);
+    GError *recorded = g_steal_pointer(&self->error);
+    if (recorded)
+      g_propagate_error(error, recorded);
+    else
+      g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_FAILED,
+                          "Could not list the refused MLS welcomes");
+    return NULL;
+  }
+  return out;
+}
+
 GError *
 gh_store_marmot_take_error(MarmotStorage *storage)
 {

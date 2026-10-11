@@ -1017,7 +1017,7 @@ test_key_package_row(Fixture *f, gconstpointer data)
   g_assert_true(gtk_widget_get_visible(group));
   g_assert_false(gtk_widget_get_visible(setup));  /* waiting: nothing to press */
   g_assert_nonnull(strstr(adw_action_row_get_subtitle(row),
-                          "Waiting for Grotto to prove your account"));
+                          "Waiting for your signer to prove your account"));
 
   gh_preferences_dialog_set_key_package_state(f->dialog,
                                               GH_PREFERENCES_KEY_PACKAGE_IDENTITY_DECLINED);

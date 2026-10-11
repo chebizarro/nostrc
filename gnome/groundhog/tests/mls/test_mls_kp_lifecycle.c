@@ -768,6 +768,32 @@ test_delayed_welcome(void)
     g_autoptr(GPtrArray) after = gh_mls_service_list_refused_invites(bob->service, &error);
     g_assert_no_error(error);
     g_assert_cmpuint(after->len, ==, 0);
+    /* A dismissal sticks across a restart. */
+    app_restart(bob);
+    g_autoptr(GPtrArray) dismissed = gh_mls_service_list_refused_invites(bob->service, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(dismissed->len, ==, 0);
+    /* mls-groups-bunker: a store whose Welcome was refused before refusals
+     * were listed (the owner's 19:13 "matching key not found") holds only
+     * libmarmot's failed record, and the wrap is seen, so it never comes
+     * again. The next start lists it, inviter unknown, once. */
+    forget_refusal_list(bob);
+    app_restart(bob);
+    g_autoptr(GPtrArray) earlier = gh_mls_service_list_refused_invites(bob->service, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(earlier->len, ==, 1);
+    GhMlsRefusedInvite *invite = g_ptr_array_index(earlier, 0);
+    g_assert_cmpstr(invite->wrapper_id, ==, g_ptr_array_index(wraps, 0));
+    g_assert_null(invite->inviter);
+    g_assert_true(invite->key_missing);
+    g_assert_cmpint(invite->created_at, >, 0);
+    g_assert_true(gh_mls_service_dismiss_refused_invite(bob->service,
+                                                        g_ptr_array_index(wraps, 0), &error));
+    g_assert_no_error(error);
+    app_restart(bob);
+    g_autoptr(GPtrArray) once = gh_mls_service_list_refused_invites(bob->service, &error);
+    g_assert_no_error(error);
+    g_assert_cmpuint(once->len, ==, 0);
   }
   (void)carol;
   world_down(&w);
