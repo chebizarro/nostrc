@@ -394,7 +394,7 @@ static void update_content_view(GnostrWikiCard *self) {
   if (self->is_expanded && self->content_markdown && *self->content_markdown) {
     /* Show full rendered content */
     if (GTK_IS_WIDGET(self->content_expander)) {
-      gchar *pango_content = gn_markdown_pango_from_text(self->content_markdown, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID });
+      gchar *pango_content = gn_markdown_pango_from_text(self->content_markdown, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID | GN_MARKDOWN_PANGO_FENCED_TABLES });
       if (GTK_IS_LABEL(self->full_content_label)) {
         /* nostrc-csaf: Use safe markup setter for relay-sourced wiki content */
         gnostr_safe_set_markup(GTK_LABEL(self->full_content_label), pango_content);

@@ -30,6 +30,11 @@ typedef enum {
                                                dimmed "---" rule, indented lists */
   GN_MARKDOWN_PANGO_TABLE_GRID    = 1 << 2, /* aligned monospace grid; off =
                                                cells joined by " | " */
+  GN_MARKDOWN_PANGO_FENCED_TABLES = 1 << 3, /* a fence holding exactly one GFM
+                                               table (see gn-markdown.h) is
+                                               formatted as that table */
+  GN_MARKDOWN_PANGO_CODE_BLOCKS   = 1 << 4, /* format_blocks: each fenced code
+                                               block is a CODE block */
 } GnMarkdownPangoFlags;
 
 /* Called (FULL mode only) for plain text and every raw address: text tokens,
@@ -60,10 +65,12 @@ gchar *gn_markdown_pango_format(const GnMarkdownDocument *document,
 typedef enum {
   GN_MARKDOWN_PANGO_BLOCK_TEXT = 0,
   GN_MARKDOWN_PANGO_BLOCK_TABLE,
+  GN_MARKDOWN_PANGO_BLOCK_CODE,  /* with GN_MARKDOWN_PANGO_CODE_BLOCKS */
 } GnMarkdownPangoBlockKind;
 
-/* One block of a document laid out by the host: text as markup, or a GFM
- * table as cells, so a host can show it as a real table (a grid of labels)
+/* One block of a document laid out by the host: text as markup, a fenced
+ * code block as markup (one <tt> run, its lines as written, to be shown
+ * unwrapped), or a GFM table as cells, so a host can show it as a real table (a grid of labels)
  * instead of a monospace grid inside a wrapping paragraph. */
 typedef struct {
   GnMarkdownPangoBlockKind kind;
@@ -73,6 +80,8 @@ typedef struct {
   gboolean header; /* TABLE: row 0 is a header row (its cells are not bold) */
   gchar **cells;   /* TABLE: rows * columns cell markups, row-major, NULL-ended */
   guint *aligns;   /* TABLE: a GnMarkdownAlign per column */
+  gchar *source;   /* TABLE from a fence: its lines as written (for copying
+                      the original text); else NULL */
 } GnMarkdownPangoBlock;
 
 void gn_markdown_pango_block_free(GnMarkdownPangoBlock *block);
