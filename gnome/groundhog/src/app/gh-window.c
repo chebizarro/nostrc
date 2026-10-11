@@ -366,6 +366,16 @@ gh_window_push_flow(GhWindow *self, AdwNavigationPage *page)
 }
 
 void
+gh_window_push_panel(GhWindow *self, AdwNavigationPage *page)
+{
+  g_return_if_fail(GH_IS_WINDOW(self));
+  g_return_if_fail(ADW_IS_NAVIGATION_PAGE(page));
+  if (adw_navigation_split_view_get_collapsed(self->split))
+    adw_navigation_split_view_set_show_content(self->split, FALSE);
+  gh_sidebar_page_push_panel(self->sidebar, page);
+}
+
+void
 gh_window_close_panels(GhWindow *self)
 {
   g_return_if_fail(GH_IS_WINDOW(self));

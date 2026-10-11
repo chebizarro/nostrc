@@ -71,6 +71,10 @@ void gh_window_set_new_message_enabled(GhWindow *self, gboolean enabled);
  * list. close_panels() returns the sidebar to the list (a flow that
  * finished). */
 void gh_window_push_flow(GhWindow *self, AdwNavigationPage *page);
+/* A panel of its own (Group Invitations): brings the sidebar on screen
+ * (collapsed: leaves an open conversation for it), closes any panel and
+ * pushes page over the conversation list; Back or Escape returns to it. */
+void gh_window_push_panel(GhWindow *self, AdwNavigationPage *page);
 void gh_window_close_panels(GhWindow *self);
 
 /* Adds app.quit and binds every accelerator of the shortcuts window to its

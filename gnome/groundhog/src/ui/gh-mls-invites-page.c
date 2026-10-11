@@ -1,6 +1,7 @@
-#include "gh-mls-invites-dialog.h"
+#include "gh-mls-invites-page.h"
 
 #include "gh-mls-copy.h"
+#include "gh-shell.h"
 #include "gh-recipient.h"
 
 #include <glib/gi18n.h>
@@ -8,17 +9,19 @@
 /* ---- GhMlsInviteRow (data/ui/gh-mls-invite-row.blp) ------------------------------------- */
 
 #define GH_TYPE_MLS_INVITE_ROW (gh_mls_invite_row_get_type())
-G_DECLARE_FINAL_TYPE(GhMlsInviteRow, gh_mls_invite_row, GH, MLS_INVITE_ROW, AdwActionRow)
+G_DECLARE_FINAL_TYPE(GhMlsInviteRow, gh_mls_invite_row, GH, MLS_INVITE_ROW, AdwPreferencesRow)
 
 struct _GhMlsInviteRow {
-  AdwActionRow parent_instance;
+  AdwPreferencesRow parent_instance;
   AdwAvatar *avatar;
+  GtkLabel *title_label;
+  GtkLabel *subtitle_label;
   GtkWidget *decline_button;
   GtkWidget *accept_button;
   gchar *wrapper_id;
 };
 
-G_DEFINE_FINAL_TYPE(GhMlsInviteRow, gh_mls_invite_row, ADW_TYPE_ACTION_ROW)
+G_DEFINE_FINAL_TYPE(GhMlsInviteRow, gh_mls_invite_row, ADW_TYPE_PREFERENCES_ROW)
 
 static void
 gh_mls_invite_row_finalize(GObject *object)
@@ -35,6 +38,8 @@ gh_mls_invite_row_class_init(GhMlsInviteRowClass *klass)
   gtk_widget_class_set_template_from_resource(widget_class,
                                               "/org/nostr/Groundhog/ui/gh-mls-invite-row.ui");
   gtk_widget_class_bind_template_child(widget_class, GhMlsInviteRow, avatar);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInviteRow, title_label);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInviteRow, subtitle_label);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInviteRow, decline_button);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInviteRow, accept_button);
 }
@@ -45,11 +50,19 @@ gh_mls_invite_row_init(GhMlsInviteRow *self)
   gtk_widget_init_template(GTK_WIDGET(self));
 }
 
-/* ---- GhMlsInvitesDialog --------------------------------------------------------------- */
+/* The words, plain text: the title as the row's (PreferencesRow) title too. */
+static void
+gh_mls_invite_row_set_text(GhMlsInviteRow *self, const gchar *title, const gchar *subtitle)
+{
+  adw_preferences_row_set_title(ADW_PREFERENCES_ROW(self), title);
+  gtk_label_set_text(self->title_label, title);
+  gtk_label_set_text(self->subtitle_label, subtitle);
+}
 
-struct _GhMlsInvitesDialog {
-  AdwDialog parent_instance;
-  AdwToastOverlay *toasts;
+/* ---- GhMlsInvitesPage --------------------------------------------------------------- */
+
+struct _GhMlsInvitesPage {
+  AdwNavigationPage parent_instance;
   AdwActionRow *key_row;
   GtkWidget *empty_row;
   AdwPreferencesGroup *invites_group;
@@ -59,19 +72,25 @@ struct _GhMlsInvitesDialog {
   GPtrArray *rows;          /* GhMlsInviteRow in invites_group */
   GPtrArray *refused_rows;  /* AdwActionRow in refused_group ("wrapper-id" data) */
   gchar *last_toast;
+  gboolean focus_on_map;    /* shown while off screen (collapsed) */
 };
 
 enum { SIGNAL_OPEN_GROUP, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
-G_DEFINE_FINAL_TYPE(GhMlsInvitesDialog, gh_mls_invites_dialog, ADW_TYPE_DIALOG)
+G_DEFINE_FINAL_TYPE(GhMlsInvitesPage, gh_mls_invites_page, ADW_TYPE_NAVIGATION_PAGE)
 
 static void
-show_toast(GhMlsInvitesDialog *self, AdwToast *toast)
+show_toast(GhMlsInvitesPage *self, AdwToast *toast)
 {
   g_free(self->last_toast);
   self->last_toast = g_strdup(adw_toast_get_title(toast));
-  adw_toast_overlay_add_toast(self->toasts, toast);
+  /* The window's toasts: the panel is narrow, and Escape stays Back. */
+  GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self), ADW_TYPE_TOAST_OVERLAY);
+  if (overlay)
+    adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(overlay), toast);
+  else
+    g_object_unref(toast);
 }
 
 static gboolean
@@ -86,7 +105,7 @@ drop_stale_rows(gpointer data)
 
 /* "Could Not Be Opened": invitations libmarmot refused, said as such. */
 static void
-add_refused_rows(GhMlsInvitesDialog *self)
+add_refused_rows(GhMlsInvitesPage *self)
 {
   g_autoptr(GError) error = NULL;
   g_autoptr(GPtrArray) refused = self->context.service
@@ -131,20 +150,31 @@ add_refused_rows(GhMlsInvitesDialog *self)
   }
 }
 
+/* The first invitation's row, else the empty state's. */
 static void
-refresh(GhMlsInvitesDialog *self)
+focus_list(GhMlsInvitesPage *self)
 {
-  /* Clear focus before removing rows: on libadwaita 1.5 (Ubuntu 24.04),
-   * adw_dialog_set_focus() fires during gtk_widget_unparent() via the
-   * set-focus-child signal chain and receives a half-destroyed widget,
-   * hitting "gtk_widget_get_can_focus: assertion 'GTK_IS_WIDGET (widget)'
-   * failed".  Clearing the root's focus first prevents the stale callback.
-   * Ref old rows too, then drop the refs on the next idle, so GTK's
-   * post-unparent bookkeeping can still inspect them safely. */
+  gtk_widget_grab_focus(self->rows->len > 0 ? g_ptr_array_index(self->rows, 0)
+                                            : self->empty_row);
+}
+
+static void
+refresh(GhMlsInvitesPage *self)
+{
+  /* A focused row (its Accept, Decline or Dismiss) is about to go: move
+   * the focus off it first, so GTK never tracks a half-destroyed widget as
+   * focused (libadwaita 1.5 asserted on that). Ref old rows too, then drop
+   * the refs on the next idle, so GTK's post-unparent bookkeeping can still
+   * inspect them safely. The focus comes back to the list afterwards, so
+   * the keyboard (Escape, Tab) stays in the panel. */
+  gboolean refocus = FALSE;
   if (self->rows->len > 0 || self->refused_rows->len > 0) {
     GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-    if (root)
+    GtkWidget *focus = root ? gtk_root_get_focus(root) : NULL;
+    if (focus && gtk_widget_is_ancestor(focus, GTK_WIDGET(self))) {
       gtk_root_set_focus(root, NULL);
+      refocus = TRUE;
+    }
   }
   GPtrArray *stale = NULL;
   if (self->rows->len > 0) {
@@ -190,7 +220,6 @@ refresh(GhMlsInvitesDialog *self)
       group_label = invite->group_name && *invite->group_name
         ? g_strdup(invite->group_name) : g_strdup(_("Unnamed Group"));
     }
-    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), group_label);
     adw_avatar_set_text(row->avatar, group_label);
     g_autofree gchar *subtitle = NULL;
     if (invite->is_dm) {
@@ -200,7 +229,7 @@ refresh(GhMlsInvitesDialog *self)
     } else {
       subtitle = gh_mls_invite_subtitle(npub, name, contact, invite->member_count);
     }
-    adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitle);
+    gh_mls_invite_row_set_text(row, group_label, subtitle);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(row->accept_button), "s",
                                      invite->wrapper_id);
     gtk_actionable_set_action_target(GTK_ACTIONABLE(row->decline_button), "s",
@@ -221,13 +250,15 @@ refresh(GhMlsInvitesDialog *self)
   add_refused_rows(self);
   gtk_widget_set_visible(self->empty_row, self->rows->len == 0);
   gtk_widget_set_visible(GTK_WIDGET(self->refused_group), self->refused_rows->len > 0);
+  if (refocus)
+    focus_list(self);
   if (stale)
     g_idle_add(drop_stale_rows, stale);
 }
 
-/* This device's invitation key, live while the dialog is shown. */
+/* This device's invitation key, live while the panel is open. */
 static void
-sync_key(GhMlsInvitesDialog *self)
+sync_key(GhMlsInvitesPage *self)
 {
   GhMlsService *service = self->context.service;
   if (!service)
@@ -242,7 +273,7 @@ static void
 action_accept(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(widget);
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(widget);
   const gchar *wrapper = g_variant_get_string(parameter, NULL);
   if (!self->context.service)
     return;
@@ -255,22 +286,20 @@ action_accept(GtkWidget *widget, const gchar *action, GVariant *parameter)
     refresh(self);
     return;
   }
-  const gchar *name = gh_mls_group_get_name(group);
-  g_autofree gchar *title = g_strdup_printf(_("You joined “%s”"),
-                                            name && *name ? name : _("Unnamed Group"));
-  AdwToast *toast = adw_toast_new(title);
-  adw_toast_set_button_label(toast, _("_Open"));
-  adw_toast_set_action_name(toast, "mls-invites.open");
-  adw_toast_set_action_target(toast, "s", gh_mls_group_get_group_id(group));
-  show_toast(self, toast);
   refresh(self);
+  /* Joined: the panels close and the group opens (gh-mls-ui.c), with the
+   * window's "You joined" toast. */
+  g_autoptr(GhMlsGroup) held = g_object_ref(group);
+  g_object_ref(self);
+  g_signal_emit(self, signals[SIGNAL_OPEN_GROUP], 0, held);
+  g_object_unref(self);
 }
 
 static void
 action_decline(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(widget);
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(widget);
   const gchar *wrapper = g_variant_get_string(parameter, NULL);
   if (!self->context.service)
     return;
@@ -289,7 +318,7 @@ static void
 action_dismiss(GtkWidget *widget, const gchar *action, GVariant *parameter)
 {
   (void)action;
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(widget);
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(widget);
   if (!self->context.service)
     return;
   g_autoptr(GError) error = NULL;
@@ -300,37 +329,20 @@ action_dismiss(GtkWidget *widget, const gchar *action, GVariant *parameter)
 }
 
 static void
-action_open(GtkWidget *widget, const gchar *action, GVariant *parameter)
-{
-  (void)action;
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(widget);
-  GhMlsGroup *group = self->context.service
-    ? gh_mls_service_lookup(self->context.service, g_variant_get_string(parameter, NULL))
-    : NULL;
-  if (!group)
-    return;
-  g_autoptr(GhMlsGroup) held = g_object_ref(group);
-  g_object_ref(self);
-  adw_dialog_close(ADW_DIALOG(self));
-  g_signal_emit(self, signals[SIGNAL_OPEN_GROUP], 0, held);
-  g_object_unref(self);
-}
-
-static void
 on_service_gone(gpointer data, GObject *where)
 {
-  GhMlsInvitesDialog *self = data;
+  GhMlsInvitesPage *self = data;
   (void)where;
   self->context.service = NULL;
-  adw_dialog_force_close(ADW_DIALOG(self));
+  gh_sidebar_panel_leave(ADW_NAVIGATION_PAGE(self));
 }
 
-GhMlsInvitesDialog *
-gh_mls_invites_dialog_new(const GhMlsUiContext *context)
+GhMlsInvitesPage *
+gh_mls_invites_page_new(const GhMlsUiContext *context)
 {
   g_return_val_if_fail(context != NULL && GH_IS_MLS_SERVICE(context->service), NULL);
   g_return_val_if_fail(GH_IS_CONVERSATION_STORE(context->model), NULL);
-  GhMlsInvitesDialog *self = g_object_new(GH_TYPE_MLS_INVITES_DIALOG, NULL);
+  GhMlsInvitesPage *self = g_object_new(GH_TYPE_MLS_INVITES_PAGE, NULL);
   self->context = *context;
   self->context.default_relays = NULL;
   g_object_weak_ref(G_OBJECT(context->service), on_service_gone, self);
@@ -354,32 +366,32 @@ gh_mls_invites_dialog_new(const GhMlsUiContext *context)
 }
 
 guint
-gh_mls_invites_dialog_get_n_invites(GhMlsInvitesDialog *self)
+gh_mls_invites_page_get_n_invites(GhMlsInvitesPage *self)
 {
-  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), 0);
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), 0);
   return self->rows->len;
 }
 
 guint
-gh_mls_invites_dialog_get_n_refused(GhMlsInvitesDialog *self)
+gh_mls_invites_page_get_n_refused(GhMlsInvitesPage *self)
 {
-  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), 0);
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), 0);
   return self->refused_rows->len;
 }
 
 gboolean
-gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id,
+gh_mls_invites_page_describe(GhMlsInvitesPage *self, const gchar *wrapper_id,
                                const gchar **title, const gchar **subtitle)
 {
-  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), FALSE);
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), FALSE);
   for (guint i = 0; i < self->rows->len; i++) {
     GhMlsInviteRow *row = g_ptr_array_index(self->rows, i);
     if (g_strcmp0(row->wrapper_id, wrapper_id) != 0)
       continue;
     if (title)
-      *title = adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row));
+      *title = gtk_label_get_text(row->title_label);
     if (subtitle)
-      *subtitle = adw_action_row_get_subtitle(ADW_ACTION_ROW(row));
+      *subtitle = gtk_label_get_text(row->subtitle_label);
     return TRUE;
   }
   for (guint i = 0; i < self->refused_rows->len; i++) {
@@ -396,67 +408,95 @@ gh_mls_invites_dialog_describe(GhMlsInvitesDialog *self, const gchar *wrapper_id
 }
 
 const gchar *
-gh_mls_invites_dialog_get_key_status(GhMlsInvitesDialog *self)
+gh_mls_invites_page_get_key_status(GhMlsInvitesPage *self)
 {
-  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), NULL);
   return adw_action_row_get_subtitle(self->key_row);
 }
 
 const gchar *
-gh_mls_invites_dialog_get_last_toast(GhMlsInvitesDialog *self)
+gh_mls_invites_page_get_last_toast(GhMlsInvitesPage *self)
 {
-  g_return_val_if_fail(GH_IS_MLS_INVITES_DIALOG(self), NULL);
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), NULL);
   return self->last_toast;
 }
 
 static void
-gh_mls_invites_dialog_dispose(GObject *object)
+gh_mls_invites_page_dispose(GObject *object)
 {
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(object);
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(object);
   if (self->context.service) {
     g_object_weak_unref(G_OBJECT(self->context.service), on_service_gone, self);
     self->context.service = NULL;
   }
   g_clear_object(&self->context.model);
-  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MLS_INVITES_DIALOG);
-  G_OBJECT_CLASS(gh_mls_invites_dialog_parent_class)->dispose(object);
+  gtk_widget_dispose_template(GTK_WIDGET(object), GH_TYPE_MLS_INVITES_PAGE);
+  G_OBJECT_CLASS(gh_mls_invites_page_parent_class)->dispose(object);
 }
 
 static void
-gh_mls_invites_dialog_finalize(GObject *object)
+gh_mls_invites_page_finalize(GObject *object)
 {
-  GhMlsInvitesDialog *self = GH_MLS_INVITES_DIALOG(object);
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(object);
   g_ptr_array_unref(self->rows);
   g_ptr_array_unref(self->refused_rows);
   g_free(self->last_toast);
-  G_OBJECT_CLASS(gh_mls_invites_dialog_parent_class)->finalize(object);
+  G_OBJECT_CLASS(gh_mls_invites_page_parent_class)->finalize(object);
+}
+
+/* The keyboard starts in the panel, on the first invitation's row (or the
+ * empty state), so Escape and Tab work at once; nothing is pressed by Enter
+ * or Space there. */
+static void
+gh_mls_invites_page_shown(AdwNavigationPage *page)
+{
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(page);
+  /* Shown before it is on screen (the collapsed sidebar comes back with
+   * it): the focus moves in once it is, after the sidebar's own. */
+  if (gtk_widget_get_mapped(GTK_WIDGET(self)))
+    focus_list(self);
+  else
+    self->focus_on_map = TRUE;
+  if (ADW_NAVIGATION_PAGE_CLASS(gh_mls_invites_page_parent_class)->shown)
+    ADW_NAVIGATION_PAGE_CLASS(gh_mls_invites_page_parent_class)->shown(page);
 }
 
 static void
-gh_mls_invites_dialog_class_init(GhMlsInvitesDialogClass *klass)
+gh_mls_invites_page_map(GtkWidget *widget)
+{
+  GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(widget);
+  GTK_WIDGET_CLASS(gh_mls_invites_page_parent_class)->map(widget);
+  if (self->focus_on_map) {
+    self->focus_on_map = FALSE;
+    focus_list(self);
+  }
+}
+
+static void
+gh_mls_invites_page_class_init(GhMlsInvitesPageClass *klass)
 {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  object_class->dispose = gh_mls_invites_dialog_dispose;
-  object_class->finalize = gh_mls_invites_dialog_finalize;
+  object_class->dispose = gh_mls_invites_page_dispose;
+  object_class->finalize = gh_mls_invites_page_finalize;
+  ADW_NAVIGATION_PAGE_CLASS(klass)->shown = gh_mls_invites_page_shown;
+  widget_class->map = gh_mls_invites_page_map;
   signals[SIGNAL_OPEN_GROUP] = g_signal_new("open-group", G_TYPE_FROM_CLASS(klass),
                                             G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL,
                                             G_TYPE_NONE, 1, GH_TYPE_MLS_GROUP);
   gtk_widget_class_set_template_from_resource(
-    widget_class, "/org/nostr/Groundhog/ui/gh-mls-invites-dialog.ui");
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, toasts);
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, key_row);
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, empty_row);
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, invites_group);
-  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesDialog, refused_group);
+    widget_class, "/org/nostr/Groundhog/ui/gh-mls-invites-page.ui");
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, key_row);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, empty_row);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, invites_group);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, refused_group);
   gtk_widget_class_install_action(widget_class, "mls-invites.accept", "s", action_accept);
   gtk_widget_class_install_action(widget_class, "mls-invites.decline", "s", action_decline);
-  gtk_widget_class_install_action(widget_class, "mls-invites.open", "s", action_open);
   gtk_widget_class_install_action(widget_class, "mls-invites.dismiss", "s", action_dismiss);
 }
 
 static void
-gh_mls_invites_dialog_init(GhMlsInvitesDialog *self)
+gh_mls_invites_page_init(GhMlsInvitesPage *self)
 {
   self->rows = g_ptr_array_new();
   self->refused_rows = g_ptr_array_new();
