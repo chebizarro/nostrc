@@ -14,12 +14,18 @@ if [[ "$libdir" != /opt/libsecret-0.21.8/lib ]]; then
 fi
 echo "NIP-55L refusing-session contract: libsecret $version from $libdir"
 
-# A runtime test reaches only the paths it drives; reject every sync
-# session-open call in the signer sources as well as exercising the live read
-# path below.
-if grep -rnE '(^|[^[:alnum:]_])(secret_service_ensure_session_sync|_secret_session_open_sync)[[:space:]]*\(' \
-        /src/nips/nip55l/src; then
+# A runtime test reaches only the paths it drives; also reject every
+# synchronous session open in the signer sources and the key schema library
+# it links (defence in depth for the live read path exercised below). grep
+# exits 1 for "no match"; any other status is an error, never a pass.
+rc=0
+grep -rnE '(^|[^[:alnum:]_])(secret_service_ensure_session_sync|_secret_session_open_sync|secret_service_open_sync)[[:space:]]*\(|SECRET_SERVICE_OPEN_SESSION' \
+    /src/nips/nip55l/src /src/gnome/seahorse || rc=$?
+if [ "$rc" -eq 0 ]; then
     echo "ERROR: synchronous libsecret session opening reintroduced" >&2
+    exit 1
+elif [ "$rc" -ne 1 ]; then
+    echo "ERROR: source guard could not scan the signer sources (grep exit $rc)" >&2
     exit 1
 fi
 
