@@ -714,7 +714,12 @@ setup(void)
 #endif
     );
   g_assert_true(g_file_set_contents(secrets_path, secrets_json, -1, NULL));
-  const gchar *secret_argv[] = { "python3", secret_script, secrets_path, NULL };
+  /* The interpreter CMake found (it has PyGObject); a bare "python3" from
+   * PATH can be one without gi (macOS's /usr/bin/python3), and the service
+   * then dies at import before claiming its name (nostrc-abepi). */
+  const gchar *secret_python = g_getenv("SECRET_SERVICE_PYTHON");
+  g_assert_nonnull(secret_python);
+  const gchar *secret_argv[] = { secret_python, secret_script, secrets_path, NULL };
   nostrc_test_bus_spawn_supervised(test_bus.bus, "secret-service.log", NULL, secret_argv);
   wait_for_name("org.freedesktop.secrets");
   gh_test_signer_up(&test_bus, &signer);
