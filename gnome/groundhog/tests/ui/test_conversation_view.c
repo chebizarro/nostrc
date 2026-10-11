@@ -3642,6 +3642,311 @@ test_markdown_table_explained(Fixture *f, gconstpointer data)
   g_assert_null(row_table(row));
 }
 
+/* ---- fenced tables and code blocks ------------------------------------------------ */
+
+/* The owner's bot message: its Markdown table inside a code fence. */
+static const gchar *const fenced_bot_body =
+  "**Muse Glimmer IQ3_M + dflash speculator** \xe2\x80\x94 loaded and running on port **8080**:\n"
+  "\n"
+  "```\n"
+  "| Metric     | Value                          |\n"
+  "| ---------- | ------------------------------ |\n"
+  "| Gen speed  | 22.3 tok/s                     |\n"
+  "| Prompt     | 28.3 tok/s                     |\n"
+  "| VRAM       | 17.0 + 15.8 = ~33 GB           |\n"
+  "| Speculator | dflash, n_max=3, block_size=16 |\n"
+  "```\n"
+  "\n"
+  "Also a vision model \xe2\x80\x94 ...";
+
+/* A wide five-column table with ragged widths, in a ~~~ fence with blank
+ * lines around and inside it. */
+static const gchar *const fenced_wide_body =
+  "Relays I checked:\n"
+  "\n"
+  "\n"
+  "~~~\n"
+  "\n"
+  "| # | Pubkey (short) | Operator | Location | Notes |\n"
+  "|---|----------------|----------|----------|-------|\n"
+  "| 1 | 3bf0c63fcb93\xe2\x80\xa6 | Damus | US-East (Virginia) | paid relay, fast, NIP-42 auth required for writes |\n"
+  "| 2 | 82341f882b6e\xe2\x80\xa6 | nos.lol | Germany | free |\n"
+  "| 3 | 32e1827635\xe2\x80\xa6 | Primal | US-West | caching service, read-heavy; rate-limits bursts above 30 req/s |\n"
+  "\n"
+  "~~~\n"
+  "\n"
+  "That's all three.";
+
+#define LONG_CODE_LINE \
+  "curl -sS --retry 5 --retry-delay 2 -H 'Accept: application/nostr+json' " \
+  "https://relay.example.org/a/very/long/path/that/keeps/going/and/going?with=query&and=more&until=it&is=far&wider=than&any=bubble"
+
+static const gchar *const code_body =
+  "Run this:\n\n```sh\n" LONG_CODE_LINE "\n\n  ls -la   | grep  x\n```\nDone.";
+
+static void
+fenced_shot(Fixture *f, const char *name)
+{
+  const char *prefix = g_getenv("GROUNDHOG_FENCED_SCREENSHOTS");
+  if (!prefix) return;
+  drain_idle();
+  gboolean painted = FALSE;
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(GTK_WIDGET(f->window));
+  gulong handler = g_signal_connect(clock, "after-paint", G_CALLBACK(on_table_painted), &painted);
+  gtk_widget_queue_draw(GTK_WIDGET(f->window));
+  spin_until(is_true, &painted);
+  g_signal_handler_disconnect(clock, handler);
+  g_autofree char *path = g_strdup_printf("%s-%s.png", prefix, name);
+  save_png_path(GTK_WIDGET(f->window), NULL, path);
+}
+
+static gboolean
+body_rendered(gpointer data)
+{
+  GhMessageRow *row = data;
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  return *gtk_label_get_text(GTK_LABEL(row_child(row, "body_label"))) ||
+         (blocks && gtk_widget_get_visible(blocks));
+}
+
+/* Shows @body at @width and returns its row once rendered and painted (and
+ * saves a screenshot named @shot when asked). */
+static GhMessageRow *
+show_body(Fixture *f, const gchar *body, int width, const char *shot)
+{
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), body);
+  show(f, room_of(f->store, message), width, 600);
+  if (width < 400)
+    spin_until(view_is_compact, f->view);
+  GhMessageRow *row = row_for(f->view, message);
+  spin_until(body_rendered, row);
+  fenced_shot(f, shot);
+  return row;
+}
+
+static void
+assert_fenced_bot(Fixture *f, int width, const char *shot)
+{
+  g_autofree gchar *logged = NULL;
+  g_log_set_debug_enabled(TRUE);
+  GLogFunc previous = g_log_set_default_handler(capture_table_debug, &logged);
+  GhMessageRow *row = show_body(f, fenced_bot_body, width, shot);
+  spin_until(row_has_table, row);
+  g_log_set_default_handler(previous, NULL);
+  g_log_set_debug_enabled(FALSE);
+  /* The debug log no longer reports a fenced table. */
+  g_assert_null(logged);
+  g_assert_cmpstr(gtk_label_get_text(row_child(row, "body_label")), ==,
+                  "Muse Glimmer IQ3_M + dflash speculator \xe2\x80\x94 loaded and running on port 8080:");
+  GtkGrid *grid = row_table(row);
+  static const gchar *const cells[5][2] = {
+    { "Metric", "Value" }, { "Gen speed", "22.3 tok/s" }, { "Prompt", "28.3 tok/s" },
+    { "VRAM", "17.0 + 15.8 = ~33 GB" }, { "Speculator", "dflash, n_max=3, block_size=16" },
+  };
+  for (int r = 0; r < 5; r++)
+    for (int c = 0; c < 2; c++)
+      g_assert_cmpstr(cell_text(grid, c, r), ==, cells[r][c]);
+  g_assert_null(gtk_grid_get_child_at(grid, 2, 0));
+  g_assert_null(gtk_grid_get_child_at(grid, 0, 5));
+  g_assert_true(gtk_widget_has_css_class(gtk_grid_get_child_at(grid, 0, 0), "header"));
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  g_assert_null(find_type(blocks, GTK_TYPE_SCROLLED_WINDOW)); /* not code */
+  GtkWidget *after = gtk_widget_get_last_child(blocks);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(after)), ==, "Also a vision model \xe2\x80\x94 ...");
+  assert_no_table_syntax(GTK_WIDGET(row));
+  /* Copy gives the table as it was written. */
+  g_clear_pointer(&f->copied, g_free);
+  click(row_child(row, "copy_button"));
+  g_assert_cmpstr(f->copied, ==,
+                  "Muse Glimmer IQ3_M + dflash speculator \xe2\x80\x94 loaded and running on port 8080:\n\n"
+                  "| Metric     | Value                          |\n"
+                  "| ---------- | ------------------------------ |\n"
+                  "| Gen speed  | 22.3 tok/s                     |\n"
+                  "| Prompt     | 28.3 tok/s                     |\n"
+                  "| VRAM       | 17.0 + 15.8 = ~33 GB           |\n"
+                  "| Speculator | dflash, n_max=3, block_size=16 |\n\n"
+                  "Also a vision model \xe2\x80\x94 ...");
+  spin_until(table_mapped, row);
+  drain_idle();
+  graphene_rect_t bounds;
+  GtkWidget *bubble = row_child(row, "bubble");
+  for (int r = 0; r < 5; r++)
+    for (int c = 0; c < 2; c++) {
+      g_assert_true(gtk_widget_compute_bounds(gtk_grid_get_child_at(grid, c, r), bubble, &bounds));
+      g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(bubble));
+    }
+  g_assert_cmpint(gtk_widget_get_height(bubble), <, 600);
+}
+
+static void
+test_fenced_table(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_fenced_bot(f, 700, "bot-700");
+}
+
+static void
+test_fenced_table_compact(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_fenced_bot(f, 360, "bot-compact");
+}
+
+static void
+assert_fenced_wide(Fixture *f, int width, const char *shot)
+{
+  GhMessageRow *row = show_body(f, fenced_wide_body, width, shot);
+  spin_until(row_has_table, row);
+  g_assert_cmpstr(gtk_label_get_text(row_child(row, "body_label")), ==, "Relays I checked:");
+  GtkGrid *grid = row_table(row);
+  static const gchar *const header[] = { "#", "Pubkey (short)", "Operator", "Location", "Notes" };
+  for (int c = 0; c < 5; c++)
+    g_assert_cmpstr(cell_text(grid, c, 0), ==, header[c]);
+  g_assert_cmpstr(cell_text(grid, 3, 1), ==, "US-East (Virginia)");
+  g_assert_cmpstr(cell_text(grid, 4, 3),
+                  ==, "caching service, read-heavy; rate-limits bursts above 30 req/s");
+  g_assert_null(gtk_grid_get_child_at(grid, 0, 4));
+  assert_no_table_syntax(GTK_WIDGET(row));
+  spin_until(table_mapped, row);
+  drain_idle();
+  GtkWidget *bubble = row_child(row, "bubble");
+  graphene_rect_t bounds;
+  for (int r = 0; r < 4; r++)
+    for (int c = 0; c < 5; c++) {
+      g_assert_true(gtk_widget_compute_bounds(gtk_grid_get_child_at(grid, c, r), bubble, &bounds));
+      g_assert_cmpfloat(bounds.origin.x, >=, 0);
+      g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(bubble));
+    }
+  GtkWidget *view = gtk_widget_get_ancestor(bubble, GH_TYPE_CONVERSATION_VIEW);
+  g_assert_true(gtk_widget_compute_bounds(bubble, view, &bounds));
+  g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(view));
+  /* As tall as its wrapped cells (five narrow columns wrap a lot when
+   * compact), not stretched by measuring. */
+  g_assert_cmpint(gtk_widget_get_height(bubble), <, width < 400 ? 1200 : 600);
+}
+
+static void
+test_fenced_table_wide(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_fenced_wide(f, 700, "wide-700");
+}
+
+static void
+test_fenced_table_wide_compact(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_fenced_wide(f, 360, "wide-compact");
+}
+
+static GtkScrolledWindow *
+row_code(GhMessageRow *row)
+{
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  if (!blocks || !gtk_widget_get_visible(blocks))
+    return NULL;
+  GtkWidget *scroller = find_type(blocks, GTK_TYPE_SCROLLED_WINDOW);
+  return scroller ? GTK_SCROLLED_WINDOW(scroller) : NULL;
+}
+
+static gboolean
+code_mapped(gpointer data)
+{
+  GtkScrolledWindow *scroller = row_code(GH_MESSAGE_ROW(data));
+  return scroller && gtk_widget_get_mapped(GTK_WIDGET(scroller)) &&
+         gtk_widget_get_width(GTK_WIDGET(scroller)) > 0 &&
+         gtk_adjustment_get_page_size(gtk_scrolled_window_get_hadjustment(scroller)) > 0;
+}
+
+/* Fenced code does not wrap: one monospace label, as written, that scrolls
+ * sideways inside the bubble and is no taller than its lines. */
+static void
+assert_code_block(Fixture *f, int width, const char *shot)
+{
+  GhMessageRow *row = show_body(f, code_body, width, shot);
+  spin_until(code_mapped, row);
+  drain_idle();
+  GtkScrolledWindow *scroller = row_code(row);
+  GtkWidget *label = find_type(GTK_WIDGET(scroller), GTK_TYPE_LABEL);
+  g_assert_nonnull(label);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==,
+                  LONG_CODE_LINE "\n\n  ls -la   | grep  x");
+  g_assert_false(gtk_label_get_wrap(GTK_LABEL(label)));
+  g_assert_true(gtk_label_get_selectable(GTK_LABEL(label)));
+  g_assert_true(gtk_widget_has_css_class(label, "monospace"));
+  GtkPolicyType hpolicy, vpolicy;
+  gtk_scrolled_window_get_policy(scroller, &hpolicy, &vpolicy);
+  g_assert_cmpint(hpolicy, ==, GTK_POLICY_AUTOMATIC);
+  g_assert_cmpint(vpolicy, ==, GTK_POLICY_NEVER);
+  /* The text around the code wraps as usual. */
+  g_assert_cmpstr(gtk_label_get_text(row_child(row, "body_label")), ==, "Run this:");
+  GtkWidget *blocks = find_named_widget(GTK_WIDGET(row), "body_blocks");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(gtk_widget_get_last_child(blocks))), ==, "Done.");
+  /* Bounded to the bubble; the long line scrolls instead. */
+  GtkWidget *bubble = row_child(row, "bubble");
+  graphene_rect_t bounds;
+  g_assert_true(gtk_widget_compute_bounds(GTK_WIDGET(scroller), bubble, &bounds));
+  g_assert_cmpfloat(bounds.origin.x, >=, 0);
+  g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(bubble));
+  GtkAdjustment *h = gtk_scrolled_window_get_hadjustment(scroller);
+  g_assert_cmpfloat(gtk_adjustment_get_upper(h), >, gtk_adjustment_get_page_size(h));
+  g_assert_cmpint(gtk_widget_get_width(label), >, gtk_widget_get_width(GTK_WIDGET(scroller)));
+  GtkWidget *view = gtk_widget_get_ancestor(bubble, GH_TYPE_CONVERSATION_VIEW);
+  g_assert_true(gtk_widget_compute_bounds(bubble, view, &bounds));
+  g_assert_cmpfloat(bounds.origin.x + bounds.size.width, <=, gtk_widget_get_width(view));
+  /* Not stretched: as tall as its three lines (plus a scrollbar at most). */
+  int line_min = 0, line_nat = 0;
+  gtk_widget_measure(label, GTK_ORIENTATION_VERTICAL, -1, &line_min, &line_nat, NULL, NULL);
+  g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(scroller)), >=, line_min);
+  g_assert_cmpint(gtk_widget_get_height(GTK_WIDGET(scroller)), <=, line_nat + 24);
+  g_assert_cmpint(gtk_widget_get_height(bubble), <, 300);
+  /* Copy gives the code as written. */
+  g_clear_pointer(&f->copied, g_free);
+  click(row_child(row, "copy_button"));
+  g_assert_cmpstr(f->copied, ==, "Run this:\n\n" LONG_CODE_LINE "\n\n  ls -la   | grep  x\n\nDone.");
+}
+
+static void
+test_code_block(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_code_block(f, 700, "code-700");
+}
+
+static void
+test_code_block_compact(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  assert_code_block(f, 360, "code-compact");
+}
+
+/* Short code needs no scrolling; a recycled row drops and rebuilds its
+ * code block. */
+static void
+test_code_block_short_and_recycled(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *code = add_dm(f->store, 2, 1, noon_today(), "```\nls -la\n```");
+  GhMessage *plain = add_dm(f->store, 2, 1, noon_today() + 1, "plain text");
+  show(f, room_of(f->store, code), 700, 600);
+  GhMessageRow *row = row_for(f->view, code);
+  spin_until(code_mapped, row);
+  drain_idle();
+  GtkScrolledWindow *scroller = row_code(row);
+  GtkAdjustment *h = gtk_scrolled_window_get_hadjustment(scroller);
+  g_assert_cmpfloat(gtk_adjustment_get_upper(h), <=, gtk_adjustment_get_page_size(h));
+  g_assert_false(gtk_widget_get_child_visible(row_child(row, "body_label")));
+  gh_message_row_set_message(row, plain);
+  drain_idle();
+  g_assert_null(row_code(row));
+  g_assert_cmpstr(gtk_label_get_text(row_child(row, "body_label")), ==, "plain text");
+  gh_message_row_set_message(row, code);
+  drain_idle();
+  g_assert_nonnull(row_code(row));
+  GtkWidget *label = find_type(GTK_WIDGET(row_code(row)), GTK_TYPE_LABEL);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(label)), ==, "ls -la");
+}
+
 typedef struct {
   GhConversationStore *store;
   GhConversation *dm;      /* B: days, runs, a link, statuses */
@@ -4707,6 +5012,13 @@ main(int argc, char **argv)
   ADD("markdown-table-line-ends", test_markdown_table_line_ends);
   ADD("markdown-table-blanks", test_markdown_table_blanks);
   ADD("markdown-table-explained", test_markdown_table_explained);
+  ADD("fenced-table", test_fenced_table);
+  ADD("fenced-table-compact", test_fenced_table_compact);
+  ADD("fenced-table-wide", test_fenced_table_wide);
+  ADD("fenced-table-wide-compact", test_fenced_table_wide_compact);
+  ADD("code-block", test_code_block);
+  ADD("code-block-compact", test_code_block_compact);
+  ADD("code-block-short-and-recycled", test_code_block_short_and_recycled);
   ADD("reference-card", test_reference_card);
   ADD("share-reference", test_share_reference);
   ADD("link-previews", test_link_previews);

@@ -20,7 +20,8 @@ static GnMarkdownToken *emit(GnMarkdownDocument *doc, GnMarkdownTokenKind kind,
                              const char *text, gsize len, const char *target,
                              guint style, guint level, gboolean ordered) {
   if (!len && kind != GN_MARKDOWN_SEPARATOR && kind != GN_MARKDOWN_LINE_BREAK &&
-      kind != GN_MARKDOWN_TABLE_CELL && kind != GN_MARKDOWN_LIST_ITEM)
+      kind != GN_MARKDOWN_TABLE_CELL && kind != GN_MARKDOWN_LIST_ITEM &&
+      !(kind == GN_MARKDOWN_CODE && level))
     return NULL;
   if (doc->tokens->len >= GN_MARKDOWN_MAX_TOKENS) {
     doc->truncated = TRUE;
@@ -380,6 +381,66 @@ static guint table_start(const char *s, gsize n, const char *next, const char *e
   return columns;
 }
 
+/* The bytes of the fence run (three or more of one character) at s after
+ * up to three spaces, and its character in *mark; 0 if s is not a fence. */
+static gsize fence_run(const char *s, gsize n, char *mark) {
+  gsize i = 0;
+  while (i < n && i < 3 && s[i] == ' ') i++;
+  if (n - i < 3 || (s[i] != '`' && s[i] != '~')) return 0;
+  gsize j = i;
+  while (j < n && s[j] == s[i]) j++;
+  if (j - i < 3) return 0;
+  *mark = s[i];
+  return j;
+}
+
+static gboolean ascii_blank(const char *s, gsize n) {
+  for (gsize i = 0; i < n; i++)
+    if (s[i] != ' ' && s[i] != '\t') return FALSE;
+  return TRUE;
+}
+
+/* Whether the fence opened by line s (n bytes) holds exactly one GFM table
+ * and may be shown as one: its info string is empty, "markdown", "md" or
+ * "table", and its non-blank lines up to the closing fence (or the end) are
+ * a header row, a delimiter row with as many cells, and rows with a pipe. */
+static gboolean fence_holds_table(const char *s, gsize n, const char *body, const char *end) {
+  char mark = 0;
+  gsize run = fence_run(s, n, &mark);
+  if (!run) return FALSE;
+  const char *info = s + run;
+  gsize info_n = n - run;
+  while (info_n && (*info == ' ' || *info == '\t')) { info++; info_n--; }
+  while (info_n && (info[info_n - 1] == ' ' || info[info_n - 1] == '\t')) info_n--;
+  static const char *const tables[] = { "markdown", "md", "table" };
+  gboolean ok = info_n == 0;
+  for (guint k = 0; !ok && k < G_N_ELEMENTS(tables); k++)
+    ok = info_n == strlen(tables[k]) && g_ascii_strncasecmp(info, tables[k], info_n) == 0;
+  if (!ok) return FALSE;
+  guint lines = 0, columns = 0;
+  for (const char *p = body; p && p < end;) {
+    gsize len = 0;
+    const char *line = p;
+    p = line_bounds(p, end, &len);
+    if (fence_line(line, len, mark)) break;
+    if (ascii_blank(line, len)) continue;
+    Span cells[GN_MARKDOWN_MAX_TABLE_COLUMNS];
+    guint aligns[GN_MARKDOWN_MAX_TABLE_COLUMNS];
+    guint count = split_row(line, len, cells, GN_MARKDOWN_MAX_TABLE_COLUMNS);
+    if (lines == 0) {
+      if (!count) return FALSE;
+      columns = count;
+    } else if (lines == 1) {
+      guint delimiter = 0;
+      if (!delimiter_row(line, len, aligns, &delimiter) || delimiter != columns) return FALSE;
+    } else if (!count) {
+      return FALSE;
+    }
+    lines++;
+  }
+  return lines >= 2;
+}
+
 /* Why the delimiter-row candidate at s is not one, for gn_markdown_explain_no_table. */
 static gchar *delimiter_problem(const char *s, gsize n) {
   Span cells[GN_MARKDOWN_MAX_TABLE_COLUMNS];
@@ -418,6 +479,10 @@ gchar *gn_markdown_explain_no_table(const gchar *input, gssize length) {
     line++;
     p = next ? next : end;
     if (fence_line(s, n, fence)) {
+      if (!fence && fence_holds_table(s, n, p, end)) {
+        g_free(first);
+        return NULL; /* a fenced table is shown as a table */
+      }
       gsize i = 0;
       while (s[i] == ' ') i++;
       fence = fence ? 0 : s[i];
@@ -465,6 +530,8 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
   GnMarkdownDocument *doc = document_new(input, length);
   const char *p = doc->source, *end = doc->source + strlen(doc->source);
   char fence = 0;             /* the open fence's character */
+  guint fences = 0;           /* fences opened so far */
+  gboolean fenced_table = FALSE; /* the open fence holds one table */
   guint table = 0;            /* columns of the table being read */
   guint aligns[GN_MARKDOWN_MAX_TABLE_COLUMNS] = { 0 };
   while (p < end && doc->tokens->len < GN_MARKDOWN_MAX_TOKENS) {
@@ -482,11 +549,15 @@ GnMarkdownDocument *gn_markdown_parse(const gchar *input, gssize length) {
     if (table) {
       /* a body row, emitted above */
     } else if (fence_line(s, n, fence)) {
+      if (!fence) {
+        fences++;
+        fenced_table = fence_holds_table(s, n, next, end);
+      }
       gsize i = 0;
       while (s[i] == ' ') i++;
       fence = fence ? 0 : s[i];
     } else if (fence) {
-      emit(doc, GN_MARKDOWN_CODE, s, n, NULL, 0, 0, FALSE);
+      emit(doc, GN_MARKDOWN_CODE, s, n, NULL, 0, fences, fenced_table);
     } else if (separator(s, n)) {
       emit(doc, GN_MARKDOWN_SEPARATOR, NULL, 0, NULL, 0, 0, FALSE);
     } else if ((table = table_start(s, n, next, end, aligns)) != 0) {

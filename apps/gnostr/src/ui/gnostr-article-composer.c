@@ -89,7 +89,7 @@ static void on_preview_toggled(GtkToggleButton *btn, gpointer user_data) {
     char *text = gtk_text_buffer_get_text(buf, &start, &end, FALSE);
 
     if (text && *text) {
-      char *pango = gn_markdown_pango_from_text(text, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID });
+      char *pango = gn_markdown_pango_from_text(text, &(GnMarkdownPangoOptions){ .flags = GN_MARKDOWN_PANGO_HEADING_SIZES | GN_MARKDOWN_PANGO_TABLE_GRID | GN_MARKDOWN_PANGO_FENCED_TABLES });
       if (pango) {
         /* nostrc-csaf: Use safe markup setter for consistency - users may paste
          * relay content into the composer which could contain malformed markup */

@@ -51,7 +51,14 @@ typedef enum {
  * (0-based, every row padded or cut to the delimiter's column count),
  * ordered = TRUE in the header row, align = GnMarkdownAlign of the column
  * and columns = the column count. Rows are separated by LINE_BREAK tokens;
- * the delimiter row emits nothing. */
+ * the delimiter row emits nothing.
+ *
+ * Fenced code: each line inside a ``` or ~~~ fence is a CODE token (blank
+ * lines too, with empty text) with level = the fence's number (1-based, in
+ * document order; inline code has level 0) and ordered = TRUE when the fence
+ * holds exactly one GFM table (no info string, or "markdown", "md" or
+ * "table"; its non-blank lines a header row, a matching delimiter row and
+ * rows with a pipe), which a formatter may show as a table. */
 
 typedef struct {
   GnMarkdownTokenKind kind;
@@ -88,7 +95,7 @@ void gn_markdown_document_free(GnMarkdownDocument *document);
 /* Why lines of input with a pipe are not a GFM table, for a debug log: the
  * first candidate header line and what its next line lacks (line numbers,
  * cell counts and code points only, never the text). NULL when the input
- * has a table or no line with a pipe. Free with g_free(). */
+ * has a table (a fence holding one counts) or no line with a pipe. Free with g_free(). */
 gchar *gn_markdown_explain_no_table(const gchar *input, gssize length);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnMarkdownDocument, gn_markdown_document_free)
 

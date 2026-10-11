@@ -260,7 +260,8 @@ format_code_block(GString *out, const GnMarkdownDocument *document, guint i, Ctx
   while (TRUE) {
     append_text(out, token_at(document, i)->text, FALSE, ctx);
     i++;
-    if (!token_at(document, i) || !is_code_line(document, i + 1))
+    if (!token_at(document, i) || !is_code_line(document, i + 1) ||
+        token_at(document, i + 1)->level != token_at(document, i - 1)->level)
       break;
     g_string_append_c(out, '\n');
     i++;
@@ -318,6 +319,92 @@ table_block(GString *out, const GnMarkdownDocument *document, guint start, Ctx *
   return end;
 }
 
+/* A fenced code line (CODE alone on its line, from fence number > 0). */
+static gboolean
+is_fence_line(const GnMarkdownDocument *document, guint i)
+{
+  return is_code_line(document, i) && token_at(document, i)->level > 0;
+}
+
+/* The index after the last code line of the fence whose first line is at
+ * @i; its lines, joined by newlines, in @text when given. */
+static guint
+fence_end(const GnMarkdownDocument *document, guint i, GString *text)
+{
+  guint fence = token_at(document, i)->level;
+  guint last = i;
+  for (guint k = i; k < document->tokens->len; k++) {
+    const GnMarkdownToken *token = token_at(document, k);
+    if (token->kind == GN_MARKDOWN_LINE_BREAK)
+      continue;
+    if (token->kind != GN_MARKDOWN_CODE || token->level != fence || !is_code_line(document, k))
+      break;
+    if (text) {
+      if (k > i)
+        g_string_append_c(text, '\n');
+      g_string_append(text, token->text ? token->text : "");
+    }
+    last = k;
+  }
+  return last + 1;
+}
+
+/* A fence holding one GFM table (see gn-markdown.h) as that table, as
+ * format_table or table_block would show it unfenced. Returns the index
+ * after the fence, or 0 (nothing written) when its lines are not one table
+ * after all. */
+static guint table_block(GString *out, const GnMarkdownDocument *document, guint start,
+                         Ctx *ctx);
+
+static guint
+fenced_table(GString *out, const GnMarkdownDocument *document, guint i, Ctx *ctx)
+{
+  g_autoptr(GString) text = g_string_new(NULL);
+  guint end = fence_end(document, i, text);
+  /* Blank lines inside the fence do not split the table. */
+  g_autoptr(GString) rows = g_string_new(NULL);
+  gchar **lines = g_strsplit(text->str, "\n", -1);
+  for (gchar **line = lines; *line; line++) {
+    if (!(*line)[strspn(*line, " \t")])
+      continue;
+    if (rows->len)
+      g_string_append_c(rows, '\n');
+    g_string_append(rows, *line);
+  }
+  g_strfreev(lines);
+  g_autoptr(GnMarkdownDocument) table = gn_markdown_parse(rows->str, (gssize)rows->len);
+  if (table->truncated || !table->tokens->len)
+    return 0;
+  for (guint k = 0; k < table->tokens->len; k++) {
+    const GnMarkdownToken *token = token_at(table, k);
+    if (token->kind != GN_MARKDOWN_TABLE_CELL && token->kind != GN_MARKDOWN_LINE_BREAK)
+      return 0;
+  }
+  if (ctx->blocks) {
+    table_block(out, table, 0, ctx);
+    GnMarkdownPangoBlock *block = g_ptr_array_index(ctx->blocks, ctx->blocks->len - 1);
+    block->source = g_string_free(g_steal_pointer(&text), FALSE);
+  } else {
+    format_table(out, table, 0, ctx);
+  }
+  return end;
+}
+
+/* A fenced code block as a block of its own, shown unwrapped by the host. */
+static guint
+code_block(GString *out, const GnMarkdownDocument *document, guint i, Ctx *ctx)
+{
+  flush_text_block(out, ctx);
+  g_autoptr(GString) text = g_string_new(NULL);
+  guint end = fence_end(document, i, text);
+  GnMarkdownPangoBlock *block = g_new0(GnMarkdownPangoBlock, 1);
+  block->kind = GN_MARKDOWN_PANGO_BLOCK_CODE;
+  g_autofree gchar *escaped = g_markup_escape_text(text->str, (gssize)text->len);
+  block->markup = g_strconcat("<tt>", escaped, "</tt>", NULL);
+  g_ptr_array_add(ctx->blocks, block);
+  return end;
+}
+
 static void
 format_full(GString *out, const GnMarkdownDocument *document, Ctx *ctx)
 {
@@ -331,6 +418,18 @@ format_full(GString *out, const GnMarkdownDocument *document, Ctx *ctx)
     if (token->kind == GN_MARKDOWN_TABLE_CELL) {
       i = ctx->blocks ? table_block(out, document, i, ctx)
                       : format_table(out, document, i, ctx);
+      continue;
+    }
+    if (is_fence_line(document, i) && token->ordered &&
+        (flags & GN_MARKDOWN_PANGO_FENCED_TABLES)) {
+      guint end = fenced_table(out, document, i, ctx);
+      if (end) {
+        i = end;
+        continue;
+      }
+    }
+    if (ctx->blocks && is_fence_line(document, i) && (flags & GN_MARKDOWN_PANGO_CODE_BLOCKS)) {
+      i = code_block(out, document, i, ctx);
       continue;
     }
     if (is_code_line(document, i)) {
@@ -484,6 +583,7 @@ gn_markdown_pango_block_free(GnMarkdownPangoBlock *block)
   g_free(block->markup);
   g_strfreev(block->cells);
   g_free(block->aligns);
+  g_free(block->source);
   g_free(block);
 }
 

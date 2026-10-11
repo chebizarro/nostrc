@@ -110,6 +110,16 @@
   border-bottom: none;
 }
 
+/* Fenced code: unwrapped, scrolls sideways inside the bubble. */
+.groundhog-message-code {
+  background-color: alpha(currentColor, 0.06);
+  border-radius: 6px;
+}
+
+.groundhog-message-code label {
+  padding: 6px 8px;
+}
+
 .groundhog-undecryptable,
 .groundhog-withdrawn {
   font-style: italic;

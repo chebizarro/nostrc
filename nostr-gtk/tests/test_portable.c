@@ -113,7 +113,12 @@ static void markdown_table_explain(void) {
     { "| a | b |\n| | --- |\n", "line 1 has 2 cells but cell 1 of the next line is empty, not a run of '-'" },
     { "| a | b |\nplain\n", "line 1 has 2 cells but the next line has no pipe" },
     { "text\n| a | b |", "line 2 has 2 cells but is the last line" },
-    { "```\n| a | b |\n| - | - |\n```\n", "2 pipe lines are inside a code fence" },
+    /* A fence holding just a table is shown as one; other fences are code. */
+    { "```\n| a | b |\n| - | - |\n```\n", NULL },
+    { "~~~ md\n\n| a | b |\n\n| - | - |\n| 1 | 2 |\n~~~\n", NULL },
+    { "```sh\n| a | b |\n| - | - |\n```\n", "2 pipe lines are inside a code fence" },
+    { "```\n| a | b |\n| - | - |\nplain\n```\n", "2 pipe lines are inside a code fence" },
+    { "```\n| a | b |\n| - |\n```\n", "2 pipe lines are inside a code fence" },
     { "\xef\xbd\x9c a \xef\xbd\x9c b \xef\xbd\x9c\n", NULL },
     { "a | b\nplain\n| c | d |\n| - | - |\n", NULL }, /* a later table */
   };
