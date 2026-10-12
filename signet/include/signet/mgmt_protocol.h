@@ -426,11 +426,37 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       int64_t event_created_at,
                                       int64_t now);
 
+/* Handle a kind-1059 gift-wrapped management intent addressed to the bunker:
+ * unwrap it with the bunker key, authenticate the seal author as the
+ * sender, and hand the inner request to signet_mgmt_handler_handle_intent()
+ * with the rumor's created_at. Returns -1 if it does not unwrap. */
+int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
+                                         const char *event_json,
+                                         const char *event_id_hex,
+                                         int64_t now);
+
+/* Create, attach and own the management replay caches, one per sender
+ * class (provisioners; self-service agents; delivery-grant requesters), so
+ * one class cannot fill another's. Ids live 2 * skew_seconds (0 means 120);
+ * a request whose created_at is outside the skew window is refused; each
+ * non-provisioner sender may hold 512 live ids, provisioners are not
+ * limited per sender; a full sender or cache is refused, never evicted.
+ * Replaces any caches set before. Returns 0, or -1 on allocation failure. */
+int signet_mgmt_handler_enable_replay(SignetMgmtHandler *h,
+                                      uint32_t skew_seconds);
+
+/* Attach a replay cache for delivery-grant requests (borrowed). Without it
+ * they use the self-service cache. */
+void signet_mgmt_handler_set_grant_replay_cache(SignetMgmtHandler *h,
+                                                struct SignetReplayCache *replay);
+
 /* Bound the requests each non-provisioner sender (delivery-grant requester,
  * self-service agent) may make: a token bucket of @burst requests refilled
- * at @per_minute, checked before the request is decrypted or read. Defaults:
- * burst 60, 60 per minute. A refused request gets error.data
- * "rate_limited". */
+ * at @per_minute, checked first — before any refusal, audit, decryption of
+ * the inner request or store read (a gift wrap is opened beforehand, to
+ * authenticate the sender). Defaults: burst 60, 60 per minute. Over the
+ * limit, requests are dropped; the sender gets error.data "rate_limited" at
+ * most once a minute. Not audited. */
 void signet_mgmt_handler_set_requester_rate_limit(SignetMgmtHandler *h,
                                                   unsigned burst,
                                                   unsigned per_minute);

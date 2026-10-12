@@ -562,26 +562,11 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
   if (ev->kind == NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
     if (signet_now_unix() < ctx->mgmt_accept_after) return;
     if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    NostrEvent *gw = nostr_event_new();
-    if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
-      char *inner = NULL;
-      char *sender = NULL;
-      int64_t rumor_at = 0;
-      if (nostr_nip17_decrypt_dm_ex(gw, ctx->cfg->remote_signer_secret_key_hex,
-                                    &inner, &sender, &rumor_at) == 0 && inner) {
-        /* The rumor's created_at is the sender's real, seal-authenticated
-         * time; the gift wrap's is randomized by NIP-59. */
-        (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
-                                                sender ? sender : "",
-                                                inner,
-                                                ev->event_id_hex ? ev->event_id_hex : "",
-                                                rumor_at,
-                                                signet_now_unix());
-      }
-      free(inner);
-      free(sender);
-    }
-    if (gw) nostr_event_free(gw);
+    /* Unwraps with the bunker key and passes the rumor's (authenticated)
+     * created_at to the replay window. */
+    (void)signet_mgmt_handler_handle_gift_wrap(
+        ctx->mgmt, ev->event_json, ev->event_id_hex ? ev->event_id_hex : "",
+        signet_now_unix());
     return;
   }
 
@@ -959,28 +944,14 @@ int main(int argc, char **argv) {
    * reissue-connect, provision). Deliberately NOT the NIP-46 cache: sharing
    * would couple management replay retention to signing traffic volume, and
    * high NIP-46 load could evict a management event id before its TTL.
-   * Each id is charged to its authenticated sender (at most 256 live ids per
-   * sender) and nothing unexpired is ever evicted: a full sender, or a full
-   * cache, is refused. With the skew window on the request's own created_at,
-   * an id seen once can never execute again — no sender can flood another's
-   * ids out of the cache. */
-  SignetReplayCacheConfig mgmt_replay_cfg = {
-    .max_entries = 16384,
-    .ttl_seconds = cfg.replay_ttl_seconds,
-    /* Management always has a window (skew 0 would let an expired id run
-     * again). */
-    .skew_seconds = cfg.replay_skew_seconds ? cfg.replay_skew_seconds : 120,
-    .max_entries_per_scope = 256,
-    .refuse_when_full = true,
-  };
-  SignetReplayCache *mgmt_replay = signet_replay_cache_new(&mgmt_replay_cfg);
-  signet_mgmt_handler_set_replay_cache(mgmt, mgmt_replay);
-
-  /* Separate replay domain for non-provisioner (self-service reissue and
-   * delivery-grant) events, so their volume never fills the provisioners'
-   * cache. */
-  SignetReplayCache *mgmt_replay_self = signet_replay_cache_new(&mgmt_replay_cfg);
-  signet_mgmt_handler_set_self_replay_cache(mgmt, mgmt_replay_self);
+   * The handler owns one cache per sender class, bounded by a clock window
+   * on each request's authenticated created_at ([replay] skew_seconds; ids
+   * live twice that), with per-sender quotas for non-provisioners and
+   * refuse-not-evict, so an id seen once can never execute again. */
+  if (signet_mgmt_handler_enable_replay(mgmt, cfg.replay_skew_seconds) != 0) {
+    g_critical("[signetd] management replay protection could not be set up");
+    return 1;
+  }
 
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
@@ -1306,8 +1277,6 @@ cleanup:
 
   signet_key_store_free(keys);
 
-  signet_replay_cache_free(mgmt_replay_self);
-  signet_replay_cache_free(mgmt_replay);
   signet_replay_cache_free(replay);
 
   signet_deny_list_free(deny);

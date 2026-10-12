@@ -15,7 +15,9 @@
 #include "signet/store_secrets.h"
 
 #include <nostr-keys.h>
+#include <nostr/nip17/nip17.h>
 #include <nostr/nip44/nip44.h>
+#include <nostr-event.h>
 
 #include "test_check.h"
 #include <stdio.h>
@@ -1227,6 +1229,251 @@ static void test_requester_rate_limit(void) {
   puts("test_requester_rate_limit: PASS");
 }
 
+static int audit_total(SignetStore *store) {
+  return (int)signet_audit_log_count(store);
+}
+
+static int intent_from(Fixture *f, const char *sender_pk, const char *method,
+                       const char *params, const char *evt, int64_t now) {
+  char *rpc = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"%s\",\"method\":\"%s\",\"params\":%s}",
+      evt, method, params);
+  int rc = signet_mgmt_handler_handle_intent(f->mgmt, sender_pk, rpc, evt,
+                                             now, now);
+  g_free(rpc);
+  return rc;
+}
+
+/* Review (MEDIUM 2): refusals of non-provisioner senders cannot be turned
+ * into unbounded audit rows — not by one key (rate limit first), not by many
+ * keys (global refusal-audit budget, aggregated). */
+static void test_refusals_cannot_amplify_audit(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  int64_t now = 2000000000;
+  int before = audit_total(store);
+
+  /* One key, 500 provisioner-only requests: only its 60-request burst is
+   * even considered; each of those is one refusal row. */
+  char a_sk[65], a_pk[65];
+  keypair(a_sk, a_pk);
+  sodium_memzero(a_sk, sizeof(a_sk));
+  for (int i = 0; i < 500; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "a-%d", i);
+    CHECK(intent_from(&f, a_pk, "agent/list", "{}", evt, now) == -1);
+  }
+  CHECK(audit_total(store) == before + 60);
+
+  /* 300 fresh keys across the three non-provisioner refusal paths: the
+   * remaining budget (40 of 100) is written, the rest is counted. */
+  for (int i = 0; i < 300; i++) {
+    char sk[65], pk[65], evt[32];
+    keypair(sk, pk);
+    sodium_memzero(sk, sizeof(sk));
+    g_snprintf(evt, sizeof(evt), "k-%d", i);
+    const char *method = i % 3 == 0 ? "agent/list"
+                       : i % 3 == 1 ? "credential/inspect"
+                                    : "agent/reissue-connect";
+    const char *params = i % 3 == 1 ? "{\"credential_id\":\"cred_x\"}"
+                                    : "{\"agent_id\":\"owner\"}";
+    CHECK(intent_from(&f, pk, method, params, evt, now) == -1);
+  }
+  CHECK(audit_total(store) == before + 100);
+  CHECK(audit_rows_containing(store, "mgmt_refusals_suppressed") == 0);
+
+  /* Once budget recovers, the next refusal is preceded by one aggregate
+   * row carrying the count (440 rate-dropped requests never reached it). */
+  CHECK(intent_from(&f, a_pk, "agent/list", "{}", "a-late", now + 50) == -1);
+  CHECK(audit_total(store) == before + 102);
+  CHECK(audit_rows_containing(store, "\"count\":260") == 1);
+  int64_t broken_id = 0;
+  CHECK(signet_audit_verify_chain(store, 0, 0, &broken_id) == 0);
+  teardown(&f);
+  puts("test_refusals_cannot_amplify_audit: PASS");
+}
+
+/* Review (MEDIUM 2): a full bucket table drops a refilled (stateless) bucket
+ * or the least recently used one; it never wipes an active sender's. */
+static void test_rate_limit_table_keeps_active_senders(void) {
+  Fixture f;
+  setup(&f);
+  int64_t t0 = 2000000000;
+  for (int i = 0; i < 4095; i++) {
+    char pk[65], evt[32];
+    g_snprintf(pk, sizeof(pk), "%064x", i + 1);
+    g_snprintf(evt, sizeof(evt), "fill-%d", i);
+    (void)intent_from(&f, pk, "agent/list", "{}", evt, t0);
+  }
+  char requester_sk[65], requester_pk[65];
+  keypair(requester_sk, requester_pk);
+  grant_delivery(&f, "owner", requester_pk);
+  char *cred = create_credential(&f, "owner", "bucket", "bucket-v1");
+  char *inspect = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\"}", cred);
+  int64_t t1 = t0 + 100; /* every filler bucket has refilled */
+  /* The requester (the 4096th bucket) spends its whole burst at t1. */
+  char *rpc = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"x\",\"method\":\"credential/inspect\","
+      "\"params\":{\"credential_id\":\"%s\"}}", cred);
+  for (int i = 0; i < 60; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "rq-t1-%d", i);
+    CHECK(signet_mgmt_handler_handle_intent(f.mgmt, requester_pk, rpc, evt,
+                                            t1, t1) == 0);
+  }
+  char evt_over[] = "rq-over";
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, requester_pk, rpc,
+                                          evt_over, t1, t1) == -1);
+  /* The table is full; a new sender evicts a refilled filler bucket. */
+  char newcomer[65];
+  g_snprintf(newcomer, sizeof(newcomer), "%064x", 99999);
+  (void)intent_from(&f, newcomer, "agent/list", "{}", "newcomer", t1);
+  /* The active requester is still over its rate (a wipe would reset it). */
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, requester_pk, rpc,
+                                          "rq-after", t1, t1) == -1);
+  sodium_memzero(requester_sk, sizeof(requester_sk));
+  g_free(rpc); g_free(inspect); g_free(cred);
+  teardown(&f);
+  puts("test_rate_limit_table_keeps_active_senders: PASS");
+}
+
+/* Review (MEDIUM 3, LOW 5): the daemon's replay configuration, through the
+ * handler. Provisioners are not limited per sender; a non-provisioner sender
+ * is held to its quota; one class cannot fill another's cache. */
+static void test_enabled_replay_classes(void) {
+  Fixture f;
+  setup(&f);
+  CHECK(signet_mgmt_handler_enable_replay(f.mgmt, 120) == 0);
+  char *cred = create_credential(&f, "owner", "classes", "classes-v1");
+  char *inspect = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\"}", cred);
+
+  /* A provisioner burst (bulk provisioning, a reconcile loop). */
+  for (int i = 0; i < 1000; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "prov-%d", i);
+    CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) == 0);
+  }
+
+  /* A grant requester with its rate limit raised meets its replay quota. */
+  char requester_sk[65], requester_pk[65];
+  keypair(requester_sk, requester_pk);
+  grant_delivery(&f, "owner", requester_pk);
+  signet_mgmt_handler_set_requester_rate_limit(f.mgmt, 100000, 100000);
+  int executed = 0;
+  for (int i = 0; i < 600; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "grant-%d", i);
+    if (handle_as(&f, requester_sk, requester_pk,
+                  SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) == 0)
+      executed++;
+  }
+  CHECK(executed == 512);
+  CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "prov-x") == 0);
+
+  /* Class isolation with tiny caches: a full delivery-grant cache leaves
+   * self-service reissue untouched. */
+  SignetReplayCacheConfig tiny = {
+    .max_entries = 4, .ttl_seconds = 240, .skew_seconds = 120,
+    .refuse_when_full = true,
+  };
+  SignetReplayCache *grant_cache = signet_replay_cache_new(&tiny);
+  SignetReplayCache *self_cache = signet_replay_cache_new(&tiny);
+  signet_mgmt_handler_set_grant_replay_cache(f.mgmt, grant_cache);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, self_cache);
+  for (int i = 0; i < 6; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "tiny-%d", i);
+    CHECK(handle_as(&f, requester_sk, requester_pk,
+                    SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) ==
+          (i < 4 ? 0 : -1));
+  }
+  char agent_sk[65], agent_pk[65], out_pk[65] = {0};
+  uint8_t raw[32];
+  keypair(agent_sk, agent_pk);
+  CHECK(hex32(agent_sk, raw) == 0);
+  CHECK(signet_key_store_adopt_agent(
+      f.keys, "selfie", raw, agent_pk, "selfie-pairing", f.bunker_pk,
+      NULL, 0, out_pk, NULL) == SIGNET_ADOPT_OK);
+  sodium_memzero(raw, sizeof(raw));
+  CHECK(handle_as(&f, agent_sk, agent_pk, SIGNET_MGMT_OP_REISSUE_CONNECT,
+                  "{\"request_id\":\"r\",\"agent_id\":\"selfie\"}",
+                  "self-1") == 0);
+  signet_mgmt_handler_set_grant_replay_cache(f.mgmt, NULL);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, NULL);
+  signet_replay_cache_free(grant_cache);
+  signet_replay_cache_free(self_cache);
+
+  sodium_memzero(agent_sk, sizeof(agent_sk));
+  sodium_memzero(requester_sk, sizeof(requester_sk));
+  g_free(inspect); g_free(cred);
+  teardown(&f);
+  puts("test_enabled_replay_classes: PASS");
+}
+
+/* Wrap a JSON-RPC request the way a client does, with an explicit rumor
+ * created_at; returns the compact gift wrap and its id. */
+static char *wrap_request(const char *sender_sk, const char *sender_pk,
+                          const char *bunker_pk, const char *rpc,
+                          int64_t rumor_at, char **out_id) {
+  NostrEvent *rumor = nostr_nip17_create_rumor(sender_pk, bunker_pk, rpc,
+                                               rumor_at);
+  CHECK(rumor);
+  NostrEvent *seal = nostr_nip17_create_seal(rumor, sender_sk, bunker_pk);
+  CHECK(seal);
+  NostrEvent *gift = nostr_nip17_create_gift_wrap(seal, bunker_pk);
+  CHECK(gift);
+  char *json = nostr_event_serialize_compact(gift);
+  *out_id = nostr_event_get_id(gift);
+  CHECK(json && *out_id);
+  nostr_event_free(gift);
+  nostr_event_free(seal);
+  nostr_event_free(rumor);
+  return json;
+}
+
+/* signetd's gift-wrap path: the replay window applies to the rumor's
+ * authenticated created_at, not the gift wrap's NIP-59-randomized one. */
+static void test_gift_wrap_uses_rumor_time(void) {
+  Fixture f;
+  setup(&f);
+  CHECK(signet_mgmt_handler_enable_replay(f.mgmt, 120) == 0);
+  int64_t now = 2000000000; /* the wrap's own created_at is ~now-of-day */
+  const char *rpc =
+      "{\"jsonrpc\":\"2.0\",\"id\":\"g\",\"method\":\"credential/list\","
+      "\"params\":{\"agent_id\":\"owner\"}}";
+  char *id = NULL;
+  char *fresh = wrap_request(f.provisioner_sk, f.provisioner_pk, f.bunker_pk,
+                             rpc, now - 30, &id);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, fresh, id, now) == 0);
+  /* Redelivery of the same wrap is a duplicate. */
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, fresh, id, now + 1) == -1);
+  free(fresh); free(id);
+
+  char *stale = wrap_request(f.provisioner_sk, f.provisioner_pk, f.bunker_pk,
+                             rpc, now - 121, &id);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, stale, id, now) == -1);
+  free(stale); free(id);
+  char *ahead = wrap_request(f.provisioner_sk, f.provisioner_pk, f.bunker_pk,
+                             rpc, now + 121, &id);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, ahead, id, now) == -1);
+  free(ahead); free(id);
+
+  /* Not addressed to the bunker (wrapped to another key): not unwrapped. */
+  char other_sk[65], other_pk[65];
+  keypair(other_sk, other_pk);
+  char *misaddressed = wrap_request(f.provisioner_sk, f.provisioner_pk,
+                                    other_pk, rpc, now, &id);
+  CHECK(signet_mgmt_handler_handle_gift_wrap(f.mgmt, misaddressed, id,
+                                             now) == -1);
+  free(misaddressed); free(id);
+  sodium_memzero(other_sk, sizeof(other_sk));
+  teardown(&f);
+  puts("test_gift_wrap_uses_rumor_time: PASS");
+}
+
 #ifdef SIGNET_ENABLE_TEST_HOOKS
 typedef struct {
   char *recipient;
@@ -1523,6 +1770,10 @@ int main(void) {
   test_deliver_expected_version();
   test_replay_flood_cannot_reexecute();
   test_requester_rate_limit();
+  test_refusals_cannot_amplify_audit();
+  test_rate_limit_table_keeps_active_senders();
+  test_enabled_replay_classes();
+  test_gift_wrap_uses_rumor_time();
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   test_contextvm_reply_shapes();
 #else
