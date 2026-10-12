@@ -230,6 +230,14 @@ groundhog-reaction-bar > flowbox > flowboxchild {
   padding: 8px 12px;
 }
 
+/* The shared-note card (GnNostrReferenceCard) under a message, rounded as
+ * the link preview card is (nostrc-1co3q). */
+.groundhog-reference.card {
+  margin-top: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+}
+
 /* Link preview cards (GnOgPreviewCard, compact skin): gnostr's media card
  * in libadwaita colours (nostrc-8xfib.3). */
 .groundhog-link-preview .og-preview-card {

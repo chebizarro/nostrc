@@ -69,6 +69,7 @@ struct _GhMessageRow {
   /* Built on first use (ensure_reference); NULL for most rows. */
   GtkBox *reference_box;
   GnNostrReferenceCard *reference_card;
+  GtkBox *reference_actions;  /* the note's actions, once it shows */
   GtkButton *reference_copy_button;
   GtkButton *share_reference_button;
   GtkBox *public_actions;
@@ -232,7 +233,7 @@ compose_summary(GhMessage *message, GDateTime *now, gboolean undecryptable)
   /* A repost or quote reads as what it shares, never its JSON (nostrc-tv98u). */
   g_autofree gchar *quote_text = NULL;
   gboolean repost = !undecryptable && !withdrawn && !file &&
-    gh_conversation_view_parse_repost_body(gh_message_get_content(message), &quote_text, NULL);
+    gn_nostr_shared_note_dup_text(gh_message_get_content(message), &quote_text, NULL);
   const gchar *body = undecryptable ? _("Unable to decrypt yet")
                       : withdrawn   ? gh_message_withdrawn_text()
                       : file        ? file
@@ -859,16 +860,17 @@ update_cards(GhMessageRow *self, GhMessage *message, guint cards)
 
 /* Repost and Quote… need the note in the verified local cache (the
  * card may also have resolved from a repost's embedded original). */
-/* A resolved repost card replaces the body line (nostrc-boq9.5), as
- * gnostr's kind-6 rows show the original instead of the repost's JSON.
- * Only a line this hid is shown again; update_all() decides the rest. */
+/* A repost's card is its bubble's content (nostrc-boq9.5, nostrc-1co3q), as
+ * gnostr's kind-6 rows show the original instead of the repost's JSON: a
+ * repost has no text of its own, and the card says what it shares, or that
+ * it isn't available, in every state. Only a line this hid is shown again;
+ * update_all() decides the rest. */
 static void
 update_repost_body(GhMessageRow *self)
 {
   gboolean hide = self->reference_card && self->message &&
     gtk_widget_get_visible(GTK_WIDGET(self->reference_box)) &&
-    self->reference_role == GN_NOSTR_REFERENCE_CARD_ROLE_REPOST &&
-    gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED;
+    self->reference_role == GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
   if (hide && !self->body_hidden_for_repost &&
       gtk_widget_get_visible(GTK_WIDGET(self->body_label))) {
     gtk_widget_set_visible(GTK_WIDGET(self->body_label), FALSE);
@@ -888,9 +890,14 @@ update_public_actions(GhMessageRow *self)
   const GnNostrReference *reference = gn_nostr_reference_card_get_reference(self->reference_card);
   GnNostrReferenceResolver *resolver = self->view
     ? gh_conversation_view_get_reference_resolver(self->view) : NULL;
+  gboolean resolved =
+    gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED;
+  /* An unresolved card offers one thing (its own Find on Relays…) or a
+   * muted note (nostrc-1co3q); the note's actions follow once it shows. Its
+   * address stays selectable on the card, and Copy Message copies it. */
+  gtk_widget_set_visible(GTK_WIDGET(self->reference_actions), resolved);
   g_autofree gchar *local = reference && resolver &&
-    reference->type != GN_NOSTR_REFERENCE_PERSON &&
-    gn_nostr_reference_card_get_state(self->reference_card) == GN_NOSTR_REFERENCE_CARD_RESOLVED
+    reference->type != GN_NOSTR_REFERENCE_PERSON && resolved
       ? gn_nostr_reference_resolver_lookup_local(resolver, reference) : NULL;
   gtk_widget_set_visible(GTK_WIDGET(self->public_actions), local != NULL);
 }
@@ -907,13 +914,14 @@ ensure_reference(GhMessageRow *self)
   g_autoptr(GtkBuilder) builder =
     gtk_builder_new_from_resource("/org/nostr/Groundhog/ui/gh-message-reference.ui");
   static const gchar *const names[] = {
-    "reference_box", "reference_card", "reference_copy_button", "share_reference_button",
-    "public_actions", "repost_reference_button", "quote_reference_button",
+    "reference_box", "reference_card", "reference_actions", "reference_copy_button",
+    "share_reference_button", "public_actions", "repost_reference_button", "quote_reference_button",
   };
   for (guint i = 0; i < G_N_ELEMENTS(names); i++)
     gtk_widget_set_name(GTK_WIDGET(gtk_builder_get_object(builder, names[i])), names[i]);
   self->reference_box = GTK_BOX(gtk_builder_get_object(builder, "reference_box"));
   self->reference_card = GN_NOSTR_REFERENCE_CARD(gtk_builder_get_object(builder, "reference_card"));
+  self->reference_actions = GTK_BOX(gtk_builder_get_object(builder, "reference_actions"));
   self->reference_copy_button = GTK_BUTTON(gtk_builder_get_object(builder, "reference_copy_button"));
   self->share_reference_button = GTK_BUTTON(gtk_builder_get_object(builder, "share_reference_button"));
   self->public_actions = GTK_BOX(gtk_builder_get_object(builder, "public_actions"));
@@ -927,6 +935,33 @@ ensure_reference(GhMessageRow *self)
   gtk_widget_insert_before(GTK_WIDGET(self->reference_box), GTK_WIDGET(self),
                            GTK_WIDGET(self->web_box));
   add_menu_gestures(self, GTK_WIDGET(self->reference_box));
+}
+
+/* A repost's card is its bubble's content (nostrc-1co3q): the bubble is
+ * already its surface, and keeps the message's menu, picker and reactions.
+ * Any other card sits under the bubble, as a card of its own, starting where
+ * the bubble does, past the avatar (update_all()). */
+static void
+place_reference(GhMessageRow *self, gboolean in_bubble)
+{
+  GtkWidget *box = GTK_WIDGET(self->reference_box);
+  GtkWidget *parent = gtk_widget_get_parent(box);
+  gboolean outgoing = self->message && gh_message_is_self(self->message);
+  if (parent != (in_bubble ? GTK_WIDGET(self->bubble) : GTK_WIDGET(self))) {
+    g_object_ref(box);
+    if (parent == GTK_WIDGET(self->bubble))
+      gtk_box_remove(self->bubble, box);
+    else if (parent)
+      gtk_widget_unparent(box);
+    if (in_bubble)
+      gtk_box_append(self->bubble, box);
+    else
+      gtk_widget_insert_before(box, GTK_WIDGET(self), GTK_WIDGET(self->web_box));
+    g_object_unref(box);
+  }
+  set_class(box, "card", !in_bubble);
+  gtk_widget_set_margin_start(box, in_bubble || outgoing ? 0 : 38);
+  gtk_widget_set_margin_end(box, !in_bubble && outgoing ? 38 : 0);
 }
 
 static void
@@ -946,6 +981,7 @@ update_reference(GhMessageRow *self)
   if (!reference && !self->reference_box)
     return;
   ensure_reference(self);
+  place_reference(self, reference && role == GN_NOSTR_REFERENCE_CARD_ROLE_REPOST);
   self->reference_role = reference ? role : GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
   gtk_widget_set_visible(GTK_WIDGET(self->reference_box), reference != NULL);
   /* The card only consults the resolver's verified local cache here. */
@@ -1155,7 +1191,7 @@ refresh_body_markup(GhMessageRow *self)
      * repost or quote as the card and its own text, never its JSON
      * (nostrc-tv98u). */
     g_autofree gchar *quote_text = NULL;
-    gboolean repost = gh_conversation_view_parse_repost_body(body, &quote_text, NULL);
+    gboolean repost = gn_nostr_shared_note_dup_text(body, &quote_text, NULL);
     const gchar *shown = !repost ? body
       : quote_text ? quote_text : _("The reposted note isn't available on this device.");
     g_autofree gchar *valid = g_utf8_make_valid(shown ? shown : "", -1);

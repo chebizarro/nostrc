@@ -1182,6 +1182,8 @@ card_state(GhMessageRow *row)
   return gn_nostr_reference_card_get_state(GN_NOSTR_REFERENCE_CARD(row_child(row, "reference_card")));
 }
 
+static void render_shot(Fixture *f, GtkPopover *popover, const gchar *name);
+
 static void
 test_reference_card(Fixture *f, gconstpointer data)
 {
@@ -1212,11 +1214,17 @@ test_reference_card(Fixture *f, gconstpointer data)
   g_assert_cmpstr(cached_uri, ==, uri);
   g_assert_cmpint(role, ==, GN_NOSTR_REFERENCE_CARD_ROLE_MENTION);
   g_assert_true(shown(row_child(row, "reference_box")));
-  g_assert_true(shown(row_child(row, "share_reference_button")));
-  /* No resolver: an inert, translated summary; nothing to find with. */
+  /* No resolver: an inert card (nostrc-1co3q): what it is, its address and
+   * a muted note; nothing to find with, and none of the note's actions. */
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
-  g_assert_nonnull(strstr(text_of(card_part(row, "reference-title")), "Nostr note"));
+  g_assert_cmpstr(text_of(card_part(row, "reference-title")), ==, "Nostr note");
+  g_assert_true(shown(card_part(row, "reference-address")));
+  g_assert_true(g_str_has_prefix(text_of(card_part(row, "reference-address")), "note1"));
+  g_assert_true(shown(card_part(row, "reference-status")));
+  g_assert_cmpstr(text_of(card_part(row, "reference-status")), ==, "Not available on this device");
   g_assert_false(shown(card_part(row, "reference-find")));
+  g_assert_false(shown(row_child(row, "reference_actions")));
+  g_assert_false(gtk_widget_is_visible(row_child(row, "share_reference_button")));
   g_assert_false(shown(row_child(row, "public_actions")));
 
   GhMessageRow *repost_row = row_for(f->view, repost_message);
@@ -1230,7 +1238,7 @@ test_reference_card(Fixture *f, gconstpointer data)
       GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
       "Opens a preview before anything is published publicly");
   }
-  g_assert_nonnull(strstr(text_of(card_part(repost_row, "reference-title")), "Reposted Nostr note"));
+  g_assert_cmpstr(text_of(card_part(repost_row, "reference-title")), ==, "Reposted Nostr note");
   /* The verified embedded original resolves without any resolver. */
   const gchar *verified = NULL;
   g_assert_nonnull(gh_conversation_view_get_reference_target(f->view, embedded_message, NULL,
@@ -1240,17 +1248,28 @@ test_reference_card(Fixture *f, gconstpointer data)
   GhMessageRow *embedded_row = row_for(f->view, embedded_message);
   g_assert_cmpint(card_state(embedded_row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
   g_assert_cmpstr(text_of(card_part(embedded_row, "reference-content")), ==, "the original note");
-  /* nostrc-boq9.5: the card shows the repost, so the bubble never shows its
-   * NIP-18 JSON: no body line once resolved, a plain sentence until then. */
+  g_assert_true(shown(row_child(embedded_row, "reference_actions")));
+  g_assert_true(shown(row_child(embedded_row, "share_reference_button")));
+  /* nostrc-boq9.5, nostrc-1co3q: the card is a repost's bubble's content,
+   * which never shows its NIP-18 JSON: resolved, or saying it isn't
+   * available. A mention's card sits under its bubble. */
   g_assert_false(shown(row_child(embedded_row, "body_label")));
+  g_assert_true(gtk_widget_is_ancestor(row_child(embedded_row, "reference_box"),
+                                       row_child(embedded_row, "bubble")));
+  g_assert_false(gtk_widget_has_css_class(row_child(embedded_row, "reference_box"), "card"));
+  g_assert_false(gtk_widget_is_ancestor(row_child(row, "reference_box"), row_child(row, "bubble")));
+  g_assert_true(gtk_widget_has_css_class(row_child(row, "reference_box"), "card"));
   g_assert_null(strchr(text_of(row_child(embedded_row, "body_label")), '{'));
   g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
-  g_assert_true(shown(row_child(repost_row, "body_label")));
-  g_assert_cmpstr(text_of(row_child(repost_row, "body_label")), ==,
-                  "The reposted note isn't available on this device.");
+  g_assert_false(shown(row_child(repost_row, "body_label")));
+  g_assert_true(gtk_widget_is_ancestor(row_child(repost_row, "reference_box"),
+                                       row_child(repost_row, "bubble")));
+  g_assert_cmpstr(text_of(card_part(repost_row, "reference-status")), ==,
+                  "Not available on this device");
   /* A mention keeps its text. */
   g_assert_true(shown(row_child(row, "body_label")));
   g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, uri);
+  render_shot(f, NULL, "reference-inert");
 
   /* A resolver that can fetch offers Find on Relays; binding never fetches. */
   g_autoptr(TestResolver) resolver = g_object_new(TEST_TYPE_RESOLVER, NULL);
@@ -1258,7 +1277,10 @@ test_reference_card(Fixture *f, gconstpointer data)
   drain_idle();
   row = row_for(f->view, message);
   g_assert_true(shown(card_part(row, "reference-find")));
+  g_assert_false(shown(card_part(row, "reference-status")));
+  g_assert_false(shown(row_child(row, "reference_actions")));
   g_assert_cmpuint(resolver->fetches, ==, 0);
+  render_shot(f, NULL, "reference-findable");
   g_signal_emit_by_name(card_part(row, "reference-find"), "clicked");
   g_assert_cmpuint(resolver->fetches, ==, 1);
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_FETCHING);
@@ -1269,18 +1291,23 @@ test_reference_card(Fixture *f, gconstpointer data)
   g_task_return_pointer(resolver->pending, g_strdup(original), g_free);
   drain_idle();
   g_assert_cmpint(card_state(row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
+  g_assert_true(shown(row_child(row, "reference_actions")));
+  g_assert_true(shown(row_child(row, "share_reference_button")));
   g_assert_true(shown(row_child(row, "public_actions")));
+  g_assert_false(shown(card_part(row, "reference-address")));
+  render_shot(f, NULL, "reference-resolved");
   /* The plain repost resolves from the cache too; its line goes. */
   repost_row = row_for(f->view, repost_message);
   g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_RESOLVED);
   g_assert_false(shown(row_child(repost_row, "body_label")));
   g_assert_true(shown(row_child(row, "body_label")));
-  /* Without the cache it is unresolved again and the line returns. */
+  /* Without the cache it is unresolved again; the card says so. */
   gh_conversation_view_set_reference_resolver(f->view, NULL);
   drain_idle();
   repost_row = row_for(f->view, repost_message);
   g_assert_cmpint(card_state(repost_row), ==, GN_NOSTR_REFERENCE_CARD_INERT);
-  g_assert_true(shown(row_child(repost_row, "body_label")));
+  g_assert_false(shown(row_child(repost_row, "body_label")));
+  g_assert_false(shown(row_child(repost_row, "reference_actions")));
   gh_conversation_view_set_reference_resolver(f->view, GN_NOSTR_REFERENCE_RESOLVER(resolver));
   drain_idle();
   g_assert_cmpuint(resolver->fetches, ==, 1);
@@ -1369,10 +1396,10 @@ test_quote_body(Fixture *f, gconstpointer data)
   /* A quote whose text does not name the note gets the note's address. */
   g_autofree gchar *bare = g_strdup_printf(
     "{\"kind\":1,\"content\":\"Bare words\",\"tags\":[[\"q\",\"%s\",\"\"]]}", info->id);
-  g_autofree gchar *copy = gh_conversation_view_dup_body_copy_text(bare);
+  g_autofree gchar *copy = gn_nostr_shared_note_dup_copy_text(bare);
   g_autofree gchar *expected = g_strconcat("Bare words\n", cached_uri, NULL);
   g_assert_cmpstr(copy, ==, expected);
-  g_autofree gchar *plain = gh_conversation_view_dup_body_copy_text("just {text}");
+  g_autofree gchar *plain = gn_nostr_shared_note_dup_copy_text("just {text}");
   g_assert_cmpstr(plain, ==, "just {text}");
   render_shot(f, NULL, "quote");
 

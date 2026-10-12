@@ -102,6 +102,29 @@ GnNostrRepostDescriptor *gn_nostr_repost_descriptor_parse_tags(gint kind,
 void gn_nostr_repost_descriptor_free(GnNostrRepostDescriptor *descriptor);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GnNostrRepostDescriptor, gn_nostr_repost_descriptor_free)
 
+/* A NIP-18 repost (kind 6/16) or quote (kind 1 with a "q" tag) shared as a
+ * chat message has an event's JSON as its body, which is never text for
+ * people (nostrc-tv98u, nostrc-yarxx). The one parse every surface uses:
+ *
+ * gn_nostr_shared_note_parse(): the descriptor when @body (at most 64 KiB)
+ * is one, else NULL; *quote_content (nullable out) is then a quote's own
+ * text as written (valid UTF-8, NULL for a repost or an empty quote). */
+GnNostrRepostDescriptor *gn_nostr_shared_note_parse(const gchar *body, gchar **quote_content);
+/* A quote's text as shown: @quote_content without a trailing nostr:
+ * reference to @target (NIP-18 puts one there; the card shows it). */
+gchar *gn_nostr_shared_note_shown_text(const gchar *quote_content,
+                                       const GnNostrReference *target);
+/* What to copy: the quote's text with a reference to the note (its own, or
+ * @target's URI appended); only the URI for a repost. */
+gchar *gn_nostr_shared_note_copy_text(const gchar *quote_content,
+                                      const GnNostrReference *target);
+/* TRUE when @body is a shared note; *shown_text (nullable out) is then the
+ * quote's shown text (NULL for a repost) and *uri (nullable out) the shared
+ * note's nostr: URI. */
+gboolean gn_nostr_shared_note_dup_text(const gchar *body, gchar **shown_text, gchar **uri);
+/* @body as text to copy: as it is, or gn_nostr_shared_note_copy_text(). */
+gchar *gn_nostr_shared_note_dup_copy_text(const gchar *body);
+
 /* Unsigned event templates: caller supplies pubkey, timestamp, signing and relays. */
 gchar *gn_nostr_build_repost_template(const GnNostrReference *target,
                                       const gchar *verified_original_json);

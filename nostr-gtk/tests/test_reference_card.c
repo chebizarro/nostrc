@@ -171,7 +171,21 @@ static void card_inert_and_explicit_fetch(void) {
   gtk_window_present(GTK_WINDOW(window));
   while (g_main_context_iteration(NULL, FALSE));
   g_assert_cmpint(gn_nostr_reference_card_get_state(rc), ==, GN_NOSTR_REFERENCE_CARD_INERT);
-  g_assert_true(g_str_has_prefix(gtk_label_get_text(GTK_LABEL(title)), "Quoted Nostr note: "));
+  /* nostrc-1co3q: what it is, its shortened address, and a muted note. */
+  GtkWidget *address = child_named(card, "reference-address");
+  GtkWidget *status = child_named(card, "reference-status");
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(title)), ==, "Quoted Nostr note");
+  g_assert_true(gtk_widget_get_visible(address));
+  g_assert_true(g_str_has_prefix(gtk_label_get_text(GTK_LABEL(address)), "note1"));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(address)), "…"));
+  g_assert_cmpstr(gtk_widget_get_tooltip_text(address), ==, ref->uri);
+  g_assert_true(gtk_widget_get_visible(status));
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(status)), ==, "Not available on this device");
+  g_autofree gchar *summary = gn_nostr_reference_dup_summary(ref, GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE);
+  g_assert_true(g_str_has_prefix(summary, "Quoted Nostr note: "));
+  g_autofree gchar *expected_label = g_strconcat(summary, ": Not available on this device", NULL);
+  gtk_test_accessible_assert_property(GTK_ACCESSIBLE(card), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                      expected_label);
   g_assert_false(gtk_widget_get_visible(find));
   g_assert_false(gn_nostr_reference_card_fetch(rc));
   g_assert_cmpuint(fake->fetches, ==, 0);
@@ -181,6 +195,9 @@ static void card_inert_and_explicit_fetch(void) {
   gn_nostr_reference_card_set_reference(rc, ref, GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE, NULL);
   while (g_main_context_iteration(NULL, FALSE));
   g_assert_true(gtk_widget_get_visible(find));
+  /* The one action replaces the muted note. */
+  g_assert_false(gtk_widget_get_visible(status));
+  g_assert_true(gtk_widget_get_visible(address));
   g_assert_cmpuint(fake->fetches, ==, 0);
   g_assert_cmpuint(fake->lookups, >=, 1);
 

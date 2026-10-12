@@ -17,7 +17,6 @@
 #include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
-#include <json.h>
 #include <stdlib.h>
 
 /* Consecutive messages from one sender this close together form a run. */
@@ -1305,79 +1304,6 @@ render_job_free(RenderJob *job)
   g_free(job);
 }
 
-static GnNostrRepostDescriptor *
-repost_of_body(const gchar *body, gchar **quote_text)
-{
-  if (!body || body[0] != '{' || strlen(body) > GN_MARKDOWN_MAX_INPUT_BYTES)
-    return NULL;
-  GnNostrRepostDescriptor *repost = gn_nostr_repost_descriptor_parse(body, FALSE);
-  if (repost && repost->quote && quote_text) {
-    char *content = NULL;
-    if (nostr_json_get_string(body, "content", &content) == 0 && content && *content)
-      *quote_text = g_utf8_make_valid(content, -1);
-    free(content);
-  }
-  return repost;
-}
-
-/* A quote's text as its bubble shows it: without the trailing nostr:
- * reference to the quoted note (NIP-18 puts one there), which the card
- * shows. */
-static gchar *
-quote_shown_text(const gchar *quote_text, const GnNostrReference *target)
-{
-  gchar *text = g_strchomp(g_strdup(quote_text ? quote_text : ""));
-  gchar *token = text + strlen(text);
-  while (token > text && !g_ascii_isspace(token[-1]))
-    token--;
-  if (g_str_has_prefix(token, "nostr:")) {
-    g_autoptr(GnNostrReference) named = gn_nostr_reference_parse(token);
-    if (named && named->type == target->type && named->id && target->id &&
-        g_ascii_strcasecmp(named->id, target->id) == 0) {
-      *token = '\0';
-      g_strchomp(text);
-    }
-  }
-  return text;
-}
-
-/* What Copy Message copies for a repost or quote: the quote's text with a
- * reference to the note (its own, or the note's address added), or for a
- * repost only the address. */
-static gchar *
-repost_copy_text(const gchar *quote_text, const GnNostrReference *target)
-{
-  if (!quote_text || !*quote_text)
-    return g_strdup(target->uri);
-  g_autofree gchar *full = g_strchomp(g_strdup(quote_text));
-  g_autofree gchar *shown = quote_shown_text(quote_text, target);
-  if (g_strcmp0(full, shown) != 0)
-    return g_steal_pointer(&full);
-  return *shown ? g_strconcat(shown, "\n", target->uri, NULL) : g_strdup(target->uri);
-}
-
-gboolean
-gh_conversation_view_parse_repost_body(const gchar *body, gchar **quote_text, gchar **uri)
-{
-  g_autofree gchar *text = NULL;
-  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(body, &text);
-  if (!repost)
-    return FALSE;
-  if (quote_text) *quote_text = repost->quote ? quote_shown_text(text, repost->target) : NULL;
-  if (uri) *uri = g_strdup(repost->target->uri);
-  return TRUE;
-}
-
-gchar *
-gh_conversation_view_dup_body_copy_text(const gchar *body)
-{
-  g_autofree gchar *quote_text = NULL;
-  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(body, &quote_text);
-  if (!repost)
-    return g_strdup(body);
-  return repost_copy_text(quote_text, repost->target);
-}
-
 /* A repost or quote body (nostrc-boq9.5, nostrc-tv98u): the card shows the
  * shared note. A quote's bubble shows its own text (@quote_text, rendered as
  * any message); a repost's shows a sentence only while the card can't show
@@ -1392,7 +1318,7 @@ render_entry_set_repost(RenderEntry *entry, GnNostrRepostDescriptor *repost,
   entry->reference_role = repost->quote ? GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE
                                         : GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
   entry->reference_original = g_steal_pointer(&repost->original_json);
-  entry->copy_text = repost_copy_text(quote_text, entry->reference_descriptor);
+  entry->copy_text = gn_nostr_shared_note_copy_text(quote_text, entry->reference_descriptor);
   if (!repost->quote) {
     g_free(entry->markup);
     entry->markup = g_markup_escape_text(_("The reposted note isn't available on this device."), -1);
@@ -1562,9 +1488,9 @@ render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager
    * renders a quote's own text, a repost only a sentence (nostrc-tv98u),
    * already in the first, unrendered markup. */
   g_autofree gchar *quote_text = NULL;
-  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(content, &quote_text);
+  g_autoptr(GnNostrRepostDescriptor) repost = gn_nostr_shared_note_parse(content, &quote_text);
   g_autofree gchar *shown = repost && repost->quote
-    ? quote_shown_text(quote_text, repost->target) : NULL;
+    ? gn_nostr_shared_note_shown_text(quote_text, repost->target) : NULL;
   const gchar *body = repost ? (shown ? shown : "") : (content ? content : "");
   g_autofree gchar *valid = g_utf8_make_valid(body, -1);
   entry = g_new0(RenderEntry, 1);
@@ -3036,7 +2962,7 @@ action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
      * never its JSON (nostrc-tv98u); anything else the text it shows. */
     RenderEntry *entry = render_cache_ensure(self, message, FALSE);
     if (!entry) {
-      text = gh_conversation_view_dup_body_copy_text(gh_message_get_content(message));
+      text = gn_nostr_shared_note_dup_copy_text(gh_message_get_content(message));
     } else if (entry->copy_text) {
       text = g_strdup(entry->copy_text);
     } else {

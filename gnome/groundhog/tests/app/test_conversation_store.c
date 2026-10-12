@@ -7,6 +7,7 @@
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-tag.h"
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -326,6 +327,49 @@ test_file_preview(void)
   Rumor text = { .author = 2, .p = { 1 }, .created_at = 30, .content = "after the file" };
   g_assert_cmpint(add(store, 1, &text), ==, GH_CONVERSATION_ADD_NEW);
   g_assert_cmpstr(gh_conversation_get_preview(room), ==, "after the file");
+}
+
+/* nostrc-yarxx: a NIP-18 quote or repost shared into a chat previews as the
+ * conversation shows it (gh_message_dup_display_text(), the sidebar,
+ * Requests and notifications): the quote's own text, else what it is;
+ * never its JSON. */
+static void
+test_shared_note_preview(void)
+{
+  g_autoptr(GhConversationStore) store = gh_conversation_store_new();
+  gh_conversation_store_set_account(store, hex[1], NULL, NULL, NULL);
+  g_autofree gchar *uri = gn_nostr_reference_build_event(
+    "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730", NULL, 1, NULL);
+  g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
+  g_assert_nonnull(reference);
+  g_autofree gchar *quote = gn_nostr_build_quote_template(reference, "Worth **reading**");
+  g_autofree gchar *bare_quote = gn_nostr_build_quote_template(reference, NULL);
+  g_autofree gchar *repost = gn_nostr_build_repost_template(reference, NULL);
+  g_assert_nonnull(quote);
+  g_assert_nonnull(bare_quote);
+  g_assert_nonnull(repost);
+  g_autofree gchar *pair = room_id(1, 2, 0);
+  const struct { const gchar *body, *shown; } cases[] = {
+    { quote, "Worth **reading**" },
+    { bare_quote, "Quoted Nostr note" },
+    { repost, "Reposted Nostr note" },
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    Rumor r = { .author = 2, .p = { 1 }, .created_at = 10 + i, .content = cases[i].body };
+    g_autoptr(GhMessage) message = message_for(1, &r, NULL);
+    g_autofree gchar *text = gh_message_dup_display_text(message);
+    g_assert_cmpstr(text, ==, cases[i].shown);
+    g_assert_cmpint(gh_conversation_store_add_message(store, message, NULL), ==,
+                    GH_CONVERSATION_ADD_NEW);
+    GhConversation *room = gh_conversation_store_lookup(store, pair);
+    g_assert_cmpstr(gh_conversation_get_preview(room), ==, cases[i].shown);
+    g_assert_null(strchr(gh_conversation_get_preview(room), '{'));
+  }
+  /* Text that merely looks like JSON is still text. */
+  Rumor plain = { .author = 2, .p = { 1 }, .created_at = 20, .content = "{\"kind\":1}" };
+  g_assert_cmpint(add(store, 1, &plain), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_cmpstr(gh_conversation_get_preview(gh_conversation_store_lookup(store, pair)), ==,
+                  "{\"kind\":1}");
 }
 
 static void
@@ -1296,6 +1340,7 @@ main(int argc, char **argv)
   init_keys();
   g_test_add_func("/groundhog/conversations/message-fields", test_message_fields);
   g_test_add_func("/groundhog/conversations/file-preview", test_file_preview);
+  g_test_add_func("/groundhog/conversations/shared-note-preview", test_shared_note_preview);
   g_test_add_func("/groundhog/conversations/room-canonicalization", test_room_canonicalization);
   g_test_add_func("/groundhog/conversations/order-and-dedup", test_order_and_dedup);
   g_test_add_func("/groundhog/conversations/subject", test_subject);
