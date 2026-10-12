@@ -8921,6 +8921,343 @@ gh_mls_service_rotate_key_package(GhMlsService *self, GError **error)
   return TRUE;
 }
 
+/* ---- Old invitation keys (nostrc-ab9kn) ------------------------------------------------ */
+
+void
+gh_mls_own_key_package_free(GhMlsOwnKeyPackage *key_package)
+{
+  if (!key_package)
+    return;
+  g_free(key_package->event_id);
+  g_free(key_package->slot);
+  g_free(key_package);
+}
+
+static gint
+own_key_package_order(gconstpointer a, gconstpointer b)
+{
+  const GhMlsOwnKeyPackage *x = *(GhMlsOwnKeyPackage *const *)a;
+  const GhMlsOwnKeyPackage *y = *(GhMlsOwnKeyPackage *const *)b;
+  if (x->current != y->current)
+    return x->current ? -1 : 1;
+  if (x->created_at != y->created_at)
+    return x->created_at > y->created_at ? -1 : 1;
+  return g_strcmp0(x->event_id, y->event_id);
+}
+
+/* The publication slots (`d`) libmarmot keeps for this store's KeyPackages:
+ * at most one per profile, NULL-terminated. */
+static GStrv
+own_key_package_slots(GhMlsService *self)
+{
+  GPtrArray *slots = g_ptr_array_new();
+  const MarmotKeyPackageProfile profiles[] = {
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+    MARMOT_KEY_PACKAGE_PROFILE_ADOPTED,
+#endif
+    MARMOT_KEY_PACKAGE_PROFILE_MDK_0_8,
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(profiles); i++) {
+    char d[65];
+    drop_stale_error(self);
+    if (marmot_key_package_slot(self->marmot, self->account_key, profiles[i], d) == MARMOT_OK)
+      g_ptr_array_add(slots, g_strdup(d));
+  }
+  drop_stale_error(self);
+  g_ptr_array_add(slots, NULL);
+  return (GStrv)g_ptr_array_free(slots, FALSE);
+}
+
+static void
+own_key_packages_listed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GTask *task = data;
+  GhMlsService *self = g_task_get_source_object(task);
+  GError *error = NULL;
+  g_autoptr(GPtrArray) found = gh_mls_key_package_evidence_lookup_finish(result, &error);
+  if (!found) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  if (!running(self) || !self->account) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_INACTIVE,
+                            "Encrypted groups work only for the active account, online");
+    g_object_unref(task);
+    return;
+  }
+  g_auto(GStrv) slots = own_key_package_slots(self);
+  GPtrArray *listed = g_ptr_array_new_with_free_func((GDestroyNotify)gh_mls_own_key_package_free);
+  for (guint i = 0; i < found->len; i++) {
+    NostrEvent *event = nostr_event_new();
+    if (nostr_event_deserialize_compact(event, g_ptr_array_index(found, i), NULL) != 1 ||
+        g_strcmp0(nostr_event_get_pubkey(event), self->account) != 0) {
+      nostr_event_free(event);
+      continue;
+    }
+    char *id = nostr_event_get_id(event);   /* malloc'd */
+    GhMlsOwnKeyPackage *kp = g_new0(GhMlsOwnKeyPackage, 1);
+    kp->event_id = g_strdup(id);
+    free(id);
+    kp->kind = nostr_event_get_kind(event);
+    kp->created_at = nostr_event_get_created_at(event);
+    NostrTags *tags = nostr_event_get_tags(event);
+    for (size_t t = 0; kp->kind == MARMOT_KIND_KEY_PACKAGE && tags && t < nostr_tags_size(tags);
+         t++) {
+      NostrTag *tag = nostr_tags_get(tags, t);
+      if (tag && nostr_tag_size(tag) >= 2 && g_strcmp0(nostr_tag_get(tag, 0), "d") == 0) {
+        kp->slot = g_strdup(nostr_tag_get(tag, 1));
+        break;
+      }
+    }
+    nostr_event_free(event);
+    if (!kp->event_id) {
+      gh_mls_own_key_package_free(kp);
+      continue;
+    }
+    g_ptr_array_add(listed, kp);
+  }
+  /* This device's: the newest of each of its slots (NIP-01: then the lower
+   * id), as a relay keeps it. */
+  for (guint s = 0; slots[s]; s++) {
+    GhMlsOwnKeyPackage *newest = NULL;
+    for (guint i = 0; i < listed->len; i++) {
+      GhMlsOwnKeyPackage *kp = g_ptr_array_index(listed, i);
+      if (kp->kind != MARMOT_KIND_KEY_PACKAGE || g_strcmp0(kp->slot, slots[s]) != 0)
+        continue;
+      if (!newest || kp->created_at > newest->created_at ||
+          (kp->created_at == newest->created_at && g_strcmp0(kp->event_id, newest->event_id) < 0))
+        newest = kp;
+    }
+    if (newest)
+      newest->current = TRUE;
+  }
+  g_ptr_array_sort(listed, own_key_package_order);
+  g_task_return_pointer(task, listed, (GDestroyNotify)g_ptr_array_unref);
+  g_object_unref(task);
+}
+
+void
+gh_mls_service_list_own_key_packages_async(GhMlsService *self, GCancellable *cancellable,
+                                           GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_service_list_own_key_packages_async);
+  GError *error = NULL;
+  if (!check_running(self, &error) || !self->account) {
+    if (!error)
+      g_set_error_literal(&error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_INACTIVE,
+                          "Encrypted groups work only for the active account, online");
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  g_auto(GStrv) relays = key_package_relays(self);
+  if (!relays[0]) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                            "The account has no write relay to look its KeyPackages up on");
+    g_object_unref(task);
+    return;
+  }
+  /* Where the KeyPackages go is where they are looked up (phase 1); phase 2
+   * adds any other write relay of the newest 10002 found there. */
+  gh_mls_key_package_evidence_lookup_async(self->accounts, (const gchar *const *)relays, NULL,
+                                           self->account, 0, cancellable,
+                                           own_key_packages_listed, task);
+}
+
+GPtrArray *
+gh_mls_service_list_own_key_packages_finish(GhMlsService *self, GAsyncResult *result,
+                                            GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), NULL);
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+typedef struct {
+  GStrv urls;
+  guint named;
+} RemoveKeys;
+
+static void
+remove_keys_free(gpointer data)
+{
+  RemoveKeys *op = data;
+  g_strfreev(op->urls);
+  g_free(op);
+}
+
+static void
+remove_keys_update(GhRelayPublish *publish, const GhRelayPublishResult *result, gpointer data)
+{
+  (void)publish;
+  (void)result;
+  (void)data;
+}
+
+static void
+remove_keys_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary, gpointer data)
+{
+  GTask *task = data;
+  RemoveKeys *op = g_task_get_task_data(task);
+  g_idle_add(key_package_publish_free_idle, publish);
+  if (summary->any_accepted)
+    g_task_return_int(task, op->named);
+  else
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_REFUSED,
+                            "No relay accepted the deletion request");
+  g_object_unref(task);
+}
+
+static void
+remove_keys_signed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  GTask *task = data;
+  GhMlsService *self = g_task_get_source_object(task);
+  RemoveKeys *op = g_task_get_task_data(task);
+  GError *error = NULL;
+  g_autofree gchar *signed_json = gh_account_controller_sign_finish(result, &error);
+  if (!signed_json) {
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  NostrEvent *event = nostr_event_new();
+  gboolean ok = nostr_event_deserialize_compact(event, signed_json, NULL) == 1 &&
+                nostr_event_validate(event, NULL) == NOSTR_EVENT_VALIDATION_OK &&
+                nostr_event_get_kind(event) == 5 &&
+                g_strcmp0(nostr_event_get_pubkey(event), self->account) == 0;
+  nostr_event_free(event);
+  if (!ok || !running(self)) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR,
+                            ok ? GH_MLS_SERVICE_ERROR_INACTIVE : GH_MLS_SERVICE_ERROR_REFUSED,
+                            ok ? "Encrypted groups work only for the active account, online"
+                               : "The signer returned something other than the request");
+    g_object_unref(task);
+    return;
+  }
+  GhRelayPublish *publish = gh_relay_publish_new(self->generation, signed_json,
+                                                 remove_keys_update, remove_keys_done, task,
+                                                 &error);
+  guint added = 0;
+  for (guint i = 0; publish && op->urls[i]; i++) {
+    if (!gh_relay_publish_add_url(publish, op->urls[i], NULL))
+      continue;
+    gh_auth_policy_apply_publish(self->policy, publish, GH_AUTH_PURPOSE_OWN_LIST_PUBLISH,
+                                 op->urls[i], NULL);
+    added++;
+  }
+  if (publish && self->publish_deadline)
+    gh_relay_publish_set_deadline(publish, self->publish_deadline);
+  if (!publish || !added || !gh_relay_publish_start(publish, &error)) {
+    if (publish)
+      gh_relay_publish_unref(publish);
+    if (!error)
+      g_set_error_literal(&error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_RELAYS,
+                          "No write relay to send the deletion request to");
+    g_task_return_error(task, error);
+    g_object_unref(task);
+  }
+}
+
+void
+gh_mls_service_remove_other_key_packages_async(GhMlsService *self, GPtrArray *listed,
+                                               GCancellable *cancellable,
+                                               GAsyncReadyCallback callback, gpointer user_data)
+{
+  g_return_if_fail(GH_IS_MLS_SERVICE(self));
+  g_return_if_fail(listed != NULL);
+  GTask *task = g_task_new(self, cancellable, callback, user_data);
+  g_task_set_source_tag(task, gh_mls_service_remove_other_key_packages_async);
+  GError *error = NULL;
+  if (!check_running(self, &error) || !self->account) {
+    if (!error)
+      g_set_error_literal(&error, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_INACTIVE,
+                          "Encrypted groups work only for the active account, online");
+    g_task_return_error(task, error);
+    g_object_unref(task);
+    return;
+  }
+  if (self->key_package != GH_MLS_KEY_PACKAGE_PUBLISHED) {
+    g_task_return_new_error(task, GH_MLS_SERVICE_ERROR, GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE,
+                            "This device's own KeyPackage is not published yet");
+    g_object_unref(task);
+    return;
+  }
+  g_auto(GStrv) slots = own_key_package_slots(self);
+  NostrTags *tags = nostr_tags_new(0);
+  g_autoptr(GHashTable) addresses = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  gboolean kind_new = FALSE, kind_old = FALSE;
+  guint named = 0;
+  for (guint i = 0; i < listed->len; i++) {
+    GhMlsOwnKeyPackage *kp = g_ptr_array_index(listed, i);
+    if (kp->current || !kp->event_id ||
+        (kp->kind != MARMOT_KIND_KEY_PACKAGE && kp->kind != GH_MLS_KIND_LEGACY_KEY_PACKAGE))
+      continue;
+    nostr_tags_append(tags, nostr_tag_new("e", kp->event_id, NULL));
+    named++;
+    if (kp->kind == MARMOT_KIND_KEY_PACKAGE) {
+      kind_new = TRUE;
+      /* Another store's or app's slot, by address too (its later versions
+       * up to now); never this device's: its current one lives there. */
+      if (kp->slot && !g_strv_contains((const gchar *const *)slots, kp->slot)) {
+        gchar *address = g_strdup_printf("%d:%s:%s", MARMOT_KIND_KEY_PACKAGE, self->account,
+                                         kp->slot);
+        if (g_hash_table_add(addresses, address))
+          nostr_tags_append(tags, nostr_tag_new("a", address, NULL));
+      }
+    } else {
+      kind_old = TRUE;
+    }
+  }
+  if (named == 0) {
+    nostr_tags_free(tags);
+    g_task_return_int(task, 0);
+    g_object_unref(task);
+    return;
+  }
+  g_autofree gchar *k_new = g_strdup_printf("%d", MARMOT_KIND_KEY_PACKAGE);
+  g_autofree gchar *k_old = g_strdup_printf("%d", GH_MLS_KIND_LEGACY_KEY_PACKAGE);
+  if (kind_new)
+    nostr_tags_append(tags, nostr_tag_new("k", k_new, NULL));
+  if (kind_old)
+    nostr_tags_append(tags, nostr_tag_new("k", k_old, NULL));
+  RemoveKeys *op = g_new0(RemoveKeys, 1);
+  op->urls = key_package_relays(self);
+  op->named = named;
+  g_task_set_task_data(task, op, remove_keys_free);
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 5);
+  nostr_event_set_created_at(event, now_s(self));
+  nostr_event_set_content(event, "");
+  nostr_event_set_pubkey(event, self->account);
+  nostr_event_set_tags(event, tags);
+  char *raw = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gh_account_controller_sign_with_cancellable_async(self->accounts, raw, cancellable,
+                                                    remove_keys_signed, task);
+  free(raw);
+}
+
+gboolean
+gh_mls_service_remove_other_key_packages_finish(GhMlsService *self, GAsyncResult *result,
+                                                guint *removed, GError **error)
+{
+  g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
+  GError *local = NULL;
+  gssize n = g_task_propagate_int(G_TASK(result), &local);
+  if (local) {
+    g_propagate_error(error, local);
+    return FALSE;
+  }
+  if (removed)
+    *removed = (guint)n;
+  return TRUE;
+}
+
 /* ---- Resume --------------------------------------------------------------------------- */
 
 /* The group a stored kind 445 routes to (its h tag), or NULL. */

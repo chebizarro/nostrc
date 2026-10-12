@@ -776,6 +776,53 @@ gboolean gh_mls_service_rotate_key_package(GhMlsService *self, GError **error);
  * "key-package-held" property, with notify. */
 gboolean gh_mls_service_get_key_package_held(GhMlsService *self);
 
+/* Old invitation keys (nostrc-ab9kn). The account's own KeyPackage events
+ * (kind 30443 and the older 443) on its kind-10002 write relays, read
+ * through gh_mls_key_package_evidence_lookup_async() (one bounded lookup,
+ * ephemeral AUTH only): every event the account signed there, whichever
+ * device or app (another Groundhog store, White Noise) made it. `current`
+ * marks this device's: the newest event of one of the publication slots
+ * (`d`) libmarmot keeps for this store; never anything else. Sorted:
+ * current first, then newest first. */
+typedef struct {
+  gchar *event_id;
+  gint kind;           /* 30443 or 443 */
+  gchar *slot;         /* the `d` of a kind 30443, else NULL */
+  gint64 created_at;
+  gboolean current;    /* this device's current KeyPackage */
+} GhMlsOwnKeyPackage;
+
+void gh_mls_own_key_package_free(GhMlsOwnKeyPackage *key_package);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(GhMlsOwnKeyPackage, gh_mls_own_key_package_free)
+
+/* GH_MLS_SERVICE_ERROR_INACTIVE when the service is not running,
+ * GH_MLS_SERVICE_ERROR_NO_RELAYS without a write relay; the lookup's
+ * G_IO_ERROR_HOST_UNREACHABLE when no relay answered. finish: transfer full
+ * (g_ptr_array_unref()), each GhMlsOwnKeyPackage owned by the array. */
+void gh_mls_service_list_own_key_packages_async(GhMlsService *self, GCancellable *cancellable,
+                                                GAsyncReadyCallback callback,
+                                                gpointer user_data);
+GPtrArray *gh_mls_service_list_own_key_packages_finish(GhMlsService *self,
+                                                       GAsyncResult *result, GError **error);
+
+/* Asks the account's write relays to delete every KeyPackage in `listed`
+ * (from gh_mls_service_list_own_key_packages_finish()) that is not current:
+ * ONE NIP-09 kind-5 request, signed by the account's signer, naming each by
+ * `e` id and each other kind-30443 slot by its `a` address (never one of
+ * this device's slots), with a `k` tag per kind. Only while this device's
+ * own KeyPackages are published (else GH_MLS_SERVICE_ERROR_NO_KEY_PACKAGE:
+ * the account would be left with no invitation key at all).
+ * finish: the number of KeyPackages named (0: nothing to remove, nothing
+ * published); FALSE with GH_MLS_SERVICE_ERROR_REFUSED when no relay
+ * accepted the request. */
+void gh_mls_service_remove_other_key_packages_async(GhMlsService *self, GPtrArray *listed,
+                                                    GCancellable *cancellable,
+                                                    GAsyncReadyCallback callback,
+                                                    gpointer user_data);
+gboolean gh_mls_service_remove_other_key_packages_finish(GhMlsService *self,
+                                                         GAsyncResult *result, guint *removed,
+                                                         GError **error);
+
 /* The group of a hex MLS group id or of a room id, or NULL. Transfer none. */
 GhMlsGroup *gh_mls_service_lookup(GhMlsService *self, const gchar *group_id_or_room_id);
 

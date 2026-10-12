@@ -50,6 +50,10 @@ gboolean gh_mls_invites_page_describe(GhMlsInvitesPage *self, const gchar *wrapp
 /* The "This Device" Invitation Key row's text (gh_mls_device_key_copy()). */
 const gchar *gh_mls_invites_page_get_key_status(GhMlsInvitesPage *self);
 const gchar *gh_mls_invites_page_get_last_toast(GhMlsInvitesPage *self);
+/* Old invitation keys (nostrc-ab9kn): the row's subtitle (what the last
+ * look found), and whether a look or a removal is in flight. */
+const gchar *gh_mls_invites_page_get_old_keys_status(GhMlsInvitesPage *self);
+gboolean gh_mls_invites_page_get_old_keys_busy(GhMlsInvitesPage *self);
 
 G_END_DECLS
 #endif

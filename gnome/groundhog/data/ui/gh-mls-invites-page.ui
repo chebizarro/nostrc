@@ -32,6 +32,26 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                   </object>
                 </child>
+                <child>
+                  <object class="AdwActionRow" id="old_keys_row">
+                    <property name="title" translatable="yes">Old Invitation Keys</property>
+                    <property name="subtitle" translatable="yes">Keys your account published from other devices, apps or earlier installs. People may still invite you with them.</property>
+                    <child type="prefix">
+                      <object class="GtkImage">
+                        <property name="icon-name">dialog-password-symbolic</property>
+                        <property name="accessible-role">43</property>
+                      </object>
+                    </child>
+                    <child type="suffix">
+                      <object class="GtkButton" id="old_keys_button">
+                        <property name="label" translatable="yes">_Review…</property>
+                        <property name="use-underline">true</property>
+                        <property name="valign">3</property>
+                        <property name="action-name">mls-invites.review-keys</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
               </object>
             </child>
             <child>

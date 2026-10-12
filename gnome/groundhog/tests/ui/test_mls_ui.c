@@ -1690,6 +1690,181 @@ test_gui_refused_invitation(void)
   world_down(&w);
 }
 
+/* ---- --gui: Remove old invitation keys (nostrc-ab9kn) ----------------------------------- */
+
+/* Bob's KeyPackage events (kind 30443 or 443) stored on relay; with
+ * `current`, only those this device's service last published. */
+static guint
+bob_key_packages_on(WireRelay *relay, App *bob, gboolean current)
+{
+  guint n = 0;
+  for (guint i = 0; i < relay->stored->len; i++) {
+    WireStored *stored = g_ptr_array_index(relay->stored, i);
+    gint kind = nostr_event_get_kind(stored->event);
+    if ((kind != 30443 && kind != 443) ||
+        g_strcmp0(nostr_event_get_pubkey(stored->event), hex[bob->key]) != 0)
+      continue;
+    gboolean mine = FALSE;
+    for (guint f = 0; f < GH_MLS_KEY_PACKAGE_N_FORMATS; f++)
+      mine |= g_strcmp0(gh_mls_service_get_key_package_id_for_format(bob->service, f),
+                        stored->id) == 0;
+    n += !current || mine;
+  }
+  return n;
+}
+
+typedef struct { WireRelay *relay; App *bob; } OnlyCurrentWait;
+
+static gboolean
+only_current_left(gpointer data)
+{
+  OnlyCurrentWait *wait = data;
+  return bob_key_packages_on(wait->relay, wait->bob, FALSE) ==
+         bob_key_packages_on(wait->relay, wait->bob, TRUE);
+}
+
+static gboolean
+old_keys_idle(gpointer page)
+{
+  return !gh_mls_invites_page_get_old_keys_busy(page);
+}
+
+static gboolean
+alert_shown(gpointer window)
+{
+  AdwDialog *dialog = visible_dialog(window);
+  return ADW_IS_ALERT_DIALOG(dialog) && gh_test_dialog_shown(dialog);
+}
+
+static const gchar *
+old_keys_status(gpointer page)
+{
+  return gh_mls_invites_page_get_old_keys_status(page);
+}
+
+/* The owner's case: KeyPackages the account published from a store this
+ * device no longer has (the 10-08 Groundhog keys), from another app (White
+ * Noise) and in the older kind 443 stay on the write relay, and inviters
+ * may pick one whose private key is gone here. Group Invitations' "Old
+ * Invitation Keys" lists them through the account's relays, the dialog
+ * marks this device's as kept and says other apps must publish anew, and
+ * Remove publishes ONE kind-5 signed by the account that the relay applies
+ * to every other one, never to this device's current KeyPackages. */
+static void
+test_gui_remove_old_keys(void)
+{
+  World w;
+  const guint keys[] = { BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *bob = &w.apps[BOB];
+  w.w.nip09 = TRUE;
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  /* A fresh store here: new slots, the first store's KeyPackages orphaned. */
+  app_store_down(bob);
+  wipe_dir(bob->data_dir);
+  app_store_up(bob);
+  spin_until(key_package_published, bob, "Bob's new KeyPackage");
+#if GH_MLS_ADOPTED_KEY_PACKAGES
+  inject_adopted_key_package(&w, BOB);   /* White Noise's */
+#endif
+  g_free(inject_legacy_key_package(&w, BOB));   /* an older app's */
+  NostrTags *tags = nostr_tags_new(0);
+  g_autofree gchar *kind_443 = sign_event(BOB, 443, real_now() - 86400 * 30, "00", tags);
+  wire_relay_inject(&w.w, kind_443);
+  guint current = bob_key_packages_on(&w.w, bob, TRUE);
+  guint others = bob_key_packages_on(&w.w, bob, FALSE) - current;
+  g_assert_cmpuint(current, ==, GH_MLS_ADOPTED_KEY_PACKAGES ? 2 : 1);
+  g_assert_cmpuint(others, >=, current + 2 + GH_MLS_ADOPTED_KEY_PACKAGES);
+
+  GhWindow *window = app_window(bob, NULL);
+  GhMlsInvitesPage *page = open_invitations(window);
+  GtkWidget *review = action_button(GTK_WIDGET(page), "mls-invites.review-keys");
+  g_assert_nonnull(review);
+  g_assert_true(gtk_widget_get_sensitive(review));
+  painted_png(window, "old-keys-row");
+
+  /* Review: the account's relays are asked, then the confirmation. */
+  guint deletions_before = w.w.deleted;
+  press_focused(GTK_WINDOW(window), review);
+  g_assert_true(gh_mls_invites_page_get_old_keys_busy(page));
+  g_assert_false(gtk_widget_get_sensitive(review));
+  spin_until(alert_shown, window, "the old keys' confirmation");
+  AdwAlertDialog *alert = ADW_ALERT_DIALOG(visible_dialog(window));
+  g_autofree gchar *heading = g_strdup_printf("Remove %u Old Invitation Keys?", others);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, heading);
+  const gchar *body = adw_alert_dialog_get_body(alert);
+  g_assert_nonnull(strstr(body, "such as White Noise, stop working for new invitations until "
+                                "those apps publish new ones"));
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(alert), ==, "cancel");
+  g_assert_cmpint(adw_alert_dialog_get_response_appearance(alert, "remove"), ==,
+                  ADW_RESPONSE_DESTRUCTIVE);
+  /* Every key listed, this device's first and marked kept. */
+  GtkWidget *extra = adw_alert_dialog_get_extra_child(alert);
+  GtkWidget *list = find_type(extra, GTK_TYPE_LIST_BOX, NULL);
+  guint rows = 0, kept = 0;
+  for (GtkWidget *c = gtk_widget_get_first_child(list); c; c = gtk_widget_get_next_sibling(c)) {
+    if (!ADW_IS_ACTION_ROW(c))
+      continue;
+    const gchar *title = adw_preferences_row_get_title(ADW_PREFERENCES_ROW(c));
+    if (g_str_equal(title, "This device (kept)")) {
+      g_assert_cmpuint(rows, ==, kept);   /* listed first */
+      kept++;
+    }
+    rows++;
+  }
+  g_assert_cmpuint(kept, ==, current);
+  g_assert_cmpuint(rows, ==, current + others);
+  g_assert_nonnull(find_type(extra, ADW_TYPE_ACTION_ROW, "Older-format key"));
+  g_assert_nonnull(find_type(extra, ADW_TYPE_ACTION_ROW, "Another device, app or install"));
+  g_assert_cmpuint(w.w.deleted, ==, deletions_before);   /* nothing before Remove */
+  painted_png(window, "old-keys-confirm");
+
+  /* Cancel changes nothing. */
+  g_signal_emit_by_name(alert, "response", "cancel");
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  drain();
+  g_assert_cmpuint(bob_key_packages_on(&w.w, bob, FALSE), ==, current + others);
+  g_autofree gchar *found = g_strdup_printf("%u other keys are on your relays.", others);
+  g_assert_cmpstr(gh_mls_invites_page_get_old_keys_status(page), ==, found);
+
+  /* Remove: one kind 5 by the account, every other key named. */
+  press_focused(GTK_WINDOW(window), review);
+  spin_until(alert_shown, window, "the confirmation again");
+  alert = ADW_ALERT_DIALOG(visible_dialog(window));
+  g_signal_emit_by_name(alert, "response", "remove");
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  OnlyCurrentWait gone = { &w.w, bob };
+  spin_until(only_current_left, &gone, "the relay applied the deletion");
+  g_assert_cmpuint(w.w.deleted - deletions_before, ==, others);
+  g_autoptr(GPtrArray) requests = published(&w.w, 5);
+  g_assert_cmpuint(requests->len, ==, 1);
+  NostrEvent *request = g_ptr_array_index(requests, 0);
+  g_assert_cmpstr(nostr_event_get_pubkey(request), ==, hex[BOB]);
+  g_assert_cmpint(nostr_event_validate(request, NULL), ==, NOSTR_EVENT_VALIDATION_OK);
+  guint e_tags = 0;
+  NostrTags *request_tags = nostr_event_get_tags(request);
+  for (size_t t = 0; request_tags && t < nostr_tags_size(request_tags); t++)
+    e_tags += g_strcmp0(nostr_tag_get(nostr_tags_get(request_tags, t), 0), "e") == 0;
+  g_assert_cmpuint(e_tags, ==, others);
+  g_assert_cmpuint(bob_key_packages_on(&w.w, bob, TRUE), ==, current);
+  g_assert_true(key_package_published(bob));
+  spin_until(old_keys_idle, page, "the panel looked again");
+  wait_text(old_keys_status, page, "No other keys are on your relays.");
+  g_autofree gchar *toast = g_strdup_printf("Asked your relays to remove %u old invitation keys",
+                                            others);
+  g_assert_cmpstr(gh_mls_invites_page_get_last_toast(page), ==, toast);
+  painted_png(window, "old-keys-removed");
+
+  /* Looking again finds nothing to remove: a toast, no dialog. */
+  press_focused(GTK_WINDOW(window), review);
+  spin_until(old_keys_idle, page, "the second look");
+  g_assert_null(visible_dialog(window));
+  g_assert_cmpstr(gh_mls_invites_page_get_last_toast(page), ==,
+                  "No old invitation keys on your relays");
+  close_window(window);
+  world_down(&w);
+}
+
 /* ---- --gui: the Group Invitations panel ------------------------------------------------- */
 
 /* The panel slides over the conversation list from the sidebar entry and
@@ -2881,6 +3056,7 @@ main(int argc, char **argv)
 #endif
     g_test_add_func("/groundhog/mls-ui-gui/invites-panel", test_gui_invites_panel);
     g_test_add_func("/groundhog/mls-ui-gui/refused-invitation", test_gui_refused_invitation);
+    g_test_add_func("/groundhog/mls-ui-gui/remove-old-keys", test_gui_remove_old_keys);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF

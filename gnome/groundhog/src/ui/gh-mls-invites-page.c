@@ -1,6 +1,7 @@
 #include "gh-mls-invites-page.h"
 
 #include "gh-mls-copy.h"
+#include "gh-mls-key-packages.h"
 #include "gh-shell.h"
 #include "gh-recipient.h"
 
@@ -67,12 +68,15 @@ struct _GhMlsInvitesPage {
   GtkWidget *empty_row;
   AdwPreferencesGroup *invites_group;
   AdwPreferencesGroup *refused_group;
+  AdwActionRow *old_keys_row;
+  GtkWidget *old_keys_button;
 
   GhMlsUiContext context;   /* service weak-watched, the others referenced */
   GPtrArray *rows;          /* GhMlsInviteRow in invites_group */
   GPtrArray *refused_rows;  /* AdwActionRow in refused_group ("wrapper-id" data) */
   gchar *last_toast;
   gboolean focus_on_map;    /* shown while off screen (collapsed) */
+  GCancellable *old_keys_cancellable;  /* a look or a removal in flight */
 };
 
 enum { SIGNAL_OPEN_GROUP, N_SIGNALS };
@@ -267,6 +271,195 @@ sync_key(GhMlsInvitesPage *self)
     gh_mls_device_key_copy(gh_mls_service_get_key_package_state(service),
                            gh_mls_service_get_key_package_held(service),
                            gh_mls_service_get_identity_state(service)));
+  /* Removing the others leaves this device's key alone: only once it is
+   * published, never while a look or a removal runs. */
+  gtk_widget_set_sensitive(self->old_keys_button,
+                           !self->old_keys_cancellable &&
+                           gh_mls_service_get_key_package_state(service) ==
+                             GH_MLS_KEY_PACKAGE_PUBLISHED);
+}
+
+/* ---- Old invitation keys (nostrc-ab9kn) ------------------------------------------------ */
+
+static void old_keys_list(GhMlsInvitesPage *self, gboolean ask);
+
+static guint
+old_keys_count(GPtrArray *listed)
+{
+  guint n = 0;
+  for (guint i = 0; listed && i < listed->len; i++)
+    n += !((GhMlsOwnKeyPackage *)g_ptr_array_index(listed, i))->current;
+  return n;
+}
+
+static void
+old_keys_settle(GhMlsInvitesPage *self, const gchar *subtitle)
+{
+  g_clear_object(&self->old_keys_cancellable);
+  adw_action_row_set_subtitle(self->old_keys_row, subtitle);
+  sync_key(self);
+}
+
+static void
+old_keys_removed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  g_autoptr(GhMlsInvitesPage) self = data;
+  g_autoptr(GError) error = NULL;
+  guint removed = 0;
+  gboolean ok = gh_mls_service_remove_other_key_packages_finish(GH_MLS_SERVICE(source), result,
+                                                                &removed, &error);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || !self->old_keys_cancellable)
+    return;
+  if (!ok) {
+    g_message("Groundhog could not remove old invitation keys: %s", error->message);
+    old_keys_settle(self, _("Your relays did not take the request. Try again later."));
+    show_toast(self, adw_toast_new(_("Old invitation keys could not be removed")));
+    return;
+  }
+  g_autofree gchar *words = g_strdup_printf(
+    g_dngettext(NULL, "Asked your relays to remove %u old invitation key",
+                "Asked your relays to remove %u old invitation keys", removed), removed);
+  show_toast(self, adw_toast_new(words));
+  /* What the relays hold now. */
+  g_clear_object(&self->old_keys_cancellable);
+  old_keys_list(self, FALSE);
+}
+
+static void
+old_keys_response(AdwAlertDialog *alert, const gchar *response, gpointer data)
+{
+  GhMlsInvitesPage *self = data;
+  GPtrArray *listed = g_object_get_data(G_OBJECT(alert), "listed");
+  if (g_strcmp0(response, "remove") != 0 || !listed || !self->context.service ||
+      self->old_keys_cancellable)
+    return;
+  self->old_keys_cancellable = g_cancellable_new();
+  adw_action_row_set_subtitle(self->old_keys_row, _("Asking your relays to remove them…"));
+  sync_key(self);
+  gh_mls_service_remove_other_key_packages_async(self->context.service, listed,
+                                                 self->old_keys_cancellable, old_keys_removed,
+                                                 g_object_ref(self));
+}
+
+/* "Published Oct 8, 2026" in the local time zone. */
+static gchar *
+old_key_date(gint64 created_at)
+{
+  g_autoptr(GDateTime) when = g_date_time_new_from_unix_local(created_at);
+  g_autofree gchar *date = when ? g_date_time_format(when, "%x") : NULL;
+  return date ? g_strdup_printf(_("Published %s"), date) : g_strdup(_("Publication date unknown"));
+}
+
+/* The confirmation: every key found, this device's marked as kept. */
+static void
+old_keys_confirm(GhMlsInvitesPage *self, GPtrArray *listed, guint others)
+{
+  g_autofree gchar *heading = g_strdup_printf(
+    g_dngettext(NULL, "Remove %u Old Invitation Key?", "Remove %u Old Invitation Keys?", others),
+    others);
+  AdwAlertDialog *alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(heading,
+    _("People who invite you pick one of your invitation keys, and an invitation made for a key "
+      "this device doesn’t have can’t be opened here. This asks your relays to delete every "
+      "key below except this device’s.\n\nKeys from your other devices or apps, such as "
+      "White Noise, stop working for new invitations until those apps publish new ones. "
+      "Groups you already joined are not affected.")));
+  GtkWidget *list = gtk_list_box_new();
+  gtk_list_box_set_selection_mode(GTK_LIST_BOX(list), GTK_SELECTION_NONE);
+  gtk_widget_add_css_class(list, "boxed-list");
+  for (guint i = 0; i < listed->len; i++) {
+    GhMlsOwnKeyPackage *kp = g_ptr_array_index(listed, i);
+    AdwActionRow *row = ADW_ACTION_ROW(adw_action_row_new());
+    adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), kp->current
+      ? _("This device (kept)")
+      : kp->kind == GH_MLS_KIND_LEGACY_KEY_PACKAGE ? _("Older-format key")
+                                                   : _("Another device, app or install"));
+    g_autofree gchar *date = old_key_date(kp->created_at);
+    adw_action_row_set_subtitle(row, date);
+    GtkWidget *icon = gtk_image_new_from_icon_name(kp->current ? "emblem-ok-symbolic"
+                                                               : "user-trash-symbolic");
+    gtk_accessible_update_property(GTK_ACCESSIBLE(icon), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                   kp->current ? _("Kept") : _("Removed"), -1);
+    adw_action_row_add_prefix(row, icon);
+    gtk_list_box_append(GTK_LIST_BOX(list), GTK_WIDGET(row));
+  }
+  GtkWidget *scroller = gtk_scrolled_window_new();
+  gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroller), GTK_POLICY_NEVER,
+                                 GTK_POLICY_AUTOMATIC);
+  gtk_scrolled_window_set_propagate_natural_height(GTK_SCROLLED_WINDOW(scroller), TRUE);
+  gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroller), 260);
+  gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroller), list);
+  adw_alert_dialog_set_extra_child(alert, scroller);
+  adw_alert_dialog_add_responses(alert, "cancel", _("_Cancel"), "remove", _("_Remove"), NULL);
+  adw_alert_dialog_set_response_appearance(alert, "remove", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_set_default_response(alert, "cancel");
+  adw_alert_dialog_set_close_response(alert, "cancel");
+  g_object_set_data_full(G_OBJECT(alert), "listed", g_ptr_array_ref(listed),
+                         (GDestroyNotify)g_ptr_array_unref);
+  g_signal_connect_object(alert, "response", G_CALLBACK(old_keys_response), self, 0);
+  adw_dialog_present(ADW_DIALOG(alert), GTK_WIDGET(self));
+}
+
+typedef struct {
+  GhMlsInvitesPage *page;   /* referenced */
+  gboolean ask;             /* the user asked: confirm when there are others */
+} OldKeysLook;
+
+static void
+old_keys_listed(GObject *source, GAsyncResult *result, gpointer data)
+{
+  OldKeysLook *look = data;
+  g_autoptr(GhMlsInvitesPage) self = look->page;
+  gboolean ask = look->ask;
+  g_free(look);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GPtrArray) listed = gh_mls_service_list_own_key_packages_finish(
+    GH_MLS_SERVICE(source), result, &error);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || !self->old_keys_cancellable)
+    return;
+  if (!listed) {
+    g_message("Groundhog could not list its invitation keys: %s", error->message);
+    old_keys_settle(self, _("Your relays could not be checked. Try again later."));
+    if (ask)
+      show_toast(self, adw_toast_new(_("Your relays could not be checked")));
+    return;
+  }
+  guint others = old_keys_count(listed);
+  if (others == 0) {
+    old_keys_settle(self, _("No other keys are on your relays."));
+    if (ask)
+      show_toast(self, adw_toast_new(_("No old invitation keys on your relays")));
+    return;
+  }
+  g_autofree gchar *found = g_strdup_printf(
+    g_dngettext(NULL, "%u other key is on your relays.", "%u other keys are on your relays.",
+                others), others);
+  old_keys_settle(self, found);
+  if (ask)
+    old_keys_confirm(self, listed, others);
+}
+
+static void
+old_keys_list(GhMlsInvitesPage *self, gboolean ask)
+{
+  if (!self->context.service || self->old_keys_cancellable)
+    return;
+  self->old_keys_cancellable = g_cancellable_new();
+  adw_action_row_set_subtitle(self->old_keys_row, _("Looking on your relays…"));
+  sync_key(self);
+  OldKeysLook *look = g_new0(OldKeysLook, 1);
+  look->page = g_object_ref(self);
+  look->ask = ask;
+  gh_mls_service_list_own_key_packages_async(self->context.service, self->old_keys_cancellable,
+                                             old_keys_listed, look);
+}
+
+static void
+action_review_keys(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  (void)action;
+  (void)parameter;
+  old_keys_list(GH_MLS_INVITES_PAGE(widget), TRUE);
 }
 
 static void
@@ -421,10 +614,28 @@ gh_mls_invites_page_get_last_toast(GhMlsInvitesPage *self)
   return self->last_toast;
 }
 
+const gchar *
+gh_mls_invites_page_get_old_keys_status(GhMlsInvitesPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), NULL);
+  return adw_action_row_get_subtitle(self->old_keys_row);
+}
+
+gboolean
+gh_mls_invites_page_get_old_keys_busy(GhMlsInvitesPage *self)
+{
+  g_return_val_if_fail(GH_IS_MLS_INVITES_PAGE(self), FALSE);
+  return self->old_keys_cancellable != NULL;
+}
+
 static void
 gh_mls_invites_page_dispose(GObject *object)
 {
   GhMlsInvitesPage *self = GH_MLS_INVITES_PAGE(object);
+  if (self->old_keys_cancellable) {
+    g_cancellable_cancel(self->old_keys_cancellable);
+    g_clear_object(&self->old_keys_cancellable);
+  }
   if (self->context.service) {
     g_object_weak_unref(G_OBJECT(self->context.service), on_service_gone, self);
     self->context.service = NULL;
@@ -490,6 +701,10 @@ gh_mls_invites_page_class_init(GhMlsInvitesPageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, empty_row);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, invites_group);
   gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, refused_group);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, old_keys_row);
+  gtk_widget_class_bind_template_child(widget_class, GhMlsInvitesPage, old_keys_button);
+  gtk_widget_class_install_action(widget_class, "mls-invites.review-keys", NULL,
+                                  action_review_keys);
   gtk_widget_class_install_action(widget_class, "mls-invites.accept", "s", action_accept);
   gtk_widget_class_install_action(widget_class, "mls-invites.decline", "s", action_decline);
   gtk_widget_class_install_action(widget_class, "mls-invites.dismiss", "s", action_dismiss);
