@@ -647,6 +647,12 @@ conversation_state(const RoomState *state, gboolean has_older, gint64 floor_crea
   };
 }
 
+/* Rows a room keeps for delivery or bookkeeping but never lists as chat:
+ * sent NIP-09 deletions (5), NIP-25 reactions (7) and MLS welcomes (444).
+ * Their rumors are not messages, so parsing them would read as a failed
+ * verification. */
+#define NOT_CHAT_ROW "kind NOT IN (5, 7, 444)"
+
 /* Lists a page of a stored room: its newest messages (conversation NULL) or
  * those before the listed room's floor. Pages past messages that cannot be
  * listed (expired, or failing verification) so a new room gets at least one
@@ -672,7 +678,7 @@ restore_room(GhStoreConversations *self, GhConversationStore *model, gint64 conv
   RoomState state = { 0 };
   sqlite3_stmt *stmt = prepare(store,
     "SELECT created_at, backend_msg_id, raw_json, expires_at, seq FROM messages "
-    "WHERE conversation_id = ?1 AND (?2 = 0 OR created_at < ?3 OR "
+    "WHERE conversation_id = ?1 AND " NOT_CHAT_ROW " AND (?2 = 0 OR created_at < ?3 OR "
     "(created_at = ?3 AND backend_msg_id < ?4)) "
     "ORDER BY created_at DESC, backend_msg_id DESC LIMIT ?5", error);
   if (!stmt)
@@ -867,7 +873,7 @@ gh_store_conversations_load_newer(GhStoreConversations *self, GhConversation *co
   g_autoptr(GPtrArray) messages = g_ptr_array_new_with_free_func(g_object_unref);
   sqlite3_stmt *stmt = prepare(store,
     "SELECT raw_json, expires_at, seq FROM messages WHERE conversation_id = ?1 "
-    "AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
+    "AND " NOT_CHAT_ROW " AND (created_at > ?2 OR (created_at = ?2 AND backend_msg_id > ?3)) "
     "ORDER BY created_at ASC, backend_msg_id ASC", error);
   if (!stmt)
     return FALSE;

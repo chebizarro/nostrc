@@ -44,6 +44,7 @@
 #include "gh-reaction-store.h"
 #include "gh-reaction-picker.h"
 
+#include "json.h"
 #include "nostr-event.h"
 #include "nostr-keys.h"
 #include "nostr-tag.h"
@@ -1285,6 +1286,115 @@ test_reference_card(Fixture *f, gconstpointer data)
   g_assert_cmpuint(resolver->fetches, ==, 1);
   g_assert_cmpuint(f->fetches, ==, 0);
   gh_conversation_view_set_reference_resolver(f->view, NULL);
+}
+
+static void save_png_path(GtkWidget *window, GtkWidget *popover, const char *path);
+
+/* Opt-in evidence (GROUNDHOG_MESSAGE_RENDER_SHOTS=<prefix>): the window,
+ * with @popover where it sits, as <prefix>-<name>.png. */
+static void
+render_shot(Fixture *f, GtkPopover *popover, const gchar *name)
+{
+  const gchar *prefix = g_getenv("GROUNDHOG_MESSAGE_RENDER_SHOTS");
+  if (!prefix)
+    return;
+  drain_idle();
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, name);
+  save_png_path(GTK_WIDGET(f->window), popover ? GTK_WIDGET(popover) : NULL, path);
+}
+
+/* nostrc-tv98u: a NIP-18 quote shared into a chat shows the card and its
+ * own text, never its JSON: rendered, before it is rendered, and in a row
+ * with no view; Copy Message copies that text and the note's address, and
+ * a repost's copies the address. */
+static void
+test_quote_body(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autofree char *original = signed_note("the original note");
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(original, NULL);
+  g_autofree gchar *uri = gn_nostr_reference_build_event(info->id, NULL, -1, NULL);
+  g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
+  reference->kind = 1;
+  g_autofree gchar *quote = gn_nostr_build_quote_template(reference, "Worth **reading**");
+  g_assert_nonnull(quote);
+  gint64 t = noon_today();
+  GhMessage *quote_message = add_dm(f->store, 2, 1, t, quote);
+  g_assert_cmpstr(gh_message_get_content(quote_message), ==, quote);
+  /* Longer than the bind-time budget: rendered off the main thread. */
+  GString *long_text = g_string_new(NULL);
+  while (long_text->len < 6000)
+    g_string_append(long_text, "A long comment on the note. ");
+  g_autofree gchar *long_quote = gn_nostr_build_quote_template(reference, long_text->str);
+  GhMessage *long_message = add_dm(f->store, 2, 1, t + 1, long_quote);
+  g_autofree gchar *repost = gn_nostr_build_repost_template(reference, original);
+  GhMessage *repost_message = add_dm(f->store, 2, 1, t + 2, repost);
+  GhConversation *conversation = room_of(f->store, quote_message);
+  gh_conversation_accept(conversation);
+
+  /* Before any view renders it: the row alone shows the quote's text. */
+  GhMessageRow *lone = GH_MESSAGE_ROW(g_object_ref_sink(gh_message_row_new()));
+  gh_message_row_set_message(lone, quote_message);
+  /* The card shows the quoted note: its reference leaves the text. */
+  g_assert_cmpstr(text_of(row_child(lone, "body_label")), ==, "Worth **reading**");
+  g_assert_nonnull(strstr(gh_message_row_get_summary(lone), ": Worth **reading**"));
+  gh_message_row_set_message(lone, repost_message);
+  g_assert_null(strchr(text_of(row_child(lone, "body_label")), '{'));
+  g_assert_nonnull(strstr(gh_message_row_get_summary(lone), ": Reposted Nostr note"));
+  g_object_unref(lone);
+
+  show(f, conversation, 700, 600);
+  GhMessageRow *row = row_for(f->view, quote_message);
+  const gchar *cached_uri = NULL;
+  GnNostrReferenceCardRole role = GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
+  g_assert_nonnull(gh_conversation_view_get_reference_target(f->view, quote_message, &cached_uri,
+                                                             &role, NULL));
+  g_assert_cmpint(role, ==, GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE);
+  g_assert_true(g_str_has_prefix(cached_uri, "nostr:"));
+  g_assert_true(shown(row_child(row, "reference_box")));
+  g_assert_true(shown(row_child(row, "body_label")));
+  g_assert_cmpstr(text_of(row_child(row, "body_label")), ==, "Worth reading");
+  g_assert_nonnull(strstr(gtk_label_get_label(GTK_LABEL(row_child(row, "body_label"))),
+                          "<b>reading</b>"));
+  /* Its text names the note (NIP-18): copied as it is, the reference too. */
+  char *content = NULL;
+  g_assert_cmpint(nostr_json_get_string(quote, "content", &content), ==, 0);
+  g_assert_true(g_str_has_prefix(content, "Worth **reading**\n\nnostr:"));
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.copy-message", "s",
+                             gh_message_get_rumor_id(quote_message));
+  g_assert_cmpstr(f->copied, ==, content);
+  free(content);
+  g_clear_pointer(&f->copied, g_free);
+  /* A quote whose text does not name the note gets the note's address. */
+  g_autofree gchar *bare = g_strdup_printf(
+    "{\"kind\":1,\"content\":\"Bare words\",\"tags\":[[\"q\",\"%s\",\"\"]]}", info->id);
+  g_autofree gchar *copy = gh_conversation_view_dup_body_copy_text(bare);
+  g_autofree gchar *expected = g_strconcat("Bare words\n", cached_uri, NULL);
+  g_assert_cmpstr(copy, ==, expected);
+  g_autofree gchar *plain = gh_conversation_view_dup_body_copy_text("just {text}");
+  g_assert_cmpstr(plain, ==, "just {text}");
+  render_shot(f, NULL, "quote");
+
+  /* The long one: its text from the first bind, rendered or not. */
+  GhMessageRow *long_row = row_for(f->view, long_message);
+  g_assert_null(strchr(text_of(row_child(long_row, "body_label")), '{'));
+  g_assert_true(g_str_has_prefix(text_of(row_child(long_row, "body_label")), "A long comment"));
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.copy-message", "s",
+                             gh_message_get_rumor_id(long_message));
+  g_assert_true(g_str_has_prefix(f->copied, "A long comment"));
+  g_assert_nonnull(strstr(f->copied, "\n\nnostr:nevent1"));
+  g_assert_null(strchr(f->copied, '{'));
+  g_clear_pointer(&f->copied, g_free);
+
+  /* A repost copies the shared note's address (with its verified author). */
+  const gchar *repost_uri = NULL;
+  g_assert_true(gh_conversation_view_get_reference(f->view, repost_message, &repost_uri));
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.copy-message", "s",
+                             gh_message_get_rumor_id(repost_message));
+  g_assert_cmpstr(f->copied, ==, repost_uri);
+  g_clear_pointer(&f->copied, g_free);
+  g_string_free(long_text, TRUE);
 }
 
 static void
@@ -5072,6 +5182,132 @@ test_owner_remembered_consent(Fixture *f, G_GNUC_UNUSED gconstpointer data)
   g_ptr_array_unref(web.asked);
 }
 
+/* A PNG of @width x @height opaque pixels. */
+static GBytes *
+png_of_size(int width, int height)
+{
+  gsize stride = (gsize)width * 4;
+  guchar *pixels = g_malloc((gsize)height * stride);
+  for (gsize i = 0; i < (gsize)height * stride; i++)
+    pixels[i] = (guchar)(i % 4 == 3 ? 0xff : i * 7);
+  g_autoptr(GBytes) data = g_bytes_new_take(pixels, (gsize)height * stride);
+  g_autoptr(GdkTexture) texture =
+    gdk_memory_texture_new(width, height, GDK_MEMORY_R8G8B8A8, data, stride);
+  return gdk_texture_save_to_png_bytes(texture);
+}
+
+static void
+budget_load(Fixture *f, GhMessage *message, gboolean ask)
+{
+  GtkWidget *button = row_child(row_for(f->view, message), "image_button");
+  g_assert_true(shown(button));
+  click(button);
+  if (ask)
+    owner_allow(f);
+  else
+    g_assert_false(dialog_presented(view_child(f->view, "preview_dialog")));
+  WebWait wait = { f, message, GH_WEB_IMAGE };
+  spin_until(web_loaded, &wait);
+}
+
+static gboolean
+image_kept(Fixture *f, GhMessage *message)
+{
+  GhLinkPreviewState state;
+  return gh_conversation_view_get_web_texture(f->view, message, GH_WEB_IMAGE, &state) != NULL;
+}
+
+/* nostrc-bgjcp: what the session keeps loaded (groundhog/remember-consent)
+ * has a memory budget, through the real view, rows and GhNetHttp. Past it
+ * the least recently viewed image is given up: its row offers it again,
+ * and the kept allow loads it without asking; one image shown under many
+ * messages counts once. */
+static void
+test_web_texture_budget(Fixture *f, G_GNUC_UNUSED gconstpointer data)
+{
+  g_settings_set_string(f->settings, "network-mode", "none");
+  OwnerWeb web = { gh_net_http_new(f->settings), blossom_fixture_new(),
+                   g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free),
+                   g_ptr_array_new_with_free_func(g_free) };
+  g_autoptr(GBytes) small = png_of_size(64, 48);
+  g_autoptr(GBytes) middle = png_of_size(80, 60);
+  g_autoptr(GBytes) large = png_of_size(56, 42);
+  owner_serve(&web, "one.example", small);
+  owner_serve(&web, "two.example", middle);
+  owner_serve(&web, "three.example", large);
+  const gsize one_bytes = 64 * 48 * 4, two_bytes = 80 * 60 * 4, three_bytes = 56 * 42 * 4;
+  gint64 t = noon_today();
+  GhMessage *one = add_dm(f->store, 2, 1, t, "https://one.example/a.png");
+  GhMessage *two = add_dm(f->store, 2, 1, t + 60, "https://two.example/b.png");
+  GhMessage *again = add_dm(f->store, 2, 1, t + 120, "https://one.example/a.png");
+  GhConversation *conversation = room_of(f->store, one);
+  gh_conversation_accept(conversation);
+  GhMessage *three = add_dm(f->store, 3, 1, t, "https://three.example/c.png");
+  GhConversation *other = room_of(f->store, three);
+  gh_conversation_accept(other);
+  show(f, conversation, 640, 700);
+  static const GhHttpTransport transport = { owner_web_get, owner_web_finish };
+  gh_conversation_view_enable_web_content(f->view, &transport, &web);
+  /* Room for the first two, not the third. */
+  gh_conversation_view_set_web_texture_budget(f->view, one_bytes + two_bytes + 16);
+
+  budget_load(f, one, TRUE);
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==, one_bytes);
+  /* The same address again in this conversation: no request, counted once. */
+  WebWait again_wait = { f, again, GH_WEB_IMAGE };
+  gh_conversation_view_auto_load(f->view, again, GH_WEB_IMAGE);
+  spin_until(web_loaded, &again_wait);
+  g_assert_cmpuint(web.asked->len, ==, 1);
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==, one_bytes);
+  budget_load(f, two, TRUE);
+  g_assert_cmpuint(web.asked->len, ==, 2);
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==,
+                   one_bytes + two_bytes);
+  /* The first image is viewed last (as a row showing it does). */
+  g_assert_true(image_kept(f, one));
+  g_assert_true(image_kept(f, again));
+
+  /* Another conversation's image does not fit: the least recently viewed
+   * (the second) is given up, the rest kept. */
+  gh_conversation_view_set_conversation(f->view, other);
+  drain_idle();
+  budget_load(f, three, TRUE);
+  g_assert_cmpuint(web.asked->len, ==, 3);
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==,
+                   one_bytes + three_bytes);
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), <=,
+                   one_bytes + two_bytes + 16);
+  g_assert_true(image_kept(f, three));
+  g_assert_false(image_kept(f, two));
+  g_assert_true(image_kept(f, one));
+  render_shot(f, NULL, "budget-other");
+
+  /* Back: the given-up image offers itself again and loads without being
+   * asked about (the allow is kept); now the third is the oldest. */
+  gh_conversation_view_set_conversation(f->view, conversation);
+  drain_idle();
+  GhMessageRow *row = row_for(f->view, two);
+  g_assert_true(shown(row_child(row, "image_button")));
+  g_assert_false(shown(row_child(row, "remote_image")));
+  render_shot(f, NULL, "budget-evicted");
+  budget_load(f, two, FALSE);
+  g_assert_cmpuint(web.asked->len, ==, 4);
+  g_assert_false(image_kept(f, three));
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==,
+                   one_bytes + two_bytes);
+  g_assert_true(shown(row_child(row_for(f->view, two), "remote_image")));
+  render_shot(f, NULL, "budget-reloaded");
+
+  gh_conversation_view_set_conversation(f->view, NULL);
+  gh_conversation_view_enable_web_content(f->view, NULL, NULL);
+  drain_idle();
+  g_assert_cmpuint(gh_conversation_view_get_web_texture_bytes(f->view), ==, 0);
+  g_object_unref(web.http);
+  blossom_fixture_free(web.server);
+  g_hash_table_unref(web.hosts);
+  g_ptr_array_unref(web.asked);
+}
+
 /* ---- bubble padding (owner request, groundhog/bubble-menu) ------------------------- */
 
 /* The space between a bubble's edge and its content, per side (start, top,
@@ -5237,6 +5473,101 @@ press_menu_key(Fixture *f, guint keyval, GdkModifierType state)
   gboolean handled = FALSE;
   g_signal_emit_by_name(keys, "key-pressed", keyval, 0, state, &handled);
   return handled;
+}
+
+/* Right-clicks @area as a pointer would: its capture-phase gesture, ahead
+ * of any label's own; returns the row's menu, shown. */
+static GtkPopover *
+right_click(GhMessageRow *row, GtkWidget *area)
+{
+  GtkEventController *click = find_controller(area, GTK_TYPE_GESTURE_CLICK, GTK_PHASE_CAPTURE);
+  g_assert_nonnull(click);
+  g_assert_nonnull(find_controller(area, GTK_TYPE_GESTURE_LONG_PRESS, GTK_PHASE_CAPTURE));
+  g_signal_emit_by_name(click, "pressed", 1, 4.0, 4.0);
+  GtkPopover *menu = gh_message_row_get_menu(row);
+  g_assert_true(GTK_IS_POPOVER_MENU(menu));
+  spin_until(popover_mapped, menu);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  return menu;
+}
+
+/* nostrc-yloj8: the selectable text outside the bubble (a link preview's
+ * title and text) and the shared note's card have the row's own menu, not
+ * GTK's label menu: Copy with a selection, Copy Link for the address, and
+ * nothing that edits text. */
+static void
+test_area_menus(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  gint64 t = noon_today();
+  const gchar *link = "https://news.example/story";
+  g_autofree gchar *text = g_strdup_printf("Read %s", link);
+  GhMessage *message = add_dm(f->store, 2, 1, t, text);
+  const gchar *note = "nostr:note1zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygsglnzgl";
+  GhMessage *mention = add_dm(f->store, 2, 1, t + 60, note);
+  GhConversation *conversation = room_of(f->store, message);
+  gh_conversation_accept(conversation);
+  gh_conversation_view_set_link_preview_fetcher(f->view, fake_fetch, fake_finish, f, NULL);
+  show(f, conversation, 700, 600);
+
+  GhMessageRow *row = row_for(f->view, message);
+  click(row_child(row, "preview_button"));
+  AdwAlertDialog *dialog = view_child(f->view, "preview_dialog");
+  spin_until(dialog_presented, dialog);
+  g_signal_emit_by_name(dialog, "response", "preview-show");
+  close_dialog(ADW_DIALOG(dialog));
+  answer_fetch(f, NULL, NULL);
+  StateWait failed = { f, message, GH_LINK_PREVIEW_FAILED };
+  spin_until(state_is, &failed);
+  row = row_for(f->view, message);
+  GtkLabel *preview_text = row_child(row, "preview_text");
+  g_assert_true(shown(preview_text));
+  g_assert_true(gtk_label_get_selectable(preview_text));
+  g_assert_cmpstr(text_of(preview_text), ==, "The preview couldn't be loaded.");
+
+  /* Nothing selected: Copy Link only. */
+  GtkWidget *preview_box = row_child(row, "preview_box");
+  GtkPopover *menu = right_click(row, preview_box);
+  g_autofree gchar *plain = menu_labels(menu);
+  g_assert_cmpstr(plain, ==, "Copy _Link");
+  menu_choose(menu, "Copy _Link");
+  take_copied(f, link);
+
+  /* A selection there: Copy copies it. */
+  gtk_label_select_region(preview_text, 4, 11);
+  menu = right_click(row, preview_box);
+  g_autofree gchar *selected = menu_labels(menu);
+  g_assert_cmpstr(selected, ==, "_Copy|Copy _Link");
+  render_shot(f, menu, "preview-menu");
+  menu_choose(menu, "_Copy");
+  take_copied(f, "preview");
+
+  /* Menu with the preview's text focused: its menu, not the bubble's. */
+  gtk_widget_grab_focus(GTK_WIDGET(preview_text));
+  g_assert_true(press_menu_key(f, GDK_KEY_Menu, 0));
+  menu = gh_message_row_get_menu(row);
+  spin_until(popover_mapped, menu);
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  g_autofree gchar *keyed = menu_labels(menu);
+  g_assert_true(g_str_has_suffix(keyed, "Copy _Link"));
+  g_assert_null(strstr(keyed, "Message"));
+  close_popover(menu);
+
+  /* The shared note's card: Copy Link copies its nostr: address. */
+  GhMessageRow *mention_row = row_for(f->view, mention);
+  GtkWidget *reference_box = row_child(mention_row, "reference_box");
+  g_assert_true(shown(reference_box));
+  menu = right_click(mention_row, reference_box);
+  g_autofree gchar *card = menu_labels(menu);
+  g_assert_cmpstr(card, ==, "Copy _Link");
+  render_shot(f, menu, "card-menu");
+  menu_choose(menu, "Copy _Link");
+  const gchar *address = NULL;
+  g_assert_true(gh_conversation_view_get_reference(f->view, mention, &address));
+  g_assert_true(g_str_has_prefix(address, "nostr:"));
+  take_copied(f, address);
+  gh_conversation_view_set_link_preview_fetcher(f->view, NULL, NULL, NULL, NULL);
+  spin_until(not_loading, f);
 }
 
 static void
@@ -5464,6 +5795,7 @@ main(int argc, char **argv)
   ADD("markdown-copy-identity", test_markdown_copy_identity);
   ADD("bubble-padding", test_bubble_padding);
   ADD("bubble-menu", test_bubble_menu);
+  ADD("area-menus", test_area_menus);
   ADD("bubble-delete", test_bubble_delete);
   ADD("markdown-table-real", test_markdown_table_real);
   ADD("markdown-table-compact", test_markdown_table_compact);
@@ -5480,6 +5812,7 @@ main(int argc, char **argv)
   ADD("code-block-compact", test_code_block_compact);
   ADD("code-block-short-and-recycled", test_code_block_short_and_recycled);
   ADD("reference-card", test_reference_card);
+  ADD("quote-body", test_quote_body);
   ADD("share-reference", test_share_reference);
   ADD("link-previews", test_link_previews);
   ADD("sender-scoped-consent", test_sender_scoped_consent);
@@ -5503,6 +5836,7 @@ main(int argc, char **argv)
   ADD("web-preview-github-card", test_web_preview_github_card);
   ADD("owner-link-previews", test_owner_link_previews);
   ADD("owner-remembered-consent", test_owner_remembered_consent);
+  ADD("web-texture-budget", test_web_texture_budget);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-fixture",
                   test_web_preview_github_fixture);
   g_test_add_func("/groundhog/conversation-view/web-preview-github-live",

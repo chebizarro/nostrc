@@ -2565,6 +2565,58 @@ test_reaction_same_second_toggle(void)
   fixture_down(&f);
 }
 
+/* nostrc-u78k5: a sent reaction and deletion are stored rows of their room
+ * (the outbox resumes them) but never chat. A restart, and paging back past
+ * them, lists the two texts without reading those rows as messages that
+ * failed verification (a warning, fatal here). */
+static void
+test_restore_skips_reaction_rows(void)
+{
+  Fixture f;
+  fixture_up(&f, NULL, NULL);
+  fixture_outbox(&f);
+  fake_monitor_set_available(f.network, FALSE);
+  const gchar *recipients[] = { hex_bob, NULL };
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhOutboxItem) first = send_text(&f, hex_bob, "first");
+  advance_seconds(&f, 1);
+  g_autofree gchar *reaction = gh_outbox_send_reaction_room(
+    f.outbox, recipients, "+", gh_outbox_item_get_rumor_id(first), "14", &error);
+  g_assert_no_error(error);
+  advance_seconds(&f, 1);
+  g_autofree gchar *deletion = gh_outbox_send_deletion_room(f.outbox, recipients, reaction,
+                                                            &error);
+  g_assert_no_error(error);
+  advance_seconds(&f, 1);
+  g_autoptr(GhOutboxItem) last = send_text(&f, hex_bob, "last");
+
+  g_autoptr(GhConversationStore) model = gh_conversation_store_new();
+  g_autoptr(GhStoreConversations) conversations = gh_store_conversations_new(f.store);
+  g_assert_true(gh_store_conversations_attach(conversations, model, 1, &error));
+  g_assert_no_error(error);
+  g_autofree gchar *room_id = strcmp(hex_alice, hex_bob) < 0
+    ? g_strconcat(hex_alice, ",", hex_bob, NULL) : g_strconcat(hex_bob, ",", hex_alice, NULL);
+  GhConversation *room = gh_conversation_store_lookup(model, room_id);
+  g_assert_nonnull(room);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, 1);
+  guint loaded = 0;
+  g_assert_true(gh_store_conversations_load_older(conversations, room, 1, &loaded, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(loaded, ==, 1);
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(room)), ==, 2);
+  g_assert_nonnull(gh_conversation_store_lookup_message(model,
+                                                        gh_outbox_item_get_rumor_id(first)));
+  g_assert_nonnull(gh_conversation_store_lookup_message(model,
+                                                        gh_outbox_item_get_rumor_id(last)));
+  g_assert_null(gh_conversation_store_lookup_message(model, reaction));
+  g_assert_null(gh_conversation_store_lookup_message(model, deletion));
+  g_assert_true(gh_store_conversations_load_older(conversations, room, 1, &loaded, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(loaded, ==, 0);
+  gh_store_conversations_close(conversations);
+  fixture_down(&f);
+}
+
 /* NIP-29 and MLS entries in the same store belong to their own engines:
  * the NIP-17 outbox neither resumes nor touches them. */
 static void
@@ -2891,6 +2943,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/outbox/cancel-delete", test_cancel_and_delete);
   g_test_add_func("/groundhog/outbox/reaction-same-second-toggle",
                   test_reaction_same_second_toggle);
+  g_test_add_func("/groundhog/outbox/restore-skips-reaction-rows",
+                  test_restore_skips_reaction_rows);
   g_test_add_func("/groundhog/outbox/note-to-self", test_note_to_self);
   g_test_add_func("/groundhog/outbox/other-backends", test_other_backends_untouched);
   g_test_add_func("/groundhog/outbox/relays-refused", test_relays_refused);
