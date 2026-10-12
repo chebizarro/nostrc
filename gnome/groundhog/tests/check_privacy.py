@@ -931,17 +931,23 @@ def check_diagnostics(tree):
 
 
 # nostrc-8xfib.5: the portable NIP-34 issue form (nostr-gtk) takes injected
-# services. Groundhog passes no repository resolver
-# (gn_nip34_issue_view_new(target, publisher, NULL, ...)), and the only
-# uploader it may pass is GhIssueUploader (src/net/gh-issue-uploader.c, owner
-# decision): the form's uploader argument is NULL or a variable named
-# `uploader` that is only ever set from gh_issue_uploader_new() or NULL.
-# GhIssueUploader is the only implementation of the uploader interface, and
-# it sends only through gh_blossom_client_upload_public_async() (GhNetHttp:
-# network mode, Tor, public hosts only); it never opens sockets, resolves
-# names or calls another upload. A resolver may only be a GhNet adapter in
-# src/net/. Anything else would bypass GhNet's network mode, Tor isolation
-# and dispatcher.
+# services. The only uploader Groundhog may pass is GhIssueUploader
+# (src/net/gh-issue-uploader.c, owner decision): the form's uploader
+# argument is NULL or a variable named `uploader` that is only ever set from
+# gh_issue_uploader_new() or NULL. GhIssueUploader is the only
+# implementation of the uploader interface, and it sends only through
+# gh_blossom_client_upload_public_async() (GhNetHttp: network mode, Tor,
+# public hosts only); it never opens sockets, resolves names or calls
+# another upload. Likewise the only resolver is GhIssueResolver
+# (src/net/gh-issue-resolver.c, nostrc-ewx8x): the resolver argument is NULL
+# or a variable named `resolver` only ever set from gh_issue_resolver_new()
+# or NULL, and a file that passes it also sets the form's lookup consent
+# (gn_nip34_issue_view_set_lookup_consent(): no lookup without the user's
+# consent, charter). GhIssueResolver is the only implementation of the
+# resolver interface; it asks relays only through gh_relay_scope_new() (the
+# application transport, GhNet's dispatcher), never with a transport of its
+# own, sockets, HTTP, a publish or the account's own relay lists. Anything
+# else would bypass GhNet's network mode, Tor isolation and dispatcher.
 ISSUE_VIEW_NEW_RE = re.compile(r"\bgn_nip34_issue_view_new\s*\(([^;]*?)\)\s*;", re.S)
 ISSUE_UPLOADER_IMPL_RE = re.compile(r"\bGN_TYPE_ISSUE_UPLOADER\b|\bGnIssueUploaderInterface\b")
 ISSUE_RESOLVER_IMPL_RE = re.compile(
@@ -949,6 +955,16 @@ ISSUE_RESOLVER_IMPL_RE = re.compile(
 ISSUE_UPLOADER_FILE = "src/net/gh-issue-uploader.c"
 ISSUE_UPLOADER_ASSIGN_RE = re.compile(r"\buploader\s*=\s*([^;]*);")
 ISSUE_UPLOADER_ALLOWED_VALUE_RE = re.compile(r"^(?:NULL|gh_issue_uploader_new\s*\([^;]*\))$", re.S)
+ISSUE_RESOLVER_FILE = "src/net/gh-issue-resolver.c"
+ISSUE_RESOLVER_ASSIGN_RE = re.compile(r"\bresolver\s*=\s*([^;]*);")
+ISSUE_RESOLVER_ALLOWED_VALUE_RE = re.compile(r"^(?:NULL|gh_issue_resolver_new\s*\([^;]*\))$", re.S)
+ISSUE_LOOKUP_CONSENT_RE = re.compile(r"\bgn_nip34_issue_view_set_lookup_consent\s*\(")
+ISSUE_RESOLVER_SCOPE_RE = re.compile(r"\bgh_relay_scope_new\s*\(")
+ISSUE_RESOLVER_NET_RE = re.compile(
+    r"\bgh_relay_scope_new_with_transport\b|\bgh_relay_scope_set_\w*transport\b"
+    r"|\bgh_relay_publish_\w+\b|\bgh_account_relays_\w+\b|\bgh_blossom_client_\w+\b"
+    r"|\bgh_net_http_\w+\b|\bg_socket_\w+\b|\bg_resolver_\w+\b|\bsoup_\w+\b|\bg_network_\w+\b"
+    r"|\bgnostr_\w+\b|\bnostr_relay_\w+\b")
 ISSUE_UPLOADER_NET_RE = re.compile(
     r"\bgh_blossom_client_upload(?:_on_servers|_keyed)?_async\b|\bgh_blossom_client_download_async\b"
     r"|\bgh_net_http_\w+\b|\bg_socket_\w+\b|\bg_resolver_\w+\b|\bsoup_\w+\b|\bg_network_\w+\b")
@@ -970,20 +986,34 @@ def check_issue_services(tree):
             found += find_all(rule, rel, code, ISSUE_UPLOADER_IMPL_RE,
                               lambda s: f"{s}: the only issue uploader is GhIssueUploader "
                                         f"({ISSUE_UPLOADER_FILE})")
-        if not rel.startswith("src/net/"):
+        if rel == ISSUE_RESOLVER_FILE:
+            if not ISSUE_RESOLVER_SCOPE_RE.search(code):
+                found.append(Violation(rule, rel, 0, "the issue resolver must ask relays through "
+                                       "gh_relay_scope_new() (GhNet's transport)", "scope"))
+            found += find_all(rule, rel, code, ISSUE_RESOLVER_NET_RE,
+                              lambda s: f"{s}: the issue resolver asks only through "
+                                        "gh_relay_scope_new() with the application transport")
+        else:
             found += find_all(rule, rel, code, ISSUE_RESOLVER_IMPL_RE,
-                              lambda s: f"{s}: an issue resolver must be a GhNet adapter in src/net/")
+                              lambda s: f"{s}: the only issue resolver is GhIssueResolver "
+                                        f"({ISSUE_RESOLVER_FILE})")
         for m in ISSUE_VIEW_NEW_RE.finditer(code):
             args = [a.strip() for a in m.group(1).split(",")]
-            ok = len(args) == 4 and args[2] == "NULL" and args[3] in ("NULL", "uploader")
+            ok = len(args) == 4 and args[2] in ("NULL", "resolver") and args[3] in ("NULL", "uploader")
             if ok and args[3] == "uploader":
                 values = [v.group(1).strip() for v in ISSUE_UPLOADER_ASSIGN_RE.finditer(code)]
                 ok = bool(values) and all(ISSUE_UPLOADER_ALLOWED_VALUE_RE.match(v) for v in values)
+            if ok and args[2] == "resolver":
+                values = [v.group(1).strip() for v in ISSUE_RESOLVER_ASSIGN_RE.finditer(code)]
+                ok = (bool(values) and all(ISSUE_RESOLVER_ALLOWED_VALUE_RE.match(v) for v in values)
+                      and bool(ISSUE_LOOKUP_CONSENT_RE.search(code)))
             if not ok:
                 found.append(Violation(rule, rel, line_of(code, m.start()),
-                                       "the issue form gets a resolver, or an uploader other than "
-                                       "gh_issue_uploader_new() (charter: no fetch or upload "
-                                       "outside GhNet)", m.group()))
+                                       "the issue form gets a resolver other than "
+                                       "gh_issue_resolver_new() (or without the lookup consent), "
+                                       "or an uploader other than gh_issue_uploader_new() "
+                                       "(charter: no fetch or upload outside GhNet, no lookup "
+                                       "without consent)", m.group()))
     return found
 
 
@@ -1045,17 +1075,25 @@ def clean_tree():
         "src/ui/gh-issue-adapters.c": (
             "#include \"gh-issue-adapters.h\"\n"
             "/* No GnIssueUploaderInterface here: only GhIssueUploader uploads. */\n"
-            "static void *v(void *t, void *p, void *b) {\n"
+            "static void *v(void *t, void *p, void *b, void *a, void *s) {\n"
             "  void *uploader = gh_issue_uploader_new(b);\n"
             "  /* No resolver: no lookup */\n"
-            "  return gn_nip34_issue_view_new(t, p, NULL, uploader);\n"
+            "  void *resolver = gh_issue_resolver_new(a, s);\n"
+            "  void *view = gn_nip34_issue_view_new(t, p, resolver, uploader);\n"
+            "  gn_nip34_issue_view_set_lookup_consent(view, \"Look Up?\", \"relays\");\n"
+            "  return view;\n"
             "}\n"
             "static void *w(void *t, void *p) { return gn_nip34_issue_view_new(t, p, NULL, NULL); }\n"),
         "src/net/gh-issue-uploader.c": (
             "#include \"gh-issue-uploader.h\"\n"
             "/* Not gh_net_http_send_async() or g_socket_client_new(): GhBlossomClient only. */\n"
             "static void iface(GnIssueUploaderInterface *i) { (void)i; }\n"
-            "static void up(void *c) { gh_blossom_client_upload_public_async(c, 0, 0, 0, 0, 0, 0); }\n"),
+            "static void up(void *c) { gh_blossom_client_upload_public_async(c, 0, 0, 0, 0, 0, 0, 0, 0); }\n"),
+        "src/net/gh-issue-resolver.c": (
+            "#include \"gh-issue-resolver.h\"\n"
+            "/* Not gh_relay_scope_new_with_transport() or gh_relay_publish_new(): the app transport. */\n"
+            "static void iface(GnIssueRepoResolverInterface *i) { (void)i; }\n"
+            "static void *q(void *f) { return gh_relay_scope_new(1, f, 0, 0); }\n"),
         "src/main.c": (
             "#include <adwaita.h>\n"
             f'#define GROUNDHOG_APP_ID "{APP_ID}"\n'
@@ -1337,9 +1375,31 @@ MUTATIONS = [
       [replace("src/ui/gh-issue-adapters.c", "  /* No resolver: no lookup",
                "  uploader = gh_other_uploader_new();\n  /* No resolver: no lookup")]),
     M("issue-uploader-other-arg", {"issue-services"},
-      [replace("src/ui/gh-issue-adapters.c", "p, NULL, uploader)", "p, NULL, blossom_uploader)")]),
-    M("issue-resolver-passed", {"issue-services"},
-      [replace("src/ui/gh-issue-adapters.c", "p, NULL, uploader)", "p, resolver, uploader)")]),
+      [replace("src/ui/gh-issue-adapters.c", "p, resolver, uploader)", "p, resolver, blossom_uploader)")]),
+    M("issue-resolver-foreign", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "resolver = gh_issue_resolver_new(",
+               "resolver = gnostr_issue_resolver_new(")]),
+    M("issue-resolver-reassigned", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "  void *view =",
+               "  resolver = other_resolver_new();\n  void *view =")]),
+    M("issue-resolver-other-arg", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c", "p, resolver, uploader)", "p, pool_resolver, uploader)")]),
+    M("issue-resolver-without-consent", {"issue-services"},
+      [replace("src/ui/gh-issue-adapters.c",
+               "  gn_nip34_issue_view_set_lookup_consent(view, \"Look Up?\", \"relays\");\n", "")]),
+    M("issue-resolver-impl-net", {"issue-services"},
+      [append("src/net/gh-net-session.c",
+              "static void r(GnIssueRepoResolverInterface *iface) { (void)iface; }\n")]),
+    M("issue-resolver-own-transport", {"issue-services"},
+      [replace(ISSUE_RESOLVER_FILE, "gh_relay_scope_new(1, f, 0, 0)",
+               "gh_relay_scope_new_with_transport(1, f, 0, 0, 0, 0)")]),
+    M("issue-resolver-socket", {"issue-services"},
+      [append(ISSUE_RESOLVER_FILE, "static void s(void) { g_socket_client_new(); }\n")]),
+    M("issue-resolver-own-relays", {"issue-services"},
+      [append(ISSUE_RESOLVER_FILE,
+              "static void *o(void *r) { return gh_account_relays_get_write_relays(r); }\n")]),
+    M("issue-resolver-publish", {"issue-services"},
+      [append(ISSUE_RESOLVER_FILE, "static void *w(void) { return gh_relay_publish_new(0, 0, 0, 0, 0, 0); }\n")]),
     M("issue-uploader-impl", {"issue-services"},
       [append("src/ui/gh-issue-adapters.c",
               "static void i(GnIssueUploaderInterface *iface) { (void)iface; }\n")]),

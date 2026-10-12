@@ -3520,9 +3520,14 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
       add_subdirectory(${CMAKE_SOURCE_DIR}/nips/nip34 ${CMAKE_BINARY_DIR}/nips/nip34 EXCLUDE_FROM_ALL)
     endif()
   endif()
-  add_library(groundhog-issue STATIC src/ui/gh-issue-adapters.c)
-  target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
-  target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup nip34 groundhog-diagnostics
+  # GhIssueResolver (nostrc-ewx8x): the repository lookup over the discovery
+  # relays through the relay scope's application transport (GhNet), only
+  # after the form's lookup consent.
+  add_library(groundhog-issue STATIC src/ui/gh-issue-adapters.c src/net/gh-issue-resolver.c)
+  target_include_directories(groundhog-issue PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/net)
+  target_link_libraries(groundhog-issue PUBLIC groundhog-inbox-setup groundhog-auth-policy
+    groundhog-relay groundhog-account nip34 groundhog-diagnostics
     NostrGtk::Portable PkgConfig::GROUNDHOG_DEPS)
   target_compile_options(groundhog-issue PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(groundhog PRIVATE groundhog-issue)

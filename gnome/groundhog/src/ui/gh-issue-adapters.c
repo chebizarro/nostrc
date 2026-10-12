@@ -3,6 +3,7 @@
 #include "gh-diagnostics.h"
 #include "gh-identity.h"
 #include "gh-inbox-setup.h"
+#include "gh-issue-resolver.h"
 #include "gh-relay-publish.h"
 #include <glib/gi18n.h>
 #if GH_ISSUE_UPLOADS
@@ -253,7 +254,8 @@ account_changed(GhAccountController *accounts, GnNip34IssueView *view)
 }
 
 GnNip34IssueView *
-gh_issue_dialog_new(GhAccountController *accounts, GSettings *settings, GhBlossomClient *blossom)
+gh_issue_dialog_new(GhAccountController *accounts, GSettings *settings, GhBlossomClient *blossom,
+                    GhIssueConsentFunc record_consent, gpointer record_data)
 {
   g_return_val_if_fail(GH_IS_ACCOUNT_CONTROLLER(accounts), NULL);
   g_autoptr(GnIssueTarget) target = gn_issue_target_new(REPO_OWNER, REPO_ID, NULL, NULL);
@@ -261,12 +263,27 @@ gh_issue_dialog_new(GhAccountController *accounts, GSettings *settings, GhBlosso
 #if GH_ISSUE_UPLOADS
   /* Only GhIssueUploader, over GhNet (privacy rule issue-services). */
   g_autoptr(GnIssueUploader) uploader = gh_issue_uploader_new(blossom);
+  if (uploader)
+    gh_issue_uploader_set_consent_recorder(GH_ISSUE_UPLOADER(uploader), record_consent,
+                                           record_data);
 #else
   (void)blossom;
+  (void)record_consent;
+  (void)record_data;
   GnIssueUploader *uploader = NULL;
 #endif
-  /* No resolver: no lookup (privacy charter). */
-  GnNip34IssueView *view = gn_nip34_issue_view_new(target, publisher, NULL, uploader);
+  /* Only GhIssueResolver, over GhNet, and only after the lookup consent
+   * below (privacy rule issue-services; charter: no lookup by default). */
+  g_autoptr(GnIssueRepoResolver) resolver = gh_issue_resolver_new(accounts, settings);
+  GnNip34IssueView *view = gn_nip34_issue_view_new(target, publisher, resolver, uploader);
+  if (resolver) {
+    g_autofree gchar *relays = g_strjoinv("\n", (gchar **)gh_issue_resolver_get_relays(
+                                                   GH_ISSUE_RESOLVER(resolver)));
+    g_autofree gchar *body = g_strdup_printf(
+      _("Groundhog asks these relays for the nostrc repository announcement, to tag its maintainers and publish to its relays too:\n%s\n\nThey see that this device asked for it, through your network mode. Your account is not used. Without a lookup, the issue tags only the repository owner."),
+      relays);
+    gn_nip34_issue_view_set_lookup_consent(view, _("Look Up the Repository?"), body);
+  }
   gn_nip34_issue_view_set_intro(view, uploader
     ? _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm. Attached files are public: anyone can download them. Photo location and other metadata is removed from JPEG and PNG images, but other files can contain hidden details. Files are not encrypted, and the server can see your IP address unless you use Tor.")
     : _("File a public NIP-34 issue for nostrc. Describe the problem without including private messages or keys. Nothing is sent until you review and confirm. You have no attachment server, so files cannot be attached; add web links instead. Groundhog asks you to choose a server the first time you send a file in a conversation."));

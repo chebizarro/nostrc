@@ -68,8 +68,15 @@ struct _GnIssueUploaderInterface {
                        gpointer user_data);
   /* Returns the public URL of the uploaded file. */
   gchar *(*upload_finish)(GnIssueUploader *self, GAsyncResult *result, GError **error);
+  /* Optional: choices the upload consent offers, unchecked (e.g. "Upload to
+   * a server as your account"); NULL or empty for none. Transfer full. */
+  GStrv (*dup_consent_options)(GnIssueUploader *self);
+  /* Optional: the user checked option index (of the list shown) and
+   * accepted the upload consent. Called before the first upload; on FALSE
+   * nothing is uploaded. */
+  gboolean (*apply_consent_option)(GnIssueUploader *self, guint index, GError **error);
   /*< private >*/
-  gpointer padding[8];
+  gpointer padding[6];
 };
 
 const gchar *gn_issue_uploader_describe_destination(GnIssueUploader *self);
@@ -78,6 +85,10 @@ void gn_issue_uploader_upload_async(GnIssueUploader *self, GFile *file,
                                     GAsyncReadyCallback callback, gpointer user_data);
 gchar *gn_issue_uploader_upload_finish(GnIssueUploader *self, GAsyncResult *result,
                                        GError **error);
+/* NULL when the uploader offers no consent options. */
+GStrv gn_issue_uploader_dup_consent_options(GnIssueUploader *self);
+gboolean gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index,
+                                                GError **error);
 
 /* ---- Repository resolver (optional) ---- */
 
