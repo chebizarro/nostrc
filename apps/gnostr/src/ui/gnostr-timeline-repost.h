@@ -5,6 +5,7 @@
 
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
 #include <nostr-gtk-1.0/gn-nostr-reference-resolver.h>
+#include "../model/gnostr-timeline-item-view-model.h"
 
 G_BEGIN_DECLS
 
@@ -16,6 +17,16 @@ void gnostr_timeline_repost_show_pending(NostrGtkNoteCardRow *row,
                                          const GnNostrRepostDescriptor *descriptor,
                                          GnNostrReferenceResolver *resolver,
                                          gboolean fetch);
+
+/* Snapshot rows (fixed geometry, no bind-time relay work): a repost whose
+ * original the snapshot resolved (nostrc-4yt5v) shows that original as the
+ * row's author, body and timestamp; a missing one gets the inert card
+ * offering Find on Relays through @resolver. */
+void gnostr_timeline_repost_show_snapshot(NostrGtkNoteCardRow *row,
+                                          GnostrTimelineItemViewModel *vm,
+                                          const char *root_id,
+                                          gint source_kind,
+                                          GnNostrReferenceResolver *resolver);
 
 G_END_DECLS
 #endif

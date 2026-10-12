@@ -34,6 +34,13 @@ void gnostr_timeline_source_testing_enqueue_live_keys(GnostrTimelineSource *self
 guint gnostr_timeline_source_testing_get_live_pending_count(GnostrTimelineSource *self);
 guint gnostr_timeline_source_testing_get_live_dropped_count(GnostrTimelineSource *self);
 guint gnostr_timeline_source_testing_get_queue_capacity(void);
+/* The snapshot's repost-original resolution for one kind-6 repost, in a
+ * fresh read transaction. */
+gboolean gnostr_timeline_source_testing_resolve_repost(const char *reposted_event_id,
+                                                       const char *embedded_json,
+                                                       char **pubkey_hex_out,
+                                                       char **content_out,
+                                                       gint64 *created_at_out);
 #endif
 
 G_END_DECLS

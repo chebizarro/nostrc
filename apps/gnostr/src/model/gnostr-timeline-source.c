@@ -5,6 +5,7 @@
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/gnostr-mute-list.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include <nostr.h>
 #include <string.h>
 
@@ -360,6 +361,63 @@ note_is_muted_by_fields(storage_ndb_note *note,
                                                hashtags);
 }
 
+/* The original a kind-6 repost points at, resolved while the snapshot is
+ * built so the row binds with a fixed height and no relay work (nostrc-4yt5v).
+ * nostrdb first (ingest already verified it); otherwise the repost's embedded
+ * JSON, used only when it verifies and is the kind-1 event the e tag names
+ * (gn_nostr_event_parse, shared with GnNostrReference's verification cache). */
+typedef struct {
+  char *pubkey_hex;
+  char *content;
+  gint64 created_at;
+  gint kind;
+} SourceRepostOriginal;
+
+static void
+source_repost_original_clear(SourceRepostOriginal *original)
+{
+  g_clear_pointer(&original->pubkey_hex, g_free);
+  g_clear_pointer(&original->content, g_free);
+}
+
+static gboolean
+source_resolve_repost_original(void *txn,
+                               const char *reposted_event_id,
+                               const char *embedded_json,
+                               SourceRepostOriginal *out)
+{
+  uint8_t id32[32];
+  if (!reposted_event_id || !hex_to_bytes32(reposted_event_id, id32))
+    return FALSE;
+
+  storage_ndb_note *note = NULL;
+  if (storage_ndb_get_note_key_by_id(txn, id32, &note) != 0 && note) {
+    const unsigned char *pk32 = storage_ndb_note_pubkey(note);
+    if (!pk32)
+      return FALSE;
+    out->pubkey_hex = g_malloc(65);
+    storage_ndb_hex_encode(pk32, out->pubkey_hex);
+    const char *content = storage_ndb_note_content(note);
+    out->content = g_strndup(content ? content : "",
+                             content ? storage_ndb_note_content_length(note) : 0);
+    out->created_at = (gint64)storage_ndb_note_created_at(note);
+    out->kind = (gint)storage_ndb_note_kind(note);
+    return TRUE;
+  }
+
+  if (!embedded_json || !*embedded_json)
+    return FALSE;
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(embedded_json, NULL);
+  if (!info || info->kind != 1 ||
+      g_ascii_strcasecmp(info->id, reposted_event_id) != 0)
+    return FALSE;
+  out->pubkey_hex = g_steal_pointer(&info->pubkey);
+  out->content = g_steal_pointer(&info->content);
+  out->created_at = info->created_at;
+  out->kind = info->kind;
+  return TRUE;
+}
+
 static gboolean
 add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
                                GNostrTimelineQuery *query,
@@ -410,6 +468,19 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   if (!has_profile)
     gnostr_timeline_batch_add_profile_request(batch, pubkey_hex);
 
+  SourceRepostOriginal original = {0};
+  SourceProfileCacheEntry *original_profile = NULL;
+  gboolean repost_resolved = kind == 6 &&
+    source_resolve_repost_original(txn, reposted_event_id, content, &original);
+  uint8_t original_pk32[32];
+  if (repost_resolved && hex_to_bytes32(original.pubkey_hex, original_pk32)) {
+    original_profile = source_profile_cache_lookup(profile_cache, txn,
+                                                   original_pk32,
+                                                   original.pubkey_hex);
+    if (!original_profile->meta.event_exists)
+      gnostr_timeline_batch_add_profile_request(batch, original.pubkey_hex);
+  }
+
   GnostrTimelineBatchEntry entry = {
     .note_key = note_key,
     .content_blocks = content_blocks,
@@ -424,6 +495,14 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
     .reply_id = reply_id,
     .quoted_event_id = quoted_event_id,
     .reposted_event_id = reposted_event_id,
+    .reposted_pubkey = original.pubkey_hex,
+    .reposted_display_name = original_profile ? original_profile->meta.display_name : NULL,
+    .reposted_avatar_url = original_profile ? original_profile->meta.picture : NULL,
+    .reposted_nip05 = original_profile ? original_profile->meta.nip05 : NULL,
+    .reposted_content = original.content,
+    .reposted_created_at = original.created_at,
+    .reposted_kind = original.kind,
+    .reposted_resolved = repost_resolved,
     .hashtags = hashtags,
     .kind = kind,
     .has_profile = has_profile,
@@ -431,6 +510,7 @@ add_note_key_to_batch_from_txn(GnostrTimelineBatch *batch,
   memcpy(entry.event_id, storage_ndb_note_id(note), sizeof(entry.event_id));
   gnostr_timeline_batch_add_entry(batch, &entry);
   storage_ndb_blocks_free(content_blocks);
+  source_repost_original_clear(&original);
 
   g_free(root_id);
   g_free(reply_id);
@@ -1345,6 +1425,26 @@ gnostr_timeline_source_load_newer_async(GnostrTimelineSource *self,
 }
 
 #ifdef GNOSTR_TIMELINE_SOURCE_TESTING
+gboolean
+gnostr_timeline_source_testing_resolve_repost(const char *reposted_event_id,
+                                              const char *embedded_json,
+                                              char **pubkey_hex_out,
+                                              char **content_out,
+                                              gint64 *created_at_out)
+{
+  void *txn = NULL;
+  if (storage_ndb_begin_query(&txn, NULL) != 0 || !txn)
+    return FALSE;
+  SourceRepostOriginal original = {0};
+  gboolean resolved = source_resolve_repost_original(txn, reposted_event_id,
+                                                     embedded_json, &original);
+  storage_ndb_end_query(txn);
+  *pubkey_hex_out = g_steal_pointer(&original.pubkey_hex);
+  *content_out = g_steal_pointer(&original.content);
+  *created_at_out = original.created_at;
+  return resolved;
+}
+
 char *
 gnostr_timeline_source_testing_dup_filter(GnostrTimelineSource *self)
 {
