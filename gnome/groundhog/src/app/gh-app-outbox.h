@@ -90,6 +90,13 @@ typedef struct _GhStoreConversations GhStoreConversations;
 gboolean gh_app_outbox_delete_message(GhStoreConversations *stored, GObject *outbox,
                                       GhConversation *conversation, GhMessage *message,
                                       gboolean for_everyone, GError **error);
+/* The same for a message of an encrypted (MLS) or NIP-29 group of @self's
+ * open store (groundhog/deletion): gh_mls_service_delete_message() or
+ * gh_nip29_service_delete_message(); for everyone only for the account's
+ * own message. NOT_SUPPORTED when the group's service is not running. */
+gboolean gh_app_outbox_delete_group_message(GhAppOutbox *self, GhConversation *conversation,
+                                            GhMessage *message, gboolean for_everyone,
+                                            GError **error);
 /* A received NIP-09 request (GhAppOutboxDeleteFunc): the message @rumor_id
  * in @room_id is deleted as with Delete for Me only if @author_pubkey wrote
  * it; anyone else's is left alone. *out_deleted (nullable) says whether one

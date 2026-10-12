@@ -5430,6 +5430,148 @@ test_bubble_delete(Fixture *f, gconstpointer data)
   g_free(call.rumor_id);
 }
 
+/* ---- Delete in groups (groundhog/deletion) --------------------------------------------- */
+
+/* A kind-9 group message by key index @author: an MLS inner event of group
+ * "0123456789abcdef" (@mls) or a NIP-29 event of group "delete-group",
+ * admitted to the model as the services do. Borrowed. */
+static GhMessage *
+add_group_message(GhConversationStore *store, gboolean mls, guint author, gint64 created_at,
+                  const gchar *content)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 9);
+  nostr_event_set_pubkey(event, hex[author]);
+  nostr_event_set_created_at(event, created_at);
+  nostr_event_set_content(event, content);
+  if (!mls)
+    nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("h", "delete-group", NULL)));
+  else
+    nostr_event_set_tags(event, nostr_tags_new(0));
+  /* A member's NIP-29 event is signed; the account's own echo is not. */
+  if (!mls && author != 1)
+    g_assert_cmpint(nostr_event_sign(event, secrets[author]), ==, 0);
+  else
+    event->id = nostr_event_get_id(event);
+  g_autofree gchar *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhMessage) message = mls
+    ? gh_message_new_from_mls(hex[1], "0123456789abcdef", json, &error)
+    : gh_message_new_from_nip29_event(hex[1], "wss://relay.example.com", json, &error);
+  g_assert_no_error(error);
+  g_assert_cmpint(gh_conversation_store_add_message(store, message, &error), ==,
+                  GH_CONVERSATION_ADD_NEW);
+  g_assert_no_error(error);
+  return message;
+}
+
+/* Opt-in evidence: GROUNDHOG_DELETION_SCREENSHOTS=<dir> saves
+ * <dir>/groundhog-deletion-<name>.png with the app stylesheet. */
+static void
+maybe_save_deletion_png(Fixture *f, GtkWidget *popover, const gchar *name)
+{
+  const char *dir = g_getenv("GROUNDHOG_DELETION_SCREENSHOTS");
+  if (!dir)
+    return;
+  drain_idle();
+  gboolean painted = FALSE;
+  GdkFrameClock *clock = gtk_widget_get_frame_clock(GTK_WIDGET(f->window));
+  gulong handler = g_signal_connect(clock, "after-paint", G_CALLBACK(on_table_painted), &painted);
+  gtk_widget_queue_draw(GTK_WIDGET(f->window));
+  spin_until(is_true, &painted);
+  g_signal_handler_disconnect(clock, handler);
+  g_autofree gchar *path = g_strdup_printf("%s/groundhog-deletion-%s.png", dir, name);
+  save_png_path(GTK_WIDGET(f->window), popover, path);
+}
+
+/* The dialog of a menu item, its body checked, then cancelled or confirmed. */
+static void
+group_delete_dialog(Fixture *f, GhMessageRow *row, const gchar *label, const gchar *heading,
+                    const gchar *body, const gchar *shot, const gchar *response)
+{
+  menu_choose(open_menu(row), label);
+  AdwAlertDialog *dialog = view_child(f->view, "delete_dialog");
+  spin_until(dialog_presented, dialog);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(dialog), ==, heading);
+  g_assert_cmpstr(adw_alert_dialog_get_body(dialog), ==, body);
+  if (shot)
+    maybe_save_deletion_png(f, NULL, shot);
+  g_signal_emit_by_name(dialog, "response", response);
+  close_dialog(ADW_DIALOG(dialog));
+}
+
+static void
+test_group_delete(Fixture *f, gconstpointer data)
+{
+  const gboolean mls = GPOINTER_TO_INT(data);
+  gint64 t = noon_today();
+  GhMessage *incoming = add_group_message(f->store, mls, 2, t, "Pizza at eight?");
+  GhMessage *own = add_group_message(f->store, mls, 1, t + 60, "Wrong group, sorry");
+  GhMessage *keep = add_group_message(f->store, mls, 2, t + 120, "See you there");
+  GhConversation *conversation = room_of(f->store, own);
+  g_assert_cmpint(gh_conversation_get_backend(conversation), ==,
+                  mls ? GH_CONVERSATION_BACKEND_MLS : GH_CONVERSATION_BACKEND_NIP29);
+  DeleteCall call = { .store = f->store };
+  gh_conversation_view_set_delete_func(f->view, capture_delete, &call, NULL);
+  show(f, conversation, 700, 600);
+  g_autofree gchar *own_id = g_strdup(gh_message_get_rumor_id(own));
+  g_autofree gchar *incoming_id = g_strdup(gh_message_get_rumor_id(incoming));
+
+  /* In a group too: own messages for me or for everyone, others' for me. */
+  GtkPopover *menu = open_menu(row_for(f->view, own));
+  g_autofree gchar *own_labels = menu_labels(menu);
+  g_assert_nonnull(strstr(own_labels, "|_Delete for Me…|Delete for _Everyone…"));
+  maybe_save_deletion_png(f, GTK_WIDGET(menu), mls ? "mls-menu" : "nip29-menu");
+  close_popover(menu);
+  menu = open_menu(row_for(f->view, incoming));
+  g_autofree gchar *incoming_labels = menu_labels(menu);
+  g_assert_true(g_str_has_suffix(incoming_labels, "|_Delete for Me…"));
+  close_popover(menu);
+  g_assert_true(gh_conversation_view_can_delete_message(f->view, own, TRUE));
+  g_assert_false(gh_conversation_view_can_delete_message(f->view, incoming, TRUE));
+  /* A message the group withdrew never reached anyone to ask. */
+  if (mls) {
+    gh_message_set_withdrawn(keep, TRUE);
+    g_assert_false(gh_conversation_view_can_delete_message(f->view, keep, TRUE));
+    g_assert_true(gh_conversation_view_can_delete_message(f->view, keep, FALSE));
+    gh_message_set_withdrawn(keep, FALSE);
+  }
+
+  /* The copy says what a group does with each. */
+  const gchar *everyone_body = mls
+    ? "The message is deleted from this device, and everyone in the group is asked to "
+      "delete it too. Their apps may ignore the request, and they may already have read "
+      "or saved it."
+    : "The message is deleted from this device, and the group’s relay and everyone in "
+      "the group are asked to delete it too. The relay or their apps may ignore the "
+      "request, and they may already have read or saved it.";
+  const gchar *me_body = mls
+    ? "The message is deleted from this device only. Everyone else in the group keeps "
+      "their copy."
+    : "The message is deleted from this device only. The group’s relay and everyone "
+      "else in the group keep their copies.";
+  group_delete_dialog(f, row_for(f->view, own), "Delete for _Everyone…", "Delete for Everyone?",
+                      everyone_body, mls ? "mls-everyone" : "nip29-everyone", "delete-cancel");
+  g_assert_cmpuint(call.calls, ==, 0);
+  group_delete_dialog(f, row_for(f->view, own), "Delete for _Everyone…", "Delete for Everyone?",
+                      everyone_body, NULL, "delete-confirm");
+  g_assert_cmpuint(call.calls, ==, 1);
+  g_assert_cmpstr(call.rumor_id, ==, own_id);
+  g_assert_true(call.for_everyone);
+  gpointer own_args[] = { f->view, own };
+  spin_until(row_gone, own_args);
+  group_delete_dialog(f, row_for(f->view, incoming), "_Delete for Me…", "Delete for Me?",
+                      me_body, mls ? "mls-me" : "nip29-me", "delete-confirm");
+  g_assert_cmpuint(call.calls, ==, 2);
+  g_assert_cmpstr(call.rumor_id, ==, incoming_id);
+  g_assert_false(call.for_everyone);
+  gpointer incoming_args[] = { f->view, incoming };
+  spin_until(row_gone, incoming_args);
+  g_assert_nonnull(item_for(f->view, keep));
+  g_free(call.rumor_id);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -5462,6 +5604,10 @@ main(int argc, char **argv)
   ADD("bubble-padding", test_bubble_padding);
   ADD("bubble-menu", test_bubble_menu);
   ADD("bubble-delete", test_bubble_delete);
+  g_test_add("/groundhog/conversation-view/group-delete-mls", Fixture, GINT_TO_POINTER(TRUE),
+             fixture_setup, test_group_delete, fixture_teardown);
+  g_test_add("/groundhog/conversation-view/group-delete-nip29", Fixture, GINT_TO_POINTER(FALSE),
+             fixture_setup, test_group_delete, fixture_teardown);
   ADD("markdown-table-real", test_markdown_table_real);
   ADD("markdown-table-compact", test_markdown_table_compact);
   ADD("markdown-table-tight", test_markdown_table_tight);

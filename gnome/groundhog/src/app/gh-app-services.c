@@ -804,12 +804,16 @@ reactions_teardown(GhAppServices *self)
  * appropriate backend based on the conversation type. */
 #if GROUNDHOG_HAVE_INBOX && GROUNDHOG_HAVE_OUTBOX
 /* Delete for Me / Delete for Everyone from a bubble's menu (groundhog/
- * bubble-menu): gh_app_outbox_delete_message() on the open store. */
+ * bubble-menu): gh_app_outbox_delete_message() on the open store, or for
+ * a group's message its service's (groundhog/deletion). */
 static gboolean
 on_delete_message(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
                   gpointer user_data, GError **error)
 {
   GhAppServices *self = user_data;
+  if (gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_NIP17)
+    return gh_app_outbox_delete_group_message(self->outbox, conversation, message, for_everyone,
+                                              error);
   return gh_app_outbox_delete_message(gh_account_store_get_conversations(self->account_store),
                                       gh_account_store_get_outbox(self->account_store),
                                       conversation, message, for_everyone, error);

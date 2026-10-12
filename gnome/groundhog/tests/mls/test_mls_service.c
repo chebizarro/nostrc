@@ -4056,6 +4056,105 @@ test_reactions_after_account_switch(void)
   world_down(&w);
 }
 
+/* ---- Delete for Me / Delete for Everyone (groundhog/deletion) --------------------------- */
+
+static gboolean
+message_unlisted(gpointer data)
+{
+  return !message_listed(data);
+}
+
+typedef struct {
+  App *app;
+  const gchar *sender;
+} MarkerWait;
+
+/* A kept NIP-09 request (a deletion marker) from @sender reached the store. */
+static gboolean
+marker_kept(gpointer data)
+{
+  MarkerWait *wait = data;
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(wait->app->store),
+    "SELECT count(*) FROM reaction_tombstones WHERE sender_pubkey = ?1", -1, &stmt, NULL),
+    ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->sender, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  gint64 count = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count > 0;
+}
+
+/* Two accounts over the group relay: Alice deletes her message for
+ * everyone (a kind-5 MLS application message) and Bob's copy goes; Bob's
+ * request for Alice's message deletes nothing at Alice; Bob deletes one for
+ * himself only. Nothing comes back after a restart. */
+static void
+test_delete_messages(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Deletion", (const guint[]){ BOB }, 1);
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  g_autofree gchar *room_id = g_strdup(gh_mls_group_get_room_id(ga));
+  send_text(alice, ga, "a typo");
+  send_text(alice, ga, "keep this");
+  send_text(bob, gb, "bob's aside");
+  wait_message(bob, room_id, "a typo");
+  wait_message(bob, room_id, "keep this");
+  wait_message(alice, room_id, "bob's aside");
+
+  /* Bob asks to delete Alice's message: not his to delete. */
+  g_autofree gchar *keep_id = g_strdup(gh_message_get_rumor_id(
+    find_message(bob, room_id, "keep this")));
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_send_deletion(bob->service, gb, keep_id, &error));
+  g_assert_no_error(error);
+  MarkerWait forged = { alice, hex[BOB] };
+  spin_until(marker_kept, &forged, "Bob's request reached Alice");
+  g_assert_nonnull(find_message(alice, room_id, "keep this"));
+
+  /* Alice deletes hers for everyone: gone here at once, then at Bob's. */
+  g_autofree gchar *typo_id = g_strdup(gh_message_get_rumor_id(
+    find_message(alice, room_id, "a typo")));
+  g_assert_true(gh_mls_service_delete_message(alice->service, ga, typo_id, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_null(find_message(alice, room_id, "a typo"));
+  MessageWait gone_at_bob = { bob, room_id, "a typo" };
+  spin_until(message_unlisted, &gone_at_bob, "Alice's deletion reached Bob");
+
+  /* Bob deletes his copy of one of hers, for himself: Alice keeps it. */
+  g_assert_true(gh_mls_service_delete_message(bob->service, gb, keep_id, FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_null(find_message(bob, room_id, "keep this"));
+  send_text(bob, gb, "still here");
+  wait_message(alice, room_id, "still here");
+  g_assert_nonnull(find_message(alice, room_id, "keep this"));
+  g_assert_nonnull(find_message(alice, room_id, "bob's aside"));
+
+  /* Restarted, both read the group again: nothing comes back. */
+  app_restart(alice);
+  app_restart(bob);
+  ga = gh_mls_service_lookup(alice->service, room_id);
+  gb = gh_mls_service_lookup(bob->service, room_id);
+  g_assert_nonnull(ga);
+  g_assert_nonnull(gb);
+  wait_live(ga);
+  wait_live(gb);
+  send_text(alice, ga, "after the restart");
+  wait_message(bob, room_id, "after the restart");
+  g_assert_null(find_message(alice, room_id, "a typo"));
+  g_assert_null(find_message(bob, room_id, "a typo"));
+  g_assert_null(find_message(bob, room_id, "keep this"));
+  g_assert_nonnull(find_message(alice, room_id, "keep this"));
+  world_down(&w);
+}
+
 /* ---- Leaving (nostrc-2um6) ------------------------------------------------------------- */
 
 typedef struct {
@@ -4339,6 +4438,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/account-switch", test_account_switch);
   g_test_add_func("/groundhog/mls-service/reactions-after-account-switch",
                   test_reactions_after_account_switch);
+  g_test_add_func("/groundhog/mls-service/delete-messages", test_delete_messages);
   g_test_add_func("/groundhog/mls-service/future-replay-moves-no-cursor",
                   test_future_replay_moves_no_cursor);
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);

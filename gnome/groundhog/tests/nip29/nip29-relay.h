@@ -25,6 +25,8 @@
  *    relay-signed 9000 and a new 39002. 9022 removes the author with a
  *    relay-signed 9001. 9000/9001/9002/9005/9009 need an admin whose role
  *    allows them ("admin": all, "moderator": 9005 only) and apply the change.
+ *    A member's kind 5 deletes the events it names that its author signed
+ *    (NIP-09) and is kept for the other members to read.
  *  - 9007 (allow_create): creates the group named by its h tag with the
  *    author as its "admin" (OK true); without allow_create "blocked:", for a
  *    group that exists "invalid:". 9002 sets name, about, private and
@@ -230,11 +232,25 @@ nip29_stored(Nip29Relay *relay, const gchar *id)
 }
 
 /* Stores (taking ownership) and broadcasts; an addressable 3900x replaces the
- * previous one of its kind and d. */
+ * previous one of its kind and d. A kind 5 (NIP-09, as relay29 on khatru
+ * applies it) first deletes each event its `e` tags name that its own
+ * author signed; anyone else's stays. */
 static G_GNUC_UNUSED void
 nip29_store(Nip29Relay *relay, NostrEvent *event)
 {
   gint kind = nostr_event_get_kind(event);
+  NostrTags *deletes = kind == 5 ? nostr_event_get_tags(event) : NULL;
+  for (size_t t = 0; deletes && t < nostr_tags_size(deletes); t++) {
+    NostrTag *tag = nostr_tags_get(deletes, t);
+    if (nostr_tag_size(tag) < 2 || g_strcmp0(nostr_tag_get(tag, 0), "e") != 0)
+      continue;
+    for (guint i = relay->events->len; i > 0; i--) {
+      NostrEvent *old = g_ptr_array_index(relay->events, i - 1);
+      if (g_strcmp0(nip29_event_id(old), nostr_tag_get(tag, 1)) == 0 &&
+          g_strcmp0(nostr_event_get_pubkey(old), nostr_event_get_pubkey(event)) == 0)
+        g_ptr_array_remove_index(relay->events, i - 1);
+    }
+  }
   if (kind >= 39000 && kind < 40000) {
     const gchar *d = nip29_tag_value(event, "d");
     for (guint i = relay->events->len; i > 0; i--) {

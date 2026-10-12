@@ -2012,6 +2012,190 @@ test_leave_and_removed(void)
   nip29_relay_clear(&relay);
 }
 
+/* ---- Delete for Me / Delete for Everyone (groundhog/deletion) --------------------------- */
+
+/* The room's listed message with this text, or NULL. */
+static GhMessage *
+listed_text(Fixture *f, GhNip29Room *room, const gchar *text)
+{
+  GhConversation *conversation = room_conversation(f, room);
+  guint n = conversation ? g_list_model_get_n_items(G_LIST_MODEL(conversation)) : 0;
+  for (guint i = 0; i < n; i++) {
+    g_autoptr(GhMessage) message = g_list_model_get_item(G_LIST_MODEL(conversation), i);
+    if (g_strcmp0(gh_message_get_content(message), text) == 0)
+      return message; /* the room keeps it */
+  }
+  return NULL;
+}
+
+typedef struct {
+  Fixture *f;
+  GhNip29Room *room;
+  const gchar *text;
+} TextWait;
+
+static gboolean
+text_listed(gpointer data)
+{
+  TextWait *wait = data;
+  return listed_text(wait->f, wait->room, wait->text) != NULL;
+}
+
+static gboolean
+text_unlisted(gpointer data)
+{
+  return !text_listed(data);
+}
+
+/* A member's signed kind-5 NIP-09 request naming @event_id, into the group. */
+static void
+member_deletes(Nip29Relay *relay, guint key, const gchar *group_id, const gchar *event_id)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, 5);
+  nostr_event_set_created_at(event, nip29_now(relay));
+  nostr_event_set_content(event, "");
+  nostr_event_set_tags(event, nostr_tags_new(2, nostr_tag_new("h", group_id, NULL),
+                                             nostr_tag_new("e", event_id, NULL)));
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[key]), ==, 0);
+  nip29_store(relay, event);
+}
+
+typedef struct {
+  GhStore *store;
+  const gchar *sender;
+} MarkerWait;
+
+static gboolean
+marker_kept(gpointer data)
+{
+  MarkerWait *wait = data;
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(wait->store),
+    "SELECT count(*) FROM reaction_tombstones WHERE sender_pubkey = ?1", -1, &stmt, NULL),
+    ==, SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, wait->sender, -1, SQLITE_TRANSIENT);
+  g_assert_cmpint(sqlite3_step(stmt), ==, SQLITE_ROW);
+  gint64 count = sqlite3_column_int64(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count > 0;
+}
+
+static gboolean
+relay_has_deletion(gpointer data)
+{
+  NostrEvent *event = nip29_last_received(data, 5);
+  if (event)
+    nostr_event_free(event);
+  return event != NULL;
+}
+
+/* Two accounts in a group on a local NIP-29 relay that honours NIP-09:
+ * Alice (Groundhog) deletes her message for everyone (a kind 5 to the
+ * relay, which deletes its copy) and Bob's for herself only; Bob's own
+ * request deletes his message at Alice's, his request for hers deletes
+ * nothing, and his request that comes before its message keeps the message
+ * out (nostrc-419wf). Nothing comes back after a restart's backfill. */
+static void
+test_delete_messages(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay;
+  nip29_relay_init(&relay);
+  Nip29TestGroup *group = nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_set_member(&relay, group, hex_bob, NULL);
+  NostrEvent *old_note = member_post(&relay, KEY_BOB, "pizza", "bob's old note");
+  g_autofree gchar *old_note_id = g_strdup(nip29_event_id(old_note));
+  g_autoptr(GhNip29Room) room = join(&f, &relay, "pizza", NULL);
+  wait_join(room, GH_NIP29_JOIN_MEMBER);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  TextWait old_wait = { &f, room, "bob's old note" };
+  gh_test_spin_until(text_listed, &old_wait);
+
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GhNip29Op) oops = gh_nip29_service_send(f.service, room, "oops", &error);
+  g_assert_no_error(error);
+  wait_relay_ok(&f, oops);
+  g_autoptr(GhNip29Op) mine = gh_nip29_service_send(f.service, room, "keep mine", &error);
+  g_assert_no_error(error);
+  wait_relay_ok(&f, mine);
+  g_autofree gchar *oops_id = g_strdup(gh_nip29_op_get_event_id(oops));
+  g_autofree gchar *mine_id = g_strdup(gh_nip29_op_get_event_id(mine));
+
+  /* Delete for Everyone: gone here at once; the relay gets a kind 5 naming
+   * it and deletes its copy; a later message cites only what is there. */
+  g_assert_true(gh_nip29_service_delete_message(f.service, room, oops_id, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_null(listed_text(&f, room, "oops"));
+  gh_test_spin_until(relay_has_deletion, &relay);
+  NostrEvent *request = nip29_last_received(&relay, 5);
+  g_assert_cmpstr(nip29_tag_value(request, "e"), ==, oops_id);
+  g_assert_cmpstr(nip29_tag_value(request, "h"), ==, "pizza");
+  g_assert_cmpstr(nostr_event_get_pubkey(request), ==, hex_alice);
+  nostr_event_free(request);
+  gh_test_spin_until(ops_settled, gh_nip29_service_get_outbox(f.service));
+  g_assert_false(nip29_stored(&relay, oops_id));
+  g_autoptr(GhNip29Op) after = gh_nip29_service_send(f.service, room, "after the delete",
+                                                     &error);
+  g_assert_no_error(error);
+  wait_relay_ok(&f, after);
+  g_assert_cmpint(gh_nip29_op_get_result(after), ==, GH_NIP29_OP_ACCEPTED);
+
+  /* Bob deletes his own message: it goes here too. His request for
+   * Alice's message is not his to make: hers stays. */
+  NostrEvent *never = live_post(&relay, KEY_BOB, "pizza", "never mind");
+  g_autofree gchar *never_id = g_strdup(nip29_event_id(never));
+  TextWait never_wait = { &f, room, "never mind" };
+  gh_test_spin_until(text_listed, &never_wait);
+  member_deletes(&relay, KEY_BOB, "pizza", mine_id);
+  member_deletes(&relay, KEY_BOB, "pizza", never_id);
+  gh_test_spin_until(text_unlisted, &never_wait);
+  g_assert_nonnull(listed_text(&f, room, "keep mine"));
+
+  /* A request that comes before its message (another relay was faster,
+   * or the relay serves them out of order): the message stays out. */
+  NostrEvent *late = nip29_member_event(gh_test_secret[KEY_BOB], 9, nip29_now(&relay), "pizza",
+                                        "deleted before it came");
+  g_autofree gchar *late_id = g_strdup(nip29_event_id(late));
+  member_deletes(&relay, KEY_BOB, "pizza", late_id);
+  MarkerWait marker = { f.store, hex_bob };
+  gh_test_spin_until(marker_kept, &marker);
+  nip29_store(&relay, late);
+  live_post(&relay, KEY_BOB, "pizza", "after the late one");
+  TextWait after_late = { &f, room, "after the late one" };
+  gh_test_spin_until(text_listed, &after_late);
+  g_assert_null(listed_text(&f, room, "deleted before it came"));
+
+  /* Delete for Me of Bob's message: here only; the relay keeps it. */
+  g_assert_true(gh_nip29_service_delete_message(f.service, room, old_note_id, FALSE, &error));
+  g_assert_no_error(error);
+  g_assert_null(listed_text(&f, room, "bob's old note"));
+  g_assert_true(nip29_stored(&relay, old_note_id));
+  guint deletions = 0;
+  for (guint i = 0; i < relay.received->len; i++)
+    deletions += strstr(g_ptr_array_index(relay.received, i), "\"kind\":5") != NULL;
+  g_assert_cmpuint(deletions, ==, 1); /* only Alice's one for everyone */
+
+  /* After a restart the group is read again: nothing deleted comes back. */
+  g_clear_object(&room);
+  restart(&f);
+  GListModel *list = G_LIST_MODEL(f.service);
+  g_assert_cmpuint(g_list_model_get_n_items(list), ==, 1);
+  room = g_list_model_get_item(list, 0);
+  wait_read(room, GH_NIP29_READ_LIVE);
+  live_post(&relay, KEY_BOB, "pizza", "after the restart");
+  TextWait restarted = { &f, room, "after the restart" };
+  gh_test_spin_until(text_listed, &restarted);
+  g_assert_null(listed_text(&f, room, "bob's old note"));
+  g_assert_null(listed_text(&f, room, "oops"));
+  g_assert_null(listed_text(&f, room, "never mind"));
+  g_assert_null(listed_text(&f, room, "deleted before it came"));
+  g_assert_nonnull(listed_text(&f, room, "keep mine"));
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -2057,6 +2241,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/nip29-service/incomplete-backfill-holds-cursor",
                   test_incomplete_backfill_holds_cursor);
   g_test_add_func("/groundhog/nip29-service/leave-and-removed", test_leave_and_removed);
+  g_test_add_func("/groundhog/nip29-service/delete-messages", test_delete_messages);
   gint rc = g_test_run();
   gh_test_bus_down(&shared_bus);
   g_free(hex_alice);
