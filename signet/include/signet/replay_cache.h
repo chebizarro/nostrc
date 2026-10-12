@@ -15,6 +15,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -45,14 +46,26 @@ typedef enum {
   SIGNET_REPLAY_TOO_FAR_IN_FUTURE = 3,
   /* Malformed input (missing/empty/overlong event id, or invalid timestamp
    * while skew validation is enabled). Callers must fail closed on this. */
-  SIGNET_REPLAY_INVALID = 4
+  SIGNET_REPLAY_INVALID = 4,
+  /* refuse_when_full only: no room without dropping an unexpired id (the
+   * cache, or the caller's scope, is full). Callers must fail closed. */
+  SIGNET_REPLAY_FULL = 5
 } SignetReplayResult;
 
 /**
  * SignetReplayCacheConfig:
  * @max_entries: maximum number of cache entries.
- * @ttl_seconds: entry time-to-live in seconds.
+ * @ttl_seconds: entry time-to-live in seconds. When @skew_seconds is set the
+ *   effective TTL is at least 2 * @skew_seconds, so an id stays cached for as
+ *   long as its created_at can pass the skew check.
  * @skew_seconds: accepted clock skew in seconds.
+ * @max_entries_per_scope: with signet_replay_check_and_mark_scoped(), the most
+ *   unexpired ids one scope may hold (0: no per-scope bound). A full scope is
+ *   refused (SIGNET_REPLAY_FULL), never evicted.
+ * @refuse_when_full: when the cache is full, refuse (SIGNET_REPLAY_FULL)
+ *   instead of evicting the oldest unexpired id. With a skew window this
+ *   makes "an id seen once never executes again" unconditional: an evicted
+ *   id could otherwise be replayed while its created_at is still fresh.
  *
  * Configuration for replay cache bounds and skew checks.
  *
@@ -62,6 +75,8 @@ typedef struct {
   size_t max_entries;
   uint32_t ttl_seconds;
   uint32_t skew_seconds;
+  size_t max_entries_per_scope;
+  bool refuse_when_full;
 } SignetReplayCacheConfig;
 
 /* Create replay cache. Returns NULL on OOM. */
@@ -114,6 +129,25 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
                                                 const char *event_id_hex,
                                                 int64_t event_created_at,
                                                 int64_t now);
+
+/**
+ * signet_replay_check_and_mark_scoped:
+ * @c: (not nullable): a #SignetReplayCache
+ * @scope: (nullable): quota scope, e.g. the authenticated sender pubkey
+ * @event_id_hex: (nullable): event id hex
+ * @event_created_at: event created at
+ * @now: current Unix time in seconds
+ *
+ * As signet_replay_check_and_mark(), charging the id to @scope's
+ * max_entries_per_scope quota. Ids are still unique across scopes.
+ *
+ * Returns: the replay verdict
+ */
+SignetReplayResult signet_replay_check_and_mark_scoped(SignetReplayCache *c,
+                                                       const char *scope,
+                                                       const char *event_id_hex,
+                                                       int64_t event_created_at,
+                                                       int64_t now);
 
 #ifdef __cplusplus
 }

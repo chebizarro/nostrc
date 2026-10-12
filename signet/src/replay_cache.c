@@ -11,6 +11,7 @@
 
 typedef struct {
   char *id;          /* owned */
+  char *scope;       /* owned; NULL when unscoped */
   int64_t seen_at;   /* unix seconds */
   GList *link;       /* link in insertion-order queue (oldest->newest) */
 } SignetReplayEntry;
@@ -19,6 +20,11 @@ struct SignetReplayCache {
   size_t max_entries;
   uint32_t ttl_seconds;
   uint32_t skew_seconds;
+  size_t max_entries_per_scope;
+  bool refuse_when_full;
+
+  /* scope -> number of cached ids charged to it (GUINT_TO_POINTER) */
+  GHashTable *scope_counts;
 
   /* key: entry->id (do not free key separately; freed in value destroy) */
   GHashTable *by_id; /* char* -> SignetReplayEntry* */
@@ -33,6 +39,8 @@ static void signet_replay_entry_free(SignetReplayEntry *e) {
   if (!e) return;
   g_free(e->id);
   e->id = NULL;
+  g_free(e->scope);
+  e->scope = NULL;
   e->seen_at = 0;
   e->link = NULL;
   g_free(e);
@@ -40,6 +48,13 @@ static void signet_replay_entry_free(SignetReplayEntry *e) {
 
 static void signet_replay_evict_entry_locked(SignetReplayCache *c, SignetReplayEntry *e) {
   if (!c || !e) return;
+
+  if (e->scope) {
+    guint n = GPOINTER_TO_UINT(g_hash_table_lookup(c->scope_counts, e->scope));
+    if (n <= 1) (void)g_hash_table_remove(c->scope_counts, e->scope);
+    else g_hash_table_insert(c->scope_counts, g_strdup(e->scope),
+                             GUINT_TO_POINTER(n - 1));
+  }
 
   /* Remove from queue first while e is still valid. */
   if (e->link) {
@@ -81,6 +96,13 @@ SignetReplayCache *signet_replay_cache_new(const SignetReplayCacheConfig *cfg) {
   c->max_entries = cfg->max_entries;
   c->ttl_seconds = cfg->ttl_seconds;
   c->skew_seconds = cfg->skew_seconds;
+  /* An id must outlive the window in which its created_at passes the skew
+   * check ([seen - skew, seen + skew] as seen at mark time). */
+  if (c->skew_seconds > 0 && c->ttl_seconds < 2u * c->skew_seconds)
+    c->ttl_seconds = 2u * c->skew_seconds;
+  c->max_entries_per_scope = cfg->max_entries_per_scope;
+  c->refuse_when_full = cfg->refuse_when_full;
+  c->scope_counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 
   g_mutex_init(&c->mu);
 
@@ -114,6 +136,7 @@ void signet_replay_cache_free(SignetReplayCache *c) {
    * stale pointers in its nodes; g_queue_free() does not dereference them. */
   g_clear_pointer(&c->by_id, g_hash_table_destroy);
   g_clear_pointer(&c->order, g_queue_free);
+  g_clear_pointer(&c->scope_counts, g_hash_table_destroy);
 
   g_mutex_unlock(&c->mu);
 
@@ -159,6 +182,15 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
                                                 const char *event_id_hex,
                                                 int64_t event_created_at,
                                                 int64_t now) {
+  return signet_replay_check_and_mark_scoped(c, NULL, event_id_hex,
+                                             event_created_at, now);
+}
+
+SignetReplayResult signet_replay_check_and_mark_scoped(SignetReplayCache *c,
+                                                       const char *scope,
+                                                       const char *event_id_hex,
+                                                       int64_t event_created_at,
+                                                       int64_t now) {
   if (!c) return SIGNET_REPLAY_OK; /* replay protection disabled */
   /* Missing/empty event id means we cannot dedup; reject rather than admit. */
   if (!event_id_hex || event_id_hex[0] == '\0') return SIGNET_REPLAY_INVALID;
@@ -170,6 +202,7 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
   /* Defensive bound to avoid pathological memory use if caller passes junk.
    * An overlong id is malformed input, so fail closed rather than admit it. */
   if (strlen(event_id_hex) > 256) return SIGNET_REPLAY_INVALID;
+  if (scope && strlen(scope) > 256) return SIGNET_REPLAY_INVALID;
 
   g_mutex_lock(&c->mu);
 
@@ -180,6 +213,19 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
   if (g_hash_table_contains(c->by_id, event_id_hex)) {
     g_mutex_unlock(&c->mu);
     return SIGNET_REPLAY_DUPLICATE;
+  }
+
+  /* A scope at its quota is refused: its own ids are never dropped early. */
+  if (scope && c->max_entries_per_scope > 0 &&
+      GPOINTER_TO_UINT(g_hash_table_lookup(c->scope_counts, scope)) >=
+          c->max_entries_per_scope) {
+    g_mutex_unlock(&c->mu);
+    return SIGNET_REPLAY_FULL;
+  }
+  if (c->refuse_when_full &&
+      (size_t)g_hash_table_size(c->by_id) >= c->max_entries) {
+    g_mutex_unlock(&c->mu);
+    return SIGNET_REPLAY_FULL;
   }
 
   /* Enforce bound with eviction from oldest. */
@@ -208,6 +254,12 @@ SignetReplayResult signet_replay_check_and_mark(SignetReplayCache *c,
 
   e->seen_at = now;
   e->link = NULL;
+  if (scope) {
+    e->scope = g_strdup(scope);
+    guint n = GPOINTER_TO_UINT(g_hash_table_lookup(c->scope_counts, scope));
+    g_hash_table_insert(c->scope_counts, g_strdup(scope),
+                        GUINT_TO_POINTER(n + 1));
+  }
 
   g_queue_push_tail(c->order, e);
   e->link = g_queue_peek_tail_link(c->order);
