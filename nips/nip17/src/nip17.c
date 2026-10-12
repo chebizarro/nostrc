@@ -476,12 +476,22 @@ int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
                             const char *recipient_sk_hex,
                             char **content_out,
                             char **sender_pubkey_out) {
+    return nostr_nip17_decrypt_dm_ex(gift_wrap, recipient_sk_hex, content_out,
+                                     sender_pubkey_out, NULL);
+}
+
+int nostr_nip17_decrypt_dm_ex(NostrEvent *gift_wrap,
+                               const char *recipient_sk_hex,
+                               char **content_out,
+                               char **sender_pubkey_out,
+                               int64_t *rumor_created_at_out) {
     if (!gift_wrap || !recipient_sk_hex || !content_out) {
         return -EINVAL;
     }
 
     *content_out = NULL;
     if (sender_pubkey_out) *sender_pubkey_out = NULL;
+    if (rumor_created_at_out) *rumor_created_at_out = 0;
 
     /* Unwrap gift wrap to get seal */
     NostrEvent *seal = nostr_nip17_unwrap_gift_wrap(gift_wrap, recipient_sk_hex);
@@ -529,6 +539,9 @@ int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
 
     if (sender_pubkey_out) {
         *sender_pubkey_out = strdup(rumor_pk);
+    }
+    if (rumor_created_at_out) {
+        *rumor_created_at_out = nostr_event_get_created_at(rumor);
     }
 
     nostr_event_free(seal);
