@@ -18,10 +18,7 @@
 #include <fontconfig/fontconfig.h>
 #endif
 
-/* nostrc-v59q: the D-Bus probe uses a supervised GLib connection. */
-#include <errno.h>
-#include <sys/wait.h>
-#include <unistd.h>
+#include "gn-session-bus-probe.h"
 
 #define GROUNDHOG_APP_ID "org.nostr.Groundhog"
 
@@ -186,74 +183,18 @@ app_id_for_instance(const char *name)
   return buf;
 }
 
-/* A child performs GLib's real bus connection, including the complete AUTH
- * exchange, without allowing a stalled auth worker to hang the UI process.
- * The single monotonic deadline covers address resolution, connect and AUTH
- * for Unix paths, abstract sockets, TCP and launchd addresses alike. */
-static gboolean
-session_bus_connects(guint timeout_ms, gboolean *timed_out)
-{
-  *timed_out = FALSE;
-  pid_t pid = fork();
-  if (pid < 0)
-    return FALSE;
-  if (pid == 0) {
-    GError *error = NULL;
-    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
-    if (bus)
-      g_object_unref(bus);
-    g_clear_error(&error);
-    _exit(bus ? 0 : 1);
-  }
-
-  gint64 deadline = g_get_monotonic_time() + (gint64)timeout_ms * 1000;
-  int status = 0;
-  for (;;) {
-    pid_t result = waitpid(pid, &status, WNOHANG);
-    if (result == pid)
-      return WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    if (result < 0 && errno != EINTR)
-      return FALSE;
-    if (g_get_monotonic_time() >= deadline)
-      break;
-    g_usleep(20 * 1000);
-  }
-  *timed_out = TRUE;
-  kill(pid, SIGKILL);
-  while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-    ;
-  return FALSE;
-}
-
-/* Check whether the session bus is reachable; if not, arrange for
- * GApplication to skip it. Called before g_application_run(). */
+/* nostrc-v59q, nostrc-py0hg: a session bus that never answers AUTH must not
+ * hang startup. Probed whatever the environment says: with no
+ * DBUS_SESSION_BUS_ADDRESS GLib still connects, through $XDG_RUNTIME_DIR/bus
+ * or `dbus-launch --autolaunch`, which on macOS hands back the launchd
+ * socket. Called before g_application_run(). */
 static void
 probe_session_bus(GApplicationFlags *flags)
 {
-  /* No address at all: nothing to probe, GApplication will fail fast. */
-  const gchar *addr = g_getenv("DBUS_SESSION_BUS_ADDRESS");
-#ifdef __APPLE__
-  const gchar *launchd_sock = g_getenv("DBUS_LAUNCHD_SESSION_BUS_SOCKET");
-  if ((!addr || !*addr) && (!launchd_sock || !*launchd_sock))
+  if (!gn_session_bus_fallback_if_unresponsive(5000))
     return;
-#else
-  if (!addr || !*addr)
-    return;
-#endif
-
-  gboolean timed_out = FALSE;
-  if (session_bus_connects(5000, &timed_out) || !timed_out)
-    return;
-
-  /* A bus that never completed AUTH timed out. Point the address at a path
-   * that fails fast (connect → ENOTSOCK) so g_bus_get_sync() returns
-   * an error instead of blocking, and switch to non-unique so
-   * g_application_register() does not fail. An empty string would
-   * trigger GLib's Linux fallback to $XDG_RUNTIME_DIR/bus or X11
-   * autolaunch, which may also block. */
   g_message("Groundhog: the session bus did not respond within 5 s — "
             "Grotto and notifications are unavailable (nostrc-v59q)");
-  g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/dev/null", TRUE);
   *flags |= G_APPLICATION_NON_UNIQUE;
   bus_fallback = TRUE;
 }

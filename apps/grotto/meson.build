@@ -102,11 +102,13 @@ nips_inc = include_directories(
   '../../nips/nip77/include',
   '../../nips/nip86/include',
   '../../nips/nip94/include',
+  '../../gnome/common',
 )
 
 # Source files
 app_sources = files(
   'src/main_app.c',
+  '../../gnome/common/gn-session-bus-probe.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
   'src/bunker_service.c',
