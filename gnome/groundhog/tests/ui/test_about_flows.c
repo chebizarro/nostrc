@@ -13,6 +13,9 @@
 #include <glib/gstdio.h>
 #include "gh-issue-resolver.h"
 #include "../relay/wire-relay.h"
+#if GH_ISSUE_UPLOADS
+#include "blossom-fixture.h"
+#endif
 
 #define OWNER "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400"
 #define OWNER_URI "nostr:npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv"
@@ -577,9 +580,9 @@ answer(AdwAlertDialog *alert, const char *response)
 }
 
 /* Opt-in evidence: GROUNDHOG_TEST_SCREENSHOTS=<dir> saves the window, with
- * the application's stylesheet, as groundhog-issue-uploads-maintainers-<name>.png. */
+ * the application's stylesheet, as groundhog-<prefix>-<name>.png. */
 static void
-screenshot(GtkWindow *window, const char *name)
+screenshot_as(GtkWindow *window, const char *prefix, const char *name)
 {
   const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
   if (!dir || !*dir)
@@ -596,10 +599,15 @@ screenshot(GtkWindow *window, const char *name)
   gsk_render_node_get_bounds(node, &bounds);
   GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
   g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
-  g_autofree char *path = g_strdup_printf("%s/groundhog-issue-uploads-maintainers-%s.png", dir,
-                                          name);
+  g_autofree char *path = g_strdup_printf("%s/groundhog-%s-%s.png", dir, prefix, name);
   g_assert_true(gdk_texture_save_to_png(texture, path));
   g_test_message("saved %s", path);
+}
+
+static void
+screenshot(GtkWindow *window, const char *name)
+{
+  screenshot_as(window, "issue-uploads-maintainers", name);
 }
 
 static void
@@ -795,6 +803,211 @@ test_issue_lookup(void)
   gh_test_bus_down(&bus);
 }
 
+#if GH_ISSUE_UPLOADS
+/* The blossom client's account signer: signs the kind-24242 authorization
+ * with the test key, and counts. */
+typedef struct {
+  gchar *secret;
+  guint calls;
+} RetrySigner;
+
+static void
+retry_sign(gpointer data, const gchar *unsigned_json, GCancellable *cancellable,
+           GAsyncReadyCallback callback, gpointer callback_data)
+{
+  RetrySigner *signer = data;
+  signer->calls++;
+  GTask *task = g_task_new(NULL, cancellable, callback, callback_data);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, unsigned_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_kind(event), ==, 24242);
+  g_assert_cmpint(nostr_event_sign(event, signer->secret), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_task_return_pointer(task, g_strdup(json), g_free);
+  free(json);
+  g_object_unref(task);
+}
+
+static gchar *
+retry_sign_finish(GAsyncResult *result, GError **error)
+{
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+typedef struct {
+  GhBlossomClient *client;
+  GPtrArray *servers;
+} RetryRecorder;
+
+/* What the application's recorder does (gh_attachments_set_consent()). */
+static gboolean
+retry_record(gpointer data, const gchar *server, GError **error)
+{
+  (void)error;
+  RetryRecorder *recorder = data;
+  g_ptr_array_add(recorder->servers, g_strdup(server));
+  gh_blossom_client_set_account_consent(recorder->client, server, TRUE);
+  return TRUE;
+}
+
+static gboolean
+widget_visible(gpointer data)
+{
+  return gtk_widget_get_visible(data);
+}
+
+static gboolean
+label_says_uploaded(gpointer data)
+{
+  return g_strcmp0(gtk_label_get_text(GTK_LABEL(data)), "Uploaded") == 0;
+}
+
+static GtkLabel *
+row_status(GtkWidget *row)
+{
+  return g_object_get_data(G_OBJECT(row), "gn-upload-status");
+}
+
+/* nostrc-j4nvf: a server that accepts only accounts it knows refuses the
+ * throwaway key (401). The failed file offers a retry; it asks for the
+ * per-server account consent first (recorded as the attachments' consent),
+ * then the same file is uploaded again signed by the account (200), and the
+ * issue is reviewed with its address. Nothing signs as the account before. */
+static void
+test_issue_upload_retry(void)
+{
+  GhTestBus bus = {0};
+  GhTestSigner signer = {0};
+  gh_test_bus_up_beside_gtk(&bus);
+  gh_test_signer_up(&bus, &signer);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_autofree char *npub = gh_test_npub(1);
+  g_settings_set_string(settings, "current-npub", npub);
+  g_settings_set_string(settings, "signer-method", "auto");
+  g_settings_set_string(settings, "network-mode", "none");
+  /* The issue's relay: shown in the review, never contacted (not published). */
+  const char *relays[] = { "wss://relay.example.com", NULL };
+  g_settings_set_strv(settings, "discovery-relays", relays);
+  g_autoptr(GhAccountController) accounts = gh_account_controller_new_full(settings, bus.client, identities, NULL);
+  gh_test_spin_until(active, accounts);
+
+  BlossomFixture *blossom = blossom_fixture_new();
+  const char *servers[] = { blossom_fixture_url(blossom), NULL };
+  g_settings_set_strv(settings, "blossom-servers", servers);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
+  g_autoptr(GhBlossomClient) client = gh_blossom_client_new(settings, http);
+  /* The fixture is on loopback, which a public issue's server may not be. */
+  gh_blossom_client_set_allow_private_hosts(client, TRUE);
+  char *secret = nostr_key_generate_private();
+  char *account = nostr_key_get_public(secret);
+  RetrySigner sign = { g_strdup(secret), 0 };
+  gh_blossom_client_set_account_signer(client, account, retry_sign, retry_sign_finish, &sign, NULL);
+  blossom_fixture_require_pubkey(blossom, account);
+  RetryRecorder recorder = { client, g_ptr_array_new_with_free_func(g_free) };
+
+  if (g_getenv("GROUNDHOG_TEST_SCREENSHOTS")) {
+    g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
+    gtk_css_provider_load_from_resource(css, "/org/nostr/Groundhog/style.css");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  }
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  gtk_window_set_default_size(window, 720, 860);
+  gtk_window_present(window);
+  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings, client, retry_record, &recorder);
+  gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
+  gtk_editable_set_text(GTK_EDITABLE(child(dialog, "title_row")), "Crash when opening a room");
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(child(dialog, "body_view"))),
+                           "The log is attached.", -1);
+  g_autofree char *path = g_build_filename(g_get_tmp_dir(), "groundhog-issue-retry.txt", NULL);
+  g_assert_true(g_file_set_contents(path, "relay closed\n", -1, NULL));
+  g_autoptr(GFile) file = g_file_new_for_path(path);
+  g_assert_true(gn_nip34_issue_view_add_attachment(dialog, file));
+  GtkWidget *retry = child(dialog, "upload_retry");
+  GtkWidget *row = gtk_widget_get_ancestor(retry, GTK_TYPE_LIST_BOX_ROW);
+  g_assert_false(gtk_widget_get_visible(retry));
+
+  /* The throwaway-key default: the option stays unchecked. */
+  g_signal_emit_by_name(child(dialog, "review_button"), "clicked");
+  AdwAlertDialog *alert = shown_alert(window);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Upload Files for This Issue?");
+  answer(alert, "upload");
+  gh_test_spin_until(widget_visible, retry);
+  g_assert_cmpstr(gtk_label_get_text(row_status(row)), ==, "Upload failed");
+  GPtrArray *requests = blossom_fixture_requests(blossom);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+  BlossomRequest *put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_true(put->auth_valid);
+  g_assert_cmpstr(put->auth_pubkey, !=, account);
+  g_assert_cmpuint(sign.calls, ==, 0);
+  g_assert_cmpuint(recorder.servers->len, ==, 0);
+  /* The form waits for the user instead of reviewing without the file. */
+  g_assert_false(ADW_IS_ALERT_DIALOG(adw_window_get_visible_dialog(ADW_WINDOW(window))));
+  g_assert_true(gtk_widget_is_sensitive(retry));
+  g_assert_false(gtk_widget_is_sensitive(child(dialog, "attach_button")));
+  screenshot_as(window, "issue-upload-retry", "after-refused");
+
+  /* Cancelling the consent records, signs and sends nothing. */
+  g_signal_emit_by_name(retry, "clicked");
+  alert = shown_alert(window);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Upload as Your Account?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), "Upload to 127.0.0.1 as my account"));
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), "groundhog-issue-retry.txt"));
+  screenshot_as(window, "issue-upload-retry", "after-consent");
+  answer(alert, "cancel");
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_assert_cmpuint(recorder.servers->len, ==, 0);
+  g_assert_false(gh_blossom_client_get_account_consent(client, servers[0]));
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 1);
+
+  /* Accepted: the consent is kept for this server, then the account signs. */
+  g_signal_emit_by_name(retry, "clicked");
+  answer(shown_alert(window), "retry");
+  g_assert_cmpuint(recorder.servers->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(recorder.servers, 0), ==, servers[0]);
+  g_assert_false(gtk_widget_get_visible(retry));
+  gh_test_spin_until(label_says_uploaded, row_status(row));
+  g_assert_cmpuint(sign.calls, ==, 1);
+  g_assert_cmpuint(blossom_fixture_count(blossom, "PUT"), ==, 2);
+  put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_true(put->auth_valid);
+  g_assert_cmpstr(put->auth_pubkey, ==, account);
+
+  /* The issue is reviewed again, with the file's address. */
+  alert = shown_alert(window);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Publish This Issue Publicly?");
+  GtkWidget *preview = adw_alert_dialog_get_extra_child(alert);
+  while (preview && !GTK_IS_LABEL(preview))
+    preview = gtk_widget_get_first_child(preview);
+  g_assert_nonnull(preview);
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(preview)), servers[0]));
+  screenshot_as(window, "issue-upload-retry", "after-review");
+  answer(alert, "cancel");
+
+  g_assert_cmpint(g_unlink(path), ==, 0);
+  gtk_window_destroy(window);
+  drain();
+  gh_blossom_client_set_account_signer(client, NULL, NULL, NULL, NULL, NULL);
+  g_ptr_array_unref(recorder.servers);
+  g_free(sign.secret);
+  free(secret);
+  free(account);
+  g_clear_object(&client);
+  g_clear_object(&http);
+  drain();
+  blossom_fixture_free(blossom);
+  g_settings_reset(settings, "blossom-servers");
+  g_settings_reset(settings, "network-mode");
+  g_settings_reset(settings, "discovery-relays");
+  gh_test_release(g_steal_pointer(&accounts));
+  GhTestSenders check = { &bus, &signer };
+  gh_test_spin_until(gh_test_signer_senders_closed, &check);
+  gh_test_signer_down(&bus, &signer);
+  gh_test_bus_down(&bus);
+}
+#endif
+
 void
 gh_test_about_flows_register(void)
 {
@@ -806,4 +1019,7 @@ gh_test_about_flows_register(void)
   g_test_add_data_func("/groundhog/about/issue-close-signing", GINT_TO_POINTER(2), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-fields-diagnostics", GINT_TO_POINTER(3), test_issue_consent);
   g_test_add_func("/groundhog/about/issue-lookup", test_issue_lookup);
+#if GH_ISSUE_UPLOADS
+  g_test_add_func("/groundhog/about/issue-upload-retry", test_issue_upload_retry);
+#endif
 }

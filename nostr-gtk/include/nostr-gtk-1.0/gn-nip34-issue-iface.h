@@ -75,8 +75,16 @@ struct _GnIssueUploaderInterface {
    * accepted the upload consent. Called before the first upload; on FALSE
    * nothing is uploaded. */
   gboolean (*apply_consent_option)(GnIssueUploader *self, guint index, GError **error);
+  /* Optional: for an upload whose upload_finish() failed (result), a consent
+   * the user may give to try that file again (e.g. "Upload to a server as
+   * your account" for a server that refused an unknown key); NULL for none.
+   * Offered on the failed file, asked for before anything is retried. */
+  gchar *(*dup_retry_consent)(GnIssueUploader *self, GAsyncResult *result);
+  /* Optional: the user accepted the retry consent of result. On FALSE the
+   * file is not retried. */
+  gboolean (*apply_retry_consent)(GnIssueUploader *self, GAsyncResult *result, GError **error);
   /*< private >*/
-  gpointer padding[6];
+  gpointer padding[4];
 };
 
 const gchar *gn_issue_uploader_describe_destination(GnIssueUploader *self);
@@ -89,6 +97,10 @@ gchar *gn_issue_uploader_upload_finish(GnIssueUploader *self, GAsyncResult *resu
 GStrv gn_issue_uploader_dup_consent_options(GnIssueUploader *self);
 gboolean gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index,
                                                 GError **error);
+/* NULL when the uploader offers no consent to retry the failed upload result. */
+gchar *gn_issue_uploader_dup_retry_consent(GnIssueUploader *self, GAsyncResult *result);
+gboolean gn_issue_uploader_apply_retry_consent(GnIssueUploader *self, GAsyncResult *result,
+                                               GError **error);
 
 /* ---- Repository resolver (optional) ---- */
 

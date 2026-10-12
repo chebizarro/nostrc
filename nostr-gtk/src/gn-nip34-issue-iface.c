@@ -94,6 +94,33 @@ gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index, GErro
   return iface->apply_consent_option(self, index, error);
 }
 
+gchar *
+gn_issue_uploader_dup_retry_consent(GnIssueUploader *self, GAsyncResult *result)
+{
+  g_return_val_if_fail(GN_IS_ISSUE_UPLOADER(self), NULL);
+  g_return_val_if_fail(G_IS_ASYNC_RESULT(result), NULL);
+  GnIssueUploaderInterface *iface = GN_ISSUE_UPLOADER_GET_IFACE(self);
+  gchar *consent = iface->dup_retry_consent ? iface->dup_retry_consent(self, result) : NULL;
+  if (consent && !*consent)
+    g_clear_pointer(&consent, g_free);
+  return consent;
+}
+
+gboolean
+gn_issue_uploader_apply_retry_consent(GnIssueUploader *self, GAsyncResult *result,
+                                      GError **error)
+{
+  g_return_val_if_fail(GN_IS_ISSUE_UPLOADER(self), FALSE);
+  g_return_val_if_fail(G_IS_ASYNC_RESULT(result), FALSE);
+  GnIssueUploaderInterface *iface = GN_ISSUE_UPLOADER_GET_IFACE(self);
+  if (!iface->apply_retry_consent) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "This uploader offers no retry consent");
+    return FALSE;
+  }
+  return iface->apply_retry_consent(self, result, error);
+}
+
 void
 gn_issue_repo_resolver_resolve_async(GnIssueRepoResolver *self, const GnIssueTarget *hint,
                                      GCancellable *cancellable, GAsyncReadyCallback callback,

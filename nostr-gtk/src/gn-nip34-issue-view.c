@@ -21,6 +21,8 @@ typedef struct {
   GtkLabel *status; /* owned by the widget tree */
   gchar *url;
   gboolean failed;
+  GtkWidget *retry_button; /* owned by the widget tree */
+  GAsyncResult *retry_result; /* the failed upload, while a retry consent is offered */
 } UploadItem;
 
 struct _GnNip34IssueView {
@@ -78,6 +80,7 @@ struct _GnNip34IssueView {
   gboolean crash_failed;
   gboolean skip_crash_logs;
   guint attachment_failures;
+  guint retry_index; /* the item whose retry consent is shown or uploading */
 
   /* The upload consent's option check buttons (the uploader's list, in
    * order), while that consent is shown. */
@@ -100,6 +103,9 @@ static guint signals[N_SIGNALS];
 
 static void review(GnNip34IssueView *self);
 static void upload_next(GnNip34IssueView *self);
+static void present_alert(GnNip34IssueView *self, const gchar *heading, const gchar *body,
+                          GtkWidget *extra, const gchar *accept_id, const gchar *accept_label,
+                          AdwResponseAppearance appearance, GCallback on_response);
 
 static void
 upload_item_free(UploadItem *item)
@@ -107,6 +113,7 @@ upload_item_free(UploadItem *item)
   if (!item)
     return;
   g_clear_object(&item->file);
+  g_clear_object(&item->retry_result);
   g_free(item->url);
   g_free(item);
 }
@@ -142,10 +149,19 @@ set_form_sensitive(GnNip34IssueView *self, gboolean sensitive)
   };
   for (guint i = 0; i < G_N_ELEMENTS(widgets); i++)
     gtk_widget_set_sensitive(widgets[i], sensitive);
-  /* Uploaded files stay as reviewed: their URLs are already in the report. */
+  /* Uploaded files stay as reviewed: their URLs are already in the report.
+   * A failed file's retry stays available until the issue is published. */
   gboolean files = sensitive && !self->uploads_done;
-  gtk_widget_set_sensitive(GTK_WIDGET(self->crash_list), files);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->attachment_list), files);
+  GtkListBox *lists[] = { self->crash_list, self->attachment_list };
+  for (guint i = 0; i < G_N_ELEMENTS(lists); i++) {
+    gtk_widget_set_sensitive(GTK_WIDGET(lists[i]), sensitive);
+    for (GtkWidget *row = gtk_widget_get_first_child(GTK_WIDGET(lists[i])); row;
+         row = gtk_widget_get_next_sibling(row)) {
+      GtkWidget *control = g_object_get_data(G_OBJECT(row), "gn-control");
+      if (control)
+        gtk_widget_set_sensitive(control, files);
+    }
+  }
   gtk_widget_set_sensitive(GTK_WIDGET(self->attach_button), files);
 }
 
@@ -297,6 +313,7 @@ pending_uploads(GnNip34IssueView *self)
       item->file = g_object_ref(file);
       item->crash_log = TRUE;
       item->status = g_object_get_data(G_OBJECT(row), "gn-upload-status");
+      item->retry_button = g_object_get_data(G_OBJECT(row), "gn-retry");
       g_ptr_array_add(items, item);
     }
   }
@@ -307,6 +324,7 @@ pending_uploads(GnNip34IssueView *self)
       UploadItem *item = g_new0(UploadItem, 1);
       item->file = g_object_ref(file);
       item->status = g_object_get_data(G_OBJECT(row), "gn-upload-status");
+      item->retry_button = g_object_get_data(G_OBJECT(row), "gn-retry");
       g_ptr_array_add(items, item);
     }
   }
@@ -386,6 +404,37 @@ start_publish(GnNip34IssueView *self)
 /* ---- Uploads (only after consent) ---- */
 
 static void
+clear_retry(UploadItem *item)
+{
+  g_clear_object(&item->retry_result);
+  if (item->retry_button)
+    gtk_widget_set_visible(item->retry_button, FALSE);
+}
+
+/* A failed upload the uploader offers a retry consent for (e.g. a server
+ * that accepts only accounts it knows) gets a retry action on its row. */
+static void
+offer_retry(GnNip34IssueView *self, UploadItem *item, GAsyncResult *result)
+{
+  clear_retry(item);
+  g_autofree gchar *consent = self->uploader
+    ? gn_issue_uploader_dup_retry_consent(self->uploader, result) : NULL;
+  if (!consent || !item->retry_button)
+    return;
+  item->retry_result = g_object_ref(result);
+  gtk_widget_set_visible(item->retry_button, TRUE);
+}
+
+static gboolean
+retries_offered(GnNip34IssueView *self)
+{
+  for (guint i = 0; self->uploads && i < self->uploads->len; i++)
+    if (((UploadItem *)g_ptr_array_index(self->uploads, i))->retry_result)
+      return TRUE;
+  return FALSE;
+}
+
+static void
 set_item_status(UploadItem *item, const gchar *text, gboolean error)
 {
   if (!item || !item->status)
@@ -417,6 +466,7 @@ uploaded(GObject *source, GAsyncResult *result, gpointer data)
     return;
   set_item_status(item, _("Upload failed"), TRUE);
   item->failed = TRUE;
+  offer_retry(self, item, result);
   if (item->crash_log) {
     /* gnostr behaviour: stop, and offer to send without crash logs. */
     self->crash_failed = TRUE;
@@ -453,6 +503,11 @@ upload_next(GnNip34IssueView *self)
   }
   self->uploads_done = TRUE;
   set_busy(self, FALSE, "");
+  if (retries_offered(self)) {
+    /* Wait for the user: retry, or review the issue without those files. */
+    toast(self, _("A server refused some files. Retry them, or review the issue without them."));
+    return;
+  }
   if (self->attachment_failures > 0)
     toast(self, _("Some attachments failed to upload; sending the rest."));
   /* The report now contains the public URLs: show the final event again. */
@@ -460,8 +515,113 @@ upload_next(GnNip34IssueView *self)
 }
 
 static void
+retried(GObject *source, GAsyncResult *result, gpointer data)
+{
+  g_autoptr(GnNip34IssueView) self = data;
+  g_autoptr(GError) error = NULL;
+  g_autofree gchar *url = gn_issue_uploader_upload_finish(GN_ISSUE_UPLOADER(source), result, &error);
+  if (self->closed || !self->uploads || self->retry_index >= self->uploads->len)
+    return;
+  UploadItem *item = g_ptr_array_index(self->uploads, self->retry_index);
+  if (g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    return;
+  if (!url || !*url) {
+    set_item_status(item, _("Upload failed"), TRUE);
+    offer_retry(self, item, result);
+    set_busy(self, FALSE, NULL);
+    toast(self, error ? error->message : _("The file could not be uploaded."));
+    return;
+  }
+  item->url = g_steal_pointer(&url);
+  item->failed = FALSE;
+  set_item_status(item, _("Uploaded"), FALSE);
+  if (item->crash_log) {
+    /* The queue stopped at this crash log: go on from the next file. */
+    self->crash_failed = FALSE;
+    gtk_button_set_label(self->review_button, _("Review Public Issue…"));
+    self->upload_index = self->retry_index + 1;
+  } else if (self->attachment_failures > 0) {
+    self->attachment_failures--;
+  }
+  /* With the queue done, this shows the issue again, with the file's URL. */
+  upload_next(self);
+}
+
+static void
+retry_upload(GnNip34IssueView *self, UploadItem *item)
+{
+  g_autofree gchar *name = g_file_get_basename(item->file);
+  g_autofree gchar *status = g_strdup_printf(_("Uploading %s…"), name);
+  set_busy(self, TRUE, status);
+  set_item_status(item, _("Uploading…"), FALSE);
+  gn_issue_uploader_upload_async(self->uploader, item->file,
+                                 item->crash_log ? "application/json" : NULL,
+                                 self->cancel, retried, g_object_ref(self));
+}
+
+/* The item at index while its retry can be asked for or started. */
+static UploadItem *
+retry_item(GnNip34IssueView *self, guint index)
+{
+  if (self->closed || self->busy || self->submitted || self->reviewing || !self->uploader ||
+      !self->uploads || index >= self->uploads->len)
+    return NULL;
+  UploadItem *item = g_ptr_array_index(self->uploads, index);
+  return item->retry_result ? item : NULL;
+}
+
+static void
+retry_consent_response(GObject *alert, const gchar *response, GnNip34IssueView *self)
+{
+  (void)alert;
+  self->reviewing = FALSE;
+  UploadItem *item = retry_item(self, self->retry_index);
+  if (!item || !g_str_equal(response, "retry"))
+    return;
+  g_autoptr(GError) error = NULL;
+  if (!gn_issue_uploader_apply_retry_consent(self->uploader, item->retry_result, &error)) {
+    toast(self, error ? error->message : _("The upload choice could not be kept."));
+    return;
+  }
+  clear_retry(item);
+  retry_upload(self, item);
+}
+
+/* The retry action of a failed file: its consent first, then the upload. */
+static void
+retry_clicked(GtkButton *button, GnNip34IssueView *self)
+{
+  for (guint i = 0; self->uploads && i < self->uploads->len; i++) {
+    UploadItem *item = g_ptr_array_index(self->uploads, i);
+    if (item->retry_button != GTK_WIDGET(button))
+      continue;
+    if (!retry_item(self, i))
+      return;
+    self->retry_index = i;
+    g_autofree gchar *consent = gn_issue_uploader_dup_retry_consent(self->uploader,
+                                                                    item->retry_result);
+    if (!consent) {
+      /* Consented meanwhile (another file's retry): nothing more to ask. */
+      clear_retry(item);
+      retry_upload(self, item);
+      return;
+    }
+    g_autofree gchar *name = g_file_get_basename(item->file);
+    g_autofree gchar *body = g_strdup_printf(
+      _("The server refused “%s” because it accepts only accounts it knows.\n\n%s"), name, consent);
+    self->reviewing = TRUE;
+    present_alert(self, _("Upload as Your Account?"), body, NULL, "retry",
+                  _("Upload as My Account"), ADW_RESPONSE_SUGGESTED,
+                  G_CALLBACK(retry_consent_response));
+    return;
+  }
+}
+
+static void
 start_uploads(GnNip34IssueView *self)
 {
+  for (guint i = 0; self->uploads && i < self->uploads->len; i++)
+    clear_retry(g_ptr_array_index(self->uploads, i));
   g_clear_pointer(&self->uploads, g_ptr_array_unref);
   self->uploads = pending_uploads(self);
   self->upload_index = 0;
@@ -704,6 +864,11 @@ review_clicked(GtkButton *button, GnNip34IssueView *self)
     /* "Send Without Logs": continue the queue without crash reports. */
     self->crash_failed = FALSE;
     self->skip_crash_logs = TRUE;
+    for (guint i = 0; self->uploads && i < self->uploads->len; i++) {
+      UploadItem *item = g_ptr_array_index(self->uploads, i);
+      if (item->crash_log)
+        clear_retry(item);
+    }
     gtk_button_set_label(self->review_button, _("Review Public Issue…"));
     upload_next(self);
     return;
@@ -838,8 +1003,8 @@ gn_nip34_issue_view_set_diagnostics(GnNip34IssueView *self, const gchar *heading
 /* ---- Files ---- */
 
 static GtkWidget *
-file_row(GFile *file, GtkWidget *leading, const gchar *detail, GtkWidget *trailing,
-         GtkLabel **status_out)
+file_row(GnNip34IssueView *self, GFile *file, GtkWidget *leading, const gchar *detail,
+         GtkWidget *trailing, GtkLabel **status_out)
 {
   g_autofree gchar *name = g_file_get_basename(file);
   GtkWidget *row = gtk_list_box_row_new();
@@ -866,9 +1031,20 @@ file_row(GFile *file, GtkWidget *leading, const gchar *detail, GtkWidget *traili
   GtkWidget *status = gtk_label_new("");
   gtk_widget_add_css_class(status, "dim-label");
   gtk_box_append(GTK_BOX(box), status);
+  /* Shown when the upload failed and the uploader offers a retry consent. */
+  GtkWidget *retry = gtk_button_new_with_label(_("Retry as My Account…"));
+  gtk_widget_set_name(retry, "upload_retry");
+  gtk_widget_set_valign(retry, GTK_ALIGN_CENTER);
+  g_autofree gchar *retry_label = g_strdup_printf(_("Retry uploading %s as my account"), name);
+  gtk_accessible_update_property(GTK_ACCESSIBLE(retry), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                 retry_label, -1);
+  gtk_widget_set_visible(retry, FALSE);
+  g_signal_connect(retry, "clicked", G_CALLBACK(retry_clicked), self);
+  gtk_box_append(GTK_BOX(box), retry);
   if (trailing)
     gtk_box_append(GTK_BOX(box), trailing);
   gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), box);
+  g_object_set_data(G_OBJECT(row), "gn-retry", retry);
   g_object_set_data_full(G_OBJECT(row), "gn-file", g_object_ref(file), g_object_unref);
   g_object_set_data(G_OBJECT(row), "gn-upload-status", status);
   *status_out = GTK_LABEL(status);
@@ -916,8 +1092,9 @@ gn_nip34_issue_view_set_crash_logs(GnNip34IssueView *self, GListModel *files)
     gtk_accessible_update_property(GTK_ACCESSIBLE(check), GTK_ACCESSIBLE_PROPERTY_LABEL, name, -1);
     g_signal_connect_swapped(check, "toggled", G_CALLBACK(files_changed), self);
     GtkLabel *status = NULL;
-    GtkWidget *row = file_row(file, check, date, NULL, &status);
+    GtkWidget *row = file_row(self, file, check, date, NULL, &status);
     g_object_set_data(G_OBJECT(row), "gn-crash-check", check);
+    g_object_set_data(G_OBJECT(row), "gn-control", check);
     gtk_list_box_append(self->crash_list, row);
   }
 }
@@ -952,7 +1129,8 @@ gn_nip34_issue_view_add_attachment(GnNip34IssueView *self, GFile *file)
   gtk_accessible_update_property(GTK_ACCESSIBLE(remove), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                  remove_label, -1);
   GtkLabel *status = NULL;
-  GtkWidget *row = file_row(file, NULL, size_text, remove, &status);
+  GtkWidget *row = file_row(self, file, NULL, size_text, remove, &status);
+  g_object_set_data(G_OBJECT(row), "gn-control", remove);
   gtk_label_set_text(status, _("Ready"));
   g_object_set_data(G_OBJECT(remove), "gn-row", row);
   g_signal_connect(remove, "clicked", G_CALLBACK(remove_attachment), self);

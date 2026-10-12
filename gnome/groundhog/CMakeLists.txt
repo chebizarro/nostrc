@@ -3611,8 +3611,12 @@ if (TARGET groundhog-inbox-setup AND TARGET nostr_gtk_portable)
 endif()
 
 if (TARGET test-groundhog-about AND TARGET groundhog-issue AND TARGET groundhog-new-message)
-  target_sources(test-groundhog-about PRIVATE tests/ui/test_about_flows.c src/app/gh-inbox-resolver.c)
-  target_include_directories(test-groundhog-about PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+  # The local Blossom fixture: an issue file refused (401), then retried as
+  # the account (nostrc-j4nvf).
+  target_sources(test-groundhog-about PRIVATE tests/ui/test_about_flows.c src/app/gh-inbox-resolver.c
+    tests/media/blossom-fixture.c)
+  target_include_directories(test-groundhog-about PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/app
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/media)
   target_link_libraries(test-groundhog-about PRIVATE groundhog-issue groundhog-new-message nostrc-test-bus)
   target_compile_definitions(test-groundhog-about PRIVATE GH_ABOUT_FLOWS=1)
   add_dependencies(test-groundhog-about groundhog-test-schemas)

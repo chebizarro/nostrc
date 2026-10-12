@@ -36,7 +36,11 @@ G_BEGIN_DECLS
  * signer, the form's upload consent offers "upload as your account" for
  * that server (unchecked); checking it records the consent through the
  * recorder (gh_issue_uploader_set_consent_recorder(): the account's kept
- * consents) before the first upload.
+ * consents) before the first upload. A file a server refused because it
+ * accepts only accounts it knows (GH_BLOSSOM_ERROR_AUTH_REQUIRED) gets the
+ * same consent for that server as its retry consent (dup_retry_consent);
+ * accepting it records the consent the same way, and the retry is signed
+ * by the account (nostrc-j4nvf).
  */
 
 #define GH_TYPE_ISSUE_UPLOADER (gh_issue_uploader_get_type())

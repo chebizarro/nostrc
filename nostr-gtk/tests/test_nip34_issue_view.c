@@ -29,6 +29,9 @@ typedef struct {
   guint apply_calls;
   guint applied_index;
   guint uploads_at_apply;
+  /* Retry consent (nostrc-j4nvf): "known" files are refused until accepted. */
+  gboolean known_accepted;
+  guint retry_applies;
 } Mock;
 typedef GObjectClass MockClass;
 
@@ -103,7 +106,10 @@ upload_async(GnIssueUploader *uploader, GFile *file, const gchar *content_type,
   g_autofree gchar *name = g_file_get_basename(file);
   if (strstr(name, "fail"))
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_FAILED, "upload refused");
-  else
+  else if (strstr(name, "known") && !((Mock *)uploader)->known_accepted) {
+    g_task_set_task_data(task, GINT_TO_POINTER(1), NULL); /* retry consent offered */
+    g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "known accounts only");
+  } else
     g_task_return_pointer(task, g_strdup_printf("https://blossom.test/%s", name), g_free);
   g_object_unref(task);
 }
@@ -138,9 +144,31 @@ apply_option(GnIssueUploader *u, guint index, GError **error)
   return TRUE;
 }
 
+static gchar *
+dup_retry(GnIssueUploader *u, GAsyncResult *result)
+{
+  g_assert_true(g_task_had_error(G_TASK(result)));
+  if (!g_task_get_task_data(G_TASK(result)) || ((Mock *)u)->known_accepted)
+    return NULL;
+  return g_strdup("Upload to blossom.test as my account");
+}
+
+static gboolean
+apply_retry(GnIssueUploader *u, GAsyncResult *result, GError **error)
+{
+  (void)result;
+  (void)error;
+  Mock *self = (Mock *)u;
+  self->retry_applies++;
+  self->known_accepted = TRUE;
+  return TRUE;
+}
+
 static void
 mock_uploader_iface_init(GnIssueUploaderInterface *iface)
 {
+  iface->dup_retry_consent = dup_retry;
+  iface->apply_retry_consent = apply_retry;
   iface->describe_destination = describe;
   iface->upload_async = upload_async;
   iface->upload_finish = upload_finish;
@@ -449,6 +477,53 @@ test_send_without_logs(void)
   teardown(&f);
 }
 
+/* nostrc-j4nvf: a crash log a server refused offers a retry consent on its
+ * row; the queue waits ("Send Without Logs" still works); accepting it
+ * uploads the same file again and the queue goes on to the review. */
+static void
+test_retry_consent(void)
+{
+  Fixture f = {0};
+  setup(&f, TRUE, FALSE);
+  g_autoptr(GFile) crash = temp_file(&f, "gnostr-known.ips");
+  g_autoptr(GListStore) logs = g_list_store_new(G_TYPE_FILE);
+  g_list_store_append(logs, crash);
+  gn_nip34_issue_view_set_crash_logs(f.view, G_LIST_MODEL(logs));
+  GtkWidget *row = gtk_widget_get_first_child(child(&f, "crash_list"));
+  gtk_check_button_set_active(g_object_get_data(G_OBJECT(row), "gn-crash-check"), TRUE);
+  g_autoptr(GFile) file = temp_file(&f, "after.txt");
+  g_assert_true(gn_nip34_issue_view_add_attachment(f.view, file));
+  GtkWidget *retry = g_object_get_data(G_OBJECT(row), "gn-retry");
+  g_assert_false(gtk_widget_get_visible(retry));
+  click(&f, "review_button");
+  respond(alert(&f), "upload");
+  g_assert_cmpuint(f.mock->upload_calls, ==, 1);
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_assert_true(gtk_widget_is_sensitive(retry));
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(&f, "review_button"))), ==, "Send Without Logs");
+  /* Cancelled: nothing applied or uploaded. */
+  g_signal_emit_by_name(retry, "clicked");
+  AdwAlertDialog *a = alert(&f);
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(a), "Upload to blossom.test as my account"));
+  respond(a, "cancel");
+  g_assert_cmpuint(f.mock->retry_applies, ==, 0);
+  g_assert_cmpuint(f.mock->upload_calls, ==, 1);
+  g_assert_true(gtk_widget_get_visible(retry));
+  g_signal_emit_by_name(retry, "clicked");
+  respond(alert(&f), "retry");
+  drain();
+  g_assert_cmpuint(f.mock->retry_applies, ==, 1);
+  g_assert_false(gtk_widget_get_visible(retry));
+  g_assert_cmpuint(f.mock->upload_calls, ==, 3);
+  g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(child(&f, "review_button"))), ==, "Review Public Issue…");
+  a = alert(&f);
+  g_assert_nonnull(strstr(preview(a), "https://blossom.test/gnostr-known.ips"));
+  g_assert_nonnull(strstr(preview(a), "https://blossom.test/after.txt"));
+  respond(a, "publish");
+  g_assert_cmpuint(f.mock->publish_calls, ==, 1);
+  teardown(&f);
+}
+
 static gchar *diag_func(gpointer data) { (void)data; return g_strdup("App: test 1.0"); }
 
 static void
@@ -643,6 +718,7 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-gtk/nip34-issue-view/pubkey-change", test_pubkey_change);
   g_test_add_func("/nostr-gtk/nip34-issue-view/partial-upload-failure", test_partial_upload_failure);
   g_test_add_func("/nostr-gtk/nip34-issue-view/send-without-logs", test_send_without_logs);
+  g_test_add_func("/nostr-gtk/nip34-issue-view/retry-consent", test_retry_consent);
   g_test_add_func("/nostr-gtk/nip34-issue-view/diagnostics", test_diagnostics);
   g_test_add_func("/nostr-gtk/nip34-issue-view/not-sent-retry", test_publish_not_sent_allows_retry);
   g_test_add_func("/nostr-gtk/nip34-issue-view/lookup", test_lookup_repository);
