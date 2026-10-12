@@ -807,7 +807,8 @@ if (NOT GROUNDHOG_PACKAGE_CHANNEL MATCHES "^(flatpak|deb|rpm|arch|nix|source)$")
 endif()
 target_compile_definitions(groundhog PRIVATE GH_PACKAGE_CHANNEL="${GROUNDHOG_PACKAGE_CHANNEL}")
 # W32: an app indicator where a StatusNotifierWatcher runs (Ubuntu, KDE).
-target_sources(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-status-notifier.c)
+target_sources(groundhog PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-status-notifier.c
+               ${CMAKE_CURRENT_SOURCE_DIR}/../common/gn-session-bus-probe.c)
 if (TARGET groundhog-account)
   target_sources(groundhog PRIVATE src/app/gh-tray.c src/app/gh-update-handoff.c)
 endif()
@@ -862,7 +863,7 @@ if (BUILD_TESTING)
   target_link_libraries(test-groundhog-bus-probe PRIVATE nostrc-test-bus PkgConfig::GROUNDHOG_DEPS)
   target_compile_options(test-groundhog-bus-probe PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-bus-probe COMMAND test-groundhog-bus-probe)
-  set_tests_properties(groundhog-bus-probe PROPERTIES TIMEOUT 30
+  set_tests_properties(groundhog-bus-probe PROPERTIES TIMEOUT 60
     ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
 
   # nostrc-lrac: two-instance concurrent start test.

@@ -68,11 +68,17 @@ keyfile GSettings backend even when `GSETTINGS_BACKEND=dconf` is inherited.
 ### Session bus resilience
 
 If the session bus socket accepts connections but never answers the
-D-Bus AUTH handshake (common on macOS where launchd holds the socket),
-Groundhog performs a complete D-Bus connection and AUTH exchange with a
-5-second deadline before `gtk_init` or `g_application_run`. Only a stalled
-connection enters non-unique fallback mode, with the banner: "Grotto
-and notifications are unavailable: the session bus isn't responding".
+D-Bus AUTH handshake (common on macOS where launchd holds the socket and its
+dbus-daemon agent cannot start), Groundhog performs a complete D-Bus
+connection and AUTH exchange with a 5-second deadline before `gtk_init` or
+`g_application_run`. The probe always runs, because GLib finds a session bus
+without `DBUS_SESSION_BUS_ADDRESS` too: through `$XDG_RUNTIME_DIR/bus`, or
+through `dbus-launch --autolaunch` when `$DISPLAY` is set, which on macOS
+(XQuartz sets `DISPLAY`) returns the launchd socket. Only a stalled
+connection enters non-unique fallback mode, with the banner: "Grotto and
+notifications are unavailable: the session bus isn't responding". Grotto
+runs the same probe (`gnome/common/gn-session-bus-probe.c`) before it
+registers its application.
 
 ## Building
 

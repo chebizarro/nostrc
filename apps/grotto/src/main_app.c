@@ -1,3 +1,4 @@
+#include "gn-session-bus-probe.h"
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <gio/gio.h>
@@ -1038,7 +1039,16 @@ int main(int argc, char **argv) {
   gn_i18n_init();
 
   g_set_prgname("grotto");
-  AdwApplication *app = adw_application_new("org.nostr.Grotto", G_APPLICATION_DEFAULT_FLAGS);
+  /* nostrc-py0hg: registration connects to the session bus; one that never
+   * answers AUTH (a dead launchd dbus agent on macOS) would hang here before
+   * any window. Run without uniqueness instead. */
+  GApplicationFlags app_flags = G_APPLICATION_DEFAULT_FLAGS;
+  if (gn_session_bus_fallback_if_unresponsive(5000)) {
+    g_message("Grotto: the session bus did not respond within 5 s; "
+              "running without D-Bus");
+    app_flags |= G_APPLICATION_NON_UNIQUE;
+  }
+  AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags);
 
   STARTUP_TIME_END(STARTUP_PHASE_INIT);
 
