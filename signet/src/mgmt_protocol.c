@@ -60,6 +60,7 @@ static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
                                        const char *decision,
                                        const char *reason,
                                        const char *auth,
+                                       const char *owner,
                                        int64_t now);
 
 static void signet_mgmt_memzero(void *p, size_t n) {
@@ -267,6 +268,13 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
     if (vn && JSON_NODE_HOLDS_VALUE(vn) &&
         json_node_get_value_type(vn) == G_TYPE_INT64)
       v = json_node_get_int(vn);
+    if (op != SIGNET_MGMT_OP_DELIVER_CREDENTIAL) {
+      if (out_error)
+        *out_error =
+            g_strdup("expected_version applies only to credential/deliver");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
     if (v < 1 || v > INT_MAX) {
       if (out_error)
         *out_error = g_strdup("expected_version must be a positive integer");
@@ -1162,11 +1170,12 @@ static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
                                     const char *reason,
                                     int64_t now) {
   signet_mgmt_chain_audit_ex(h, operation, identity, secret_id, decision,
-                             reason, NULL, now);
+                             reason, NULL, NULL, now);
 }
 
 /* As signet_mgmt_chain_audit, plus auth: the authorization path of a
- * credential method ("provisioner" or "delivery_grant"), or NULL. */
+ * credential method ("provisioner" or "delivery_grant"), and owner: the
+ * credential owner a request targeted (an agent id), each or NULL. */
 static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
                                        const char *operation,
                                        const char *identity,
@@ -1174,6 +1183,7 @@ static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
                                        const char *decision,
                                        const char *reason,
                                        const char *auth,
+                                       const char *owner,
                                        int64_t now) {
   if (!h || !h->keys || !operation) return;
   SignetStore *base_store = signet_key_store_get_store(h->keys);
@@ -1190,6 +1200,10 @@ static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
       if (auth) {
         json_builder_set_member_name(b, "auth");
         json_builder_add_string_value(b, auth);
+      }
+      if (owner) {
+        json_builder_set_member_name(b, "owner");
+        json_builder_add_string_value(b, owner);
       }
       json_builder_end_object(b);
       JsonNode *root = json_builder_get_root(b);
@@ -1417,11 +1431,12 @@ static int signet_mgmt_decode_secret_payload(const char *payload_b64,
  * audit, by signet_credential_access_acquire(). */
 static const char *signet_mgmt_delivery_grant_refusal(
     SignetMgmtHandler *h, const SignetMgmtRequest *req, const char *sender,
-    int64_t now) {
+    int64_t now, char **out_owner) {
+  *out_owner = NULL;
   if (!sender || !sender[0]) return "no_capability";
   if (h->deny && signet_deny_list_contains(h->deny, sender))
     return "deny_listed";
-  g_autofree char *owner = NULL;
+  char *owner = NULL;
   if (req->op == SIGNET_MGMT_OP_INSPECT_CREDENTIAL) {
     SignetStore *store = signet_key_store_get_store(h->keys);
     if (!store) return "no_store";
@@ -1433,13 +1448,17 @@ static const char *signet_mgmt_delivery_grant_refusal(
     signet_secret_metadata_clear(&m);
     if (src != SIGNET_SECRET_OK && src != SIGNET_SECRET_NOT_FOUND)
       return "credential_store_failed";
-  } else {
+  } else if (req->agent_id) {
     owner = g_strdup(req->agent_id);
   }
-  if (!owner || !owner[0] || !h->policy_store ||
-      !signet_policy_store_has_exact_delivery_grant(h->policy_store, owner,
-                                                    sender, now))
-    return "no_capability";
+  *out_owner = owner;
+  /* A missing credential still costs the policy lookup an existing one
+   * does, so the two refusals take comparable work. */
+  bool granted = h->policy_store &&
+      signet_policy_store_has_exact_delivery_grant(
+          h->policy_store, (owner && owner[0]) ? owner : "\x01no-owner",
+          sender, now);
+  if (!owner || !owner[0] || !granted) return "no_capability";
   char owner_pk[65] = {0};
   if (h->deny &&
       signet_key_store_get_agent_pubkey(h->keys, owner, owner_pk,
@@ -1447,6 +1466,13 @@ static const char *signet_mgmt_delivery_grant_refusal(
       signet_deny_list_contains(h->deny, owner_pk))
     return "deny_listed";
   return NULL;
+}
+
+/* A request-supplied id recorded in the audit chain: bounded, never echoed
+ * at arbitrary length. */
+static const char *signet_mgmt_audit_target(const char *id) {
+  if (!id || !id[0]) return NULL;
+  return strlen(id) <= 128 ? id : "overlong";
 }
 
 static int signet_mgmt_handler_handle_request_ex(
@@ -1559,14 +1585,18 @@ static int signet_mgmt_handler_handle_request_ex(
    * credential/inspect|list|deliver, BEFORE the replay mark (as in 2a) so
    * senders without a grant cannot churn the replay cache. */
   if (grant_path) {
-    const char *gcode =
-        signet_mgmt_delivery_grant_refusal(h, &req, event_pubkey_hex, now);
+    g_autofree char *target_owner = NULL;
+    const char *gcode = signet_mgmt_delivery_grant_refusal(
+        h, &req, event_pubkey_hex, now, &target_owner);
     if (gcode) {
+      /* Record what was asked for (ids only, no secret material). */
       signet_mgmt_chain_audit_ex(
           h,
           req.op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ? "credential_deliver"
                                                       : "mgmt_unauthorized",
-          event_pubkey_hex, NULL, "deny", gcode, "delivery_grant", now);
+          event_pubkey_hex, signet_mgmt_audit_target(req.credential_id),
+          "deny", gcode, "delivery_grant",
+          signet_mgmt_audit_target(target_owner), now);
       char *gack = signet_mgmt_build_ack(
           req.request_id, false, gcode,
           strcmp(gcode, "no_capability") == 0
@@ -1715,6 +1745,7 @@ static int signet_mgmt_handler_handle_request_ex(
   char *message = NULL;
   char *result = NULL;
   char *audit_secret_id = NULL; /* affected credential id for chain audit */
+  const char *audit_code = NULL; /* chain-audit reason when the reply's differs */
 
   switch (req.op) {
     case SIGNET_MGMT_OP_WRITER_ACQUIRE: {
@@ -2375,6 +2406,16 @@ static int signet_mgmt_handler_handle_request_ex(
         message = g_strdup(arc == SIGNET_CRED_ACCESS_VERSION_MISMATCH
                                ? "active credential version is not expected_version"
                                : "credential delivery denied");
+        /* A delivery-grant requester learns nothing about credentials it is
+         * not granted: another owner's credential and a missing one get the
+         * same refusal. The audit keeps the real reason. */
+        if (grant_path && (arc == SIGNET_CRED_ACCESS_NOT_OWNER ||
+                           arc == SIGNET_CRED_ACCESS_NOT_FOUND)) {
+          audit_code = code;
+          code = "no_capability";
+          g_free(message);
+          message = g_strdup("credential is not delivered to this requester");
+        }
         signet_credential_access_grant_clear(&grant);
         break;
       }
@@ -2637,7 +2678,8 @@ static int signet_mgmt_handler_handle_request_ex(
                                                     : event_pubkey_hex),
           audit_secret_id ? audit_secret_id :
               (req.credential_id ? req.credential_id : req.provisioner_pubkey),
-          ok ? "allow" : "deny", code, auth, now);
+          ok ? "allow" : "deny", audit_code ? audit_code : code, auth,
+          NULL, now);
     }
   }
   g_free(audit_secret_id);

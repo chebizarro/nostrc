@@ -786,7 +786,18 @@ static void test_delivery_grant_requester_without_provisioner(void) {
       "\"credential_id\":\"%s\"}", foreign);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
                      deliver_cross, "g-8") == -1);
+  /* The reply says no_capability; the audit keeps the real reason. */
   CHECK(audit_rows_containing(store, "not_owner") > 0);
+  /* Grant refusals record the target credential and owner. */
+  CHECK(audit_rows_containing(store, "\"owner\":\"other\"") > 0);
+  sqlite3_stmt *st = NULL;
+  CHECK(sqlite3_prepare_v2(signet_store_get_db(store),
+      "SELECT COUNT(*) FROM audit_log WHERE operation='mgmt_unauthorized' "
+      "AND secret_id=?1 AND instr(detail,'delivery_grant')>0", -1, &st,
+      NULL) == SQLITE_OK);
+  sqlite3_bind_text(st, 1, foreign, -1, SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(st) == SQLITE_ROW && sqlite3_column_int(st, 0) > 0);
+  sqlite3_finalize(st);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL,
       "{\"request_id\":\"r\",\"credential_id\":\"cred_missing\"}",
       "g-9") == -1);
@@ -819,12 +830,26 @@ static void test_delivery_grant_requester_without_provisioner(void) {
     { SIGNET_MGMT_OP_REVOKE_AGENT,
       "{\"request_id\":\"r\",\"agent_id\":\"owner\"}" },
   };
+  char owner_pk[65] = {0};
+  CHECK(signet_key_store_get_agent_pubkey(f.keys, "owner", owner_pk,
+                                          sizeof(owner_pk)));
   for (size_t i = 0; i < G_N_ELEMENTS(refused); i++) {
     char evt[32];
     g_snprintf(evt, sizeof(evt), "g-refused-%zu", i);
+    /* Each is dropped before parsing, leaving one not_provisioner record. */
+    int denials = audit_rows_containing(store, "not_provisioner");
     CHECK(AS_REQUESTER(refused[i].op, refused[i].json, evt) == -1);
+    CHECK(audit_rows_containing(store, "not_provisioner") == denials + 1);
   }
   CHECK(!signet_store_is_provisioner(store, requester_pk));
+  /* agent/revoke did not touch the owner: same identity, still usable. */
+  char owner_pk_after[65] = {0};
+  CHECK(signet_key_store_get_agent_pubkey(f.keys, "owner", owner_pk_after,
+                                          sizeof(owner_pk_after)));
+  CHECK(strcmp(owner_pk, owner_pk_after) == 0);
+  CHECK(audit_rows_containing(store, "mgmt_revoke_agent") == 0);
+  CHECK(audit_rows_containing(store, "mgmt_provision_agent") == 0);
+  CHECK(audit_rows_containing(store, "mgmt_set_policy") == 0);
   SignetSecretMetadata metadata;
   memset(&metadata, 0, sizeof(metadata));
   CHECK(signet_store_get_secret_metadata(
@@ -853,10 +878,14 @@ static void test_delivery_grant_requester_without_provisioner(void) {
   set_policy(&f, "owner", deny_policy);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-d1") == -1);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-d2") == -1);
-  set_policy(&f, "owner",
-      "{\"default\":\"deny\",\"allow_methods\":[\"credential.deliver\"],"
-      "\"deny_methods\":[\"credential.deliver\"]}");
+  char *deny_method_policy = g_strdup_printf(
+      "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+      "\"allow_methods\":[\"credential.deliver\"],"
+      "\"deny_methods\":[\"credential.deliver\"]}", requester_pk);
+  set_policy(&f, "owner", deny_method_policy);
+  g_free(deny_method_policy);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-d3") == -1);
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-d3b") == -1);
 
   grant_delivery(&f, "owner", requester_pk);
   SignetDenyList *deny = signet_deny_list_new(store);
@@ -873,6 +902,18 @@ static void test_delivery_grant_requester_without_provisioner(void) {
   CHECK(leases_for(store, granted) == leases_before);
   CHECK(audit_rows_containing(store, "deny_listed") > 0);
   CHECK(signet_deny_list_remove(deny, requester_pk) == 0);
+  /* A deny-listed owner is refused through the grant path as well. */
+  CHECK(signet_deny_list_add(deny, owner_pk, "owner", "test",
+                             2000000000) == 0);
+  int owner_denials = audit_rows_containing(store, "deny_listed");
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-o1") == -1);
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "g-o2") == -1);
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_LIST_CREDENTIALS,
+                     "{\"request_id\":\"r\",\"agent_id\":\"owner\"}",
+                     "g-o3") == -1);
+  CHECK(audit_rows_containing(store, "deny_listed") == owner_denials + 3);
+  CHECK(leases_for(store, granted) == leases_before);
+  CHECK(signet_deny_list_remove(deny, owner_pk) == 0);
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-d7") == 0);
   signet_mgmt_handler_set_deny_list(f.mgmt, NULL);
   signet_deny_list_free(deny);
@@ -960,6 +1001,20 @@ static void test_deliver_expected_version(void) {
     g_free(json);
   }
   CHECK(leases_for(store, live) == 0);
+
+  /* expected_version is a deliver parameter only. */
+  char *inspect_pinned = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\","
+      "\"expected_version\":1}", live);
+  CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect_pinned,
+               "v-ins") == -1);
+  CHECK(handle(&f, SIGNET_MGMT_OP_REVOKE_CREDENTIAL, inspect_pinned,
+               "v-rev") == -1);
+  CHECK(signet_store_get_secret_metadata(store, live, 2000000000,
+                                         &metadata) == SIGNET_SECRET_OK);
+  CHECK(metadata.status == SIGNET_SECRET_STATUS_ACTIVE);
+  signet_secret_metadata_clear(&metadata);
+  g_free(inspect_pinned);
 
   int64_t broken_id = 0;
   CHECK(signet_audit_verify_chain(store, 0, 0, &broken_id) == 0);
@@ -1285,6 +1340,56 @@ static void test_contextvm_reply_shapes(void) {
   g_free(foreign_reply);
   g_free(rpc_foreign);
 
+  /* Same for deliver under the owner's own grant: another owner's
+   * credential (not_owner in the audit) and a made-up id (not_found)
+   * produce byte-identical replies. */
+  char *rpc_cross = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"x-1\",\"method\":\"credential/deliver\","
+      "\"params\":{\"agent_id\":\"owner\",\"credential_id\":\"%s\"}}",
+      foreign);
+  r = intent(&f, &cap, requester_pk, rpc_cross, "w-x1");
+  CHECK(g_strcmp0(error_data(r), "no_capability") == 0);
+  char *cross_reply = g_strdup(cap.reply);
+  json_node_unref(r);
+  r = intent(&f, &cap, requester_pk,
+      "{\"jsonrpc\":\"2.0\",\"id\":\"x-1\",\"method\":\"credential/deliver\","
+      "\"params\":{\"agent_id\":\"owner\",\"credential_id\":"
+      "\"cred_0000000000000000000000000000000000000000000000000000000000000000\"}}",
+      "w-x2");
+  CHECK(g_strcmp0(cap.reply, cross_reply) == 0);
+  json_node_unref(r);
+  g_free(cross_reply);
+  g_free(rpc_cross);
+
+  /* Every other management method is refused on the ContextVM path before
+   * it is read, with the requester's id echoed. */
+  const char *forbidden[] = {
+    "credential/create", "credential/import", "credential/rotate",
+    "credential/revoke", "credential/delete", "config/grant-provisioner",
+    "config/revoke-provisioner", "agent/set-policy", "agent/list",
+    "agent/get-status", "agent/provision", "agent/revoke",
+    "agent/rotate-key", "agent/adopt-existing", "agent/restore-existing",
+    "agent/list-clients", "agent/revoke-client", "agent/writer-acquire",
+    "agent/writer-revoke",
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(forbidden); i++) {
+    char *frpc = g_strdup_printf(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"f-%zu\",\"method\":\"%s\","
+        "\"params\":{\"agent_id\":\"owner\",\"credential_id\":\"%s\"}}",
+        i, forbidden[i], cred);
+    char evt[32], want_id[32];
+    g_snprintf(evt, sizeof(evt), "w-f%zu", i);
+    g_snprintf(want_id, sizeof(want_id), "f-%zu", i);
+    r = intent(&f, &cap, requester_pk, frpc, evt);
+    o = json_node_get_object(r);
+    CHECK(g_strcmp0(json_object_get_string_member(o, "id"), want_id) == 0);
+    CHECK(json_object_get_int_member(
+        json_object_get_object_member(o, "error"), "code") == -32002);
+    CHECK(g_strcmp0(error_data(r), "not_provisioner") == 0);
+    json_node_unref(r);
+    g_free(frpc);
+  }
+
   /* List through the grant is scoped to the granting owner. */
   r = intent(&f, &cap, requester_pk,
       "{\"jsonrpc\":\"2.0\",\"id\":\"l-1\",\"method\":\"credential/list\","
@@ -1307,6 +1412,35 @@ static void test_contextvm_reply_shapes(void) {
       "\"params\":{\"agent_id\":\"owner\"}}", "w-14");
   CHECK(json_object_get_int_member(json_node_get_object(r), "id") == 7);
   json_node_unref(r);
+
+  /* Replay-window and rate-limit refusals are typed and echo the id. */
+  SignetReplayCacheConfig rcfg = {
+    .max_entries = 64, .ttl_seconds = 600, .skew_seconds = 120,
+    .max_entries_per_scope = 8, .refuse_when_full = true,
+  };
+  SignetReplayCache *replay = signet_replay_cache_new(&rcfg);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, replay);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, replay);
+  const char *skew_rpc =
+      "{\"jsonrpc\":\"2.0\",\"id\":\"s-1\",\"method\":\"credential/list\","
+      "\"params\":{\"agent_id\":\"owner\"}}";
+  (void)signet_mgmt_handler_handle_intent(f.mgmt, requester_pk, skew_rpc,
+                                          "w-s1", 2000000000 - 600,
+                                          2000000000);
+  r = json_from_string(cap.reply, NULL);
+  CHECK(g_strcmp0(json_object_get_string_member(json_node_get_object(r), "id"),
+                  "s-1") == 0);
+  CHECK(g_strcmp0(error_data(r), "request_time_skew") == 0);
+  json_node_unref(r);
+  signet_mgmt_handler_set_requester_rate_limit(f.mgmt, 0, 0);
+  r = intent(&f, &cap, requester_pk, skew_rpc, "w-s2");
+  CHECK(g_strcmp0(json_object_get_string_member(json_node_get_object(r), "id"),
+                  "s-1") == 0);
+  CHECK(g_strcmp0(error_data(r), "rate_limited") == 0);
+  json_node_unref(r);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, NULL);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, NULL);
+  signet_replay_cache_free(replay);
 
   signet_mgmt_handler_set_reply_hook(f.mgmt, NULL, NULL);
   g_free(cap.recipient);
