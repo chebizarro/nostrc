@@ -248,3 +248,10 @@ if (SIGNET_ENABLE_PASSKEYS)
     DISABLED TRUE
     LABELS "manual;interop;dbus;passkeys")
 endif()
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(signet-test-homes)
+endif()

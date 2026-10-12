@@ -10,6 +10,7 @@
  */
 #include "client_session.h"
 #include "settings_manager.h"
+#include <nostrc-profile-guard.h>
 
 #include <string.h>
 #include <time.h>
@@ -1212,6 +1213,9 @@ gn_client_session_manager_load_persistent(GnClientSessionManager *self)
   g_return_val_if_fail(GN_IS_CLIENT_SESSION_MANAGER(self), 0);
 
 #ifdef GNOSTR_HAVE_LIBSECRET
+  /* nostrc-wqn0u: never the owner's Secret Service under test. */
+  if (nostrc_profile_guard_refuses_session_keyring())
+    return 0;
   GError *err = NULL;
 
   gchar *json_str = secret_password_lookup_sync(
@@ -1252,6 +1256,9 @@ gn_client_session_manager_save_persistent(GnClientSessionManager *self)
   g_return_val_if_fail(GN_IS_CLIENT_SESSION_MANAGER(self), FALSE);
 
 #ifdef GNOSTR_HAVE_LIBSECRET
+  /* nostrc-wqn0u: never the owner's Secret Service under test. */
+  if (nostrc_profile_guard_refuses_session_keyring())
+    return FALSE;
   gchar *json_str = serialize_sessions_to_json(self);
   GError *err = NULL;
 

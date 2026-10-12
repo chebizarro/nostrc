@@ -132,3 +132,10 @@ install(TARGETS ${PLUGIN_NAME}
   LIBRARY DESTINATION ${CMAKE_INSTALL_DATADIR}/gnostr/plugins/${PLUGIN_NAME})
 install(FILES ${PLUGIN_NAME}.plugin
   DESTINATION ${CMAKE_INSTALL_DATADIR}/gnostr/plugins/${PLUGIN_NAME})
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(gnostr-concord-communities-test-homes)
+endif()

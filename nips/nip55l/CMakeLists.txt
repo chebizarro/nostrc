@@ -275,6 +275,20 @@ if (BUILD_TESTING)
     LABELS "nip55l;signer;unit" TIMEOUT 60
     ENVIRONMENT "DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent;HOME=${_nip55l_selector_home};XDG_CONFIG_HOME=${_nip55l_selector_home}/config;XDG_DATA_HOME=${_nip55l_selector_home}/data;XDG_CACHE_HOME=${_nip55l_selector_home}/cache")
 
+  # Profile guard (nostrc-wqn0u): under test the key store is off limits.
+  add_executable(test_nip55l_profile_guard ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_profile_guard.c)
+  target_link_libraries(test_nip55l_profile_guard PRIVATE nostr_nip55l_core nostr)
+  target_compile_options(test_nip55l_profile_guard PRIVATE -Wall -Wextra -Werror)
+  if ((NIP55L_USE_LIBSECRET AND LIBSECRET_FOUND) OR
+      (NIP55L_USE_KEYCHAIN AND SECURITY_FRAMEWORK AND COREFOUNDATION_FRAMEWORK))
+    target_compile_definitions(test_nip55l_profile_guard PRIVATE NIP55L_TEST_HAVE_STORE)
+  endif()
+  if (NIP55L_USE_LIBSECRET AND LIBSECRET_FOUND)
+    target_compile_definitions(test_nip55l_profile_guard PRIVATE NIP55L_TEST_HAVE_LIBSECRET_STORE)
+  endif()
+  add_test(NAME nip55l_profile_guard COMMAND test_nip55l_profile_guard)
+  set_tests_properties(nip55l_profile_guard PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
+
   # macOS Keychain import of pre-e5nz GNostr client keys (nostrc-de9h). The
   # migration is compiled into the test with NIP55L_KEYCHAIN_TEST_HOOKS so it
   # runs against a throwaway keychain file, never the login keychain.
@@ -418,3 +432,10 @@ endif()
 
 install(TARGETS nostr_nip55l_core)
 install(DIRECTORY ${NIP55L_INC}/ DESTINATION include/nostr/nip55l)
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(nip55l-test-homes)
+endif()

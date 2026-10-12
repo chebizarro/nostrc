@@ -20,6 +20,7 @@
 #include <Security/Security.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <string.h>
+#include <nostrc-profile-guard.h>
 
 #define SIGNER_SERVICE_NAME "Gnostr Identity Key"
 #define LEGACY_CLIENT_SERVICE_NAME "org.gnostr.Client"
@@ -42,8 +43,17 @@ GnostrKeyInfo *gnostr_key_info_copy(const GnostrKeyInfo *info) {
   return copy;
 }
 
-gboolean gnostr_keystore_available(void) {
+/* nostrc-wqn0u: under test (NOSTRC_TEST_ISOLATION) this is the owner's login
+ * Keychain; refuse it rather than read their identities. */
+static gboolean keychain_refused(GError **error) {
+  if (!nostrc_profile_guard_refuses_default_keychain()) return FALSE;
+  g_set_error_literal(error, GNOSTR_KEYSTORE_ERROR, GNOSTR_KEYSTORE_ERROR_ACCESS_DENIED,
+                      "the login Keychain is off limits under test");
   return TRUE;
+}
+
+gboolean gnostr_keystore_available(void) {
+  return !keychain_refused(NULL);
 }
 
 gboolean gnostr_keystore_legacy_migrates_automatically(void) {
@@ -71,6 +81,7 @@ static gint compare_npub(gconstpointer a, gconstpointer b) {
  * npub is the comment (signer items) or the account (legacy client items). */
 static GList *list_service(const char *service_name, gboolean npub_in_comment,
                            GError **error) {
+  if (keychain_refused(error)) return NULL;
   CFStringRef service = CFStringCreateWithCString(NULL, service_name,
                                                   kCFStringEncodingUTF8);
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(

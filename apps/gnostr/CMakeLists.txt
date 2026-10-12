@@ -838,6 +838,36 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "keystore;security;unit;gnostr")
 
+  # Profile guard (nostrc-wqn0u): under test the NDB directory, start-up and
+  # the identity shim refuse the owner's profile and key stores.
+  add_executable(gnostr-test-profile-guard
+    tests/test_profile_guard.c
+    src/util/gnostr_paths.c
+    src/util/keystore_libsecret.c
+    src/util/keystore_macos.c
+    src/util/keystore_stub.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/src/gnostr-app-bridge.c)
+  target_compile_features(gnostr-test-profile-guard PRIVATE c_std_11)
+  target_include_directories(gnostr-test-profile-guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/tests/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../nostr-gobject/include/nostr-gobject-1.0)
+  if (APPLE)
+    target_compile_definitions(gnostr-test-profile-guard PRIVATE HAVE_MACOS_KEYCHAIN=1)
+    target_link_libraries(gnostr-test-profile-guard PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+  elseif (LIBSECRET_FOUND)
+    target_compile_definitions(gnostr-test-profile-guard PRIVATE HAVE_LIBSECRET=1)
+    target_link_libraries(gnostr-test-profile-guard PRIVATE PkgConfig::LIBSECRET gnostr-secret)
+  endif()
+  target_link_libraries(gnostr-test-profile-guard PRIVATE nostr PkgConfig::GLIB PkgConfig::GIO)
+  target_compile_options(gnostr-test-profile-guard PRIVATE -Wall -Wextra -Werror)
+  _gnostr_apply_sanitizers(gnostr-test-profile-guard)
+  add_test(NAME gnostr-test-profile-guard COMMAND gnostr-test-profile-guard)
+  set_tests_properties(gnostr-test-profile-guard PROPERTIES
+    TIMEOUT 30
+    LABELS "security;unit;gnostr")
+
   add_executable(gnostr-test-profile-event-validation
     tests/test_profile_event_validation.c
     src/util/profile_event_validation.c)
@@ -2038,3 +2068,10 @@ endforeach()
 install(FILES ${ICON_ROOT}/scalable/apps/${ICON_BASENAME}.svg
         DESTINATION ${ICON_INSTALL_ROOT}/scalable/apps
         OPTIONAL)
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(gnostr-test-homes ENVIRONMENT "GST_REGISTRY=${CMAKE_CURRENT_BINARY_DIR}/gst-registry.bin")
+endif()

@@ -19,6 +19,9 @@
 #include <unistd.h>
 
 #define NOSTRC_TEST_ISOLATION_ENV "NOSTRC_TEST_ISOLATION"
+/* Exported by a test bus while it is the session bus; the application key
+ * stores accept no other session bus under test (nostrc-profile-guard.h). */
+#define NOSTRC_TEST_BUS_ADDRESS_ENV "NOSTRC_TEST_BUS_ADDRESS"
 
 static inline gboolean
 nostrc_test_isolation_enabled(void)

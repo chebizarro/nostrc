@@ -503,6 +503,9 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
   if (approval_ui_service_dir) g_test_dbus_add_service_dir(ctx->tbus, approval_ui_service_dir);
   g_test_dbus_up(ctx->tbus);
+  /* nostrc-wqn0u: declare the bus private, so the daemon (which inherits
+   * this) may use a Secret Service on it under NOSTRC_TEST_ISOLATION. */
+  g_setenv("NOSTRC_TEST_BUS_ADDRESS", g_test_dbus_get_bus_address(ctx->tbus), TRUE);
 
   /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);

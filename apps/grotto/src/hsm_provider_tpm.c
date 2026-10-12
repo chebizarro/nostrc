@@ -9,6 +9,7 @@
  */
 #include "hsm_provider_tpm.h"
 #include "secure-memory.h"
+#include <nostrc-profile-guard.h>
 #include <string.h>
 #include <time.h>
 
@@ -389,6 +390,9 @@ gn_hw_keystore_is_supported(void)
 static SecKeyRef
 create_secure_enclave_key(CFStringRef label, CFErrorRef *error)
 {
+  /* nostrc-wqn0u: no Secure Enclave key in the owner's keychain under test. */
+  if (nostrc_profile_guard_refuses_default_keychain())
+    return NULL;
   CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(
     kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks,
@@ -437,6 +441,9 @@ create_secure_enclave_key(CFStringRef label, CFErrorRef *error)
 static SecKeyRef
 load_secure_enclave_key(CFStringRef label)
 {
+  /* nostrc-wqn0u: no Secure Enclave key in the owner's keychain under test. */
+  if (nostrc_profile_guard_refuses_default_keychain())
+    return NULL;
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(
     kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks,
@@ -461,6 +468,9 @@ load_secure_enclave_key(CFStringRef label)
 static gboolean
 delete_secure_enclave_key(CFStringRef label)
 {
+  /* nostrc-wqn0u: no Secure Enclave key in the owner's keychain under test. */
+  if (nostrc_profile_guard_refuses_default_keychain())
+    return FALSE;
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(
     kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks,

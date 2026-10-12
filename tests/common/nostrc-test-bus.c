@@ -302,6 +302,9 @@ nostrc_test_bus_up(NostrcTestBus *bus)
   if (bus->flags & NOSTRC_TEST_BUS_FLAGS_NOT_SESSION)
     return;
   g_setenv("DBUS_SESSION_BUS_ADDRESS", bus->address, TRUE);
+  /* Marks the session bus as private: under NOSTRC_TEST_ISOLATION the key
+   * stores accept no other (libnostr/include/nostrc-profile-guard.h). */
+  g_setenv(NOSTRC_TEST_BUS_ADDRESS_ENV, bus->address, TRUE);
   g_unsetenv("DBUS_STARTER_ADDRESS");
   g_unsetenv("DBUS_STARTER_BUS_TYPE");
   /* Held until down, so g_bus_get() users share one connection that is
@@ -315,6 +318,17 @@ nostrc_test_bus_up(NostrcTestBus *bus)
       (guid && g_strcmp0(g_dbus_connection_get_guid(bus->session), guid) != 0))
     g_error("nostrc-test-bus: the session-bus connection belongs to another bus; something "
             "still references a session connection made before this bus came up");
+  /* Services this bus activates are on it too; dbus-daemon gives them
+   * DBUS_SESSION_BUS_ADDRESS, this adds the marker. */
+  GVariantBuilder env;
+  g_variant_builder_init(&env, G_VARIANT_TYPE("a{ss}"));
+  g_variant_builder_add(&env, "{ss}", NOSTRC_TEST_BUS_ADDRESS_ENV, bus->address);
+  g_autoptr(GVariant) updated = g_dbus_connection_call_sync(
+    bus->session, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+    "UpdateActivationEnvironment", g_variant_new("(a{ss})", &env), NULL,
+    G_DBUS_CALL_FLAGS_NONE, -1, NULL, &error);
+  if (!updated)
+    g_error("nostrc-test-bus: UpdateActivationEnvironment: %s", error->message);
 }
 
 const gchar *
@@ -448,8 +462,10 @@ nostrc_test_bus_down(NostrcTestBus *bus)
     g_error("nostrc-test-bus: the session-bus connection is still referenced %d s after its "
             "bus stopped (leaked by the code under test?)", NOSTRC_TEST_BUS_CLOSE_TIMEOUT);
   g_source_remove(deadline);
-  if (!(bus->flags & NOSTRC_TEST_BUS_FLAGS_NOT_SESSION))
+  if (!(bus->flags & NOSTRC_TEST_BUS_FLAGS_NOT_SESSION)) {
     g_unsetenv("DBUS_SESSION_BUS_ADDRESS");
+    g_unsetenv(NOSTRC_TEST_BUS_ADDRESS_ENV);
+  }
 
   g_ptr_array_unref(bus->supervisors);
   g_ptr_array_unref(bus->service_dirs);

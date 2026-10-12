@@ -118,3 +118,10 @@ if(BUILD_TESTING AND TARGET nostr)
         TIMEOUT 30
         LABELS "nip29;plugin;unit;gnostr")
 endif()
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(gnostr-nip29-groups-test-homes)
+endif()

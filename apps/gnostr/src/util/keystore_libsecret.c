@@ -14,6 +14,7 @@
 #include "keystore.h"
 #include "seahorse/secret_store.h"
 #include <string.h>
+#include <nostrc-profile-guard.h>
 
 G_DEFINE_QUARK(gnostr-keystore-error-quark, gnostr_keystore_error)
 
@@ -33,7 +34,17 @@ GnostrKeyInfo *gnostr_key_info_copy(const GnostrKeyInfo *info) {
   return copy;
 }
 
+/* nostrc-wqn0u: under test (NOSTRC_TEST_ISOLATION) only a Secret Service on
+ * a private test bus; never the owner's keyring. */
+static gboolean keyring_refused(GError **error) {
+  if (!nostrc_profile_guard_refuses_session_keyring()) return FALSE;
+  g_set_error_literal(error, GNOSTR_KEYSTORE_ERROR, GNOSTR_KEYSTORE_ERROR_ACCESS_DENIED,
+                      "the session keyring is off limits under test (not a private test bus)");
+  return TRUE;
+}
+
 gboolean gnostr_keystore_available(void) {
+  if (keyring_refused(NULL)) return FALSE;
   SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
   if (!service) return FALSE;
   g_object_unref(service);
@@ -47,6 +58,7 @@ gboolean gnostr_keystore_legacy_migrates_automatically(void) {
 /* Items of schema (optionally npub=...), attributes only. */
 static GList *search_metadata(const SecretSchema *schema, const char *npub,
                               GError **error) {
+  if (keyring_refused(error)) return NULL;
   SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
   if (!service) return NULL;
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
@@ -74,6 +86,7 @@ static gint compare_npub(gconstpointer a, gconstpointer b) {
 GList *gnostr_keystore_list_keys(GError **error) {
   /* "npub|label" -> attribute table; one identity may have several items
    * (different key_id selectors), so collapse by npub. */
+  if (keyring_refused(error)) return NULL;
   GHashTable *all = gnostr_secret_store_find_all(error);
   GHashTable *seen = g_hash_table_new(g_str_hash, g_str_equal);
   GList *result = NULL;
