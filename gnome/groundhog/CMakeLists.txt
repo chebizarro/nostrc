@@ -863,7 +863,7 @@ if (BUILD_TESTING)
   target_link_libraries(test-groundhog-bus-probe PRIVATE nostrc-test-bus PkgConfig::GROUNDHOG_DEPS)
   target_compile_options(test-groundhog-bus-probe PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-bus-probe COMMAND test-groundhog-bus-probe)
-  set_tests_properties(groundhog-bus-probe PROPERTIES TIMEOUT 60
+  set_tests_properties(groundhog-bus-probe PROPERTIES TIMEOUT 150
     ENVIRONMENT "GROUNDHOG_BIN=$<TARGET_FILE:groundhog>;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR};GSETTINGS_BACKEND=memory")
 
   # nostrc-lrac: two-instance concurrent start test.

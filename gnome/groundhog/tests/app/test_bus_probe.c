@@ -20,7 +20,7 @@
  *               nostrc-py0hg hang: the old probe saw no variable and skipped.
  *
  * Each case must reach the stall server, log the fallback and exit 0 within
- * the probe's 5 s plus startup. A healthy bus must not trigger the fallback. */
+ * LAUNCH_LIMIT_US. A healthy bus must not trigger the fallback. */
 #include <gio/gio.h>
 #include <gio/gunixsocketaddress.h>
 #include <glib/gstdio.h>
@@ -29,9 +29,10 @@
 #include "nostrc-test-bus.h"
 
 #define FALLBACK_LOG "session bus did not respond"
-/* The probe deadline is 5 s; the window must be up well before the 30 s
- * ctest timeout. */
-#define LAUNCH_LIMIT_US (12 * G_USEC_PER_SEC)
+/* The probe gives up after 5 s; a hang never ends. The rest is ordinary
+ * startup, which a loaded CI machine stretches (a healthy launch on the Linux
+ * gate waits 10 s for an absent Secret Service), so the bound is generous. */
+#define LAUNCH_LIMIT_US (30 * G_USEC_PER_SEC)
 
 typedef struct {
   gchar *dir;          /* short, under /tmp: Unix socket paths are short */
