@@ -457,6 +457,7 @@ struct _GhNewMessagePage {
   GtkListBox *results;
   GtkListBox *people;
   AdwActionRow *check_row;
+  AdwActionRow *add_people_row;
   GtkSpinner *check_spinner;
   GtkLabel *start_note;
 
@@ -813,6 +814,21 @@ add_recipient(GhNewMessagePage *self, const gchar *pubkey, const gchar *label)
   return TRUE;
 }
 
+/* One-click start (nostrc-puwx4, as Signal's "New chat"): the user picked
+ * someone with nobody else chosen, so the confirm page comes at once, with
+ * the blocked warning and the inbox check as after Next; Add People there
+ * (or Back) returns to the picker with the chip kept, for more people. */
+static gboolean
+pick_recipient(GhNewMessagePage *self, const gchar *pubkey, const gchar *label)
+{
+  gboolean first = g_list_model_get_n_items(G_LIST_MODEL(self->recipients)) == 0;
+  if (!add_recipient(self, pubkey, label))
+    return FALSE;
+  if (first)
+    gtk_widget_activate_action(GTK_WIDGET(self), "new-message.next", NULL);
+  return TRUE;
+}
+
 /* ---- starting ---------------------------------------------------------------- */
 
 /* Complete a conversation start: emit the signal and close. */
@@ -976,7 +992,7 @@ on_looked_up(GObject *source, GAsyncResult *result, gpointer data)
     gtk_accessible_announce(GTK_ACCESSIBLE(self), why, GTK_ACCESSIBLE_ANNOUNCEMENT_PRIORITY_MEDIUM);
   } else if (g_strcmp0(pubkey, account_of(self)) == 0) {
     item_set_subtitle(item, _("That's your own address"));
-  } else if (!add_recipient(self, pubkey, item->address)) {
+  } else if (!pick_recipient(self, pubkey, item->address)) {
     item_set_subtitle(item, is_recipient(self, pubkey) ? _("Already added") : NULL);
   }
   pending_free(pending);
@@ -1142,7 +1158,20 @@ on_next(GtkWidget *widget, const gchar *action, GVariant *parameter)
                     "aren't shown."), "\n\n", note, NULL)
     : g_strdup(note);
   gtk_label_set_text(self->start_note, text);
-  adw_navigation_view_push(self->navigation, self->confirm_page);
+  gtk_widget_set_visible(GTK_WIDGET(self->add_people_row), !recipients_full(self));
+  if (adw_navigation_view_get_visible_page(self->navigation) != self->confirm_page)
+    adw_navigation_view_push(self->navigation, self->confirm_page);
+}
+
+/* Add People: back to the picker, the chosen people kept as chips. */
+static void
+on_add_people(GtkWidget *widget, const gchar *action, GVariant *parameter)
+{
+  GhNewMessagePage *self = GH_NEW_MESSAGE_PAGE(widget);
+  (void)action;
+  (void)parameter;
+  adw_navigation_view_pop_to_tag(self->navigation, "pick");
+  gtk_widget_grab_focus(GTK_WIDGET(self->entry));
 }
 
 static void
@@ -1186,7 +1215,8 @@ activate_item(GhNewMessagePage *self, GhNewMessageItem *item)
     break;
   case GH_NEW_MESSAGE_ITEM_CONTACT:
   case GH_NEW_MESSAGE_ITEM_PUBKEY:
-    if (add_recipient(self, item->pubkey, NULL))
+    if (pick_recipient(self, item->pubkey, NULL) &&
+        adw_navigation_view_get_visible_page(self->navigation) != self->confirm_page)
       gtk_widget_grab_focus(GTK_WIDGET(self->entry));
     break;
   case GH_NEW_MESSAGE_ITEM_LOOKUP:
@@ -1514,6 +1544,8 @@ gh_new_message_page_class_init(GhNewMessagePageClass *klass)
   gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, check_row);
   gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, check_spinner);
   gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, start_note);
+  gtk_widget_class_bind_template_child(widget_class, GhNewMessagePage, add_people_row);
+  gtk_widget_class_install_action(widget_class, "new-message.add-people", NULL, on_add_people);
   gtk_widget_class_install_action(widget_class, "new-message.next", NULL, on_next);
   gtk_widget_class_install_action(widget_class, "new-message.start", NULL, on_start);
   gtk_widget_class_install_action(widget_class, "new-message.remove", "s", on_remove);
