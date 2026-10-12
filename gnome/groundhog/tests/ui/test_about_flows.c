@@ -9,7 +9,10 @@
 #include <libsoup/soup.h>
 #include <json-glib/json-glib.h>
 #include <nip34.h>
+#include <nostr-keys.h>
 #include <glib/gstdio.h>
+#include "gh-issue-resolver.h"
+#include "../relay/wire-relay.h"
 
 #define OWNER "cdee943cbb19c51ab847a66d5d774373aa9f63d287246bb59b0827fa5e637400"
 #define OWNER_URI "nostr:npub1ehhfg09mr8z34wz85ek46a6rww4f7c7jsujxhdvmpqnl5hnrwsqq2szjqv"
@@ -316,7 +319,7 @@ test_issue_consent(gconstpointer data)
     blossom = client;
   }
 #endif
-  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings, blossom);
+  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings, blossom, NULL, NULL);
   g_assert_true(GN_IS_NIP34_ISSUE_VIEW(dialog));
   gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
   {
@@ -468,6 +471,330 @@ cleanup:
   }
 }
 
+/* ---- Repository lookup and upload consent options (nostrc-ewx8x, -u42c7) ---- */
+
+#define MAINT1 "1111111111111111111111111111111111111111111111111111111111111111"
+#define MAINT2 "2222222222222222222222222222222222222222222222222222222222222222"
+#define MAINT_OLD "3333333333333333333333333333333333333333333333333333333333333333"
+#define MAINT_FORGED "4444444444444444444444444444444444444444444444444444444444444444"
+#define ANNOUNCED "wss://announced.example"
+
+/* A signed kind-30617 announcement of repo by secret's key. */
+static gchar *
+announcement(const char *secret, const char *repo, gint64 created_at,
+             const char *const *maintainers, const char *const *relays)
+{
+  NostrEvent *event = nip34_create_repo_announcement(repo, repo, NULL, NULL, NULL, relays,
+                                                     maintainers);
+  g_assert_nonnull(event);
+  nostr_event_set_created_at(event, created_at);
+  g_assert_cmpint(nostr_event_sign(event, secret), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  gchar *out = g_strdup(json);
+  free(json);
+  return out;
+}
+
+typedef struct {
+  gboolean done;
+  GnIssueTarget *target;
+  GError *error;
+} Resolved;
+
+static void
+on_resolved(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Resolved *r = data;
+  r->target = gn_issue_repo_resolver_resolve_finish(GN_ISSUE_REPO_RESOLVER(source), result,
+                                                    &r->error);
+  r->done = TRUE;
+}
+
+static gboolean resolved_done(gpointer data) { return ((Resolved *)data)->done; }
+
+/* The inbound REQ frames the relay received, joined. */
+static gchar *
+inbound_reqs(WireRelay *relay)
+{
+  GString *out = g_string_new(NULL);
+  for (guint i = 0; i < relay->frames->len; i++) {
+    WireFrame *frame = g_ptr_array_index(relay->frames, i);
+    if (frame->inbound && g_str_has_prefix(frame->text, "[\"REQ\""))
+      g_string_append_printf(out, "%s\n", frame->text);
+  }
+  return g_string_free(out, FALSE);
+}
+
+static gboolean
+p_tagged(NostrEvent *event, const char *pubkey)
+{
+  const NostrTags *tags = nostr_event_get_tags(event);
+  for (gsize i = 0; i < nostr_tags_size(tags); i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    if (nostr_tag_size(tag) >= 2 && g_strcmp0(nostr_tag_get(tag, 0), "p") == 0 &&
+        g_strcmp0(nostr_tag_get(tag, 1), pubkey) == 0)
+      return TRUE;
+  }
+  return FALSE;
+}
+
+static gboolean
+status_says_no_announcement(gpointer data)
+{
+  return strstr(gtk_label_get_text(GTK_LABEL(data)), "No repository announcement") != NULL;
+}
+
+static gboolean
+count_tick(GtkWidget *widget, GdkFrameClock *clock, gpointer data)
+{
+  (void)widget;
+  (void)clock;
+  return ++*(guint *)data < 2 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+
+/* An AdwDialog opens on the second frame after it is mapped. */
+static AdwAlertDialog *
+shown_alert(GtkWindow *window)
+{
+  AdwDialog *dialog = adw_window_get_visible_dialog(ADW_WINDOW(window));
+  g_assert_true(ADW_IS_ALERT_DIALOG(dialog));
+  while (!gtk_widget_get_mapped(GTK_WIDGET(dialog)))
+    g_main_context_iteration(NULL, TRUE);
+  guint ticks = 0;
+  gtk_widget_add_tick_callback(GTK_WIDGET(dialog), count_tick, &ticks, NULL);
+  while (ticks < 2)
+    g_main_context_iteration(NULL, TRUE);
+  return ADW_ALERT_DIALOG(dialog);
+}
+
+static void
+answer(AdwAlertDialog *alert, const char *response)
+{
+  g_signal_emit_by_name(alert, "response", response);
+  adw_dialog_force_close(ADW_DIALOG(alert));
+  drain();
+}
+
+/* Opt-in evidence: GROUNDHOG_TEST_SCREENSHOTS=<dir> saves the window, with
+ * the application's stylesheet, as groundhog-issue-uploads-maintainers-<name>.png. */
+static void
+screenshot(GtkWindow *window, const char *name)
+{
+  const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (!dir || !*dir)
+    return;
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(window));
+  drain();
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(GTK_WIDGET(window));
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot, gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  graphene_rect_t bounds;
+  gsk_render_node_get_bounds(node, &bounds);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(window));
+  g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(renderer, node, &bounds);
+  g_autofree char *path = g_strdup_printf("%s/groundhog-issue-uploads-maintainers-%s.png", dir,
+                                          name);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+  g_test_message("saved %s", path);
+}
+
+static void
+never_sign(gpointer data, const gchar *unsigned_json, GCancellable *cancellable,
+           GAsyncReadyCallback callback, gpointer callback_data)
+{
+  (void)data; (void)unsigned_json; (void)cancellable; (void)callback; (void)callback_data;
+  g_error("Nothing may be signed as the account in the issue form without consent");
+}
+
+static gchar *
+never_sign_finish(GAsyncResult *result, GError **error)
+{
+  (void)result; (void)error;
+  return NULL;
+}
+
+static void
+test_issue_lookup(void)
+{
+  GhTestBus bus = {0};
+  GhTestSigner signer = {0};
+  gh_test_bus_up_beside_gtk(&bus);
+  gh_test_signer_up(&bus, &signer);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_autofree char *npub = gh_test_npub(1);
+  g_autofree char *pk = gh_test_pub(1);
+  g_settings_set_string(settings, "current-npub", npub);
+  g_settings_set_string(settings, "signer-method", "auto");
+  g_autoptr(GhAccountController) accounts = gh_account_controller_new_full(settings, bus.client, identities, NULL);
+  gh_test_spin_until(active, accounts);
+
+  /* A local relay that serves announcements: the owner's current and older
+   * one for "repo", the owner's for another repository, and a forgery. */
+  WireRelay discovery = { .serve = TRUE, .record = TRUE };
+  relay_init(&discovery);
+  char *owner_secret = nostr_key_generate_private();
+  char *owner = nostr_key_get_public(owner_secret);
+  char *forger_secret = nostr_key_generate_private();
+  gint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  const char *current[] = { MAINT1, MAINT2, NULL };
+  const char *older[] = { MAINT_OLD, NULL };
+  const char *forged[] = { MAINT_FORGED, NULL };
+  const char *announced[] = { ANNOUNCED, NULL };
+  g_autofree gchar *a_current = announcement(owner_secret, "repo", now - 10, current, announced);
+  g_autofree gchar *a_older = announcement(owner_secret, "repo", now - 1000, older, NULL);
+  g_autofree gchar *a_other = announcement(owner_secret, "other", now, forged, NULL);
+  g_autofree gchar *a_forged = announcement(forger_secret, "repo", now, forged, NULL);
+  wire_relay_inject(&discovery, a_older);
+  wire_relay_inject(&discovery, a_current);
+  wire_relay_inject(&discovery, a_other);
+  wire_relay_inject(&discovery, a_forged);
+
+  /* No discovery relay: no resolver, so the form offers no lookup. */
+  g_settings_set_strv(settings, "discovery-relays", NULL);
+  g_assert_null(gh_issue_resolver_new(accounts, settings));
+  const char *relays[] = { discovery.url, NULL };
+  g_settings_set_strv(settings, "discovery-relays", relays);
+
+  /* The resolver over the application's relay transport: one REQ for the
+   * owner's announcement of "repo"; the newest one by the owner wins. */
+  g_autoptr(GnIssueRepoResolver) resolver = gh_issue_resolver_new(accounts, settings);
+  g_assert_nonnull(resolver);
+  g_assert_cmpstr(gh_issue_resolver_get_relays(GH_ISSUE_RESOLVER(resolver))[0], ==, discovery.url);
+  drain();
+  g_assert_cmpuint(discovery.connections->len, ==, 0);
+  g_autoptr(GnIssueTarget) hint = gn_issue_target_new(owner, "repo", NULL, NULL);
+  Resolved r = { 0 };
+  gn_issue_repo_resolver_resolve_async(resolver, hint, NULL, on_resolved, &r);
+  gh_test_spin_until(resolved_done, &r);
+  g_assert_no_error(r.error);
+  g_assert_nonnull(r.target);
+  g_assert_cmpuint(g_strv_length(r.target->maintainers), ==, 2);
+  g_assert_cmpstr(r.target->maintainers[0], ==, MAINT1);
+  g_assert_cmpstr(r.target->maintainers[1], ==, MAINT2);
+  g_assert_cmpuint(g_strv_length(r.target->relays), ==, 1);
+  g_assert_cmpstr(r.target->relays[0], ==, ANNOUNCED);
+  g_autofree gchar *reqs = inbound_reqs(&discovery);
+  g_assert_nonnull(strstr(reqs, "30617"));
+  g_assert_nonnull(strstr(reqs, owner));
+  g_assert_nonnull(strstr(reqs, "\"#d\":[\"repo\"]"));
+  /* The maintainers become p tags of the issue, after the owner. */
+  GnIssueDraftInput input = { .title = "Crash", .description = "It crashes." };
+  g_autoptr(GnIssueDraft) draft = gn_issue_draft_new(&input, NULL);
+  g_assert_nonnull(draft);
+  NostrEvent *issue = gn_issue_draft_build_event(draft, r.target, pk);
+  g_assert_true(p_tagged(issue, owner));
+  g_assert_true(p_tagged(issue, MAINT1));
+  g_assert_true(p_tagged(issue, MAINT2));
+  g_assert_false(p_tagged(issue, MAINT_OLD));
+  g_assert_false(p_tagged(issue, MAINT_FORGED));
+  nostr_event_free(issue);
+  g_clear_pointer(&r.target, gn_issue_target_free);
+
+  /* Cancelled by the form: no result. */
+  g_autoptr(GCancellable) cancel = g_cancellable_new();
+  g_cancellable_cancel(cancel);
+  r.done = FALSE;
+  gn_issue_repo_resolver_resolve_async(resolver, hint, cancel, on_resolved, &r);
+  gh_test_spin_until(resolved_done, &r);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
+  g_assert_null(r.target);
+  g_clear_error(&r.error);
+
+  /* The form: the lookup runs only after its consent, which names the
+   * relays; nothing connects before. */
+  if (g_getenv("GROUNDHOG_TEST_SCREENSHOTS")) {
+    g_autoptr(GtkCssProvider) css = gtk_css_provider_new();
+    gtk_css_provider_load_from_resource(css, "/org/nostr/Groundhog/style.css");
+    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(css),
+                                               GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+  }
+  GtkWindow *window = GTK_WINDOW(adw_window_new());
+  gtk_window_set_default_size(window, 720, 860);
+  gtk_window_present(window);
+  guint connections = discovery.connections->len;
+  guint frames = discovery.frames->len;
+  GnNip34IssueView *dialog = gh_issue_dialog_new(accounts, settings, NULL, NULL, NULL);
+  gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
+  GtkWidget *lookup = child(dialog, "lookup_button");
+  g_assert_true(gtk_widget_get_visible(lookup));
+  g_signal_emit_by_name(lookup, "clicked");
+  AdwAlertDialog *alert = shown_alert(window);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(alert), ==, "Look Up the Repository?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(alert), discovery.url));
+  screenshot(window, "lookup-consent");
+  drain();
+  g_assert_cmpuint(discovery.connections->len, ==, connections);
+  answer(alert, "cancel");
+  g_assert_cmpuint(discovery.connections->len, ==, connections);
+  g_assert_cmpuint(discovery.frames->len, ==, frames);
+  g_signal_emit_by_name(lookup, "clicked");
+  answer(shown_alert(window), "lookup");
+  /* nostrc's own announcement is not on this relay (only "repo" is). */
+  gh_test_spin_until(status_says_no_announcement, child(dialog, "status"));
+  g_autofree gchar *form_reqs = inbound_reqs(&discovery);
+  g_assert_nonnull(strstr(form_reqs, OWNER));
+  g_assert_nonnull(strstr(form_reqs, "\"#d\":[\"nostrc\"]"));
+  gtk_window_destroy(window);
+  drain();
+
+#if GH_ISSUE_UPLOADS
+  /* The upload consent offers "use my account" for a server the account has
+   * not consented to, unchecked; cancelling contacts and signs nothing. */
+  window = GTK_WINDOW(adw_window_new());
+  gtk_window_set_default_size(window, 720, 860);
+  gtk_window_present(window);
+  const char *servers[] = { "https://blossom.example.com", NULL };
+  g_settings_set_strv(settings, "blossom-servers", servers);
+  g_autoptr(GhNetHttp) http = gh_net_http_new(settings);
+  g_autoptr(GhBlossomClient) client = gh_blossom_client_new(settings, http);
+  gh_blossom_client_set_account_signer(client, pk, never_sign, never_sign_finish, NULL, NULL);
+  dialog = gh_issue_dialog_new(accounts, settings, client, NULL, NULL);
+  gn_nip34_issue_view_present(dialog, GTK_WIDGET(window));
+  gtk_editable_set_text(GTK_EDITABLE(child(dialog, "title_row")), "Screenshot of the crash");
+  gtk_text_buffer_set_text(gtk_text_view_get_buffer(GTK_TEXT_VIEW(child(dialog, "body_view"))),
+                           "The window closes when I open a conversation.", -1);
+  g_autofree char *path = g_build_filename(g_get_tmp_dir(), "groundhog-issue-shot.png", NULL);
+  g_assert_true(g_file_set_contents(path, "\x89PNG\r\n\x1a\n", 8, NULL));
+  g_autoptr(GFile) file = g_file_new_for_path(path);
+  g_assert_true(gn_nip34_issue_view_add_attachment(dialog, file));
+  g_signal_emit_by_name(child(dialog, "review_button"), "clicked");
+  alert = shown_alert(window);
+  GtkWidget *option = find_named(adw_alert_dialog_get_extra_child(alert), "consent_option_0");
+  g_assert_nonnull(option);
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(option)));
+  GtkWidget *option_label = gtk_check_button_get_child(GTK_CHECK_BUTTON(option));
+  g_assert_nonnull(strstr(GTK_IS_LABEL(option_label)
+                            ? gtk_label_get_text(GTK_LABEL(option_label))
+                            : gtk_check_button_get_label(GTK_CHECK_BUTTON(option)),
+                          "blossom.example.com"));
+  screenshot(window, "upload-consent");
+  answer(alert, "cancel");
+  g_assert_false(gh_blossom_client_get_account_consent(client, servers[0]));
+  g_assert_cmpint(g_unlink(path), ==, 0);
+  gtk_window_destroy(window);
+  drain();
+  g_settings_reset(settings, "blossom-servers");
+#else
+  (void)never_sign;
+  (void)never_sign_finish;
+#endif
+
+  relay_clear(&discovery);
+  free(owner_secret);
+  free(owner);
+  free(forger_secret);
+  g_settings_reset(settings, "discovery-relays");
+  gh_test_release(g_steal_pointer(&accounts));
+  GhTestSenders check = { &bus, &signer };
+  gh_test_spin_until(gh_test_signer_senders_closed, &check);
+  gh_test_signer_down(&bus, &signer);
+  gh_test_bus_down(&bus);
+}
+
 void
 gh_test_about_flows_register(void)
 {
@@ -478,4 +805,5 @@ gh_test_about_flows_register(void)
   g_test_add_data_func("/groundhog/about/issue-account-changed", GINT_TO_POINTER(1), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-close-signing", GINT_TO_POINTER(2), test_issue_consent);
   g_test_add_data_func("/groundhog/about/issue-fields-diagnostics", GINT_TO_POINTER(3), test_issue_consent);
+  g_test_add_func("/groundhog/about/issue-lookup", test_issue_lookup);
 }

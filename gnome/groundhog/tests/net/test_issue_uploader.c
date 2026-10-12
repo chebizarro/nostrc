@@ -9,6 +9,9 @@
 
 #include <errno.h>
 #include <glib/gstdio.h>
+#include <nostr-event.h>
+#include <nostr-keys.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define ONION "groundhogtestblobqw4yvkpvrbwe5wtamgzhhdrhm5k2ww7m3tgdwbzdyd.onion"
@@ -210,7 +213,8 @@ test_no_server(void)
 
 /* Nothing is contacted until the form asks for an upload (after consent);
  * then the file goes once, metadata stripped, with a throwaway-key
- * authorization, and the address is the user's server's BUD-01 blob. */
+ * authorization and its sniffed Content-Type, and the address is the user's
+ * server's BUD-01 blob with the type's extension (nostrc-u42c7). */
 static void
 test_round_trip(void)
 {
@@ -233,8 +237,9 @@ test_round_trip(void)
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 1);
   g_autofree gchar *prefix = g_strconcat(blossom_fixture_url(f.blossom), "/", NULL);
   g_assert_true(g_str_has_prefix(r.url, prefix));
-  const gchar *sha = r.url + strlen(prefix);
-  g_assert_cmpuint(strlen(sha), ==, 64);
+  g_assert_cmpuint(strlen(r.url), ==, strlen(prefix) + 64 + strlen(".jpg"));
+  g_assert_true(g_str_has_suffix(r.url, ".jpg"));
+  g_autofree gchar *sha = g_strndup(r.url + strlen(prefix), 64);
   GBytes *stored = blossom_fixture_get_blob(f.blossom, sha);
   g_assert_nonnull(stored);
   g_assert_false(contains(stored, GPS_CANARY));
@@ -245,7 +250,275 @@ test_round_trip(void)
   g_assert_true(put->auth_valid);
   g_assert_cmpstr(put->auth_x, ==, sha);
   g_assert_cmpstr(put->x_sha256, ==, sha);
+  g_assert_cmpstr(put->content_type, ==, "image/jpeg");
   result_clear(&r);
+  fixture_down(&f);
+}
+
+/* ---- Content type and address (nostrc-u42c7) -------------------------------------- */
+
+static GBytes *
+bytes_of(const void *data, gsize size)
+{
+  return g_bytes_new(data, size);
+}
+
+static void
+assert_sniff(GBytes *bytes, const gchar *type, const gchar *extension)
+{
+  const gchar *got_extension = "unset";
+  g_assert_cmpstr(gh_issue_uploader_sniff(bytes, &got_extension), ==, type);
+  g_assert_cmpstr(got_extension, ==, extension);
+}
+
+/* The type is the bytes' alone, from an allowlist; markup is text. */
+static void
+test_sniff(void)
+{
+  g_autoptr(GBytes) jpeg = make_jpeg(1024);
+  assert_sniff(jpeg, "image/jpeg", "jpg");
+  static const guint8 png[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0, 0, 0, 13 };
+  g_autoptr(GBytes) png_bytes = bytes_of(png, sizeof png);
+  assert_sniff(png_bytes, "image/png", "png");
+  g_autoptr(GBytes) gif = bytes_of("GIF89a\x01\x00\x01\x00", 10);
+  assert_sniff(gif, "image/gif", "gif");
+  g_autoptr(GBytes) webp = bytes_of("RIFF\x10\x00\x00\x00WEBPVP8 ", 16);
+  assert_sniff(webp, "image/webp", "webp");
+  g_autoptr(GBytes) pdf = bytes_of("%PDF-1.7\n\x80\x81", 11);
+  assert_sniff(pdf, "application/pdf", "pdf");
+  g_autoptr(GBytes) mp4 = bytes_of("\x00\x00\x00\x18" "ftypisom\x00\x00\x02\x00", 16);
+  assert_sniff(mp4, "video/mp4", "mp4");
+  g_autoptr(GBytes) quicktime = bytes_of("\x00\x00\x00\x14" "ftypqt  \x00\x00\x02\x00", 16);
+  assert_sniff(quicktime, "application/octet-stream", NULL);
+  g_autoptr(GBytes) webm = bytes_of("\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x84webm", 16);
+  assert_sniff(webm, "video/webm", "webm");
+  g_autoptr(GBytes) mkv = bytes_of("\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x88matroska", 20);
+  assert_sniff(mkv, "application/octet-stream", NULL);
+  const gchar *svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" onload=\"alert(1)\"/>\n";
+  g_autoptr(GBytes) svg_bytes = bytes_of(svg, strlen(svg));
+  assert_sniff(svg_bytes, "text/plain", "txt");
+  const gchar *log = "{\"crash\": \"Grüße\"}\r\n\tend\f";
+  g_autoptr(GBytes) log_bytes = bytes_of(log, strlen(log));
+  assert_sniff(log_bytes, "text/plain", "txt");
+  g_autoptr(GBytes) nul = bytes_of("text\0more", 9);
+  assert_sniff(nul, "application/octet-stream", NULL);
+  g_autoptr(GBytes) escape = bytes_of("text\x1b[31m", 9);
+  assert_sniff(escape, "application/octet-stream", NULL);
+  g_autoptr(GBytes) latin1 = bytes_of("caf\xe9", 4);
+  assert_sniff(latin1, "application/octet-stream", NULL);
+  /* A character cut at the end of the file is not text; one cut by the
+   * 64 KiB bound is, and only the bound is read. */
+  g_autoptr(GBytes) cut = bytes_of("caf\xc3", 4);
+  assert_sniff(cut, "application/octet-stream", NULL);
+  GByteArray *long_text = g_byte_array_new();
+  for (guint i = 0; i < 64 * 1024 - 1; i++)
+    g_byte_array_append(long_text, (const guint8 *)"a", 1);
+  g_byte_array_append(long_text, (const guint8 *)"\xc3\xa9\0\0", 4);
+  g_autoptr(GBytes) bounded = g_byte_array_free_to_bytes(long_text);
+  assert_sniff(bounded, "text/plain", "txt");
+  g_autoptr(GBytes) empty = g_bytes_new_static("", 0);
+  assert_sniff(empty, "application/octet-stream", NULL);
+}
+
+/* The name never decides: random bytes named .png go as an opaque file
+ * without an extension, markup named .svg as text. The extension the
+ * server's descriptor names is used when its url is that same blob on the
+ * same server; any other url is ignored. */
+static void
+test_type_and_address(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  g_autoptr(GnIssueUploader) uploader = gh_issue_uploader_new(f.client);
+  g_autofree gchar *prefix = g_strconcat(blossom_fixture_url(f.blossom), "/", NULL);
+  Result r = { 0 };
+
+  guint8 noise[256];
+  for (guint i = 0; i < sizeof noise; i++)
+    noise[i] = (guint8)(i * 151u + 7u);
+  noise[0] = 0x00;
+  g_autoptr(GBytes) noise_bytes = bytes_of(noise, sizeof noise);
+  g_autoptr(GFile) fake_png = write_file("not-really.png", noise_bytes);
+  upload(uploader, fake_png, NULL, &r);
+  g_assert_no_error(r.error);
+  g_autofree gchar *noise_sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, noise_bytes);
+  g_autofree gchar *bare = g_strconcat(prefix, noise_sha, NULL);
+  g_assert_cmpstr(r.url, ==, bare);
+  GPtrArray *requests = blossom_fixture_requests(f.blossom);
+  BlossomRequest *put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_cmpstr(put->content_type, ==, "application/octet-stream");
+
+  const gchar *svg = "<svg onload=\"alert(1)\"/>\n";
+  g_autoptr(GBytes) svg_bytes = bytes_of(svg, strlen(svg));
+  g_autoptr(GFile) svg_file = write_file("image.svg", svg_bytes);
+  upload(uploader, svg_file, NULL, &r);
+  g_assert_no_error(r.error);
+  g_autofree gchar *svg_sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, svg_bytes);
+  g_autofree gchar *svg_url = g_strconcat(prefix, svg_sha, ".txt", NULL);
+  g_assert_cmpstr(r.url, ==, svg_url);
+  put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_cmpstr(put->content_type, ==, "text/plain");
+
+  /* The server names its own extension for the blob. */
+  g_autoptr(GBytes) jpeg = make_jpeg(4 * 1024);
+  g_autoptr(GFile) photo = write_file("photo", jpeg);
+  blossom_fixture_set_descriptor_url(f.blossom, NULL, "JPEG");
+  upload(uploader, photo, NULL, &r);
+  g_assert_no_error(r.error);
+  g_assert_true(g_str_has_prefix(r.url, prefix));
+  g_assert_true(g_str_has_suffix(r.url, ".jpeg"));
+  g_autofree gchar *sha = g_strndup(r.url + strlen(prefix), 64);
+  g_assert_nonnull(blossom_fixture_get_blob(f.blossom, sha));
+
+  /* Another host, a bad extension or another path: the server's url is not
+   * used, the address is still the user's server's blob with the type's
+   * extension. */
+  const gchar *bad[][2] = { { "https://cdn.example.com", "jpeg" }, { NULL, "j.peg" },
+                            { NULL, "jpg?x=1" }, { NULL, "averyveryverylongextension" } };
+  g_autofree gchar *expected = g_strconcat(prefix, sha, ".jpg", NULL);
+  for (guint i = 0; i < G_N_ELEMENTS(bad); i++) {
+    blossom_fixture_set_descriptor_url(f.blossom, bad[i][0], bad[i][1]);
+    upload(uploader, photo, NULL, &r);
+    g_assert_no_error(r.error);
+    g_assert_cmpstr(r.url, ==, expected);
+  }
+  g_autofree gchar *nested = g_strconcat(blossom_fixture_url(f.blossom), "/media", NULL);
+  blossom_fixture_set_descriptor_url(f.blossom, nested, "jpeg");
+  upload(uploader, photo, NULL, &r);
+  g_assert_cmpstr(r.url, ==, expected);
+  result_clear(&r);
+  fixture_down(&f);
+}
+
+/* ---- "Use my account for this server" (nostrc-u42c7) -------------------------- */
+
+typedef struct {
+  gchar *secret;
+  gchar *pubkey;
+  guint calls;
+} FakeSigner;
+
+static void
+fake_sign_async(gpointer data, const gchar *unsigned_json, GCancellable *cancellable,
+                GAsyncReadyCallback callback, gpointer callback_data)
+{
+  FakeSigner *signer = data;
+  signer->calls++;
+  GTask *task = g_task_new(NULL, cancellable, callback, callback_data);
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_compact(event, unsigned_json, NULL), ==, 1);
+  g_assert_cmpint(nostr_event_get_kind(event), ==, 24242);
+  g_assert_cmpint(nostr_event_sign(event, signer->secret), ==, 0);
+  char *json = nostr_event_serialize_compact(event);
+  nostr_event_free(event);
+  g_task_return_pointer(task, g_strdup(json), g_free);
+  free(json);
+  g_object_unref(task);
+}
+
+static gchar *
+fake_sign_finish(GAsyncResult *result, GError **error)
+{
+  return g_task_propagate_pointer(G_TASK(result), error);
+}
+
+typedef struct {
+  GhBlossomClient *client;
+  GPtrArray *servers; /* recorded */
+  gboolean fail;
+} Recorder;
+
+/* What the application's recorder does (gh_attachments_set_consent()):
+ * keep the consent, then set it on the client. */
+static gboolean
+record_consent(gpointer data, const gchar *server, GError **error)
+{
+  Recorder *recorder = data;
+  if (recorder->fail) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "store closed");
+    return FALSE;
+  }
+  g_ptr_array_add(recorder->servers, g_strdup(server));
+  gh_blossom_client_set_account_consent(recorder->client, server, TRUE);
+  return TRUE;
+}
+
+/* A server that only accepts accounts it knows refuses the throwaway key.
+ * The upload consent offers, unchecked, to use the account for that server
+ * only while the client has an account signer and no consent for it;
+ * checking it records the account's kept consent, and the next upload is
+ * signed by the account. Nothing signs as the account before that. */
+static void
+test_account_option(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  g_autoptr(GnIssueUploader) uploader = gh_issue_uploader_new(f.client);
+  /* No account signer: nothing to offer. */
+  g_assert_null(gn_issue_uploader_dup_consent_options(uploader));
+
+  FakeSigner signer = { 0 };
+  char *secret = nostr_key_generate_private();
+  char *pubkey = nostr_key_get_public(secret);
+  signer.secret = g_strdup(secret);
+  signer.pubkey = g_strdup(pubkey);
+  free(secret);
+  free(pubkey);
+  gh_blossom_client_set_account_signer(f.client, signer.pubkey, fake_sign_async, fake_sign_finish,
+                                       &signer, NULL);
+  blossom_fixture_require_pubkey(f.blossom, signer.pubkey);
+  Recorder recorder = { f.client, g_ptr_array_new_with_free_func(g_free), FALSE };
+  gh_issue_uploader_set_consent_recorder(GH_ISSUE_UPLOADER(uploader), record_consent, &recorder);
+
+  g_autoptr(GBytes) jpeg = make_jpeg(4 * 1024);
+  g_autoptr(GFile) photo = write_file("known.jpg", jpeg);
+  Result r = { 0 };
+  upload(uploader, photo, NULL, &r);
+  g_assert_error(r.error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED);
+  g_assert_cmpuint(signer.calls, ==, 0);
+  BlossomRequest *put = g_ptr_array_index(blossom_fixture_requests(f.blossom), 0);
+  g_assert_cmpstr(put->auth_pubkey, !=, signer.pubkey);
+
+  g_auto(GStrv) options = gn_issue_uploader_dup_consent_options(uploader);
+  g_assert_nonnull(options);
+  g_assert_cmpuint(g_strv_length(options), ==, 1);
+  g_assert_nonnull(strstr(options[0], "127.0.0.1"));
+  g_assert_cmpuint(signer.calls, ==, 0);
+  g_assert_cmpuint(recorder.servers->len, ==, 0);
+
+  g_autoptr(GError) error = NULL;
+  g_assert_false(gn_issue_uploader_apply_consent_option(uploader, 1, &error));
+  g_assert_nonnull(error);
+  g_clear_error(&error);
+  recorder.fail = TRUE;
+  g_assert_false(gn_issue_uploader_apply_consent_option(uploader, 0, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+  g_clear_error(&error);
+  g_assert_false(gh_blossom_client_get_account_consent(f.client, blossom_fixture_url(f.blossom)));
+  recorder.fail = FALSE;
+  g_assert_true(gn_issue_uploader_apply_consent_option(uploader, 0, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(recorder.servers->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(recorder.servers, 0), ==, blossom_fixture_url(f.blossom));
+  g_assert_true(gh_blossom_client_get_account_consent(f.client, blossom_fixture_url(f.blossom)));
+
+  upload(uploader, photo, NULL, &r);
+  g_assert_no_error(r.error);
+  g_assert_cmpuint(signer.calls, ==, 1);
+  GPtrArray *requests = blossom_fixture_requests(f.blossom);
+  put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_true(put->auth_valid);
+  g_assert_cmpstr(put->auth_pubkey, ==, signer.pubkey);
+  g_assert_cmpstr(put->content_type, ==, "image/jpeg");
+  g_assert_true(g_str_has_suffix(r.url, ".jpg"));
+  /* Consented: nothing more to offer. */
+  g_assert_null(gn_issue_uploader_dup_consent_options(uploader));
+
+  result_clear(&r);
+  gh_blossom_client_set_account_signer(f.client, NULL, NULL, NULL, NULL, NULL);
+  g_ptr_array_unref(recorder.servers);
+  g_free(signer.secret);
+  g_free(signer.pubkey);
   fixture_down(&f);
 }
 
@@ -486,6 +759,9 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   g_test_add_func("/groundhog/issue-uploader/no-server", test_no_server);
   g_test_add_func("/groundhog/issue-uploader/round-trip", test_round_trip);
+  g_test_add_func("/groundhog/issue-uploader/sniff", test_sniff);
+  g_test_add_func("/groundhog/issue-uploader/type-and-address", test_type_and_address);
+  g_test_add_func("/groundhog/issue-uploader/account-option", test_account_option);
   g_test_add_func("/groundhog/issue-uploader/refusals", test_refusals);
   g_test_add_func("/groundhog/issue-uploader/tor", test_tor);
   g_test_add_func("/groundhog/issue-uploader/rebinding", test_rebinding);

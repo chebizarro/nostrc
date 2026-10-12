@@ -20,7 +20,9 @@ G_BEGIN_DECLS
  * contacted. Servers are tried in order; the first that accepts the file and
  * answers with a matching descriptor (sha256 and size) is used, and the file
  * URL is <server>/<sha256> (BUD-01), so no server-chosen address or
- * redirect is ever put in a message. A server that refuses the upload's
+ * redirect is ever put in a message. (A public issue file also gets an
+ * extension, at most the one the server's descriptor names; see
+ * gh_blossom_client_upload_public_async().) A server that refuses the upload's
  * credentials ends the upload (GH_BLOSSOM_ERROR_AUTH_REQUIRED): the file
  * goes to no other server until the user decides.
  *
@@ -109,6 +111,8 @@ void gh_blossom_client_set_account_signer(GhBlossomClient *self, const gchar *ac
 void gh_blossom_client_set_account_consent(GhBlossomClient *self, const gchar *server,
                                            gboolean consent);
 gboolean gh_blossom_client_get_account_consent(GhBlossomClient *self, const gchar *server);
+/* Whether an account signer is set (an account consent can be used). */
+gboolean gh_blossom_client_has_account_signer(GhBlossomClient *self);
 
 /* Tests only: lets downloads reach loopback and other non-public hosts (the
  * local Blossom fixtures). Nothing in the application calls it. */
@@ -161,14 +165,20 @@ void gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *co
 
 /* As upload_on_servers_async(), for a file that is meant to be public (a
  * NIP-34 issue attachment; gh-issue-uploader.h): bytes are sent as they are,
- * not encrypted. The servers get the public rule of upload_keyed_async():
- * only those with a public host are contacted, over a public-only
- * connection; with none left, GH_BLOSSOM_ERROR_NO_SERVER before any
- * request. Authorization as for upload_async() (a throwaway key, the
- * account only for a server it consented to). Finishes with
- * gh_blossom_client_upload_finish(). */
+ * not encrypted, with content_type (the caller's sniffed type; NULL:
+ * application/octet-stream) as the Content-Type. The servers get the public
+ * rule of upload_keyed_async(): only those with a public host are
+ * contacted, over a public-only connection; with none left,
+ * GH_BLOSSOM_ERROR_NO_SERVER before any request. Authorization as for
+ * upload_async() (a throwaway key, the account only for a server it
+ * consented to). Finishes with gh_blossom_client_upload_finish(): the URL is
+ * <server>/<sha256>.<ext> (BUD-01), where ext is the one the server's
+ * descriptor url gives when that url is exactly that address on the same
+ * server, else extension (nullable: 1-16 ASCII letters or digits), else
+ * there is none. */
 void gh_blossom_client_upload_public_async(GhBlossomClient *self, const gchar *const *servers,
                                            GBytes *bytes, const gchar *sha256_hex,
+                                           const gchar *content_type, const gchar *extension,
                                            GCancellable *cancellable,
                                            GAsyncReadyCallback callback, gpointer user_data);
 

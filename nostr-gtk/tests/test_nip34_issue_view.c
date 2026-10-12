@@ -23,6 +23,12 @@ typedef struct {
   gchar *last_json;
   GStrv last_relays;
   gboolean fail_not_sent;
+  /* Consent options (nostrc-u42c7) */
+  gboolean offer_options;
+  gboolean fail_apply;
+  guint apply_calls;
+  guint applied_index;
+  guint uploads_at_apply;
 } Mock;
 typedef GObjectClass MockClass;
 
@@ -109,12 +115,37 @@ upload_finish(GnIssueUploader *u, GAsyncResult *result, GError **error)
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+static GStrv
+dup_options(GnIssueUploader *u)
+{
+  if (!((Mock *)u)->offer_options)
+    return NULL;
+  const gchar *options[] = { "Use my account for blossom.test", NULL };
+  return g_strdupv((gchar **)options);
+}
+
+static gboolean
+apply_option(GnIssueUploader *u, guint index, GError **error)
+{
+  Mock *self = (Mock *)u;
+  self->apply_calls++;
+  self->applied_index = index;
+  self->uploads_at_apply = self->upload_calls;
+  if (self->fail_apply) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Consent not kept");
+    return FALSE;
+  }
+  return TRUE;
+}
+
 static void
 mock_uploader_iface_init(GnIssueUploaderInterface *iface)
 {
   iface->describe_destination = describe;
   iface->upload_async = upload_async;
   iface->upload_finish = upload_finish;
+  iface->dup_consent_options = dup_options;
+  iface->apply_consent_option = apply_option;
 }
 
 static void
@@ -477,6 +508,100 @@ test_lookup_repository(void)
   teardown(&f);
 }
 
+/* The upload consent offers the uploader's options unchecked, applies only a
+ * checked one, and before the first upload; one that cannot be applied
+ * stops the upload (nostrc-u42c7). */
+static void
+test_consent_options(void)
+{
+  Fixture f = {0};
+  setup(&f, TRUE, FALSE);
+  g_autoptr(GFile) file = temp_file(&f, "shot.png");
+  g_assert_true(gn_nip34_issue_view_add_attachment(f.view, file));
+
+  /* Without options the consent is unchanged. */
+  click(&f, "review_button");
+  AdwAlertDialog *a = alert(&f);
+  g_assert_null(find(adw_alert_dialog_get_extra_child(a), "consent_option_0"));
+  respond(a, "cancel");
+
+  f.mock->offer_options = TRUE;
+  click(&f, "review_button");
+  a = alert(&f);
+  GtkWidget *option = find(adw_alert_dialog_get_extra_child(a), "consent_option_0");
+  g_assert_nonnull(option);
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(option)));
+  GtkWidget *option_label = gtk_check_button_get_child(GTK_CHECK_BUTTON(option));
+  g_assert_cmpstr(GTK_IS_LABEL(option_label) ? gtk_label_get_text(GTK_LABEL(option_label))
+                                             : gtk_check_button_get_label(GTK_CHECK_BUTTON(option)),
+                  ==, "Use my account for blossom.test");
+  /* Checked, then cancelled: nothing is applied or uploaded. */
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(option), TRUE);
+  respond(a, "cancel");
+  g_assert_cmpuint(f.mock->apply_calls + f.mock->upload_calls, ==, 0);
+
+  /* Checked and refused by the uploader: no upload. */
+  f.mock->fail_apply = TRUE;
+  click(&f, "review_button");
+  a = alert(&f);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(find(adw_alert_dialog_get_extra_child(a),
+                                                    "consent_option_0")), TRUE);
+  respond(a, "upload");
+  g_assert_cmpuint(f.mock->apply_calls, ==, 1);
+  g_assert_cmpuint(f.mock->upload_calls, ==, 0);
+  g_assert_cmpstr(status(&f), ==, "Consent not kept");
+
+  /* Checked: applied first, then uploaded. */
+  f.mock->fail_apply = FALSE;
+  click(&f, "review_button");
+  a = alert(&f);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(find(adw_alert_dialog_get_extra_child(a),
+                                                    "consent_option_0")), TRUE);
+  respond(a, "upload");
+  g_assert_cmpuint(f.mock->apply_calls, ==, 2);
+  g_assert_cmpuint(f.mock->applied_index, ==, 0);
+  g_assert_cmpuint(f.mock->uploads_at_apply, ==, 0);
+  g_assert_cmpuint(f.mock->upload_calls, ==, 1);
+  respond(alert(&f), "cancel");
+  teardown(&f);
+
+  /* Not checked: uploaded without applying. */
+  Fixture g = {0};
+  setup(&g, TRUE, FALSE);
+  g.mock->offer_options = TRUE;
+  g_autoptr(GFile) other = temp_file(&g, "log.txt");
+  g_assert_true(gn_nip34_issue_view_add_attachment(g.view, other));
+  click(&g, "review_button");
+  respond(alert(&g), "upload");
+  g_assert_cmpuint(g.mock->apply_calls, ==, 0);
+  g_assert_cmpuint(g.mock->upload_calls, ==, 1);
+  respond(alert(&g), "cancel");
+  teardown(&g);
+}
+
+/* With a lookup consent the button asks first; only accepting looks up. */
+static void
+test_lookup_consent(void)
+{
+  Fixture f = {0};
+  setup(&f, FALSE, TRUE);
+  gn_nip34_issue_view_set_lookup_consent(f.view, "Look Up the Repository?",
+                                         "These relays are asked: wss://discovery.example");
+  click(&f, "lookup_button");
+  AdwAlertDialog *a = alert(&f);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(a), ==, "Look Up the Repository?");
+  g_assert_nonnull(strstr(adw_alert_dialog_get_body(a), "wss://discovery.example"));
+  g_assert_cmpuint(f.mock->resolve_calls, ==, 0);
+  respond(a, "cancel");
+  g_assert_cmpuint(f.mock->resolve_calls, ==, 0);
+  g_assert_null(gn_nip34_issue_view_get_target(f.view)->maintainers[0]);
+  click(&f, "lookup_button");
+  respond(alert(&f), "lookup");
+  g_assert_cmpuint(f.mock->resolve_calls, ==, 1);
+  g_assert_cmpstr(gn_nip34_issue_view_get_target(f.view)->maintainers[0], ==, MAINT);
+  teardown(&f);
+}
+
 static void
 assert_labelled(GtkWidget *w)
 {
@@ -521,6 +646,8 @@ main(int argc, char **argv)
   g_test_add_func("/nostr-gtk/nip34-issue-view/diagnostics", test_diagnostics);
   g_test_add_func("/nostr-gtk/nip34-issue-view/not-sent-retry", test_publish_not_sent_allows_retry);
   g_test_add_func("/nostr-gtk/nip34-issue-view/lookup", test_lookup_repository);
+  g_test_add_func("/nostr-gtk/nip34-issue-view/consent-options", test_consent_options);
+  g_test_add_func("/nostr-gtk/nip34-issue-view/lookup-consent", test_lookup_consent);
   g_test_add_func("/nostr-gtk/nip34-issue-view/a11y", test_a11y);
   return g_test_run();
 }

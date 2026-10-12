@@ -70,6 +70,30 @@ gn_issue_uploader_upload_finish(GnIssueUploader *self, GAsyncResult *result, GEr
   return GN_ISSUE_UPLOADER_GET_IFACE(self)->upload_finish(self, result, error);
 }
 
+GStrv
+gn_issue_uploader_dup_consent_options(GnIssueUploader *self)
+{
+  g_return_val_if_fail(GN_IS_ISSUE_UPLOADER(self), NULL);
+  GnIssueUploaderInterface *iface = GN_ISSUE_UPLOADER_GET_IFACE(self);
+  GStrv options = iface->dup_consent_options ? iface->dup_consent_options(self) : NULL;
+  if (options && !options[0])
+    g_clear_pointer(&options, g_strfreev);
+  return options;
+}
+
+gboolean
+gn_issue_uploader_apply_consent_option(GnIssueUploader *self, guint index, GError **error)
+{
+  g_return_val_if_fail(GN_IS_ISSUE_UPLOADER(self), FALSE);
+  GnIssueUploaderInterface *iface = GN_ISSUE_UPLOADER_GET_IFACE(self);
+  if (!iface->apply_consent_option) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                        "This uploader offers no consent options");
+    return FALSE;
+  }
+  return iface->apply_consent_option(self, index, error);
+}
+
 void
 gn_issue_repo_resolver_resolve_async(GnIssueRepoResolver *self, const GnIssueTarget *hint,
                                      GCancellable *cancellable, GAsyncReadyCallback callback,

@@ -1911,6 +1911,16 @@ preferences_teardown(GhAppServices *self)
 /* app.about (the primary menu): the About dialog, over the active window.
  * It reads only build-time constants and contacts no network. */
 #if GROUNDHOG_HAVE_ISSUE
+#if GROUNDHOG_HAVE_ATTACHMENTS
+/* "Use my account" in the issue form's upload consent: the same kept,
+ * per-server consent as for message attachments (nostrc-dnsc). */
+static gboolean
+issue_record_consent(gpointer data, const gchar *server, GError **error)
+{
+  return gh_attachments_set_consent(GH_ATTACHMENTS(data), server, TRUE, error);
+}
+#endif
+
 static void
 on_report_issue(GSimpleAction *action, GVariant *parameter, gpointer data)
 {
@@ -1924,11 +1934,12 @@ on_report_issue(GSimpleAction *action, GVariant *parameter, gpointer data)
    * user chose (none: the form offers no files). */
 #if GROUNDHOG_HAVE_ATTACHMENTS
   GhBlossomClient *blossom = gh_attachments_get_client(self->attachments);
+  GnNip34IssueView *view = gh_issue_dialog_new(self->accounts, self->settings, blossom,
+                                               issue_record_consent, self->attachments);
 #else
-  GhBlossomClient *blossom = NULL;
+  GnNip34IssueView *view = gh_issue_dialog_new(self->accounts, self->settings, NULL, NULL, NULL);
 #endif
-  gn_nip34_issue_view_present(gh_issue_dialog_new(self->accounts, self->settings, blossom),
-                              GTK_WIDGET(window));
+  gn_nip34_issue_view_present(view, GTK_WIDGET(window));
 }
 #endif
 

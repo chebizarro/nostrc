@@ -9,7 +9,10 @@
  *  - Files are uploaded only after the user accepts a prompt naming the
  *    destination and every file; the final event is then reviewed again.
  *  - The repository lookup runs only through
- *    gn_nip34_issue_view_lookup_repository() (the host decides when).
+ *    gn_nip34_issue_view_lookup_repository() (the host decides when), or
+ *    after the lookup consent (gn_nip34_issue_view_set_lookup_consent()).
+ *  - Uploader consent options are offered unchecked in the upload consent
+ *    and applied only if checked when the user accepts it.
  *  - Diagnostics are host-supplied text, previewed in place.
  *
  * GTK 4.6 / libadwaita 1.2 floor: the view is a GtkBox. The consent prompt is
@@ -74,6 +77,11 @@ gboolean gn_nip34_issue_view_add_attachment(GnNip34IssueView *self, GFile *file)
 /* Starts the resolver now (no-op without one). Hosts call this on an explicit
  * user action, or on open when their privacy model allows it. */
 void gn_nip34_issue_view_lookup_repository(GnNip34IssueView *self);
+/* With a heading, the Look Up Repository button first asks for consent
+ * (heading and body, e.g. naming the relays that will be asked) and looks
+ * up only if the user accepts. NULL heading: the button looks up at once. */
+void gn_nip34_issue_view_set_lookup_consent(GnNip34IssueView *self, const gchar *heading,
+                                            const gchar *body);
 /* Cancels in-flight work, drops any review and locks the form with message
  * (e.g. the account changed). */
 void gn_nip34_issue_view_invalidate(GnNip34IssueView *self, const gchar *message);

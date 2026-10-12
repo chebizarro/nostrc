@@ -14,6 +14,8 @@ struct _BlossomFixture {
   GPtrArray *requests;      /* BlossomRequest */
   gchar *required_pubkey;
   gchar *lie;
+  gchar *descriptor_extension; /* appended to the descriptor url, or NULL */
+  gchar *descriptor_base;      /* the descriptor url's base instead of url */
   gboolean strict_upload;
   gboolean reject_opaque;
   gboolean hold;
@@ -155,10 +157,15 @@ on_put(BlossomFixture *f, SoupServerMessage *message, BlossomRequest *request)
     return;
   }
   g_hash_table_replace(f->blobs, g_strdup(sha256), g_bytes_ref(bytes));
+  /* As BUD-02 servers do: the url may carry an extension for the type. */
   g_autofree gchar *descriptor = g_strdup_printf(
-    "{\"url\":\"%s/%s\",\"sha256\":\"%s\",\"size\":%" G_GSIZE_FORMAT ","
-    "\"type\":\"application/octet-stream\",\"uploaded\":%" G_GINT64_FORMAT "}",
-    f->url, sha256, f->lie ? f->lie : sha256, size, g_get_real_time() / G_USEC_PER_SEC);
+    "{\"url\":\"%s/%s%s%s\",\"sha256\":\"%s\",\"size\":%" G_GSIZE_FORMAT ","
+    "\"type\":\"%s\",\"uploaded\":%" G_GINT64_FORMAT "}",
+    f->descriptor_base ? f->descriptor_base : f->url, sha256,
+    f->descriptor_extension ? "." : "", f->descriptor_extension ? f->descriptor_extension : "",
+    f->lie ? f->lie : sha256, size,
+    request->content_type ? request->content_type : "application/octet-stream",
+    g_get_real_time() / G_USEC_PER_SEC);
   soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
   soup_server_message_set_response(message, "application/json", SOUP_MEMORY_COPY, descriptor,
                                    strlen(descriptor));
@@ -277,6 +284,8 @@ blossom_fixture_free(BlossomFixture *f)
   g_hash_table_unref(f->blobs);
   g_free(f->required_pubkey);
   g_free(f->lie);
+  g_free(f->descriptor_base);
+  g_free(f->descriptor_extension);
   g_free(f->url);
   g_free(f);
 }
@@ -298,6 +307,15 @@ blossom_fixture_require_pubkey(BlossomFixture *f, const gchar *pubkey)
 {
   g_free(f->required_pubkey);
   f->required_pubkey = g_strdup(pubkey);
+}
+
+void
+blossom_fixture_set_descriptor_url(BlossomFixture *f, const gchar *base, const gchar *extension)
+{
+  g_free(f->descriptor_base);
+  g_free(f->descriptor_extension);
+  f->descriptor_base = g_strdup(base);
+  f->descriptor_extension = g_strdup(extension);
 }
 
 void

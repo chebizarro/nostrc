@@ -154,6 +154,13 @@ gh_blossom_client_set_account_consent(GhBlossomClient *self, const gchar *server
 }
 
 gboolean
+gh_blossom_client_has_account_signer(GhBlossomClient *self)
+{
+  g_return_val_if_fail(GH_IS_BLOSSOM_CLIENT(self), FALSE);
+  return self->sign_async != NULL;
+}
+
+gboolean
 gh_blossom_client_get_account_consent(GhBlossomClient *self, const gchar *server)
 {
   g_return_val_if_fail(GH_IS_BLOSSOM_CLIENT(self), FALSE);
@@ -322,6 +329,9 @@ typedef struct {
   GError *last_error; /* the latest server's failure */
   nostr_secure_buf upload_key; /* keyed upload: its 32 secret bytes (locked, wiped), else empty */
   gboolean public_only; /* servers someone else named: public addresses only */
+  gboolean public_file; /* a public issue file: its type is sent and named */
+  gchar *content_type;  /* public file: the sniffed type (else octet-stream) */
+  gchar *extension;     /* public file: the type's extension, or NULL */
 } Upload;
 
 static void
@@ -334,6 +344,8 @@ upload_free(gpointer data)
   g_strfreev(upload->servers);
   g_free(upload->server);
   g_free(upload->host);
+  g_free(upload->content_type);
+  g_free(upload->extension);
   g_clear_error(&upload->last_error);
   g_free(upload);
 }
@@ -369,6 +381,51 @@ descriptor_matches(GBytes *body, const gchar *sha256, gsize size)
     return FALSE;
   return g_ascii_strcasecmp(json_node_get_string(hash), sha256) == 0 &&
          json_node_get_int(bytes) == (gint64)size;
+}
+
+/* A file extension as BUD-01 allows it after /<sha256>: 1 to 16 ASCII
+ * letters and digits. */
+static gboolean
+extension_ok(const gchar *extension)
+{
+  gsize length = extension ? strlen(extension) : 0;
+  if (length == 0 || length > 16)
+    return FALSE;
+  for (const gchar *p = extension; *p; p++)
+    if (!g_ascii_isalnum(*p))
+      return FALSE;
+  return TRUE;
+}
+
+/* The extension of the descriptor's url (BUD-02), if that url is exactly
+ * <server>/<sha256>.<extension> on the server the file went to; NULL
+ * otherwise (no url, another place, a query, or no extension). Only the
+ * extension is taken from the server: the address is still built here. */
+static gchar *
+descriptor_extension(GBytes *body, const gchar *server, const gchar *sha256)
+{
+  gsize length = 0;
+  const gchar *text = body ? g_bytes_get_data(body, &length) : NULL;
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!text || !json_parser_load_from_data(parser, text, (gssize)length, NULL))
+    return NULL;
+  JsonNode *root = json_parser_get_root(parser);
+  JsonObject *object = root && JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
+  JsonNode *node = object ? json_object_get_member(object, "url") : NULL;
+  if (!node || json_node_get_value_type(node) != G_TYPE_STRING)
+    return NULL;
+  const gchar *url = json_node_get_string(node);
+  const gchar *slash = url ? strrchr(url, '/') : NULL;
+  if (!slash)
+    return NULL;
+  g_autofree gchar *base = g_strndup(url, (gsize)(slash - url));
+  g_autofree gchar *normalized = normalize_server(base, NULL);
+  const gchar *name = slash + 1;
+  if (!normalized || !g_str_equal(normalized, server) ||
+      g_ascii_strncasecmp(name, sha256, 64) != 0 || name[64] != '.' ||
+      !extension_ok(name + 65))
+    return NULL;
+  return g_ascii_strdown(name + 65, -1);
 }
 
 static void
@@ -415,7 +472,16 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
                                     "%s answered with a different file", upload->host));
     return;
   }
-  gchar *url = g_strconcat(upload->server, "/", upload->sha256, NULL);
+  /* A public file is addressed with an extension (BUD-01 /<sha256>.<ext>)
+   * so that it is shown inline: the one the server named in its descriptor,
+   * else the one of the type it was sent as. */
+  g_autofree gchar *extension = upload->public_file
+    ? descriptor_extension(body, upload->server, upload->sha256) : NULL;
+  if (!extension && upload->public_file && upload->extension)
+    extension = g_strdup(upload->extension);
+  gchar *url = extension
+    ? g_strconcat(upload->server, "/", upload->sha256, ".", extension, NULL)
+    : g_strconcat(upload->server, "/", upload->sha256, NULL);
   g_task_return_pointer(task, url, g_free);
   g_object_unref(task);
 }
@@ -447,7 +513,7 @@ upload_put(GTask *task, const gchar *auth_json)
     .uri = uri,
     .accept = "application/json",
     .authorization = authorization,
-    .content_type = "application/octet-stream",
+    .content_type = upload->content_type ? upload->content_type : "application/octet-stream",
     .x_sha256 = upload->sha256,
     .body = upload->ciphertext,
     .max_bytes = DESCRIPTOR_MAX_BYTES,
@@ -526,10 +592,11 @@ upload_next(GTask *task)
   upload_put(task, auth);
 }
 
-static void upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
-                         const gchar *const *servers, const guint8 *upload_key,
-                         gboolean public_only, GCancellable *cancellable, GAsyncReadyCallback callback,
-                         gpointer user_data);
+static GTask *upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
+                           const gchar *const *servers, const guint8 *upload_key,
+                           gboolean public_only, GCancellable *cancellable,
+                           GAsyncReadyCallback callback, gpointer user_data);
+static void upload_begin(GTask *task);
 
 void
 gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
@@ -538,7 +605,8 @@ gh_blossom_client_upload_async(GhBlossomClient *self, GBytes *ciphertext, const 
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(ciphertext != NULL && sha256_hex != NULL);
-  upload_start(self, ciphertext, sha256_hex, NULL, NULL, FALSE, cancellable, callback, user_data);
+  upload_begin(upload_start(self, ciphertext, sha256_hex, NULL, NULL, FALSE, cancellable,
+                            callback, user_data));
 }
 
 void
@@ -549,7 +617,8 @@ gh_blossom_client_upload_on_servers_async(GhBlossomClient *self, const gchar *co
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL);
-  upload_start(self, ciphertext, sha256_hex, servers, NULL, FALSE, cancellable, callback, user_data);
+  upload_begin(upload_start(self, ciphertext, sha256_hex, servers, NULL, FALSE, cancellable,
+                            callback, user_data));
 }
 
 void
@@ -561,22 +630,34 @@ gh_blossom_client_upload_keyed_async(GhBlossomClient *self, const gchar *const *
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(servers != NULL && ciphertext != NULL && sha256_hex != NULL &&
                    upload_key != NULL);
-  upload_start(self, ciphertext, sha256_hex, servers, upload_key, TRUE, cancellable, callback,
-               user_data);
+  upload_begin(upload_start(self, ciphertext, sha256_hex, servers, upload_key, TRUE, cancellable,
+                            callback, user_data));
 }
 
 void
 gh_blossom_client_upload_public_async(GhBlossomClient *self, const gchar *const *servers,
                                       GBytes *bytes, const gchar *sha256_hex,
+                                      const gchar *content_type, const gchar *extension,
                                       GCancellable *cancellable, GAsyncReadyCallback callback,
                                       gpointer user_data)
 {
   g_return_if_fail(GH_IS_BLOSSOM_CLIENT(self));
   g_return_if_fail(servers != NULL && bytes != NULL && sha256_hex != NULL);
-  upload_start(self, bytes, sha256_hex, servers, NULL, TRUE, cancellable, callback, user_data);
+  g_return_if_fail(extension == NULL || extension_ok(extension));
+  GTask *task = upload_start(self, bytes, sha256_hex, servers, NULL, TRUE, cancellable, callback,
+                             user_data);
+  Upload *upload = task ? g_task_get_task_data(task) : NULL;
+  if (upload) {
+    upload->public_file = TRUE;
+    upload->content_type = g_strdup(content_type ? content_type : "application/octet-stream");
+    upload->extension = extension ? g_ascii_strdown(extension, -1) : NULL;
+  }
+  upload_begin(task);
 }
 
-static void
+/* The upload's task, ready for upload_begin(); NULL if it already
+ * finished (an invalid file or a cancellable already cancelled). */
+static GTask *
 upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
              const gchar *const *servers, const guint8 *upload_key, gboolean public_only,
              GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
@@ -589,14 +670,14 @@ upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
     g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
                             "An upload needs a non-empty file and its SHA-256");
     g_object_unref(task);
-    return;
+    return NULL;
   }
   if (size > max_ciphertext(self)) {
     g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_TOO_LARGE,
                             "Files can be at most %" G_GSIZE_FORMAT " MB",
                             self->max_file_size / (1024 * 1024));
     g_object_unref(task);
-    return;
+    return NULL;
   }
   Upload *upload = g_new0(Upload, 1);
   upload->ciphertext = g_bytes_ref(ciphertext);
@@ -609,7 +690,7 @@ upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
       g_task_return_new_error(task, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_SIGNER,
                               "Could not hold the upload key");
       g_object_unref(task);
-      return;
+      return NULL;
     }
     memcpy(upload->upload_key.ptr, upload_key, 32);
   }
@@ -625,9 +706,16 @@ upload_start(GhBlossomClient *self, GBytes *ciphertext, const gchar *sha256_hex,
   g_task_set_task_data(task, upload, upload_free);
   if (g_task_return_error_if_cancelled(task)) {
     g_object_unref(task);
-    return;
+    return NULL;
   }
-  upload_next(task);
+  return task;
+}
+
+static void
+upload_begin(GTask *task)
+{
+  if (task)
+    upload_next(task);
 }
 
 gchar *

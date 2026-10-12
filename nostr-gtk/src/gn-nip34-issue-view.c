@@ -79,6 +79,13 @@ struct _GnNip34IssueView {
   gboolean skip_crash_logs;
   guint attachment_failures;
 
+  /* The upload consent's option check buttons (the uploader's list, in
+   * order), while that consent is shown. */
+  GPtrArray *consent_checks;
+  /* With a heading, Look Up Repository asks first (the host's text). */
+  gchar *lookup_heading;
+  gchar *lookup_body;
+
   gboolean busy;
   gboolean reviewing;
   gboolean submitted;
@@ -464,10 +471,28 @@ start_uploads(GnNip34IssueView *self)
 
 /* ---- Review and consent ---- */
 
+/* The options the user checked in the upload consent, applied before any
+ * upload; FALSE (with the reason shown) if one could not be. */
+static gboolean
+apply_consent_options(GnNip34IssueView *self, GPtrArray *checks)
+{
+  for (guint i = 0; checks && i < checks->len; i++) {
+    if (!gtk_check_button_get_active(g_ptr_array_index(checks, i)))
+      continue;
+    g_autoptr(GError) error = NULL;
+    if (!gn_issue_uploader_apply_consent_option(self->uploader, i, &error)) {
+      toast(self, error ? error->message : _("The upload choice could not be kept."));
+      return FALSE;
+    }
+  }
+  return TRUE;
+}
+
 static void
 act_on_consent(GnNip34IssueView *self, const gchar *response)
 {
   self->reviewing = FALSE;
+  g_autoptr(GPtrArray) checks = g_steal_pointer(&self->consent_checks);
   gboolean publish = g_str_equal(response, "publish");
   gboolean upload = g_str_equal(response, "upload");
   if ((!publish && !upload) || self->closed || self->submitted || self->busy) {
@@ -479,6 +504,10 @@ act_on_consent(GnNip34IssueView *self, const gchar *response)
   if (!review_still_current(self)) {
     clear_review(self);
     set_status(self, _("The report changed after review. Review it again before publishing."));
+    return;
+  }
+  if (upload && !apply_consent_options(self, checks)) {
+    clear_review(self);
     return;
   }
   if (upload)
@@ -522,8 +551,44 @@ format_tags(NostrEvent *event)
 }
 
 static void
+present_alert(GnNip34IssueView *self, const gchar *heading, const gchar *body, GtkWidget *extra,
+              const gchar *accept_id, const gchar *accept_label, AdwResponseAppearance appearance,
+              GCallback on_response)
+{
+#if ADW_CHECK_VERSION(1, 5, 0)
+  AdwDialog *alert = adw_alert_dialog_new(heading, body);
+  AdwAlertDialog *a = ADW_ALERT_DIALOG(alert);
+  if (extra)
+    adw_alert_dialog_set_extra_child(a, extra);
+  adw_alert_dialog_add_responses(a, "cancel", _("Cancel"), accept_id, accept_label, NULL);
+  adw_alert_dialog_set_default_response(a, "cancel");
+  adw_alert_dialog_set_close_response(a, "cancel");
+  adw_alert_dialog_set_response_appearance(a, accept_id, appearance);
+  g_signal_connect_object(alert, "response", on_response, self, 0);
+  adw_dialog_present(alert, GTK_WIDGET(self));
+#else
+  /* libadwaita 1.2 floor: AdwMessageDialog (deprecated only from 1.6). */
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  GtkWidget *alert = adw_message_dialog_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL,
+                                            heading, body);
+  AdwMessageDialog *a = ADW_MESSAGE_DIALOG(alert);
+  if (extra)
+    adw_message_dialog_set_extra_child(a, extra);
+  adw_message_dialog_add_responses(a, "cancel", _("Cancel"), accept_id, accept_label, NULL);
+  adw_message_dialog_set_default_response(a, "cancel");
+  adw_message_dialog_set_close_response(a, "cancel");
+  adw_message_dialog_set_response_appearance(a, accept_id, appearance);
+  g_signal_connect_object(alert, "response", on_response, self, 0);
+  gtk_window_present(GTK_WINDOW(alert));
+#endif
+}
+
+/* options (nullable): the uploader's consent options, offered unchecked
+ * below the preview. */
+static void
 present_consent(GnNip34IssueView *self, const gchar *heading, const gchar *body,
-                const gchar *preview, const gchar *accept_id, const gchar *accept_label)
+                const gchar *preview, const gchar *const *options, const gchar *accept_id,
+                const gchar *accept_label)
 {
   GtkWidget *label = gtk_label_new(preview);
   gtk_label_set_selectable(GTK_LABEL(label), TRUE);
@@ -535,31 +600,35 @@ present_consent(GnNip34IssueView *self, const gchar *heading, const gchar *body,
   gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(scroll), 220);
   gtk_scrolled_window_set_max_content_height(GTK_SCROLLED_WINDOW(scroll), 320);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), label);
-  self->reviewing = TRUE;
-#if ADW_CHECK_VERSION(1, 5, 0)
-  AdwDialog *alert = adw_alert_dialog_new(heading, body);
-  AdwAlertDialog *a = ADW_ALERT_DIALOG(alert);
-  adw_alert_dialog_set_extra_child(a, scroll);
-  adw_alert_dialog_add_responses(a, "cancel", _("Cancel"), accept_id, accept_label, NULL);
-  adw_alert_dialog_set_default_response(a, "cancel");
-  adw_alert_dialog_set_close_response(a, "cancel");
-  adw_alert_dialog_set_response_appearance(a, accept_id, ADW_RESPONSE_DESTRUCTIVE);
-  g_signal_connect_object(alert, "response", G_CALLBACK(consent_response), self, 0);
-  adw_dialog_present(alert, GTK_WIDGET(self));
+  GtkWidget *extra = scroll;
+  g_clear_pointer(&self->consent_checks, g_ptr_array_unref);
+  if (options && options[0]) {
+    extra = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+    gtk_box_append(GTK_BOX(extra), scroll);
+    self->consent_checks = g_ptr_array_new_with_free_func(g_object_unref);
+    for (guint i = 0; options[i]; i++) {
+#if GTK_CHECK_VERSION(4, 8, 0)
+      /* A wrapping label, so a long option does not widen the prompt. */
+      GtkWidget *check = gtk_check_button_new();
+      GtkWidget *check_label = gtk_label_new(options[i]);
+      gtk_label_set_wrap(GTK_LABEL(check_label), TRUE);
+      gtk_label_set_wrap_mode(GTK_LABEL(check_label), PANGO_WRAP_WORD_CHAR);
+      gtk_label_set_xalign(GTK_LABEL(check_label), 0);
+      gtk_check_button_set_child(GTK_CHECK_BUTTON(check), check_label);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(check), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     options[i], -1);
 #else
-  /* libadwaita 1.2 floor: AdwMessageDialog (deprecated only from 1.6). */
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  GtkWidget *alert = adw_message_dialog_new(GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL,
-                                            heading, body);
-  AdwMessageDialog *a = ADW_MESSAGE_DIALOG(alert);
-  adw_message_dialog_set_extra_child(a, scroll);
-  adw_message_dialog_add_responses(a, "cancel", _("Cancel"), accept_id, accept_label, NULL);
-  adw_message_dialog_set_default_response(a, "cancel");
-  adw_message_dialog_set_close_response(a, "cancel");
-  adw_message_dialog_set_response_appearance(a, accept_id, ADW_RESPONSE_DESTRUCTIVE);
-  g_signal_connect_object(alert, "response", G_CALLBACK(consent_response), self, 0);
-  gtk_window_present(GTK_WINDOW(alert));
+      GtkWidget *check = gtk_check_button_new_with_label(options[i]);
 #endif
+      g_autofree gchar *name = g_strdup_printf("consent_option_%u", i);
+      gtk_widget_set_name(check, name);
+      gtk_box_append(GTK_BOX(extra), check);
+      g_ptr_array_add(self->consent_checks, g_object_ref(check));
+    }
+  }
+  self->reviewing = TRUE;
+  present_alert(self, heading, body, extra, accept_id, accept_label, ADW_RESPONSE_DESTRUCTIVE,
+                G_CALLBACK(consent_response));
 }
 
 static void
@@ -610,8 +679,9 @@ review(GnNip34IssueView *self)
     g_autofree gchar *body = g_strdup_printf(
       _("These files will be uploaded publicly to %s, where anyone can download them:\n%s\n\nThen you review the final issue, with their addresses, before it is published."),
       gn_issue_uploader_describe_destination(self->uploader), files);
-    present_consent(self, _("Upload Files for This Issue?"), body, preview, "upload",
-                    _("Upload Files"));
+    g_auto(GStrv) options = gn_issue_uploader_dup_consent_options(self->uploader);
+    present_consent(self, _("Upload Files for This Issue?"), body, preview,
+                    (const gchar *const *)options, "upload", _("Upload Files"));
     return;
   }
   const gchar *uploads = self->uploads_done
@@ -622,7 +692,7 @@ review(GnNip34IssueView *self)
                       self->diag_heading ? self->diag_heading : _("Diagnostics"), uploads)
     : g_strdup_printf(_("This is not a private message. Anyone can read and copy this report and associate it with your public key. Deletion cannot be guaranteed. No logs or device details are added. %s"),
                       uploads);
-  present_consent(self, _("Publish This Issue Publicly?"), body, preview, "publish",
+  present_consent(self, _("Publish This Issue Publicly?"), body, preview, NULL, "publish",
                   _("Publish Public Issue"));
 }
 
@@ -680,10 +750,37 @@ gn_nip34_issue_view_lookup_repository(GnNip34IssueView *self)
 }
 
 static void
+lookup_consent_response(GObject *alert, const gchar *response, GnNip34IssueView *self)
+{
+  (void)alert;
+  if (g_str_equal(response, "lookup"))
+    gn_nip34_issue_view_lookup_repository(self);
+}
+
+static void
 lookup_clicked(GtkButton *button, GnNip34IssueView *self)
 {
   (void)button;
-  gn_nip34_issue_view_lookup_repository(self);
+  if (!self->resolver || self->busy || self->submitted || self->closed)
+    return;
+  if (!self->lookup_heading) {
+    gn_nip34_issue_view_lookup_repository(self);
+    return;
+  }
+  present_alert(self, self->lookup_heading, self->lookup_body, NULL, "lookup",
+                _("Look Up Repository"), ADW_RESPONSE_SUGGESTED,
+                G_CALLBACK(lookup_consent_response));
+}
+
+void
+gn_nip34_issue_view_set_lookup_consent(GnNip34IssueView *self, const gchar *heading,
+                                       const gchar *body)
+{
+  g_return_if_fail(GN_IS_NIP34_ISSUE_VIEW(self));
+  g_free(self->lookup_heading);
+  g_free(self->lookup_body);
+  self->lookup_heading = heading ? g_strdup(heading) : NULL;
+  self->lookup_body = heading && body ? g_strdup(body) : NULL;
 }
 
 /* ---- Diagnostics ---- */
@@ -973,6 +1070,7 @@ dispose(GObject *object)
   g_clear_object(&self->uploader);
   clear_review(self);
   g_clear_pointer(&self->uploads, g_ptr_array_unref);
+  g_clear_pointer(&self->consent_checks, g_ptr_array_unref);
   G_OBJECT_CLASS(gn_nip34_issue_view_parent_class)->dispose(object);
 }
 
@@ -985,6 +1083,8 @@ finalize(GObject *object)
   g_strfreev(self->required_labels);
   g_free(self->diag_heading);
   g_free(self->diag_text);
+  g_free(self->lookup_heading);
+  g_free(self->lookup_body);
   G_OBJECT_CLASS(gn_nip34_issue_view_parent_class)->finalize(object);
 }
 

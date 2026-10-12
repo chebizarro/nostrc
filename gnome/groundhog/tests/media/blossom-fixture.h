@@ -40,6 +40,10 @@ guint16 blossom_fixture_port(BlossomFixture *fixture);
 
 /* Uploads are accepted only when signed by pubkey (NULL: any valid key). */
 void blossom_fixture_require_pubkey(BlossomFixture *fixture, const gchar *pubkey);
+/* The descriptor's url: base (NULL: the fixture's url), "/", the sha256 and
+ * ".extension" (NULL: none), as servers that name the type do. */
+void blossom_fixture_set_descriptor_url(BlossomFixture *fixture, const gchar *base,
+                                        const gchar *extension);
 /* Enforce BUD-11 Base64url and BUD-02 ciphertext headers. */
 void blossom_fixture_set_strict_upload(BlossomFixture *fixture, gboolean strict);
 /* Simulate a media-only server: body signatures, not declared MIME, decide;
