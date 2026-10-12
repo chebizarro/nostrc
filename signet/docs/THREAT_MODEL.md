@@ -142,10 +142,16 @@ Mutations reach the store only through the ContextVM management handler:
 - **Replay**: with the replay cache attached, a delivered event id executes at
   most once; duplicates are dropped, missing ids fail closed
   (`test_credential_mutation_replay_rejected`, `test_mgmt_replay.c`).
-- **Authorization**: non-provisioner senders are dropped (and chain-audited);
-  retrieval goes through the single `signet_credential_access_acquire` path
-  (deny-list → capability → rate limit → owner/status before decrypt → type
-  rules → lease burn → mandatory audit).
+- **Authorization**: non-provisioner senders are dropped (and chain-audited),
+  except for `credential/inspect|list|deliver` from a requester the owner's
+  policy grants exactly `credential.deliver`. That grant is checked before the
+  replay mark, is scoped to the granting owner's credentials, and is refused
+  identically for a missing and an ungranted credential (no existence
+  oracle); a stolen requester key yields only those credentials and no
+  management authority. Retrieval goes through the single
+  `signet_credential_access_acquire` path (deny-list, for owner and requester →
+  capability → rate limit → owner/status/expected version before decrypt →
+  type rules → lease burn → mandatory audit).
 
 ## 4. Memory hygiene (mlock / zeroization inventory)
 

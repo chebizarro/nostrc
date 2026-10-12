@@ -158,7 +158,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey to be in the `provisioner_pubkeys` list (sole exception: `agent/reissue-connect` also accepts the target agent itself — see below). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey (the seal author) to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` also accepts the target agent itself, and `credential/inspect`, `credential/list` and `credential/deliver` also accept a requester holding the owner's exact delivery grant (see [Credential methods](#credential-methods)). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once per replay-cache TTL: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
 
 | Kind  | Method | Description |
 |-------|--------|-------------|
@@ -172,6 +172,123 @@ All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents
 | 25910 | `agent/reissue-connect` | Mint a fresh one-time `connect_secret` for an existing agent |
 | 25910 | `agent/list-clients` | List an agent's persistent NIP-46 client bindings |
 | 25910 | `agent/revoke-client` | Soft-revoke a persistent NIP-46 client binding (forces re-pairing) |
+| 25910 | `agent/writer-acquire` | Assign an identity's single-writer NIP-46 client |
+| 25910 | `agent/writer-revoke` | Clear an identity's single-writer assignment |
+| 25910 | `config/grant-provisioner` | Persist and activate a provisioner pubkey |
+| 25910 | `config/revoke-provisioner` | Persist and activate a provisioner revocation |
+| 25910 | `credential/create` | Store a new credential for an agent |
+| 25910 | `credential/import` | Store an existing credential for an agent (provenance `imported`) |
+| 25910 | `credential/list` | Payload-free metadata of an agent's credentials (provisioner, or delivery grant) |
+| 25910 | `credential/inspect` | Payload-free metadata of one credential (provisioner, or delivery grant) |
+| 25910 | `credential/deliver` | Release a credential payload under a one-use lease (provisioner or delivery grant; always needs the grant) |
+| 25910 | `credential/rotate` | Replace the payload; the prior version is archived |
+| 25910 | `credential/revoke` | Revoke a credential (no further delivery) |
+| 25910 | `credential/delete` | Delete a revoked credential and its history |
+
+### Requests, replies and refusals
+
+A request is a JSON-RPC 2.0 object, `{"jsonrpc":"2.0","id":<string|integer>,"method":"<method>","params":{...}}`,
+carried as the content of a kind-14 rumor sealed (kind 13) by the sender and
+gift-wrapped (kind 1059) to Signet's bunker pubkey. Every reply is gift-wrapped
+back the same way and echoes the request's `id` verbatim (a string of at most
+256 bytes, or an integer; any other id is answered with `id: null`):
+
+- success: `{"jsonrpc":"2.0","result":{...},"id":<id>}`
+- failure: `{"jsonrpc":"2.0","error":{"code":<int>,"message":"<text>","data":"<reason>"},"id":<id>}`
+
+`error.data` is a stable reason code; `error.message` is human text and never
+carries secret material. Codes `-32002` (`data: "not_provisioner"`: the method
+is provisioner-only and the sender is not a provisioner) and `-32601`
+(`data: "unknown_method"`) are sent before the request is read. Every other
+failure is `-32000` with the method's reason code in `data`; a malformed
+request is `parse_error`. A refusal tells the sender nothing beyond the
+refusal itself.
+
+NIP-59 randomizes each gift wrap's `created_at` up to **48 hours** into the
+past. A client subscribing for replies (`kinds:[1059]`, `#p:[<client pubkey>]`)
+must therefore use a `since` at least 48 hours back (or none) and match replies
+by `id`, not by arrival time.
+
+### Credential methods
+
+Credentials are generic secrets owned by an agent (`agent_id`). Their id is
+`cred_` plus 64 hex characters, derived from owner, type and label. Payloads
+travel only inside the encrypted request or reply, base64-encoded
+(`payload_b64`, at most 1 MiB decoded), and never reach logs or audit records.
+
+**Metadata** (the result of create, import, inspect, rotate, revoke, and each
+entry of list) is payload-free:
+
+```json
+{"credential_id":"cred_…","agent_id":"vault","secret_type":"credential",
+ "label":"db/primary","policy_id":null,"provenance":"imported",
+ "created_by":"<provisioner pubkey>","created_at":1760000000,
+ "rotated_at":null,"expires_at":null,"revoked_at":null,
+ "version":1,"active_version":1,"status":"active"}
+```
+
+`status` is `active`, `expired` or `revoked`. `version` starts at 1 and each
+rotation increments it by one; versions are never reused.
+
+| Method | Params | Result | Failure codes (`error.data`) |
+|--------|--------|--------|------------------------------|
+| `credential/create`, `credential/import` | `agent_id`, `secret_type` (`api_token`\|`credential`), `label`, `payload_b64`; optional `policy_id`, `expires_at` | metadata | `credential_exists` (never overwritten), `agent_not_found`, `invalid_credential`, `no_store` |
+| `credential/list` | `agent_id` (required for a delivery-grant requester; a provisioner may omit it to list every owner) | `{"count":n,"credentials":[metadata…]}` | `no_capability`, `deny_listed`, `credential_store_failed`, `no_store` |
+| `credential/inspect` | `credential_id` | metadata | `credential_not_found` (provisioner), `no_capability`, `deny_listed`, `credential_store_failed`, `no_store` |
+| `credential/deliver` | `agent_id` (the owner), `credential_id`; optional `expected_version` (positive integer) | `{"credential_id","agent_id","version","payload_b64","lease_id","lease_expires_at"}` | `no_capability`, `deny_listed`, `not_owner`, `not_found`, `revoked`, `expired`, `version_mismatch`, `type_denied`, `rate_limited`, `credential_access_unavailable`, `internal_error` |
+| `credential/rotate` | `credential_id`, `payload_b64`; optional `expires_at` (required to revive an expired credential) | metadata | `credential_not_found`, `credential_revoked`, `credential_expired`, `invalid_credential`, `credential_store_failed` |
+| `credential/revoke` | `credential_id` | metadata | `credential_not_found`, `credential_store_failed` |
+| `credential/delete` | `credential_id` | `{"credential_id","agent_id","deleted":true}` | `credential_not_found`, `credential_not_revoked`, `credential_store_failed` |
+
+**Delivery.** `credential/deliver` goes through Signet's single credential
+access path, in order: deny list (owner or requester deny-listed →
+`deny_listed`), the exact delivery grant (`no_capability`), rate limit,
+ownership and status on metadata before any decryption (`not_owner` before
+`revoked` before `expired` before `version_mismatch`), type rules, then a
+60-second lease that is minted and burned before the payload is decrypted. The
+result's `version` is the version of the released payload, read in the same
+statement as the payload. With `expected_version`, a different active version
+fails with `version_mismatch`: nothing is decrypted and no lease is minted. A
+client that pins a version therefore resolves in one round trip:
+
+```json
+{"jsonrpc":"2.0","id":"7f3a…","method":"credential/deliver",
+ "params":{"agent_id":"vault","credential_id":"cred_…","expected_version":2}}
+```
+
+Every delivery outcome — allow, deny or error — appends a redacted entry to the
+hash-chained audit log, naming the requester and, for the management entry, the
+authorization path (`"auth":"provisioner"` or `"auth":"delivery_grant"`).
+
+**The delivery grant.** Delivery is released only to a requester the owner's
+policy names exactly:
+
+```json
+{"default":"deny","allow_clients":["<requester pubkey hex>"],"allow_methods":["credential.deliver"]}
+```
+
+set with `agent/set-policy` (or `signetctl set-policy <owner> '<json>'`).
+Exactly one client and exactly one method: wildcards, default-allow, more
+clients, or mixing `credential.deliver` with NIP-46 methods grant nothing, and
+the grant gives no NIP-46 signing authority. A `deny_clients` entry naming the
+requester (or `*`), or a `deny_methods` entry naming `credential.deliver` (or
+`*`), overrides it. A provisioner needs the grant too: provisioner status
+authorizes the request, not the release.
+
+**Requesters without provisioner rights.** A requester that is not a
+provisioner may call exactly three methods, and only within its grants:
+
+- `credential/deliver` for an owner whose policy grants it;
+- `credential/inspect` for a credential whose owner grants it;
+- `credential/list` with the `agent_id` of an owner that grants it.
+
+Anything else — another owner's credential, a missing credential, an unscoped
+list, every other management method — is refused. Inspect of a credential the
+requester is not granted and of a credential that does not exist both fail
+with `no_capability`, so the refusal reveals nothing about which credentials
+exist. Such a requester's key therefore carries no management authority: it
+cannot create, rotate, revoke or delete credentials, change policies, or grant
+itself anything. Keep it separate from provisioner keys.
 
 ### `agent/adopt-existing` (BYO-key)
 
@@ -414,5 +531,6 @@ Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
 - **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, revokes the agent's persistent client bindings, wipes cache and persistent key material, and audits the operation.
 - **Atomic pairing**: NIP-46 `connect` consumes the one-time secret and records the durable client binding in one SQLite transaction — the credential cannot be burned without the pairing (or vice versa).
 - **Identity-pinned bindings**: client bindings resolve only while the agent's current identity pubkey matches the one pinned at pairing time — rotation or reprovisioning cannot resurrect prior authority.
-- **Management replay protection**: each delivered management event id executes at most once per replay-cache TTL, with self-service reissue events isolated in their own replay domain so they cannot evict provisioner entries.
+- **Management replay protection**: each delivered management event id executes at most once per replay-cache TTL, with self-service reissue and delivery-grant events isolated in their own replay domain so they cannot evict provisioner entries.
+- **Least-privilege credential delivery**: a delivery requester needs no provisioner rights; the owner's exact `credential.deliver` grant authorizes it to inspect, list and receive that owner's credentials and nothing else, and deny entries override the grant.
 - **DB-level identity uniqueness**: a partial unique index on `agents.pubkey` (with upsert semantics that error instead of destructively replacing) prevents one custody key from ever being bound to two agents.
