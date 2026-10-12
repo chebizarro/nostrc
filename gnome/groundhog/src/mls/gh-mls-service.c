@@ -1895,6 +1895,8 @@ read_relays_of(GhMlsGroup *group)
   return sorted_strv(urls);
 }
 
+static void requests_cancel(GhMlsGroup *group);
+
 /* Reads everything the group shows from libmarmot and notifies what changed.
  * A changed routing (relays or nostr group id) re-subscribes. */
 static void
@@ -2026,6 +2028,7 @@ group_refresh(GhMlsGroup *group)
                          (group->end == GH_MLS_GROUP_END_REMOVED ||
                           group->end == GH_MLS_GROUP_END_LEFT);
   group->removal_final = removal_final;
+  gboolean ended_now = group->active && !active;
   if (group->active != active) {
     group->active = active;
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_ACTIVE]);
@@ -2034,6 +2037,8 @@ group_refresh(GhMlsGroup *group)
     group->end = end;
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_END]);
   }
+  if (ended_now && end != GH_MLS_GROUP_END_NONE)
+    requests_cancel(group);
   if (g_strcmp0(group->removed_by, removed_by) != 0) {
     g_free(group->removed_by);
     group->removed_by = g_steal_pointer(&removed_by);
@@ -5816,20 +5821,84 @@ inner_event_new_deletion(GhMlsService *self, GhMlsGroup *group,
   return json;
 }
 
-/* W26 slice B: fire-and-forget publish callbacks. */
-static void
-reaction_publish_done(GhRelayPublish *publish, const GhRelayPublishSummary *summary,
-                      gpointer data)
+/* A reaction or a deletion request (an inner kind 7 or 5; nostrc-knbkr): no
+ * listed message, but the same durable path as a chat message -- the outgoing
+ * row (a non-chat kind: never listed, previewed or counted), the ratchet step
+ * and the sealed kind 445 in one transaction, then published; a failed or
+ * unanswered round is republished byte for byte with backoff, after a restart
+ * too (resume_all()), and never once the group is left (send_resume()). */
+static gboolean
+send_request(GhMlsService *self, GhMlsGroup *group, gint kind, const gchar *inner,
+             const gchar *inner_id, const gchar *body, GError **error)
 {
-  (void)summary; (void)data;
-  gh_relay_publish_unref(publish);
-}
+  g_autofree gchar *op_id = gh_store_new_op_id();
+  gint64 conversation_id = 0, outbox_id = 0, message_id = 0;
+  MarmotOutgoingMessage out;
+  memset(&out, 0, sizeof out);
+  g_autofree gchar *envelope_id = NULL;
+  g_autofree gchar *key = NULL;
+  g_autoptr(GhStoreOutboxEntry) entry = NULL;
+  drop_stale_error(self);
+  if (!gh_store_begin(self->store, error))
+    return FALSE;
+  GhStoreOutgoing outgoing = {
+    .op_id = op_id,
+    .backend_msg_id = inner_id,
+    .sender_pubkey = self->account,
+    .kind = kind,
+    .created_at = now_s(self),
+    .body = body,
+    .rumor_json = inner,
+  };
+  GhStoreSealedEvent sealed = {
+    .role = GH_STORE_OUTBOX_ROLE_MLS_MESSAGE,
+    .relay_urls = (const gchar *const *)group->relays,
+  };
+  MarmotError err = MARMOT_OK;
+  if (!gh_store_mls_save_room(self->store, group->gid_hex, NULL, &conversation_id, error))
+    goto fail;
+  outgoing.conversation_id = conversation_id;
+  if (!gh_store_enqueue(self->store, &outgoing, &outbox_id, &message_id, error))
+    goto fail;
+  err = marmot_create_message(self->marmot, &group->gid, inner, &out);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The request could not be encrypted", error);
+    goto fail;
+  }
+  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json, inner);
+  if (err != MARMOT_OK) {
+    marmot_fail(self, err, "The request could not be stored", error);
+    goto fail;
+  }
+  envelope_id = event_id_of(out.event_json);
+  sealed.event_id = envelope_id;
+  sealed.event_json = out.event_json;
+  if (!envelope_id || !gh_store_seal(self->store, outbox_id, &sealed, 1, error))
+    goto fail;
+  /* Durable before anything is published. */
+  if (!gh_store_commit(self->store, error)) {
+    marmot_outgoing_message_free(&out);
+    return FALSE;
+  }
+  entry = gh_store_outbox_load(self->store, outbox_id, NULL);
+  key = outbox_key(outbox_id);
+  Delivery *delivery = delivery_new(self, key, group, FALSE);
+  delivery->outbox_id = outbox_id;
+  delivery->outbox_event_id = entry && entry->events->len
+    ? ((GhStoreOutboxEvent *)g_ptr_array_index(entry->events, 0))->id : 0;
+  if (!delivery->outbox_event_id ||
+      !delivery_publish(delivery, out.event_json, (const gchar *const *)group->relays,
+                        GH_AUTH_PURPOSE_MLS_ROUTING)) {
+    delivery_abandon(delivery);
+    schedule_retry(self);
+  }
+  marmot_outgoing_message_free(&out);
+  return TRUE;
 
-static void
-reaction_publish_update(GhRelayPublish *publish, const GhRelayPublishResult *result,
-                        gpointer data)
-{
-  (void)publish; (void)result; (void)data;
+fail:
+  gh_store_rollback(self->store);
+  marmot_outgoing_message_free(&out);
+  return FALSE;
 }
 
 void
@@ -5870,35 +5939,8 @@ gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
                         "Could not build reaction inner event");
     return FALSE;
   }
-  MarmotOutgoingMessage out;
-  memset(&out, 0, sizeof out);
-  drop_stale_error(self);
-  MarmotError err = marmot_create_message(self->marmot, &group->gid, inner, &out);
-  if (err != MARMOT_OK) {
-    marmot_fail(self, err, "The reaction could not be encrypted", error);
-    marmot_outgoing_message_free(&out);
+  if (!send_request(self, group, 7, inner, inner_id, emoji, error))
     return FALSE;
-  }
-  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json, inner);
-  if (err != MARMOT_OK) {
-    marmot_fail(self, err, "The reaction could not be stored", error);
-    marmot_outgoing_message_free(&out);
-    return FALSE;
-  }
-  /* Fire-and-forget publish. */
-  g_autoptr(GError) pub_error = NULL;
-  GhRelayPublish *publish = gh_relay_publish_new(
-    self->generation, out.event_json, reaction_publish_update,
-    reaction_publish_done, NULL, &pub_error);
-  if (publish) {
-    for (guint i = 0; group->relays[i]; i++) {
-      gh_relay_publish_add_url(publish, group->relays[i], NULL);
-      gh_auth_policy_apply_publish(self->policy, publish,
-                                   GH_AUTH_PURPOSE_MLS_ROUTING, group->relays[i], NULL);
-    }
-    if (!gh_relay_publish_start(publish, &pub_error))
-      gh_relay_publish_unref(publish);
-  }
   /* Local echo: the reaction store admits it for immediate display. */
   if (self->reactions) {
     g_autoptr(GhReaction) reaction =
@@ -5908,7 +5950,6 @@ gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
     if (reaction)
       gh_reaction_store_admit(self->reactions, reaction, NULL);
   }
-  marmot_outgoing_message_free(&out);
   return TRUE;
 }
 
@@ -5937,36 +5978,7 @@ gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
                         "Could not build deletion inner event");
     return FALSE;
   }
-  MarmotOutgoingMessage out;
-  memset(&out, 0, sizeof out);
-  drop_stale_error(self);
-  MarmotError err = marmot_create_message(self->marmot, &group->gid, inner, &out);
-  if (err != MARMOT_OK) {
-    marmot_fail(self, err, "The deletion could not be encrypted", error);
-    marmot_outgoing_message_free(&out);
-    return FALSE;
-  }
-  err = marmot_save_created_message(self->marmot, &group->gid, out.event_json, inner);
-  if (err != MARMOT_OK) {
-    marmot_fail(self, err, "The deletion could not be stored", error);
-    marmot_outgoing_message_free(&out);
-    return FALSE;
-  }
-  g_autoptr(GError) pub_error = NULL;
-  GhRelayPublish *publish = gh_relay_publish_new(
-    self->generation, out.event_json, reaction_publish_update,
-    reaction_publish_done, NULL, &pub_error);
-  if (publish) {
-    for (guint i = 0; group->relays[i]; i++) {
-      gh_relay_publish_add_url(publish, group->relays[i], NULL);
-      gh_auth_policy_apply_publish(self->policy, publish,
-                                   GH_AUTH_PURPOSE_MLS_ROUTING, group->relays[i], NULL);
-    }
-    if (!gh_relay_publish_start(publish, &pub_error))
-      gh_relay_publish_unref(publish);
-  }
-  marmot_outgoing_message_free(&out);
-  return TRUE;
+  return send_request(self, group, 5, inner, inner_id, "", error);
 }
 
 gboolean
@@ -6003,13 +6015,54 @@ unsigned_id_of(const gchar *json, gint *out_kind)
   return ok ? g_strdup(id) : NULL;
 }
 
-/* After a restart or a failed round: the stored kind 445, byte for byte. */
+/* @group ended (left, removed): its unfinished reaction and deletion requests
+ * are cancelled and any round in flight stopped, so none goes out later
+ * (nostrc-knbkr). Chat messages stay as they are, shown not sent. */
+static GhMlsGroup *group_of_envelope(GhMlsService *self, const gchar *event_json);
+
 static void
-send_resume(GhMlsService *self, GhStoreOutboxEntry *entry, GhMlsGroup *group)
+requests_cancel(GhMlsGroup *group)
+{
+  GhMlsService *self = group->service;
+  if (!self->store)
+    return;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GArray) ids = gh_store_outbox_list_unfinished(self->store, GH_STORE_BACKEND_MLS,
+                                                          &error);
+  if (!ids) {
+    g_debug("Groundhog could not list an ended group's requests: %s", error->message);
+    return;
+  }
+  for (guint i = 0; i < ids->len; i++) {
+    gint64 id = g_array_index(ids, gint64, i);
+    g_autoptr(GhStoreOutboxEntry) entry = gh_store_outbox_load(self->store, id, NULL);
+    gint kind = 0;
+    g_autofree gchar *inner_id = entry ? unsigned_id_of(entry->rumor_json, &kind) : NULL;
+    if (!inner_id || (kind != 5 && kind != 7) || entry->events->len != 1)
+      continue;
+    GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
+    if (group_of_envelope(self, event->event_json) != group)
+      continue;
+    g_autofree gchar *key = outbox_key(id);
+    g_hash_table_remove(self->deliveries, key);
+    outbox_set(self, id, GH_STORE_OUTBOX_CANCELLED, "mls-group-ended", FALSE);
+  }
+}
+
+/* After a restart or a failed round: the stored kind 445, byte for byte.
+ * Nothing goes to a group being left (nostrc-2um6); a reaction or deletion
+ * request (@request) to a group that ended is cancelled, so it never goes
+ * out, even if the account is added again (nostrc-knbkr). */
+static void
+send_resume(GhMlsService *self, GhStoreOutboxEntry *entry, GhMlsGroup *group, gboolean request)
 {
   g_autofree gchar *key = outbox_key(entry->id);
-  if (!group || !group->active || g_hash_table_contains(self->deliveries, key) ||
-      entry->events->len != 1)
+  if (request && group && !group->active && group->end != GH_MLS_GROUP_END_NONE) {
+    outbox_set(self, entry->id, GH_STORE_OUTBOX_CANCELLED, "mls-group-ended", FALSE);
+    return;
+  }
+  if (!group || !group->active || group->leaving ||
+      g_hash_table_contains(self->deliveries, key) || entry->events->len != 1)
     return;
   GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
   if (event->role != GH_STORE_OUTBOX_ROLE_MLS_MESSAGE || !event->event_json)
@@ -9354,10 +9407,11 @@ resume_all(GhMlsService *self)
       gh_store_outbox_load(self->store, g_array_index(ids, gint64, i), NULL);
     gint kind = 0;
     g_autofree gchar *id = entry ? unsigned_id_of(entry->rumor_json, &kind) : NULL;
-    if (!id || kind != GH_MESSAGE_MLS_KIND || entry->events->len != 1)
+    gboolean request = kind == 5 || kind == 7;
+    if (!id || (kind != GH_MESSAGE_MLS_KIND && !request) || entry->events->len != 1)
       continue;   /* Commits: gh-mls-commits; Welcome wraps: welcomes_pump */
     GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
-    send_resume(self, entry, group_of_envelope(self, event->event_json));
+    send_resume(self, entry, group_of_envelope(self, event->event_json), request);
   }
   for (guint i = 0; i < self->groups->len; i++) {
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);

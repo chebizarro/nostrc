@@ -3453,10 +3453,14 @@ enqueue_locked(GhStore *store, const GhStoreOutgoing *o, gint64 now,
    * and a block is lifted (writing to someone again is choosing to hear from
    * them, G18). Only here, where a new own message is first stored: a repeat
    * of this op_id returned above, and a self-copy a relay delivers (T-admit)
-   * never unblocks. */
-  stmt = store_prepare(store,
-    "UPDATE conversations SET draft = NULL, last_activity = MAX(last_activity, ?1), "
-    "request_state = 0 WHERE id = ?2", error);
+   * never unblocks. A reaction or a deletion request (kinds 7 and 5) is
+   * not something written there: the draft and the last activity stay
+   * (nostrc-knbkr). */
+  gboolean chat = o->kind != 5 && o->kind != 7;
+  stmt = store_prepare(store, chat
+    ? "UPDATE conversations SET draft = NULL, last_activity = MAX(last_activity, ?1), "
+      "request_state = 0 WHERE id = ?2"
+    : "UPDATE conversations SET request_state = 0 WHERE id = ?2", error);
   if (!stmt)
     return FALSE;
   BIND(sqlite3_bind_int64(stmt, 1, o->created_at));
