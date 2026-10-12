@@ -21,6 +21,7 @@
 #ifdef __APPLE__
 
 #include "gh-store-key-keychain.h"
+#include "gh-profile-guard.h"
 #include <Security/Security.h>
 #include <Security/Authorization.h>
 #include <sodium.h>
@@ -113,6 +114,28 @@ gh_store_key_keychain_error_from_status(OSStatus st)
   case errSecAuthFailed:           return GH_STORE_KEY_ERROR_LOCKED;
   default:                         return GH_STORE_KEY_ERROR_FAILED;
   }
+}
+
+/* The user's default Keychain is never used under test, nor ever for a
+ * well-known test account (nostrc-ttvxv). A temporary keychain is fine. */
+static gboolean
+kc_refuse(GhStoreKeyBackend *backend, GHashTable *attributes, GCancellable *cancellable,
+          GAsyncReadyCallback callback, gpointer user_data, gpointer tag)
+{
+  GhStoreKeyKeychain *self = GH_STORE_KEY_KEYCHAIN(backend);
+  const gchar *acct = attributes ? g_hash_table_lookup(attributes, GH_STORE_KEY_ATTR_ACCOUNT)
+                                 : NULL;
+  if (self->keychain || !gh_profile_guard_refuses_default_keychain(acct))
+    return FALSE;
+  GTask *task = g_task_new(backend, cancellable, callback, user_data);
+  g_task_set_source_tag(task, tag);
+  g_task_return_new_error(task, GH_STORE_KEY_ERROR, GH_STORE_KEY_ERROR_UNAVAILABLE,
+                          "Refusing to use the login Keychain %s",
+                          gh_profile_guard_under_test()
+                            ? "under test (" GH_PROFILE_GUARD_ENV " is set)"
+                            : "for a well-known test account");
+  g_object_unref(task);
+  return TRUE;
 }
 
 /* ---- search ----------------------------------------------------------- */
@@ -250,6 +273,8 @@ kc_search_async(GhStoreKeyBackend *self, GHashTable *attributes,
                 GAsyncReadyCallback callback, gpointer user_data)
 {
   (void)flags;
+  if (kc_refuse(self, attributes, cancellable, callback, user_data, kc_search_async))
+    return;
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_task_data(task, attributes ? g_hash_table_ref(attributes) : NULL,
                        attributes ? (GDestroyNotify)g_hash_table_unref : NULL);
@@ -346,6 +371,8 @@ kc_store_async(GhStoreKeyBackend *self, GHashTable *attributes,
                gpointer user_data)
 {
   (void)flags;
+  if (kc_refuse(self, attributes, cancellable, callback, user_data, kc_store_async))
+    return;
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   StoreData *sd = g_new0(StoreData, 1);
   sd->attributes = g_hash_table_ref(attributes);
@@ -411,6 +438,8 @@ kc_clear_async(GhStoreKeyBackend *self, GHashTable *attributes,
                GAsyncReadyCallback callback, gpointer user_data)
 {
   (void)flags;
+  if (kc_refuse(self, attributes, cancellable, callback, user_data, kc_clear_async))
+    return;
   GTask *task = g_task_new(self, cancellable, callback, user_data);
   g_task_set_task_data(task, attributes ? g_hash_table_ref(attributes) : NULL,
                        attributes ? (GDestroyNotify)g_hash_table_unref : NULL);
