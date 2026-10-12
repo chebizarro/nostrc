@@ -3073,8 +3073,9 @@ gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *mes
                                         gboolean for_everyone)
 {
   g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  /* Any conversation (groundhog/deletion: NIP-17, encrypted and NIP-29
+   * groups alike). */
   if (!self->delete_func || !self->conversation || !message ||
-      gh_conversation_get_backend(self->conversation) != GH_CONVERSATION_BACKEND_NIP17 ||
       g_strcmp0(gh_message_get_account(message),
                 gh_conversation_get_account(self->conversation)) != 0 ||
       !gh_conversation_lookup_message(self->conversation, gh_message_get_rumor_id(message)))
@@ -3084,7 +3085,7 @@ gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *mes
   /* A request to delete only makes sense for an own message that reached
    * someone: one still sending (or never sent) is simply deleted here,
    * which also stops it. */
-  if (!gh_message_is_self(message))
+  if (!gh_message_is_self(message) || gh_message_get_withdrawn(message))
     return FALSE;
   switch (gh_message_get_status(message)) {
   case GH_MESSAGE_STATUS_NONE:
@@ -3093,6 +3094,36 @@ gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *mes
     return TRUE;
   default:
     return FALSE;
+  }
+}
+
+/* What each delete does where (charter §3.8). A NIP-29 group's relay keeps
+ * its own copy, which only a request for everyone asks it to delete. */
+static const gchar *
+delete_body(GhConversation *conversation, gboolean everyone)
+{
+  switch (gh_conversation_get_backend(conversation)) {
+  case GH_CONVERSATION_BACKEND_MLS:
+    return everyone
+      ? _("The message is deleted from this device, and everyone in the group is asked to "
+          "delete it too. Their apps may ignore the request, and they may already have read "
+          "or saved it.")
+      : _("The message is deleted from this device only. Everyone else in the group keeps "
+          "their copy.");
+  case GH_CONVERSATION_BACKEND_NIP29:
+    return everyone
+      ? _("The message is deleted from this device, and the group’s relay and everyone in "
+          "the group are asked to delete it too. The relay or their apps may ignore the "
+          "request, and they may already have read or saved it.")
+      : _("The message is deleted from this device only. The group’s relay and everyone "
+          "else in the group keep their copies.");
+  default:
+    return everyone
+      ? _("The message is deleted from this device, and everyone in the conversation is "
+          "asked to delete it too. Their apps may ignore the request, and they may "
+          "already have read or saved it.")
+      : _("The message is deleted from this device only. Everyone else in the "
+          "conversation keeps their copy.");
   }
 }
 
@@ -3113,12 +3144,7 @@ action_delete_message(GtkWidget *widget, const char *name, GVariant *parameter)
   self->pending_delete_everyone = everyone;
   adw_alert_dialog_set_heading(self->delete_dialog,
     everyone ? _("Delete for Everyone?") : _("Delete for Me?"));
-  adw_alert_dialog_set_body(self->delete_dialog, everyone
-    ? _("The message is deleted from this device, and everyone in the conversation is "
-        "asked to delete it too. Their apps may ignore the request, and they may "
-        "already have read or saved it.")
-    : _("The message is deleted from this device only. Everyone else in the "
-        "conversation keeps their copy."));
+  adw_alert_dialog_set_body(self->delete_dialog, delete_body(self->conversation, everyone));
   adw_alert_dialog_set_response_label(self->delete_dialog, "delete-confirm",
     everyone ? _("_Delete for Everyone") : _("_Delete for Me"));
   adw_dialog_present(ADW_DIALOG(self->delete_dialog), GTK_WIDGET(self));

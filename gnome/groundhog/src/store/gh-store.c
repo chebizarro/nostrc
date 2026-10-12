@@ -2907,6 +2907,148 @@ gh_store_mls_is_withdrawn(GhStore *store, const gchar *group_id_hex, const gchar
   return gh_store_seen_contains(store, GH_STORE_SEEN_MLS_WITHDRAWN, key, out_withdrawn, error);
 }
 
+/* ---- Deferred reactions and deletion markers (W28 nostrc-r41l, nostrc-419wf) ---------- */
+
+/* A reaction may arrive before its message (pending_reactions), and a NIP-09
+ * deletion request before what it deletes (reaction_tombstones, which hold
+ * one marker per event id, room and requester, for reactions and messages
+ * alike). Both are kept for a week of receipt time, only for a known room,
+ * and within per-author, per-room and per-account quotas. */
+#define DEFERRED_AUTHOR_ROOM_LIMIT 64
+#define DEFERRED_AUTHOR_ACCOUNT_LIMIT 256
+#define DEFERRED_ROOM_LIMIT 512
+#define DEFERRED_ACCOUNT_LIMIT 4096
+#define DEFERRED_SECONDS (7 * 24 * 60 * 60)
+
+/* The model's room id of a stored conversation: an MLS group's is
+ * "mls:<group id>" while its backend_key is the bare group id. */
+#define CONVERSATION_ROOM_SQL \
+  "(CASE WHEN c.backend = 3 THEN 'mls:' || c.backend_key ELSE c.backend_key END)"
+
+gboolean
+gh_store_prune_deferred(GhStore *store, GError **error)
+{
+  g_return_val_if_fail(store != NULL, FALSE);
+  static const gchar *sql =
+    "DELETE FROM pending_reactions WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
+    G_STRINGIFY(DEFERRED_SECONDS) ";"
+    "DELETE FROM reaction_tombstones WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
+    G_STRINGIFY(DEFERRED_SECONDS) ";"
+    "DELETE FROM pending_reactions WHERE NOT EXISTS (SELECT 1 FROM conversations c "
+    "WHERE " CONVERSATION_ROOM_SQL " = pending_reactions.room_id);"
+    "DELETE FROM reaction_tombstones WHERE NOT EXISTS (SELECT 1 FROM conversations c "
+    "WHERE " CONVERSATION_ROOM_SQL " = reaction_tombstones.room_id);"
+    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
+    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id, sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(DEFERRED_AUTHOR_ROOM_LIMIT) ");"
+    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
+    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(DEFERRED_ROOM_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id, sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(DEFERRED_AUTHOR_ROOM_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
+    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
+    "PARTITION BY room_id ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(DEFERRED_ROOM_LIMIT) ");"
+    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) WHERE n > " G_STRINGIFY(DEFERRED_AUTHOR_ACCOUNT_LIMIT) ");"
+    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(DEFERRED_AUTHOR_ACCOUNT_LIMIT) ");"
+    /* An author's nth-newest row is its oldest when it has n rows left.
+     * Descending n therefore drains the heaviest authors first, rebalancing
+     * after each removal; arrival_seq breaks ties oldest-first. The newest
+     * arrival survives rather than being rejected at a full account. */
+    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM pending_reactions) ORDER BY n DESC, arrival_seq ASC "
+    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(DEFERRED_ACCOUNT_LIMIT) ") "
+    "FROM pending_reactions));"
+    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
+    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
+    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
+    "FROM reaction_tombstones) ORDER BY n DESC, arrival_seq ASC "
+    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(DEFERRED_ACCOUNT_LIMIT) ") "
+    "FROM reaction_tombstones));";
+  return gh_store_exec(store, sql, error);
+}
+
+/* The marker room id of (backend, backend_key), as CONVERSATION_ROOM_SQL. */
+static gchar *
+marker_room(GhStoreBackend backend, const gchar *backend_key)
+{
+  return backend == GH_STORE_BACKEND_MLS ? g_strconcat("mls:", backend_key, NULL)
+                                         : g_strdup(backend_key);
+}
+
+/* A deletion request by @author for @msg_id that came before the message
+ * (nostrc-419wf): *out_found says whether one is kept; it is used up. */
+static gboolean
+take_deletion_marker(GhStore *store, GhStoreBackend backend, const gchar *backend_key,
+                     const gchar *msg_id, const gchar *author, gboolean *out_found,
+                     GError **error)
+{
+  *out_found = FALSE;
+  g_autofree gchar *room = marker_room(backend, backend_key);
+  sqlite3_stmt *stmt = store_prepare(store,
+    "DELETE FROM reaction_tombstones WHERE reaction_msg_id = ?1 AND room_id = ?2 "
+    "AND sender_pubkey = ?3", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, msg_id));
+  BIND(bind_text(stmt, 2, room));
+  BIND(bind_text(stmt, 3, author));
+  gboolean ok = store_step_done(store, stmt, "Looking up a deletion request", error);
+  if (ok)
+    *out_found = sqlite3_changes(store->db) > 0;
+  sqlite3_finalize(stmt);
+  return ok;
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
+/* Keeps a deletion request whose message has not arrived (nostrc-419wf), in
+ * a known room only, within gh_store_prune_deferred()'s bounds. */
+static gboolean
+keep_deletion_marker(GhStore *store, GhStoreBackend backend, const gchar *backend_key,
+                     const gchar *msg_id, const gchar *author, GError **error)
+{
+  gboolean found = FALSE;
+  gint64 id = 0;
+  if (!conversation_lookup(store, backend, backend_key, &found, &id, NULL, error))
+    return FALSE;
+  if (!found)
+    return TRUE;
+  g_autofree gchar *room = marker_room(backend, backend_key);
+  sqlite3_stmt *stmt = store_prepare(store,
+    "INSERT INTO reaction_tombstones (reaction_msg_id, room_id, sender_pubkey, received_at) "
+    "VALUES (?1, ?2, ?3, CAST(strftime('%s','now') AS INTEGER)) "
+    "ON CONFLICT(reaction_msg_id, room_id, sender_pubkey) DO UPDATE SET "
+    "received_at = excluded.received_at, arrival_seq = excluded.arrival_seq", error);
+  if (!stmt)
+    return FALSE;
+  BIND(bind_text(stmt, 1, msg_id));
+  BIND(bind_text(stmt, 2, room));
+  BIND(bind_text(stmt, 3, author));
+  gboolean ok = store_step_done(store, stmt, "Keeping a deletion request", error);
+  sqlite3_finalize(stmt);
+  return ok && gh_store_prune_deferred(store, error);
+fail:
+  sqlite3_finalize(stmt);
+  return FALSE;
+}
+
 /* ---- T-admit ------------------------------------------------------------------------ */
 
 /* An MLS message's source epoch (stored as a signed integer) and its
@@ -3034,6 +3176,15 @@ admit_locked(GhStore *store, const GhStoreMessage *m, gint64 now,
   /* Seen before (stored, purged or forgotten): never store it again. */
   if (!fresh) {
     *result = GH_STORE_ADMIT_DUPLICATE;
+    return TRUE;
+  }
+  /* Its author asked to delete it before it came (nostrc-419wf). */
+  gboolean deleted = FALSE;
+  if (!take_deletion_marker(store, m->backend, m->backend_key, m->backend_msg_id,
+                            m->sender_pubkey, &deleted, error))
+    return FALSE;
+  if (deleted) {
+    *result = GH_STORE_ADMIT_DELETED;
     return TRUE;
   }
   if (m->expires_at > 0 && m->expires_at <= now) {
@@ -4262,8 +4413,11 @@ gh_store_delete_message(GhStore *store, GhStoreBackend backend, const gchar *bac
     id = sqlite3_column_int64(stmt, 0);
   g_clear_pointer(&stmt, sqlite3_finalize);
   if (!has_row) {
-    store_rollback(store);
-    return TRUE;
+    /* A request for a message not here yet is kept for when it comes. */
+    if (sender_pubkey &&
+        !keep_deletion_marker(store, backend, backend_key, backend_msg_id, sender_pubkey, error))
+      goto fail;
+    return store_commit(store, error);
   }
   /* As T-purge: a read marker on it moves back to the newest message at or
    * before it, and its room's unread count is counted again without it. */

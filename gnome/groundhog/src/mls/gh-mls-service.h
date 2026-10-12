@@ -948,10 +948,23 @@ gboolean gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
                                       const gchar *emoji,
                                       GError **error);
 /* W26 slice B (nostrc-191r): sends a kind-5 NIP-09 deletion (inner event)
- * referencing @event_id (the reaction to remove). */
+ * referencing @event_id (a reaction to remove, or a message: see
+ * gh_mls_service_delete_message()). */
 gboolean gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
                                       const gchar *event_id,
                                       GError **error);
+
+/* Delete for Me / Delete for Everyone (groundhog/deletion): the message
+ * @message_id of @group leaves the store (as gh_store_delete_message():
+ * attachments and read state with it, its seen key kept) and the model.
+ * For everyone (the caller checks it is the account's own), a kind-5
+ * NIP-09 inner event naming it is first sent to the group as an MLS
+ * application message (gh_mls_service_send_deletion()); members delete
+ * it only if that request's authenticated sender wrote it in this group,
+ * and keep a request that comes first (nostrc-419wf). */
+gboolean gh_mls_service_delete_message(GhMlsService *self, GhMlsGroup *group,
+                                       const gchar *message_id, gboolean for_everyone,
+                                       GError **error);
 
 /* Pending invitations, oldest first (GhMlsInvite). Transfer full. */
 GPtrArray *gh_mls_service_list_invites(GhMlsService *self, GError **error);

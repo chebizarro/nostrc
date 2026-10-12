@@ -736,6 +736,30 @@ room_forget_event(GhNip29Room *room, const gchar *event_id)
     g_warning("Groundhog could not delete a removed group message: %s", error->message);
 }
 
+/* A member's NIP-09 request (groundhog/deletion): @event_id leaves the room,
+ * the timeline ring and the store only if @author wrote it in this group;
+ * the relay deleted it too if it honours NIP-09, so it is no longer cited
+ * as `previous`. A request whose message is not stored yet is kept by the
+ * store for when it comes (nostrc-419wf). */
+static gboolean
+room_honour_deletion(GhNip29Room *room, const gchar *event_id, const gchar *author,
+                     GError **error)
+{
+  GhNip29Service *self = room->service;
+  if (!self->store || !gh_nip29_is_hex64(event_id))
+    return TRUE;
+  gboolean deleted = FALSE;
+  if (!gh_store_delete_message(self->store, GH_STORE_BACKEND_NIP29, room->room_id, event_id,
+                               author, &deleted, error))
+    return FALSE;
+  if (deleted) {
+    if (gh_nip29_timeline_remove(room->timeline, event_id))
+      room_save(room);
+    gh_conversation_store_remove_message(self->conversations, event_id);
+  }
+  return TRUE;
+}
+
 static void
 room_deletion_event(GhNip29Room *room, NostrEvent *event)
 {
@@ -859,12 +883,14 @@ relay_filters(Relay *relay, GPtrArray *rooms)
     nostr_filters_add(filters, messages);
     nostr_filter_free(messages);
 
-    if (relay->service->reactions) {
+    {
       /* Reactions and author deletions cannot use the chat cursor: a group
-       * may have old reactions that predate its latest message. */
+       * may have old reactions that predate its latest message. Deletions
+       * also delete messages (groundhog/deletion), reactions or not. */
       int reaction_kinds[] = { NOSTR_KIND_DELETION, NOSTR_KIND_REACTION };
       NostrFilter *reactions = nostr_filter_new();
-      nostr_filter_set_kinds(reactions, reaction_kinds, G_N_ELEMENTS(reaction_kinds));
+      nostr_filter_set_kinds(reactions, reaction_kinds,
+                             relay->service->reactions ? G_N_ELEMENTS(reaction_kinds) : 1);
       nostr_filter_tags_append(reactions, "h", room_group_id(room), NULL);
       if (room->reaction_cursor > 0)
         nostr_filter_set_since_i64(reactions,
@@ -1218,10 +1244,11 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
       } else {
         room_advance_reaction_cursor(room, nostr_event_get_created_at(event), backfill);
       }
-    } else if (room && room->service->reactions && kind == NOSTR_KIND_DELETION) {
-      /* W26 slice B: NIP-25 deletion in a NIP-29 group.
-       * W26 slice B review fix (F3): only the reaction's author may delete
-       * it (NIP-09). The event's pubkey is the deletion sender. */
+    } else if (room && kind == NOSTR_KIND_DELETION) {
+      /* W26 slice B: a NIP-09 deletion in a NIP-29 group, of a reaction or
+       * (groundhog/deletion) a message. W26 slice B review fix (F3): only
+       * its author may delete it; the event's pubkey is the deletion
+       * sender. One whose message is not here yet is kept (nostrc-419wf). */
       const gchar *deletion_sender = nostr_event_get_pubkey(event);
       g_autoptr(GError) deletion_error = NULL;
       NostrTags *tags = (NostrTags *)nostr_event_get_tags(event);
@@ -1230,9 +1257,11 @@ relay_event(Relay *relay, const gchar *json, gboolean backfill)
           NostrTag *tag = nostr_tags_get(tags, ti);
           if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 && nostr_tag_get_value(tag)) {
             const gchar *rid = nostr_tag_get_value(tag);
-            gh_reaction_store_delete_event(room->service->reactions, rid,
-                                           deletion_sender, room->room_id, &deletion_error);
-            if (deletion_error)
+            if (room->service->reactions &&
+                !gh_reaction_store_delete_event(room->service->reactions, rid,
+                                                deletion_sender, room->room_id, &deletion_error))
+              break;
+            if (!room_honour_deletion(room, rid, deletion_sender, &deletion_error))
               break;
           }
         }
@@ -2212,6 +2241,33 @@ gh_nip29_service_send_deletion(GhNip29Service *self, GhNip29Room *room,
   g_autofree gchar *deletion_json = gh_nip29_template_deletion(
     room->key, &context, event_id, error);
   return deletion_json ? room_enqueue(room, deletion_json, error) : NULL;
+}
+
+gboolean
+gh_nip29_service_delete_message(GhNip29Service *self, GhNip29Room *room, const gchar *event_id,
+                                gboolean for_everyone, GError **error)
+{
+  g_return_val_if_fail(GH_IS_NIP29_SERVICE(self), FALSE);
+  if (!GH_IS_NIP29_ROOM(room) || room->service != self || !gh_nip29_is_hex64(event_id)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        "Not a message of a group of this account");
+    return FALSE;
+  }
+  if (for_everyone) {
+    g_autoptr(GhNip29Op) op = gh_nip29_service_send_deletion(self, room, event_id, error);
+    if (!op)
+      return FALSE;
+    /* The relay deletes it (NIP-09): no later event may cite it. */
+    if (gh_nip29_timeline_remove(room->timeline, event_id))
+      room_save(room);
+  }
+  gboolean deleted = FALSE;
+  if (self->store &&
+      !gh_store_delete_message(self->store, GH_STORE_BACKEND_NIP29, room->room_id, event_id,
+                               NULL, &deleted, error))
+    return FALSE;
+  gh_conversation_store_remove_message(self->conversations, event_id);
+  return TRUE;
 }
 
 static GhNip29Op *

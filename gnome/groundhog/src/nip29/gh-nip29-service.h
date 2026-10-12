@@ -287,6 +287,20 @@ GhNip29Op *gh_nip29_service_send_deletion(GhNip29Service *self, GhNip29Room *roo
                                           const gchar *event_id,
                                           GError **error);
 
+/* Delete for Me / Delete for Everyone (groundhog/deletion): the message
+ * @event_id of @room leaves the store (as gh_store_delete_message(), its
+ * seen key kept) and the model. For everyone (the caller checks it is the
+ * account's own), a kind-5 NIP-09 request naming it is first queued to the
+ * group relay (gh_nip29_service_send_deletion()), which deletes it if it
+ * honours NIP-09, as relay29 does, and serves the request to the members,
+ * who delete it only if its signer wrote it in this group. A kind-9005
+ * moderation delete is for an admin removing someone else's event
+ * (gh_nip29_service_delete_event()), not used here; the relay's own 9005s
+ * are honoured as before. */
+gboolean gh_nip29_service_delete_message(GhNip29Service *self, GhNip29Room *room,
+                                         const gchar *event_id, gboolean for_everyone,
+                                         GError **error);
+
 /* Admin operations, refused with G_IO_ERROR_PERMISSION_DENIED only when the
  * account's authorization for them is DENIED_* (gh_nip29_room_check_permission). */
 GhNip29Op *gh_nip29_service_put_user(GhNip29Service *self, GhNip29Room *room,

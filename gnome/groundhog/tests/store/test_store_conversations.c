@@ -1196,6 +1196,73 @@ test_delete_message(void)
   fixture_clear(&f);
 }
 
+/* nostrc-419wf: a NIP-09 request that comes before its message is kept, for
+ * that author, message and room only, and the message is then never shown,
+ * across a restart too. */
+static void
+test_delete_before_message(void)
+{
+  Fixture f;
+  fixture_init(&f, ACCOUNT_A, 0);
+  g_autofree gchar *ap = room_of(ACCOUNT_A, PEER_P, NULL);
+  g_autofree gchar *aq = room_of(ACCOUNT_A, PEER_Q, NULL);
+  Rumor first = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 100,
+                  .content = "first" };
+  Rumor early = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 90,
+                  .content = "deleted before it came" };
+  Rumor forged = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 80,
+                   .content = "someone else asked" };
+  Rumor stranger = { .author = PEER_Q, .to = { ACCOUNT_A }, .created_at = T0 - 70,
+                     .content = "a new room's first message" };
+  g_autofree gchar *early_id = rumor_id(ACCOUNT_A, &early);
+  g_autofree gchar *forged_id = rumor_id(ACCOUNT_A, &forged);
+  g_autofree gchar *stranger_id = rumor_id(ACCOUNT_A, &stranger);
+  g_assert_cmpint(deliver(f.model, &first, "early/1"), ==, GH_CONVERSATION_ADD_NEW);
+
+  /* The requests come first: from the author, and from someone who did not
+   * write the message (the account itself here); and one in a room this
+   * device does not know, which is not kept (as with early reactions). */
+  g_assert_false(delete_message(&f, ap, early_id, PEER_P));
+  g_assert_false(delete_message(&f, ap, forged_id, ACCOUNT_A));
+  g_assert_false(delete_message(&f, aq, stranger_id, PEER_Q));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 2);
+  /* Delete for Me of a message not here keeps nothing. */
+  g_assert_false(delete_message(&f, ap, "00", NULL));
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones"), ==, 2);
+  fixture_restart(&f);
+
+  /* The author's message is seen and never shown; the marker is used up. */
+  g_assert_cmpint(deliver(f.model, &early, "early/2"), ==, GH_CONVERSATION_ADD_HIDDEN);
+  g_assert_null(gh_conversation_store_lookup_message(f.model, early_id));
+  g_assert_cmpint(stored_messages(f.store, early_id), ==, 0);
+  g_assert_true(is_seen(f.store, GH_STORE_SEEN_RUMOR, early_id));
+  g_assert_cmpint(deliver(f.model, &early, "early/2-again"), ==, GH_CONVERSATION_ADD_DUPLICATE);
+  /* Another key's request deletes nothing it did not write. */
+  g_assert_cmpint(deliver(f.model, &forged, "early/3"), ==, GH_CONVERSATION_ADD_NEW);
+  g_assert_nonnull(gh_conversation_store_lookup_message(f.model, forged_id));
+  g_assert_cmpint(deliver(f.model, &stranger, "early/4"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_room(&f, ap, 2, 2, TRUE);
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "sender_pubkey = '%s'", PEER_P), ==, 0);
+  fixture_restart(&f);
+  assert_room(&f, ap, 2, 2, TRUE);
+  g_assert_null(gh_conversation_store_lookup_message(f.model, early_id));
+
+  /* A marker lasts a week of receipt time. */
+  Rumor late = { .author = PEER_P, .to = { ACCOUNT_A }, .created_at = T0 - 60,
+                 .content = "deleted, but came too late" };
+  g_autofree gchar *late_id = rumor_id(ACCOUNT_A, &late);
+  g_assert_false(delete_message(&f, ap, late_id, PEER_P));
+  g_assert_true(gh_store_exec(f.store,
+    "UPDATE reaction_tombstones SET received_at = received_at - 8 * 24 * 60 * 60", NULL));
+  g_assert_false(delete_message(&f, ap, "11", PEER_P)); /* any write prunes */
+  g_assert_cmpint(sql_int(f.store, "SELECT count(*) FROM reaction_tombstones WHERE "
+                                   "reaction_msg_id = '%s'", late_id), ==, 0);
+  g_assert_cmpint(deliver(f.model, &late, "early/5"), ==, GH_CONVERSATION_ADD_NEW);
+  assert_store_consistent(f.store);
+  fixture_clear(&f);
+}
+
 /* ---- Notification state (G16, NO-7): mute and block live in the store ---------------------------- */
 
 static GhStoreNotifyState
@@ -2312,6 +2379,8 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/store-conversations/restart/verifies", test_restore_verifies);
   g_test_add_func("/groundhog/store-conversations/st9/forget", test_st9_forget);
   g_test_add_func("/groundhog/store-conversations/delete-message", test_delete_message);
+  g_test_add_func("/groundhog/store-conversations/delete-before-message",
+                  test_delete_before_message);
   g_test_add_func("/groundhog/store-conversations/notify-state", test_notify_state);
   g_test_add_func("/groundhog/store-conversations/list-blocked", test_list_blocked);
   g_test_add_func("/groundhog/store-conversations/ex4-ex6/expiry", test_expiry);

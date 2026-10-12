@@ -439,6 +439,50 @@ gh_app_outbox_delete_message(GhStoreConversations *stored, GObject *outbox,
 }
 
 gboolean
+gh_app_outbox_delete_group_message(GhAppOutbox *self, GhConversation *conversation,
+                                   GhMessage *message, gboolean for_everyone, GError **error)
+{
+  g_return_val_if_fail(self != NULL, FALSE);
+  g_return_val_if_fail(GH_IS_CONVERSATION(conversation) && GH_IS_MESSAGE(message), FALSE);
+  if (for_everyone && !gh_message_is_self(message)) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
+                        "Only your own messages can be deleted for everyone");
+    return FALSE;
+  }
+  const gchar *room_id = gh_conversation_get_room_id(conversation);
+  const gchar *message_id = gh_message_get_rumor_id(message);
+  (void)room_id; /* unused in a build without groups */
+  (void)message_id;
+  switch (gh_conversation_get_backend(conversation)) {
+#if GROUNDHOG_HAVE_MLS
+  case GH_CONVERSATION_BACKEND_MLS:
+    if (GH_IS_MLS_SERVICE(self->mls)) {
+      GhMlsGroup *group = gh_mls_service_lookup(GH_MLS_SERVICE(self->mls), room_id);
+      if (group)
+        return gh_mls_service_delete_message(GH_MLS_SERVICE(self->mls), group, message_id,
+                                             for_everyone, error);
+    }
+    break;
+#endif
+#if GROUNDHOG_HAVE_NIP29
+  case GH_CONVERSATION_BACKEND_NIP29:
+    if (GH_IS_NIP29_SERVICE(self->nip29)) {
+      GhNip29Room *room = gh_nip29_service_lookup_room(GH_NIP29_SERVICE(self->nip29), room_id);
+      if (room)
+        return gh_nip29_service_delete_message(GH_NIP29_SERVICE(self->nip29), room, message_id,
+                                               for_everyone, error);
+    }
+    break;
+#endif
+  default:
+    break;
+  }
+  g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                      "Messages can't be deleted here now");
+  return FALSE;
+}
+
+gboolean
 gh_app_outbox_honour_deletion(GhStoreConversations *stored, GObject *outbox,
                               const gchar *room_id, const gchar *rumor_id,
                               const gchar *author_pubkey, gboolean *out_deleted,

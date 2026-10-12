@@ -539,15 +539,18 @@ typedef enum {
   GH_STORE_ADMIT_STORED,     /* new message stored, seen keys recorded */
   GH_STORE_ADMIT_DUPLICATE,  /* message id already seen; new wrap id recorded */
   GH_STORE_ADMIT_FORGOTTEN,  /* older than the conversation's forgotten_before */
-  GH_STORE_ADMIT_EXPIRED     /* expired on arrival (EX-4) */
+  GH_STORE_ADMIT_EXPIRED,    /* expired on arrival (EX-4) */
+  GH_STORE_ADMIT_DELETED     /* its author's deletion request came first (nostrc-419wf) */
 } GhStoreAdmitResult;
 
 /* T-admit: records the wrap id and message id in `seen`, and stores the
  * message (creating or updating its conversation: last activity, unread count,
  * title, participants) in one transaction, so dedup and storage can never
  * disagree. A message whose id is already seen is never stored again, so
- * purged or forgotten messages do not return from backfill (EX-6); FORGOTTEN
- * and EXPIRED messages are seen-recorded only. On failure (e.g.
+ * purged or forgotten messages do not return from backfill (EX-6); FORGOTTEN,
+ * EXPIRED and DELETED messages are seen-recorded only (DELETED: a deletion
+ * request by the message's sender for it in its room was kept by
+ * gh_store_delete_message(), and is used up). On failure (e.g.
  * GH_STORE_ERROR_FULL) nothing is recorded and the wrap is re-fetched later.
  * @out_message_id is set for STORED only (otherwise 0). */
 gboolean gh_store_admit(GhStore *store, const GhStoreMessage *message,
@@ -720,12 +723,22 @@ gboolean gh_store_outbox_delete(GhStore *store, gint64 outbox_id, GError **error
  * The seen keys stay, so the same message from a relay is never admitted
  * again. Then the WAL is truncated. With @sender_pubkey (lowercase hex),
  * only a message written by that key is deleted (a NIP-09 request may
- * only delete its author's own messages). *out_deleted is FALSE, and
- * nothing changes, when there is no such message: not an error. */
+ * only delete its author's own messages). *out_deleted is FALSE when there
+ * is no such message: not an error. Then, with @sender_pubkey, the request
+ * is kept as a marker (nostrc-419wf) if the conversation is known, so the
+ * message is refused when it arrives (GH_STORE_ADMIT_DELETED); markers are
+ * bounded as gh_store_prune_deferred() says. Any backend. */
 gboolean gh_store_delete_message(GhStore *store, GhStoreBackend backend,
                                  const gchar *backend_key, const gchar *backend_msg_id,
                                  const gchar *sender_pubkey, gboolean *out_deleted,
                                  GError **error);
+
+/* Bounds the rows kept for events that came before what they name: reactions
+ * waiting for their message and NIP-09 deletion markers (kept a week by
+ * receipt time, only for a known room, at most 64 per author and room, 256
+ * per author, 512 per room and 4096 in all, the heaviest author's oldest
+ * going first). Called inside the writer's transaction. */
+gboolean gh_store_prune_deferred(GhStore *store, GError **error);
 
 /* ---- T-purge ------------------------------------------------------------------------ */
 

@@ -2745,6 +2745,8 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
   GhMlsRefusal refusal = GH_MLS_REFUSAL_BROKEN_PROOF;   /* or UNPROVEN: set_refused() */
   gboolean proposal = FALSE, awaits_proposal = FALSE;
   gboolean retained = FALSE;
+  /* Messages a member's NIP-09 request deleted here (groundhog/deletion). */
+  g_autoptr(GPtrArray) deleted = g_ptr_array_new_with_free_func(g_free);
 
   if (err == MARMOT_OK && result.type == MARMOT_RESULT_APPLICATION_MESSAGE) {
     g_autoptr(GError) bad = NULL;
@@ -2824,12 +2826,12 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     /* W26 slice B (nostrc-191r): kind-7 reaction or kind-5 deletion.
      * The inner event is an unsigned rumor: parse it to check its kind,
      * and route to the reaction store when present. */
-    if (!message && self->reactions && result.app_msg.inner_event_json) {
+    if (!message && result.app_msg.inner_event_json) {
       NostrEvent *inner = nostr_event_new();
       if (inner && nostr_event_deserialize_unsigned(inner, result.app_msg.inner_event_json,
                                                      NULL) == NOSTR_EVENT_VALIDATION_OK) {
         int inner_kind = nostr_event_get_kind(inner);
-        if (inner_kind == 7) {
+        if (inner_kind == 7 && self->reactions) {
           /* NIP-25 reaction: e-tag is the target message, content is emoji. */
           NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
           const gchar *target_id = NULL;
@@ -2861,9 +2863,10 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
             }
           }
         } else if (inner_kind == 5 && result.app_msg.sender_pubkey_hex) {
-          /* NIP-25 deletion: each e-tag names a reaction to remove.
-           * W26 slice B review fix (F3): only the reaction's author may
-           * delete it (NIP-09). */
+          /* NIP-09 deletion: each e-tag names a reaction or a message.
+           * W26 slice B review fix (F3): only its author may delete it,
+           * and only in this group (groundhog/deletion); one not here yet
+           * is kept for when it comes (nostrc-419wf). */
           NostrTags *tags = (NostrTags *)nostr_event_get_tags(inner);
           if (tags) {
             for (size_t ti = 0; ti < nostr_tags_size(tags); ti++) {
@@ -2871,9 +2874,19 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
               if (tag && g_strcmp0(nostr_tag_get_key(tag), "e") == 0 &&
                   nostr_tag_get_value(tag)) {
                 const gchar *rid = nostr_tag_get_value(tag);
-                gh_reaction_store_delete_event(self->reactions, rid,
-                                               result.app_msg.sender_pubkey_hex,
-                                               group->room_id, NULL);
+                if (self->reactions)
+                  gh_reaction_store_delete_event(self->reactions, rid,
+                                                 result.app_msg.sender_pubkey_hex,
+                                                 group->room_id, NULL);
+                gboolean gone = FALSE;
+                g_autoptr(GError) delete_error = NULL;
+                if (!gh_store_delete_message(self->store, GH_STORE_BACKEND_MLS, group->gid_hex,
+                                             rid, result.app_msg.sender_pubkey_hex, &gone,
+                                             &delete_error))
+                  g_message("Groundhog could not honour a group deletion request: %s",
+                            delete_error->message);
+                else if (gone)
+                  g_ptr_array_add(deleted, g_strdup(rid));
               }
             }
           }
@@ -2996,6 +3009,11 @@ process_event(GhMlsGroup *group, const gchar *event_json, const gchar *url, gboo
     g_message("Groundhog could not store an encrypted group event: %s", error->message);
     return EVENT_OTHER;
   }
+  /* The deleted text leaves the WAL now, as after Delete for Me. */
+  if (deleted->len > 0 && gh_store_get_transaction_depth(self->store) == 0)
+    (void)gh_store_checkpoint(self->store, NULL);
+  for (guint i = 0; i < deleted->len && account_matches_model(self); i++)
+    gh_conversation_store_remove_message(self->conversations, deleted->pdata[i]);
   if (refused) {
     set_refused(group, event_json, refusal);
     return EVENT_OTHER;
@@ -5948,6 +5966,23 @@ gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
       gh_relay_publish_unref(publish);
   }
   marmot_outgoing_message_free(&out);
+  return TRUE;
+}
+
+gboolean
+gh_mls_service_delete_message(GhMlsService *self, GhMlsGroup *group, const gchar *message_id,
+                              gboolean for_everyone, GError **error)
+{
+  g_return_val_if_fail(GH_IS_MLS_SERVICE(self), FALSE);
+  g_return_val_if_fail(GH_IS_MLS_GROUP(group) && message_id != NULL, FALSE);
+  if (for_everyone && !gh_mls_service_send_deletion(self, group, message_id, error))
+    return FALSE;
+  gboolean deleted = FALSE;
+  if (!gh_store_delete_message(self->store, GH_STORE_BACKEND_MLS, group->gid_hex, message_id,
+                               NULL, &deleted, error))
+    return FALSE;
+  if (account_matches_model(self))
+    gh_conversation_store_remove_message(self->conversations, message_id);
   return TRUE;
 }
 

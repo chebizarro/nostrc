@@ -10,12 +10,6 @@ struct _GhStoreReactions {
 
 G_DEFINE_FINAL_TYPE(GhStoreReactions, gh_store_reactions, G_TYPE_OBJECT)
 
-#define REACTION_AUTHOR_ROOM_LIMIT 64
-#define REACTION_AUTHOR_ACCOUNT_LIMIT 256
-#define REACTION_ROOM_LIMIT 512
-#define REACTION_ACCOUNT_LIMIT 4096
-#define REACTION_PENDING_SECONDS (7 * 24 * 60 * 60)
-
 /* Reaction room ids use the model's namespace. MLS conversations persist the
  * bare group id as backend_key, while their model room id is "mls:<group id>".
  * Keep that distinction in every room/target lookup, including restore and
@@ -47,63 +41,6 @@ lookup_room(sqlite3 *db, const gchar *room_id, gboolean *known, GError **error)
   if (rc == SQLITE_ROW)
     *known = TRUE;
   return rc == SQLITE_ROW || sql_error(db, rc, "lookup room", error);
-}
-
-static gboolean
-prune_deferred(sqlite3 *db, GError **error)
-{
-  static const gchar *sql =
-    "DELETE FROM pending_reactions WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
-    G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
-    "DELETE FROM reaction_tombstones WHERE received_at < CAST(strftime('%s','now') AS INTEGER) - "
-    G_STRINGIFY(REACTION_PENDING_SECONDS) ";"
-    "DELETE FROM pending_reactions WHERE NOT EXISTS (SELECT 1 FROM conversations c "
-    "WHERE " CONVERSATION_ROOM_SQL " = pending_reactions.room_id);"
-    "DELETE FROM reaction_tombstones WHERE NOT EXISTS (SELECT 1 FROM conversations c "
-    "WHERE " CONVERSATION_ROOM_SQL " = reaction_tombstones.room_id);"
-    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
-    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
-    "PARTITION BY room_id, sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT) ");"
-    "DELETE FROM pending_reactions WHERE reaction_msg_id IN ("
-    "SELECT reaction_msg_id FROM (SELECT reaction_msg_id, ROW_NUMBER() OVER ("
-    "PARTITION BY room_id ORDER BY arrival_seq DESC) AS n "
-    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");"
-    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
-    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
-    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
-    "PARTITION BY room_id, sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ROOM_LIMIT) ");"
-    "DELETE FROM reaction_tombstones WHERE (reaction_msg_id, room_id, sender_pubkey) IN ("
-    "SELECT reaction_msg_id, room_id, sender_pubkey FROM ("
-    "SELECT reaction_msg_id, room_id, sender_pubkey, ROW_NUMBER() OVER ("
-    "PARTITION BY room_id ORDER BY arrival_seq DESC) AS n "
-    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_ROOM_LIMIT) ");"
-    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
-    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
-    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM pending_reactions) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ACCOUNT_LIMIT) ");"
-    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
-    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
-    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM reaction_tombstones) WHERE n > " G_STRINGIFY(REACTION_AUTHOR_ACCOUNT_LIMIT) ");"
-    /* An author's nth-newest row is its oldest when it has n rows left.
-     * Descending n therefore drains the heaviest authors first, rebalancing
-     * after each removal; arrival_seq breaks ties oldest-first. The newest
-     * arrival survives rather than being rejected at a full account. */
-    "DELETE FROM pending_reactions WHERE arrival_seq IN ("
-    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
-    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM pending_reactions) ORDER BY n DESC, arrival_seq ASC "
-    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(REACTION_ACCOUNT_LIMIT) ") "
-    "FROM pending_reactions));"
-    "DELETE FROM reaction_tombstones WHERE arrival_seq IN ("
-    "SELECT arrival_seq FROM (SELECT arrival_seq, ROW_NUMBER() OVER ("
-    "PARTITION BY sender_pubkey ORDER BY arrival_seq DESC) AS n "
-    "FROM reaction_tombstones) ORDER BY n DESC, arrival_seq ASC "
-    "LIMIT (SELECT max(0, count(*) - " G_STRINGIFY(REACTION_ACCOUNT_LIMIT) ") "
-    "FROM reaction_tombstones));";
-  return sql_error(db, sqlite3_exec(db, sql, NULL, NULL, NULL), "prune reactions", error);
 }
 
 static gboolean
@@ -177,7 +114,7 @@ delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
     return FALSE;
   if (!known)
     return FALSE;
-  if (!prune_deferred(db, error))
+  if (!gh_store_prune_deferred(self->store, error))
     return FALSE;
   sqlite3_stmt *tombstone = NULL;
   int rc = sqlite3_prepare_v2(db,
@@ -232,7 +169,8 @@ delegate_admit_inner(gpointer data, GhReaction *reaction, GError **error)
     sqlite3_bind_int64(pending, 6, gh_reaction_get_created_at(reaction));
     rc = sqlite3_step(pending);
     sqlite3_finalize(pending);
-    if (!sql_error(db, rc, "insert pending reaction", error) || !prune_deferred(db, error))
+    if (!sql_error(db, rc, "insert pending reaction", error) ||
+        !gh_store_prune_deferred(self->store, error))
       return FALSE;
     return FALSE;
   }
@@ -277,7 +215,7 @@ delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender
     return FALSE;
   if (!known)
     return TRUE;
-  if (!prune_deferred(db, error))
+  if (!gh_store_prune_deferred(self->store, error))
     return FALSE;
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db,
@@ -317,7 +255,8 @@ delegate_delete_event_inner(gpointer data, const gchar *rid, const gchar *sender
   sqlite3_bind_text(stmt, 3, sender, -1, SQLITE_TRANSIENT);
   rc = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
-  return sql_error(db, rc, "remove reaction", error) && prune_deferred(db, error);
+  return sql_error(db, rc, "remove reaction", error) &&
+         gh_store_prune_deferred(self->store, error);
 }
 
 static gboolean
@@ -434,7 +373,7 @@ gh_store_reactions_reconcile(GhStoreReactions *self, GhReactionStore *model,
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CLOSED, "Reaction store closed");
     return FALSE;
   }
-  if (!prune_deferred(db, error))
+  if (!gh_store_prune_deferred(self->store, error))
     return FALSE;
   sqlite3_stmt *stmt = NULL;
   int rc = sqlite3_prepare_v2(db,
