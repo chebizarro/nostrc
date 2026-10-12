@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "nostrc-test-bus.h"
+#include "nostrc-test-isolation.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -149,6 +150,8 @@ nostrc_test_bus_available(void)
 NostrcTestBus *
 nostrc_test_bus_new(NostrcTestBusFlags flags)
 {
+  /* A private bus is no help if the profile is the owner's (nostrc-ttvxv). */
+  nostrc_test_isolation_assert();
   NostrcTestBus *bus = g_new0(NostrcTestBus, 1);
   bus->flags = flags;
   bus->service_dirs = g_ptr_array_new_with_free_func(g_free);
