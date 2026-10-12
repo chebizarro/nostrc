@@ -17,6 +17,8 @@
 #include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
+#include <json.h>
+#include <stdlib.h>
 
 /* Consecutive messages from one sender this close together form a run. */
 #define RUN_GAP_SECONDS (5 * 60)
@@ -29,6 +31,9 @@
 #define RENDER_CACHE_MAX_ITEMS 256u
 #define RENDER_CACHE_MAX_BYTES (2u * 1024u * 1024u)
 #define RENDER_WORKER_THRESHOLD 4096u
+/* nostrc-bgjcp: decoded images, page artwork and pictures the view loaded
+ * itself, kept for the account's session, take at most this much memory. */
+#define WEB_TEXTURE_BUDGET_BYTES ((gsize)64 * 1024 * 1024)
 #define RENDER_PREWARM_ITEMS 40u
 
 /* ---- GhTimelineItem --------------------------------------------------------------- */
@@ -671,13 +676,51 @@ typedef struct {
    * "don't ask again" that was in force). Kept for the account's session
    * so that leaving the conversation never asks for it again. */
   gboolean approved;
+  /* The texture's place in the view's budget (nostrc-bgjcp): only one the
+   * view loaded itself (the picture cache bounds its own). */
+  struct TextureBudget *budget;
+  GList link;
 } Preview;
+
+/* Session-kept textures: their previews, least recently viewed first, and
+ * the size of the distinct textures they hold (one picture shows under
+ * every message of its sender: counted once). */
+typedef struct TextureBudget {
+  GQueue lru;
+  GHashTable *holders; /* GdkTexture -> number of previews holding it */
+  gsize bytes;
+  gsize limit;
+} TextureBudget;
+
+static gsize
+texture_bytes(GdkTexture *texture)
+{
+  return (gsize)gdk_texture_get_width(texture) * (gsize)gdk_texture_get_height(texture) * 4;
+}
 
 static gboolean picture_via_cache(GhConversationView *self, const gchar *id, Preview *preview);
 
 static void
+texture_budget_forget(Preview *preview)
+{
+  if (!preview->budget)
+    return;
+  TextureBudget *budget = preview->budget;
+  g_queue_unlink(&budget->lru, &preview->link);
+  guint holders = GPOINTER_TO_UINT(g_hash_table_lookup(budget->holders, preview->texture));
+  if (holders > 1) {
+    g_hash_table_insert(budget->holders, preview->texture, GUINT_TO_POINTER(holders - 1));
+  } else {
+    g_hash_table_remove(budget->holders, preview->texture);
+    budget->bytes -= texture_bytes(preview->texture);
+  }
+  preview->budget = NULL;
+}
+
+static void
 preview_free(Preview *preview)
 {
+  texture_budget_forget(preview);
   g_free(preview->uri);
   g_free(preview->sender);
   g_free(preview->room);
@@ -716,6 +759,7 @@ struct _GhConversationView {
   AdwAlertDialog *delete_dialog;
 
   GhConversation *conversation;
+  TextureBudget textures;      /* nostrc-bgjcp */
   GhTimeline *timeline;
   GSettings *settings;
   gboolean compact;
@@ -1205,6 +1249,8 @@ typedef struct {
   GnNostrReference *reference_descriptor;
   GnNostrReferenceCardRole reference_role;
   gchar *reference_original; /* verified embedded original of a repost */
+  gchar *copy_text;      /* a repost's or quote's human text (nostrc-tv98u) */
+  gboolean repost;       /* the reference came from a repost or quote body */
   gchar *preview_uri;
   gchar *image_uri;
   gsize bytes;
@@ -1244,6 +1290,7 @@ render_entry_free(RenderEntry *entry)
   g_free(entry->reference_uri);
   gn_nostr_reference_free(entry->reference_descriptor);
   g_free(entry->reference_original);
+  g_free(entry->copy_text);
   g_free(entry->preview_uri);
   g_free(entry->image_uri);
   g_free(entry);
@@ -1258,52 +1305,121 @@ render_job_free(RenderJob *job)
   g_free(job);
 }
 
-static void
-render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *document,
-                               const gchar *body)
+static GnNostrRepostDescriptor *
+repost_of_body(const gchar *body, gchar **quote_text)
 {
-  g_clear_pointer(&entry->reference_uri, g_free);
-  g_clear_pointer(&entry->reference_descriptor, gn_nostr_reference_free);
-  g_clear_pointer(&entry->reference_original, g_free);
-  entry->reference_role = GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
-  g_autoptr(GnNostrRepostDescriptor) repost = NULL;
-  if (body && body[0] == '{' &&
-      strlen(body) <= GN_MARKDOWN_MAX_INPUT_BYTES)
-    repost = gn_nostr_repost_descriptor_parse(body, FALSE);
-  const GnNostrReference *reference = repost ? repost->target : NULL;
-  g_autoptr(GnNostrReference) parsed = NULL;
-  if (!reference && document) {
-    for (guint i = 0; i < document->tokens->len; i++) {
-      const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
-      if (token->kind != GN_MARKDOWN_NOSTR_REFERENCE &&
-          !(token->kind == GN_MARKDOWN_LINK && token->target &&
-            g_str_has_prefix(token->target, "nostr:")))
-        continue;
-      parsed = gn_nostr_reference_parse(token->target);
-      if (parsed && (parsed->type == GN_NOSTR_REFERENCE_EVENT ||
-                     parsed->type == GN_NOSTR_REFERENCE_ADDRESS)) {
-        reference = parsed;
-        break;
-      }
-      g_clear_pointer(&parsed, gn_nostr_reference_free);
+  if (!body || body[0] != '{' || strlen(body) > GN_MARKDOWN_MAX_INPUT_BYTES)
+    return NULL;
+  GnNostrRepostDescriptor *repost = gn_nostr_repost_descriptor_parse(body, FALSE);
+  if (repost && repost->quote && quote_text) {
+    char *content = NULL;
+    if (nostr_json_get_string(body, "content", &content) == 0 && content && *content)
+      *quote_text = g_utf8_make_valid(content, -1);
+    free(content);
+  }
+  return repost;
+}
+
+/* A quote's text as its bubble shows it: without the trailing nostr:
+ * reference to the quoted note (NIP-18 puts one there), which the card
+ * shows. */
+static gchar *
+quote_shown_text(const gchar *quote_text, const GnNostrReference *target)
+{
+  gchar *text = g_strchomp(g_strdup(quote_text ? quote_text : ""));
+  gchar *token = text + strlen(text);
+  while (token > text && !g_ascii_isspace(token[-1]))
+    token--;
+  if (g_str_has_prefix(token, "nostr:")) {
+    g_autoptr(GnNostrReference) named = gn_nostr_reference_parse(token);
+    if (named && named->type == target->type && named->id && target->id &&
+        g_ascii_strcasecmp(named->id, target->id) == 0) {
+      *token = '\0';
+      g_strchomp(text);
     }
   }
-  if (!reference) return;
-  entry->reference_descriptor = repost ? g_steal_pointer(&repost->target)
-                                       : g_steal_pointer(&parsed);
+  return text;
+}
+
+/* What Copy Message copies for a repost or quote: the quote's text with a
+ * reference to the note (its own, or the note's address added), or for a
+ * repost only the address. */
+static gchar *
+repost_copy_text(const gchar *quote_text, const GnNostrReference *target)
+{
+  if (!quote_text || !*quote_text)
+    return g_strdup(target->uri);
+  g_autofree gchar *full = g_strchomp(g_strdup(quote_text));
+  g_autofree gchar *shown = quote_shown_text(quote_text, target);
+  if (g_strcmp0(full, shown) != 0)
+    return g_steal_pointer(&full);
+  return *shown ? g_strconcat(shown, "\n", target->uri, NULL) : g_strdup(target->uri);
+}
+
+gboolean
+gh_conversation_view_parse_repost_body(const gchar *body, gchar **quote_text, gchar **uri)
+{
+  g_autofree gchar *text = NULL;
+  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(body, &text);
+  if (!repost)
+    return FALSE;
+  if (quote_text) *quote_text = repost->quote ? quote_shown_text(text, repost->target) : NULL;
+  if (uri) *uri = g_strdup(repost->target->uri);
+  return TRUE;
+}
+
+gchar *
+gh_conversation_view_dup_body_copy_text(const gchar *body)
+{
+  g_autofree gchar *quote_text = NULL;
+  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(body, &quote_text);
+  if (!repost)
+    return g_strdup(body);
+  return repost_copy_text(quote_text, repost->target);
+}
+
+/* A repost or quote body (nostrc-boq9.5, nostrc-tv98u): the card shows the
+ * shared note. A quote's bubble shows its own text (@quote_text, rendered as
+ * any message); a repost's shows a sentence only while the card can't show
+ * the note, and the row hides it once the card has resolved it. */
+static void
+render_entry_set_repost(RenderEntry *entry, GnNostrRepostDescriptor *repost,
+                        const gchar *quote_text)
+{
+  entry->repost = TRUE;
+  entry->reference_descriptor = g_steal_pointer(&repost->target);
   entry->reference_uri = g_strdup(entry->reference_descriptor->uri);
-  /* The shared card (nostrc-8xfib.6) words the summary from the role. */
-  if (repost) {
-    entry->reference_role = repost->quote ? GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE
-                                          : GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
-    entry->reference_original = g_steal_pointer(&repost->original_json);
-    /* A repost's content is NIP-18 JSON, never text for people
-     * (nostrc-boq9.5). The card shows the note; the row hides this line
-     * once the card has resolved it and shows it only while it can't. */
-    if (!repost->quote) {
-      g_clear_pointer(&entry->blocks, g_ptr_array_unref);
-      g_free(entry->markup);
-      entry->markup = g_markup_escape_text(_("The reposted note isn't available on this device."), -1);
+  entry->reference_role = repost->quote ? GN_NOSTR_REFERENCE_CARD_ROLE_QUOTE
+                                        : GN_NOSTR_REFERENCE_CARD_ROLE_REPOST;
+  entry->reference_original = g_steal_pointer(&repost->original_json);
+  entry->copy_text = repost_copy_text(quote_text, entry->reference_descriptor);
+  if (!repost->quote) {
+    g_free(entry->markup);
+    entry->markup = g_markup_escape_text(_("The reposted note isn't available on this device."), -1);
+  }
+}
+
+/* A message mentioning a note or address shows it on a card too. */
+static void
+render_entry_collect_reference(RenderEntry *entry, const GnMarkdownDocument *document)
+{
+  if (entry->repost)
+    return;
+  g_clear_pointer(&entry->reference_uri, g_free);
+  g_clear_pointer(&entry->reference_descriptor, gn_nostr_reference_free);
+  entry->reference_role = GN_NOSTR_REFERENCE_CARD_ROLE_MENTION;
+  for (guint i = 0; document && i < document->tokens->len; i++) {
+    const GnMarkdownToken *token = g_ptr_array_index(document->tokens, i);
+    if (token->kind != GN_MARKDOWN_NOSTR_REFERENCE &&
+        !(token->kind == GN_MARKDOWN_LINK && token->target &&
+          g_str_has_prefix(token->target, "nostr:")))
+      continue;
+    g_autoptr(GnNostrReference) parsed = gn_nostr_reference_parse(token->target);
+    if (parsed && (parsed->type == GN_NOSTR_REFERENCE_EVENT ||
+                   parsed->type == GN_NOSTR_REFERENCE_ADDRESS)) {
+      entry->reference_descriptor = g_steal_pointer(&parsed);
+      entry->reference_uri = g_strdup(entry->reference_descriptor->uri);
+      return;
     }
   }
 }
@@ -1348,6 +1464,7 @@ render_entry_size(RenderEntry *entry)
   return strlen(entry->markup) + render_blocks_size(entry->blocks) +
          (entry->reference_uri ? strlen(entry->reference_uri) : 0) +
          (entry->reference_original ? strlen(entry->reference_original) : 0) +
+         (entry->copy_text ? strlen(entry->copy_text) : 0) +
          (entry->preview_uri ? strlen(entry->preview_uri) : 0) +
          (entry->image_uri ? strlen(entry->image_uri) : 0);
 }
@@ -1412,7 +1529,7 @@ render_worker_done(GObject *source, GAsyncResult *result, gpointer data)
   self->render_bytes -= entry->bytes;
   if (!rendered->document->truncated) {
     render_entry_format(entry, rendered->document, job->account);
-    render_entry_collect_reference(entry, rendered->document, job->body);
+    render_entry_collect_reference(entry, rendered->document);
   }
   g_free(entry->preview_uri);
   g_free(entry->image_uri);
@@ -1440,23 +1557,35 @@ render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager
     g_queue_push_tail(&self->render_lru, entry);
     return entry;
   }
-  const gchar *body = gh_message_get_content(message);
-  g_autofree gchar *valid = g_utf8_make_valid(body ? body : "", -1);
+  const gchar *content = gh_message_get_content(message);
+  /* A repost or quote's JSON is never shown or parsed as text: the bubble
+   * renders a quote's own text, a repost only a sentence (nostrc-tv98u),
+   * already in the first, unrendered markup. */
+  g_autofree gchar *quote_text = NULL;
+  g_autoptr(GnNostrRepostDescriptor) repost = repost_of_body(content, &quote_text);
+  g_autofree gchar *shown = repost && repost->quote
+    ? quote_shown_text(quote_text, repost->target) : NULL;
+  const gchar *body = repost ? (shown ? shown : "") : (content ? content : "");
+  g_autofree gchar *valid = g_utf8_make_valid(body, -1);
   entry = g_new0(RenderEntry, 1);
   entry->id = g_strdup(id);
   entry->markup = g_markup_escape_text(valid, -1);
-  if (eager && strlen(body ? body : "") <= RENDER_WORKER_THRESHOLD) {
+  if (repost)
+    render_entry_set_repost(entry, repost, quote_text);
+  if (repost && !repost->quote) {
+    /* Nothing of a repost's own to render. */
+  } else if (eager && strlen(body) <= RENDER_WORKER_THRESHOLD) {
     g_autoptr(GnMarkdownDocument) document = gn_markdown_parse(body, -1);
     entry->preview_uri = gh_link_policy_dup_preview_uri(body);
     entry->image_uri = gh_link_policy_dup_image_uri(body);
     if (!document->truncated) {
       render_entry_format(entry, document, self->render_account);
-      render_entry_collect_reference(entry, document, body);
+      render_entry_collect_reference(entry, document);
     }
   } else {
     /* The portable parser rejects oversized input. Do not copy or queue it;
      * the escaped body above remains selectable in full. */
-    entry->pending = strlen(body ? body : "") <= GN_MARKDOWN_MAX_INPUT_BYTES;
+    entry->pending = strlen(body) <= GN_MARKDOWN_MAX_INPUT_BYTES;
   }
   entry->bytes = render_entry_size(entry);
   g_hash_table_insert(self->render_cache, g_strdup(id), entry);
@@ -1466,7 +1595,7 @@ render_cache_ensure(GhConversationView *self, GhMessage *message, gboolean eager
     RenderJob *job = g_new0(RenderJob, 1);
     job->id = g_strdup(id);
     job->account = g_strdup(self->render_account);
-    job->body = g_strdup(body ? body : "");
+    job->body = g_strdup(body);
     job->generation = self->render_generation;
     GTask *task = g_task_new(self, self->render_cancel, render_worker_done, NULL);
     g_task_set_task_data(task, job, (GDestroyNotify)render_job_free);
@@ -2112,6 +2241,80 @@ set_preview_state(GhConversationView *self, const gchar *rumor_id, GhLinkPreview
   g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, rumor_id);
 }
 
+static void texture_budget_trim(GhConversationView *self, Preview *keep);
+
+/* A texture the view loaded itself for @preview, counted against the
+ * session budget (nostrc-bgjcp). Past the budget the least recently viewed
+ * others give theirs up: their rows offer the button again, and since the
+ * allow is kept, it loads without asking. */
+static void
+preview_keep_texture(GhConversationView *self, Preview *preview, GdkTexture *texture)
+{
+  TextureBudget *budget = &self->textures;
+  texture_budget_forget(preview);
+  g_set_object(&preview->texture, texture);
+  if (!texture)
+    return;
+  preview->budget = budget;
+  preview->link.data = preview;
+  g_queue_push_tail_link(&budget->lru, &preview->link);
+  guint holders = GPOINTER_TO_UINT(g_hash_table_lookup(budget->holders, texture));
+  g_hash_table_insert(budget->holders, texture, GUINT_TO_POINTER(holders + 1));
+  if (holders == 0)
+    budget->bytes += texture_bytes(texture);
+  texture_budget_trim(self, preview);
+}
+
+/* Gives up the least recently viewed textures, never @keep's, until the
+ * kept ones fit the budget. */
+static void
+texture_budget_trim(GhConversationView *self, Preview *keep)
+{
+  TextureBudget *budget = &self->textures;
+  gboolean evicted = FALSE;
+  GList *link = budget->lru.head;
+  while (budget->bytes > budget->limit && link) {
+    GList *next = link->next;
+    Preview *oldest = link->data;
+    if (oldest != keep) {
+      texture_budget_forget(oldest);
+      g_clear_object(&oldest->texture);
+      /* A page card keeps its words; an image is offered again. */
+      if (oldest->kind != GH_WEB_PREVIEW && oldest->state == GH_LINK_PREVIEW_LOADED)
+        oldest->state = GH_LINK_PREVIEW_NONE;
+      evicted = TRUE;
+    }
+    link = next;
+  }
+  if (evicted)
+    g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
+}
+
+void
+gh_conversation_view_set_web_texture_budget(GhConversationView *self, gsize bytes)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  self->textures.limit = bytes ? bytes : WEB_TEXTURE_BUDGET_BYTES;
+  texture_budget_trim(self, NULL);
+}
+
+gsize
+gh_conversation_view_get_web_texture_bytes(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), 0);
+  return self->textures.bytes;
+}
+
+/* @preview's texture was just shown: last in line to be given up. */
+static void
+preview_viewed(Preview *preview)
+{
+  if (!preview->budget)
+    return;
+  g_queue_unlink(&preview->budget->lru, &preview->link);
+  g_queue_push_tail_link(&preview->budget->lru, &preview->link);
+}
+
 typedef struct {
   GWeakRef view;
   gchar *rumor_id;
@@ -2167,7 +2370,7 @@ on_web_fetched(GObject *source, GAsyncResult *answer, gpointer data)
         preview->image_url = g_steal_pointer(&result->image_url);
         g_free(preview->site_name);
         preview->site_name = g_steal_pointer(&result->site_name);
-        g_set_object(&preview->texture, result->texture);
+        preview_keep_texture(self, preview, result->texture);
       } else {
         /* Why, for the debug log (owner report: GitHub answered HTTP 503). */
         g_debug("web content %s for %s failed: %s", gh_web_content_setting(preview->kind),
@@ -2474,12 +2677,13 @@ on_cache_picture_changed(GhPictureCache *cache, const gchar *pubkey, GhConversat
     if (preview->kind != GH_WEB_PICTURE || g_strcmp0(preview->sender, pubkey) != 0) continue;
     GdkTexture *texture = gh_picture_cache_get(cache, pubkey, preview->uri);
     if (texture) {
+      texture_budget_forget(preview); /* the cache's, bounded there */
       g_set_object(&preview->texture, texture);
       preview->state = GH_LINK_PREVIEW_LOADED;
     } else if (gh_picture_cache_has_failed(cache, preview->uri)) {
       preview->state = GH_LINK_PREVIEW_FAILED;
     } else if (!gh_picture_cache_is_allowed(cache, pubkey)) {
-      g_clear_object(&preview->texture);
+      preview_keep_texture(self, preview, NULL);
       preview->state = GH_LINK_PREVIEW_NONE;
     }
     changed = TRUE;
@@ -2511,6 +2715,7 @@ picture_via_cache(GhConversationView *self, const gchar *id, Preview *preview)
     return FALSE;
   GdkTexture *texture = gh_picture_cache_get(self->pictures, preview->sender, preview->uri);
   if (texture) {
+    texture_budget_forget(preview); /* the cache's, bounded there */
     g_set_object(&preview->texture, texture);
     set_preview_state(self, id, GH_LINK_PREVIEW_LOADED);
   } else if (gh_picture_cache_has_failed(self->pictures, preview->uri)) {
@@ -2531,6 +2736,8 @@ gh_conversation_view_get_web_texture(GhConversationView *self, GhMessage *messag
   g_autofree gchar *id = g_strconcat(prefix, gh_message_get_rumor_id(message), NULL);
   Preview *preview = preview_for(self, id);
   *state = preview ? preview->state : GH_LINK_PREVIEW_NONE;
+  if (preview && preview->texture)
+    preview_viewed(preview);
   return preview ? preview->texture : NULL;
 }
 
@@ -2600,7 +2807,7 @@ gh_conversation_view_auto_load(GhConversationView *self, GhMessage *message, GhW
     return;
   GdkTexture *loaded = loaded_texture_for(self, kind, preview->uri);
   if (loaded) {
-    g_set_object(&preview->texture, loaded);
+    preview_keep_texture(self, preview, loaded);
     set_preview_state(self, id, GH_LINK_PREVIEW_LOADED);
     g_signal_emit(self, signals[SIGNAL_PREVIEW_CHANGED], 0, NULL);
     return;
@@ -2825,12 +3032,17 @@ action_copy_message(GtkWidget *widget, const char *name, GVariant *parameter)
   } else if (gh_message_get_kind(message) == GH_MESSAGE_MLS_POLL_KIND) {
     text = gh_message_dup_display_text(message);
   } else {
-    const gchar *markup = gh_conversation_view_get_render_markup(self, message);
-    GPtrArray *blocks = markup ? gh_conversation_view_get_render_blocks(self, message) : NULL;
-    if (blocks && blocks->len)
-      text = visible_text_from_blocks(blocks);
-    else
-      text = markup ? visible_text_from_markup(markup) : NULL;
+    /* A repost or quote copies its text and the shared note's address,
+     * never its JSON (nostrc-tv98u); anything else the text it shows. */
+    RenderEntry *entry = render_cache_ensure(self, message, FALSE);
+    if (!entry) {
+      text = gh_conversation_view_dup_body_copy_text(gh_message_get_content(message));
+    } else if (entry->copy_text) {
+      text = g_strdup(entry->copy_text);
+    } else {
+      text = entry->blocks && entry->blocks->len ? visible_text_from_blocks(entry->blocks)
+                                                 : visible_text_from_markup(entry->markup);
+    }
     if (!text)
       text = gh_message_dup_display_text(message);
   }
@@ -3357,6 +3569,7 @@ gh_conversation_view_finalize(GObject *object)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(object);
   g_hash_table_unref(self->previews);
+  g_hash_table_unref(self->textures.holders);
   g_hash_table_unref(self->allowed_senders);
   g_queue_clear(&self->render_lru);
   g_hash_table_unref(self->render_cache);
@@ -3462,6 +3675,9 @@ gh_conversation_view_init(GhConversationView *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
   self->sticky = TRUE;
+  g_queue_init(&self->textures.lru);
+  self->textures.holders = g_hash_table_new(g_direct_hash, g_direct_equal);
+  self->textures.limit = WEB_TEXTURE_BUDGET_BYTES;
   self->previews = g_hash_table_new_full(g_str_hash, g_str_equal, g_free,
                                          (GDestroyNotify)preview_free);
   self->allowed_senders = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
