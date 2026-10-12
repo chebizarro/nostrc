@@ -38,6 +38,7 @@
 #endif
 #include "gnostr-timeline-embed-private.h"
 #include "gnostr-reference-resolver-ndb.h"
+#include "gnostr-timeline-repost.h"
 #include "gnostr-timeline-metadata-controller.h"
 #include "gnostr-timeline-action-relay.h"
 #include "gnostr-timeline-feed-controller.h"
@@ -413,7 +414,8 @@ static gchar *format_timestamp(gint64 created_at);
 
 /* NIP-18 kind 6/16 (nostrc-8xfib.6): a repost's main content becomes the
  * original note, from its verified embedded copy or NDB via the shared
- * resolver; otherwise the row asks for an embed fetch (gnostr policy). */
+ * resolver; otherwise the repost card fetches it through the resolver
+ * (gnostr's eager policy, nostrc-8xfib.10 / nostrc-uoe2q). */
 static void apply_repost_original(NostrGtkNoteCardRow *row,
                                   const GnNostrRepostDescriptor *descriptor,
                                   const char *root_id) {
@@ -423,8 +425,7 @@ static void apply_repost_original(NostrGtkNoteCardRow *row,
     ? gn_nostr_resolved_note_new(descriptor->target, descriptor->original_json, resolver) : NULL;
   if (!note) note = gn_nostr_reference_resolver_resolve_local(resolver, descriptor->target);
   if (!note) {
-    if (descriptor->target->uri)
-      g_signal_emit_by_name(row, "request-embed", descriptor->target->uri);
+    gnostr_timeline_repost_show_pending(row, descriptor, resolver, TRUE);
     return;
   }
   const GnNostrEventInfo *original = note->event;
@@ -1029,6 +1030,13 @@ bind_row_common(NostrGtkTimelineView *self,
     nostr_gtk_note_card_row_set_event_kind(NOSTR_GTK_NOTE_CARD_ROW(row), event_kind);
     g_autoptr(GnNostrRepostDescriptor) nip18_descriptor = tags_json ?
       gn_nostr_repost_descriptor_parse_tags(event_kind, tags_json) : NULL;
+    /* NIP-18 kind 6/16 (nostrc-uoe2q): a repost's own content is the
+     * original's JSON (or empty), never the note body; the repost block
+     * below fills the body from the original or the reference card. */
+    const gboolean is_repost = is_snapshot_row
+      ? ((event_kind == 6 || event_kind == 16) && snapshot_reposted_id && *snapshot_reposted_id)
+      : (nip18_descriptor && !nip18_descriptor->quote &&
+         nip18_descriptor->target->type == GN_NOSTR_REFERENCE_EVENT);
 
     /* NIP-23: Handle long-form content (kind 30023) */
     if (gnostr_article_is_article(event_kind) && tags_json) {
@@ -1126,7 +1134,9 @@ bind_row_common(NostrGtkTimelineView *self,
       }
     }
 
-    if (tags_json) {
+    if (is_repost) {
+      nostr_gtk_note_card_row_set_content(NOSTR_GTK_NOTE_CARD_ROW(row), "");
+    } else if (tags_json) {
       if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
         const GnContentRenderResult *cached = gn_nostr_event_item_get_render_result(GN_NOSTR_EVENT_ITEM(obj));
         if (cached) {
@@ -1231,19 +1241,8 @@ bind_row_common(NostrGtkTimelineView *self,
      * nostrc-lkoa: Repost state sourced from GnNostrEventItem.
      * nostrc-cj8p: Quote repost state (q-tag) now modelled on GnNostrEventItem. */
     {
-      gboolean is_repost = FALSE;
-      g_autofree char *legacy_reposted_id = NULL;
-      const char *reposted_id = NULL;
-      if (is_snapshot_row) {
-        is_repost = ((event_kind == 6 || event_kind == 16) && snapshot_reposted_id && *snapshot_reposted_id);
-        reposted_id = snapshot_reposted_id;
-      } else if (G_TYPE_CHECK_INSTANCE_TYPE(obj, gn_nostr_event_item_get_type())) {
-        is_repost = nip18_descriptor && !nip18_descriptor->quote &&
-          nip18_descriptor->target->type == GN_NOSTR_REFERENCE_EVENT;
-        if (is_repost)
-          legacy_reposted_id = g_strdup(nip18_descriptor->target->id);
-        reposted_id = legacy_reposted_id;
-      }
+      const char *reposted_id = !is_repost ? NULL
+        : is_snapshot_row ? snapshot_reposted_id : nip18_descriptor->target->id;
       if (is_repost) {
         if (reposted_id) {
           /* Mark this as a repost and set reposter info */
@@ -1287,10 +1286,16 @@ bind_row_common(NostrGtkTimelineView *self,
                                                   root_id,
                                                   orig_pubkey);
               } else if (repost_state == GNOSTR_TIMELINE_PREVIEW_MISSING) {
-                nostr_gtk_note_card_row_set_embed_rich(NOSTR_GTK_NOTE_CARD_ROW(row),
-                                                       "Reposted note",
-                                                       reposted_id,
-                                                       "Preview unavailable");
+                /* Snapshot rows do no bind-time relay work (fixed
+                 * geometry): the card offers Find on Relays instead. */
+                g_autofree gchar *uri = gn_nostr_reference_build_event(reposted_id, NULL, -1, NULL);
+                g_autoptr(GnNostrReference) target = uri ? gn_nostr_reference_parse(uri) : NULL;
+                if (target) {
+                  GnNostrRepostDescriptor missing = { .target = target, .source_kind = event_kind };
+                  gnostr_timeline_repost_show_pending(NOSTR_GTK_NOTE_CARD_ROW(row), &missing,
+                                                      gnostr_reference_resolver_ndb_get_default(),
+                                                      FALSE);
+                }
               }
             }
           } else {

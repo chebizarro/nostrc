@@ -870,6 +870,22 @@ if (BUILD_TESTING)
   set_tests_properties(gnostr-test-publish-gate PROPERTIES
     LABELS "gtk;widget;unit;gnostr")
 
+  # Kind-6 repost whose original is not local (nostrc-uoe2q): the repost
+  # card's pending/unavailable states on a real note card row.
+  gn_add_gtest_xvfb(gnostr-test-timeline-repost
+    SOURCES tests/test_timeline_repost.c
+            src/ui/gnostr-timeline-repost.c
+            ${GRESOURCE_C}
+    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
+    TIMEOUT 60)
+  target_include_directories(gnostr-test-timeline-repost PRIVATE
+    ${PROJECT_ROOT}/tests/common
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gtk/include)
+  set_tests_properties(gnostr-test-timeline-repost PROPERTIES
+    LABELS "gtk;widget;unit;gnostr")
+
   # Grotto (NIP-55L) session restore + identity selection
   # (nostrc-vuwu). Headless: fake org.nostr.Signer on a private test bus
   # (tests/common/nostrc-test-bus.h).
