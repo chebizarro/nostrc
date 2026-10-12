@@ -37,6 +37,8 @@
 #ifndef GH_TEST_NIP29_RELAY_H
 #define GH_TEST_NIP29_RELAY_H
 
+#include "../gh-test-port.h"
+
 #include <gio/gio.h>
 #include <libsoup/soup.h>
 #include <nostr-envelope.h>
@@ -912,6 +914,7 @@ nip29_relay_init(Nip29Relay *relay)
                                     relay, NULL);
   g_autoptr(GError) error = NULL;
   g_assert_true(soup_server_listen_local(relay->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
+  gh_test_deepen_listen_backlog(soup_server_get_listeners(relay->server));
   GSList *uris = soup_server_get_uris(relay->server);
   relay->url = g_strdup_printf("ws://127.0.0.1:%d/relay", g_uri_get_port(uris->data));
   g_slist_free_full(uris, (GDestroyNotify)g_uri_unref);
