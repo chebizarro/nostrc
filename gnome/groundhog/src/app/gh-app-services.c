@@ -2144,6 +2144,16 @@ group_ui_service(gpointer data)
   return GH_IS_NIP29_SERVICE(service) ? GH_NIP29_SERVICE(service) : NULL;
 }
 
+/* nostrc-90jof: the open store's group list (kind 10009), made beside its
+ * NIP-29 service. */
+static GhNip29GroupList *
+group_ui_list(gpointer data)
+{
+  GhAppServices *self = data;
+  GObject *list = gh_app_outbox_get_nip29_group_list(self->outbox);
+  return GH_IS_NIP29_GROUP_LIST(list) ? GH_NIP29_GROUP_LIST(list) : NULL;
+}
+
 static const gchar *
 group_ui_name(const gchar *pubkey, gpointer data)
 {
@@ -2510,6 +2520,7 @@ gh_app_services_attach_window(GhAppServices *self, GhWindow *window)
     .conversations = self->conversations,
     .service = group_ui_service,
     .service_data = self,
+    .group_list = group_ui_list,
     .state_source = G_OBJECT(self->account_store),
     .display_name = group_ui_name,
     .names_data = self,

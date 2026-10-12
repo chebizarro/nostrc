@@ -15,8 +15,10 @@ G_BEGIN_DECLS
  *
  *   purpose               identity   connection
  *   OWN_INBOX_READ        ACCOUNT    kind-1059 #p=me REQs on the own 10050 (GhDmInbox)
- *   OWN_LIST_DISCOVERY    EPHEMERAL  own 10002/10050 on discovery-relays (GhAccountRelays)
- *   OWN_LIST_PUBLISH      ACCOUNT    own 10050/10002/KeyPackage publish (GhInboxSetup)
+ *   OWN_LIST_DISCOVERY    EPHEMERAL  own 10002/10050 on discovery-relays (GhAccountRelays);
+ *                                    own 10009 group list (GhNip29GroupList)
+ *   OWN_LIST_PUBLISH      ACCOUNT    own 10050/10002/KeyPackage publish (GhInboxSetup);
+ *                                    own 10009 group list (GhNip29GroupList)
  *   CONTACT_DIRECTORY     EPHEMERAL  others' 10050/kind 0 on discovery-relays
  *                                    (GhContactDirectory, GhInboxLookup)
  *   RECIPIENT_WRAP        EPHEMERAL  a gift wrap (DM, Welcome) to a recipient's 10050

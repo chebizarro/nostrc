@@ -78,6 +78,7 @@ src/ui/gh-delivery-indicator.c
 src/ui/gh-group-copy.c
 src/ui/gh-group-info-dialog.c
 src/ui/gh-group-join-page.c
+src/ui/gh-group-restore-dialog.c
 src/ui/gh-group-ui.c
 src/ui/gh-issue-adapters.c
 src/ui/gh-message-row.c

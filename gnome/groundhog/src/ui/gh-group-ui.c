@@ -4,6 +4,7 @@
 #include "gh-conversation-view.h"
 #include "gh-group-copy.h"
 #include "gh-group-join-page.h"
+#include "gh-group-restore-dialog.h"
 #include "gh-new-group-page.h"
 #include "gh-send-ui.h"
 #include "gh-store.h"
@@ -29,6 +30,10 @@ typedef struct {
   GhNip29Service *watched; /* weak: whose rooms refresh the composer */
   GhGroupUiNewGroupFunc extend_new; /* qp24.13 part 2: the encrypted page */
   gpointer extend_new_data;
+  GhGroupUiGroupListFunc list_func;  /* nostrc-90jof */
+  GhNip29GroupList *watched_list;    /* weak */
+  GtkWidget *restore_dialog;         /* weak: the one presented */
+  gulong map_handler;
 } GroupUi;
 
 static GhNip29Service *
@@ -107,6 +112,106 @@ on_rooms_changed(GhWindow *window)
 
 static void sync_service(GroupUi *ui);
 
+/* ---- Restore Groups (nostrc-90jof) ---------------------------------------------------- */
+
+static GhNip29GroupList *
+current_list(GroupUi *ui)
+{
+  return ui->list_func ? ui->list_func(ui->service_data) : NULL;
+}
+
+static void offer_restore(GroupUi *ui);
+
+static void
+on_restore_response(AdwAlertDialog *dialog, const gchar *response, gpointer data)
+{
+  GroupUi *ui = data;
+  GhNip29GroupList *list = current_list(ui);
+  if (!list || list != ui->watched_list)
+    return;
+  if (g_strcmp0(response, GH_GROUP_RESTORE_RESPONSE_RESTORE) == 0) {
+    g_autoptr(GPtrArray) chosen = gh_group_restore_dialog_dup_selected(
+      GH_GROUP_RESTORE_DIALOG(dialog));
+    g_autoptr(GError) error = NULL;
+    guint started = gh_nip29_group_list_restore(list, chosen, &error);
+    if (error)
+      g_message("Groundhog could not restore every group: %s", error->message);
+    g_autofree gchar *text = started == chosen->len
+      ? g_strdup_printf(g_dngettext(NULL, "Asked %u group to let you in again",
+                                    "Asked %u groups to let you in again", started), started)
+      : g_strdup_printf(_("Asked %u of %u groups to let you in again"), started, chosen->len);
+    adw_toast_overlay_add_toast(gh_window_get_toasts(ui->window), adw_toast_new(text));
+  }
+  /* Whatever was not restored is not offered again this session. */
+  gh_nip29_group_list_dismiss(list);
+}
+
+static void
+on_window_mapped(GtkWidget *window, gpointer data)
+{
+  GroupUi *ui = data;
+  g_clear_signal_handler(&ui->map_handler, window);
+  offer_restore(ui);
+}
+
+static void
+offer_restore(GroupUi *ui)
+{
+  GhNip29GroupList *list = ui->watched_list;
+  if (!list || ui->restore_dialog || ui->map_handler)
+    return;
+  g_autoptr(GPtrArray) groups = gh_nip29_group_list_dup_restorable(list);
+  if (!groups->len)
+    return;
+  if (!gtk_widget_get_mapped(GTK_WIDGET(ui->window))) {
+    /* In the background: asked once the window is shown. */
+    ui->map_handler = g_signal_connect(ui->window, "map", G_CALLBACK(on_window_mapped), ui);
+    return;
+  }
+  GhGroupRestoreDialog *dialog = gh_group_restore_dialog_new(groups);
+  ui->restore_dialog = GTK_WIDGET(dialog);
+  g_object_add_weak_pointer(G_OBJECT(dialog), (gpointer *)&ui->restore_dialog);
+  g_signal_connect(dialog, "response", G_CALLBACK(on_restore_response), ui);
+  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(ui->window));
+}
+
+static void
+on_list_changed(GtkWidget *window)
+{
+  GroupUi *ui = ui_of(GH_WINDOW(window));
+  if (ui)
+    offer_restore(ui);
+}
+
+static void
+on_list_gone(gpointer data, GObject *where)
+{
+  GroupUi *ui = data;
+  (void)where;
+  ui->watched_list = NULL;
+}
+
+static void
+sync_list(GroupUi *ui)
+{
+  GhNip29GroupList *list = current_list(ui);
+  if (list == ui->watched_list)
+    return;
+  if (ui->watched_list) {
+    g_signal_handlers_disconnect_by_func(ui->watched_list, on_list_changed, ui->window);
+    g_object_weak_unref(G_OBJECT(ui->watched_list), on_list_gone, ui);
+  }
+  if (ui->restore_dialog)
+    adw_dialog_force_close(ADW_DIALOG(ui->restore_dialog));
+  ui->watched_list = list;
+  if (list) {
+    g_object_weak_ref(G_OBJECT(list), on_list_gone, ui);
+    g_signal_connect_object(list, "changed", G_CALLBACK(on_list_changed), ui->window,
+                            G_CONNECT_SWAPPED);
+    offer_restore(ui);
+  }
+}
+
 static void
 on_watched_gone(gpointer data, GObject *where)
 {
@@ -136,6 +241,7 @@ sync_service(GroupUi *ui)
       watch_rooms(ui);
     }
   }
+  sync_list(ui);
   gh_send_ui_refresh(ui->window);
   sync_mention_members(ui->window);
 }
@@ -399,6 +505,14 @@ group_ui_free(gpointer data)
   GroupUi *ui = data;
   if (ui->watched)
     g_object_weak_unref(G_OBJECT(ui->watched), on_watched_gone, ui);
+  if (ui->watched_list) {
+    g_signal_handlers_disconnect_by_func(ui->watched_list, on_list_changed, ui->window);
+    g_object_weak_unref(G_OBJECT(ui->watched_list), on_list_gone, ui);
+  }
+  if (ui->restore_dialog) {
+    g_signal_handlers_disconnect_by_func(ui->restore_dialog, on_restore_response, ui);
+    g_object_remove_weak_pointer(G_OBJECT(ui->restore_dialog), (gpointer *)&ui->restore_dialog);
+  }
   g_clear_object(&ui->join_action);
   g_clear_object(&ui->new_action);
   g_clear_object(&ui->model);
@@ -417,6 +531,7 @@ gh_group_ui_attach(GhWindow *window, const GhGroupUiConfig *config)
   ui->model = g_object_ref(config->conversations);
   ui->service_func = config->service;
   ui->service_data = config->service_data;
+  ui->list_func = config->group_list;
   ui->display_name = config->display_name;
   ui->names_data = config->names_data;
   ui->load_older = config->load_older;

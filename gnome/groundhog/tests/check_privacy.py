@@ -328,6 +328,9 @@ ACCOUNT_PURPOSE_FILES = {
                                "probe never authenticates",
     "src/nip29/gh-nip29-service.": "NIP-29 group relays: the one group relay's live REQ",
     "src/nip29/gh-nip29-outbox.": "NIP-29 group relays: publish to exactly the group's relay",
+    "src/nip29/gh-nip29-group-list.": "own list publish (the account's NIP-51 kind-10009 group "
+                                      "list, private items only, nostrc-90jof) on its own 10002 "
+                                      "write and discovery relays only; never a group relay",
     "src/mls/gh-mls-service.": "own list publish (the account's KeyPackage, kind 30443) on its "
                                "own 10002 write and 10050 inbox relays only; group relays, "
                                "lookups and Welcome wraps are ephemeral",
