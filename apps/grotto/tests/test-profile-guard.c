@@ -102,18 +102,22 @@ test_secret_store(void)
   g_setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent-nostrc-bus", TRUE);
   g_assert_true(nostrc_profile_guard_refuses_session_keyring());
 
-  /* Direct reads of the user's key store: refused, so nothing is listed. */
+  /* Direct reads of the user's key store (the Keychain on macOS; none in a
+   * CMake Linux build, where keys live only behind the daemon): refused, so
+   * nothing is listed. */
   g_assert_false(secret_store_is_available());
   g_autoptr(GPtrArray) listed = secret_store_list();
   g_assert_cmpuint(listed->len, ==, 0);
   g_assert_false(secret_store_has_secret(TEST_NPUB));
-  g_autofree gchar *nsec = NULL;
-  g_assert_cmpint(secret_store_get_secret(TEST_NPUB, &nsec), ==, SECRET_STORE_ERR_PERMISSION);
-  g_assert_null(nsec);
-  SecretStoreEntry *entry = NULL;
-  g_assert_cmpint(secret_store_lookup_by_fingerprint("deadbeef", &entry), ==,
-                  SECRET_STORE_ERR_PERMISSION);
-  g_assert_null(entry);
+  if (g_strcmp0(secret_store_backend_name(), "none") != 0) {
+    g_autofree gchar *nsec = NULL;
+    g_assert_cmpint(secret_store_get_secret(TEST_NPUB, &nsec), ==, SECRET_STORE_ERR_PERMISSION);
+    g_assert_null(nsec);
+    SecretStoreEntry *entry = NULL;
+    g_assert_cmpint(secret_store_lookup_by_fingerprint("deadbeef", &entry), ==,
+                    SECRET_STORE_ERR_PERMISSION);
+    g_assert_null(entry);
+  }
 
   /* Key writes go to the signer daemon on the session bus: refused. */
   g_assert_cmpint(secret_store_add(TEST_SK_HEX, "test", FALSE), ==, SECRET_STORE_ERR_PERMISSION);
