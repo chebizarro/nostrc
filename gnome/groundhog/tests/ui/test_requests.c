@@ -972,6 +972,32 @@ press_enter(GhNewMessagePage *dialog)
   drain();
 }
 
+static gboolean
+on_confirm(GhNewMessagePage *dialog)
+{
+  return adw_navigation_view_get_visible_page(
+           ADW_NAVIGATION_VIEW(template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "navigation"))) ==
+         ADW_NAVIGATION_PAGE(template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "confirm_page"));
+}
+
+/* One-click start (nostrc-puwx4): the first person picked went straight to
+ * the confirm page; its Add People row returns to the picker with every
+ * chip kept and the entry focused. */
+static void
+add_people(GhNewMessagePage *dialog)
+{
+  g_assert_true(on_confirm(dialog));
+  guint n = n_recipients(dialog);
+  GtkWidget *row = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "add_people_row");
+  g_assert_true(gtk_widget_get_visible(row));
+  g_assert_true(gtk_widget_activate(row));
+  drain();
+  g_assert_false(on_confirm(dialog));
+  g_assert_cmpuint(n_recipients(dialog), ==, n);
+  g_assert_true(gtk_widget_get_visible(template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE,
+                                                      "chips")));
+}
+
 static GhNewMessageItem *
 person(GhNewMessagePage *dialog, const gchar *pubkey)
 {
@@ -1042,6 +1068,8 @@ test_gui_new_message_consent(void)
     gh_new_message_page_get_recipients(dialog), 0);
   g_assert_cmpstr(gh_new_message_item_get_pubkey(chip), ==, bob->pk);
   g_assert_cmpstr(gh_new_message_item_get_title(chip), ==, "bob@example.com");
+  /* The first person picked: straight to the confirm page; back for more. */
+  add_people(dialog);
 
   /* A pasted npub is checked offline and added with Enter. */
   g_autofree gchar *uri = g_strconcat("nostr:", carol->npub, NULL);
@@ -1136,6 +1164,9 @@ test_gui_new_message_limit(void)
     type_into(dialog, people[i].npub);
     press_enter(dialog);
     g_assert_cmpuint(n_recipients(dialog), ==, i + 1);
+    if (i == 0)
+      add_people(dialog);
+    g_assert_false(on_confirm(dialog));
   }
   /* At 10: the limit, in this fixture with groups deliberately disabled. */
   g_assert_true(gtk_widget_get_visible(limit));
@@ -1258,8 +1289,8 @@ test_gui_new_message_unblocks(void)
   type_into(dialog, v->npub);
   press_enter(dialog);
   g_assert_cmpuint(n_recipients(dialog), ==, 1);
-  g_assert_true(gtk_widget_activate_action(GTK_WIDGET(dialog), "new-message.next", NULL));
-  drain();
+  /* One person picked: the confirm page at once, the warning on it. */
+  g_assert_true(on_confirm(dialog));
   GtkLabel *note = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE, "start_note");
   g_assert_true(g_str_has_prefix(gtk_label_get_text(note),
                                  "You blocked this conversation. Starting it unblocks it"));
@@ -1300,6 +1331,7 @@ test_gui_new_message_check_rounds(void)
   GhNewMessagePage *dialog = open_dialog(&f);
   type_into(dialog, bob->npub);
   press_enter(dialog);
+  add_people(dialog);
   type_into(dialog, carol->npub);
   press_enter(dialog);
   AdwNavigationView *navigation = template_child(dialog, GH_TYPE_NEW_MESSAGE_PAGE,
@@ -1430,6 +1462,9 @@ test_gui_screenshots(void)
     shoot(&f, dir, empty);
     type_into(dialog, people[2].npub);
     press_enter(dialog);
+    g_autofree gchar *one = g_strdup_printf("new-message-one-click-%s", size_names[s]);
+    shoot(&f, dir, one);
+    add_people(dialog);
     type_into(dialog, "bob@example.com");
     g_autofree gchar *consent = g_strdup_printf("new-message-consent-%s", size_names[s]);
     shoot(&f, dir, consent);
@@ -1606,8 +1641,15 @@ test_gui_new_chat_panel(void)
   shoot_panel(&f, shots, "search-wide");
   press_enter(panel);
   g_assert_cmpuint(n_recipients(panel), ==, 1);
+  /* One-click start (nostrc-puwx4): the confirm page at once; Add People
+   * returns to the picker with Erin's chip and Next. */
+  g_assert_true(on_confirm(panel));
+  shoot_panel(&f, shots, "one-click-wide");
+  add_people(panel);
+  g_assert_true(focus_in(f.window, panel_child(panel, "entry")));
   g_assert_true(gtk_widget_get_visible(panel_child(panel, "next_button")));
   g_assert_true(gtk_widget_get_visible(panel_child(panel, "actions")));
+  shoot_panel(&f, shots, "add-people-wide");
 
   /* A pasted npub gives its exact row, offline. */
   type_into(panel, frank->npub);
@@ -1623,16 +1665,20 @@ test_gui_new_chat_panel(void)
   drain();
   g_assert_null(visible_panel(&f));
 
-  /* Choosing a contact opens the DM: Next, Start, and the conversation is
-   * selected and shown, the panel gone, focus in the conversation. */
+  /* Choosing a contact opens the DM in one click: the confirm page at
+   * once, Start, and the conversation is selected and shown, the panel
+   * gone, focus in the conversation. */
   panel = open_dialog(&f);
   choose(panel, 1); /* Dave */
   g_assert_cmpuint(n_recipients(panel), ==, 1);
-  g_assert_true(focus_in(f.window, panel_child(panel, "entry")));
-  press_enter(panel); /* Enter in the empty entry: Next */
-  g_assert_true(adw_navigation_view_get_visible_page(
-                  ADW_NAVIGATION_VIEW(panel_child(panel, "navigation"))) ==
-                ADW_NAVIGATION_PAGE(panel_child(panel, "confirm_page")));
+  g_assert_true(on_confirm(panel));
+  /* Back keeps the chip too, and Enter in the empty entry is Next again. */
+  adw_navigation_view_pop(ADW_NAVIGATION_VIEW(panel_child(panel, "navigation")));
+  drain();
+  g_assert_false(on_confirm(panel));
+  g_assert_cmpuint(n_recipients(panel), ==, 1);
+  press_enter(panel);
+  g_assert_true(on_confirm(panel));
   g_assert_true(gtk_widget_activate_action(GTK_WIDGET(panel), "new-message.start", NULL));
   drain();
   GhConversation *dave_room = room_of(&f, dave);

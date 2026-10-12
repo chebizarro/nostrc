@@ -41,6 +41,30 @@ template $GhMlsInvitesPage: Adw.NavigationPage {
             accessible-role: presentation;
           }
         }
+
+        // Old invitation keys (nostrc-ab9kn): the account's other
+        // KeyPackages on its relays (another device, another app, an
+        // earlier install here), listed in a confirmation before one NIP-09
+        // deletion request asks the relays to drop them. The subtitle says
+        // what the last look found.
+        Adw.ActionRow old_keys_row {
+          title: _("Old Invitation Keys");
+          subtitle: _("Keys your account published from other devices, apps or earlier installs. People may still invite you with them.");
+
+          [prefix]
+          Image {
+            icon-name: "dialog-password-symbolic";
+            accessible-role: presentation;
+          }
+
+          [suffix]
+          Button old_keys_button {
+            label: _("_Review…");
+            use-underline: true;
+            valign: center;
+            action-name: "mls-invites.review-keys";
+          }
+        }
       }
 
       // Rows from C; a placeholder row while there are none.

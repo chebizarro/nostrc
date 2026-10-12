@@ -11,7 +11,9 @@ using Adw 1;
 // (local only); a pasted npub, nprofile or nostr: address gives an exact
 // row, checked offline; a name@domain address gives a consent row that names
 // the host it would contact, and nothing is looked up until that row is
-// chosen. Chosen people are chips (up to 10). "confirm": each person's npub
+// chosen. Chosen people are chips (up to 10). Picking one person with nobody
+// else chosen goes straight to "confirm" (nostrc-puwx4); its Add People row,
+// like Back, returns to "pick" with the chips kept. "confirm": each person's npub
 // in groups of four and whether they can receive private messages, which is
 // checked only when the consent row that names the discovery relays is
 // chosen. Rows are gh-new-message-row.blp, chips gh-recipient-chip.blp;
@@ -268,6 +270,29 @@ template $GhNewMessagePage: Adw.NavigationPage {
 
                 accessibility {
                   label: _("People in this conversation");
+                }
+              }
+
+              // One-click start (nostrc-puwx4): picking one person comes
+              // straight here; this returns to the picker, chips kept.
+              ListBox add_people_list {
+                selection-mode: none;
+
+                styles [
+                  "boxed-list",
+                ]
+
+                Adw.ActionRow add_people_row {
+                  activatable: true;
+                  title: _("_Add People");
+                  use-underline: true;
+                  action-name: "new-message.add-people";
+
+                  [prefix]
+                  Image {
+                    icon-name: "list-add-symbolic";
+                    accessible-role: presentation;
+                  }
                 }
               }
 

@@ -257,6 +257,28 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
+                              <object class="GtkListBox" id="add_people_list">
+                                <property name="selection-mode">0</property>
+                                <style>
+                                  <class name="boxed-list"/>
+                                </style>
+                                <child>
+                                  <object class="AdwActionRow" id="add_people_row">
+                                    <property name="activatable">true</property>
+                                    <property name="title" translatable="yes">_Add People</property>
+                                    <property name="use-underline">true</property>
+                                    <property name="action-name">new-message.add-people</property>
+                                    <child type="prefix">
+                                      <object class="GtkImage">
+                                        <property name="icon-name">list-add-symbolic</property>
+                                        <property name="accessible-role">43</property>
+                                      </object>
+                                    </child>
+                                  </object>
+                                </child>
+                              </object>
+                            </child>
+                            <child>
                               <object class="GtkListBox" id="check_list">
                                 <property name="selection-mode">0</property>
                                 <style>
