@@ -543,10 +543,13 @@ test_bunker_save_order(gconstpointer data)
   gtk_window_destroy(GTK_WINDOW(window));
   drain();
   g_object_unref(dialog);
-  bunker_clear(&bunker);
-  pair_store_clear(&store);
+  /* The account holds the paired session, open on the fake relays: sign out
+   * and drop the controller (closing it) before the relays go away. */
   g_settings_set_string(settings, "current-npub", "");
   g_settings_set_string(settings, "current-backend", "grotto");
+  g_clear_object(&accounts);
+  bunker_clear(&bunker);
+  pair_store_clear(&store);
 }
 
 typedef struct {

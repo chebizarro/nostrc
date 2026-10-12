@@ -70,9 +70,21 @@ bunker_set_signer_secret(TestBunker *bunker, const gchar *secret)
   bunker->user_pubkey = nostr_key_get_public(secret);
 }
 
+/* Only once nothing can call bunker_close() any more: every scope and
+ * publish the code under test opened must have been closed by it. Freeing
+ * the handles earlier lets a later close write into freed memory, which
+ * corrupts the heap and fails some unrelated test later on (nostrc-pk7zx). */
 static void
 bunker_clear(TestBunker *bunker)
 {
+  for (guint i = 0; i < bunker->scopes->len; i++)
+    if (!((BunkerHandle *)g_ptr_array_index(bunker->scopes, i))->closed)
+      g_error("bunker_clear: scope %u (%s) is still open", i,
+              ((BunkerHandle *)g_ptr_array_index(bunker->scopes, i))->url);
+  for (guint i = 0; i < bunker->publishes->len; i++)
+    if (!((BunkerHandle *)g_ptr_array_index(bunker->publishes, i))->closed)
+      g_error("bunker_clear: publish %u (%s) is still open", i,
+              ((BunkerHandle *)g_ptr_array_index(bunker->publishes, i))->url);
   g_ptr_array_unref(bunker->scopes);
   g_ptr_array_unref(bunker->publishes);
   g_free(bunker->signer_secret);
