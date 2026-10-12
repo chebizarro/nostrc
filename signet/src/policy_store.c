@@ -40,6 +40,11 @@ typedef struct {
 
   guint32 ttl_seconds; /* if >0: reload TTL for this identity policy */
   int64_t loaded_at;   /* unix seconds; when parsed */
+
+  /* Some entry could not be parsed or canonicalized and was dropped: the
+   * lists above say less than the file did. Such a policy never counts as
+   * an exact delivery grant. */
+  gboolean lossy;
 } SignetIdentityPolicy;
 
 struct SignetPolicyStore {
@@ -217,7 +222,8 @@ static char *signet_pubkey_canon_dup(const char *s) {
 
   if (signet_is_hex_64(s)) return g_ascii_strdown(s, -1);
 
-  return g_ascii_strdown(s, -1);
+  /* Not a pubkey: no client could ever match it. */
+  return NULL;
 }
 
 static void signet_identity_policy_free(SignetIdentityPolicy *p) {
@@ -273,27 +279,30 @@ static gboolean signet_kinds_match(const SignetIdentityPolicy *p, gboolean allow
 }
 
 /* Parse a JSON array string (preferred) or a loose CSV/semicolon-separated list. */
-static GPtrArray *signet_parse_string_list(const char *raw) {
+/* *lossy is set when an entry is skipped or the list does not parse. */
+static GPtrArray *signet_parse_string_list(const char *raw, gboolean *lossy) {
   if (!raw) return NULL;
 
   g_autofree char *s = signet_strip_quotes_dup(raw);
-  if (!s) return NULL;
+  if (!s) { *lossy = TRUE; return NULL; }
   g_strstrip(s);
   if (s[0] == '\0') return NULL;
 
   GPtrArray *out = g_ptr_array_new_with_free_func(g_free);
-  if (!out) return NULL;
+  if (!out) { *lossy = TRUE; return NULL; }
 
   if (s[0] == '[') {
     JsonParser *p = json_parser_new();
     if (!p) {
       g_ptr_array_free(out, TRUE);
+      *lossy = TRUE;
       return NULL;
     }
 
     if (!json_parser_load_from_data(p, s, -1, NULL)) {
       g_object_unref(p);
       g_ptr_array_free(out, TRUE);
+      *lossy = TRUE;
       return NULL;
     }
 
@@ -301,6 +310,7 @@ static GPtrArray *signet_parse_string_list(const char *raw) {
     if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
       g_object_unref(p);
       g_ptr_array_free(out, TRUE);
+      *lossy = TRUE;
       return NULL;
     }
 
@@ -308,17 +318,16 @@ static GPtrArray *signet_parse_string_list(const char *raw) {
     guint n = json_array_get_length(a);
     for (guint i = 0; i < n; i++) {
       JsonNode *en = json_array_get_element(a, i);
-      if (!en) continue;
-
-      if (JSON_NODE_HOLDS_VALUE(en) && json_node_get_value_type(en) == G_TYPE_STRING) {
-        const char *v = json_node_get_string(en);
-        if (!v) continue;
-        g_autofree char *sv = signet_strip_quotes_dup(v);
-        if (!sv) continue;
-        g_strstrip(sv);
-        if (sv[0] == '\0') continue;
-        g_ptr_array_add(out, g_strdup(sv));
+      const char *v = (en && JSON_NODE_HOLDS_VALUE(en) &&
+                       json_node_get_value_type(en) == G_TYPE_STRING)
+                          ? json_node_get_string(en) : NULL;
+      g_autofree char *sv = v ? signet_strip_quotes_dup(v) : NULL;
+      if (sv) g_strstrip(sv);
+      if (!sv || sv[0] == '\0') {
+        *lossy = TRUE;
+        continue;
       }
+      g_ptr_array_add(out, g_strdup(sv));
     }
 
     g_object_unref(p);
@@ -527,7 +536,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
 
     /* allow/deny clients */
     g_autofree gchar *allow_clients_raw = g_key_file_get_string(kf, grp, "allow_clients", NULL);
-    GPtrArray *allow_clients = signet_parse_string_list(allow_clients_raw);
+    GPtrArray *allow_clients = signet_parse_string_list(allow_clients_raw, &p->lossy);
     if (allow_clients) {
       p->allow_clients = g_ptr_array_new_with_free_func(g_free);
       for (guint i = 0; i < allow_clients->len; i++) {
@@ -539,13 +548,14 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
         }
         g_autofree char *canon = signet_pubkey_canon_dup(v);
         if (canon) g_ptr_array_add(p->allow_clients, g_strdup(canon));
+        else p->lossy = TRUE;
       }
       g_ptr_array_free(allow_clients, TRUE);
       if (p->allow_clients && p->allow_clients->len == 0) g_clear_pointer(&p->allow_clients, g_ptr_array_unref);
     }
 
     g_autofree gchar *deny_clients_raw = g_key_file_get_string(kf, grp, "deny_clients", NULL);
-    GPtrArray *deny_clients = signet_parse_string_list(deny_clients_raw);
+    GPtrArray *deny_clients = signet_parse_string_list(deny_clients_raw, &p->lossy);
     if (deny_clients) {
       p->deny_clients = g_ptr_array_new_with_free_func(g_free);
       for (guint i = 0; i < deny_clients->len; i++) {
@@ -557,6 +567,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
         }
         g_autofree char *canon = signet_pubkey_canon_dup(v);
         if (canon) g_ptr_array_add(p->deny_clients, g_strdup(canon));
+        else p->lossy = TRUE;
       }
       g_ptr_array_free(deny_clients, TRUE);
       if (p->deny_clients && p->deny_clients->len == 0) g_clear_pointer(&p->deny_clients, g_ptr_array_unref);
@@ -564,19 +575,21 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
 
     /* allow/deny methods */
     g_autofree gchar *allow_methods_raw = g_key_file_get_string(kf, grp, "allow_methods", NULL);
-    p->allow_methods = signet_parse_string_list(allow_methods_raw);
+    p->allow_methods = signet_parse_string_list(allow_methods_raw, &p->lossy);
     if (p->allow_methods && p->allow_methods->len == 0) g_clear_pointer(&p->allow_methods, g_ptr_array_unref);
 
     g_autofree gchar *deny_methods_raw = g_key_file_get_string(kf, grp, "deny_methods", NULL);
-    p->deny_methods = signet_parse_string_list(deny_methods_raw);
+    p->deny_methods = signet_parse_string_list(deny_methods_raw, &p->lossy);
     if (p->deny_methods && p->deny_methods->len == 0) g_clear_pointer(&p->deny_methods, g_ptr_array_unref);
 
     /* allow/deny kinds */
     g_autofree gchar *allow_kinds_raw = g_key_file_get_string(kf, grp, "allow_kinds", NULL);
-    (void)signet_parse_int_list(allow_kinds_raw, &p->allow_kinds, &p->allow_kinds_any);
+    if (!signet_parse_int_list(allow_kinds_raw, &p->allow_kinds, &p->allow_kinds_any))
+      p->lossy = TRUE;
 
     g_autofree gchar *deny_kinds_raw = g_key_file_get_string(kf, grp, "deny_kinds", NULL);
-    (void)signet_parse_int_list(deny_kinds_raw, &p->deny_kinds, &p->deny_kinds_any);
+    if (!signet_parse_int_list(deny_kinds_raw, &p->deny_kinds, &p->deny_kinds_any))
+      p->lossy = TRUE;
 
     g_hash_table_replace(new_ids, g_strdup(identity), p);
     loaded_identities++;
@@ -755,22 +768,19 @@ bool signet_policy_store_has_exact_delivery_grant(
   SignetIdentityPolicy *p = ps->identities
       ? (SignetIdentityPolicy *)g_hash_table_lookup(ps->identities, identity)
       : NULL;
-  bool allowed = p && !p->default_allow &&
+  /* Exactly {default deny, allow_clients [requester], allow_methods
+   * ["credential.deliver"]} (ttl_seconds aside): any other field — kinds,
+   * any deny list — or any entry that was dropped while parsing voids it. */
+  bool allowed = p && !p->lossy && !p->default_allow &&
       p->allow_clients && p->allow_clients->len == 1 &&
       p->allow_methods && p->allow_methods->len == 1 &&
       strcmp((const char *)g_ptr_array_index(p->allow_clients, 0), requester) == 0 &&
       strcmp((const char *)g_ptr_array_index(p->allow_methods, 0),
-             SIGNET_CAP_CREDENTIAL_DELIVER) == 0;
-  /* Deny > allow: an explicit deny of this requester or of delivery wins. */
-  for (guint i = 0; allowed && p->deny_clients && i < p->deny_clients->len; i++) {
-    const char *d = (const char *)g_ptr_array_index(p->deny_clients, i);
-    if (strcmp(d, "*") == 0 || strcmp(d, requester) == 0) allowed = false;
-  }
-  for (guint i = 0; allowed && p->deny_methods && i < p->deny_methods->len; i++) {
-    const char *d = (const char *)g_ptr_array_index(p->deny_methods, i);
-    if (strcmp(d, "*") == 0 || strcmp(d, SIGNET_CAP_CREDENTIAL_DELIVER) == 0)
-      allowed = false;
-  }
+             SIGNET_CAP_CREDENTIAL_DELIVER) == 0 &&
+      !p->deny_clients && !p->deny_methods &&
+      !p->allow_kinds_any && !p->deny_kinds_any &&
+      (!p->allow_kinds || p->allow_kinds->len == 0) &&
+      (!p->deny_kinds || p->deny_kinds->len == 0);
 
   g_mutex_unlock(&ps->mu);
   return allowed;
@@ -833,13 +843,16 @@ static void signet_policy_identity_to_keyfile(GKeyFile *kf,
 }
 
 /* Parse a JSON string list member into a canonicalized GPtrArray. */
+/* *dropped is set when the member is not an array of non-empty strings
+ * (pubkeys, when canonicalize_pubkeys) — the caller rejects the policy. */
 static GPtrArray *signet_parse_json_string_array(JsonObject *o,
                                                  const char *member,
-                                                 gboolean canonicalize_pubkeys) {
+                                                 gboolean canonicalize_pubkeys,
+                                                 gboolean *dropped) {
   if (!json_object_has_member(o, member)) return NULL;
 
   JsonNode *n = json_object_get_member(o, member);
-  if (!n || !JSON_NODE_HOLDS_ARRAY(n)) return NULL;
+  if (!n || !JSON_NODE_HOLDS_ARRAY(n)) { *dropped = TRUE; return NULL; }
 
   JsonArray *a = json_node_get_array(n);
   guint len = json_array_get_length(a);
@@ -849,15 +862,15 @@ static GPtrArray *signet_parse_json_string_array(JsonObject *o,
 
   for (guint i = 0; i < len; i++) {
     JsonNode *en = json_array_get_element(a, i);
-    if (!en || !JSON_NODE_HOLDS_VALUE(en)) continue;
-    if (json_node_get_value_type(en) != G_TYPE_STRING) continue;
-
-    const char *v = json_node_get_string(en);
-    if (!v || v[0] == '\0') continue;
+    const char *v = (en && JSON_NODE_HOLDS_VALUE(en) &&
+                     json_node_get_value_type(en) == G_TYPE_STRING)
+                        ? json_node_get_string(en) : NULL;
+    if (!v || v[0] == '\0') { *dropped = TRUE; continue; }
 
     if (canonicalize_pubkeys) {
       char *canon = signet_pubkey_canon_dup(v);
       if (canon) g_ptr_array_add(out, canon);
+      else *dropped = TRUE;
     } else {
       g_ptr_array_add(out, g_strdup(v));
     }
@@ -950,12 +963,24 @@ int signet_policy_store_set_identity_json(SignetPolicyStore *ps,
   }
 
   /* Client lists (canonicalize pubkeys). */
-  p->allow_clients = signet_parse_json_string_array(o, "allow_clients", TRUE);
-  p->deny_clients  = signet_parse_json_string_array(o, "deny_clients",  TRUE);
+  gboolean dropped = FALSE;
+  p->allow_clients = signet_parse_json_string_array(o, "allow_clients", TRUE, &dropped);
+  p->deny_clients  = signet_parse_json_string_array(o, "deny_clients",  TRUE, &dropped);
 
   /* Method lists. */
-  p->allow_methods = signet_parse_json_string_array(o, "allow_methods", FALSE);
-  p->deny_methods  = signet_parse_json_string_array(o, "deny_methods",  FALSE);
+  p->allow_methods = signet_parse_json_string_array(o, "allow_methods", FALSE, &dropped);
+  p->deny_methods  = signet_parse_json_string_array(o, "deny_methods",  FALSE, &dropped);
+
+  /* Nothing is silently dropped: a policy is stored as written or not at
+   * all. */
+  if (dropped) {
+    signet_identity_policy_free(p);
+    if (out_error)
+      *out_error = g_strdup("client and method lists must be arrays of "
+                            "non-empty strings; clients must be \"*\", npub "
+                            "or 64-hex pubkeys");
+    return -1;
+  }
 
   /* Kind lists. */
   if (!signet_parse_json_kind_array(o, "allow_kinds", &p->allow_kinds, &p->allow_kinds_any)) {

@@ -918,6 +918,66 @@ static void test_delivery_grant_requester_without_provisioner(void) {
   signet_mgmt_handler_set_deny_list(f.mgmt, NULL);
   signet_deny_list_free(deny);
 
+  /* The grant is exactly one shape: an extra rule of any kind voids it,
+   * and a policy with an entry Signet cannot read is never a grant. */
+  const char *voiding[] = {
+    "\"allow_kinds\":[1]", "\"deny_kinds\":[\"*\"]",
+    "\"deny_clients\":[\"%s\"]", "\"deny_methods\":[\"sign_event\"]",
+  };
+  char stranger_pk[65], stranger_sk[65];
+  keypair(stranger_sk, stranger_pk);
+  sodium_memzero(stranger_sk, sizeof(stranger_sk));
+  for (size_t i = 0; i < G_N_ELEMENTS(voiding); i++) {
+    char *extra = g_strdup_printf(voiding[i], stranger_pk);
+    char *json = g_strdup_printf(
+        "{\"default\":\"deny\",\"allow_clients\":[\"%s\"],"
+        "\"allow_methods\":[\"credential.deliver\"],%s}",
+        requester_pk, extra);
+    set_policy(&f, "owner", json);
+    CHECK(!signet_policy_store_has_exact_delivery_grant(
+        f.identity_policy, "owner", requester_pk, 2000000000));
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "g-v%zu", i);
+    CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, evt) == -1);
+    g_free(json);
+    g_free(extra);
+  }
+  /* set-policy refuses entries it would otherwise have dropped... */
+  const char *bad_entries[] = {
+    "\"allow_clients\":[\"%s\",\"npub1notakey\"]",
+    "\"allow_clients\":[\"%s\",\"garbage\"]",
+    "\"allow_clients\":[\"%s\",7]",
+    "\"allow_clients\":[\"%s\",\"\"]",
+    "\"allow_clients\":\"%s\"",
+  };
+  for (size_t i = 0; i < G_N_ELEMENTS(bad_entries); i++) {
+    char *clients = g_strdup_printf(bad_entries[i], requester_pk);
+    char *json = g_strdup_printf(
+        "{\"default\":\"deny\",%s,"
+        "\"allow_methods\":[\"credential.deliver\"]}", clients);
+    char *err = NULL;
+    CHECK(signet_policy_store_set_identity_json(
+        f.identity_policy, "owner", json, 2000000000, &err) == -1);
+    CHECK(err != NULL);
+    g_free(err); g_free(json); g_free(clients);
+  }
+  /* ...and a policy file carrying one is read but never grants delivery. */
+  grant_delivery(&f, "owner", requester_pk);
+  CHECK(signet_policy_store_has_exact_delivery_grant(
+      f.identity_policy, "owner", requester_pk, 2000000000));
+  char *file = g_strdup_printf(
+      "[identity.owner]\ndefault=deny\n"
+      "allow_clients=[\"%s\",\"npub1notakey\"]\n"
+      "allow_methods=[\"credential.deliver\"]\n", requester_pk);
+  CHECK(g_file_set_contents(f.policy_path, file, -1, NULL));
+  CHECK(signet_policy_store_reload(f.identity_policy, 2000000000) == 0);
+  CHECK(!signet_policy_store_has_exact_delivery_grant(
+      f.identity_policy, "owner", requester_pk, 2000000000));
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-lossy") == -1);
+  g_free(file);
+  grant_delivery(&f, "owner", requester_pk);
+  CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-ok") == 0);
+
   /* Withdrawing the grant withdraws the access. */
   set_policy(&f, "owner", "{\"default\":\"deny\"}");
   CHECK(AS_REQUESTER(SIGNET_MGMT_OP_DELIVER_CREDENTIAL, deliver, "g-w1") == -1);
