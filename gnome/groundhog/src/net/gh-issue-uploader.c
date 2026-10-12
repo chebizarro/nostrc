@@ -105,11 +105,21 @@ on_uploaded(GObject *source, GAsyncResult *result, gpointer data)
 {
   GTask *task = data;
   GError *error = NULL;
-  gchar *url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result, NULL, &error);
-  if (url)
+  gchar *server = NULL;
+  gchar *url = gh_blossom_client_upload_finish(GH_BLOSSOM_CLIENT(source), result, &server, &error);
+  if (url) {
+    g_free(server);
     g_task_return_pointer(task, url, g_free);
+    g_object_unref(task);
+    return;
+  }
+  /* The server that refused the throwaway key: the one a retry as the
+   * account would need the consent of (dup_retry_consent()). */
+  if (g_error_matches(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED) && server)
+    g_task_set_task_data(task, server, g_free);
   else
-    g_task_return_error(task, error);
+    g_free(server);
+  g_task_return_error(task, error);
   g_object_unref(task);
 }
 
@@ -184,6 +194,18 @@ upload_finish(GnIssueUploader *uploader, GAsyncResult *result, GError **error)
   return g_task_propagate_pointer(G_TASK(result), error);
 }
 
+/* The consent text for uploading to server as the account. */
+static gchar *
+account_consent_label(const gchar *server)
+{
+  g_autofree gchar *host = NULL;
+  g_autofree gchar *normalized = gh_blossom_client_normalize_server(server, &host);
+  /* Translators: %s is a server's host name. */
+  return g_strdup_printf(
+    _("Upload to %s as my account, if it only accepts accounts it knows. It then learns that these files are yours. Kept for this server, as for message attachments."),
+    host ? host : server);
+}
+
 /* "Upload as your account" for each server the account has not consented
  * to, while the client has an account signer (nostrc-u42c7). */
 static GStrv
@@ -198,16 +220,20 @@ dup_consent_options(GnIssueUploader *uploader)
   for (guint i = 0; self->servers[i]; i++) {
     if (gh_blossom_client_get_account_consent(self->client, self->servers[i]))
       continue;
-    g_autofree gchar *host = NULL;
-    g_autofree gchar *normalized = gh_blossom_client_normalize_server(self->servers[i], &host);
     g_strv_builder_add(servers, self->servers[i]);
-    /* Translators: %s is a server's host name. */
-    g_strv_builder_take(labels, g_strdup_printf(
-      _("Upload to %s as my account, if it only accepts accounts it knows. It then learns that these files are yours. Kept for this server, as for message attachments."),
-      host ? host : self->servers[i]));
+    g_strv_builder_take(labels, account_consent_label(self->servers[i]));
   }
   self->option_servers = g_strv_builder_end(servers);
   return g_strv_builder_end(labels);
+}
+
+static gboolean
+record_consent(GhIssueUploader *self, const gchar *server, GError **error)
+{
+  if (self->record_consent)
+    return self->record_consent(self->record_data, server, error);
+  gh_blossom_client_set_account_consent(self->client, server, TRUE);
+  return TRUE;
 }
 
 static gboolean
@@ -220,11 +246,46 @@ apply_consent_option(GnIssueUploader *uploader, guint index, GError **error)
                         _("The account changed. Close this report and open a new one."));
     return FALSE;
   }
-  const gchar *server = self->option_servers[index];
-  if (self->record_consent)
-    return self->record_consent(self->record_data, server, error);
-  gh_blossom_client_set_account_consent(self->client, server, TRUE);
-  return TRUE;
+  return record_consent(self, self->option_servers[index], error);
+}
+
+/* The server that refused result's throwaway key, while a retry as the
+ * account is possible: an account signer, and no consent for it yet (with
+ * one, the account itself was refused). */
+static const gchar *
+retry_server(GhIssueUploader *self, GAsyncResult *result)
+{
+  if (!g_task_is_valid(result, self) ||
+      g_task_get_source_tag(G_TASK(result)) != (gpointer)upload_async)
+    return NULL;
+  const gchar *server = g_task_get_task_data(G_TASK(result));
+  if (!server || !gh_blossom_client_has_account_signer(self->client) ||
+      gh_blossom_client_get_account_consent(self->client, server))
+    return NULL;
+  return server;
+}
+
+static gchar *
+dup_retry_consent(GnIssueUploader *uploader, GAsyncResult *result)
+{
+  const gchar *server = retry_server(GH_ISSUE_UPLOADER(uploader), result);
+  return server ? account_consent_label(server) : NULL;
+}
+
+static gboolean
+apply_retry_consent(GnIssueUploader *uploader, GAsyncResult *result, GError **error)
+{
+  GhIssueUploader *self = GH_ISSUE_UPLOADER(uploader);
+  const gchar *server = retry_server(self, result);
+  if (!server) {
+    if (g_task_is_valid(result, self) && g_task_get_task_data(G_TASK(result)) &&
+        gh_blossom_client_has_account_signer(self->client))
+      return TRUE; /* consented meanwhile (another file's retry) */
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT,
+                        _("The account changed. Close this report and open a new one."));
+    return FALSE;
+  }
+  return record_consent(self, server, error);
 }
 
 static void
@@ -235,6 +296,8 @@ uploader_iface_init(GnIssueUploaderInterface *iface)
   iface->upload_finish = upload_finish;
   iface->dup_consent_options = dup_consent_options;
   iface->apply_consent_option = apply_consent_option;
+  iface->dup_retry_consent = dup_retry_consent;
+  iface->apply_retry_consent = apply_retry_consent;
 }
 
 static void

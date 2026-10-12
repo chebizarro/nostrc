@@ -522,6 +522,122 @@ test_account_option(void)
   fixture_down(&f);
 }
 
+typedef struct {
+  gboolean done;
+  GAsyncResult *result;
+} Kept;
+
+static void
+on_upload_kept(GObject *source, GAsyncResult *result, gpointer data)
+{
+  (void)source;
+  Kept *kept = data;
+  kept->result = g_object_ref(result);
+  kept->done = TRUE;
+}
+
+static gboolean
+kept_done(gpointer data)
+{
+  return ((Kept *)data)->done;
+}
+
+/* nostrc-j4nvf: a file the server refused (401: it accepts only accounts it
+ * knows) has a retry consent for that server, only while an account signer
+ * exists and the account has not consented; accepting it records the
+ * consent through the recorder, and the same file then uploads (200),
+ * signed by the account. Other failures have none. */
+static void
+test_retry_consent(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  g_autoptr(GnIssueUploader) uploader = gh_issue_uploader_new(f.client);
+  FakeSigner signer = { 0 };
+  char *secret = nostr_key_generate_private();
+  char *pubkey = nostr_key_get_public(secret);
+  signer.secret = g_strdup(secret);
+  signer.pubkey = g_strdup(pubkey);
+  free(secret);
+  free(pubkey);
+  blossom_fixture_require_pubkey(f.blossom, signer.pubkey);
+  Recorder recorder = { f.client, g_ptr_array_new_with_free_func(g_free), FALSE };
+  gh_issue_uploader_set_consent_recorder(GH_ISSUE_UPLOADER(uploader), record_consent, &recorder);
+  g_autoptr(GBytes) jpeg = make_jpeg(4 * 1024);
+  g_autoptr(GFile) photo = write_file("retry.jpg", jpeg);
+
+  /* Refused without an account signer: nothing to offer. */
+  Kept kept = { 0 };
+  gn_issue_uploader_upload_async(uploader, photo, NULL, NULL, on_upload_kept, &kept);
+  spin_until(kept_done, &kept);
+  g_autoptr(GError) error = NULL;
+  g_assert_null(gn_issue_uploader_upload_finish(uploader, kept.result, &error));
+  g_assert_error(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED);
+  g_clear_error(&error);
+  g_assert_null(gn_issue_uploader_dup_retry_consent(uploader, kept.result));
+  g_assert_false(gn_issue_uploader_apply_retry_consent(uploader, kept.result, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+  g_clear_object(&kept.result);
+
+  gh_blossom_client_set_account_signer(f.client, signer.pubkey, fake_sign_async, fake_sign_finish,
+                                       &signer, NULL);
+  kept.done = FALSE;
+  gn_issue_uploader_upload_async(uploader, photo, NULL, NULL, on_upload_kept, &kept);
+  spin_until(kept_done, &kept);
+  g_assert_null(gn_issue_uploader_upload_finish(uploader, kept.result, &error));
+  g_assert_error(error, GH_BLOSSOM_ERROR, GH_BLOSSOM_ERROR_AUTH_REQUIRED);
+  g_clear_error(&error);
+  GPtrArray *requests = blossom_fixture_requests(f.blossom);
+  BlossomRequest *put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_cmpstr(put->auth_pubkey, !=, signer.pubkey);
+  g_assert_cmpuint(signer.calls, ==, 0);
+  g_autofree gchar *consent = gn_issue_uploader_dup_retry_consent(uploader, kept.result);
+  g_assert_nonnull(consent);
+  g_assert_nonnull(strstr(consent, "Upload to 127.0.0.1 as my account"));
+
+  /* The recorder's failure keeps nothing. */
+  recorder.fail = TRUE;
+  g_assert_false(gn_issue_uploader_apply_retry_consent(uploader, kept.result, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_FAILED);
+  g_clear_error(&error);
+  g_assert_false(gh_blossom_client_get_account_consent(f.client, blossom_fixture_url(f.blossom)));
+  recorder.fail = FALSE;
+  g_assert_true(gn_issue_uploader_apply_retry_consent(uploader, kept.result, &error));
+  g_assert_no_error(error);
+  g_assert_cmpuint(recorder.servers->len, ==, 1);
+  g_assert_cmpstr(g_ptr_array_index(recorder.servers, 0), ==, blossom_fixture_url(f.blossom));
+  /* Consented: no more retry consent for that refusal. */
+  g_assert_null(gn_issue_uploader_dup_retry_consent(uploader, kept.result));
+  g_clear_object(&kept.result);
+
+  Result r = { 0 };
+  upload(uploader, photo, NULL, &r);
+  g_assert_no_error(r.error);
+  g_assert_cmpuint(signer.calls, ==, 1);
+  put = g_ptr_array_index(requests, requests->len - 1);
+  g_assert_true(put->auth_valid);
+  g_assert_cmpstr(put->auth_pubkey, ==, signer.pubkey);
+
+  /* A refusal that is not about the account (missing file) has none. */
+  g_autoptr(GFile) missing = g_file_new_build_filename(root, "missing.jpg", NULL);
+  kept.done = FALSE;
+  gn_issue_uploader_upload_async(uploader, missing, NULL, NULL, on_upload_kept, &kept);
+  spin_until(kept_done, &kept);
+  g_assert_null(gn_issue_uploader_upload_finish(uploader, kept.result, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND);
+  g_clear_error(&error);
+  g_assert_null(gn_issue_uploader_dup_retry_consent(uploader, kept.result));
+  g_clear_object(&kept.result);
+
+  result_clear(&r);
+  gh_blossom_client_set_account_signer(f.client, NULL, NULL, NULL, NULL, NULL);
+  g_ptr_array_unref(recorder.servers);
+  g_free(signer.secret);
+  g_free(signer.pubkey);
+  fixture_down(&f);
+}
+
 /* Too large (before reading), not a regular file, empty, or cancelled:
  * refused with nothing sent. */
 static void
@@ -762,6 +878,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/issue-uploader/sniff", test_sniff);
   g_test_add_func("/groundhog/issue-uploader/type-and-address", test_type_and_address);
   g_test_add_func("/groundhog/issue-uploader/account-option", test_account_option);
+  g_test_add_func("/groundhog/issue-uploader/retry-consent", test_retry_consent);
   g_test_add_func("/groundhog/issue-uploader/refusals", test_refusals);
   g_test_add_func("/groundhog/issue-uploader/tor", test_tor);
   g_test_add_func("/groundhog/issue-uploader/rebinding", test_rebinding);
