@@ -169,6 +169,12 @@ static void test_replay_ttl_covers_skew(void) {
   /* 199 s later created_at is still within skew; it must be a duplicate. */
   CHECK(signet_replay_check_and_mark(cache, "x", now + 100, now + 199) ==
         SIGNET_REPLAY_DUPLICATE);
+  /* A redelivery near the window edge is still a duplicate, not a clock
+   * error: it was already executed. */
+  CHECK(signet_replay_check_and_mark(cache, "edge", now - 100, now) ==
+        SIGNET_REPLAY_OK);
+  CHECK(signet_replay_check_and_mark(cache, "edge", now - 100, now + 50) ==
+        SIGNET_REPLAY_DUPLICATE);
   signet_replay_cache_free(cache);
   printf("test_replay_ttl_covers_skew: PASS\n");
 }

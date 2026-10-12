@@ -195,10 +195,6 @@ SignetReplayResult signet_replay_check_and_mark_scoped(SignetReplayCache *c,
   /* Missing/empty event id means we cannot dedup; reject rather than admit. */
   if (!event_id_hex || event_id_hex[0] == '\0') return SIGNET_REPLAY_INVALID;
 
-  SignetReplayResult skew_res = SIGNET_REPLAY_OK;
-  (void)signet_replay_skew_check(c, event_created_at, now, &skew_res);
-  if (skew_res != SIGNET_REPLAY_OK) return skew_res;
-
   /* Defensive bound to avoid pathological memory use if caller passes junk.
    * An overlong id is malformed input, so fail closed rather than admit it. */
   if (strlen(event_id_hex) > 256) return SIGNET_REPLAY_INVALID;
@@ -209,10 +205,19 @@ SignetReplayResult signet_replay_check_and_mark_scoped(SignetReplayCache *c,
   /* First, prune expired entries. */
   signet_replay_prune_expired_locked(c, now);
 
-  /* Duplicate detection. */
+  /* Duplicate detection comes before the clock window: a redelivered,
+   * already-executed request is a duplicate (dropped silently by callers)
+   * even when its created_at has since left the window. */
   if (g_hash_table_contains(c->by_id, event_id_hex)) {
     g_mutex_unlock(&c->mu);
     return SIGNET_REPLAY_DUPLICATE;
+  }
+
+  SignetReplayResult skew_res = SIGNET_REPLAY_OK;
+  (void)signet_replay_skew_check(c, event_created_at, now, &skew_res);
+  if (skew_res != SIGNET_REPLAY_OK) {
+    g_mutex_unlock(&c->mu);
+    return skew_res;
   }
 
   /* A scope at its quota is refused: its own ids are never dropped early. */
