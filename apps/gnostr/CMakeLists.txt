@@ -905,8 +905,11 @@ if (BUILD_TESTING)
   gn_add_gtest_xvfb(gnostr-test-timeline-repost
     SOURCES tests/test_timeline_repost.c
             src/ui/gnostr-timeline-repost.c
+            src/model/gnostr-timeline-batch.c
+            src/model/gnostr-timeline-hydrator.c
+            src/model/gnostr-timeline-item-view-model.c
             ${GRESOURCE_C}
-    LIBS    nostr_gtk gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
+    LIBS    nostr_gtk gn_content_parser gnostr-widget-test-support PkgConfig::GTK4 PkgConfig::GLIB
     ENV     "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}" "GSETTINGS_BACKEND=memory"
     TIMEOUT 60)
   target_include_directories(gnostr-test-timeline-repost PRIVATE
@@ -1537,19 +1540,23 @@ if (BUILD_TESTING)
     tests/test_timeline_source.c
     src/model/gnostr-timeline-source.c
     src/model/gnostr-timeline-batch.c
+    src/model/gnostr-timeline-hydrator.c
+    src/model/gnostr-timeline-item-view-model.c
     src/util/mute_filter.c)
   target_compile_features(gnostr-test-timeline-source PRIVATE c_std_11)
   target_compile_definitions(gnostr-test-timeline-source PRIVATE
     GNOSTR_TIMELINE_SOURCE_TESTING=1)
   target_include_directories(gnostr-test-timeline-source PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${PROJECT_ROOT}/nostr-gtk/include
     ${PROJECT_ROOT}/nostr-gobject/include
     ${PROJECT_ROOT}/libnostr/include
     ${PROJECT_ROOT}/libjson/include
     ${PROJECT_ROOT}/libgo/include
     ${_NOSTR_CONFIG_DIR})
   target_link_libraries(gnostr-test-timeline-source PRIVATE
-    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json)
+    PkgConfig::GLIB PkgConfig::GIO nostr_gobject nostr_json nostr_gtk
+    gn_content_parser)
   if(APPLE)
     target_link_options(gnostr-test-timeline-source PRIVATE -Wl,-undefined,dynamic_lookup)
   else()

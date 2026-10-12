@@ -8,7 +8,9 @@
  *   - the card goes Finding on relays… -> the original, or -> unavailable,
  *     through the resolver's fetch, never the legacy request-embed;
  *   - snapshot rows (no bind-time fetch) get the same card, inert;
- *   - recycling the row cancels an in-flight fetch.
+ *   - recycling the row cancels an in-flight fetch;
+ *   - a snapshot row whose original the timeline source resolved shows the
+ *     original itself (nostrc-4yt5v).
  * With GNOSTR_TEST_SCREENSHOTS=<dir> the states are saved as PNGs, styled
  * with gnostr.css.
  *
@@ -16,6 +18,8 @@
  */
 #include "nostrc-test-gdk-frame.h"
 #include "ui/gnostr-timeline-repost.h"
+#include "model/gnostr-timeline-batch.h"
+#include "model/gnostr-timeline-hydrator.h"
 
 #include <gtk/gtk.h>
 #include <nostr-gtk-1.0/nostr-note-card-row.h>
@@ -323,6 +327,84 @@ test_recycle_cancels(Fixture *f, gconstpointer data)
   g_assert_cmpstr(nostr_gtk_note_card_row_get_content_text(f->row), ==, "plain note");
 }
 
+/* ---- snapshot rows (nostrc-4yt5v) ---- */
+
+/* The view model the main feed binds: a kind-6 batch entry carrying the
+ * original the timeline source resolved (or not), through the hydrator. */
+static GnostrTimelineItemViewModel *
+snapshot_repost_vm(const char *original_json, gboolean resolved)
+{
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(original_json, NULL);
+  g_assert_nonnull(info);
+  g_autoptr(GnostrTimelineBatch) batch = gnostr_timeline_batch_new(GNOSTR_TIMELINE_BATCH_REFRESH, 1);
+  GnostrTimelineBatchEntry entry = {
+    .note_key = 7,
+    .created_at = 1700000100,
+    .pubkey_hex = "3333333333333333333333333333333333333333333333333333333333333333",
+    .content = "",
+    .display_name = "Bob",
+    .reposted_event_id = info->id,
+    .kind = 6,
+    .has_profile = TRUE,
+  };
+  if (resolved) {
+    entry.reposted_pubkey = info->pubkey;
+    entry.reposted_display_name = "Alice";
+    entry.reposted_content = info->content;
+    entry.reposted_created_at = info->created_at;
+    entry.reposted_kind = info->kind;
+    entry.reposted_resolved = TRUE;
+  }
+  memset(entry.event_id, 0x44, sizeof(entry.event_id));
+  gnostr_timeline_batch_add_entry(batch, &entry);
+  g_autoptr(GnostrTimelineHydrator) hydrator = gnostr_timeline_hydrator_new(1);
+  return gnostr_timeline_hydrator_hydrate_entry(hydrator, gnostr_timeline_batch_get_entry(batch, 0));
+}
+
+/* The snapshot resolved the original: the row is the original, no card and
+ * no resolver work at bind time. */
+static void
+test_snapshot_resolved(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autofree char *original = signed_note("snapshot original, resolved");
+  g_autoptr(GnNostrEventInfo) info = gn_nostr_event_parse(original, NULL);
+  g_autoptr(GnostrTimelineItemViewModel) vm = snapshot_repost_vm(original, TRUE);
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_repost_state(vm), ==,
+                  GNOSTR_TIMELINE_PREVIEW_RESOLVED);
+  bind_repost(f, "");
+  gnostr_timeline_repost_show_snapshot(f->row, vm, NULL, 6, GN_NOSTR_REFERENCE_RESOLVER(f->resolver));
+  settle();
+  g_assert_cmpstr(nostr_gtk_note_card_row_get_content_text(f->row), ==, "snapshot original, resolved");
+  g_assert_cmpstr(nostr_gtk_note_card_row_get_event_id(f->row), ==, info->id);
+  g_assert_cmpstr(nostr_gtk_note_card_row_get_pubkey(f->row), ==, info->pubkey);
+  GnNostrReferenceCard *card = nostr_gtk_note_card_row_get_reference_card(f->row);
+  g_assert_true(!card || !gtk_widget_get_visible(GTK_WIDGET(card)));
+  g_assert_cmpuint(f->resolver->lookups, ==, 0);
+  g_assert_cmpuint(f->resolver->fetches, ==, 0);
+  g_assert_cmpuint(f->embeds, ==, 0);
+  save_png(f, "snapshot-resolved");
+}
+
+/* Not resolved by the snapshot: the inert card offering Find on Relays. */
+static void
+test_snapshot_missing(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  g_autofree char *original = signed_note("snapshot original, missing");
+  g_autoptr(GnostrTimelineItemViewModel) vm = snapshot_repost_vm(original, FALSE);
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_repost_state(vm), ==,
+                  GNOSTR_TIMELINE_PREVIEW_MISSING);
+  bind_repost(f, "");
+  gnostr_timeline_repost_show_snapshot(f->row, vm, NULL, 6, GN_NOSTR_REFERENCE_RESOLVER(f->resolver));
+  GnNostrReferenceCard *card = nostr_gtk_note_card_row_get_reference_card(f->row);
+  g_assert_nonnull(card);
+  g_assert_cmpint(gn_nostr_reference_card_get_state(card), ==, GN_NOSTR_REFERENCE_CARD_INERT);
+  g_assert_cmpuint(f->resolver->fetches, ==, 0);
+  g_assert_true(gtk_widget_get_visible(find_named(GTK_WIDGET(card), "reference-find")));
+  g_assert_cmpstr(nostr_gtk_note_card_row_get_content_text(f->row), ==, "");
+}
+
 /* gnostr.css carries rules this GTK may not know (e.g. "overflow" before
  * GTK 4.x supports it); the app logs them, the test must not abort on them. */
 static void
@@ -350,5 +432,7 @@ main(int argc, char **argv)
   ADD("fetch-unavailable", test_fetch_unavailable);
   ADD("snapshot-inert", test_snapshot_inert);
   ADD("recycle-cancels", test_recycle_cancels);
+  ADD("snapshot-resolved", test_snapshot_resolved);
+  ADD("snapshot-missing", test_snapshot_missing);
   return g_test_run();
 }

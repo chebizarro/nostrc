@@ -3,6 +3,9 @@
 #include <string.h>
 
 #include "../src/model/gnostr-timeline-source.h"
+#include "../src/model/gnostr-timeline-hydrator.h"
+#include <nostr-event.h>
+#include <nostr-tag.h>
 #include <nostr-gobject-1.0/gn-ndb-sub-dispatcher.h>
 #include <nostr-gobject-1.0/storage_ndb.h>
 
@@ -185,6 +188,205 @@ test_local_ingest_populates_note_meta_equivalent_to_recompute(void)
                    recompute_count(reply_filter));
 }
 
+/* ---- kind-6 reposts resolve their original in the snapshot (nostrc-4yt5v) */
+
+#define REPOST_ORIGINAL_SK "7f7ff03d123792d6ac594bfa67bf6d0c0ab55b6b1fdb6249303fe861f1ccba9a"
+#define REPOST_REPOSTER_SK "3a3e5e1f0b87d1c0e6a4b3f2d8a9c7e6f5d4c3b2a1908f7e6d5c4b3a29181716"
+
+static char *
+signed_event(const char *sk, int kind, gint64 created_at, const char *content,
+             const char *e_tag, char **id_out)
+{
+  NostrEvent *ev = nostr_event_new();
+  nostr_event_set_kind(ev, kind);
+  nostr_event_set_created_at(ev, created_at);
+  nostr_event_set_content(ev, content);
+  if (e_tag)
+    nostr_event_set_tags(ev, nostr_tags_new(1, nostr_tag_new("e", e_tag, NULL)));
+  g_assert_cmpint(nostr_event_sign(ev, sk), ==, 0);
+  if (id_out)
+    *id_out = nostr_event_get_id(ev);
+  char *json = nostr_event_serialize_compact(ev);
+  nostr_event_free(ev);
+  g_assert_nonnull(json);
+  return json;
+}
+
+static char *
+replace_once(const char *haystack, const char *needle, const char *with)
+{
+  const char *at = strstr(haystack, needle);
+  g_assert_nonnull(at);
+  return g_strdup_printf("%.*s%s%s", (int)(at - haystack), haystack, with,
+                         at + strlen(needle));
+}
+
+static void
+on_refresh_batch(GnostrTimelineSource *source G_GNUC_UNUSED,
+                 GnostrTimelineBatch *batch,
+                 gpointer user_data)
+{
+  GnostrTimelineBatch **out = user_data;
+  if (gnostr_timeline_batch_get_kind(batch) == GNOSTR_TIMELINE_BATCH_REFRESH && !*out)
+    *out = g_object_ref(batch);
+}
+
+static void
+on_ids_stored(uint64_t subid G_GNUC_UNUSED,
+              const uint64_t *note_keys G_GNUC_UNUSED,
+              guint n_keys,
+              gpointer user_data)
+{
+  *(guint *)user_data += n_keys;
+}
+
+static gboolean
+on_refresh_deadline(gpointer user_data)
+{
+  *(gboolean *)user_data = TRUE;
+  return G_SOURCE_REMOVE;
+}
+
+static GnostrTimelineItemViewModel *
+hydrate_snapshot_entry(GnostrTimelineHydrator *hydrator,
+                       GnostrTimelineBatch *batch,
+                       const char *event_id)
+{
+  for (guint i = 0; i < gnostr_timeline_batch_get_n_entries(batch); i++) {
+    const GnostrTimelineBatchEntry *entry = gnostr_timeline_batch_get_entry(batch, i);
+    char hex[65];
+    storage_ndb_hex_encode(entry->event_id, hex);
+    if (g_strcmp0(hex, event_id) == 0)
+      return gnostr_timeline_hydrator_hydrate_entry(hydrator, entry);
+  }
+  g_assert_not_reached();
+  return NULL;
+}
+
+static void
+test_snapshot_reposts_resolve_original(void)
+{
+  /* Original stored locally: the repost carries no embedded JSON. */
+  g_autofree char *local_id = NULL;
+  g_autofree char *local = signed_event(REPOST_ORIGINAL_SK, 1, 300,
+                                        "stored original", NULL, &local_id);
+  g_autofree char *repost_local_id = NULL;
+  g_autofree char *repost_local = signed_event(REPOST_REPOSTER_SK, 6, 301, "",
+                                               local_id, &repost_local_id);
+
+  /* Original embedded and verifying (nostrdb also stores the embedded
+   * original on its own; either way the snapshot resolves it). */
+  g_autofree char *embedded_id = NULL;
+  g_autofree char *embedded = signed_event(REPOST_ORIGINAL_SK, 1, 310,
+                                           "embedded original", NULL, &embedded_id);
+  g_autofree char *repost_embedded_id = NULL;
+  g_autofree char *repost_embedded = signed_event(REPOST_REPOSTER_SK, 6, 311, embedded,
+                                                  embedded_id, &repost_embedded_id);
+
+  /* Wait for nostrdb's own commit notification, not a timer. */
+  guint stored = 0;
+  gboolean timed_out = FALSE;
+  g_autofree char *ids_filter = g_strdup_printf(
+    "{\"ids\":[\"%s\",\"%s\",\"%s\"]}",
+    local_id, repost_local_id, repost_embedded_id);
+  uint64_t subid = gn_ndb_subscribe(ids_filter, on_ids_stored, &stored, NULL);
+  g_assert_cmpuint(subid, >, 0);
+  guint deadline = g_timeout_add_seconds(10, on_refresh_deadline, &timed_out);
+  g_assert_cmpint(storage_ndb_ingest_event_json(local, NULL), ==, 0);
+  g_assert_cmpint(storage_ndb_ingest_event_json(repost_local, NULL), ==, 0);
+  g_assert_cmpint(storage_ndb_ingest_event_json(repost_embedded, NULL), ==, 0);
+  while (stored < 3 && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  gn_ndb_unsubscribe(subid);
+  g_assert_cmpuint(stored, ==, 3);
+
+  g_autoptr(GnostrTimelineSource) source = gnostr_timeline_source_new();
+  GnostrTimelineBatch *batch = NULL;
+  g_signal_connect(source, "batch", G_CALLBACK(on_refresh_batch), &batch);
+  gnostr_timeline_source_refresh_async(source);
+  while (!batch && !timed_out)
+    g_main_context_iteration(NULL, TRUE);
+  if (!timed_out)
+    g_source_remove(deadline);
+  g_assert_nonnull(batch);
+
+  g_autoptr(GnostrTimelineHydrator) hydrator = gnostr_timeline_hydrator_new(1);
+  g_autofree char *original_pubkey = NULL;
+  {
+    NostrEvent *ev = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize_compact(ev, local, NULL), ==, 1);
+    original_pubkey = g_strdup(nostr_event_get_pubkey(ev));
+    nostr_event_free(ev);
+  }
+
+  g_autoptr(GnostrTimelineItemViewModel) from_ndb =
+    hydrate_snapshot_entry(hydrator, batch, repost_local_id);
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_repost_state(from_ndb), ==,
+                  GNOSTR_TIMELINE_PREVIEW_RESOLVED);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_event_id(from_ndb), ==, local_id);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_pubkey(from_ndb), ==, original_pubkey);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_content(from_ndb), ==, "stored original");
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_reposted_created_at(from_ndb), ==, 300);
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_reposted_kind(from_ndb), ==, 1);
+
+  g_autoptr(GnostrTimelineItemViewModel) from_embedded =
+    hydrate_snapshot_entry(hydrator, batch, repost_embedded_id);
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_repost_state(from_embedded), ==,
+                  GNOSTR_TIMELINE_PREVIEW_RESOLVED);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_event_id(from_embedded), ==, embedded_id);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_pubkey(from_embedded), ==, original_pubkey);
+  g_assert_cmpstr(gnostr_timeline_item_view_model_get_reposted_content(from_embedded), ==, "embedded original");
+  g_assert_cmpint(gnostr_timeline_item_view_model_get_reposted_created_at(from_embedded), ==, 310);
+
+  g_object_unref(batch);
+}
+
+/* The embedded fallback on its own: originals that are not in nostrdb (this
+ * test DB skips validation, and nostrdb stores a kind 6's embedded original
+ * itself, so these are never ingested). Only a verifying kind-1 event whose
+ * id is the e-tagged one is trusted. */
+static void
+test_repost_embedded_original_must_verify(void)
+{
+  g_autofree char *id = NULL;
+  g_autofree char *genuine = signed_event(REPOST_ORIGINAL_SK, 1, 410,
+                                          "genuine words", NULL, &id);
+  g_autofree char *pubkey = NULL;
+  g_autofree char *content = NULL;
+  gint64 created_at = 0;
+  g_assert_true(gnostr_timeline_source_testing_resolve_repost(id, genuine, &pubkey,
+                                                              &content, &created_at));
+  g_assert_cmpuint(strlen(pubkey), ==, 64);
+  g_assert_cmpstr(content, ==, "genuine words");
+  g_assert_cmpint(created_at, ==, 410);
+  g_clear_pointer(&pubkey, g_free);
+  g_clear_pointer(&content, g_free);
+
+  /* Tampered after signing. */
+  g_autofree char *forged = replace_once(genuine, "genuine words", "forged words");
+  g_assert_false(gnostr_timeline_source_testing_resolve_repost(id, forged, &pubkey,
+                                                               &content, &created_at));
+  g_assert_null(pubkey);
+  g_assert_null(content);
+
+  /* Valid, but not the event the repost's e tag names. */
+  g_autofree char *other_id = NULL;
+  g_autofree char *other = signed_event(REPOST_ORIGINAL_SK, 1, 411, "other", NULL, &other_id);
+  g_assert_false(gnostr_timeline_source_testing_resolve_repost(id, other, &pubkey,
+                                                               &content, &created_at));
+
+  /* Valid and matching, but not a kind-1 note. */
+  g_autofree char *meta_id = NULL;
+  g_autofree char *meta = signed_event(REPOST_ORIGINAL_SK, 0, 412, "{}", NULL, &meta_id);
+  g_assert_false(gnostr_timeline_source_testing_resolve_repost(meta_id, meta, &pubkey,
+                                                               &content, &created_at));
+
+  /* Nothing embedded and nothing stored. */
+  g_assert_false(gnostr_timeline_source_testing_resolve_repost(id, "", &pubkey,
+                                                               &content, &created_at));
+  g_assert_null(pubkey);
+}
+
 int
 main(int argc,
      char **argv)
@@ -211,6 +413,10 @@ main(int argc,
                   test_live_key_queue_is_deduplicated_and_bounded);
   g_test_add_func("/gnostr/timeline-source/note-meta-local-ingest-equivalence",
                   test_local_ingest_populates_note_meta_equivalent_to_recompute);
+  g_test_add_func("/gnostr/timeline-source/snapshot-reposts-resolve-original",
+                  test_snapshot_reposts_resolve_original);
+  g_test_add_func("/gnostr/timeline-source/repost-embedded-original-must-verify",
+                  test_repost_embedded_original_must_verify);
 
   int result = g_test_run();
   storage_ndb_shutdown();
