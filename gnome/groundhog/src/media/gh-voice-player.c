@@ -168,6 +168,89 @@ gh_voice_player_set_state_internal(GhVoicePlayer *self, GhVoicePlayerState st)
   g_signal_emit(self, signals[SIGNAL_STATE_CHANGED], 0, (guint)st);
 }
 
+/* decodebin exposes its decoded pad from its own streaming thread. Linked
+ * there by gst_parse's delayed link, that can happen while the main thread
+ * sets the pipeline to NULL (a voice message stopped or replaced before it
+ * prerolled): the link changes the graph the state change is sorting the
+ * pipeline's children by, and GStreamer warns "loop detected in the graph"
+ * (nostrc-pk7zx). So the pipelines are parsed with decodebin unlinked and
+ * voice_link_decoded() links it under a lock that voice_pipeline_stop()
+ * takes first: a link either completes before the state change or is not
+ * made. */
+typedef struct {
+  GMutex lock;
+  gboolean stopping;
+  GstElement *convert; /* owned by the pipeline */
+} VoiceLink;
+
+static void
+voice_link_free(gpointer data)
+{
+  VoiceLink *link = data;
+  g_mutex_clear(&link->lock);
+  g_free(link);
+}
+
+static void
+voice_link_decoded(GstElement *decode G_GNUC_UNUSED, GstPad *pad, gpointer data)
+{
+  VoiceLink *link = data;
+  GstCaps *caps = gst_pad_get_current_caps(pad);
+  if (!caps)
+    caps = gst_pad_query_caps(pad, NULL);
+  gboolean audio = caps && gst_caps_get_size(caps) > 0 &&
+    g_str_has_prefix(gst_structure_get_name(gst_caps_get_structure(caps, 0)), "audio/");
+  if (caps)
+    gst_caps_unref(caps);
+  if (!audio)
+    return;
+  g_mutex_lock(&link->lock);
+  if (!link->stopping) {
+    GstPad *sink = gst_element_get_static_pad(link->convert, "sink");
+    if (!gst_pad_is_linked(sink))
+      gst_pad_link(pad, sink);
+    gst_object_unref(sink);
+  }
+  g_mutex_unlock(&link->lock);
+}
+
+/* Parses "appsrc name=src ! decodebin name=decode  audioconvert name=convert
+ * ! ..." (@description) and has the decoded pad linked by
+ * voice_link_decoded(). */
+static GstElement *
+voice_pipeline_new(const gchar *description, GError **error)
+{
+  GstElement *pipeline = gst_parse_launch(description, error);
+  if (!pipeline || (error && *error) || !GST_IS_BIN(pipeline))
+    return pipeline;
+  GstElement *decode = gst_bin_get_by_name(GST_BIN(pipeline), "decode");
+  GstElement *convert = gst_bin_get_by_name(GST_BIN(pipeline), "convert");
+  if (decode && convert) {
+    VoiceLink *link = g_new0(VoiceLink, 1);
+    g_mutex_init(&link->lock);
+    link->convert = convert;
+    g_object_set_data_full(G_OBJECT(pipeline), "gh-voice-link", link, voice_link_free);
+    g_signal_connect(decode, "pad-added", G_CALLBACK(voice_link_decoded), link);
+  }
+  g_clear_pointer(&decode, gst_object_unref);
+  g_clear_pointer(&convert, gst_object_unref);
+  return pipeline;
+}
+
+/* No link is made from now on (one in progress completes first); then the
+ * pipeline goes to NULL with a graph that no longer changes. */
+static void
+voice_pipeline_stop(GstElement *pipeline)
+{
+  VoiceLink *link = g_object_get_data(G_OBJECT(pipeline), "gh-voice-link");
+  if (link) {
+    g_mutex_lock(&link->lock);
+    link->stopping = TRUE;
+    g_mutex_unlock(&link->lock);
+  }
+  gst_element_set_state(pipeline, GST_STATE_NULL);
+}
+
 static void
 gh_voice_player_tear_down(GhVoicePlayer *self)
 {
@@ -181,7 +264,7 @@ gh_voice_player_tear_down(GhVoicePlayer *self)
   }
   g_clear_object(&self->bus);
   if (self->pipeline) {
-    gst_element_set_state(self->pipeline, GST_STATE_NULL);
+    voice_pipeline_stop(self->pipeline);
     g_clear_pointer(&self->pipeline, gst_object_unref);
   }
   self->appsrc = NULL;   /* owned by pipeline */
@@ -221,6 +304,33 @@ gh_voice_player_position_tick(gpointer user_data)
     gh_voice_player_query_duration(self);
 
   return G_SOURCE_CONTINUE;
+}
+
+/* Applies the selected rate as a flushing seek, once the pipeline plays
+ * with no state change pending. A seek on an unprerolled decodebin can fail
+ * silently; one made while the pipeline is still on its way to PLAYING
+ * (play() before the decoder prerolled: the preroll's ASYNC_DONE arrives
+ * with PLAYING pending) flushes it mid-change, after which the source is
+ * never asked for data again and playback stalls without EOS
+ * (nostrc-pk7zx). Called on ASYNC_DONE and on the pipeline's state changes;
+ * the one that finds it settled seeks. */
+static void
+gh_voice_player_apply_speed(GhVoicePlayer *self)
+{
+  if (!self->pipeline || self->state != GH_VOICE_PLAYER_STATE_PLAYING ||
+      self->applied_speed == self->speed)
+    return;
+  GstState current = GST_STATE_VOID_PENDING, pending = GST_STATE_VOID_PENDING;
+  if (gst_element_get_state(self->pipeline, &current, &pending, 0) != GST_STATE_CHANGE_SUCCESS ||
+      current != GST_STATE_PLAYING || pending != GST_STATE_VOID_PENDING)
+    return;
+  gint64 pos_ns = 0;
+  gst_element_query_position(self->pipeline, GST_FORMAT_TIME, &pos_ns);
+  if (gst_element_seek(self->pipeline, self->speed, GST_FORMAT_TIME,
+                       GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
+                       GST_SEEK_TYPE_SET, MAX(pos_ns, 0),
+                       GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
+    self->applied_speed = self->speed;
 }
 
 static gboolean
@@ -263,16 +373,11 @@ gh_voice_player_bus_callback(GstBus *bus G_GNUC_UNUSED, GstMessage *message,
     gh_voice_player_query_duration(self);
     break;
   case GST_MESSAGE_ASYNC_DONE:
-    if (self->pipeline && self->state == GH_VOICE_PLAYER_STATE_PLAYING &&
-        self->applied_speed != self->speed) {
-      gint64 pos_ns = 0;
-      gst_element_query_position(self->pipeline, GST_FORMAT_TIME, &pos_ns);
-      if (gst_element_seek(self->pipeline, self->speed, GST_FORMAT_TIME,
-                           GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-                           GST_SEEK_TYPE_SET, MAX(pos_ns, 0),
-                           GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
-        self->applied_speed = self->speed;
-    }
+    gh_voice_player_apply_speed(self);
+    break;
+  case GST_MESSAGE_STATE_CHANGED:
+    if (GST_MESSAGE_SRC(message) == GST_OBJECT(self->pipeline))
+      gh_voice_player_apply_speed(self);
     break;
   default:
     break;
@@ -348,8 +453,8 @@ gh_voice_player_build_pipeline(GhVoicePlayer *self, GError **error)
     return FALSE;
 
   GError *parse_error = NULL;
-  self->pipeline = gst_parse_launch(
-    "appsrc name=src ! decodebin ! audioconvert ! audioresample ! "
+  self->pipeline = voice_pipeline_new(
+    "appsrc name=src ! decodebin name=decode  audioconvert name=convert ! audioresample ! "
     "scaletempo ! autoaudiosink", &parse_error);
   if (!self->pipeline || parse_error || !GST_IS_BIN(self->pipeline)) {
     g_set_error(error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
@@ -409,10 +514,10 @@ voice_decode_waveform(GBytes *bytes, GCancellable *cancellable)
   const gchar *format = "F32BE";
 #endif
   g_autofree gchar *description = g_strdup_printf(
-    "appsrc name=src ! decodebin ! audioconvert ! audioresample ! "
+    "appsrc name=src ! decodebin name=decode  audioconvert name=convert ! audioresample ! "
     "audio/x-raw,format=%s,channels=1,rate=8000 ! appsink name=sink "
     "sync=false max-buffers=4", format);
-  pipeline = gst_parse_launch(description, &parse_error);
+  pipeline = voice_pipeline_new(description, &parse_error);
   if (!pipeline || parse_error || !GST_IS_BIN(pipeline))
     goto out;
   source = gst_bin_get_by_name(GST_BIN(pipeline), "src");
@@ -494,7 +599,9 @@ voice_decode_waveform(GBytes *bytes, GCancellable *cancellable)
     result = gh_voice_waveform_new(bars, count);
   }
 out:
-  if (pipeline)
+  if (GST_IS_BIN(pipeline))
+    voice_pipeline_stop(pipeline);
+  else if (pipeline)
     gst_element_set_state(pipeline, GST_STATE_NULL);
   g_clear_pointer(&bus, gst_object_unref);
   g_clear_pointer(&source, gst_object_unref);
@@ -596,8 +703,8 @@ gh_voice_player_play(GhVoicePlayer *self)
   if (!self->pipeline)
     return;
 
-  /* ASYNC_DONE applies the selected rate after decoder preroll. A seek on
-   * an unprerolled decodebin can fail silently. */
+  /* The selected rate is applied once the pipeline plays
+   * (gh_voice_player_apply_speed()). */
   gst_element_set_state(self->pipeline, GST_STATE_PLAYING);
   gh_voice_player_set_state_internal(self, GH_VOICE_PLAYER_STATE_PLAYING);
 
@@ -679,17 +786,9 @@ gh_voice_player_set_speed(GhVoicePlayer *self, gdouble speed)
   self->speed = speed;
   g_object_notify_by_pspec(G_OBJECT(self), props[PROP_SPEED]);
 
-  /* Apply the rate change to the running pipeline; if not playing the rate
-   * is applied at the next play() call (finding 9). */
-  if (self->pipeline && self->state == GH_VOICE_PLAYER_STATE_PLAYING) {
-    gint64 pos_ns = 0;
-    gst_element_query_position(self->pipeline, GST_FORMAT_TIME, &pos_ns);
-    if (gst_element_seek(self->pipeline, speed, GST_FORMAT_TIME,
-                         GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE,
-                         GST_SEEK_TYPE_SET, pos_ns,
-                         GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE))
-      self->applied_speed = speed;
-  }
+  /* Apply the rate change to the running pipeline; if not playing (or not
+   * settled yet) the rate is applied once it plays (finding 9). */
+  gh_voice_player_apply_speed(self);
 }
 
 gdouble

@@ -834,6 +834,7 @@ relay_init(WireRelay *relay)
   g_assert_true(soup_server_listen_local(relay->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY,
                                          &error));
   g_assert_no_error(error);
+  gh_test_deepen_listen_backlog(soup_server_get_listeners(relay->server));
   GSList *uris = soup_server_get_uris(relay->server);
   g_assert_nonnull(uris);
   g_free(relay->url);

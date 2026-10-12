@@ -465,9 +465,8 @@ start_uploads(GnNip34IssueView *self)
 /* ---- Review and consent ---- */
 
 static void
-consent_response(GObject *alert, const gchar *response, GnNip34IssueView *self)
+act_on_consent(GnNip34IssueView *self, const gchar *response)
 {
-  (void)alert;
   self->reviewing = FALSE;
   gboolean publish = g_str_equal(response, "publish");
   gboolean upload = g_str_equal(response, "upload");
@@ -486,6 +485,23 @@ consent_response(GObject *alert, const gchar *response, GnNip34IssueView *self)
     start_uploads(self);
   else
     start_publish(self);
+}
+
+/* Focus leaves the consent prompt while the prompt still exists: back to
+ * Review when it can be used again, otherwise to the status line that
+ * reports what happens next. Left inside the closing prompt, the focus is
+ * moved later by GtkWindow's after-paint fallback, after the prompt's
+ * widgets are gone; when that fallback lands on a selectable label, GTK
+ * (4.24) reads the freed previous focus widget (nostrc-pk7zx). */
+static void
+consent_response(GObject *alert, const gchar *response, GnNip34IssueView *self)
+{
+  (void)alert;
+  act_on_consent(self, response);
+  if (self->closed)
+    return;
+  if (!gtk_widget_grab_focus(GTK_WIDGET(self->review_button)))
+    gtk_widget_grab_focus(GTK_WIDGET(self->status));
 }
 
 static gchar *

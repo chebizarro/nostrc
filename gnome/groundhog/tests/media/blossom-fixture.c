@@ -1,4 +1,5 @@
 #include "blossom-fixture.h"
+#include "../gh-test-port.h"
 
 #include <libsoup/soup.h>
 #include <nostr-event.h>
@@ -237,6 +238,7 @@ blossom_fixture_new(void)
   g_autoptr(GError) error = NULL;
   g_assert_true(soup_server_listen_local(f->server, 0, SOUP_SERVER_LISTEN_IPV4_ONLY, &error));
   g_assert_no_error(error);
+  gh_test_deepen_listen_backlog(soup_server_get_listeners(f->server));
   GSList *uris = soup_server_get_uris(f->server);
   g_assert_nonnull(uris);
   f->port = (guint16)g_uri_get_port(uris->data);

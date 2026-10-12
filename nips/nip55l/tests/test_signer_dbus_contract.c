@@ -276,8 +276,43 @@ static void watcher_kill(void) {
     }
   }
 }
+#elif defined(__linux__)
+/* Here g_poll() reports the hang-up, but the watcher checks for it before
+ * reading the commands still in the pipe (GLib 2.80 watch_parent()). When
+ * this process exits right after g_test_dbus_stop() wrote "remove <pid>" and
+ * the watcher was not scheduled in between (a loaded machine), it sees both
+ * at once, says "cleaning up pid <pid>" for the daemon already stopped and
+ * kills that pid again (nostrc-pk7zx). Once every fixture is down it has
+ * nothing to do: kill it, as on macOS. It is the only child running this
+ * executable: forked, never exec'd; the daemons, keyring and shell are. */
+static void watcher_kill(void) {
+  g_autofree gchar *self = g_file_read_link("/proc/self/exe", NULL);
+  if (!self) return;
+  GDir *proc = g_dir_open("/proc", 0, NULL);
+  if (!proc) return;
+  const char *name;
+  while ((name = g_dir_read_name(proc))) {
+    if (!g_ascii_isdigit(name[0])) continue;
+    g_autofree gchar *stat_path = g_build_filename("/proc", name, "stat", NULL);
+    g_autofree gchar *stat = NULL;
+    if (!g_file_get_contents(stat_path, &stat, NULL, NULL)) continue;
+    /* "pid (comm) state ppid ...": comm may hold spaces and parentheses. */
+    const char *after = strrchr(stat, ')');
+    char state = 0;
+    int ppid = 0;
+    if (!after || sscanf(after + 1, " %c %d", &state, &ppid) != 2 || ppid != getpid())
+      continue;
+    g_autofree gchar *exe_path = g_build_filename("/proc", name, "exe", NULL);
+    g_autofree gchar *exe = g_file_read_link(exe_path, NULL);
+    if (exe && strcmp(exe, self) == 0) {
+      pid_t pid = (pid_t)atoi(name);
+      kill(pid, SIGKILL);
+      (void)waitpid(pid, NULL, 0);
+    }
+  }
+  g_dir_close(proc);
+}
 #else
-/* Elsewhere g_poll() reports the hang-up and the watcher exits cleanly. */
 static void watcher_kill(void) {}
 #endif
 

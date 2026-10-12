@@ -5291,7 +5291,10 @@ test_bubble_menu(Fixture *f, gconstpointer data)
   g_assert_false(press_menu_key(f, GDK_KEY_F10, 0));
   GtkWidget *item = item_for(f->view, incoming);
   gtk_widget_grab_focus(item);
-  g_assert_true(gtk_widget_has_focus(item));
+  /* The window's focus, not gtk_widget_has_focus(): that also needs the
+   * window to be the desktop's active one, which a parallel test or the
+   * desktop can take at any time (nostrc-9g6e). */
+  g_assert_true(gtk_root_get_focus(gtk_widget_get_root(item)) == item);
   g_assert_true(press_menu_key(f, GDK_KEY_Menu, 0));
   GhMessageRow *incoming_row = row_for(f->view, incoming);
   GtkPopover *incoming_menu = gh_message_row_get_menu(incoming_row);

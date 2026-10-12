@@ -300,7 +300,11 @@ remote_session(const gchar *active_npub, gpointer data)
     f->bunker.signer_pubkey, relays, &bunker_scope_transport, NULL,
     &bunker_publish_transport, NULL, &f->bunker, &error);
   g_assert_no_error(error);
-  gh_nip46_session_set_test_windows(session, 50, 100, 10);
+  /* Every test here answers the listening REQ with an explicit EOSE and
+   * asserts the state before it (connecting, nothing published). A no-EOSE
+   * grace short enough to elapse under load would make the session listen
+   * on its own first (nostrc-nuai6), so it never elapses in a test run. */
+  gh_nip46_session_set_test_windows(session, G_MAXUINT, 100, 10);
   return session;
 }
 
