@@ -127,6 +127,7 @@ typedef struct {
   char *credential_policy_id;
   int64_t credential_expires_at;
   bool has_credential_expires_at;
+  int expected_version;    /* deliver: release only this version (0 = active) */
 } SignetMgmtRequest;
 
 /* Map op to canonical string name. Returns static string. */

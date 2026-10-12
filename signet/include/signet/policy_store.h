@@ -119,7 +119,9 @@ int signet_policy_store_get(SignetPolicyStore *ps,
  * the identity policy must contain exactly one allow_clients entry matching
  * requester_pubkey_hex and exactly one allow_methods entry equal to
  * "credential.deliver".  Missing dimensions, wildcards, default-allow, and
- * mixed signing/delivery policies all fail closed.
+ * mixed signing/delivery policies all fail closed, and a deny_clients entry
+ * naming the requester (or "*") or a deny_methods entry naming
+ * "credential.deliver" (or "*") overrides the grant (deny > allow).
  */
 bool signet_policy_store_has_exact_delivery_grant(
     SignetPolicyStore *ps, const char *identity,

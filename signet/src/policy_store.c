@@ -761,6 +761,16 @@ bool signet_policy_store_has_exact_delivery_grant(
       strcmp((const char *)g_ptr_array_index(p->allow_clients, 0), requester) == 0 &&
       strcmp((const char *)g_ptr_array_index(p->allow_methods, 0),
              SIGNET_CAP_CREDENTIAL_DELIVER) == 0;
+  /* Deny > allow: an explicit deny of this requester or of delivery wins. */
+  for (guint i = 0; allowed && p->deny_clients && i < p->deny_clients->len; i++) {
+    const char *d = (const char *)g_ptr_array_index(p->deny_clients, i);
+    if (strcmp(d, "*") == 0 || strcmp(d, requester) == 0) allowed = false;
+  }
+  for (guint i = 0; allowed && p->deny_methods && i < p->deny_methods->len; i++) {
+    const char *d = (const char *)g_ptr_array_index(p->deny_methods, i);
+    if (strcmp(d, "*") == 0 || strcmp(d, SIGNET_CAP_CREDENTIAL_DELIVER) == 0)
+      allowed = false;
+  }
 
   g_mutex_unlock(&ps->mu);
   return allowed;
