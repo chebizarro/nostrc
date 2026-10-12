@@ -8,7 +8,7 @@
 #
 # Options:
 #   --build-dir DIR       Build directory containing compiled binary (default: ../../build)
-#   --version VERSION     Application version (default: extracted from build or "1.0.0")
+#   --version VERSION     Application version (default: extracted from build or "0.1.0")
 #   --output-dir DIR      Where to place the final DMG (default: ./dist)
 #   --sign IDENTITY       Developer ID for code signing (optional)
 #   --notarize            Submit for Apple notarization (requires --sign)
@@ -45,7 +45,7 @@ DAEMON_NAME="grotto-daemon"
 # Default paths
 BUILD_DIR="${BUILD_DIR:-${PROJECT_ROOT}/build}"
 OUTPUT_DIR="${OUTPUT_DIR:-${SCRIPT_DIR}/dist}"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-0.1.0}"
 
 # Signing configuration
 DEVELOPER_ID="${DEVELOPER_ID:-}"

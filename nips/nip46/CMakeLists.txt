@@ -1,6 +1,12 @@
 
 project(nip46)
 
+if(NOT COMMAND declare_component_version)
+  include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/VersionHelpers.cmake")
+endif()
+# One version for the NIP-46 core and optional GLib client/bunker layer.
+declare_component_version(nip46 0 1 0)
+
 set(NIP46_INC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 set(NIP46_CORE_SRC

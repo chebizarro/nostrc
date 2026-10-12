@@ -7,7 +7,7 @@
 ;   - NSIS plugins: nsProcess, AccessControl, ShellLink
 ;
 ; Build Command:
-;   makensis /DVERSION=1.0.0 /DARCH=x64 grotto.nsi
+;   makensis /DVERSION=0.1.0 /DARCH=x64 grotto.nsi
 ;
 ; Environment Variables:
 ;   BUILD_DIR    - Path to build output (default: ..\..\..\..\build)
@@ -35,7 +35,7 @@
 ; -----------------------------------------------------------------------------
 
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !define VERSION "0.1.0"
 !endif
 
 !ifndef ARCH

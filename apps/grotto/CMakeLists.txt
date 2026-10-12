@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(grotto)
 
+set(GROTTO_VERSION "0.1.0" CACHE STRING "Application version for packaging")
+
 include(GNUInstallDirs)
 
 # IDs and binaries
@@ -539,9 +541,6 @@ if(WIN32)
   # target_compile_definitions(grotto-daemon PRIVATE GNOSTR_USE_NAMED_PIPES=1)
 
   if(BUILD_WINDOWS_INSTALLER)
-    # Application version for installer
-    set(GROTTO_VERSION "1.0.0" CACHE STRING "Application version for Windows installer")
-
     # Path to packaging files
     set(WINDOWS_PACKAGING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packaging/windows)
 
@@ -600,9 +599,6 @@ if(APPLE)
   option(BUILD_MACOS_BUNDLE "Build macOS application bundle" OFF)
 
   if(BUILD_MACOS_BUNDLE)
-    # Application version for bundle
-    set(GROTTO_VERSION "1.0.0" CACHE STRING "Application version for macOS bundle")
-
     # Path to packaging files
     set(MACOS_PACKAGING_DIR ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos)
 

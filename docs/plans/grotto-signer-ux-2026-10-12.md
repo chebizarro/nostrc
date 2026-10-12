@@ -394,7 +394,7 @@ Add a **signer module to the existing extension** `gnome/nostr-shell-extension` 
 
 ## 7. File-by-file impact
 
-Paths are repo-relative. Items marked **validate** were referenced by the export but need their location confirmed during G00 (several are now confirmed — see §10).
+Paths are repo-relative. G00(b) confirmed the references below on 2026-10-12; **new** identifies planned files, not existing implementations.
 
 ### Authorisation and transport
 | File | Change | Dependency |
@@ -404,14 +404,18 @@ Paths are repo-relative. Items marked **validate** were referenced by the export
 | `nips/nip55l/src/glib/signer_approval_service.{c,h}` **new** | Request states, decisions, cancellation, grant evaluation, continuations; internal submit/complete/cancel + trusted transport-principal contracts | Existing backend |
 | `nips/nip55l/src/glib/signer_permissions.{c,h}` **new** | Scoped records, persistence, migration; fallible storage/evaluation interfaces | Legacy grant access |
 | `nips/nip55l/dbus/org.nostr.Signer.xml` | Add `CallWithContext`; preserve all existing signatures | Context dispatch |
-| nip55l CMake/test registration **validate** | Register new sources + contract tests | Above |
+| `nips/nip55l/CMakeLists.txt`, `nips/nip55l/tests/test_signer_dbus_contract.c` | Register new sources + contract tests | Above |
 | `apps/grotto/daemon/main_daemon.c` | Create shared services/control; remove deny-unattended signing path; headless policy; clean shutdown | Gate, bunker adapter |
 | `apps/grotto/daemon/grotto_control.{c,h}` **new**; `apps/grotto/data/org.nostr.Grotto.Control1.xml` **new** | Authenticated management dispatcher/revisions; canonical contract | Shared service |
 | `apps/grotto/src/bunker_service.{c,h}` | Real startup errors, async request adapter, client identity binding, method enforcement, pairing/reconfigure; documented state/ownership | Core async API |
 | `nostr-gobject/src/nostr_nip46_bunker.c`, `nostr-gobject/include/nostr-gobject-1.0/nostr_nip46_bunker.h` | Request-aware async bridge, transport-key setter, explicit stop; retain legacy APIs | Core changes |
 | `nips/nip46/src/core/nip46_session.c`, `nips/nip46/include/nostr/nip46/{nip46_bunker.h,nip46_types.h}` | Request context, deferred response, connect-token validation, stop/cancel, RPC dedup | G00 proof |
 | `apps/grotto/src/secret_store.{c,h}` | Route explicit export through daemon management; no parallel GUI writers | Backend reuse |
-| nip55l backend source/header **validate** | Transport-key credential role; authenticated export using existing backend | Custody contracts |
+| `nips/nip55l/src/core/signer_ops.c`, `nips/nip55l/include/nostr/nip55l/signer_ops.h`; Linux schema/storage: `gnome/seahorse/secret_store.{c,h}` | Transport-key credential role; authenticated export using existing backend | Custody contracts |
+
+Source and test registration both live in `nips/nip55l/CMakeLists.txt`; there is no separate nip55l tests CMakeLists.
+
+The backend is in `signer_ops.c` (libsecret/Keychain branches), not a separate nip55l backend file; Linux identity storage uses the shared Seahorse schema. A distinct transport-key role does not exist yet and must not be enumerated as an identity.
 
 ### GUI and models
 | File | Change | Dependency |
@@ -439,7 +443,9 @@ Paths are repo-relative. Items marked **validate** were referenced by the export
 | `apps/grotto/src/session-manager.{c,h}` | Accurate UI-lock/desktop-lock observation; daemon pause integration | Control interface |
 
 ### Templates and assets
-Modify and regenerate matching `.ui` atomically: `data/ui/approval-dialog.blp`, `onboarding-assistant.blp`, `signer-window.blp`, `page-applications.blp`, `page-settings.blp`, `page-history.blp`, `sheets/sheet-create-bunker.blp`, `sheets/sheet-qr-display.blp` (validate). Add `data/ui/page-home.{blp,ui}`, `page-connect.{blp,ui}`, `page-client-detail.{blp,ui}`, `page-identity-detail.{blp,ui}`. Update `data/resources.gresource.xml` (add new pages, drop retired templates) and the shortcuts window source (`data/ui/shortcuts-window.blp`; confirm `.blp` vs `.ui` authoritative). Retired permissions/sessions templates and dormant sheets leave production resources; deletion follows dependency validation.
+Under `apps/grotto/`, modify and regenerate matching `.ui` atomically: `data/ui/approval-dialog.blp`, `data/ui/onboarding-assistant.blp`, `data/ui/signer-window.blp`, `data/ui/page-applications.blp`, `data/ui/page-settings.blp`, `data/ui/page-history.blp`, `data/ui/sheets/sheet-create-bunker.blp`, `data/ui/sheets/sheet-qr-display.blp` (confirmed; matching `.ui` exists). Add `data/ui/page-home.{blp,ui}`, `data/ui/page-connect.{blp,ui}`, `data/ui/page-client-detail.{blp,ui}`, `data/ui/page-identity-detail.{blp,ui}`. Update `data/resources.gresource.xml` (add new pages, drop retired templates) and the authoritative shortcuts source `data/ui/shortcuts-window.blp`; `data/ui/shortcuts-window.ui` is its generated runtime resource (CMake compiles `.blp` when Blueprint is available, otherwise uses committed `.ui`). Retired permissions/sessions templates and dormant sheets leave production resources; deletion follows dependency validation.
+
+The shortcuts Blueprint currently defines an `AdwDialog`, not a `GtkShortcutsWindow`; implementing the §5.11 choice requires changing the Blueprint and regenerating `.ui`.
 
 ### Build, packaging, tests, docs
 | File | Change |
@@ -447,12 +453,14 @@ Modify and regenerate matching `.ui` atomically: `data/ui/approval-dialog.blp`, 
 | `apps/grotto/CMakeLists.txt`, `meson.build` | Explicit production sources, floors/version, shared libraries, resource ordering, canonical installs; same custody/floor policy |
 | `apps/grotto/data/org.nostr.Grotto.gschema.xml`, `.desktop`, `.metainfo.xml` | New keys/deprecations; implemented actions + URI handlers, Preview label; accurate features/screenshots/limits |
 | `apps/grotto/data/org.nostr.Grotto-autostart.desktop.in` **new** | Native login launch |
-| `apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service` (+ `.service.d/bunker.conf.example`) | Remove false reload, correct socket comments, preserve hardening; document network drop-in |
+| `apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service`, `apps/grotto/daemon/packaging/systemd/user/grotto-daemon.service.d/bunker.conf.example` | Remove false reload, correct socket comments, preserve hardening; update existing network drop-in (`ExecStart=... --bunker`, `IPAddressDeny=` reset); add headless variant |
 | `apps/grotto/tests/CMakeLists.txt`, `test-bunker.c`, `test-approval-dialog.c` | Real-core linkage + all named suites; replace duplicate mock; expand real-dialog regressions |
 | New `tests/test-{bunker-e2e,approval-controller,approval-integration,permissions,background,onboarding,clients,activity,ui-layout}.c` | Acceptance tests (§9) |
-| New signer CI workflow (`.github/workflows/`, e.g. `grotto-ci.yml`) | Ubuntu 24.04 floor + current, ctest, sanitizers |
+| `.github/workflows/grotto-ci.yml` **new** | Ubuntu 24.04 floor + current, ctest, sanitizers; path confirmed available (existing `.github/workflows/grotto-fuzz.yml` is fuzz-only, not this signer-suite workflow) |
 | `docs/dbus-interface.md`, `docs/proposals/55L.md`, `docs/security.md`, `apps/grotto/README.md`, `DAEMON_DEPLOYMENT.md`, `docs/designs/groundhog-packaging-plan-2026-10-05.md` | Current names/activation/typed errors/custody + new additive interfaces; scoped remembering + context extension; reconcile contradictory key-mutation statements; native/headless operation, pause, pairing, network drop-in, migration; record signer sandbox gate outcome |
-| Groundhog signer adapter + room-send call sites (`gnome/groundhog/src/identity/gh-signer-nip55l.c` and callers) | Context-aware calls (nostrc-mweu) with existing-method fallback |
+| `gnome/groundhog/src/identity/gh-signer-nip55l.c`, `gnome/groundhog/src/identity/gh-signer.{c,h}`, `gnome/groundhog/src/app/gh-account-controller.{c,h}`, `gnome/groundhog/src/app/gh-nip17-envelope.{c,h}`, `gnome/groundhog/src/app/gh-dm-send.{c,h}` | Context-aware calls (nostrc-mweu) with existing-method fallback; room send → envelope recipient/self-copy fan-out → account controller → signer abstraction → NIP-55L adapter |
+
+Room-send orchestration is in `gh-dm-send.c` / `gh-nip17-envelope.c`, not the NIP-55L adapter; envelope calls encrypt/sign through `gh-account-controller.c` and `gh-signer.c`.
 
 ## 8. Risks, migration, versions
 
@@ -480,13 +488,15 @@ Modify and regenerate matching `.ui` atomically: `data/ui/approval-dialog.blp`, 
 **Rejected alternatives:** signing from notification buttons; global basic-action approval; GUI-owned persistent client sessions; nested-loop remote approval; trusting client app names; periodic pending-request polling; fake-running listener states; automatic relay fallback; relaxing caller verification for Flatpak; Shell extension as the *only* indicator or as a trusted approver; Approve button in notifications; password at creation; implementing hardware/multisig because controls already exist.
 
 ### Version assessment (corrected against `VERSION_MANIFEST.md` and `AGENTS.md`)
-`VERSION_MANIFEST.md` has **no Grotto component row**; Grotto work has been recorded under nip55l ("Grotto exports the same service code; no version of its own", manifest rows 40, 64-67). Every relevant component is currently *Unreleased* (nip55l 0.7.0, nostr-gobject 2.2.2, groundhog 0.12.0; NIP-46 client/provider **Unversioned**). Per the manifest's own practice, additive changes to an unreleased declared version are **folded without a further bump**, with the decision recorded in each bead/review.
-- G00 must (a) decide whether to add a Grotto component row (recommended, to remove the CMake 1.0.0 vs Meson 0.1.0 mismatch and carry the "Preview" status; unify GUI/daemon/CMake/Meson/About/package versions), and (b) establish authoritative version ownership for `nips/nip46` if its public API gains additive request-aware APIs.
+**G00(a) recorded decisions (2026-10-12, nostrc-u6v55.1):** `VERSION_MANIFEST.md` now tracks **Grotto (Preview) 0.1.0** independently (OC-9), superseding historical "no version of its own" entries. Retain Meson/About/daemon/Debian/RPM 0.1.0 and correct CMake's Windows/macOS 1.0.0 defaults to one `GROTTO_VERSION` definition at 0.1.0; standalone macOS/Windows packaging defaults also use 0.1.0. All authoritative/duplicate values are listed in the manifest. PATCH-class packaging correction folded into the initial unreleased 0.1.0; no further bump, public API or wire/storage change. Preview remains a product status, not a claim that a release tag exists.
+- **NIP-46 ownership established:** `nips/nip46/CMakeLists.txt` uses `declare_component_version(nip46 0 1 0)` as the authoritative source for one NIP-46 core + optional GLib client/bunker component. Initial metadata-only declaration at 0.1.0 (no API/ABI or format change); Grotto, nostr-gobject and nostr-homed retain independent version ownership. Additive request-aware APIs are MINOR-class and may fold into 0.1.0 only while it remains unreleased; if 0.1.0 is tagged first, use 0.2.0.
+- **G00(b): no bump** for nip55l, nostr-gobject or Groundhog: path-validation edits are documentation-only. No tags created; Latest release / Release tag columns unchanged. G00(c) remains concurrent and outside these decisions.
+- For later implementation, assess each component against `AGENTS.md` and the actual published tags at landing time; the manifest's unreleased-wave folding precedent is not permission to fold into an already released version.
 - nip55l: `CallWithContext` and scoped remembering → fold into unreleased 0.7.0 (MINOR-class, additive; update `docs/proposals/55L.md` 0.7.0 row). If 0.7.0 is tagged before this lands: MINOR to 0.8.0.
 - nostr-gobject: additive wrapper APIs → fold into unreleased 2.2.2 (else MINOR).
 - Groundhog / native host: bump only for shipped context/trust/error changes, independently.
 - No monorepo-wide bump. Removing the Preview label is a separate release decision after the promotion gate, not a consequence of a version number.
-- *Resolution of the export's deferred policy lookup:* the export proposed "Grotto 0.2.0 / nip55l 0.8.0" provisionally, "subject to `AGENTS.md`/tags"; having read `AGENTS.md` and `VERSION_MANIFEST.md`, the manifest-based rule above applies.
+- *Resolution of the export's deferred policy lookup:* the provisional "Grotto 0.2.0 / nip55l 0.8.0" is replaced by the G00 decisions above: Grotto starts at Preview 0.1.0; nip55l stays 0.7.0 for this documentation/packaging baseline. Later public-surface changes still require their own assessment.
 
 ## 9. Verification specification
 
