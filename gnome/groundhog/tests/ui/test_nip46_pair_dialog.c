@@ -895,17 +895,29 @@ test_grotto_fails_remote_selected_lookup_waits(void)
   while (!lookups_parked(&backend, 2) && !expired) g_main_context_iteration(NULL, TRUE);
   g_assert_false(expired);
   g_source_remove(timer);
-  g_clear_object(&accounts);
 
+  /* Sign out before the parked reads return: a controller that still had
+   * the remote account selected would open a session from the credential
+   * read back, with the real relay transport (this test sets no session
+   * factory), and dial its relay. The reads hold the controller, so wait
+   * for it to be finalized before the store and the fake relays go. */
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
+  GhAccountController *gone = accounts;
+  g_object_add_weak_pointer(G_OBJECT(gone), (gpointer *)&gone);
+  g_clear_object(&accounts);
   g_mutex_lock(&backend.lock);
   backend.release = TRUE;
   g_cond_broadcast(&backend.cond);
   g_mutex_unlock(&backend.lock);
-  drain();
+  expired = FALSE;
+  timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (gone && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
+  g_source_remove(timer);
   g_object_unref(store);
   bunker_clear(&bunker);
-  g_settings_set_string(settings, "current-npub", "");
-  g_settings_set_string(settings, "current-backend", "grotto");
 }
 
 typedef struct {
@@ -975,6 +987,16 @@ test_blocked_listings_do_not_gate_remote(void)
   g_mutex_unlock(&remote.lock);
   g_mutex_lock(&grotto.lock); grotto.release = TRUE; g_cond_broadcast(&grotto.cond);
   g_mutex_unlock(&grotto.lock);
+  /* A listing in flight holds the controller: let them finish, and sign out
+   * (closing the paired session) before the fake relays go away. */
+  expired = FALSE;
+  timer = g_timeout_add_seconds(5, deadline, &expired);
+  while (gh_account_controller_is_listing(accounts) && !expired)
+    g_main_context_iteration(NULL, TRUE);
+  g_assert_false(expired);
+  g_source_remove(timer);
+  g_settings_set_string(settings, "current-npub", "");
+  g_settings_set_string(settings, "current-backend", "grotto");
   gtk_window_destroy(GTK_WINDOW(window));
   drain();
   g_object_unref(dialog);
