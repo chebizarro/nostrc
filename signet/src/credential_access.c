@@ -35,6 +35,7 @@ const char *signet_cred_access_reason(SignetCredAccessStatus status) {
     case SIGNET_CRED_ACCESS_NOT_OWNER:     return "not_owner";
     case SIGNET_CRED_ACCESS_TYPE_DENIED:   return "type_denied";
     case SIGNET_CRED_ACCESS_LEASE_INVALID: return "lease_invalid";
+    case SIGNET_CRED_ACCESS_VERSION_MISMATCH: return "version_mismatch";
     case SIGNET_CRED_ACCESS_ERROR:
     default:                               return "internal_error";
   }
@@ -163,6 +164,11 @@ SignetCredAccessStatus signet_credential_access_acquire(
     bool denied = false;
     if (ctx->deny && meta.pubkey && meta.pubkey[0])
       denied = signet_deny_list_contains(ctx->deny, meta.pubkey);
+    /* A mediated delivery's recipient is held to the same deny list: a
+     * deny-listed requester loses even with an exact delivery grant. */
+    if (!denied && ctx->deny && req->requester_pubkey &&
+        req->requester_pubkey[0])
+      denied = signet_deny_list_contains(ctx->deny, req->requester_pubkey);
     signet_agent_meta_clear(&meta);
     if (denied) {
       status = SIGNET_CRED_ACCESS_DENY_LISTED;
@@ -193,9 +199,10 @@ SignetCredAccessStatus signet_credential_access_acquire(
     goto audited_out;
   }
 
-  /* 4) Metadata-only gate: ownership and status are decided BEFORE any
-   * decryption. Revocation takes precedence over expiry (both derive from
-   * the metadata status). */
+  /* 4) Metadata-only gate: ownership, status and the expected version are
+   * decided BEFORE any lease or decryption. Revocation takes precedence over
+   * expiry (both derive from the metadata status), and both over a version
+   * mismatch. */
   SignetSecretType secret_type;
   int64_t secret_expires_at = 0;
   {
@@ -210,6 +217,7 @@ SignetCredAccessStatus signet_credential_access_acquire(
     }
     bool owner = smeta.agent_id && strcmp(smeta.agent_id, req->agent_id) == 0;
     SignetSecretStatus sstatus = smeta.status;
+    int active_version = smeta.active_version;
     secret_type = smeta.secret_type;
     secret_expires_at = smeta.expires_at;
     signet_secret_metadata_clear(&smeta);
@@ -225,6 +233,10 @@ SignetCredAccessStatus signet_credential_access_acquire(
     }
     if (sstatus == SIGNET_SECRET_STATUS_EXPIRED) {
       status = SIGNET_CRED_ACCESS_EXPIRED;
+      goto audited_out;
+    }
+    if (req->expected_version > 0 && active_version != req->expected_version) {
+      status = SIGNET_CRED_ACCESS_VERSION_MISMATCH;
       goto audited_out;
     }
   }
@@ -296,6 +308,15 @@ SignetCredAccessStatus signet_credential_access_acquire(
         strcmp(out_grant->record.agent_id, req->agent_id) != 0) {
       signet_secret_record_clear(&out_grant->record);
       status = SIGNET_CRED_ACCESS_NOT_OWNER;
+      goto audited_out;
+    }
+    /* A rotation between the metadata gate and this read must not release
+     * a version the caller did not ask for. The payload and its version come
+     * from one statement, so this check is exact. */
+    if (req->expected_version > 0 &&
+        out_grant->record.active_version != req->expected_version) {
+      signet_secret_record_clear(&out_grant->record);
+      status = SIGNET_CRED_ACCESS_VERSION_MISMATCH;
       goto audited_out;
     }
   }

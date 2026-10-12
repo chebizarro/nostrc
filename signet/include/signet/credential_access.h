@@ -6,16 +6,18 @@
  * session brokering, git credential helper, NIP-5L) MUST go through
  * signet_credential_access_acquire(). The single path enforces, in order:
  *
- *   1. Deny-list precedence  - a deny-listed agent pubkey loses regardless of
- *                              any capability grant (deny > allow).
+ *   1. Deny-list precedence  - a deny-listed agent pubkey, or a deny-listed
+ *                              delivery requester, loses regardless of any
+ *                              capability grant (deny > allow).
  *   2. Explicit capability   - the caller must name the capability it is
  *                              exercising; a missing policy registry or an
  *                              unassigned agent fails closed.
  *   3. Rate limiting         - token-bucket per (agent, capability).
- *   4. Owner before decrypt  - ownership and credential status (revoked >
- *                              expired) are checked on METADATA ONLY; the
- *                              payload is never decrypted for a caller that
- *                              is not the owner.
+ *   4. Owner before decrypt  - ownership, credential status (revoked >
+ *                              expired) and an optional expected version are
+ *                              checked on METADATA ONLY; the payload is never
+ *                              decrypted for a caller that is not the owner or
+ *                              for a version the caller did not ask for.
  *   5. Type deny rules       - the policy's disallowed_credential_types are
  *                              enforced against the credential's type.
  *   6. One-use lease burn    - when a lease_id is presented it is consumed
@@ -65,6 +67,7 @@ typedef enum {
   SIGNET_CRED_ACCESS_TYPE_DENIED,
   SIGNET_CRED_ACCESS_LEASE_INVALID,
   SIGNET_CRED_ACCESS_ERROR,
+  SIGNET_CRED_ACCESS_VERSION_MISMATCH,
 } SignetCredAccessStatus;
 
 /**
@@ -106,6 +109,10 @@ typedef struct {
  * @issue_lease: issue a tracking lease recording this grant.
  * @lease_ttl_seconds: lease lifetime; <=0 defaults to 3600. Clamped to the
  *   credential's own expiry when one is set.
+ * @expected_version: when > 0, release only this version: if the active
+ *   version differs the request fails with SIGNET_CRED_ACCESS_VERSION_MISMATCH
+ *   before any lease is minted or any payload decrypted. 0 releases the
+ *   active version, whatever it is.
  *
  * A single credential access request.
  *
@@ -121,11 +128,14 @@ typedef struct {
   bool one_use_delivery;
   bool issue_lease;
   int64_t lease_ttl_seconds;
+  int expected_version;
 } SignetCredentialAccessRequest;
 
 /**
  * SignetCredentialAccessGrant:
  * @record: decrypted credential record (payload mlock'd). Valid only on OK.
+ *   record.active_version is the version of the released payload, read in
+ *   the same statement as the payload.
  * @lease_id: issued lease id, or NULL when neither lease mode was requested.
  *   A one_use_delivery lease has already been consumed when returned.
  * @lease_expires_at: expiry bound of the issued lease (0 if none).

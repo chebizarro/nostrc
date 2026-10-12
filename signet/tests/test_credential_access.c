@@ -91,6 +91,21 @@ static int audit_rows_containing(SignetStore *store, const char *needle) {
   return count;
 }
 
+/* Every lease ever minted for a credential, burned or not. */
+static int leases_for(SignetStore *store, const char *credential_id) {
+  sqlite3 *db = signet_store_get_db(store);
+  CHECK(db);
+  sqlite3_stmt *stmt = NULL;
+  CHECK(sqlite3_prepare_v2(db,
+      "SELECT COUNT(*) FROM leases WHERE secret_id=?1", -1, &stmt,
+      NULL) == SQLITE_OK);
+  sqlite3_bind_text(stmt, 1, credential_id, -1, SQLITE_TRANSIENT);
+  CHECK(sqlite3_step(stmt) == SQLITE_ROW);
+  int count = sqlite3_column_int(stmt, 0);
+  sqlite3_finalize(stmt);
+  return count;
+}
+
 static SignetCredAccessStatus acquire(const SignetCredentialAccessContext *ctx,
                                       const char *agent_id,
                                       const char *cred_id,
@@ -292,6 +307,34 @@ int main(void) {
   signet_lease_list_free(active, n_active);
   signet_credential_access_grant_clear(&grant);
 
+  /* An expected version is released, and reported, only when it is the
+   * active one; otherwise no lease is minted and nothing is decrypted. */
+  delivery_req.expected_version = 1;
+  CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
+        SIGNET_CRED_ACCESS_OK);
+  expected_entries++;
+  CHECK(grant.record.active_version == 1);
+  signet_credential_access_grant_clear(&grant);
+  int leases_before = leases_for(store, cred_a);
+  delivery_req.expected_version = 2;
+  CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
+        SIGNET_CRED_ACCESS_VERSION_MISMATCH);
+  expected_entries++;
+  CHECK(grant.record.payload == NULL && grant.lease_id == NULL);
+  CHECK(leases_for(store, cred_a) == leases_before);
+  delivery_req.expected_version = 0;
+
+  /* The recipient of a mediated delivery is held to the deny list too. */
+  CHECK(signet_deny_list_add(deny, PUBKEY_B, "agent-b", "test", now) == 0);
+  delivery_req.requester_pubkey = PUBKEY_B;
+  CHECK(signet_credential_access_acquire(&ctx, &delivery_req, now, &grant) ==
+        SIGNET_CRED_ACCESS_DENY_LISTED);
+  expected_entries++;
+  CHECK(grant.record.payload == NULL);
+  CHECK(leases_for(store, cred_a) == leases_before);
+  CHECK(signet_deny_list_remove(deny, PUBKEY_B) == 0);
+  delivery_req.requester_pubkey = NULL;
+
   /* Concurrent encrypted deliveries each get an independent lease which is
    * burned before release. They serialize safely through the store and leave
    * neither reusable leases nor a broken audit chain. */
@@ -408,6 +451,7 @@ int main(void) {
   CHECK(audit_rows_containing(store, "\"decision\":\"deny\"") > 0);
   CHECK(audit_rows_containing(store, "\"reason\":\"deny_listed\"") > 0);
   CHECK(audit_rows_containing(store, "\"reason\":\"not_owner\"") > 0);
+  CHECK(audit_rows_containing(store, "\"reason\":\"version_mismatch\"") > 0);
 
   /* 15. Concurrent chain appends stay linear and verifiable. */
   enum { N_THREADS = 8, ROUNDS = 40 };
