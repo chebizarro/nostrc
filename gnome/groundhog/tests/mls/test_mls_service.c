@@ -4155,6 +4155,205 @@ test_delete_messages(void)
   world_down(&w);
 }
 
+/* The first retry after an unanswered round is due within 1.5 x RETRY_MIN_S
+ * (15 s, gh-mls-service.c). */
+#define RETRY_WAIT_S 23
+
+/* nostrc-knbkr: the outbox state of @app's one kind-5 request, or -1. */
+static gint
+request_state(App *app)
+{
+  sqlite3_stmt *stmt = NULL;
+  g_assert_cmpint(sqlite3_prepare_v2(gh_store_get_db(app->store),
+    "SELECT o.state FROM outbox o JOIN messages m ON m.outbox_id = o.id WHERE m.kind = 5",
+    -1, &stmt, NULL), ==, SQLITE_OK);
+  gint state = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : -1;
+  g_assert_cmpint(sqlite3_step(stmt), !=, SQLITE_ROW);   /* one request */
+  sqlite3_finalize(stmt);
+  return state;
+}
+
+typedef struct {
+  App *app;
+  gint state;
+} RequestWait;
+
+static gboolean
+request_in_state(gpointer data)
+{
+  RequestWait *wait = data;
+  return request_state(wait->app) == wait->state;
+}
+
+/* The kind 445s @relay was offered, in order (their ids). */
+static GPtrArray *
+offered_ids(WireRelay *relay)
+{
+  g_autoptr(GPtrArray) events = published(relay, 445);
+  GPtrArray *ids = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; i < events->len; i++)
+    g_ptr_array_add(ids, event_id_dup(g_ptr_array_index(events, i)));
+  return ids;
+}
+
+static guint
+count_id(GPtrArray *ids, const gchar *id)
+{
+  guint n = 0;
+  for (guint i = 0; i < ids->len; i++)
+    n += g_strcmp0(g_ptr_array_index(ids, i), id) == 0;
+  return n;
+}
+
+typedef struct {
+  WireRelay *relay;
+  const gchar *id;
+  guint at_least;
+} OfferWait;
+
+static gboolean
+offered_times(gpointer data)
+{
+  OfferWait *wait = data;
+  g_autoptr(GPtrArray) ids = offered_ids(wait->relay);
+  return count_id(ids, wait->id) >= wait->at_least;
+}
+
+/* nostrc-knbkr: Delete for Everyone in an encrypted group is durable. The
+ * group relay loses the answer: the message is gone here at once, the
+ * request waits for a retry and is offered again, byte for byte, with
+ * backoff; Alice quits with it unsent; after the restart the same kind 445
+ * goes out, is settled, and Bob's copy goes. */
+static void
+test_delete_retried_after_restart(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_fake_clock = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Retry deletion", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  join(bob, ALICE);
+  send_text(alice, ga, "regrettable");
+  wait_message(bob, room, "regrettable");
+  g_autofree gchar *target = g_strdup(gh_message_get_rumor_id(
+    find_message(alice, room, "regrettable")));
+
+  /* The relay drops the connection on every EVENT: no answer. A draft in
+   * the group stays: a request is not something written there. */
+  w.g.close_on_event = TRUE;
+  guint tried = w.g.events;
+  g_autoptr(GError) error = NULL;
+  gint64 conversation_id = 0;
+  g_assert_true(gh_store_find_conversation(alice->store, GH_STORE_BACKEND_MLS,
+                                           gh_mls_group_get_group_id(ga), &conversation_id,
+                                           &error));
+  g_assert_true(gh_store_set_draft(alice->store, conversation_id, "half a thought", &error));
+  g_assert_true(gh_mls_service_delete_message(alice->service, ga, target, TRUE, &error));
+  g_assert_no_error(error);
+  g_assert_null(find_message(alice, room, "regrettable"));   /* local: at once */
+  {
+    g_autofree gchar *draft = NULL;
+    g_assert_true(gh_store_get_draft(alice->store, conversation_id, &draft, &error));
+    g_assert_cmpstr(draft, ==, "half a thought");
+  }
+  RequestWait waiting = { alice, GH_STORE_OUTBOX_WAITING_RETRY };
+  spin_until(request_in_state, &waiting, "the deletion left for a retry");
+  g_assert_cmpuint(w.g.events, >, tried);
+  g_autofree gchar *request = NULL;
+  {
+    g_autoptr(GPtrArray) ids = offered_ids(&w.g);
+    request = g_strdup(g_ptr_array_index(ids, ids->len - 1));
+    g_assert_cmpuint(count_id(ids, request), ==, 1);
+  }
+  /* The backoff fires: the same event, offered again (still no answer). */
+  gh_clock_fake_advance(alice->clock, (gint64)RETRY_WAIT_S * G_USEC_PER_SEC);
+  OfferWait again = { &w.g, request, 2 };
+  spin_until(offered_times, &again, "the deletion retried");
+  spin_until(request_in_state, &waiting, "the retry unanswered too");
+  g_assert_nonnull(find_message(bob, room, "regrettable"));
+
+  /* Quit with it unsent; the relay recovers; after the restart it goes. */
+  w.g.close_on_event = FALSE;
+  app_restart(alice);
+  g_assert_null(find_message(alice, room, "regrettable"));
+  StoredWait stored = { &w.g, request };
+  spin_until(relay_stored, &stored, "the same deletion republished and stored");
+  RequestWait settled = { alice, GH_STORE_OUTBOX_SETTLED };
+  spin_until(request_in_state, &settled, "the deletion settled");
+  MessageWait gone_at_bob = { bob, room, "regrettable" };
+  spin_until(message_unlisted, &gone_at_bob, "the deletion reached Bob");
+  world_down(&w);
+}
+
+/* nostrc-knbkr: a deletion request still waiting when its group is left is
+ * cancelled and never sent: Bob's request loses its answer, he leaves, the
+ * relay recovers and his leave goes through, and neither the leave's retries
+ * nor a restart republish the request; Alice keeps the message. */
+static void
+test_delete_not_resent_after_leaving(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Leave first", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  send_text(bob, gb, "bob says");
+  wait_message(alice, room, "bob says");
+  StatusWait bob_sent = { bob, room, "bob says" };
+  spin_until(sent, &bob_sent, "Bob's message sent");
+  g_autofree gchar *target = g_strdup(gh_message_get_rumor_id(
+    find_message(bob, room, "bob says")));
+  g_assert_cmpint(gh_mls_service_leave_kind(bob->service, gb), ==, GH_MLS_LEAVE_EVERYONE);
+
+  w.g.close_on_event = TRUE;
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_delete_message(bob->service, gb, target, TRUE, &error));
+  g_assert_no_error(error);
+  RequestWait waiting = { bob, GH_STORE_OUTBOX_WAITING_RETRY };
+  spin_until(request_in_state, &waiting, "Bob's deletion left for a retry");
+  g_autofree gchar *request = NULL;
+  {
+    g_autoptr(GPtrArray) ids = offered_ids(&w.g);
+    request = g_strdup(g_ptr_array_index(ids, ids->len - 1));
+  }
+  g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+  g_assert_no_error(error);
+  g_assert_true(gh_mls_group_get_leaving(gb));
+  /* No more requests while leaving. */
+  g_assert_false(gh_mls_service_send_deletion(bob->service, gb, target, &error));
+  g_assert_error(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT);
+  g_clear_error(&error);
+
+  w.g.close_on_event = FALSE;
+  wait_members(ga, 1);
+  spin_until(group_ended, gb, "Bob's leave confirmed");
+  g_assert_cmpint(gh_mls_group_get_end(gb), ==, GH_MLS_GROUP_END_LEFT);
+  RequestWait cancelled = { bob, GH_STORE_OUTBOX_CANCELLED };
+  spin_until(request_in_state, &cancelled, "the deletion cancelled with the group");
+
+  app_restart(bob);
+  g_assert_cmpint(request_state(bob), ==, GH_STORE_OUTBOX_CANCELLED);
+  /* Alice's next message is stored after anything Bob's restart offered. */
+  send_text(alice, ga, "after bob");
+  StatusWait after = { alice, room, "after bob" };
+  spin_until(sent, &after, "Alice's message after Bob left");
+  g_autoptr(GPtrArray) ids = offered_ids(&w.g);
+  g_assert_cmpuint(count_id(ids, request), ==, 1);   /* the lost first try only */
+  StoredWait stored = { &w.g, request };
+  g_assert_false(relay_stored(&stored));
+  g_assert_nonnull(find_message(alice, room, "bob says"));
+  world_down(&w);
+}
+
 /* ---- Leaving (nostrc-2um6) ------------------------------------------------------------- */
 
 typedef struct {
@@ -4439,6 +4638,10 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/mls-service/reactions-after-account-switch",
                   test_reactions_after_account_switch);
   g_test_add_func("/groundhog/mls-service/delete-messages", test_delete_messages);
+  g_test_add_func("/groundhog/mls-service/delete-retried-after-restart",
+                  test_delete_retried_after_restart);
+  g_test_add_func("/groundhog/mls-service/delete-not-resent-after-leaving",
+                  test_delete_not_resent_after_leaving);
   g_test_add_func("/groundhog/mls-service/future-replay-moves-no-cursor",
                   test_future_replay_moves_no_cursor);
   g_test_add_func("/groundhog/mls-service/held-until-commit", test_held_until_commit);

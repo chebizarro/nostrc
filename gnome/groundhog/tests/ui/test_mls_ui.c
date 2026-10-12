@@ -42,6 +42,7 @@
 #include "gh-mls-new-group-page.h"
 #include "gh-test-escape.h"
 #include "gh-mls-ui.h"
+#include "gh-message-row.h"
 #include "gh-nip29-service.h"
 #include "gh-shell.h"
 #include "gh-test-dialog.h"
@@ -2293,6 +2294,187 @@ test_gui_group_info(void)
   world_down(&w);
 }
 
+/* ---- --gui: Delete for Everyone in a group left (nostrc-knbkr) ------------------------ */
+
+/* The application's delete callback in a test window: the group's service
+ * deletes it (gh_app_outbox_delete_group_message() in the app). */
+static gboolean
+service_delete(GhConversation *conversation, GhMessage *message, gboolean for_everyone,
+               gpointer data, GError **error)
+{
+  App *app = data;
+  GhMlsGroup *group = gh_mls_service_lookup(app->service,
+                                            gh_conversation_get_room_id(conversation));
+  return group && gh_mls_service_delete_message(app->service, group,
+                                                gh_message_get_rumor_id(message),
+                                                for_everyone, error);
+}
+
+static GhMessageRow *
+message_row(GtkWidget *widget, const gchar *text)
+{
+  if (GH_IS_MESSAGE_ROW(widget)) {
+    GhMessage *message = gh_message_row_get_message(GH_MESSAGE_ROW(widget));
+    if (message && g_strcmp0(gh_message_get_content(message), text) == 0)
+      return GH_MESSAGE_ROW(widget);
+  }
+  for (GtkWidget *c = gtk_widget_get_first_child(widget); c; c = gtk_widget_get_next_sibling(c)) {
+    GhMessageRow *found = message_row(c, text);
+    if (found)
+      return found;
+  }
+  return NULL;
+}
+
+typedef struct {
+  GhWindow *window;
+  const gchar *text;
+} RowWait;
+
+static gboolean
+row_shown(gpointer data)
+{
+  RowWait *wait = data;
+  return message_row(GTK_WIDGET(view_of(wait->window)), wait->text) != NULL;
+}
+
+static gboolean
+menu_up(gpointer data)
+{
+  return gtk_widget_get_mapped(data);
+}
+
+static gboolean
+menu_down(gpointer data)
+{
+  return !gtk_widget_get_mapped(data);
+}
+
+static void
+menu_flatten(GMenuModel *model, GString *out)
+{
+  for (int i = 0; i < g_menu_model_get_n_items(model); i++) {
+    g_autoptr(GMenuModel) section = g_menu_model_get_item_link(model, i, G_MENU_LINK_SECTION);
+    if (section) {
+      menu_flatten(section, out);
+      continue;
+    }
+    g_autofree gchar *label = NULL;
+    g_menu_model_get_item_attribute(model, i, G_MENU_ATTRIBUTE_LABEL, "s", &label);
+    g_string_append_printf(out, "%s%s", out->len ? "|" : "", label);
+  }
+}
+
+/* save_root_png() with the open @popover drawn where it sits (its own
+ * surface is not part of the window's), as a screenshot of the screen. */
+static void
+save_with_popover(GhWindow *window, GtkWidget *popover, const gchar *name)
+{
+  const gchar *prefix = g_getenv("GROUNDHOG_SCREENSHOT_PREFIX");
+  if (!prefix || !*prefix)
+    return;
+  GtkWidget *root = GTK_WIDGET(window);
+  GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(root));
+  double wx = 0, wy = 0, px = 0, py = 0;
+  gtk_native_get_surface_transform(GTK_NATIVE(root), &wx, &wy);
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  g_autoptr(GdkPaintable) window_paintable = gtk_widget_paintable_new(root);
+  gtk_snapshot_save(snapshot);
+  gtk_snapshot_translate(snapshot, &GRAPHENE_POINT_INIT(wx, wy));
+  gdk_paintable_snapshot(window_paintable, snapshot, gtk_widget_get_width(root),
+                         gtk_widget_get_height(root));
+  gtk_snapshot_restore(snapshot);
+  GdkSurface *popup = gtk_native_get_surface(GTK_NATIVE(popover));
+  gtk_native_get_surface_transform(GTK_NATIVE(popover), &px, &py);
+  g_autoptr(GdkPaintable) popover_paintable = gtk_widget_paintable_new(popover);
+  gtk_snapshot_save(snapshot);
+  gtk_snapshot_translate(snapshot,
+                         &GRAPHENE_POINT_INIT(gdk_popup_get_position_x(GDK_POPUP(popup)) + px,
+                                              gdk_popup_get_position_y(GDK_POPUP(popup)) + py));
+  gdk_paintable_snapshot(popover_paintable, snapshot, gtk_widget_get_width(popover),
+                         gtk_widget_get_height(popover));
+  gtk_snapshot_restore(snapshot);
+  g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
+  g_assert_nonnull(node);
+  GskRenderer *renderer = gtk_native_get_renderer(GTK_NATIVE(root));
+  g_autoptr(GdkTexture) texture = gsk_renderer_render_texture(
+    renderer, node, &GRAPHENE_RECT_INIT(0, 0, gdk_surface_get_width(surface),
+                                        gdk_surface_get_height(surface)));
+  g_autofree gchar *path = g_strdup_printf("%s-%s.png", prefix, name);
+  g_assert_true(gdk_texture_save_to_png(texture, path));
+  g_test_message("saved %s", path);
+}
+
+/* The bubble menu of the row showing @text, opened as right-click does, its
+ * labels joined with "|"; saved as <prefix>-<shot>.png while open. */
+static gchar *
+bubble_menu(GhWindow *window, const gchar *text, const gchar *shot)
+{
+  RowWait wait = { window, text };
+  spin_until(row_shown, &wait, "the message's row");
+  GhMessageRow *row = message_row(GTK_WIDGET(view_of(window)), text);
+  g_assert_true(gh_message_row_popup_menu(row, -1, -1));
+  GtkPopover *menu = gh_message_row_get_menu(row);
+  g_assert_true(GTK_IS_POPOVER_MENU(menu));
+  spin_until(menu_up, menu, "the bubble menu shown");
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(menu));
+  save_with_popover(window, GTK_WIDGET(menu), shot);
+  GString *labels = g_string_new(NULL);
+  menu_flatten(gtk_popover_menu_get_menu_model(GTK_POPOVER_MENU(menu)), labels);
+  gtk_popover_popdown(menu);
+  spin_until(menu_down, menu, "the bubble menu closed");
+  return g_string_free(labels, FALSE);
+}
+
+/* Bob's own sent message offers Delete for Everyone while he is in the
+ * group; once he has left it, only Delete for Me (nothing can reach the
+ * group any more, so the request could only fail). */
+static void
+test_gui_left_group_delete(void)
+{
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_published(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "Left behind", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  UpgradeWait upgraded = { bob, ga, gb };
+  spin_until(self_remove_settled, &upgraded, "the group requiring SelfRemove");
+  send_text(bob, gb, "Bob's own words");
+  MessageWait bob_sent = { bob, room, "Bob's own words" };
+  spin_until(sent, &bob_sent, "Bob's message sent");
+  wait_message(alice, room, "Bob's own words");
+
+  GhWindow *window = app_window(bob, NULL);
+  gh_conversation_view_set_delete_func(view_of(window), service_delete, bob, NULL);
+  GhConversation *conversation = gh_conversation_store_lookup(bob->model, room);
+  g_assert_true(gh_window_open_item(window, conversation));
+  g_autofree gchar *member = bubble_menu(window, "Bob's own words", "member-menu");
+  g_assert_nonnull(strstr(member, "_Delete for Me…"));
+  g_assert_nonnull(strstr(member, "Delete for _Everyone…"));
+
+  g_autoptr(GError) error = NULL;
+  g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+  g_assert_no_error(error);
+  spin_until(left_for_everyone, gb, "Bob's leave confirmed");
+  g_autofree gchar *left = bubble_menu(window, "Bob's own words", "left-menu");
+  g_assert_nonnull(strstr(left, "_Delete for Me…"));
+  g_assert_null(strstr(left, "Delete for _Everyone…"));
+
+  /* Delete for Me still works there. */
+  GhMessage *own = find_message(bob, room, "Bob's own words");
+  g_assert_nonnull(own);
+  g_assert_true(service_delete(conversation, own, FALSE, bob, &error));
+  g_assert_no_error(error);
+  g_assert_null(find_message(bob, room, "Bob's own words"));
+  g_assert_nonnull(find_message(alice, room, "Bob's own words"));
+  close_window(window);
+  world_down(&w);
+}
+
 #if GH_MLS_ADOPTED_KEY_PACKAGES
 static const gchar *
 format_notice(gpointer page)
@@ -3058,6 +3240,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/mls-ui-gui/refused-invitation", test_gui_refused_invitation);
     g_test_add_func("/groundhog/mls-ui-gui/remove-old-keys", test_gui_remove_old_keys);
     g_test_add_func("/groundhog/mls-ui-gui/group-info", test_gui_group_info);
+    g_test_add_func("/groundhog/mls-ui-gui/left-group-delete", test_gui_left_group_delete);
     g_test_add_func("/groundhog/mls-ui-gui/group-files", test_gui_group_files);
 #if GH_MLS_SERVICE_ACCOUNT_PROOF
     g_test_add_func("/groundhog/mls-ui-gui/unverified-member", test_gui_unverified_member);

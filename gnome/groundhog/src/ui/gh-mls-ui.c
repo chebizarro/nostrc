@@ -623,6 +623,19 @@ gh_mls_ui_attach_if_enabled(GhWindow *window, const GhMlsUiConfig *config)
   return TRUE;
 }
 
+/* nostrc-knbkr: Delete for Everyone only where the group still takes a
+ * message: not one the account left or is leaving (or that ended, or whose
+ * service is not running); every other conversation is not ours to judge. */
+static gboolean
+can_ask(GhConversation *conversation, gpointer data)
+{
+  MlsUi *ui = data;
+  if (gh_conversation_get_backend(conversation) != GH_CONVERSATION_BACKEND_MLS)
+    return TRUE;
+  GhMlsGroup *group = group_of(ui, conversation);
+  return group && gh_mls_group_get_active(group) && !gh_mls_group_get_leaving(group);
+}
+
 static void
 mls_ui_free(gpointer data)
 {
@@ -642,6 +655,7 @@ mls_ui_free(gpointer data)
     ui->poll_requested_handler = 0;
   }
   if (ui->view) {
+    gh_conversation_view_set_can_ask_func(ui->view, NULL, NULL, NULL);
     if (ui->poll_enricher_installed)
       gh_conversation_view_set_row_enricher(ui->view, NULL, NULL);
     g_clear_signal_handler(&ui->view_handler, ui->view);
@@ -690,6 +704,7 @@ gh_mls_ui_attach(GhWindow *window, const GhMlsUiConfig *config)
     ui->view = g_object_ref(GH_CONVERSATION_VIEW(view));
     ui->view_handler = g_signal_connect_swapped(view, "notify::conversation",
                                                 G_CALLBACK(sync_shown), ui);
+    gh_conversation_view_set_can_ask_func(ui->view, can_ask, ui, NULL);
   }
   gh_conversation_list_set_member_count_func(window, member_count, ui, NULL);
   gh_send_ui_add_delegate(window, &mls_delegate, ui);

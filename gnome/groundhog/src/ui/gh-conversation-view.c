@@ -831,6 +831,9 @@ struct _GhConversationView {
   GhConversationViewDeleteFunc delete_func;
   gpointer delete_data;
   GDestroyNotify delete_destroy;
+  GhConversationViewCanAskFunc can_ask_func;
+  gpointer can_ask_data;
+  GDestroyNotify can_ask_destroy;
   gchar *pending_delete;      /* the rumor id awaiting confirmation */
   gboolean pending_delete_everyone;
 
@@ -3013,6 +3016,9 @@ gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *mes
    * which also stops it. */
   if (!gh_message_is_self(message) || gh_message_get_withdrawn(message))
     return FALSE;
+  /* Not where nothing can be sent any more (a group left: nostrc-knbkr). */
+  if (self->can_ask_func && !self->can_ask_func(self->conversation, self->can_ask_data))
+    return FALSE;
   switch (gh_message_get_status(message)) {
   case GH_MESSAGE_STATUS_NONE:
   case GH_MESSAGE_STATUS_SENT:
@@ -3112,6 +3118,19 @@ gh_conversation_view_set_delete_func(GhConversationView *self,
   self->delete_func = func;
   self->delete_data = user_data;
   self->delete_destroy = destroy;
+}
+
+void
+gh_conversation_view_set_can_ask_func(GhConversationView *self,
+                                      GhConversationViewCanAskFunc func,
+                                      gpointer user_data, GDestroyNotify destroy)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  if (self->can_ask_destroy)
+    self->can_ask_destroy(self->can_ask_data);
+  self->can_ask_func = func;
+  self->can_ask_data = user_data;
+  self->can_ask_destroy = destroy;
 }
 
 /* Menu and Shift+F10 on a message (its list item, its text or a button in
@@ -3500,6 +3519,7 @@ gh_conversation_view_dispose(GObject *object)
   gh_conversation_view_set_link_preview_fetcher(self, NULL, NULL, NULL, NULL);
   gh_conversation_view_set_reaction_func(self, NULL, NULL, NULL);
   gh_conversation_view_set_delete_func(self, NULL, NULL, NULL);
+  gh_conversation_view_set_can_ask_func(self, NULL, NULL, NULL);
   g_clear_pointer(&self->pending_delete, g_free);
   g_clear_object(&self->reference_resolver);
   if (self->settings) g_signal_handlers_disconnect_by_data(self->settings, self);

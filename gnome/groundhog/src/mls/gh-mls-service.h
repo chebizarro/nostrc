@@ -996,7 +996,13 @@ gboolean gh_mls_service_send_reaction(GhMlsService *self, GhMlsGroup *group,
                                       GError **error);
 /* W26 slice B (nostrc-191r): sends a kind-5 NIP-09 deletion (inner event)
  * referencing @event_id (a reaction to remove, or a message: see
- * gh_mls_service_delete_message()). */
+ * gh_mls_service_delete_message()).
+ * A reaction and a deletion go through the encrypted-group outbox as a
+ * message does (nostrc-knbkr): stored, ratcheted and sealed in one
+ * transaction, then published; one no relay answered is republished byte
+ * for byte with backoff and after a restart. None is published while the
+ * group is being left, and one still unsent when the group ends is
+ * cancelled. */
 gboolean gh_mls_service_send_deletion(GhMlsService *self, GhMlsGroup *group,
                                       const gchar *event_id,
                                       GError **error);

@@ -127,7 +127,9 @@ void gh_conversation_view_set_reaction_func(GhConversationView *self,
  * menu offers them where gh_conversation_view_can_delete_message() says so
  * (a callback is set, the conversation, NIP-17 or a group (groundhog/
  * deletion), is one of the message's account, and, for everyone, the
- * message is your own, not withdrawn, and reached someone; the dialog's
+ * message is your own, not withdrawn, and reached someone, and the
+ * conversation can take the request (gh_conversation_view_set_can_ask_func());
+ * the dialog's
  * copy says what each kind of conversation does),
  * asks for confirmation, then calls @func with the message. @func deletes it
  * from the store and the model and, for everyone, sends a NIP-09 deletion
@@ -141,6 +143,15 @@ void gh_conversation_view_set_delete_func(GhConversationView *self,
                                           GhConversationViewDeleteFunc func,
                                           gpointer user_data,
                                           GDestroyNotify destroy);
+/* Whether the conversation can take a request for everyone now (nostrc-knbkr:
+ * not an encrypted group the account left or is leaving). Unset: always.
+ * Asked each time a bubble's menu opens. */
+typedef gboolean (*GhConversationViewCanAskFunc)(GhConversation *conversation,
+                                                 gpointer user_data);
+void gh_conversation_view_set_can_ask_func(GhConversationView *self,
+                                           GhConversationViewCanAskFunc func,
+                                           gpointer user_data,
+                                           GDestroyNotify destroy);
 gboolean gh_conversation_view_can_delete_message(GhConversationView *self,
                                                  GhMessage *message,
                                                  gboolean for_everyone);

@@ -30,6 +30,8 @@ G_BEGIN_DECLS
  *    restart republishes), never the NIP-17 outbox; the disabled reason is
  *    gh_mls_send_reason() and follows the group (left, removed by whom,
  *    offline; nostrc-xrya).
+ *  - The bubble menu (gh_conversation_view_set_can_ask_func()): no Delete
+ *    for Everyone in a group the account left or is leaving (nostrc-knbkr).
  *  - Group Info: gh_mls_ui_show_info() (GhMlsGroupInfoDialog), with the
  *    group picture when config->files is set.
  *  - The conversation header's "Encrypted group · N members"
