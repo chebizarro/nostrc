@@ -41,9 +41,12 @@ typedef struct {
   guint32 ttl_seconds; /* if >0: reload TTL for this identity policy */
   int64_t loaded_at;   /* unix seconds; when parsed */
 
-  /* Some entry could not be parsed or canonicalized and was dropped: the
-   * lists above say less than the file did. Such a policy never counts as
-   * an exact delivery grant. */
+  /* Some entry could not be read. It is kept as a never-matching
+   * placeholder — the raw text in a string list, SIGNET_POLICY_UNREADABLE_KIND
+   * in a kind list — so its list still counts as configured and matches only
+   * its readable entries (fail closed: an allow list of nothing but typos
+   * allows no one), and a write-back preserves it. Such a policy never counts
+   * as an exact delivery grant. */
   gboolean lossy;
 } SignetIdentityPolicy;
 
@@ -208,6 +211,10 @@ static char *signet_hex_encode_lower(const guint8 *in, gsize in_len) {
  * - 64-char hex is lower-cased
  * - otherwise lower-case the input (best-effort)
  */
+/* Stands in for a kind-list entry that could not be read; no event kind is
+ * negative, so it never matches. */
+#define SIGNET_POLICY_UNREADABLE_KIND ((gint64)-1)
+
 static char *signet_pubkey_canon_dup(const char *s) {
   if (!s || s[0] == '\0') return NULL;
   if (strcmp(s, "*") == 0) return g_strdup("*");
@@ -224,6 +231,17 @@ static char *signet_pubkey_canon_dup(const char *s) {
 
   /* Not a pubkey: no client could ever match it. */
   return NULL;
+}
+
+/* A client-list entry as stored: canonical when readable, else the raw
+ * text, kept as a never-matching placeholder (*lossy is set). A client
+ * pubkey is canonicalized to 64 lower-case hex before matching, so raw text
+ * that is not exactly that can never equal it. */
+static char *signet_client_entry_dup(const char *s, gboolean *lossy) {
+  char *canon = signet_pubkey_canon_dup(s);
+  if (canon) return canon;
+  *lossy = TRUE;
+  return g_strdup(s ? s : "");
 }
 
 static void signet_identity_policy_free(SignetIdentityPolicy *p) {
@@ -299,19 +317,15 @@ static GPtrArray *signet_parse_string_list(const char *raw, gboolean *lossy) {
       return NULL;
     }
 
-    if (!json_parser_load_from_data(p, s, -1, NULL)) {
-      g_object_unref(p);
-      g_ptr_array_free(out, TRUE);
-      *lossy = TRUE;
-      return NULL;
-    }
-
-    JsonNode *root = json_parser_get_root(p);
+    JsonNode *root = json_parser_load_from_data(p, s, -1, NULL)
+                         ? json_parser_get_root(p) : NULL;
     if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
+      /* Unreadable list: keep the whole text as one never-matching entry so
+       * the list still counts as configured. */
       g_object_unref(p);
-      g_ptr_array_free(out, TRUE);
+      g_ptr_array_add(out, g_strdup(s));
       *lossy = TRUE;
-      return NULL;
+      return out;
     }
 
     JsonArray *a = json_node_get_array(root);
@@ -324,7 +338,11 @@ static GPtrArray *signet_parse_string_list(const char *raw, gboolean *lossy) {
       g_autofree char *sv = v ? signet_strip_quotes_dup(v) : NULL;
       if (sv) g_strstrip(sv);
       if (!sv || sv[0] == '\0') {
+        /* Not a usable string: keep its JSON text as a never-matching
+         * placeholder (an empty entry stays an empty entry). */
         *lossy = TRUE;
+        g_ptr_array_add(out, (en && !v) ? json_to_string(en, FALSE)
+                                        : g_strdup(""));
         continue;
       }
       g_ptr_array_add(out, g_strdup(sv));
@@ -348,7 +366,11 @@ static GPtrArray *signet_parse_string_list(const char *raw, gboolean *lossy) {
   return out;
 }
 
-static gboolean signet_parse_int_list(const char *raw, GArray **out_arr, gboolean *out_any) {
+/* Unreadable entries (and an unreadable list) become
+ * SIGNET_POLICY_UNREADABLE_KIND and set *lossy, so the list stays configured
+ * and fails closed. */
+static gboolean signet_parse_int_list(const char *raw, GArray **out_arr,
+                                      gboolean *out_any, gboolean *lossy) {
   if (out_arr) *out_arr = NULL;
   if (out_any) *out_any = FALSE;
   if (!raw) return TRUE;
@@ -370,34 +392,33 @@ static gboolean signet_parse_int_list(const char *raw, GArray **out_arr, gboolea
       return FALSE;
     }
 
-    if (!json_parser_load_from_data(p, s0, -1, NULL)) {
-      g_object_unref(p);
-      g_array_free(arr, TRUE);
-      return FALSE;
-    }
-
-    JsonNode *root = json_parser_get_root(p);
+    JsonNode *root = json_parser_load_from_data(p, s0, -1, NULL)
+                         ? json_parser_get_root(p) : NULL;
     if (!root || !JSON_NODE_HOLDS_ARRAY(root)) {
       g_object_unref(p);
-      g_array_free(arr, TRUE);
-      return FALSE;
+      gint64 unreadable = SIGNET_POLICY_UNREADABLE_KIND;
+      g_array_append_val(arr, unreadable);
+      *lossy = TRUE;
+      if (out_arr) *out_arr = arr; else g_array_free(arr, TRUE);
+      return TRUE;
     }
 
     JsonArray *a = json_node_get_array(root);
     guint n = json_array_get_length(a);
     for (guint i = 0; i < n; i++) {
       JsonNode *en = json_array_get_element(a, i);
-      if (!en) continue;
-
-      if (JSON_NODE_HOLDS_VALUE(en)) {
-        GType t = json_node_get_value_type(en);
-        if (t == G_TYPE_INT64 || t == G_TYPE_DOUBLE || t == G_TYPE_INT || t == G_TYPE_LONG) {
-          gint64 v = json_node_get_int(en);
-          g_array_append_val(arr, v);
-        } else if (t == G_TYPE_STRING) {
-          const char *sv = json_node_get_string(en);
-          if (sv && strcmp(sv, "*") == 0) any = TRUE;
-        }
+      GType t = (en && JSON_NODE_HOLDS_VALUE(en)) ? json_node_get_value_type(en)
+                                                  : G_TYPE_INVALID;
+      const char *sv = t == G_TYPE_STRING ? json_node_get_string(en) : NULL;
+      if (t == G_TYPE_INT64) {
+        gint64 v = json_node_get_int(en);
+        g_array_append_val(arr, v);
+      } else if (sv && strcmp(sv, "*") == 0) {
+        any = TRUE;
+      } else {
+        gint64 unreadable = SIGNET_POLICY_UNREADABLE_KIND;
+        g_array_append_val(arr, unreadable);
+        *lossy = TRUE;
       }
     }
 
@@ -427,9 +448,11 @@ static gboolean signet_parse_int_list(const char *raw, GArray **out_arr, gboolea
     char *end = NULL;
     errno = 0;
     long long v = strtoll(parts[i], &end, 10);
-    if (errno != 0 || !end || *end != '\0') continue;
-
     gint64 vv = (gint64)v;
+    if (errno != 0 || !end || *end != '\0') {
+      vv = SIGNET_POLICY_UNREADABLE_KIND;
+      *lossy = TRUE;
+    }
     g_array_append_val(arr, vv);
   }
 
@@ -546,9 +569,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
           g_ptr_array_add(p->allow_clients, g_strdup("*"));
           continue;
         }
-        g_autofree char *canon = signet_pubkey_canon_dup(v);
-        if (canon) g_ptr_array_add(p->allow_clients, g_strdup(canon));
-        else p->lossy = TRUE;
+        g_ptr_array_add(p->allow_clients, signet_client_entry_dup(v, &p->lossy));
       }
       g_ptr_array_free(allow_clients, TRUE);
       if (p->allow_clients && p->allow_clients->len == 0) g_clear_pointer(&p->allow_clients, g_ptr_array_unref);
@@ -565,9 +586,7 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
           g_ptr_array_add(p->deny_clients, g_strdup("*"));
           continue;
         }
-        g_autofree char *canon = signet_pubkey_canon_dup(v);
-        if (canon) g_ptr_array_add(p->deny_clients, g_strdup(canon));
-        else p->lossy = TRUE;
+        g_ptr_array_add(p->deny_clients, signet_client_entry_dup(v, &p->lossy));
       }
       g_ptr_array_free(deny_clients, TRUE);
       if (p->deny_clients && p->deny_clients->len == 0) g_clear_pointer(&p->deny_clients, g_ptr_array_unref);
@@ -584,12 +603,22 @@ static gboolean signet_policy_store_load_file_locked(SignetPolicyStore *ps, int6
 
     /* allow/deny kinds */
     g_autofree gchar *allow_kinds_raw = g_key_file_get_string(kf, grp, "allow_kinds", NULL);
-    if (!signet_parse_int_list(allow_kinds_raw, &p->allow_kinds, &p->allow_kinds_any))
+    if (!signet_parse_int_list(allow_kinds_raw, &p->allow_kinds,
+                               &p->allow_kinds_any, &p->lossy)) {
+      gint64 unreadable = SIGNET_POLICY_UNREADABLE_KIND;
+      if (!p->allow_kinds) p->allow_kinds = g_array_new(FALSE, FALSE, sizeof(gint64));
+      g_array_append_val(p->allow_kinds, unreadable);
       p->lossy = TRUE;
+    }
 
     g_autofree gchar *deny_kinds_raw = g_key_file_get_string(kf, grp, "deny_kinds", NULL);
-    if (!signet_parse_int_list(deny_kinds_raw, &p->deny_kinds, &p->deny_kinds_any))
+    if (!signet_parse_int_list(deny_kinds_raw, &p->deny_kinds,
+                               &p->deny_kinds_any, &p->lossy)) {
+      gint64 unreadable = SIGNET_POLICY_UNREADABLE_KIND;
+      if (!p->deny_kinds) p->deny_kinds = g_array_new(FALSE, FALSE, sizeof(gint64));
+      g_array_append_val(p->deny_kinds, unreadable);
       p->lossy = TRUE;
+    }
 
     g_hash_table_replace(new_ids, g_strdup(identity), p);
     loaded_identities++;
@@ -802,17 +831,18 @@ static void signet_policy_identity_to_keyfile(GKeyFile *kf,
   }
 
   /* Serialize string list as JSON array. */
+  /* JSON-escaped, so a kept placeholder (any text) reads back unchanged. */
   #define WRITE_STR_LIST(field, key_name)                                         \
     if (p->field && p->field->len > 0) {                                          \
-      GString *buf = g_string_new("[");                                           \
-      for (guint _i = 0; _i < p->field->len; _i++) {                             \
-        if (_i > 0) g_string_append_c(buf, ',');                                  \
-        g_string_append_printf(buf, "\"%s\"",                                     \
-            (const char *)g_ptr_array_index(p->field, _i));                       \
-      }                                                                            \
-      g_string_append_c(buf, ']');                                                \
-      g_key_file_set_string(kf, grp, key_name, buf->str);                         \
-      g_string_free(buf, TRUE);                                                   \
+      JsonArray *_a = json_array_new();                                           \
+      for (guint _i = 0; _i < p->field->len; _i++)                               \
+        json_array_add_string_element(                                            \
+            _a, (const char *)g_ptr_array_index(p->field, _i));                   \
+      JsonNode *_n = json_node_new(JSON_NODE_ARRAY);                              \
+      json_node_take_array(_n, _a);                                               \
+      g_autofree char *_s = json_to_string(_n, FALSE);                            \
+      json_node_unref(_n);                                                        \
+      g_key_file_set_string(kf, grp, key_name, _s);                               \
     }
 
   WRITE_STR_LIST(allow_clients, "allow_clients")
@@ -901,17 +931,20 @@ static gboolean signet_parse_json_kind_array(JsonObject *o,
 
   for (guint i = 0; i < len; i++) {
     JsonNode *en = json_array_get_element(a, i);
-    if (!en) continue;
-
-    if (JSON_NODE_HOLDS_VALUE(en)) {
-      GType t = json_node_get_value_type(en);
-      if (t == G_TYPE_STRING) {
-        const char *sv = json_node_get_string(en);
-        if (sv && strcmp(sv, "*") == 0) *out_any = TRUE;
-      } else if (t == G_TYPE_INT64 || t == G_TYPE_DOUBLE || t == G_TYPE_INT) {
-        gint64 v = json_node_get_int(en);
-        g_array_append_val(arr, v);
-      }
+    GType t = (en && JSON_NODE_HOLDS_VALUE(en)) ? json_node_get_value_type(en)
+                                                : G_TYPE_INVALID;
+    const char *sv = t == G_TYPE_STRING ? json_node_get_string(en) : NULL;
+    if (t == G_TYPE_INT64 && json_node_get_int(en) >= 0) {
+      gint64 v = json_node_get_int(en);
+      g_array_append_val(arr, v);
+    } else if (sv && strcmp(sv, "*") == 0) {
+      *out_any = TRUE;
+    } else {
+      /* An entry that would be dropped is refused: nothing is stored
+       * differently from how it was written. */
+      g_array_free(arr, TRUE);
+      *out_any = FALSE;
+      return FALSE;
     }
   }
 
