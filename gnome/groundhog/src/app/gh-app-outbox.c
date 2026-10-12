@@ -8,6 +8,7 @@
 #define GROUNDHOG_HAVE_NIP29 0
 #endif
 #if GROUNDHOG_HAVE_NIP29
+#include "gh-nip29-group-list.h"
 #include "gh-nip29-service.h"
 #endif
 #ifndef GROUNDHOG_HAVE_MLS
@@ -41,6 +42,7 @@ struct _GhAppOutbox {
   GSettings *settings;                /* network-mode for the NIP-11 fetches; nullable */
   GObject *nip29;                     /* GhNip29Service, or NULL */
   GObject *nip29_outbox;              /* the outbox it was made beside (weak) */
+  GObject *nip29_list;                /* its GhNip29GroupList (kind 10009), or NULL */
   /* qp24.13: the open store's encrypted groups, likewise. */
   gboolean encrypted_groups;
   GObject *inbox;                     /* GhDmInbox for Welcomes; borrowed */
@@ -173,6 +175,17 @@ bind_nip29(GhAppOutbox *self, GhStore *store, GObject *outbox)
   self->nip29 = G_OBJECT(service);
   self->nip29_outbox = outbox;
   g_object_weak_ref(outbox, unbind_nip29, self);
+  /* nostrc-90jof: the account's group list, read and kept in step with the
+   * groups of this store (gh-nip29-group-list.h). */
+  if (self->settings) {
+    GhNip29GroupListConfig list = {
+      .accounts = self->accounts,
+      .account_relays = self->account_relays,
+      .settings = self->settings,
+      .service = service,
+    };
+    self->nip29_list = G_OBJECT(gh_nip29_group_list_new(&list));
+  }
 #else
   (void)self;
   (void)store;
@@ -188,6 +201,10 @@ unbind_nip29(gpointer data, GObject *outbox)
   if (self->nip29_outbox != outbox)
     return;
   self->nip29_outbox = NULL;
+  if (self->nip29_list) {
+    g_object_run_dispose(self->nip29_list);
+    g_clear_object(&self->nip29_list);
+  }
   if (self->nip29) {
     g_object_run_dispose(self->nip29);
     g_clear_object(&self->nip29);
@@ -588,6 +605,13 @@ gh_app_outbox_get_nip29_service(GhAppOutbox *self)
 {
   g_return_val_if_fail(self != NULL, NULL);
   return self->nip29;
+}
+
+GObject *
+gh_app_outbox_get_nip29_group_list(GhAppOutbox *self)
+{
+  g_return_val_if_fail(self != NULL, NULL);
+  return self->nip29_list;
 }
 
 void

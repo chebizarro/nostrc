@@ -2132,16 +2132,20 @@ endif()
 # groundhog-net. The executable runs one service per open store
 # (gh-app-outbox.c); no UI uses it yet (G20b).
 if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-policy AND
-    TARGET groundhog-conversations AND TARGET groundhog-net)
+    TARGET groundhog-conversations AND TARGET groundhog-net AND TARGET groundhog-account-relays)
   message(STATUS "Groundhog NIP-29 service: enabled")
   target_sources(groundhog-net PRIVATE src/net/gh-nip11.c)
+  # gh-nip29-group-list.c: the account's NIP-51 kind-10009 group list
+  # (nostrc-90jof), encrypted to itself, read and written on its own 10002
+  # write relays and discovery-relays; restores groups only when asked.
   set(GROUNDHOG_NIP29_SERVICE_SOURCES src/nip29/gh-nip29-service.c src/nip29/gh-nip29-outbox.c
-    src/store/gh-store-nip29.c)
+    src/nip29/gh-nip29-group-list.c src/store/gh-store-nip29.c)
   add_library(groundhog-nip29-service STATIC ${GROUNDHOG_NIP29_SERVICE_SOURCES})
   target_include_directories(groundhog-nip29-service PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store)
   target_link_libraries(groundhog-nip29-service PUBLIC groundhog-nip29 groundhog-net
-    groundhog-store groundhog-auth-policy groundhog-conversations groundhog-diagnostics)
+    groundhog-store groundhog-auth-policy groundhog-conversations groundhog-diagnostics
+    groundhog-account-relays)
   target_compile_options(groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
   if (TARGET test-groundhog-remote-feature-matrix)
     target_link_libraries(test-groundhog-remote-feature-matrix PRIVATE groundhog-nip29-service)
@@ -2168,12 +2172,32 @@ if (TARGET groundhog-nip29 AND TARGET groundhog-store AND TARGET groundhog-auth-
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
     target_link_libraries(test-groundhog-nip29-service PRIVATE groundhog-nip29 groundhog-net
       groundhog-store-testhooks groundhog-auth-policy groundhog-conversations
-      PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
+      groundhog-account-relays PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
     target_compile_options(test-groundhog-nip29-service PRIVATE -Wall -Wextra -Werror)
     groundhog_store_link_sqlcipher_first(test-groundhog-nip29-service)
     add_dependencies(test-groundhog-nip29-service groundhog-test-schemas)
     add_test(NAME groundhog-nip29-service COMMAND test-groundhog-nip29-service)
     set_tests_properties(groundhog-nip29-service PROPERTIES TIMEOUT 180
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
+    # nostrc-90jof: the account's kind-10009 group list against local relays
+    # (a NIP-29 group relay and two plain list relays as the discovery and
+    # 10002 write relays), with GhAccountRelays, the service and the list as
+    # the application makes them: encrypted publish on join and leave,
+    # restore offered (never automatic) on a new store, newest wins, local
+    # groups never dropped, public items kept, fail closed.
+    add_executable(test-groundhog-nip29-group-list tests/nip29/test_nip29_group_list.c
+      src/store/gh-store-reactions.c ${GROUNDHOG_NIP29_SERVICE_SOURCES})
+    target_include_directories(test-groundhog-nip29-group-list PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/nip29 ${CMAKE_CURRENT_SOURCE_DIR}/src/store
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/app)
+    target_link_libraries(test-groundhog-nip29-group-list PRIVATE groundhog-nip29 groundhog-net
+      groundhog-store-testhooks groundhog-auth-policy groundhog-conversations
+      groundhog-account-relays PkgConfig::GROUNDHOG_RELAY_WIRE_TEST nostrc-test-bus)
+    target_compile_options(test-groundhog-nip29-group-list PRIVATE -Wall -Wextra -Werror)
+    groundhog_store_link_sqlcipher_first(test-groundhog-nip29-group-list)
+    add_dependencies(test-groundhog-nip29-group-list groundhog-test-schemas)
+    add_test(NAME groundhog-nip29-group-list COMMAND test-groundhog-nip29-group-list)
+    set_tests_properties(groundhog-nip29-group-list PROPERTIES TIMEOUT 180
       ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${GROUNDHOG_TEST_SCHEMAS};GSETTINGS_BACKEND=memory;G_DEBUG=fatal-criticals")
   endif()
 else()
@@ -2803,7 +2827,7 @@ if (TARGET groundhog-nip29-service AND TARGET groundhog-conversation-ui AND
     TARGET groundhog-recipient AND TARGET groundhog-privacy-summary)
   message(STATUS "Groundhog NIP-29 group UI: enabled")
   set(GROUNDHOG_GROUP_UI_SOURCES src/ui/gh-group-copy.c src/ui/gh-group-join-page.c
-    src/ui/gh-group-info-dialog.c src/ui/gh-new-group-page.c)
+    src/ui/gh-group-info-dialog.c src/ui/gh-new-group-page.c src/ui/gh-group-restore-dialog.c)
   add_library(groundhog-group-ui STATIC ${GROUNDHOG_GROUP_UI_SOURCES})
   target_include_directories(groundhog-group-ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
   target_link_libraries(groundhog-group-ui PUBLIC groundhog-nip29-service

@@ -33,7 +33,10 @@
 #include "gh-group-copy.h"
 #include "gh-group-info-dialog.h"
 #include "gh-group-join-page.h"
+#include "gh-group-restore-dialog.h"
 #include "gh-group-ui.h"
+#include "gh-account-relays.h"
+#include "gh-nip29-group-list.h"
 #if GH_TEST_HAVE_NEW_MESSAGE
 #include "gh-new-message-page.h"
 #endif
@@ -1706,6 +1709,176 @@ test_gui_window(void)
   nip29_relay_clear(&relay);
 }
 
+/* ---- Restore Groups (nostrc-90jof) --------------------------------------------------- */
+
+static void save_png_as(GtkWidget *window, const char *dir, const char *prefix,
+                        const char *name);
+
+static gboolean
+restore_dialog_shown(gpointer window)
+{
+  GtkWidget *dialog = find_type(GTK_WIDGET(window), GH_TYPE_GROUP_RESTORE_DIALOG, NULL);
+  return dialog && gh_test_dialog_shown(dialog);
+}
+
+static gboolean
+restore_dialog_gone(gpointer window)
+{
+  return find_type(GTK_WIDGET(window), GH_TYPE_GROUP_RESTORE_DIALOG, NULL) == NULL;
+}
+
+static gboolean
+relays_ready(gpointer relays)
+{
+  return gh_account_relays_get_state(relays) == GH_ACCOUNT_RELAYS_COMPLETE &&
+         gh_account_relays_get_write_relays(relays) != NULL;
+}
+
+static gboolean
+nothing_restorable(gpointer list)
+{
+  g_autoptr(GPtrArray) groups = gh_nip29_group_list_dup_restorable(list);
+  return groups->len == 0;
+}
+
+typedef struct {
+  Fixture *f;
+  GhNip29GroupList *list;
+} RestoreUi;
+
+static GhNip29Service *
+restore_service(gpointer data)
+{
+  return ((RestoreUi *)data)->f->service;
+}
+
+static GhNip29GroupList *
+restore_list(gpointer data)
+{
+  return ((RestoreUi *)data)->list;
+}
+
+/* An event signed by the account (another device of it), as JSON. */
+static gchar *
+account_signed(gint kind, NostrTags *tags, const gchar *content)
+{
+  NostrEvent *event = nostr_event_new();
+  nostr_event_set_kind(event, kind);
+  nostr_event_set_created_at(event, g_get_real_time() / G_USEC_PER_SEC - 60);
+  nostr_event_set_content(event, content ? content : "");
+  nostr_event_set_tags(event, tags);
+  g_assert_cmpint(nostr_event_sign(event, gh_test_secret[KEY_ALICE]), ==, 0);
+  gchar *json = nip29_event_json(event);
+  nostr_event_free(event);
+  return json;
+}
+
+static void
+put_event(Nip29Relay *relay, const gchar *json)
+{
+  NostrEvent *event = nostr_event_new();
+  g_assert_cmpint(nostr_event_deserialize_signed(event, json, NULL), ==,
+                  NOSTR_EVENT_VALIDATION_OK);
+  nip29_store(relay, event);
+}
+
+/* A new device of an account whose group list (another device's) names
+ * two groups: "Restore Groups?" comes up once the window is shown, lists
+ * both checked; Restore with one unchecked joins only the other through the
+ * service, and the unchecked one is not offered again. */
+static void
+test_gui_restore(void)
+{
+  Fixture f;
+  fixture_up(&f);
+  Nip29Relay relay, lists;
+  nip29_relay_init(&relay);
+  nip29_relay_init(&lists);
+  lists.accept_lists = TRUE;
+  nip29_add_group(&relay, "pizza", "Pizza Lovers");
+  nip29_add_group(&relay, "tacos", "Taco Tuesday");
+  NostrTags *relay_tags = nostr_tags_new(0);
+  nostr_tags_append(relay_tags, nostr_tag_new("r", lists.url, "write", NULL));
+  g_autofree gchar *relay_list = account_signed(10002, relay_tags, NULL);
+  put_event(&lists, relay_list);
+  /* tacos in the clear (another client), pizza privately (Groundhog). */
+  g_autofree gchar *plaintext = g_strdup_printf("[[\"group\",\"pizza\",\"%s\",\"Pizza Lovers\"],"
+                                                "[\"r\",\"%s\"]]", relay.url, relay.url);
+  guint8 sk[32], pk[32];
+  g_assert_true(nostr_hex2bin(sk, gh_test_secret[KEY_ALICE], sizeof sk));
+  g_assert_true(nostr_hex2bin(pk, hex_alice, sizeof pk));
+  char *ciphertext = NULL;
+  g_assert_cmpint(nostr_nip44_encrypt_v2(sk, pk, (const guint8 *)plaintext, strlen(plaintext),
+                                         &ciphertext), ==, 0);
+  NostrTags *list_tags = nostr_tags_new(0);
+  nostr_tags_append(list_tags, nostr_tag_new("group", "tacos", relay.url, "Taco Tuesday", NULL));
+  g_autofree gchar *group_list = account_signed(GH_NIP29_GROUP_LIST_KIND, list_tags, ciphertext);
+  free(ciphertext);
+  put_event(&lists, group_list);
+  const gchar *discovery[] = { lists.url, NULL };
+  g_settings_set_strv(f.settings, "discovery-relays", discovery);
+  GhAccountRelays *own = gh_account_relays_new(f.accounts, f.settings, NULL, NULL);
+  gh_test_spin_until(relays_ready, own);
+  GhNip29GroupListConfig config = {
+    .accounts = f.accounts,
+    .account_relays = own,
+    .settings = f.settings,
+    .service = f.service,
+  };
+  RestoreUi ui = { &f, gh_nip29_group_list_new(&config) };
+
+  GtkWindow *window = test_window();
+  gh_conversation_list_attach(GH_WINDOW(window), f.model, NULL);
+  GhGroupUiConfig attach = { .conversations = f.model, .service = restore_service,
+                             .service_data = &ui, .group_list = restore_list };
+  gh_group_ui_attach(GH_WINDOW(window), &attach);
+  gh_test_spin_until(restore_dialog_shown, window);
+  GhGroupRestoreDialog *dialog = GH_GROUP_RESTORE_DIALOG(
+    find_type(GTK_WIDGET(window), GH_TYPE_GROUP_RESTORE_DIALOG, NULL));
+  /* Nothing joined before the user answers; Not Now is the default. */
+  g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(f.service)), ==, 0);
+  g_assert_cmpstr(adw_alert_dialog_get_default_response(ADW_ALERT_DIALOG(dialog)), ==,
+                  GH_GROUP_RESTORE_RESPONSE_NOT_NOW);
+  g_assert_cmpstr(adw_alert_dialog_get_heading(ADW_ALERT_DIALOG(dialog)), ==,
+                  "Restore Groups?");
+  g_autoptr(GPtrArray) all = gh_group_restore_dialog_dup_selected(dialog);
+  g_assert_cmpuint(all->len, ==, 2);
+  const gchar *shots = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (shots && *shots)
+    save_png_as(GTK_WIDGET(window), shots, "groundhog-nip29-group-list", "restore");
+
+  /* Unchecking both disables Restore. */
+  GtkWidget *restore = find_button(GTK_WIDGET(dialog), "Restore");
+  g_assert_nonnull(restore);
+  gtk_check_button_set_active(gh_group_restore_dialog_get_check(dialog, 0), FALSE);
+  gtk_check_button_set_active(gh_group_restore_dialog_get_check(dialog, 1), FALSE);
+  g_assert_false(gtk_widget_get_sensitive(restore));
+  gtk_check_button_set_active(gh_group_restore_dialog_get_check(dialog, 1), TRUE);
+  g_assert_true(gtk_widget_get_sensitive(restore));
+  if (shots && *shots)
+    save_png_as(GTK_WIDGET(window), shots, "groundhog-nip29-group-list", "restore-one");
+
+  g_signal_emit_by_name(restore, "clicked");
+  gh_test_spin_until(restore_dialog_gone, window);
+  g_autoptr(GhNip29Room) pizza = gh_nip29_service_lookup(f.service, relay.url, "pizza");
+  g_assert_nonnull(pizza);
+  wait_join(pizza, GH_NIP29_JOIN_MEMBER);
+  g_autoptr(GhNip29Room) tacos = gh_nip29_service_lookup(f.service, relay.url, "tacos");
+  g_assert_null(tacos);
+  /* tacos is not offered again: no second dialog. */
+  gh_test_spin_until(nothing_restorable, ui.list);
+  drain();
+  g_assert_true(restore_dialog_gone(window));
+
+  gtk_window_destroy(window);
+  drain();
+  gh_test_release(ui.list);
+  gh_test_release(own);
+  fixture_down(&f);
+  nip29_relay_clear(&relay);
+  nip29_relay_clear(&lists);
+}
+
 /* ---- screenshots (opt-in evidence) ----------------------------------------------------- */
 
 /* The window's render node once it has one: a frame under load may still
@@ -2050,6 +2223,7 @@ main(int argc, char **argv)
     g_test_add_func("/groundhog/group-ui-gui/group-info", test_gui_group_info);
     g_test_add_func("/groundhog/group-ui-gui/new-group", test_gui_new_group);
     g_test_add_func("/groundhog/group-ui-gui/window", test_gui_window);
+    g_test_add_func("/groundhog/group-ui-gui/restore", test_gui_restore);
     g_test_add_func("/groundhog/group-ui-gui/screenshots", test_gui_screenshots);
 #if GH_TEST_HAVE_NEW_MESSAGE
     g_test_add_func("/groundhog/group-ui-gui/panels", test_gui_panels);

@@ -31,6 +31,11 @@
  *    author as its "admin" (OK true); without allow_create "blocked:", for a
  *    group that exists "invalid:". 9002 sets name, about, private and
  *    closed as sent (the complete metadata, as NIP-29 edits replace it).
+ *  - accept_lists: also a plain relay for replaceable lists (kinds
+ *    10000-19999, e.g. the 10002 relay list and the NIP-51 kind-10009 group
+ *    list): the newest per author and kind is kept (NIP-01: created_at,
+ *    then the lowest id) and an older one is refused with OK false
+ *    "invalid: have a newer one".
  *  - NIP-42 (require_auth): each connection gets a challenge; until it has
  *    authenticated, a REQ is CLOSED "auth-required:" and an EVENT is OK false
  *    "auth-required:". refuse_auth answers every AUTH with OK false.
@@ -98,6 +103,7 @@ typedef struct {
   gboolean nip11_redirect;
   gboolean nip11_huge;
   gboolean allow_create;    /* 9007 creates groups (G20b) */
+  gboolean accept_lists;    /* replaceable lists 10000-19999 (nostrc-90jof) */
   gboolean hold_reqs;       /* REQs wait for nip29_release_reqs() */
   gboolean hold_nip11;      /* Groundhog's NIP-11 GETs wait for nip29_release_nip11() */
   GPtrArray *held_reqs;     /* Nip29HeldReq, in arrival order */
@@ -261,8 +267,29 @@ nip29_store(Nip29Relay *relay, NostrEvent *event)
         g_ptr_array_remove_index(relay->events, i - 1);
     }
   }
+  if (kind >= 10000 && kind < 20000) {
+    for (guint i = relay->events->len; i > 0; i--) {
+      NostrEvent *old = g_ptr_array_index(relay->events, i - 1);
+      if (nostr_event_get_kind(old) == kind &&
+          g_strcmp0(nostr_event_get_pubkey(old), nostr_event_get_pubkey(event)) == 0)
+        g_ptr_array_remove_index(relay->events, i - 1);
+    }
+  }
   g_ptr_array_add(relay->events, event);
   nip29_broadcast(relay, event);
+}
+
+/* The stored replaceable event of kind by author, or NULL (borrowed). */
+static G_GNUC_UNUSED NostrEvent *
+nip29_stored_list(Nip29Relay *relay, gint kind, const gchar *author)
+{
+  for (guint i = 0; i < relay->events->len; i++) {
+    NostrEvent *event = g_ptr_array_index(relay->events, i);
+    if (nostr_event_get_kind(event) == kind &&
+        g_strcmp0(nostr_event_get_pubkey(event), author) == 0)
+      return event;
+  }
+  return NULL;
 }
 
 /* The relay's clock for what it signs now: real time, strictly increasing.
@@ -464,6 +491,19 @@ nip29_on_event(Nip29Relay *relay, SoupWebsocketConnection *connection, NostrEven
   if (nip29_stored(relay, nip29_event_id(event))) {
     nip29_ok(relay, connection, event, TRUE, "duplicate: already have this event");
     nostr_event_free(event);
+    return;
+  }
+  if (relay->accept_lists && kind >= 10000 && kind < 20000) {
+    NostrEvent *old = nip29_stored_list(relay, kind, author);
+    if (old && (nostr_event_get_created_at(old) > nostr_event_get_created_at(event) ||
+                (nostr_event_get_created_at(old) == nostr_event_get_created_at(event) &&
+                 g_strcmp0(nip29_event_id(old), nip29_event_id(event)) < 0))) {
+      nip29_ok(relay, connection, event, FALSE, "invalid: have a newer one");
+      nostr_event_free(event);
+      return;
+    }
+    nip29_ok(relay, connection, event, TRUE, "");
+    nip29_store(relay, event);
     return;
   }
   if (kind == 9007) {

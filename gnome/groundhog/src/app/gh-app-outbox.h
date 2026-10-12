@@ -54,6 +54,10 @@ GhContactDirectory *gh_app_outbox_get_directory(GhAppOutbox *self);
  * gh-nip29-service.h), made beside each gh_app_outbox_create() outbox when
  * the build has them and disposed with it; NULL otherwise. Borrowed. */
 GObject *gh_app_outbox_get_nip29_service(GhAppOutbox *self);
+/* nostrc-90jof: that service's GhNip29GroupList (the account's kind-10009
+ * group list, gh-nip29-group-list.h), made and disposed with it; NULL
+ * otherwise. Borrowed. */
+GObject *gh_app_outbox_get_nip29_group_list(GhAppOutbox *self);
 
 /* qp24.13: the open store's encrypted groups (a GhMlsService,
  * gh-mls-service.h), made beside each gh_app_outbox_create() outbox when the

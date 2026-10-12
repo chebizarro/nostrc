@@ -4,6 +4,7 @@
 #include "gh-conversation-list.h"
 #include "gh-group-info-dialog.h"
 #include "gh-new-group-page.h"
+#include "gh-nip29-group-list.h"
 #include "gh-window.h"
 
 G_BEGIN_DECLS
@@ -30,16 +31,24 @@ G_BEGIN_DECLS
  *  - Older history (charter §7.6): a relay group's older stored messages come
  *    from gh_nip29_service_load_older(); other rooms' from load_older.
  *    (Pages the relay never sent are nostrc-x055.)
+ *  - Restore Groups (nostrc-90jof): see GhGroupUiConfig.group_list.
  * Nothing here contacts the network before the user acts in a dialog or the
  * composer. Everything is released with window.
  */
 
 typedef GhNip29Service *(*GhGroupUiServiceFunc)(gpointer user_data);
+typedef GhNip29GroupList *(*GhGroupUiGroupListFunc)(gpointer user_data);
 
 typedef struct {
   GhConversationStore *conversations; /* required: the window's model */
   GhGroupUiServiceFunc service;       /* required: the open store's, or NULL */
   gpointer service_data;
+  /* Nullable (nostrc-90jof): the open store's group list (kind 10009), on
+   * service_data. When it has groups this device lacks, "Restore Groups?"
+   * (GhGroupRestoreDialog) is presented once the window is shown; Restore
+   * joins the checked ones (gh_nip29_group_list_restore()), and the others,
+   * or all on "Not Now", are not offered again this session. */
+  GhGroupUiGroupListFunc group_list;
   /* Nullable: emits "changed" when the service may have changed (the
    * GhAccountStore). */
   GObject *state_source;
