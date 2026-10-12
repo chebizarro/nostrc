@@ -420,6 +420,8 @@ int main(int argc, char **argv) {
 
   gnostr_ensure_gsettings_schemas(argv[0]);
   g_set_prgname("gnostr");
+  /* nostrc-wqn0u: under test, never against the owner's profile. */
+  gnostr_assert_private_profile();
 
   /* Initialize libadwaita - required for adaptive/responsive features */
 #ifdef __APPLE__

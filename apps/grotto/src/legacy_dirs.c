@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <glib/gstdio.h>
+#include <nostrc-profile-guard.h>
 
 /* The directory name before the rename (W31). The only place it may appear:
  * scripts/check-grotto-names.sh allows it here. */
@@ -37,6 +38,9 @@ grotto_legacy_dir_migrate_in(const gchar *base)
 void
 grotto_legacy_dirs_migrate(void)
 {
+  /* Both Grotto programs start here: under test (NOSTRC_TEST_ISOLATION) they
+   * refuse to run on the owner's real profile (nostrc-wqn0u). */
+  nostrc_profile_guard_assert_user_dirs("grotto");
   grotto_legacy_dir_migrate_in(g_get_user_config_dir());
   grotto_legacy_dir_migrate_in(g_get_user_data_dir());
   grotto_legacy_dir_migrate_in(g_get_user_cache_dir());

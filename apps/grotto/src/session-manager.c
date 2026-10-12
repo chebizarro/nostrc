@@ -12,6 +12,7 @@
 #include "settings_manager.h"
 #include "rate-limiter.h"
 #include "secure-mem.h"
+#include <nostrc-profile-guard.h>
 
 #include <string.h>
 
@@ -121,6 +122,9 @@ static gboolean
 load_password_from_store(GnSessionManager *self)
 {
 #ifdef GNOSTR_HAVE_LIBSECRET
+  /* nostrc-wqn0u: never the owner's Secret Service under test. */
+  if (nostrc_profile_guard_refuses_session_keyring())
+    return FALSE;
   GError *err = NULL;
 
   /* Define schema inline for session password */
@@ -165,6 +169,9 @@ static gboolean
 save_password_to_store(GnSessionManager *self, const gchar *hash)
 {
 #ifdef GNOSTR_HAVE_LIBSECRET
+  /* nostrc-wqn0u: never the owner's Secret Service under test. */
+  if (nostrc_profile_guard_refuses_session_keyring())
+    return FALSE;
   GError *err = NULL;
 
   static const SecretSchema SESSION_SCHEMA = {
@@ -207,6 +214,9 @@ static gboolean
 clear_password_from_store(void)
 {
 #ifdef GNOSTR_HAVE_LIBSECRET
+  /* nostrc-wqn0u: never the owner's Secret Service under test. */
+  if (nostrc_profile_guard_refuses_session_keyring())
+    return FALSE;
   GError *err = NULL;
 
   static const SecretSchema SESSION_SCHEMA = {

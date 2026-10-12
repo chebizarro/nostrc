@@ -682,3 +682,10 @@ if(APPLE)
     message(STATUS "  - macos-dmg-notarized: Build notarized DMG (requires Apple credentials)")
   endif()
 endif()
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(grotto-test-homes)
+endif()

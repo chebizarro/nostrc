@@ -413,3 +413,29 @@ add_custom_target(signer-tests
 # Issue: nostrc-p7f6
 # ==============================================================================
 add_subdirectory(fuzz)
+
+# ==============================================================================
+# Test: the profile guard (nostrc-wqn0u) - under test the real secret store,
+# start-up and AccountsStore code refuse the owner's profile and key stores.
+# ==============================================================================
+if(TARGET grotto_bunker_core)
+    add_executable(test-profile-guard test-profile-guard.c)
+    target_include_directories(test-profile-guard PRIVATE
+        ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/tests/common)
+    target_link_libraries(test-profile-guard PRIVATE grotto_bunker_core ${SIGNER_TEST_LIBS})
+    target_link_directories(test-profile-guard PRIVATE ${SIGNER_TEST_LINK_DIRS})
+    target_compile_features(test-profile-guard PRIVATE c_std_11)
+    target_compile_options(test-profile-guard PRIVATE -Wall -Wextra -Werror)
+    apply_test_sanitizers(test-profile-guard)
+    add_test(NAME signer/profile-guard COMMAND test-profile-guard)
+    set_tests_properties(signer/profile-guard PROPERTIES
+        TIMEOUT 60
+        LABELS "signer;security;unit")
+endif()
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(grotto-tests-test-homes)
+endif()

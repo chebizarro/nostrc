@@ -451,7 +451,8 @@ install(TARGETS nostr
 )
 install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr
-  FILES_MATCHING PATTERN "*.h" PATTERN "nostr-config.h.in" EXCLUDE PATTERN "nostr-pointer.h" EXCLUDE)
+  FILES_MATCHING PATTERN "*.h" PATTERN "nostr-config.h.in" EXCLUDE PATTERN "nostr-pointer.h" EXCLUDE
+  PATTERN "nostrc-profile-guard.h" EXCLUDE)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/generated/nostr-config.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nostr)
 

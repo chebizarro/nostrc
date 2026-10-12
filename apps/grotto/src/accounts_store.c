@@ -19,6 +19,7 @@
 #include "secure-delete.h"
 #include "secure-mem.h"
 #include "secure-memory.h"
+#include <nostrc-profile-guard.h>
 #include "key_provider.h"
 #include "key_provider_secp256k1.h"
 #include <nostr-gobject-1.0/nostr_nip19.h>
@@ -64,6 +65,10 @@ static const char *config_path(void) {
   if (!p) {
     const char *conf = g_get_user_config_dir();
     gchar *dir = g_build_filename(conf, "grotto", NULL);
+    /* nostrc-wqn0u: never the owner's identity list under test. */
+    if (nostrc_profile_guard_refuses_path(dir))
+      g_error("accounts_store: %s is the real profile; refusing it under test "
+              "(NOSTRC_TEST_ISOLATION)", dir);
     g_mkdir_with_parents(dir, 0700);
     p = g_build_filename(dir, "accounts.ini", NULL);
     g_free(dir);

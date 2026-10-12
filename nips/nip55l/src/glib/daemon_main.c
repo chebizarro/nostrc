@@ -1,4 +1,5 @@
 #include <gio/gio.h>
+#include <nostrc-profile-guard.h>
 
 #include "nip55l_nip5f.h"
 
@@ -58,6 +59,8 @@ static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointe
 
 int main(int argc, char **argv){
   (void)argc;(void)argv;
+  /* nostrc-wqn0u: under test, never against the owner's profile. */
+  nostrc_profile_guard_assert_user_dirs("nostr-signer-daemon");
   loop = g_main_loop_new(NULL, FALSE);
   guint owner_id = g_bus_own_name(G_BUS_TYPE_SESSION,
                                   SIGNER_NAME,

@@ -21,6 +21,7 @@
 #include <nostr/nip19/nip19.h>
 #include <keys.h>
 #include <gio/gio.h>  /* For GTask async API */
+#include <nostrc-profile-guard.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -42,6 +43,31 @@
  * KC_SIGNER_SERVICE) so both processes see the same items. */
 #define GNOSTR_KC_SERVICE "Gnostr Identity Key"
 #endif
+
+/* nostrc-wqn0u: under test (NOSTRC_TEST_ISOLATION) this client never reads
+ * the owner's key store: not the login Keychain, and the Secret Service only
+ * on a private test bus. */
+static gboolean store_refused(const gchar *what) {
+#if defined(GNOSTR_HAVE_LIBSECRET)
+  gboolean refused = nostrc_profile_guard_refuses_session_keyring();
+#elif defined(GNOSTR_HAVE_KEYCHAIN)
+  gboolean refused = nostrc_profile_guard_refuses_default_keychain();
+#else
+  gboolean refused = FALSE;
+#endif
+  if (refused)
+    g_message("secret_store: %s refused under test: the user's key store is off limits", what);
+  return refused;
+}
+
+/* The signer daemon on the session bus holds keys too; under test only one
+ * on a private test bus may be asked to store or clear them. */
+static gboolean daemon_refused(const gchar *what) {
+  if (!nostrc_profile_guard_refuses_session_keyring()) return FALSE;
+  g_message("secret_store: %s refused under test: the session bus is not a private test bus",
+            what);
+  return TRUE;
+}
 
 /* Internal helpers */
 static gboolean is_hex_64(const gchar *s) {
@@ -153,6 +179,7 @@ static gchar *get_iso8601_timestamp(void) {
 #endif
 
 gboolean secret_store_is_available(void) {
+  if (store_refused("availability check")) return FALSE;
 #ifdef GNOSTR_HAVE_LIBSECRET
   /* Check if secret service is reachable */
   GError *err = NULL;
@@ -204,6 +231,7 @@ static SecretStoreResult result_from_dbus_error(const gchar *what, GError *err) 
 /* Blocking StoreKey; safe from the GTask worker threads below. */
 static SecretStoreResult daemon_store_key(const gchar *key, const gchar *label, gchar **out_npub) {
   if (out_npub) *out_npub = NULL;
+  if (daemon_refused("StoreKey")) return SECRET_STORE_ERR_PERMISSION;
   GError *err = NULL;
   g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus) return result_from_dbus_error("StoreKey (no session bus)", err);
@@ -235,6 +263,7 @@ SecretStoreResult secret_store_add(const gchar *key,
 
 SecretStoreResult secret_store_remove(const gchar *selector) {
   if (!selector || !*selector) return SECRET_STORE_ERR_INVALID_KEY;
+  if (daemon_refused("ClearKey")) return SECRET_STORE_ERR_PERMISSION;
   GError *err = NULL;
   g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &err);
   if (!bus) {
@@ -266,6 +295,7 @@ void secret_store_entry_free(SecretStoreEntry *entry) {
 
 GPtrArray *secret_store_list(void) {
   GPtrArray *arr = g_ptr_array_new_with_free_func((GDestroyNotify)secret_store_entry_free);
+  if (store_refused("listing identities")) return arr;
 
 #ifdef GNOSTR_HAVE_LIBSECRET
   GError *err = NULL;
@@ -508,6 +538,7 @@ SecretStoreResult secret_store_set_label(const gchar *selector,
 
 gboolean secret_store_has_secret(const gchar *selector) {
   if (!selector || !*selector) return FALSE;
+  if (store_refused("identity lookup")) return FALSE;
 #ifdef GNOSTR_HAVE_LIBSECRET
   const char *keys[] = { "npub", "key_id" };
   for (guint k = 0; k < G_N_ELEMENTS(keys); k++) {
@@ -548,6 +579,7 @@ SecretStoreResult secret_store_get_secret(const gchar *selector,
                                           gchar **out_nsec) {
   if (!out_nsec) return SECRET_STORE_ERR_INVALID_KEY;
   *out_nsec = NULL;
+  if (store_refused("secret lookup")) return SECRET_STORE_ERR_PERMISSION;
 
 #ifdef GNOSTR_HAVE_LIBSECRET
   GError *err = NULL;
@@ -655,6 +687,7 @@ SecretStoreResult secret_store_lookup_by_fingerprint(const gchar *fingerprint,
   /* Validate and normalize fingerprint */
   gsize len = strlen(fingerprint);
   if (len < 4 || len > 64) return SECRET_STORE_ERR_INVALID_KEY;
+  if (store_refused("fingerprint lookup")) return SECRET_STORE_ERR_PERMISSION;
 
   gchar *fp_lower = g_ascii_strdown(fingerprint, len);
 

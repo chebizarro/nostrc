@@ -178,3 +178,10 @@ if(BUILD_TESTING)
       LABELS "nostr-signer-webext-host" TIMEOUT 60)
   endif()
 endif()
+
+# Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
+# (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
+if (BUILD_TESTING)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(grotto-native-host-test-homes)
+endif()

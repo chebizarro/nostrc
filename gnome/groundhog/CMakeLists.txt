@@ -3678,7 +3678,8 @@ endif()
 # A test-key account once got a store under the developer's real
 # ~/.local/share/groundhog and an item in the login Keychain. Every Groundhog
 # CTest entry now runs with HOME and the XDG base directories in a private
-# directory of its own, recreated by a setup fixture on every run, and with
+# directory of its own, recreated by a setup fixture on every run
+# (cmake/NostrcTestIsolation.cmake, shared with Grotto and GNostr), and with
 # NOSTRC_TEST_ISOLATION=1: the store, store-key and NIP-46 credential code
 # then refuse the real data home and the default Keychain
 # (src/store/gh-profile-guard.h), children inherit that, and
@@ -3699,30 +3700,12 @@ if (BUILD_TESTING)
       ENVIRONMENT "G_DEBUG=fatal-criticals")
   endif()
 
-  set(_gh_test_homes "${CMAKE_CURRENT_BINARY_DIR}/test-homes")
   # GStreamer keeps its plugin registry in XDG_CACHE_HOME; one registry for
   # the build, built once by the setup fixture, instead of a full plugin scan
   # in every fresh per-test cache.
   set(_gh_gst_registry "${CMAKE_CURRENT_BINARY_DIR}/gst-registry.bin")
-  get_property(_gh_tests DIRECTORY PROPERTY TESTS)
-  set(_gh_test_home_script "${CMAKE_CURRENT_BINARY_DIR}/groundhog-test-homes.cmake")
-  set(_gh_test_home_body "file(REMOVE_RECURSE \"${_gh_test_homes}\")\n")
-  foreach (_gh_test IN LISTS _gh_tests)
-    set(_home "${_gh_test_homes}/${_gh_test}")
-    string(APPEND _gh_test_home_body
-      "file(MAKE_DIRECTORY \"${_home}/home\" \"${_home}/data\" \"${_home}/config\" "
-      "\"${_home}/cache\" \"${_home}/state\")\n")
-    set_property(TEST ${_gh_test} APPEND PROPERTY ENVIRONMENT
-      "NOSTRC_TEST_ISOLATION=1" "HOME=${_home}/home" "XDG_DATA_HOME=${_home}/data"
-      "XDG_CONFIG_HOME=${_home}/config" "XDG_CACHE_HOME=${_home}/cache"
-      "XDG_STATE_HOME=${_home}/state" "GST_REGISTRY=${_gh_gst_registry}")
-    set_property(TEST ${_gh_test} APPEND PROPERTY FIXTURES_REQUIRED groundhog-test-homes)
-  endforeach()
-  string(APPEND _gh_test_home_body "file(CHMOD_RECURSE \"${_gh_test_homes}\" "
-    "DIRECTORY_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE)\n")
-  file(WRITE "${_gh_test_home_script}" "${_gh_test_home_body}")
-  add_test(NAME groundhog-test-homes COMMAND ${CMAKE_COMMAND} -P "${_gh_test_home_script}")
-  set_tests_properties(groundhog-test-homes PROPERTIES FIXTURES_SETUP groundhog-test-homes)
+  include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestIsolation.cmake)
+  nostrc_isolate_tests(groundhog-test-homes ENVIRONMENT "GST_REGISTRY=${_gh_gst_registry}")
   find_program(GROUNDHOG_GST_INSPECT gst-inspect-1.0)
   if (GROUNDHOG_GST_INSPECT)
     add_test(NAME groundhog-test-gst-registry COMMAND ${GROUNDHOG_GST_INSPECT} coreelements)

@@ -19,6 +19,7 @@
 #include <keys.h>
 
 #include <secure_buf.h>
+#include <nostrc-profile-guard.h>
 
 #include <secp256k1.h>
 #include <secp256k1_schnorrsig.h>
@@ -34,12 +35,39 @@
 #include "seahorse/secret_store.h"
 #endif
 
+/* nostrc-wqn0u: under test (NOSTRC_TEST_ISOLATION) the signer never uses
+ * the owner's key store: not the login Keychain, and the Secret Service only
+ * on a private test bus. Writes and clears fail; lookups see no store. The
+ * NIP55L_KEYCHAIN_TEST_HOOKS migration code pins its own queries to a
+ * throwaway keychain (kc_scope) and is not affected. */
+static int key_store_refused(const char *what){
+#if defined(NIP55L_HAVE_LIBSECRET)
+  int refused = nostrc_profile_guard_refuses_session_keyring();
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  int refused = nostrc_profile_guard_refuses_default_keychain();
+#else
+  int refused = 0;
+#endif
+  if (refused)
+    g_message("nip55l: %s refused under test: the user's key store is off limits", what);
+  return refused;
+}
+
 #ifdef NIP55L_HAVE_KEYCHAIN
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
 /* kSecAttrService value shared with the GUI (secret_store.c
  * GNOSTR_KC_SERVICE) so both processes see the same items. */
 #define KC_SIGNER_SERVICE        "Gnostr Identity Key"
+
+/* Every login-Keychain read outside the scoped migration code. */
+static OSStatus kc_copy_matching(CFDictionaryRef query, CFTypeRef *result){
+  if (key_store_refused("Keychain lookup")) {
+    if (result) *result = NULL;
+    return errSecItemNotFound;
+  }
+  return SecItemCopyMatching(query, result);
+}
 
 static int keychain_lookup_status(OSStatus status){
   if (status == errSecSuccess) return 0;
@@ -143,7 +171,7 @@ static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_h
   CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
   CFDictionarySetValue(q, kSecReturnPersistentRef, kCFBooleanTrue);
   CFTypeRef result = NULL;
-  OSStatus st = SecItemCopyMatching(q, &result);
+  OSStatus st = kc_copy_matching(q, &result);
   CFRelease(q);
   CFRelease(service);
   if (st != errSecSuccess || !result) {
@@ -187,7 +215,7 @@ static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_h
   CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
   CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
   CFTypeRef secret = NULL;
-  st = SecItemCopyMatching(q, &secret);
+  st = kc_copy_matching(q, &secret);
   CFRelease(q);
   CFRelease(result);
   if (st != errSecSuccess || !secret) {
@@ -265,8 +293,20 @@ static gboolean secret_service_absent(const GError *e){
                g_error_matches(e, G_DBUS_ERROR, G_DBUS_ERROR_NAME_HAS_NO_OWNER));
 }
 
+#define NIP55L_REFUSED_ERROR g_quark_from_static_string("nip55l-profile-guard")
+
+/* Every Secret Service connection: refused under test off a private bus. */
+static SecretService *ss_get(GError **error){
+  if (key_store_refused("Secret Service")) {
+    g_set_error_literal(error, NIP55L_REFUSED_ERROR, 0,
+                        "the session keyring is off limits under test");
+    return NULL;
+  }
+  return secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
+}
+
 static int store_error_rc(const char *what, const GError *e){
-  if (secret_service_absent(e)) {
+  if (secret_service_absent(e) || (e && e->domain == NIP55L_REFUSED_ERROR)) {
     g_debug("nip55l: no Secret Service: %s", e->message);
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
   }
@@ -276,7 +316,7 @@ static int store_error_rc(const char *what, const GError *e){
 
 static int store_service(SecretService **out_service){
   GError *e = NULL;
-  *out_service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &e);
+  *out_service = ss_get(&e);
   if (*out_service) return 0;
   int rc = store_error_rc("unavailable", e);
   g_clear_error(&e);
@@ -494,7 +534,7 @@ static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
       if (service) { CFDictionarySetValue(q, kSecAttrService, service); }
       CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
       CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
-      CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
+      CFTypeRef result = NULL; OSStatus st = kc_copy_matching(q, &result);
       if (service) CFRelease(service);
       if (q) CFRelease(q);
       if (st == errSecSuccess && result) {
@@ -554,7 +594,7 @@ static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
     CFDictionarySetValue(q, kSecAttrAccount, account);
     CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
     CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
-    CFTypeRef result = NULL; OSStatus st = SecItemCopyMatching(q, &result);
+    CFTypeRef result = NULL; OSStatus st = kc_copy_matching(q, &result);
     if (st == errSecItemNotFound) {
       /* Try comment == selector */
       CFDictionaryRemoveValue(q, kSecAttrAccount);
@@ -567,7 +607,7 @@ static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
         return NOSTR_SIGNER_ERROR_BACKEND;
       }
       CFDictionarySetValue(q, kSecAttrComment, comment);
-      st = SecItemCopyMatching(q, &result);
+      st = kc_copy_matching(q, &result);
       CFRelease(comment);
     }
     CFRelease(service);
@@ -1200,6 +1240,7 @@ int nostr_nip55l_get_relays(char **out_relays_json){
 
 int nostr_nip55l_store_key(const char *key, const char *identity){
   if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  if (key_store_refused("StoreKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
 #ifdef NIP55L_HAVE_LIBSECRET
   /* Interpret 'identity' as selector. Write both key_id and npub attributes to the same value. */
   const char *sel_in = (identity && *identity) ? identity : NULL;
@@ -1320,6 +1361,7 @@ int nostr_nip55l_clear_key(const char *identity){
   if (!identity || !*identity ||
       (g_cached_active_npub && strcmp(identity, g_cached_active_npub) == 0))
     signer_cache_clear();
+  if (key_store_refused("ClearKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
 #ifdef NIP55L_HAVE_LIBSECRET
   const char *sel = (identity && *identity) ? identity : "";
   GError *gerr = NULL;
@@ -1384,7 +1426,7 @@ static char *env_identity_npub(void){
 static int list_stored_identities(char ***out_npubs, int *out_count) {
 #ifdef NIP55L_HAVE_LIBSECRET
   GError *gerr = NULL;
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &gerr);
+  SecretService *service = ss_get(&gerr);
   if (!service) {
     int rc = store_error_rc("unavailable", gerr);
     g_clear_error(&gerr);
@@ -1432,7 +1474,7 @@ static int list_stored_identities(char ***out_npubs, int *out_count) {
   CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitAll);
   CFDictionarySetValue(q, kSecReturnAttributes, kCFBooleanTrue);
   CFTypeRef result = NULL;
-  OSStatus st = SecItemCopyMatching(q, &result);
+  OSStatus st = kc_copy_matching(q, &result);
   if (service) CFRelease(service);
   CFRelease(q);
   if (st != errSecSuccess || !result) {
@@ -1526,7 +1568,7 @@ int nostr_nip55l_list_identities(char ***out_npubs, int *out_count) {
 #ifdef NIP55L_HAVE_LIBSECRET
 static SecretItem *find_identity_item(const char *selector){
   if (!selector || !*selector) return NULL;
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, NULL);
+  SecretService *service = ss_get(NULL);
   if (!service) return NULL;
   GError *gerr = NULL;
   /* Try key_id */
@@ -2064,7 +2106,7 @@ int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out){
   gboolean retry_later = FALSE;
   gchar uid_buf[32];
   g_snprintf(uid_buf, sizeof uid_buf, "%u", (unsigned)getuid());
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
+  SecretService *service = ss_get(&err);
   if (!service) {
     g_clear_error(&err);
     rc = NOSTR_SIGNER_ERROR_BACKEND;
@@ -2144,6 +2186,12 @@ done:
   if (out) *out = r;
   return rc;
 #elif defined(NIP55L_HAVE_KEYCHAIN)
+#ifndef NIP55L_KEYCHAIN_TEST_HOOKS
+  if (key_store_refused("legacy key migration")) {
+    if (out) *out = r;
+    return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+  }
+#endif
   int rc = kc_migrate_legacy_keys(&r);
   if (out) *out = r;
   return rc;
