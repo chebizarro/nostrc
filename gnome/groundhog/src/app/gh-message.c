@@ -2,6 +2,7 @@
 #include "gh-agent-event.h"
 
 #include <glib/gi18n.h>
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 
 #include <nostr-event.h>
 #include <nostr-tag.h>
@@ -357,6 +358,17 @@ gh_message_dup_display_text(GhMessage *self)
   if (self->kind == GH_MESSAGE_MLS_POLL_VOTE_KIND)
     /* TRANSLATORS: a vote on a poll in an encrypted group. */
     return g_strdup(_("Voted on a poll"));
+  /* A NIP-18 repost or quote reads as what it shares, never its JSON
+   * (nostrc-yarxx): the quote's own text, as the conversation shows it. */
+  g_autofree gchar *quote_text = NULL;
+  g_autoptr(GnNostrRepostDescriptor) shared = gn_nostr_shared_note_parse(self->content, &quote_text);
+  if (shared) {
+    g_autofree gchar *shown = shared->quote
+      ? gn_nostr_shared_note_shown_text(quote_text, shared->target) : NULL;
+    if (shown && *shown)
+      return g_steal_pointer(&shown);
+    return g_strdup(shared->quote ? _("Quoted Nostr note") : _("Reposted Nostr note"));
+  }
   return g_strdup(self->content);
 }
 

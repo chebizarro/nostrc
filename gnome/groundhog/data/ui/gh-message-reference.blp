@@ -16,45 +16,50 @@ Box reference_box {
     hexpand: true;
   }
 
-  Button reference_copy_button {
-    icon-name: "edit-copy-symbolic";
-    tooltip-text: _("Copy Nostr address");
-    halign: start;
-    action-name: "conversation.open-link";
-    action-target: "''";
-    styles ["flat"]
-  }
-
-  Button share_reference_button {
-    label: _("Share in Chat");
-    halign: start;
-    action-name: "conversation.share-reference";
-    action-target: "''";
-    styles ["flat"]
-  }
-
-  Box public_actions {
+  // The note's actions, in one line, once the card shows it
+  // (nostrc-1co3q); an unresolved card offers only its own Find on Relays…
+  Box reference_actions {
     spacing: 6;
     visible: false;
-    Button repost_reference_button {
-      label: _("Repost");
-      action-name: "conversation.repost-reference";
 
-      accessibility {
-        description: _("Opens a preview before anything is published publicly");
-      }
-
+    Button share_reference_button {
+      label: _("Share in Chat");
+      action-name: "conversation.share-reference";
       action-target: "''";
       styles ["flat"]
     }
-    Button quote_reference_button {
-      label: _("Quote…");
-      action-name: "conversation.quote-reference";
 
-      accessibility {
-        description: _("Opens a preview before anything is published publicly");
+    Box public_actions {
+      spacing: 6;
+      visible: false;
+      Button repost_reference_button {
+        label: _("Repost");
+        action-name: "conversation.repost-reference";
+
+        accessibility {
+          description: _("Opens a preview before anything is published publicly");
+        }
+
+        action-target: "''";
+        styles ["flat"]
       }
+      Button quote_reference_button {
+        label: _("Quote…");
+        action-name: "conversation.quote-reference";
 
+        accessibility {
+          description: _("Opens a preview before anything is published publicly");
+        }
+
+        action-target: "''";
+        styles ["flat"]
+      }
+    }
+
+    Button reference_copy_button {
+      icon-name: "edit-copy-symbolic";
+      tooltip-text: _("Copy Nostr address");
+      action-name: "conversation.open-link";
       action-target: "''";
       styles ["flat"]
     }

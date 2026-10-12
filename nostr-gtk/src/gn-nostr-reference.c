@@ -581,3 +581,77 @@ gchar *gn_nostr_build_quote_template(const GnNostrReference *target,
     comment && *comment ? "\n\n" : "", uri);
   return build_template(target, 1, content, TRUE);
 }
+
+/* ---- shared notes as chat bodies (nostrc-tv98u, nostrc-yarxx) ---------- */
+
+#define GN_SHARED_NOTE_MAX_BYTES (64u * 1024u)
+
+GnNostrRepostDescriptor *gn_nostr_shared_note_parse(const gchar *body, gchar **quote_content) {
+  if (quote_content) *quote_content = NULL;
+  if (!body || body[0] != '{' || strlen(body) > GN_SHARED_NOTE_MAX_BYTES)
+    return NULL;
+  GnNostrRepostDescriptor *repost = gn_nostr_repost_descriptor_parse(body, FALSE);
+  if (!repost || !repost->quote || !quote_content)
+    return repost;
+  g_autoptr(JsonParser) parser = json_parser_new();
+  if (!json_parser_load_from_data(parser, body, -1, NULL))
+    return repost;
+  JsonNode *root = json_parser_get_root(parser);
+  JsonObject *object = root && JSON_NODE_HOLDS_OBJECT(root) ? json_node_get_object(root) : NULL;
+  JsonNode *content = object ? json_object_get_member(object, "content") : NULL;
+  if (content && JSON_NODE_HOLDS_VALUE(content) &&
+      json_node_get_value_type(content) == G_TYPE_STRING) {
+    const gchar *text = json_node_get_string(content);
+    if (text && *text) *quote_content = g_utf8_make_valid(text, -1);
+  }
+  return repost;
+}
+
+gchar *gn_nostr_shared_note_shown_text(const gchar *quote_content,
+                                       const GnNostrReference *target) {
+  g_return_val_if_fail(target != NULL, NULL);
+  gchar *text = g_strchomp(g_strdup(quote_content ? quote_content : ""));
+  gchar *token = text + strlen(text);
+  while (token > text && !g_ascii_isspace(token[-1]))
+    token--;
+  if (g_str_has_prefix(token, "nostr:")) {
+    g_autoptr(GnNostrReference) named = gn_nostr_reference_parse(token);
+    if (named && named->type == target->type && named->id && target->id &&
+        g_ascii_strcasecmp(named->id, target->id) == 0) {
+      *token = '\0';
+      g_strchomp(text);
+    }
+  }
+  return text;
+}
+
+gchar *gn_nostr_shared_note_copy_text(const gchar *quote_content,
+                                      const GnNostrReference *target) {
+  g_return_val_if_fail(target != NULL, NULL);
+  if (!quote_content || !*quote_content)
+    return g_strdup(target->uri);
+  g_autofree gchar *full = g_strchomp(g_strdup(quote_content));
+  g_autofree gchar *shown = gn_nostr_shared_note_shown_text(quote_content, target);
+  if (g_strcmp0(full, shown) != 0)
+    return g_steal_pointer(&full);
+  return *shown ? g_strconcat(shown, "\n", target->uri, NULL) : g_strdup(target->uri);
+}
+
+gboolean gn_nostr_shared_note_dup_text(const gchar *body, gchar **shown_text, gchar **uri) {
+  g_autofree gchar *content = NULL;
+  g_autoptr(GnNostrRepostDescriptor) repost = gn_nostr_shared_note_parse(body, &content);
+  if (!repost)
+    return FALSE;
+  if (shown_text)
+    *shown_text = repost->quote ? gn_nostr_shared_note_shown_text(content, repost->target) : NULL;
+  if (uri) *uri = g_strdup(repost->target->uri);
+  return TRUE;
+}
+
+gchar *gn_nostr_shared_note_dup_copy_text(const gchar *body) {
+  g_autofree gchar *content = NULL;
+  g_autoptr(GnNostrRepostDescriptor) repost = gn_nostr_shared_note_parse(body, &content);
+  if (!repost)
+    return g_strdup(body);
+  return gn_nostr_shared_note_copy_text(content, repost->target);
+}

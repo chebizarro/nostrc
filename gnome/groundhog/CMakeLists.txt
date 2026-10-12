@@ -428,8 +428,10 @@ if (TARGET nostr AND TARGET nip19)
     src/app/gh-display-name.c)
   target_include_directories(groundhog-conversations PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/app
                              ${CMAKE_CURRENT_SOURCE_DIR}/src/relay)
+  # The shared NIP-18 note parse (nostrc-yarxx): a repost or quote reads as
+  # its text in every list, preview and notification, as in the conversation.
   target_link_libraries(groundhog-conversations PUBLIC nostr nip19 PkgConfig::GROUNDHOG_GIO
-                        PkgConfig::GROUNDHOG_AGENT_JSON)
+                        PkgConfig::GROUNDHOG_AGENT_JSON NostrGtk::Portable)
   target_compile_options(groundhog-conversations PRIVATE -Wall -Wextra -Werror)
   if (BUILD_TESTING)
     add_executable(test-groundhog-conversations tests/app/test_conversation_store.c)

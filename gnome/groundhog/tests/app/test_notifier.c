@@ -21,6 +21,7 @@
 #include "nostr-tag.h"
 #include "nostr-utils.h"
 #include "nostr/nip19/nip19.h"
+#include <nostr-gtk-1.0/gn-nostr-reference.h>
 #include "../ui/gh-test-active.h"
 
 #include <adwaita.h>
@@ -520,6 +521,49 @@ test_no1_preview(void)
   g_autofree gchar *body = g_strdup_printf("%s: hello group", author);
   g_assert_cmpstr(field(shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "2"), "body"), ==, body);
   fixture_down(&f);
+}
+
+/* nostrc-yarxx: a shared NIP-18 note notifies as the conversation shows it
+ * (its quote's text, or "Reposted Nostr note"), never its JSON; below the
+ * preview level, as any message, nothing of it. */
+static gchar *
+shared_note(gboolean quote)
+{
+  g_autofree gchar *uri = gn_nostr_reference_build_event(
+    "7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730", NULL, 1, NULL);
+  g_autoptr(GnNostrReference) reference = gn_nostr_reference_parse(uri);
+  g_assert_nonnull(reference);
+  return quote ? gn_nostr_build_quote_template(reference, CANARY " quoted")
+               : gn_nostr_build_repost_template(reference, NULL);
+}
+
+static void
+test_no1_shared_note(void)
+{
+  g_autofree gchar *quote = shared_note(TRUE);
+  g_autofree gchar *repost = shared_note(FALSE);
+  const gchar *const json[] = { "\"kind\"", "\"tags\"", "7d865e959b24", NULL };
+  for (guint level = 0; level < 2; level++) {
+    Fixture f;
+    fixture_up(&f, level ? "preview" : "sender", TRUE);
+    open_room(&f, PEER[0], NULL);
+    receive(&f, PEER[0], NULL, quote);
+    settle(&f);
+    GVariant *n = shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "1");
+    g_assert_cmpstr(field(n, "body"), ==, level ? CANARY " quoted" : "New message");
+    advance_ms(&f, GH_NOTIFIER_UPDATE_INTERVAL_MS);
+    receive(&f, PEER[0], NULL, repost);
+    settle(&f);
+    n = shown(GH_NOTIFIER_ID_CONVERSATION_PREFIX "1");
+    /* The newest message's text (a count only below the preview level). */
+    g_assert_cmpstr(field(n, "body"), ==, level ? "Reposted Nostr note" : "2 new messages");
+    assert_payloads_hide(json);
+    if (!level) {
+      const gchar *const secrets[] = { CANARY, PEER[0], ACCOUNT_A, NULL };
+      assert_payloads_hide(secrets);
+    }
+    fixture_down(&f);
+  }
 }
 
 /* ---- NO-2 forced hidden ------------------------------------------------------------------- */
@@ -1391,6 +1435,7 @@ main(int argc, char **argv)
   nostrc_test_bus_add_func("/groundhog/notifier/no1-hidden", test_no1_hidden);
   nostrc_test_bus_add_func("/groundhog/notifier/no1-sender", test_no1_sender);
   nostrc_test_bus_add_func("/groundhog/notifier/no1-preview", test_no1_preview);
+  nostrc_test_bus_add_func("/groundhog/notifier/no1-shared-note", test_no1_shared_note);
   nostrc_test_bus_add_func("/groundhog/notifier/no2-forced-hidden", test_no2_forced_hidden);
   nostrc_test_bus_add_func("/groundhog/notifier/no3-suppression", test_no3_suppression);
   nostrc_test_bus_add_func("/groundhog/notifier/no4-burst", test_no4_burst);

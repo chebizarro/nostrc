@@ -69,7 +69,10 @@ gint gh_message_get_kind(GhMessage *self);
 GhNip17File *gh_message_dup_file(GhMessage *self);
 /* What the message says, as text for a list, a preview or a notification:
  * its content, or for a kind-15 file message "Photo" or "File" (translated),
- * never its URL (W17 review #2): the one text every surface shows. */
+ * never its URL (W17 review #2); for a shared NIP-18 note the quote's own
+ * text (gn_nostr_shared_note_shown_text()) or "Quoted Nostr note" /
+ * "Reposted Nostr note", never its JSON (nostrc-yarxx): the one text every
+ * surface shows. */
 gchar *gh_message_dup_display_text(GhMessage *self);
 /* The verified rumor JSON the message was built from, which the durable store
  * keeps (and verifies again when it restores the message). */

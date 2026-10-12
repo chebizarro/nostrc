@@ -235,7 +235,8 @@ test_fetch_resolves(Fixture *f, gconstpointer data)
   g_assert_cmpuint(f->embeds, ==, 0);
   g_assert_cmpint(gn_nostr_reference_card_get_state(card), ==, GN_NOSTR_REFERENCE_CARD_FETCHING);
   g_assert_cmpstr(card_text(card, "reference-status"), ==, "Finding on relays…");
-  g_assert_true(g_str_has_prefix(card_text(card, "reference-title"), "Reposted Nostr note: "));
+  g_assert_cmpstr(card_text(card, "reference-title"), ==, "Reposted Nostr note");
+  g_assert_true(g_str_has_prefix(card_text(card, "reference-address"), "nevent1"));
   save_png(f, "fetching");
 
   g_task_return_pointer(f->resolver->pending, g_strdup(original), g_free);
@@ -244,6 +245,7 @@ test_fetch_resolves(Fixture *f, gconstpointer data)
   g_assert_cmpstr(card_text(card, "reference-title"), ==, "Reposted from Alice");
   g_assert_cmpstr(card_text(card, "reference-content"), ==, "the original note");
   g_assert_null(card_text(card, "reference-status"));
+  g_assert_null(card_text(card, "reference-address"));
   g_assert_cmpstr(nostr_gtk_note_card_row_get_content_text(f->row), ==, "");
   g_assert_cmpuint(f->embeds, ==, 0);
   save_png(f, "resolved");

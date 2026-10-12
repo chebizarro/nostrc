@@ -151,18 +151,6 @@ gboolean gh_conversation_view_get_compact(GhConversationView *self);
 GListModel *gh_conversation_view_get_timeline(GhConversationView *self);
 GtkListView *gh_conversation_view_get_message_list(GhConversationView *self);
 
-/* nostrc-tv98u: a NIP-18 repost (kind 6/16) or quote (kind 1 with a "q"
- * tag) shared into a chat has an event's JSON as its body, which is never
- * text for people. TRUE when @body is one; then *quote_text (nullable out)
- * is a quote's own text as its bubble shows it, without a trailing
- * reference to the quoted note (NULL for a repost), and *uri (nullable out) the
- * shared note's nostr: URI. The text to copy is the quote's text followed
- * by that URI (only the URI for a repost): gh_conversation_view_dup_body_copy_text(). */
-gboolean gh_conversation_view_parse_repost_body(const gchar *body, gchar **quote_text,
-                                                gchar **uri);
-/* Human text for copying @body: as it is, or as described above. */
-gchar *gh_conversation_view_dup_body_copy_text(const gchar *body);
-
 /* nostrc-bgjcp: the memory the session-kept images, page artwork and
  * pictures this view loaded may take (0: the default, 64 MiB), and what
  * the distinct ones take now. Past it the least recently viewed are given
