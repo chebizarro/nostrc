@@ -3,6 +3,7 @@
 #endif
 
 #include "gh-store.h"
+#include "gh-profile-guard.h"
 
 #include <dirent.h>
 #include <dlfcn.h>
@@ -342,12 +343,21 @@ gh_store_account_dir_name(const gchar *account_pubkey)
 /* Canonical data directory: symlinks in the user's own data home are
  * resolved once, so SQLITE_OPEN_NOFOLLOW only has to reject links below it. */
 static gchar *
-resolve_data_dir(const gchar *data_dir, gboolean create, GError **error)
+resolve_data_dir(const gchar *data_dir, const gchar *account_pubkey, gboolean create,
+                 GError **error)
 {
   const gchar *dir = data_dir ? data_dir : g_get_user_data_dir();
   if (!dir || !g_path_is_absolute(dir)) {
     g_set_error_literal(error, GH_STORE_ERROR, GH_STORE_ERROR_INVALID,
                         "The data directory must be an absolute path");
+    return NULL;
+  }
+  /* Before anything is created (nostrc-ttvxv). */
+  if (gh_profile_guard_refuses_data_dir(dir, account_pubkey)) {
+    g_set_error(error, GH_STORE_ERROR, GH_STORE_ERROR_PERMISSIONS,
+                "Refusing to use the real user's data directory %s %s", dir,
+                gh_profile_guard_under_test() ? "under test (" GH_PROFILE_GUARD_ENV " is set)"
+                                              : "for a well-known test account");
     return NULL;
   }
   if (create && g_mkdir_with_parents(dir, 0700) != 0) {
@@ -403,7 +413,7 @@ gh_store_account_dir_path(const gchar *data_dir, const gchar *account_pubkey,
 {
   if (!check_account(account_pubkey, error))
     return NULL;
-  g_autofree gchar *resolved = resolve_data_dir(data_dir, FALSE, error);
+  g_autofree gchar *resolved = resolve_data_dir(data_dir, account_pubkey, FALSE, error);
   if (!resolved)
     return NULL;
   StoreLayout layout = { 0 };
@@ -1644,7 +1654,7 @@ open_prepare(const GhStoreConfig *config, gboolean create, OpenContext *ctx,
     return FALSE;
   }
   GError *local = NULL;
-  ctx->data_dir = resolve_data_dir(config->data_dir, create, &local);
+  ctx->data_dir = resolve_data_dir(config->data_dir, config->account_pubkey, create, &local);
   if (!ctx->data_dir) {
     if (!g_error_matches(local, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND)) {
       g_propagate_error(error, local);
@@ -1803,7 +1813,7 @@ gh_store_exists(const gchar *data_dir, const gchar *account_pubkey, gboolean *ou
   if (!check_account(account_pubkey, error))
     return FALSE;
   GError *local = NULL;
-  g_autofree gchar *resolved = resolve_data_dir(data_dir, FALSE, &local);
+  g_autofree gchar *resolved = resolve_data_dir(data_dir, account_pubkey, FALSE, &local);
   if (!resolved) {
     if (g_error_matches(local, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND)) {
       g_error_free(local);
@@ -2026,7 +2036,7 @@ gh_store_delete_files(const gchar *data_dir, const gchar *account_pubkey, GError
   if (!check_account(account_pubkey, error))
     return FALSE;
   GError *local = NULL;
-  g_autofree gchar *resolved = resolve_data_dir(data_dir, FALSE, &local);
+  g_autofree gchar *resolved = resolve_data_dir(data_dir, account_pubkey, FALSE, &local);
   if (!resolved) {
     if (g_error_matches(local, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND)) {
       g_error_free(local);
@@ -2060,7 +2070,8 @@ gh_store_forget_account(const GhStoreConfig *config, GCancellable *cancellable,
     return FALSE;
 
   GError *local = NULL;
-  g_autofree gchar *data_dir = resolve_data_dir(config->data_dir, FALSE, &local);
+  g_autofree gchar *data_dir = resolve_data_dir(config->data_dir, config->account_pubkey,
+                                                FALSE, &local);
   if (!data_dir) {
     if (!g_error_matches(local, GH_STORE_ERROR, GH_STORE_ERROR_NOT_FOUND)) {
       g_propagate_error(error, local);

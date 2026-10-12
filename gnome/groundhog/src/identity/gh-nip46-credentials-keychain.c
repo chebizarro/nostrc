@@ -1,5 +1,6 @@
 #ifdef __APPLE__
 #include "gh-nip46-credentials-private.h"
+#include "../store/gh-profile-guard.h"
 #include <Security/Security.h>
 #include <Security/Authorization.h>
 #include <sodium.h>
@@ -95,6 +96,18 @@ keychain_locked(KeychainBackend *self, gboolean *locked, GError **error)
   return TRUE;
 }
 
+/* The user's normal keychain is never used under test, nor ever for a
+ * well-known test account (nostrc-ttvxv). */
+static gboolean
+refused(KeychainBackend *self, const gchar *account, GError **error)
+{
+  if (self->keychain || !gh_profile_guard_refuses_default_keychain(account))
+    return FALSE;
+  g_set_error_literal(error, GH_NIP46_CREDENTIAL_ERROR, GH_NIP46_CREDENTIAL_ERROR_UNAVAILABLE,
+                      "Refusing to use the login Keychain under test or for a test account");
+  return TRUE;
+}
+
 static GPtrArray *
 kc_search(GhNip46CredentialBackend *backend, const gchar *account,
           gboolean interactive, gboolean load_secrets, GCancellable *cancellable,
@@ -102,6 +115,7 @@ kc_search(GhNip46CredentialBackend *backend, const gchar *account,
 {
   (void)cancellable;
   KeychainBackend *self = (KeychainBackend *)backend;
+  if (refused(self, account, error)) return NULL;
   gboolean locked = FALSE;
   if (!interactive && !keychain_locked(self, &locked, error)) return NULL;
   if (locked && account) {
@@ -176,6 +190,7 @@ kc_write(GhNip46CredentialBackend *backend, const gchar *account, GBytes *secret
          gboolean interactive, GError **error)
 {
   KeychainBackend *self = (KeychainBackend *)backend;
+  if (refused(self, account, error)) return FALSE;
   gboolean locked = FALSE;
   if (!interactive && (!keychain_locked(self, &locked, error) || locked)) {
     if (locked) *error = status_error(errSecInteractionNotAllowed);
@@ -215,6 +230,7 @@ kc_remove(GhNip46CredentialBackend *backend, const gchar *account,
           gboolean interactive, GError **error)
 {
   KeychainBackend *self = (KeychainBackend *)backend;
+  if (refused(self, account, error)) return FALSE;
   gboolean locked = FALSE;
   if (!interactive && (!keychain_locked(self, &locked, error) || locked)) {
     if (locked) *error = status_error(errSecInteractionNotAllowed);
