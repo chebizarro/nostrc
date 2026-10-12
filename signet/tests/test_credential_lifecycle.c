@@ -970,6 +970,148 @@ static void test_deliver_expected_version(void) {
   puts("test_deliver_expected_version: PASS");
 }
 
+/* Review (nostrc-v13e0): a grant holder flooding cheap requests cannot evict
+ * another sender's event ids and then replay them; a request outside the
+ * clock window never executes. */
+static void test_replay_flood_cannot_reexecute(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  SignetReplayCacheConfig rcfg = {
+    .max_entries = 64, .ttl_seconds = 600, .skew_seconds = 120,
+    .max_entries_per_scope = 8, .refuse_when_full = true,
+  };
+  SignetReplayCache *replay = signet_replay_cache_new(&rcfg);
+  SignetReplayCache *replay_self = signet_replay_cache_new(&rcfg);
+  CHECK(replay && replay_self);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, replay);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, replay_self);
+  signet_mgmt_handler_set_requester_rate_limit(f.mgmt, 1000, 1000);
+
+  char flooder_sk[65], flooder_pk[65], victim_sk[65], victim_pk[65];
+  keypair(flooder_sk, flooder_pk);
+  keypair(victim_sk, victim_pk);
+  char other_pk[65];
+  adopt(&f, "other", other_pk);
+  grant_delivery(&f, "owner", victim_pk);
+  grant_delivery(&f, "other", flooder_pk);
+  char *victim_cred = create_credential(&f, "owner", "victim", "victim-v1");
+  char *flood_cred = create_credential(&f, "other", "flood", "flood-v1");
+
+  char *victim_deliver = g_strdup_printf(
+      "{\"request_id\":\"r\",\"agent_id\":\"owner\","
+      "\"credential_id\":\"%s\"}", victim_cred);
+  CHECK(handle_as(&f, victim_sk, victim_pk, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+                  victim_deliver, "victim-evt") == 0);
+  CHECK(leases_for(store, victim_cred) == 1);
+  char *rotate_b64 = g_base64_encode((const guchar *)"rotated", 7);
+  char *rotate = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\","
+      "\"payload_b64\":\"%s\"}", victim_cred, rotate_b64);
+  CHECK(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL, rotate,
+               "provisioner-evt") == 0);
+
+  /* Flood far past the flooder's quota and the whole cache. */
+  char *flood_inspect = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\"}", flood_cred);
+  int executed = 0;
+  for (int i = 0; i < 200; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "flood-%d", i);
+    if (handle_as(&f, flooder_sk, flooder_pk,
+                  SIGNET_MGMT_OP_INSPECT_CREDENTIAL, flood_inspect, evt) == 0)
+      executed++;
+  }
+  CHECK(executed == 8);
+
+  /* Neither earlier request executes again. */
+  CHECK(handle_as(&f, victim_sk, victim_pk, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+                  victim_deliver, "victim-evt") == -1);
+  CHECK(leases_for(store, victim_cred) == 1);
+  CHECK(handle(&f, SIGNET_MGMT_OP_ROTATE_CREDENTIAL, rotate,
+               "provisioner-evt") == -1);
+  CHECK(signet_store_secret_history_count(store, victim_cred) == 1);
+  /* The victim still has its own quota. */
+  CHECK(handle_as(&f, victim_sk, victim_pk, SIGNET_MGMT_OP_DELIVER_CREDENTIAL,
+                  victim_deliver, "victim-evt-2") == 0);
+  CHECK(leases_for(store, victim_cred) == 2);
+
+  /* The request's own (authenticated) created_at bounds replay: outside the
+   * window it is refused, inside it executes once. */
+  char *rpc = g_strdup_printf(
+      "{\"jsonrpc\":\"2.0\",\"id\":\"t\",\"method\":\"credential/deliver\","
+      "\"params\":{\"agent_id\":\"owner\",\"credential_id\":\"%s\"}}",
+      victim_cred);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, victim_pk, rpc, "stale",
+                                          2000000000 - 121, 2000000000) == -1);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, victim_pk, rpc, "ahead",
+                                          2000000000 + 121, 2000000000) == -1);
+  CHECK(leases_for(store, victim_cred) == 2);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, victim_pk, rpc, "fresh",
+                                          2000000000 - 100, 2000000000) == 0);
+  CHECK(signet_mgmt_handler_handle_intent(f.mgmt, victim_pk, rpc, "fresh",
+                                          2000000000 - 100, 2000000060) == -1);
+  CHECK(leases_for(store, victim_cred) == 3);
+
+  sodium_memzero(flooder_sk, sizeof(flooder_sk));
+  sodium_memzero(victim_sk, sizeof(victim_sk));
+  g_free(rpc); g_free(flood_inspect); g_free(rotate); g_free(rotate_b64);
+  g_free(victim_deliver); g_free(victim_cred); g_free(flood_cred);
+  signet_mgmt_handler_set_replay_cache(f.mgmt, NULL);
+  signet_mgmt_handler_set_self_replay_cache(f.mgmt, NULL);
+  teardown(&f);
+  signet_replay_cache_free(replay);
+  signet_replay_cache_free(replay_self);
+  puts("test_replay_flood_cannot_reexecute: PASS");
+}
+
+/* Review (nostrc-v13e0): a non-provisioner sender is rate-limited before
+ * its request is decrypted or read; the refusal costs no store work. */
+static void test_requester_rate_limit(void) {
+  Fixture f;
+  setup(&f);
+  SignetStore *store = signet_key_store_get_store(f.keys);
+  char requester_sk[65], requester_pk[65], stranger_sk[65], stranger_pk[65];
+  keypair(requester_sk, requester_pk);
+  keypair(stranger_sk, stranger_pk);
+  grant_delivery(&f, "owner", requester_pk);
+  char *cred = create_credential(&f, "owner", "limited", "limited-v1");
+  char *inspect = g_strdup_printf(
+      "{\"request_id\":\"r\",\"credential_id\":\"%s\"}", cred);
+  signet_mgmt_handler_set_requester_rate_limit(f.mgmt, 5, 60);
+  for (int i = 0; i < 5; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "rl-%d", i);
+    CHECK(handle_as(&f, requester_sk, requester_pk,
+                    SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) == 0);
+  }
+  /* Strangers (no grant) draw from their own buckets, and their refusals
+   * are audited only while they are within rate. */
+  for (int i = 0; i < 5; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "st-%d", i);
+    CHECK(handle_as(&f, stranger_sk, stranger_pk,
+                    SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) == -1);
+  }
+  int64_t audit_before = signet_audit_log_count(store);
+  CHECK(handle_as(&f, requester_sk, requester_pk,
+                  SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, "rl-over") == -1);
+  CHECK(handle_as(&f, stranger_sk, stranger_pk,
+                  SIGNET_MGMT_OP_DELIVER_CREDENTIAL, inspect, "st-over") == -1);
+  CHECK(signet_audit_log_count(store) == audit_before);
+  /* Provisioners are not limited. */
+  for (int i = 0; i < 10; i++) {
+    char evt[32];
+    g_snprintf(evt, sizeof(evt), "pv-%d", i);
+    CHECK(handle(&f, SIGNET_MGMT_OP_INSPECT_CREDENTIAL, inspect, evt) == 0);
+  }
+  sodium_memzero(requester_sk, sizeof(requester_sk));
+  sodium_memzero(stranger_sk, sizeof(stranger_sk));
+  g_free(inspect); g_free(cred);
+  teardown(&f);
+  puts("test_requester_rate_limit: PASS");
+}
+
 #ifdef SIGNET_ENABLE_TEST_HOOKS
 typedef struct {
   char *recipient;
@@ -994,7 +1136,7 @@ static JsonNode *intent(Fixture *f, ReplyCapture *c, const char *sender_pk,
                         const char *rpc, const char *evt) {
   int before = c->count;
   (void)signet_mgmt_handler_handle_intent(f->mgmt, sender_pk, rpc, evt,
-                                          2000000000);
+                                          2000000000, 2000000000);
   CHECK(c->count == before + 1);
   CHECK(g_strcmp0(c->recipient, sender_pk) == 0);
   JsonNode *n = json_from_string(c->reply, NULL);
@@ -1185,6 +1327,8 @@ int main(void) {
   test_credential_mutation_replay_rejected();
   test_delivery_grant_requester_without_provisioner();
   test_deliver_expected_version();
+  test_replay_flood_cannot_reexecute();
+  test_requester_rate_limit();
 #ifdef SIGNET_ENABLE_TEST_HOOKS
   test_contextvm_reply_shapes();
 #else

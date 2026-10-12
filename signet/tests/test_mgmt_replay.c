@@ -281,7 +281,7 @@ static void test_writer_management_requires_provisioner(void) {
       "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\"}}",
       owner);
   CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
-                                          "acquire", 1752380000) == 0);
+                                          "acquire", 1752380000, 1752380000) == 0);
   g_free(intent);
   CHECK(signet_store_writer_is_fenced(signet_key_store_get_store(f.ks),
                                       "service") == 1);
@@ -291,7 +291,7 @@ static void test_writer_management_requires_provisioner(void) {
       "\"params\":{\"agent_id\":\"service\",\"writer_pubkey\":\"%s\",\"epoch\":1}}",
       owner);
   CHECK(signet_mgmt_handler_handle_intent(f.mgmt, f.prov_pk_hex, intent,
-                                          "renew", 1752380000) != 0);
+                                          "renew", 1752380000, 1752380000) != 0);
   g_free(intent);
   const char *next_owner =
       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";

@@ -442,6 +442,16 @@ char *signet_mgmt_build_ack(const char *request_id,
 
 /* ==================== Management Handler ================================= */
 
+/* Defaults for signet_mgmt_handler_set_requester_rate_limit(). */
+#define SIGNET_MGMT_REQUESTER_BURST 60
+#define SIGNET_MGMT_REQUESTER_PER_MINUTE 60
+#define SIGNET_MGMT_REQUESTER_MAX_BUCKETS 4096
+
+typedef struct {
+  double tokens;
+  int64_t updated_at;
+} SignetMgmtBucket;
+
 struct SignetMgmtHandler {
   SignetKeyStore *keys;
   SignetRelayPool *relays;
@@ -451,6 +461,13 @@ struct SignetMgmtHandler {
   SignetPolicyRegistry *cap_policy; /* shared live capability registry */
   SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
   SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
+
+  /* Per-sender token buckets for non-provisioner senders (see
+   * signet_mgmt_requester_admit). */
+  GMutex requester_mu;
+  GHashTable *requester_buckets; /* sender hex -> SignetMgmtBucket* */
+  double requester_burst;
+  double requester_per_second;
 
   SignetStore *provisioner_store; /* borrowed through key store */
 
@@ -529,6 +546,11 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->relays = relays;
   h->audit = audit;
   h->policy_store = policy_store;
+  g_mutex_init(&h->requester_mu);
+  h->requester_buckets =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  h->requester_burst = SIGNET_MGMT_REQUESTER_BURST;
+  h->requester_per_second = SIGNET_MGMT_REQUESTER_PER_MINUTE / 60.0;
 
   h->provisioner_store = keys ? signet_key_store_get_store(keys) : NULL;
   if (h->provisioner_store && cfg->provisioner_pubkeys &&
@@ -573,7 +595,63 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
   g_free(h->relay_urls);
   g_free(h->config_path);
+  g_clear_pointer(&h->requester_buckets, g_hash_table_destroy);
+  g_mutex_clear(&h->requester_mu);
   g_free(h);
+}
+
+void signet_mgmt_handler_set_requester_rate_limit(SignetMgmtHandler *h,
+                                                  unsigned burst,
+                                                  unsigned per_minute) {
+  if (!h) return;
+  g_mutex_lock(&h->requester_mu);
+  h->requester_burst = burst;
+  h->requester_per_second = per_minute / 60.0;
+  g_hash_table_remove_all(h->requester_buckets);
+  g_mutex_unlock(&h->requester_mu);
+}
+
+/* Take one token from a non-provisioner sender's bucket. Returns false when
+ * the sender is over its rate. The table is bounded: past
+ * SIGNET_MGMT_REQUESTER_MAX_BUCKETS senders, fully refilled buckets are
+ * dropped, then (if still full) all of them — a sender that rotates keys
+ * gets a fresh bucket per key anyway, so the bound protects memory, not the
+ * rate. */
+static bool signet_mgmt_requester_admit(SignetMgmtHandler *h,
+                                        const char *sender, int64_t now) {
+  if (!sender || !sender[0]) return false;
+  g_mutex_lock(&h->requester_mu);
+  SignetMgmtBucket *b = g_hash_table_lookup(h->requester_buckets, sender);
+  if (!b) {
+    if (g_hash_table_size(h->requester_buckets) >=
+        SIGNET_MGMT_REQUESTER_MAX_BUCKETS) {
+      GHashTableIter it;
+      gpointer v;
+      g_hash_table_iter_init(&it, h->requester_buckets);
+      while (g_hash_table_iter_next(&it, NULL, &v)) {
+        SignetMgmtBucket *o = v;
+        double refilled = o->tokens +
+            (double)(now - o->updated_at) * h->requester_per_second;
+        if (refilled >= h->requester_burst) g_hash_table_iter_remove(&it);
+      }
+      if (g_hash_table_size(h->requester_buckets) >=
+          SIGNET_MGMT_REQUESTER_MAX_BUCKETS)
+        g_hash_table_remove_all(h->requester_buckets);
+    }
+    b = g_new0(SignetMgmtBucket, 1);
+    b->tokens = h->requester_burst;
+    b->updated_at = now;
+    g_hash_table_insert(h->requester_buckets, g_strdup(sender), b);
+  }
+  if (now > b->updated_at) {
+    b->tokens += (double)(now - b->updated_at) * h->requester_per_second;
+    if (b->tokens > h->requester_burst) b->tokens = h->requester_burst;
+    b->updated_at = now;
+  }
+  bool ok = b->tokens >= 1.0;
+  if (ok) b->tokens -= 1.0;
+  g_mutex_unlock(&h->requester_mu);
+  return ok;
 }
 
 void signet_mgmt_handler_set_config_path(SignetMgmtHandler *h,
@@ -789,7 +867,8 @@ static int signet_mgmt_handler_handle_request_ex(
     const char *event_id_hex,
     int64_t now,
     SignetMgmtReplyTransport reply_transport,
-    const JsonNode *rpc_id);
+    const JsonNode *rpc_id,
+    int64_t event_created_at);
 
 /* Credential methods a non-provisioner may call when the credential's owner
  * grants it exactly credential.deliver (see signet_mgmt_delivery_grant_refusal). */
@@ -1001,6 +1080,7 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       const char *event_pubkey_hex,
                                       const char *content_json,
                                       const char *event_id_hex,
+                                      int64_t event_created_at,
                                       int64_t now) {
   if (!h) return -1;
 
@@ -1053,7 +1133,7 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
     if (encrypted) {
       rc = signet_mgmt_handler_handle_request_ex(
           h, event_pubkey_hex, encrypted, op, event_id_hex, now,
-          SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
+          SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id, event_created_at);
       free(encrypted);
     }
   }
@@ -1377,7 +1457,8 @@ static int signet_mgmt_handler_handle_request_ex(
     const char *event_id_hex,
     int64_t now,
     SignetMgmtReplyTransport reply_transport,
-    const JsonNode *rpc_id) {
+    const JsonNode *rpc_id,
+    int64_t event_created_at) {
   if (!h) return -1;
 
   /* 1) Authorization check. agent/reissue-connect also admits the target
@@ -1397,6 +1478,22 @@ static int signet_mgmt_handler_handle_request_ex(
      * exists) but record the attempt in the tamper-evident audit chain. */
     signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
                             "deny", "not_provisioner", now);
+    return -1;
+  }
+
+  /* 1a) A non-provisioner sender (delivery-grant requester or self-service
+   * agent) is rate-limited before anything costly — decryption, store reads,
+   * policy reload, audit. The refusal is not audited, so it stays cheap. */
+  if (!sender_is_provisioner &&
+      !signet_mgmt_requester_admit(h, event_pubkey_hex, now)) {
+    char *rl = signet_mgmt_build_ack(NULL, false, "rate_limited",
+                                     "too many requests from this sender",
+                                     NULL);
+    if (rl) {
+      signet_mgmt_publish_ack(h, event_pubkey_hex, rl, event_id_hex, now,
+                              reply_transport, rpc_id);
+      g_free(rl);
+    }
     return -1;
   }
 
@@ -1565,16 +1662,17 @@ static int signet_mgmt_handler_handle_request_ex(
    * (history bounds come from the subscription since-floor and
    * mgmt_accept_after). Fail closed on a missing event id. */
   /* Self-service and delivery-grant events are marked in their OWN replay
-   * domain so a non-provisioner flooding unique intents can never evict
-   * provisioner event ids from the privileged cache within their TTL
-   * (replay-then-re-execute). Falls back to the provisioner cache only if no
-   * self cache was wired. */
+   * domain, and every id is charged to its authenticated sender's quota, so
+   * no sender can evict another's event ids (replay-then-re-execute). With a
+   * skew window, the request's own created_at bounds how long it can be
+   * replayed at all; a refuse_when_full cache refuses rather than forgets.
+   * Falls back to the provisioner cache only if no self cache was wired. */
   SignetReplayCache *replay_domain =
       sender_is_provisioner ? h->replay
                             : (h->replay_self ? h->replay_self : h->replay);
   if (replay_domain) {
-    SignetReplayResult rr = signet_replay_check_and_mark(
-        replay_domain, event_id_hex, now, now);
+    SignetReplayResult rr = signet_replay_check_and_mark_scoped(
+        replay_domain, event_pubkey_hex, event_id_hex, event_created_at, now);
     if (rr == SIGNET_REPLAY_DUPLICATE) {
       /* Silently drop duplicates (like unauthorized events). The FIRST
        * delivery already published the authoritative ack — publishing an
@@ -1587,9 +1685,18 @@ static int signet_mgmt_handler_handle_request_ex(
       return -1;
     }
     if (rr != SIGNET_REPLAY_OK) {
-      /* Malformed (missing event id): fail closed, but tell the sender. */
-      char *rack = signet_mgmt_build_ack(req.request_id, false, "replay_invalid",
-                                         "management event rejected by replay protection",
+      /* Malformed (missing event id), outside the clock window, or no replay
+       * room left for this sender: fail closed, but tell the sender. */
+      const char *rcode = "replay_invalid";
+      const char *rmsg = "management event rejected by replay protection";
+      if (rr == SIGNET_REPLAY_TOO_OLD || rr == SIGNET_REPLAY_TOO_FAR_IN_FUTURE) {
+        rcode = "request_time_skew";
+        rmsg = "request created_at is outside Signet's accepted clock window";
+      } else if (rr == SIGNET_REPLAY_FULL) {
+        rcode = "replay_quota_exceeded";
+        rmsg = "too many recent requests from this sender";
+      }
+      char *rack = signet_mgmt_build_ack(req.request_id, false, rcode, rmsg,
                                          NULL);
       if (rack) {
         signet_mgmt_publish_ack(h, event_pubkey_hex, rack, event_id_hex, now,
@@ -2565,5 +2672,5 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                        int64_t now) {
   return signet_mgmt_handler_handle_request_ex(
       h, event_pubkey_hex, content_json, op, event_id_hex, now,
-      SIGNET_MGMT_REPLY_LEGACY_ACK, NULL);
+      SIGNET_MGMT_REPLY_LEGACY_ACK, NULL, now);
 }
