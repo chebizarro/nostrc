@@ -102,7 +102,7 @@ static int signetd_subscribe_mgmt_kinds(SignetRelayPool *relays,
 #include <glib-unix.h>
 #include <json-glib/json-glib.h>
 
-#define SIGNET_VERSION "0.6.1"
+#define SIGNET_VERSION "0.7.0"
 #define SIGNET_NIP46_KIND_CIPHERTEXT 24133
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
@@ -553,6 +553,7 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
                                             ev->pubkey_hex ? ev->pubkey_hex : "",
                                             ev->content ? ev->content : "",
                                             ev->event_id_hex ? ev->event_id_hex : "",
+                                            ev->created_at,
                                             signet_now_unix());
     return;
   }
@@ -561,21 +562,11 @@ static void signet_on_relay_event(const SignetRelayEventView *ev, void *user_dat
   if (ev->kind == NIP59_GIFT_WRAP && ctx->mgmt && ev->event_json) {
     if (signet_now_unix() < ctx->mgmt_accept_after) return;
     if (!signet_relay_pool_is_subscribed(ctx->relays)) return;
-    NostrEvent *gw = nostr_event_new();
-    if (gw && nostr_event_deserialize_compact(gw, ev->event_json, NULL)) {
-      char *inner = NULL;
-      char *sender = NULL;
-      if (nostr_nip17_decrypt_dm(gw, ctx->cfg->remote_signer_secret_key_hex, &inner, &sender) == 0 && inner) {
-        (void)signet_mgmt_handler_handle_intent(ctx->mgmt,
-                                                sender ? sender : "",
-                                                inner,
-                                                ev->event_id_hex ? ev->event_id_hex : "",
-                                                signet_now_unix());
-      }
-      free(inner);
-      free(sender);
-    }
-    if (gw) nostr_event_free(gw);
+    /* Unwraps with the bunker key and passes the rumor's (authenticated)
+     * created_at to the replay window. */
+    (void)signet_mgmt_handler_handle_gift_wrap(
+        ctx->mgmt, ev->event_json, ev->event_id_hex ? ev->event_id_hex : "",
+        signet_now_unix());
     return;
   }
 
@@ -952,21 +943,15 @@ int main(int argc, char **argv) {
    * gift-wrapped intents re-run non-idempotent commands (rotate-key,
    * reissue-connect, provision). Deliberately NOT the NIP-46 cache: sharing
    * would couple management replay retention to signing traffic volume, and
-   * high NIP-46 load could evict a management event id before its TTL. Sized
-   * small — management traffic is a trickle. */
-  SignetReplayCacheConfig mgmt_replay_cfg = {
-    .max_entries = 4096,
-    .ttl_seconds = cfg.replay_ttl_seconds,
-    .skew_seconds = cfg.replay_skew_seconds,
-  };
-  SignetReplayCache *mgmt_replay = signet_replay_cache_new(&mgmt_replay_cfg);
-  signet_mgmt_handler_set_replay_cache(mgmt, mgmt_replay);
-
-  /* Separate replay domain for self-service agent/reissue-connect events so
-   * an agent flooding unique self-reissue intents cannot evict provisioner
-   * event ids from the privileged cache and replay a captured mutation. */
-  SignetReplayCache *mgmt_replay_self = signet_replay_cache_new(&mgmt_replay_cfg);
-  signet_mgmt_handler_set_self_replay_cache(mgmt, mgmt_replay_self);
+   * high NIP-46 load could evict a management event id before its TTL.
+   * The handler owns one cache per sender class, bounded by a clock window
+   * on each request's authenticated created_at ([replay] skew_seconds; ids
+   * live twice that), with per-sender quotas for non-provisioners and
+   * refuse-not-evict, so an id seen once can never execute again. */
+  if (signet_mgmt_handler_enable_replay(mgmt, cfg.replay_skew_seconds) != 0) {
+    g_critical("[signetd] management replay protection could not be set up");
+    return 1;
+  }
 
   /* Build a fleet registry adapter.
    * is_in_fleet: all provisioned agents are fleet members.
@@ -1292,8 +1277,6 @@ cleanup:
 
   signet_key_store_free(keys);
 
-  signet_replay_cache_free(mgmt_replay_self);
-  signet_replay_cache_free(mgmt_replay);
   signet_replay_cache_free(replay);
 
   signet_deny_list_free(deny);

@@ -122,6 +122,27 @@ int nostr_nip17_decrypt_dm(NostrEvent *gift_wrap,
                             char **sender_pubkey_out);
 
 /**
+ * nostr_nip17_decrypt_dm_ex:
+ * @gift_wrap: (transfer none): gift wrap event (kind 1059)
+ * @recipient_sk_hex: recipient's private key (64 hex chars)
+ * @content_out: (out) (transfer full): extracted message content
+ * @sender_pubkey_out: (out) (transfer full) (nullable): sender's pubkey
+ * @rumor_created_at_out: (out) (nullable): the rumor's created_at
+ *
+ * As nostr_nip17_decrypt_dm(), also returning the rumor's created_at. Unlike
+ * the seal's and gift wrap's, which NIP-59 randomizes, the rumor's timestamp
+ * is the sender's real one, and the seal signature authenticates it, so a
+ * recipient can bound how old a message may be.
+ *
+ * Returns: 0 on success, negative errno on error
+ */
+int nostr_nip17_decrypt_dm_ex(NostrEvent *gift_wrap,
+                               const char *recipient_sk_hex,
+                               char **content_out,
+                               char **sender_pubkey_out,
+                               int64_t *rumor_created_at_out);
+
+/**
  * nostr_nip17_validate_gift_wrap:
  * @gift_wrap: (transfer none): gift wrap event
  *

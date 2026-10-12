@@ -84,6 +84,11 @@ endif()
 # key_store_private.h: cache-only bindings (nostrc-xjznk).
 target_include_directories(test_client_bindings PRIVATE ${CMAKE_SOURCE_DIR}/signet/src)
 signet_add_test_executable(test_credential_lifecycle)
+if (SIGNET_ENABLE_TEST_HOOKS)
+  # mgmt_protocol_test_hooks.h: management reply observer.
+  target_compile_definitions(test_credential_lifecycle PRIVATE SIGNET_ENABLE_TEST_HOOKS=1)
+  target_include_directories(test_credential_lifecycle PRIVATE ${CMAKE_SOURCE_DIR}/signet/src)
+endif()
 signet_add_test_executable(test_credential_access)
 signet_add_test_executable(test_cli_secret_output)
 signet_add_test_executable(test_git_credential)

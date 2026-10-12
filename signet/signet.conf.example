@@ -73,7 +73,9 @@ policy_file =
 allowed_kinds =
 rate_limit_rpm = 0
 
-# Replay protection
+# Replay protection. ttl_seconds and max_entries apply to NIP-46 requests;
+# management requests must be within skew_seconds of Signet's clock (by their
+# authenticated created_at) and their ids are kept for 2 * skew_seconds.
 [replay]
 max_entries = 50000
 ttl_seconds = 600

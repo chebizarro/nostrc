@@ -233,6 +233,31 @@ static void test_decrypt_dm_roundtrip(void) {
     printf("  OK: full roundtrip successful\n");
 }
 
+static void test_decrypt_dm_ex_rumor_time(void) {
+    printf("Testing decrypt_dm_ex returns the rumor's real created_at...\n");
+
+    int64_t before = (int64_t)time(NULL);
+    NostrEvent *gift_wrap = nostr_nip17_wrap_dm(ALICE_SK, BOB_PK, "timed");
+    int64_t after = (int64_t)time(NULL);
+    assert(gift_wrap != NULL);
+
+    char *content = NULL;
+    char *sender_pk = NULL;
+    int64_t rumor_at = 0;
+    int rc = nostr_nip17_decrypt_dm_ex(gift_wrap, BOB_SK, &content, &sender_pk,
+                                       &rumor_at);
+    assert(rc == 0);
+    assert(strcmp(content, "timed") == 0);
+    assert(strcmp(sender_pk, ALICE_PK) == 0);
+    /* The outer created_at is randomized into the past; the rumor's is not. */
+    assert(rumor_at >= before && rumor_at <= after);
+
+    free(content);
+    free(sender_pk);
+    nostr_event_free(gift_wrap);
+    printf("  OK: rumor created_at returned\n");
+}
+
 static void test_wrong_recipient_fails(void) {
     printf("Testing wrong recipient cannot decrypt...\n");
 
@@ -459,6 +484,7 @@ int main(void) {
     test_unwrap_gift_wrap();
     test_unwrap_seal();
     test_decrypt_dm_roundtrip();
+    test_decrypt_dm_ex_rumor_time();
     test_wrong_recipient_fails();
     test_validate_gift_wrap();
     test_validate_seal();

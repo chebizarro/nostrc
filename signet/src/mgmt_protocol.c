@@ -23,6 +23,9 @@
 #include "signet/capability.h"
 #include "signet/bootstrap_delivery.h"
 #include "signet/util.h"
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+#include "mgmt_protocol_test_hooks.h"
+#endif
 
 #include <nostr/nip17/nip17.h>
 #include <nostr/nip44/nip44.h>
@@ -30,6 +33,7 @@
 #include <secure_buf.h>
 #include <sodium.h>
 
+#include <limits.h>
 #include <string.h>
 #include <time.h>
 
@@ -49,6 +53,15 @@ static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
                                     const char *decision,
                                     const char *reason,
                                     int64_t now);
+static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
+                                       const char *operation,
+                                       const char *identity,
+                                       const char *secret_id,
+                                       const char *decision,
+                                       const char *reason,
+                                       const char *auth,
+                                       const char *owner,
+                                       int64_t now);
 
 static void signet_mgmt_memzero(void *p, size_t n) {
   if (p && n) secure_wipe(p, n);
@@ -249,6 +262,27 @@ int signet_mgmt_request_parse(SignetMgmtOp op,
         (int64_t)json_object_get_int_member(o, "expires_at");
     out_req->has_credential_expires_at = true;
   }
+  if (json_object_has_member(o, "expected_version")) {
+    JsonNode *vn = json_object_get_member(o, "expected_version");
+    gint64 v = 0;
+    if (vn && JSON_NODE_HOLDS_VALUE(vn) &&
+        json_node_get_value_type(vn) == G_TYPE_INT64)
+      v = json_node_get_int(vn);
+    if (op != SIGNET_MGMT_OP_DELIVER_CREDENTIAL) {
+      if (out_error)
+        *out_error =
+            g_strdup("expected_version applies only to credential/deliver");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
+    if (v < 1 || v > INT_MAX) {
+      if (out_error)
+        *out_error = g_strdup("expected_version must be a positive integer");
+      signet_mgmt_request_clear(out_req);
+      return -1;
+    }
+    out_req->expected_version = (int)v;
+  }
 
   /* Validate required fields per op. */
   bool needs_agent_id = (out_req->op == SIGNET_MGMT_OP_PROVISION_AGENT ||
@@ -416,6 +450,33 @@ char *signet_mgmt_build_ack(const char *request_id,
 
 /* ==================== Management Handler ================================= */
 
+/* Defaults for signet_mgmt_handler_set_requester_rate_limit(). */
+#define SIGNET_MGMT_REQUESTER_BURST 60
+#define SIGNET_MGMT_REQUESTER_PER_MINUTE 60
+#define SIGNET_MGMT_REQUESTER_MAX_BUCKETS 4096
+/* While a sender is over its rate, it is told so at most this often; the
+ * rest of its requests are dropped without a reply. */
+#define SIGNET_MGMT_RATE_LIMIT_NOTICE_SECONDS 60
+/* Global budget for audit rows recording refusals of non-provisioner
+ * senders: burst, then one per second. Refusals over budget are counted and
+ * recorded as one aggregate row with the next audited refusal. */
+#define SIGNET_MGMT_REFUSAL_AUDIT_BURST 100
+#define SIGNET_MGMT_REFUSAL_AUDIT_PER_SECOND 1.0
+/* Management replay caches (signet_mgmt_handler_enable_replay). Ids live for
+ * 2 * skew. Provisioners have no per-sender quota; each non-provisioner
+ * sender may hold this many live ids — more than its rate limit admits in
+ * that time (60 burst + 1/s), so the quota binds only when the limit is
+ * raised. */
+#define SIGNET_MGMT_REPLAY_MAX_ENTRIES 16384
+#define SIGNET_MGMT_REPLAY_PER_SENDER 512
+#define SIGNET_MGMT_REPLAY_DEFAULT_SKEW 120
+
+typedef struct {
+  double tokens;
+  int64_t updated_at;   /* last refill, i.e. last use: the LRU key */
+  int64_t notified_at;  /* last rate_limited reply, 0 if none */
+} SignetMgmtBucket;
+
 struct SignetMgmtHandler {
   SignetKeyStore *keys;
   SignetRelayPool *relays;
@@ -423,8 +484,25 @@ struct SignetMgmtHandler {
   SignetPolicyStore *policy_store;
   SignetDenyList *deny;   /* shared live deny list (owned by daemon) */
   SignetPolicyRegistry *cap_policy; /* shared live capability registry */
-  SignetReplayCache *replay;      /* provisioner replay cache (owned by daemon) */
-  SignetReplayCache *replay_self; /* self-service replay cache (owned by daemon) */
+  /* Replay caches, one per sender class so one class cannot fill another's:
+   * provisioners, self-service reissue agents, delivery-grant requesters.
+   * Borrowed when set with the setters; owned (owned_replay) when created by
+   * signet_mgmt_handler_enable_replay(). */
+  SignetReplayCache *replay;
+  SignetReplayCache *replay_self;
+  SignetReplayCache *replay_grant;
+  SignetReplayCache *owned_replay[3];
+
+  /* Per-sender token buckets for non-provisioner senders (see
+   * signet_mgmt_requester_admit), and the global refusal-audit budget (see
+   * signet_mgmt_refusal_audit); both under requester_mu. */
+  GMutex requester_mu;
+  GHashTable *requester_buckets; /* sender hex -> SignetMgmtBucket* */
+  double requester_burst;
+  double requester_per_second;
+  double audit_tokens;
+  int64_t audit_updated_at;
+  guint64 audit_suppressed;
 
   SignetStore *provisioner_store; /* borrowed through key store */
 
@@ -439,7 +517,21 @@ struct SignetMgmtHandler {
    * that is not written back here would be undone — or worse, reversed — by
    * the next SIGHUP reload. */
   char *config_path;
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  SignetMgmtReplyHook reply_hook;
+  void *reply_hook_data;
+#endif
 };
+
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+void signet_mgmt_handler_set_reply_hook(SignetMgmtHandler *h,
+                                        SignetMgmtReplyHook hook, void *data) {
+  if (!h) return;
+  h->reply_hook = hook;
+  h->reply_hook_data = data;
+}
+#endif
 
 /* Mirror the persisted provisioner set into the config file so config and
  * SQLCipher state cannot disagree. Returns 0 on success, -1 on failure (which
@@ -489,6 +581,12 @@ SignetMgmtHandler *signet_mgmt_handler_new(SignetKeyStore *keys,
   h->relays = relays;
   h->audit = audit;
   h->policy_store = policy_store;
+  g_mutex_init(&h->requester_mu);
+  h->requester_buckets =
+      g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+  h->requester_burst = SIGNET_MGMT_REQUESTER_BURST;
+  h->requester_per_second = SIGNET_MGMT_REQUESTER_PER_MINUTE / 60.0;
+  h->audit_tokens = SIGNET_MGMT_REFUSAL_AUDIT_BURST;
 
   h->provisioner_store = keys ? signet_key_store_get_store(keys) : NULL;
   if (h->provisioner_store && cfg->provisioner_pubkeys &&
@@ -533,7 +631,160 @@ void signet_mgmt_handler_free(SignetMgmtHandler *h) {
   for (size_t i = 0; i < h->n_relay_urls; i++) g_free(h->relay_urls[i]);
   g_free(h->relay_urls);
   g_free(h->config_path);
+  g_clear_pointer(&h->requester_buckets, g_hash_table_destroy);
+  g_mutex_clear(&h->requester_mu);
+  for (size_t i = 0; i < G_N_ELEMENTS(h->owned_replay); i++)
+    signet_replay_cache_free(h->owned_replay[i]);
   g_free(h);
+}
+
+int signet_mgmt_handler_enable_replay(SignetMgmtHandler *h,
+                                      uint32_t skew_seconds) {
+  if (!h) return -1;
+  /* Management always has a window: with skew 0 an expired id could run
+   * again. */
+  uint32_t skew = skew_seconds ? skew_seconds : SIGNET_MGMT_REPLAY_DEFAULT_SKEW;
+  SignetReplayCacheConfig provisioners = {
+    .max_entries = SIGNET_MGMT_REPLAY_MAX_ENTRIES,
+    .ttl_seconds = 2u * skew,
+    .skew_seconds = skew,
+    .max_entries_per_scope = 0,
+    .refuse_when_full = true,
+  };
+  SignetReplayCacheConfig others = provisioners;
+  others.max_entries_per_scope = SIGNET_MGMT_REPLAY_PER_SENDER;
+  SignetReplayCache *c[3] = {
+    signet_replay_cache_new(&provisioners),
+    signet_replay_cache_new(&others),
+    signet_replay_cache_new(&others),
+  };
+  if (!c[0] || !c[1] || !c[2]) {
+    for (size_t i = 0; i < 3; i++) signet_replay_cache_free(c[i]);
+    return -1;
+  }
+  for (size_t i = 0; i < 3; i++) {
+    signet_replay_cache_free(h->owned_replay[i]);
+    h->owned_replay[i] = c[i];
+  }
+  h->replay = c[0];
+  h->replay_self = c[1];
+  h->replay_grant = c[2];
+  return 0;
+}
+
+void signet_mgmt_handler_set_grant_replay_cache(SignetMgmtHandler *h,
+                                                SignetReplayCache *replay) {
+  if (!h) return;
+  h->replay_grant = replay;
+}
+
+void signet_mgmt_handler_set_requester_rate_limit(SignetMgmtHandler *h,
+                                                  unsigned burst,
+                                                  unsigned per_minute) {
+  if (!h) return;
+  g_mutex_lock(&h->requester_mu);
+  h->requester_burst = burst;
+  h->requester_per_second = per_minute / 60.0;
+  g_hash_table_remove_all(h->requester_buckets);
+  g_mutex_unlock(&h->requester_mu);
+}
+
+/* Take one token from a non-provisioner sender's bucket. Returns false when
+ * the sender is over its rate; *notify is then true at most once per
+ * SIGNET_MGMT_RATE_LIMIT_NOTICE_SECONDS, when the sender should be told. The
+ * table is bounded: past SIGNET_MGMT_REQUESTER_MAX_BUCKETS senders, a fully
+ * refilled bucket (it holds no state) is dropped, else the least recently
+ * used one — an active sender keeps its bucket. */
+static bool signet_mgmt_requester_admit(SignetMgmtHandler *h,
+                                        const char *sender, int64_t now,
+                                        bool *notify) {
+  *notify = false;
+  if (!sender || !sender[0]) return false;
+  g_mutex_lock(&h->requester_mu);
+  SignetMgmtBucket *b = g_hash_table_lookup(h->requester_buckets, sender);
+  if (!b) {
+    if (g_hash_table_size(h->requester_buckets) >=
+        SIGNET_MGMT_REQUESTER_MAX_BUCKETS) {
+      GHashTableIter it;
+      gpointer k, v;
+      const char *victim = NULL;
+      int64_t oldest = G_MAXINT64;
+      g_hash_table_iter_init(&it, h->requester_buckets);
+      while (g_hash_table_iter_next(&it, &k, &v)) {
+        SignetMgmtBucket *o = v;
+        double refilled = o->tokens +
+            (double)(now - o->updated_at) * h->requester_per_second;
+        if (refilled >= h->requester_burst) { victim = k; break; }
+        if (o->updated_at < oldest) { oldest = o->updated_at; victim = k; }
+      }
+      if (victim) (void)g_hash_table_remove(h->requester_buckets, victim);
+    }
+    b = g_new0(SignetMgmtBucket, 1);
+    b->tokens = h->requester_burst;
+    b->updated_at = now;
+    g_hash_table_insert(h->requester_buckets, g_strdup(sender), b);
+  }
+  if (now > b->updated_at) {
+    b->tokens += (double)(now - b->updated_at) * h->requester_per_second;
+    if (b->tokens > h->requester_burst) b->tokens = h->requester_burst;
+    b->updated_at = now;
+  }
+  bool ok = b->tokens >= 1.0;
+  if (ok) {
+    b->tokens -= 1.0;
+  } else if (b->notified_at == 0 ||
+             now - b->notified_at >= SIGNET_MGMT_RATE_LIMIT_NOTICE_SECONDS) {
+    b->notified_at = now;
+    *notify = true;
+  }
+  g_mutex_unlock(&h->requester_mu);
+  return ok;
+}
+
+/* Record the refusal of a non-provisioner sender in the audit chain within
+ * a global budget, so no number of senders or keys can turn refusals into
+ * unbounded audit rows. Refusals over budget are counted; the next audited
+ * refusal is preceded by one "mgmt_refusals_suppressed" row carrying the
+ * count. */
+static void signet_mgmt_refusal_audit(SignetMgmtHandler *h,
+                                      const char *operation,
+                                      const char *identity,
+                                      const char *secret_id,
+                                      const char *reason,
+                                      const char *auth,
+                                      const char *owner,
+                                      int64_t now) {
+  guint64 suppressed = 0;
+  g_mutex_lock(&h->requester_mu);
+  if (now > h->audit_updated_at) {
+    h->audit_tokens += (double)(now - h->audit_updated_at) *
+                       SIGNET_MGMT_REFUSAL_AUDIT_PER_SECOND;
+    if (h->audit_tokens > SIGNET_MGMT_REFUSAL_AUDIT_BURST)
+      h->audit_tokens = SIGNET_MGMT_REFUSAL_AUDIT_BURST;
+    h->audit_updated_at = now;
+  }
+  bool write = h->audit_tokens >= 1.0;
+  if (write) {
+    h->audit_tokens -= 1.0;
+    suppressed = h->audit_suppressed;
+    h->audit_suppressed = 0;
+  } else {
+    h->audit_suppressed++;
+  }
+  g_mutex_unlock(&h->requester_mu);
+  if (!write) return;
+
+  SignetStore *store = h->keys ? signet_key_store_get_store(h->keys) : NULL;
+  if (suppressed > 0 && store) {
+    g_autofree char *detail = g_strdup_printf(
+        "{\"decision\":\"deny\",\"reason\":\"audit_budget\","
+        "\"count\":%" G_GUINT64_FORMAT "}", suppressed);
+    (void)signet_audit_log_append(store, now, "aggregate",
+                                  "mgmt_refusals_suppressed", NULL,
+                                  "contextvm", detail);
+  }
+  signet_mgmt_chain_audit_ex(h, operation, identity, secret_id, "deny",
+                             reason, auth, owner, now);
 }
 
 void signet_mgmt_handler_set_config_path(SignetMgmtHandler *h,
@@ -585,7 +836,11 @@ void signet_mgmt_handler_set_policy_registry(
   h->cap_policy = policy;
 }
 
-static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content) {
+/* Convert an internal ack to a JSON-RPC response. rpc_id, when given, is the
+ * request's own JSON-RPC id and is echoed verbatim (string or integer);
+ * otherwise the ack's string request_id is used. */
+static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content,
+                                        const JsonNode *rpc_id) {
   if (!ack_content) return NULL;
   g_autoptr(JsonParser) p = json_parser_new();
   if (!json_parser_load_from_data(p, ack_content, -1, NULL)) return g_strdup(ack_content);
@@ -615,7 +870,9 @@ static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content) {
     json_builder_end_object(b);
   }
   json_builder_set_member_name(b, "id");
-  if (rid) json_builder_add_string_value(b, rid); else json_builder_add_null_value(b);
+  if (rpc_id) json_builder_add_value(b, json_node_copy((JsonNode *)rpc_id));
+  else if (rid) json_builder_add_string_value(b, rid);
+  else json_builder_add_null_value(b);
   json_builder_end_object(b);
   JsonNode *out = json_builder_get_root(b);
   g_autoptr(JsonGenerator) gen = json_generator_new();
@@ -627,9 +884,10 @@ static char *signet_mgmt_ack_to_jsonrpc(const char *ack_content) {
 
 static void signet_mgmt_publish_contextvm_reply(SignetMgmtHandler *h,
                                                 const char *recipient_pubkey_hex,
-                                                const char *ack_content) {
+                                                const char *ack_content,
+                                                const JsonNode *rpc_id) {
   if (!h || !h->relays || !h->bunker_sk_hex || !recipient_pubkey_hex || !ack_content) return;
-  char *jsonrpc = signet_mgmt_ack_to_jsonrpc(ack_content);
+  char *jsonrpc = signet_mgmt_ack_to_jsonrpc(ack_content, rpc_id);
   if (!jsonrpc) return;
   NostrEvent *gift = nostr_nip17_wrap_dm(h->bunker_sk_hex, recipient_pubkey_hex, jsonrpc);
   /* jsonrpc may embed a fresh connect_secret / bunker URI — wipe before free. */
@@ -656,11 +914,25 @@ static void signet_mgmt_publish_ack(SignetMgmtHandler *h,
                                     const char *ack_content,
                                     const char *ref_event_id_hex,
                                     int64_t now,
-                                    SignetMgmtReplyTransport reply_transport) {
+                                    SignetMgmtReplyTransport reply_transport,
+                                    const JsonNode *rpc_id) {
+#ifdef SIGNET_ENABLE_TEST_HOOKS
+  if (h && h->reply_hook && ack_content) {
+    char *observed = reply_transport == SIGNET_MGMT_REPLY_CONTEXTVM
+        ? signet_mgmt_ack_to_jsonrpc(ack_content, rpc_id)
+        : g_strdup(ack_content);
+    if (observed) {
+      h->reply_hook(h->reply_hook_data, recipient_pubkey_hex, observed);
+      secure_wipe(observed, strlen(observed));
+      g_free(observed);
+    }
+  }
+#endif
   if (!h || !h->relays || !h->bunker_sk_hex || !ack_content) return;
 
   if (reply_transport == SIGNET_MGMT_REPLY_CONTEXTVM) {
-    signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content);
+    signet_mgmt_publish_contextvm_reply(h, recipient_pubkey_hex, ack_content,
+                                        rpc_id);
     return;
   }
 
@@ -727,7 +999,17 @@ static int signet_mgmt_handler_handle_request_ex(
     SignetMgmtOp op,
     const char *event_id_hex,
     int64_t now,
-    SignetMgmtReplyTransport reply_transport);
+    SignetMgmtReplyTransport reply_transport,
+    const JsonNode *rpc_id,
+    int64_t event_created_at);
+
+/* Credential methods a non-provisioner may call when the credential's owner
+ * grants it exactly credential.deliver (see signet_mgmt_delivery_grant_refusal). */
+static bool signet_mgmt_op_delivery_grant_eligible(SignetMgmtOp op) {
+  return op == SIGNET_MGMT_OP_INSPECT_CREDENTIAL ||
+         op == SIGNET_MGMT_OP_LIST_CREDENTIALS ||
+         op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL;
+}
 
 static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   if (!method) return SIGNET_MGMT_OP_UNKNOWN;
@@ -757,8 +1039,20 @@ static SignetMgmtOp signet_mgmt_op_from_contextvm_method(const char *method) {
   return SIGNET_MGMT_OP_UNKNOWN;
 }
 
-static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetMgmtOp *out_op) {
+/* Longest string JSON-RPC id echoed back; a longer one is answered with id
+ * null rather than reflected. */
+#define SIGNET_MGMT_MAX_RPC_ID_LEN 256
+
+/* Normalize a ContextVM JSON-RPC request into the params object that
+ * signet_mgmt_request_parse() reads. *out_rpc_id receives a copy of the
+ * request's id when it is a string (at most SIGNET_MGMT_MAX_RPC_ID_LEN bytes)
+ * or an integer — also for an unknown method, so its refusal can echo it —
+ * and NULL otherwise; free it with json_node_unref(). */
+static char *signet_mgmt_contextvm_params_json(const char *content_json,
+                                               SignetMgmtOp *out_op,
+                                               JsonNode **out_rpc_id) {
   if (out_op) *out_op = SIGNET_MGMT_OP_UNKNOWN;
+  if (out_rpc_id) *out_rpc_id = NULL;
   if (!content_json || !content_json[0]) return NULL;
 
   g_autoptr(JsonParser) p = json_parser_new();
@@ -766,6 +1060,14 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetM
   JsonNode *root = json_parser_get_root(p);
   if (!root || !JSON_NODE_HOLDS_OBJECT(root)) return NULL;
   JsonObject *o = json_node_get_object(root);
+  JsonNode *idn = json_object_get_member(o, "id");
+  if (out_rpc_id && idn && JSON_NODE_HOLDS_VALUE(idn)) {
+    GType t = json_node_get_value_type(idn);
+    const char *ids = t == G_TYPE_STRING ? json_node_get_string(idn) : NULL;
+    if (t == G_TYPE_INT64 ||
+        (ids && strlen(ids) <= SIGNET_MGMT_MAX_RPC_ID_LEN))
+      *out_rpc_id = json_node_copy(idn);
+  }
   const char *method = json_object_has_member(o, "method") ? json_object_get_string_member(o, "method") : NULL;
   SignetMgmtOp op = signet_mgmt_op_from_contextvm_method(method);
   if (op == SIGNET_MGMT_OP_UNKNOWN) return NULL;
@@ -858,8 +1160,46 @@ static char *signet_mgmt_contextvm_params_json(const char *content_json, SignetM
     json_builder_set_member_name(b, "expires_at");
     json_builder_add_int_value(b, json_object_get_int_member(po, "expires_at"));
   }
+  if (po && json_object_has_member(po, "expected_version")) {
+    /* Verbatim: signet_mgmt_request_parse() rejects a non-integer. */
+    json_builder_set_member_name(b, "expected_version");
+    json_builder_add_value(
+        b, json_node_copy(json_object_get_member(po, "expected_version")));
+  }
   json_builder_end_object(b);
 
+  JsonNode *out = json_builder_get_root(b);
+  g_autoptr(JsonGenerator) gen = json_generator_new();
+  json_generator_set_root(gen, out);
+  json_generator_set_pretty(gen, FALSE);
+  char *s = json_generator_to_data(gen, NULL);
+  json_node_free(out);
+  return s;
+}
+
+/* A JSON-RPC error response to a ContextVM request that never reached the
+ * request path. rpc_id is the sender's own request id (NULL -> null); data is
+ * a stable reason code. */
+static char *signet_mgmt_contextvm_error_json(int code, const char *message,
+                                              const char *data,
+                                              const JsonNode *rpc_id) {
+  g_autoptr(JsonBuilder) b = json_builder_new();
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "jsonrpc");
+  json_builder_add_string_value(b, "2.0");
+  json_builder_set_member_name(b, "error");
+  json_builder_begin_object(b);
+  json_builder_set_member_name(b, "code");
+  json_builder_add_int_value(b, code);
+  json_builder_set_member_name(b, "message");
+  json_builder_add_string_value(b, message);
+  json_builder_set_member_name(b, "data");
+  json_builder_add_string_value(b, data);
+  json_builder_end_object(b);
+  json_builder_set_member_name(b, "id");
+  if (rpc_id) json_builder_add_value(b, json_node_copy((JsonNode *)rpc_id));
+  else json_builder_add_null_value(b);
+  json_builder_end_object(b);
   JsonNode *out = json_builder_get_root(b);
   g_autoptr(JsonGenerator) gen = json_generator_new();
   json_generator_set_root(gen, out);
@@ -873,55 +1213,121 @@ int signet_mgmt_handler_handle_intent(SignetMgmtHandler *h,
                                       const char *event_pubkey_hex,
                                       const char *content_json,
                                       const char *event_id_hex,
+                                      int64_t event_created_at,
                                       int64_t now) {
   if (!h) return -1;
 
   SignetMgmtOp op = SIGNET_MGMT_OP_UNKNOWN;
-  char *params_json = signet_mgmt_contextvm_params_json(content_json, &op);
+  JsonNode *rpc_id = NULL;
+  char *params_json =
+      signet_mgmt_contextvm_params_json(content_json, &op, &rpc_id);
+  int rc = -1;
 
-  /* agent/reissue-connect additionally supports SELF-SERVICE authorization:
-   * a non-provisioner sender may reissue its own connect_secret. That check
-   * needs the parsed agent_id, so for this one method the sender check is
-   * deferred to the normalized request execution path. Every other method (and
-   * every unknown method) remains provisioner-only and is rejected here. */
-  bool defer_auth = (op == SIGNET_MGMT_OP_REISSUE_CONNECT);
-  if (!defer_auth &&
-      !signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex)) {
-    signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
-                            "deny", "not_provisioner", now);
-    char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32002,\"message\":\"sender is not an authorized Signet provisioner\"},\"id\":null}");
+  /* Every non-provisioner sender passes its rate limit first, before any
+   * refusal, audit or store work (the gift wrap was already opened to
+   * authenticate it). Over the limit, its requests are dropped, with a
+   * rate_limited reply at most once a minute. */
+  bool is_provisioner =
+      signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex);
+  if (!is_provisioner) {
+    bool notify = false;
+    if (!signet_mgmt_requester_admit(h, event_pubkey_hex, now, &notify)) {
+      if (notify) {
+        char *err = signet_mgmt_contextvm_error_json(
+            -32000, "too many requests from this sender", "rate_limited",
+            rpc_id);
+        signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
+                                SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
+        g_free(err);
+      }
+      goto out;
+    }
+  }
+
+  /* Two kinds of non-provisioner request are authorized on the parsed
+   * request instead of here: agent/reissue-connect by the target agent
+   * itself, and credential/inspect|list|deliver by the credential owner's
+   * exact credential.deliver grant. Every other method (and every unknown
+   * method) remains provisioner-only and is refused here. A refusal echoes
+   * the sender's own JSON-RPC id so the client can match it to its request;
+   * it says nothing beyond the refusal itself. */
+  bool defer_auth = op == SIGNET_MGMT_OP_REISSUE_CONNECT ||
+                    signet_mgmt_op_delivery_grant_eligible(op);
+  if (!defer_auth && !is_provisioner) {
+    signet_mgmt_refusal_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+                              "not_provisioner", NULL, NULL, now);
+    char *err = signet_mgmt_contextvm_error_json(
+        -32002, "sender is not an authorized Signet provisioner",
+        "not_provisioner", rpc_id);
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
-                            SIGNET_MGMT_REPLY_CONTEXTVM);
+                            SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
     g_free(err);
-    if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
-    return -1;
+    goto out;
   }
 
   if (!params_json || op == SIGNET_MGMT_OP_UNKNOWN) {
-    char *err = g_strdup("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32601,\"message\":\"unknown Signet ContextVM method\"},\"id\":null}");
+    char *err = signet_mgmt_contextvm_error_json(
+        -32601, "unknown Signet ContextVM method", "unknown_method", rpc_id);
     signet_mgmt_publish_ack(h, event_pubkey_hex, err, event_id_hex, now,
-                            SIGNET_MGMT_REPLY_CONTEXTVM);
+                            SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id);
     g_free(err);
-    if (params_json) { secure_wipe(params_json, strlen(params_json)); g_free(params_json); }
-    return -1;
+    goto out;
   }
 
-  char *encrypted = NULL;
-  uint8_t sk[32], pk[32];
-  if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
-      signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
-    (void)nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)params_json,
-                                 strlen(params_json), &encrypted);
+  {
+    char *encrypted = NULL;
+    uint8_t sk[32], pk[32];
+    if (signet_mgmt_hex_to_bytes32(h->bunker_sk_hex, sk) &&
+        signet_mgmt_hex_to_bytes32(event_pubkey_hex, pk)) {
+      (void)nostr_nip44_encrypt_v2(sk, pk, (const uint8_t *)params_json,
+                                   strlen(params_json), &encrypted);
+    }
+    signet_mgmt_memzero(sk, sizeof(sk));
+    if (encrypted) {
+      rc = signet_mgmt_handler_handle_request_ex(
+          h, event_pubkey_hex, encrypted, op, event_id_hex, now,
+          SIGNET_MGMT_REPLY_CONTEXTVM, rpc_id, event_created_at);
+      free(encrypted);
+    }
   }
-  signet_mgmt_memzero(sk, sizeof(sk));
+
+out:
   /* params_json may embed agent_nsec/connect_secret (adopt-existing). */
-  secure_wipe(params_json, strlen(params_json));
-  g_free(params_json);
-  if (!encrypted) return -1;
-  int rc = signet_mgmt_handler_handle_request_ex(
-      h, event_pubkey_hex, encrypted, op, event_id_hex, now,
-      SIGNET_MGMT_REPLY_CONTEXTVM);
-  free(encrypted);
+  if (params_json) {
+    secure_wipe(params_json, strlen(params_json));
+    g_free(params_json);
+  }
+  if (rpc_id) json_node_unref(rpc_id);
+  return rc;
+}
+
+int signet_mgmt_handler_handle_gift_wrap(SignetMgmtHandler *h,
+                                         const char *event_json,
+                                         const char *event_id_hex,
+                                         int64_t now) {
+  if (!h || !h->bunker_sk_hex || !event_json) return -1;
+  NostrEvent *gw = nostr_event_new();
+  if (!gw) return -1;
+  int rc = -1;
+  if (nostr_event_deserialize_compact(gw, event_json, NULL)) {
+    char *inner = NULL;
+    char *sender = NULL;
+    int64_t rumor_at = 0;
+    /* The rumor's created_at is the sender's real, seal-authenticated time;
+     * the gift wrap's is randomized by NIP-59. */
+    if (nostr_nip17_decrypt_dm_ex(gw, h->bunker_sk_hex, &inner, &sender,
+                                  &rumor_at) == 0 && inner) {
+      rc = signet_mgmt_handler_handle_intent(h, sender ? sender : "", inner,
+                                             event_id_hex ? event_id_hex : "",
+                                             rumor_at, now);
+    }
+    if (inner) {
+      secure_wipe(inner, strlen(inner));
+      free(inner);
+    }
+    free(sender);
+  }
+  nostr_event_free(gw);
   return rc;
 }
 
@@ -938,6 +1344,22 @@ static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
                                     const char *decision,
                                     const char *reason,
                                     int64_t now) {
+  signet_mgmt_chain_audit_ex(h, operation, identity, secret_id, decision,
+                             reason, NULL, NULL, now);
+}
+
+/* As signet_mgmt_chain_audit, plus auth: the authorization path of a
+ * credential method ("provisioner" or "delivery_grant"), and owner: the
+ * credential owner a request targeted (an agent id), each or NULL. */
+static void signet_mgmt_chain_audit_ex(SignetMgmtHandler *h,
+                                       const char *operation,
+                                       const char *identity,
+                                       const char *secret_id,
+                                       const char *decision,
+                                       const char *reason,
+                                       const char *auth,
+                                       const char *owner,
+                                       int64_t now) {
   if (!h || !h->keys || !operation) return;
   SignetStore *base_store = signet_key_store_get_store(h->keys);
   if (!base_store) return;
@@ -950,6 +1372,14 @@ static void signet_mgmt_chain_audit(SignetMgmtHandler *h,
       json_builder_add_string_value(b, decision ? decision : "deny");
       json_builder_set_member_name(b, "reason");
       json_builder_add_string_value(b, reason ? reason : "unknown");
+      if (auth) {
+        json_builder_set_member_name(b, "auth");
+        json_builder_add_string_value(b, auth);
+      }
+      if (owner) {
+        json_builder_set_member_name(b, "owner");
+        json_builder_add_string_value(b, owner);
+      }
       json_builder_end_object(b);
       JsonNode *root = json_builder_get_root(b);
       JsonGenerator *gen = json_generator_new();
@@ -1165,6 +1595,61 @@ static int signet_mgmt_decode_secret_payload(const char *payload_b64,
   return 0;
 }
 
+/* Authorize a non-provisioner's credential/inspect|list|deliver by the exact
+ * credential.deliver grant (signet_policy_store_has_exact_delivery_grant) of
+ * the credential owner: the request's agent_id for list and deliver, the
+ * stored owner of credential_id for inspect. Returns NULL when authorized,
+ * else the refusal code. A sender without a grant gets "no_capability"
+ * whether or not the credential exists, so the refusal is no existence
+ * oracle. Deny > grant: a deny-listed sender or owner is refused.
+ * credential/deliver is then authorized again, with ownership, lease and
+ * audit, by signet_credential_access_acquire(). */
+static const char *signet_mgmt_delivery_grant_refusal(
+    SignetMgmtHandler *h, const SignetMgmtRequest *req, const char *sender,
+    int64_t now, char **out_owner) {
+  *out_owner = NULL;
+  if (!sender || !sender[0]) return "no_capability";
+  if (h->deny && signet_deny_list_contains(h->deny, sender))
+    return "deny_listed";
+  char *owner = NULL;
+  if (req->op == SIGNET_MGMT_OP_INSPECT_CREDENTIAL) {
+    SignetStore *store = signet_key_store_get_store(h->keys);
+    if (!store) return "no_store";
+    SignetSecretMetadata m;
+    memset(&m, 0, sizeof(m));
+    SignetSecretResult src =
+        signet_store_get_secret_metadata(store, req->credential_id, now, &m);
+    if (src == SIGNET_SECRET_OK) owner = g_strdup(m.agent_id);
+    signet_secret_metadata_clear(&m);
+    if (src != SIGNET_SECRET_OK && src != SIGNET_SECRET_NOT_FOUND)
+      return "credential_store_failed";
+  } else if (req->agent_id) {
+    owner = g_strdup(req->agent_id);
+  }
+  *out_owner = owner;
+  /* A missing credential still costs the policy lookup an existing one
+   * does, so the two refusals take comparable work. */
+  bool granted = h->policy_store &&
+      signet_policy_store_has_exact_delivery_grant(
+          h->policy_store, (owner && owner[0]) ? owner : "\x01no-owner",
+          sender, now);
+  if (!owner || !owner[0] || !granted) return "no_capability";
+  char owner_pk[65] = {0};
+  if (h->deny &&
+      signet_key_store_get_agent_pubkey(h->keys, owner, owner_pk,
+                                        sizeof(owner_pk)) &&
+      signet_deny_list_contains(h->deny, owner_pk))
+    return "deny_listed";
+  return NULL;
+}
+
+/* A request-supplied id recorded in the audit chain: bounded, never echoed
+ * at arbitrary length. */
+static const char *signet_mgmt_audit_target(const char *id) {
+  if (!id || !id[0]) return NULL;
+  return strlen(id) <= 128 ? id : "overlong";
+}
+
 static int signet_mgmt_handler_handle_request_ex(
     SignetMgmtHandler *h,
     const char *event_pubkey_hex,
@@ -1172,25 +1657,30 @@ static int signet_mgmt_handler_handle_request_ex(
     SignetMgmtOp op,
     const char *event_id_hex,
     int64_t now,
-    SignetMgmtReplyTransport reply_transport) {
+    SignetMgmtReplyTransport reply_transport,
+    const JsonNode *rpc_id,
+    int64_t event_created_at) {
   if (!h) return -1;
 
-  /* 1) Authorization check. agent/reissue-connect alone also admits the
-   * target agent itself; its sender-vs-agent check runs after parse (the
-   * agent_id is needed) in the execution case below. The sender pubkey is
-   * trustworthy on every ingress path: plain events are Schnorr-verified
-   * before dispatch (relay_pool NPA-01) and gift-wrapped intents take the
-   * authenticated seal author from nostr_nip17_decrypt_dm. */
+  /* 1) Authorization check. agent/reissue-connect also admits the target
+   * agent itself, and credential/inspect|list|deliver a sender holding the
+   * owner's exact delivery grant; both checks need the parsed request and
+   * run after parse (2a, 2a-grant), before the replay mark. The sender
+   * pubkey is trustworthy on every ingress path: plain events are
+   * Schnorr-verified before dispatch (relay_pool NPA-01) and gift-wrapped
+   * intents take the authenticated seal author from nostr_nip17_decrypt_dm. */
   bool sender_is_provisioner =
       signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex);
-  if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT) {
+  bool grant_path = !sender_is_provisioner &&
+                    signet_mgmt_op_delivery_grant_eligible(op);
+  if (!sender_is_provisioner && op != SIGNET_MGMT_OP_REISSUE_CONNECT &&
+      !grant_path) {
     /* Silently drop unauthorized events (no ack — do not confirm the bunker
-     * exists) but record the attempt in the tamper-evident audit chain. */
-    signet_mgmt_chain_audit(h,
-                            op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
-                                ? "credential_deliver" : "mgmt_unauthorized",
-                            event_pubkey_hex, NULL,
-                            "deny", "not_provisioner", now);
+     * exists) but record the attempt in the tamper-evident audit chain,
+     * within the refusal-audit budget. (Both entry points have already
+     * rate-limited this sender.) */
+    signet_mgmt_refusal_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
+                              "not_provisioner", NULL, NULL, now);
     return -1;
   }
 
@@ -1244,12 +1734,47 @@ static int signet_mgmt_handler_handle_request_ex(
                                        parse_err ? parse_err : "invalid request", NULL);
     if (ack) {
       signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now,
-                              reply_transport);
+                              reply_transport, rpc_id);
       g_free(ack);
     }
     g_free(parse_err);
     if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
     return -1;
+  }
+
+  /* 2a-grant) Delivery-grant authorization for a non-provisioner's
+   * credential/inspect|list|deliver, BEFORE the replay mark (as in 2a) so
+   * senders without a grant cannot churn the replay cache. */
+  if (grant_path) {
+    g_autofree char *target_owner = NULL;
+    const char *gcode = signet_mgmt_delivery_grant_refusal(
+        h, &req, event_pubkey_hex, now, &target_owner);
+    if (gcode) {
+      /* Record what was asked for (ids only, no secret material). */
+      signet_mgmt_refusal_audit(
+          h,
+          req.op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL ? "credential_deliver"
+                                                      : "mgmt_unauthorized",
+          event_pubkey_hex, signet_mgmt_audit_target(req.credential_id),
+          gcode, "delivery_grant", signet_mgmt_audit_target(target_owner),
+          now);
+      char *gack = signet_mgmt_build_ack(
+          req.request_id, false, gcode,
+          strcmp(gcode, "no_capability") == 0
+              ? "credential is not delivered to this requester"
+              : strcmp(gcode, "deny_listed") == 0
+                    ? "requester or credential owner is deny-listed"
+                    : "credential store unavailable",
+          NULL);
+      if (gack) {
+        signet_mgmt_publish_ack(h, event_pubkey_hex, gack, event_id_hex, now,
+                                reply_transport, rpc_id);
+        g_free(gack);
+      }
+      if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
+      signet_mgmt_request_clear(&req);
+      return -1;
+    }
   }
 
   /* 2a) Deferred self-service authorization for agent/reissue-connect: a
@@ -1270,14 +1795,14 @@ static int signet_mgmt_handler_handle_request_ex(
        * an unauthenticated claim about an agent_id, and publishing
        * bunker-signed audits for arbitrary claims would hand strangers an
        * audit-spam/poisoning primitive. */
-      signet_mgmt_chain_audit(h, "mgmt_unauthorized", event_pubkey_hex, NULL,
-                              "deny", "not_target_agent", now);
+      signet_mgmt_refusal_audit(h, "mgmt_unauthorized", event_pubkey_hex,
+                                NULL, "not_target_agent", NULL, NULL, now);
       char *uack = signet_mgmt_build_ack(req.request_id, false, "unauthorized",
                                          "sender is neither a provisioner nor the target agent",
                                          NULL);
       if (uack) {
         signet_mgmt_publish_ack(h, event_pubkey_hex, uack, event_id_hex, now,
-                                reply_transport);
+                                reply_transport, rpc_id);
         g_free(uack);
       }
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
@@ -1304,39 +1829,45 @@ static int signet_mgmt_handler_handle_request_ex(
                                          "agent or sender is deny-listed", NULL);
       if (dack) {
         signet_mgmt_publish_ack(h, event_pubkey_hex, dack, event_id_hex, now,
-                                reply_transport);
+                                reply_transport, rpc_id);
         g_free(dack);
       }
       signet_mgmt_publish_cas_audit(h, "reissue_connect", req.agent_id,
                                     "deny_listed", now);
-      signet_mgmt_chain_audit(h, "mgmt_reissue_connect", event_pubkey_hex, NULL,
-                              "deny", "deny_listed", now);
+      if (sender_is_provisioner)
+        signet_mgmt_chain_audit(h, "mgmt_reissue_connect", event_pubkey_hex,
+                                NULL, "deny", "deny_listed", now);
+      else
+        signet_mgmt_refusal_audit(h, "mgmt_reissue_connect", event_pubkey_hex,
+                                  NULL, "deny_listed", NULL, NULL, now);
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
       signet_mgmt_request_clear(&req);
       return -1;
     }
   }
 
-  /* 2b) Replay protection: each delivered event id executes at most once per
-   * cache TTL. This runs AFTER parse (so the error ack can carry request_id)
-   * and BEFORE execute (so non-idempotent commands — rotate-key,
-   * reissue-connect, provision — never run twice on relay redelivery,
-   * republish of the same serialized event, or history replay).
-   * Duplicate suppression is by delivered event id only:
-   * gift-wrapped intents carry a NIP-59-randomized outer created_at, so `now`
-   * is passed for the timestamp and skew is effectively not enforced here
-   * (history bounds come from the subscription since-floor and
-   * mgmt_accept_after). Fail closed on a missing event id. */
-  /* Self-service events are marked in their OWN replay domain so an agent
-   * flooding unique self-reissue intents can never evict provisioner event
-   * ids from the privileged cache within their TTL (replay-then-re-execute).
-   * Falls back to the provisioner cache only if no self cache was wired. */
-  SignetReplayCache *replay_domain =
-      sender_is_provisioner ? h->replay
-                            : (h->replay_self ? h->replay_self : h->replay);
+  /* 2b) Replay protection: each delivered event id executes at most once.
+   * This runs AFTER parse (so the error ack can carry request_id) and BEFORE
+   * execute (so non-idempotent commands — rotate-key, reissue-connect,
+   * provision — never run twice on relay redelivery, republish of the same
+   * serialized event, or history replay). The id is the delivered event's;
+   * event_created_at is the request's own authenticated time (the rumor's
+   * for a gift wrap, whose outer created_at NIP-59 randomizes), checked
+   * against the cache's skew window, and ids outlive that window. Each
+   * sender class has its own cache (provisioners, self-service agents,
+   * delivery-grant requesters) and every non-provisioner id is charged to
+   * its sender's quota; a full sender or cache is refused, never evicted, so
+   * no sender can flood another's ids out and replay them. A class without
+   * its own cache falls back to the self-service, then the provisioner,
+   * cache. Fail closed on a missing event id. */
+  SignetReplayCache *replay_domain = h->replay;
+  if (grant_path && h->replay_grant)
+    replay_domain = h->replay_grant;
+  else if (!sender_is_provisioner && h->replay_self)
+    replay_domain = h->replay_self;
   if (replay_domain) {
-    SignetReplayResult rr = signet_replay_check_and_mark(
-        replay_domain, event_id_hex, now, now);
+    SignetReplayResult rr = signet_replay_check_and_mark_scoped(
+        replay_domain, event_pubkey_hex, event_id_hex, event_created_at, now);
     if (rr == SIGNET_REPLAY_DUPLICATE) {
       /* Silently drop duplicates (like unauthorized events). The FIRST
        * delivery already published the authoritative ack — publishing an
@@ -1349,13 +1880,22 @@ static int signet_mgmt_handler_handle_request_ex(
       return -1;
     }
     if (rr != SIGNET_REPLAY_OK) {
-      /* Malformed (missing event id): fail closed, but tell the sender. */
-      char *rack = signet_mgmt_build_ack(req.request_id, false, "replay_invalid",
-                                         "management event rejected by replay protection",
+      /* Malformed (missing event id), outside the clock window, or no replay
+       * room left for this sender: fail closed, but tell the sender. */
+      const char *rcode = "replay_invalid";
+      const char *rmsg = "management event rejected by replay protection";
+      if (rr == SIGNET_REPLAY_TOO_OLD || rr == SIGNET_REPLAY_TOO_FAR_IN_FUTURE) {
+        rcode = "request_time_skew";
+        rmsg = "request created_at is outside Signet's accepted clock window";
+      } else if (rr == SIGNET_REPLAY_FULL) {
+        rcode = "replay_quota_exceeded";
+        rmsg = "too many recent requests from this sender";
+      }
+      char *rack = signet_mgmt_build_ack(req.request_id, false, rcode, rmsg,
                                          NULL);
       if (rack) {
         signet_mgmt_publish_ack(h, event_pubkey_hex, rack, event_id_hex, now,
-                                reply_transport);
+                                reply_transport, rpc_id);
         g_free(rack);
       }
       if (decrypted_content) { secure_wipe(decrypted_content, strlen(decrypted_content)); free(decrypted_content); }
@@ -1370,6 +1910,7 @@ static int signet_mgmt_handler_handle_request_ex(
   char *message = NULL;
   char *result = NULL;
   char *audit_secret_id = NULL; /* affected credential id for chain audit */
+  const char *audit_code = NULL; /* chain-audit reason when the reply's differs */
 
   switch (req.op) {
     case SIGNET_MGMT_OP_WRITER_ACQUIRE: {
@@ -2019,6 +2560,7 @@ static int signet_mgmt_handler_handle_request_ex(
         .one_use_delivery = true,
         .issue_lease = false,
         .lease_ttl_seconds = 60,
+        .expected_version = req.expected_version,
       };
       SignetCredentialAccessGrant grant;
       memset(&grant, 0, sizeof(grant));
@@ -2026,7 +2568,19 @@ static int signet_mgmt_handler_handle_request_ex(
           &access_ctx, &access_req, now, &grant);
       if (arc != SIGNET_CRED_ACCESS_OK) {
         code = signet_cred_access_reason(arc);
-        message = g_strdup("credential delivery denied");
+        message = g_strdup(arc == SIGNET_CRED_ACCESS_VERSION_MISMATCH
+                               ? "active credential version is not expected_version"
+                               : "credential delivery denied");
+        /* A delivery-grant requester learns nothing about credentials it is
+         * not granted: another owner's credential and a missing one get the
+         * same refusal. The audit keeps the real reason. */
+        if (grant_path && (arc == SIGNET_CRED_ACCESS_NOT_OWNER ||
+                           arc == SIGNET_CRED_ACCESS_NOT_FOUND)) {
+          audit_code = code;
+          code = "no_capability";
+          g_free(message);
+          message = g_strdup("credential is not delivered to this requester");
+        }
         signet_credential_access_grant_clear(&grant);
         break;
       }
@@ -2040,6 +2594,8 @@ static int signet_mgmt_handler_handle_request_ex(
         json_builder_add_string_value(db, req.credential_id);
         json_builder_set_member_name(db, "agent_id");
         json_builder_add_string_value(db, req.agent_id);
+        json_builder_set_member_name(db, "version");
+        json_builder_add_int_value(db, grant.record.active_version);
         json_builder_set_member_name(db, "payload_b64");
         json_builder_add_string_value(db, payload_b64);
         json_builder_set_member_name(db, "lease_id");
@@ -2275,8 +2831,11 @@ static int signet_mgmt_handler_handle_request_ex(
    * (status/list/inspect) are not mutations and are skipped. */
   {
     const char *audit_op = signet_mgmt_op_audit_name(req.op);
+    const char *auth = signet_mgmt_op_delivery_grant_eligible(req.op)
+        ? (sender_is_provisioner ? "provisioner" : "delivery_grant")
+        : NULL;
     if (audit_op) {
-      signet_mgmt_chain_audit(
+      signet_mgmt_chain_audit_ex(
           h, audit_op,
           req.op == SIGNET_MGMT_OP_DELIVER_CREDENTIAL
               ? event_pubkey_hex
@@ -2284,7 +2843,8 @@ static int signet_mgmt_handler_handle_request_ex(
                                                     : event_pubkey_hex),
           audit_secret_id ? audit_secret_id :
               (req.credential_id ? req.credential_id : req.provisioner_pubkey),
-          ok ? "allow" : "deny", code, now);
+          ok ? "allow" : "deny", audit_code ? audit_code : code, auth,
+          NULL, now);
     }
   }
   g_free(audit_secret_id);
@@ -2293,7 +2853,7 @@ static int signet_mgmt_handler_handle_request_ex(
   char *ack = signet_mgmt_build_ack(req.request_id, ok, code, message, result);
   if (ack) {
     signet_mgmt_publish_ack(h, event_pubkey_hex, ack, event_id_hex, now,
-                            reply_transport);
+                            reply_transport, rpc_id);
     /* ack may embed secrets carried in result — wipe before free. */
     secure_wipe(ack, strlen(ack));
     g_free(ack);
@@ -2317,7 +2877,25 @@ int signet_mgmt_handler_handle_request(SignetMgmtHandler *h,
                                        SignetMgmtOp op,
                                        const char *event_id_hex,
                                        int64_t now) {
+  if (!h) return -1;
+  /* Same rate limit as signet_mgmt_handler_handle_intent(). */
+  if (!signet_store_is_provisioner(h->provisioner_store, event_pubkey_hex)) {
+    bool notify = false;
+    if (!signet_mgmt_requester_admit(h, event_pubkey_hex, now, &notify)) {
+      if (notify) {
+        char *rl = signet_mgmt_build_ack(NULL, false, "rate_limited",
+                                         "too many requests from this sender",
+                                         NULL);
+        if (rl) {
+          signet_mgmt_publish_ack(h, event_pubkey_hex, rl, event_id_hex, now,
+                                  SIGNET_MGMT_REPLY_LEGACY_ACK, NULL);
+          g_free(rl);
+        }
+      }
+      return -1;
+    }
+  }
   return signet_mgmt_handler_handle_request_ex(
       h, event_pubkey_hex, content_json, op, event_id_hex, now,
-      SIGNET_MGMT_REPLY_LEGACY_ACK);
+      SIGNET_MGMT_REPLY_LEGACY_ACK, NULL, now);
 }
