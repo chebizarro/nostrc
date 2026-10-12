@@ -143,10 +143,21 @@ Mutations reach the store only through the ContextVM management handler:
   most once; duplicates are dropped, missing ids fail closed
   (`test_credential_mutation_replay_rejected`, `test_mgmt_replay.c`). The
   request's own `created_at` (the rumor's, authenticated by the seal) must be
-  within the skew window and ids are kept for at least twice the window; ids
-  are charged to their sender, and a full sender or cache is refused rather
-  than evicting, so flooding cannot make a seen request execute again
-  (`test_replay_flood_cannot_reexecute`, `test_replay_cache.c`).
+  within the skew window and ids are kept for twice the window; each sender
+  class (provisioners, self-service agents, delivery-grant requesters) has
+  its own cache, non-provisioner ids are charged to their sender, and a full
+  sender or cache is refused rather than evicting, so flooding cannot make a
+  seen request execute again (`test_replay_flood_cannot_reexecute`,
+  `test_enabled_replay_classes`, `test_gift_wrap_uses_rumor_time`,
+  `test_replay_cache.c`). Residual: colluding authorized senders of one class
+  can fill that class's cache and have its requests refused until their ids
+  expire (2 * skew); they cannot replay anything or affect other classes.
+- **Refusal cost**: every non-provisioner sender is rate-limited before any
+  refusal, audit, inner decryption or store read (the gift wrap is opened
+  first, to authenticate it), and refusals of non-provisioner senders are
+  audited within a global budget with an aggregate count beyond it, so no
+  number of keys turns refusals into unbounded audit rows
+  (`test_refusals_cannot_amplify_audit`).
 - **Authorization**: non-provisioner senders are dropped (and chain-audited),
   except for `credential/inspect|list|deliver` from a requester the owner's
   policy grants exactly `credential.deliver`. That grant is checked before the
@@ -156,7 +167,7 @@ Mutations reach the store only through the ContextVM management handler:
   existence oracle); a stolen requester key yields only those credentials and
   no management authority. The grant is one exact policy shape: any other
   rule or an unreadable entry voids it. Non-provisioner senders are
-  rate-limited per sender before decryption, store reads or audit. Retrieval goes through the single
+  rate-limited per sender before inner decryption, store reads or audit. Retrieval goes through the single
   `signet_credential_access_acquire` path (deny-list, for owner and requester →
   capability → rate limit → owner/status/expected version before decrypt →
   type rules → lease burn → mandatory audit).

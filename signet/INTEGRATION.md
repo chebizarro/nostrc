@@ -158,7 +158,7 @@ Browsers and `fido2-token` must be tested on Linux because macOS does not provid
 
 ## Management Protocol
 
-All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey (the seal author) to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` also accepts the target agent itself, and `credential/inspect`, `credential/list` and `credential/deliver` also accept a requester holding the owner's exact delivery grant (see [Credential methods](#credential-methods)). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. The request's own `created_at` — the rumor's for a gift wrap (NIP-59 randomizes only the seal and wrap timestamps; the seal signature authenticates the rumor), the event's for a plain 25910 — must be within `[replay] skew_seconds` (default 120, never 0 for management) of Signet's clock, and ids are kept at least twice that long, so a captured request can never run again. Each id is charged to its sender: at most 256 live ids per sender, and a full sender (or cache) is refused rather than evicting anyone's ids. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
+All management traffic uses Cascadia ContextVM kind `25910` signed Nostr intents. Relay transport should gift-wrap the intent with NIP-59/NIP-17 kind `1059`; authorization requires the inner sender pubkey (the seal author) to be in the `provisioner_pubkeys` list, with two exceptions: `agent/reissue-connect` also accepts the target agent itself, and `credential/inspect`, `credential/list` and `credential/deliver` also accept a requester holding the owner's exact delivery grant (see [Credential methods](#credential-methods)). Responses are correlated, gift-wrapped ContextVM results. Each management **event id** executes at most once: relay redelivery, republishing of the same serialized event, and history replay are silently dropped instead of re-running non-idempotent commands such as `agent/rotate-key` or `agent/reissue-connect`. The request's own `created_at` — the rumor's for a gift wrap (NIP-59 randomizes only the seal and wrap timestamps; the seal signature authenticates the rumor), the event's for a plain 25910 — must be within `[replay] skew_seconds` (default 120, never 0 for management) of Signet's clock, and management ids are kept twice that long (`[replay] ttl_seconds` applies to NIP-46 only), so a captured request can never run again. Provisioners, self-service agents and delivery-grant requesters each have their own replay cache (16384 live ids), so one class cannot fill another's; a non-provisioner sender may hold 512 live ids (more than its rate limit admits in that time), provisioners are not limited per sender, and a full sender or cache is refused rather than evicting anyone's ids. Many colluding authorized senders of one class can still fill that class's cache and have its requests refused (`replay_quota_exceeded`) until their ids expire; they cannot affect the other classes or replay anything. Note this keys on the delivered Nostr event id — a client retry that re-signs the same request produces a new event id and executes again; recover from a lost reply by sending a new intent. Retired custom management event kinds are not subscribed, parsed, or emitted.
 
 | Kind  | Method | Description |
 |-------|--------|-------------|
@@ -207,8 +207,13 @@ refusal itself. Refusals that any method can get:
 | `error.data` | Meaning |
 |--------------|---------|
 | `request_time_skew` | the request's `created_at` is outside Signet's clock window (send it again with a correct clock) |
-| `replay_quota_exceeded` | this sender has too many requests inside the replay window |
-| `rate_limited` | a non-provisioner sender is over its rate (60 requests burst, refilled at 60 per minute); not audited |
+| `replay_quota_exceeded` | this sender, or its class's replay cache, holds too many requests inside the replay window |
+| `rate_limited` | a non-provisioner sender is over its rate (60 requests burst, refilled at 60 per minute). Checked before anything else, including the provisioner-only refusal; further requests are dropped without a reply, and the sender is told at most once a minute. Not audited |
+
+Refusals of non-provisioner senders are audited within a global budget (100,
+then one per second); refusals over it are counted, and the next audited
+refusal is preceded by one `mgmt_refusals_suppressed` entry carrying the
+count, so no number of keys can turn refusals into unbounded audit rows.
 | `replay_invalid` | the event has no id |
 
 NIP-59 randomizes each gift wrap's `created_at` up to **48 hours** into the
@@ -285,7 +290,10 @@ default-allow, more clients, mixing `credential.deliver` with NIP-46 methods,
 any `allow_kinds`/`deny_kinds`, and any `deny_clients`/`deny_methods` entry
 all void it, and the grant gives no NIP-46 signing authority. `set-policy`
 rejects a client or method entry it cannot read (a client must be `*`, an npub
-or 64-hex); a policy file carrying one still loads, but never as a grant. A
+or 64-hex); a policy file carrying one still loads, but never as a grant. (In
+ordinary NIP-46 evaluation an unreadable entry is kept as a placeholder that
+never matches, so its list still counts: an `allow_clients` list of nothing
+but unreadable entries allows no client.) A
 provisioner needs the grant too: provisioner status authorizes the request,
 not the release.
 
@@ -302,7 +310,9 @@ is not granted and a credential that does not exist get byte-identical
 `no_capability` refusals — for inspect, and for deliver even under a grant the
 requester does hold (another owner's credential) — so the refusal reveals
 nothing about which credentials exist. Such a requester is rate-limited per
-sender before its request is decrypted or read. Such a requester's key therefore carries no management authority: it
+sender before its inner request is decrypted or anything is read (the gift
+wrap is opened first, to authenticate it). Its key carries no management
+authority: it
 cannot create, rotate, revoke or delete credentials, change policies, or grant
 itself anything. Keep it separate from provisioner keys.
 
@@ -547,6 +557,7 @@ Returns 200 if healthy (SQLCipher open, relays connected), 503 otherwise.
 - **Complete revocation**: `revoke_agent` denies the resolved pubkey, burns active leases, revokes the agent's persistent client bindings, wipes cache and persistent key material, and audits the operation.
 - **Atomic pairing**: NIP-46 `connect` consumes the one-time secret and records the durable client binding in one SQLite transaction — the credential cannot be burned without the pairing (or vice versa).
 - **Identity-pinned bindings**: client bindings resolve only while the agent's current identity pubkey matches the one pinned at pairing time — rotation or reprovisioning cannot resurrect prior authority.
-- **Management replay protection**: each delivered management event id executes at most once: the request's authenticated `created_at` must be within the clock window, ids outlive the window, and each id is charged to its sender's quota with nothing unexpired ever evicted, so no sender can flood another's ids out of the cache. Self-service reissue and delivery-grant events also use their own replay domain.
+- **Management replay protection**: each delivered management event id executes at most once: the request's authenticated `created_at` must be within the clock window, ids outlive the window, each sender class has its own cache, and non-provisioner ids are charged to their sender's quota with nothing unexpired ever evicted, so no sender can flood another's ids out of a cache.
+- **Bounded refusals**: non-provisioner senders are rate-limited before any refusal or audit, and their refusals are audited within a global budget (aggregated beyond it).
 - **Least-privilege credential delivery**: a delivery requester needs no provisioner rights; the owner's exact `credential.deliver` grant authorizes it to inspect, list and receive that owner's credentials and nothing else, and deny entries override the grant.
 - **DB-level identity uniqueness**: a partial unique index on `agents.pubkey` (with upsert semantics that error instead of destructively replacing) prevents one custody key from ever being bound to two agents.
