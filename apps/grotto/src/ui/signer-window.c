@@ -563,6 +563,9 @@ static void signer_window_init(SignerWindow *self) {
   gn_keyboard_nav_setup_sidebar(self->sidebar, self->stack, page_names);
 }
 
+void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group) {
+  page_permissions_set_pending_group(PAGE_PERMISSIONS(self->page_permissions), group);
+}
 SignerWindow *signer_window_new(AdwApplication *app) {
   g_return_val_if_fail(ADW_IS_APPLICATION(app), NULL);
   return g_object_new(TYPE_SIGNER_WINDOW, "application", app, NULL);
@@ -571,6 +574,10 @@ SignerWindow *signer_window_new(AdwApplication *app) {
 void signer_window_show_page(SignerWindow *self, const char *name) {
   g_return_if_fail(self != NULL && name != NULL);
   if (self->stack) adw_view_stack_set_visible_child_name(self->stack, name);
+  if (!strcmp(name, "permissions")) {
+    gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, 0));
+    adw_preferences_page_scroll_to_top(ADW_PREFERENCES_PAGE(self->page_permissions));
+  }
 }
 
 /**

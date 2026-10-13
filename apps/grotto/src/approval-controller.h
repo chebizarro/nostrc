@@ -22,14 +22,17 @@ G_DECLARE_FINAL_TYPE(GrottoApprovalController, grotto_approval_controller, GROTT
                      APPROVAL_CONTROLLER, GObject)
 /* Create on the GUI main context. Subscribes before the first snapshot.
  * Application owns the controller and must stop it on shutdown. Signals:
- * message(string), availability-changed(), notifications-changed(). */
+ * message(string), availability-changed(), notifications-changed(),
+ * reconciled(boolean success), including terminal unavailable/error results. */
 GrottoApprovalController *grotto_approval_controller_new(GApplication *app, GDBusConnection *bus);
 GListModel *grotto_approval_controller_get_pending(GrottoApprovalController *self); /* borrowed */
 void grotto_approval_controller_reconcile(GrottoApprovalController *self);
 void grotto_approval_controller_stop(GrottoApprovalController *self);
 guint grotto_approval_controller_get_holds(GrottoApprovalController *self);
 gboolean grotto_approval_controller_notifications_available(GrottoApprovalController *self);
-/* Empty ID reviews the inbox; a nonempty stale ID never substitutes a request. */
+/* Empty ID reconciles the inbox without opening an arbitrary request. The
+ * application's empty review-request action presents its hosted pending view.
+ * A nonempty stale ID never substitutes a request. */
 void grotto_approval_controller_review(GrottoApprovalController *self, const char *id);
 void grotto_approval_controller_decide_async(GrottoApprovalController *self, const char *id,
                                              gboolean allow, gboolean remember, guint64 ttl,

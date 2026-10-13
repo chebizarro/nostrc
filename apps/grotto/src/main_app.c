@@ -1,4 +1,5 @@
 #include "gn-session-bus-probe.h"
+#include "main_app.h"
 #include <gtk/gtk.h>
 #include <adwaita.h>
 #include <gio/gio.h>
@@ -48,6 +49,7 @@ static void on_theme_setting_changed(const char *key, gpointer user_data);
 static void update_high_contrast_css(gboolean enable);
 static void on_system_high_contrast_changed(GObject *obj, GParamSpec *pspec, gpointer user_data);
 static gboolean should_use_high_contrast(void);
+static void attach_pending_group(GtkWindow *win);
 
 /* Global application instance for callbacks that need it */
 
@@ -248,9 +250,32 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
     }
   }
 
+  attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
 }
 
+static void attach_pending_group(GtkWindow *win) {
+  if (!SIGNER_IS_WINDOW(win) || !approval_controller ||
+      g_object_get_data(G_OBJECT(win), "grotto-pending-group")) return;
+  GtkWidget *group = grotto_approval_pending_group_new(approval_controller);
+  signer_window_set_pending_group(SIGNER_WINDOW(win), group);
+  g_object_set_data(G_OBJECT(win), "grotto-pending-group", group);
+}
+static GtkWindow *present_pending(GtkApplication *app) {
+  GtkWindow *win = NULL;
+  for (GList *w = gtk_application_get_windows(app); w; w = w->next)
+    if (SIGNER_IS_WINDOW(w->data)) { win = w->data; break; }
+  if (!win) {
+    g_application_activate(G_APPLICATION(app));
+    for (GList *w = gtk_application_get_windows(app); w; w = w->next)
+      if (SIGNER_IS_WINDOW(w->data)) { win = w->data; break; }
+    if (!win) win = GTK_WINDOW(signer_window_new(ADW_APPLICATION(app)));
+  }
+  attach_pending_group(win);
+  signer_window_show_page(SIGNER_WINDOW(win), "permissions");
+  gtk_window_present(win);
+  return win;
+}
 /* Global deferred state for D-Bus connection */
 static GDBusConnection *deferred_dbus_conn = NULL;
 static void on_approval_message(GrottoApprovalController *controller, const char *message, gpointer data) {
@@ -259,10 +284,10 @@ static void on_approval_message(GrottoApprovalController *controller, const char
   GtkWindow *win = gtk_application_get_active_window(app);
   if (g_strcmp0(message, "That request is no longer waiting.") == 0 ||
       g_strcmp0(message, "No requests are waiting.") == 0) {
-    g_application_activate(G_APPLICATION(app)); win = management_window(app);
+    win = present_pending(app);
   }
   if (win) {
-    /* G10 hosts the pending group on Home; retain today's management page. */
+    /* The existing default page hosts pending review until G10 supplies Home. */
     AdwDialog *alert = adw_alert_dialog_new("Grotto", message);
     adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "close", "Close");
     adw_dialog_present(alert, GTK_WIDGET(win));
@@ -270,7 +295,11 @@ static void on_approval_message(GrottoApprovalController *controller, const char
 }
 static void on_review_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)data; const char *id = g_variant_get_string(parameter, NULL);
-  if (approval_controller) grotto_approval_controller_review(approval_controller, id);
+  present_pending(global_app);
+  if (!*id) {
+    g_clear_pointer(&queued_review, g_free);
+    if (approval_controller) grotto_approval_controller_review(approval_controller, "");
+  } else if (approval_controller) grotto_approval_controller_review(approval_controller, id);
   else { g_free(queued_review); queued_review = g_strdup(id); }
 }
 static void deny_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -279,15 +308,19 @@ static void deny_done(GObject *source, GAsyncResult *result, gpointer data) {
   if (!grotto_approval_controller_decide_finish(GROTTO_APPROVAL_CONTROLLER(source), result, &error))
     on_approval_message(GROTTO_APPROVAL_CONTROLLER(source), "That request is no longer waiting.", app);
 }
-static void on_reconciled(GrottoApprovalController *controller, gpointer data) {
+static void on_reconciled(GrottoApprovalController *controller, gboolean success, gpointer data) {
   (void)data;
   if (queued_deny) {
     g_autofree gchar *id = g_steal_pointer(&queued_deny);
-    grotto_approval_controller_decide_async(controller, id, FALSE, FALSE, 0, NULL, deny_done, g_object_ref(global_app));
+    if (success)
+      grotto_approval_controller_decide_async(controller, id, FALSE, FALSE, 0, NULL, deny_done, g_object_ref(global_app));
+    else
+      on_approval_message(controller, "That request is no longer waiting.", global_app);
   }
 }
 static void on_deny_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)data;
+  present_pending(global_app);
   g_free(queued_deny); queued_deny = g_strdup(g_variant_get_string(parameter, NULL));
   if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
 }
@@ -323,6 +356,8 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
   g_object_set_data_full(G_OBJECT(global_app), "grotto-approval-controller", approval_controller, g_object_unref);
   g_signal_connect(approval_controller, "message", G_CALLBACK(on_approval_message), global_app);
   g_signal_connect(approval_controller, "reconciled", G_CALLBACK(on_reconciled), global_app);
+  for (GList *w = gtk_application_get_windows(global_app); w; w = w->next)
+    attach_pending_group(w->data);
   if (queued_review) {
     grotto_approval_controller_review(approval_controller, queued_review);
     g_clear_pointer(&queued_review, g_free);
@@ -388,6 +423,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
   GtkWindow *existing = management_window(app);
   if (existing) {
+    attach_pending_group(existing);
+    if (SIGNER_IS_WINDOW(existing) && approval_controller &&
+        g_list_model_get_n_items(grotto_approval_controller_get_pending(approval_controller)))
+      signer_window_show_page(SIGNER_WINDOW(existing), "permissions");
     gtk_window_present(existing);
     if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
     return;
@@ -476,6 +515,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     }
   }
 
+  attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
   if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
   STARTUP_TIME_END(STARTUP_PHASE_WINDOW);
@@ -598,6 +638,7 @@ static void on_app_show_shortcuts(GSimpleAction *action, GVariant *param, gpoint
   g_object_unref(builder);
 }
 
+#ifndef GROTTO_APP_NO_MAIN
 int main(int argc, char **argv) {
   /* Initialize startup timing first thing */
   startup_timing_init();
@@ -623,9 +664,17 @@ int main(int argc, char **argv) {
               "running without D-Bus");
     app_flags |= G_APPLICATION_NON_UNIQUE;
   }
-  AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags);
-
+  AdwApplication *app = grotto_application_new(app_flags);
   STARTUP_TIME_END(STARTUP_PHASE_INIT);
+  int status = g_application_run(G_APPLICATION(app), argc, argv);
+  g_object_unref(app);
+  gnostr_secure_mem_shutdown();
+  return status;
+}
+#endif
+
+AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
+  AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags);
 
   /* Store global app reference for theme change callbacks */
   global_app = GTK_APPLICATION(app);
@@ -676,11 +725,5 @@ int main(int argc, char **argv) {
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
-  int status = g_application_run(G_APPLICATION(app), argc, argv);
-  g_object_unref(app);
-
-  /* Shutdown secure memory subsystem - securely zeros and frees all remaining allocations */
-  gnostr_secure_mem_shutdown();
-
-  return status;
+  return app;
 }

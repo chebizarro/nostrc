@@ -56,7 +56,8 @@ struct _GrottoApprovalController {
   guint watch, lock_watch, subscriptions[3], holds, summary_timer, notification_watch[1];
   guint64 lock_revision;
   gint64 summary_sent;
-  gboolean stopped, compatible, listing, list_again, locked, notifications, bootstrap_held;
+  gboolean stopped, compatible, checking_owner, listing, list_again, locked, notifications,
+      bootstrap_held;
   GnostrApprovalDialog *dialog;
 };
 G_DEFINE_FINAL_TYPE(GrottoApprovalController, grotto_approval_controller, G_TYPE_OBJECT)
@@ -105,7 +106,7 @@ static const char *client_name(GrottoApprovalController *s, GVariant *info) {
   if (!verified)
     return "Unverified app";
   const char *app_id = text_field(info, "app_id");
-  return *app_id ? app_id : (*principal ? principal : "Unverified app");
+  return *app_id ? app_id : "Unverified app";
 }
 static gchar *operation_label(GVariant *info) {
   const char *op = text_field(info, "operation");
@@ -298,8 +299,8 @@ static void apply_info(GrottoApprovalController *s, GrottoApprovalRequest *r, GV
     deadline = g_get_monotonic_time() +
                MAX((gint64)0, (gint64)expires * G_USEC_PER_SEC - g_get_real_time());
   /* Missing authoritative age is read-only: never restart a catch-up TTL. */
-  if (deadline && r->deadline)
-    deadline = MIN(deadline, r->deadline);
+  if (r->deadline)
+    deadline = deadline ? MIN(deadline, r->deadline) : r->deadline;
   if (deadline && deadline <= g_get_monotonic_time()) {
     resolve(s, r->id, GROTTO_APPROVAL_RESOLVED);
     return;
@@ -313,18 +314,17 @@ static void apply_info(GrottoApprovalController *s, GrottoApprovalRequest *r, GV
     r->state = deadline && s->compatible ? GROTTO_APPROVAL_READY : GROTTO_APPROVAL_UNAVAILABLE;
   if (r->expiry)
     g_source_remove(r->expiry);
-  r->expiry = deadline && r->state != GROTTO_APPROVAL_SUBMITTING
-                  ? g_timeout_add_full(
-                        G_PRIORITY_DEFAULT,
-                        MAX((gint64)1, MIN((gint64)G_MAXUINT,
-                                           (deadline - g_get_monotonic_time() + 999) / 1000)),
-                        expired, fetch_new(s, r), (GDestroyNotify)fetch_free)
-                  : 0;
+  r->expiry = deadline ? g_timeout_add_full(
+                             G_PRIORITY_DEFAULT,
+                             MAX((gint64)1, MIN((gint64)G_MAXUINT,
+                                                (deadline - g_get_monotonic_time() + 999) / 1000)),
+                             expired, fetch_new(s, r), (GDestroyNotify)fetch_free)
+                       : 0;
   guint index;
   if (g_list_store_find(s->pending, r, &index))
     g_list_model_items_changed(G_LIST_MODEL(s->pending), index, 1, 1);
   update_notifications(s);
-  if (s->wanted_review && (!*s->wanted_review || !strcmp(s->wanted_review, r->id)) &&
+  if (s->wanted_review && *s->wanted_review && !strcmp(s->wanted_review, r->id) &&
       r->state == GROTTO_APPROVAL_READY) {
     g_autofree gchar *id = g_steal_pointer(&s->wanted_review);
     grotto_approval_controller_review(s, *id ? id : r->id);
@@ -398,8 +398,16 @@ static void list_done(GObject *source, GAsyncResult *result, gpointer data) {
       }
     } else if (reply)
       s->list_again = TRUE;
-    else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
-      message(s, "Pending requests unavailable. Reopen Grotto to retry.");
+    else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+      if (s->wanted_review) {
+        gboolean specific = *s->wanted_review != '\0';
+        g_clear_pointer(&s->wanted_review, g_free);
+        message(s, specific ? "That request is no longer waiting."
+                            : "Pending requests unavailable. Reopen Grotto to retry.");
+      } else
+        message(s, "Pending requests unavailable. Reopen Grotto to retry.");
+      g_signal_emit(s, signals[RECONCILED], 0, FALSE);
+    }
     if (s->list_again) {
       s->list_again = FALSE;
       grotto_approval_controller_reconcile(s);
@@ -409,19 +417,31 @@ static void list_done(GObject *source, GAsyncResult *result, gpointer data) {
       message(s, "That request is no longer waiting.");
     }
     if (reply && f->revision == s->revision) {
-      if (s->wanted_review && !*s->wanted_review &&
-          !g_list_model_get_n_items(G_LIST_MODEL(s->pending))) {
+      if (s->wanted_review && !*s->wanted_review) {
         g_clear_pointer(&s->wanted_review, g_free);
-        message(s, "No requests are waiting.");
+        if (!g_list_model_get_n_items(G_LIST_MODEL(s->pending)))
+          message(s, "No requests are waiting.");
       }
-      g_signal_emit(s, signals[RECONCILED], 0);
+      g_signal_emit(s, signals[RECONCILED], 0, TRUE);
     }
   }
   fetch_free(f);
 }
 void grotto_approval_controller_reconcile(GrottoApprovalController *s) {
-  if (s->stopped || !s->owner || !s->compatible)
+  if (s->stopped)
     return;
+  if (!s->owner || !s->compatible) {
+    if (s->bootstrap_held || s->checking_owner)
+      return;
+    if (s->wanted_review) {
+      gboolean specific = *s->wanted_review != '\0';
+      g_clear_pointer(&s->wanted_review, g_free);
+      message(s, specific ? "That request is no longer waiting."
+                          : "Signer unavailable. Requests could not be listed.");
+    }
+    g_signal_emit(s, signals[RECONCILED], 0, FALSE);
+    return;
+  }
   if (s->listing) {
     s->list_again = TRUE;
     return;
@@ -440,6 +460,7 @@ static void status_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GVariant) reply =
       g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
   if (fetch_current(f)) {
+    f->self->checking_owner = FALSE;
     guint32 version = 0;
     if (reply) {
       g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0);
@@ -449,8 +470,10 @@ static void status_done(GObject *source, GAsyncResult *result, gpointer data) {
     f->self->compatible = version == 1;
     if (version == 1)
       grotto_approval_controller_reconcile(f->self);
-    else
+    else {
       message(f->self, "Update Grotto to review requests. This daemon is read-only.");
+      grotto_approval_controller_reconcile(f->self);
+    }
     g_signal_emit(f->self, signals[AVAILABILITY_CHANGED], 0);
   }
   fetch_free(f);
@@ -493,6 +516,7 @@ static void fetch_clients(GrottoApprovalController *s) {
 static void reset_owner(GrottoApprovalController *s) {
   s->generation++;
   s->compatible = FALSE;
+  s->checking_owner = FALSE;
   s->listing = s->list_again = FALSE;
   g_cancellable_cancel(s->cancel);
   g_clear_object(&s->cancel);
@@ -521,6 +545,7 @@ static void appeared(GDBusConnection *bus, const char *name, const char *owner, 
   GrottoApprovalController *s = data;
   reset_owner(s);
   s->owner = g_strdup(owner);
+  s->checking_owner = TRUE;
   Fetch *f = fetch_new(s, NULL);
   f->held = TRUE;
   hold(s);
@@ -541,6 +566,7 @@ static void vanished(GDBusConnection *bus, const char *name, gpointer data) {
     g_clear_pointer(&s->wanted_review, g_free);
     message(s, specific ? "That request is no longer waiting." : "No requests are waiting.");
   }
+  g_signal_emit(s, signals[RECONCILED], 0, FALSE);
   g_signal_emit(s, signals[AVAILABILITY_CHANGED], 0);
 }
 static void signal_received(GDBusConnection *bus, const char *sender, const char *path,
@@ -734,10 +760,8 @@ static void decision_checked(GObject *source, GAsyncResult *result, gpointer dat
     g_object_unref(task);
     return;
   }
-  if (f->request->expiry) {
-    g_source_remove(f->request->expiry);
-    f->request->expiry = 0;
-  }
+  /* Keep cleanup anchored to the original deadline even while a decision
+   * or its recovery snapshot is uncertain. The daemon arbitrates execution. */
   g_dbus_connection_call(f->self->bus, f->self->owner, SIGNER_PATH, SIGNER, "ApproveRequest",
                          g_variant_new("(sbbt)", f->request->id, d->allow, d->remember, d->ttl),
                          G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 30000, f->self->cancel,
@@ -858,6 +882,28 @@ static void review_deferred(GnostrApprovalDialog *dialog, gpointer data) {
     update_notifications(s);
   }
 }
+static void refresh_navigation(GListModel *model, guint position, guint removed, guint added,
+                               gpointer data) {
+  (void)position;
+  (void)removed;
+  (void)added;
+  GrottoApprovalController *s = data;
+  GrottoApprovalRequest *current =
+      s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
+  if (!s->dialog || !current)
+    return;
+  guint count = 0, current_position = 1;
+  for (guint i = 0; i < g_list_model_get_n_items(model); i++) {
+    g_autoptr(GrottoApprovalRequest) r = g_list_model_get_item(model, i);
+    if (r->state == GROTTO_APPROVAL_READY && same_group(current->info, r->info)) {
+      count++;
+      if (r == current)
+        current_position = count;
+    }
+  }
+  /* Navigation is live; the displayed batch/checked-ID set stays frozen. */
+  gnostr_approval_dialog_set_position(s->dialog, current_position, MAX(1u, count));
+}
 static void review_step(GnostrApprovalDialog *dialog, int delta, gpointer data) {
   (void)dialog;
   GrottoApprovalController *s = data;
@@ -905,18 +951,12 @@ static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer
 void grotto_approval_controller_review(GrottoApprovalController *s, const char *id) {
   if (s->stopped)
     return;
-  if (!s->owner && !s->bootstrap_held) {
-    message(s, id && *id ? "That request is no longer waiting." : "No requests are waiting.");
+  if ((!s->owner && !s->bootstrap_held) || (s->owner && !s->compatible && !s->checking_owner)) {
+    message(s, id && *id ? "That request is no longer waiting."
+                         : "Signer unavailable. Requests could not be listed.");
     return;
   }
   if (!id || !*id) {
-    for (guint i = 0; i < g_list_model_get_n_items(G_LIST_MODEL(s->pending)); i++) {
-      g_autoptr(GrottoApprovalRequest) r = g_list_model_get_item(G_LIST_MODEL(s->pending), i);
-      if (r->state == GROTTO_APPROVAL_READY) {
-        grotto_approval_controller_review(s, r->id);
-        return;
-      }
-    }
     g_free(s->wanted_review);
     s->wanted_review = g_strdup("");
     grotto_approval_controller_reconcile(s);
@@ -984,6 +1024,11 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
 static void row_activated(AdwActionRow *row, gpointer data) {
   grotto_approval_controller_review(data, g_object_get_data(G_OBJECT(row), "request-id"));
 }
+static void group_notifications_changed(GrottoApprovalController *s, gpointer data) {
+  adw_preferences_group_set_description(
+      ADW_PREFERENCES_GROUP(data),
+      s->notifications ? NULL : "Notifications unavailable. Requests remain here for review.");
+}
 static void group_update(GListModel *model, guint position, guint removed, guint added,
                          gpointer data) {
   (void)position;
@@ -1011,9 +1056,7 @@ static void group_update(GListModel *model, guint position, guint removed, guint
     g_ptr_array_add(rows, row);
   }
   gtk_widget_set_visible(GTK_WIDGET(group), rows->len > 0);
-  adw_preferences_group_set_description(
-      group,
-      s->notifications ? NULL : "Notifications unavailable. Requests remain here for review.");
+  group_notifications_changed(s, group);
 }
 GtkWidget *grotto_approval_pending_group_new(GrottoApprovalController *s) {
   GtkWidget *group = adw_preferences_group_new();
@@ -1022,6 +1065,8 @@ GtkWidget *grotto_approval_pending_group_new(GrottoApprovalController *s) {
   g_object_set_data_full(G_OBJECT(group), "rows", g_ptr_array_new(),
                          (GDestroyNotify)g_ptr_array_unref);
   g_signal_connect_object(s->pending, "items-changed", G_CALLBACK(group_update), group, 0);
+  g_signal_connect_object(s, "notifications-changed", G_CALLBACK(group_notifications_changed),
+                          group, 0);
   group_update(G_LIST_MODEL(s->pending), 0, 0, 0, group);
   return group;
 }
@@ -1090,7 +1135,7 @@ static void grotto_approval_controller_class_init(GrottoApprovalControllerClass 
   o->dispose = grotto_approval_controller_dispose;
   o->finalize = grotto_approval_controller_finalize;
   signals[RECONCILED] = g_signal_new("reconciled", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
-                                     NULL, NULL, NULL, G_TYPE_NONE, 0);
+                                     NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
   signals[MESSAGE] = g_signal_new("message", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
                                   NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[AVAILABILITY_CHANGED] =
@@ -1105,6 +1150,7 @@ static void grotto_approval_controller_init(GrottoApprovalController *s) {
   g_weak_ref_init(&s->review_window, NULL);
   s->locked = TRUE;
   s->pending = g_list_store_new(GROTTO_TYPE_APPROVAL_REQUEST);
+  g_signal_connect_object(s->pending, "items-changed", G_CALLBACK(refresh_navigation), s, 0);
   s->requests = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   s->tombstones = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   s->labels = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);

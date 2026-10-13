@@ -5,5 +5,6 @@ G_BEGIN_DECLS
 #define TYPE_PAGE_PERMISSIONS (page_permissions_get_type())
 G_DECLARE_FINAL_TYPE(PagePermissions, page_permissions, PAGE, PERMISSIONS, AdwPreferencesPage)
 PagePermissions *page_permissions_new(void);
+void page_permissions_set_pending_group(PagePermissions *self, GtkWidget *group);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_PAGE_PERMISSIONS_H */

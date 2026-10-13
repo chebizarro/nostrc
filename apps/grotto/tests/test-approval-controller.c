@@ -15,7 +15,9 @@ typedef struct {
       notification_activated;
   gchar *notification_title, *notification_body;
   gchar **notification_actions;
-  gboolean delay, delay_info, delayed_is_info, fail_decision;
+  gboolean delay, delay_info, delayed_is_info, fail_decision, fail_list, reconciled_ok;
+  guint status_version, reconciles;
+  gchar *last_message;
 } Fixture;
 static const char xml[] =
     "<node><interface name='org.nostr.Grotto.Control1'>"
@@ -73,13 +75,16 @@ static void method(GDBusConnection *bus, const char *sender, const char *path,
   if (!strcmp(name, "GetStatus")) {
     GVariantBuilder row;
     g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
+    g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(f->status_version));
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(a{sv})", &row));
   } else if (!strcmp(name, "ListClients")) {
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(aa{sv})", NULL));
   } else if (!strcmp(name, "ListRequests")) {
     f->lists++;
-    if (f->delay) {
+    if (f->fail_list) {
+      g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Signer.Error.Failed",
+                                                 "Snapshot failed");
+    } else if (f->delay) {
       g_assert_null(f->delayed);
       f->delayed = g_object_ref(invocation);
       f->delayed_rows = snapshot(f);
@@ -159,8 +164,16 @@ static void name(Fixture *f, gboolean claim) {
 }
 static void seen_message(GrottoApprovalController *controller, const char *text, gpointer data) {
   (void)controller;
-  (void)text;
-  ((Fixture *)data)->messages++;
+  Fixture *f = data;
+  f->messages++;
+  g_free(f->last_message);
+  f->last_message = g_strdup(text);
+}
+static void reconciled(GrottoApprovalController *s, gboolean success, gpointer data) {
+  (void)s;
+  Fixture *f = data;
+  f->reconciles++;
+  f->reconciled_ok = success;
 }
 static void setup(Fixture *f, gconstpointer data) {
   (void)data;
@@ -170,6 +183,7 @@ static void setup(Fixture *f, gconstpointer data) {
   f->server = nostrc_test_bus_connect(f->bus);
   f->client = nostrc_test_bus_connect(f->bus);
   f->rows = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
+  f->status_version = 1;
   g_autoptr(GDBusNodeInfo) node = g_dbus_node_info_new_for_xml(xml, NULL);
   for (guint i = 0; i < 2; i++)
     f->registration[i] = g_dbus_connection_register_object(
@@ -179,6 +193,7 @@ static void setup(Fixture *f, gconstpointer data) {
   name(f, TRUE);
   f->controller = grotto_approval_controller_new(f->app, f->client);
   g_signal_connect(f->controller, "message", G_CALLBACK(seen_message), f);
+  g_signal_connect(f->controller, "reconciled", G_CALLBACK(reconciled), f);
   WAIT(f->lists > 0 && grotto_approval_controller_get_holds(f->controller) == 0);
 }
 static void delayed_reply(Fixture *f) {
@@ -202,6 +217,7 @@ static void teardown(Fixture *f, gconstpointer data) {
   for (guint i = 2; i < 4; i++)
     if (f->registration[i])
       g_dbus_connection_unregister_object(f->server, f->registration[i]);
+  g_free(f->last_message);
   g_free(f->notification_title);
   g_free(f->notification_body);
   g_strfreev(f->notification_actions);
@@ -328,6 +344,49 @@ static void decision_rechecks(Fixture *f, gconstpointer data) {
   g_assert_cmpuint(f->infos, >, before);
   g_assert_cmpuint(f->decisions, ==, 1);
   g_assert_cmpuint(pending(f), ==, 0);
+}
+static void failed_decision_and_snapshot_expires(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_ptr_array_add(f->rows, request("double-failure", 1));
+  arrive(f, "double-failure");
+  WAIT(ready(f));
+  f->fail_decision = f->fail_list = TRUE;
+  guint lists = f->lists;
+  Reply r = {0};
+  gint64 before = g_get_monotonic_time();
+  grotto_approval_controller_decide_async(f->controller, "double-failure", TRUE, FALSE, 0, NULL,
+                                          decided, &r);
+  WAIT(r.done && f->lists > lists && grotto_approval_controller_get_holds(f->controller) == 1);
+  g_assert_false(r.ok);
+  g_clear_error(&r.error);
+  g_assert_false(ready(f));
+  /* No completion signal, owner change, or successful recovery snapshot. */
+  WAIT(pending(f) == 0 && grotto_approval_controller_get_holds(f->controller) == 0);
+  g_assert_cmpint(g_get_monotonic_time() - before, <, 2 * G_USEC_PER_SEC);
+  g_assert_cmpuint(f->decisions, ==, 1);
+}
+static void stale_review_terminal(Fixture *f, gconstpointer data) {
+  (void)data;
+  f->fail_list = TRUE;
+  guint before = f->reconciles;
+  grotto_approval_controller_review(f->controller, "exact-stale-id");
+  WAIT(f->reconciles > before);
+  g_assert_false(f->reconciled_ok);
+  g_assert_cmpstr(f->last_message, ==, "That request is no longer waiting.");
+  name(f, FALSE);
+  WAIT(grotto_approval_controller_get_holds(f->controller) == 0);
+  before = f->messages;
+  grotto_approval_controller_review(f->controller, "offline-id");
+  WAIT(f->messages > before);
+  g_assert_cmpstr(f->last_message, ==, "That request is no longer waiting.");
+  f->status_version = 99;
+  name(f, TRUE);
+  WAIT(f->messages > before + 1);
+  before = f->messages;
+  grotto_approval_controller_review(f->controller, "incompatible-id");
+  WAIT(f->messages > before);
+  g_assert_cmpstr(f->last_message, ==, "That request is no longer waiting.");
+  g_assert_cmpuint(f->decisions, ==, 0);
 }
 static void missing_before_decision(Fixture *f, gconstpointer data) {
   (void)data;
@@ -463,6 +522,13 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_variant_dict_init(&dict, base);
   g_variant_dict_insert(&dict, "claimed_app_id", "s", "attacker supplied name");
   g_variant_dict_insert(&dict, "reason", "s", "private reason");
+  if (data) {
+    g_variant_dict_insert(&dict, "verified", "b", TRUE);
+    g_variant_dict_insert(&dict, "principal", "s", (const char *)data);
+    g_variant_dict_insert(&dict, "transport", "s",
+                          g_str_has_prefix(data, "nip46:") ? "NIP46" : "DBUS");
+    g_variant_dict_insert(&dict, "app_id", "s", "");
+  }
   g_ptr_array_add(f->rows, g_variant_ref_sink(g_variant_dict_end(&dict)));
   arrive(f, "notification-one");
   WAIT(f->notification_body && strstr(f->notification_body, "Text note"));
@@ -476,6 +542,10 @@ static void notifications(Fixture *f, gconstpointer data) {
   g_assert_true(review);
   g_assert_true(deny);
   g_assert_null(strstr(f->notification_body, "private"));
+  if (data) {
+    g_assert_null(strstr(f->notification_title, data));
+    g_assert_null(strstr(f->notification_body, data));
+  }
   g_ptr_array_add(f->rows, request("notification-two", 120));
   arrive(f, "notification-two");
   WAIT(f->notification_body && g_str_has_prefix(f->notification_body, "2 requests"));
@@ -503,6 +573,8 @@ int main(int argc, char **argv) {
   ADD("expiry", expiry);
   ADD("owner-change", owner_change);
   ADD("decision-rechecks", decision_rechecks);
+  ADD("failed-decision-and-snapshot-expires", failed_decision_and_snapshot_expires);
+  ADD("stale-review-terminal", stale_review_terminal);
   ADD("missing-before-decision", missing_before_decision);
   ADD("completed-before-info", completed_before_info);
   ADD("changed-identity", changed_identity);
@@ -511,6 +583,11 @@ int main(int argc, char **argv) {
 #ifndef __APPLE__
   g_test_add("/signer/approval-controller/notifications", Fixture, NULL, setup, notifications,
              teardown);
+  g_test_add("/signer/approval-controller/notifications-nameless-executable", Fixture,
+             "exe:/home/alice/private-directory/client", setup, notifications, teardown);
+  g_test_add("/signer/approval-controller/notifications-nameless-nip46", Fixture,
+             "nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", setup,
+             notifications, teardown);
 #endif
   return g_test_run();
 }
