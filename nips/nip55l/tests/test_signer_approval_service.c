@@ -65,7 +65,8 @@ static SignerCaller local_caller(void) {
 }
 static SignerGateHandle *submit(SignerApprovalService *s, SignerCaller *who, const gchar *connection,
     SignerGateOp op, const gchar *a, const gchar *b, Reply *r) {
-  SignerGateContext context = {.transport=SIGNER_TRANSPORT_NIP46, .no_identity=op==SIGNER_GATE_PING || op==SIGNER_GATE_CONNECT};
+  SignerGateContext context = {.transport=who->kind == SIGNER_CALLER_NIP46 ? SIGNER_TRANSPORT_NIP46 : SIGNER_TRANSPORT_DBUS,
+      .no_identity=op==SIGNER_GATE_PING || op==SIGNER_GATE_CONNECT};
   return signer_approval_service_submit(s, who, connection, op, a, b, "", &context, reply, r);
 }
 static void test_nip46_caller(void) {
@@ -507,6 +508,52 @@ static void test_policy_recheck(void) {
   g_assert_cmpstr(result.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_null(result.result);
   reply_clear(&result); stop(s, &w);
 }
+static void test_connect_scope_hints(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w);
+  g_autoptr(SignerCaller) who = signer_caller_for_nip46(PEER);
+  SignerGateContext context = {.transport=SIGNER_TRANSPORT_NIP46, .no_identity=TRUE};
+  Reply result = {0}; Decision decision = {0};
+  g_autoptr(SignerGateHandle) handle = signer_approval_service_submit(s, who, who->principal, SIGNER_GATE_CONNECT,
+      "get_public_key,sign_event:1,nip44_encrypt,switch_relays,https://example.invalid/#not-authority,sign_event:65536",
+      NULL, "", &context, reply, &result);
+  wait_prompts(&w, 1);
+  g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(&w, 0));
+  g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  g_autoptr(GVariant) hints = g_variant_lookup_value(summary, "requested_permissions_hint", G_VARIANT_TYPE("as"));
+  g_assert_nonnull(hints);
+  gsize count; const gchar **values = g_variant_get_strv(hints, &count);
+  g_assert_cmpuint(count, ==, 3);
+  g_assert_cmpstr(values[0], ==, "get_public_key"); g_assert_cmpstr(values[1], ==, "sign_event:1");
+  g_assert_cmpstr(values[2], ==, "nip44_encrypt"); g_free(values);
+  const gchar *source = NULL; g_assert_true(g_variant_lookup(summary, "requested_permissions_source", "&s", &source));
+  g_assert_cmpstr(source, ==, "client-hints");
+  signer_approval_service_decide(s, request_id(&w, 0), TRUE, TRUE, 600, decided, &decision);
+  wait_count(&result.count, 1); g_assert_null(result.error); g_assert_cmpstr(result.result, ==, "ack");
+  g_assert_cmpint(signer_permissions_evaluate(signer_approval_service_permissions(s), who->principal, "*", "event", 1, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  reply_clear(&result); g_free(decision.error); stop(s, &w);
+}
+static void test_remote_headless(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w);
+  g_autoptr(SignerCaller) who = signer_caller_for_nip46(PEER);
+  SignerGateContext context = {.transport=SIGNER_TRANSPORT_NIP46, .no_approval_ui=TRUE};
+  /* Canonical public identity, no backend key: ASK is rejected before custody
+   * resolution, rather than opening the keyring or summoning an approver. */
+  g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
+  Reply ask = {0};
+  g_autoptr(SignerGateHandle) ha = signer_approval_service_submit(s, who, who->principal, SIGNER_GATE_SIGN_EVENT,
+      "{\"kind\":3,\"tags\":[],\"content\":\"headless review\"}", NULL, PEER, &context, reply, &ask);
+  g_assert_cmpuint(ask.count, ==, 1); g_assert_cmpstr(ask.error, ==, ORG_NOSTR_SIGNER_ERR_NO_APPROVER);
+  g_assert_cmpuint(w.pending->len, ==, 0);
+  g_assert_true(signer_permissions_remember(signer_approval_service_permissions(s), who->principal, "*", "get_relays", -1, TRUE, 600, NULL));
+  Reply configured = {0};
+  g_autoptr(SignerGateHandle) hc = signer_approval_service_submit(s, who, who->principal, SIGNER_GATE_GET_RELAYS,
+      "[\"wss://relay.example.org/\"]", NULL, "", &context, reply, &configured);
+  wait_count(&configured.count, 1); g_assert_null(configured.error);
+  g_assert_cmpstr(configured.result, ==, "[\"wss://relay.example.org\"]");
+  g_assert_cmpuint(w.pending->len, ==, 0);
+  reply_clear(&ask); reply_clear(&configured); stop(s, &w);
+  g_setenv("NOSTR_SIGNER_SECKEY_HEX", KEY, TRUE);
+}
 static void test_headless_defaults(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w);
   gchar *exe = g_file_read_link("/proc/self/exe", NULL);
@@ -584,6 +631,8 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/validation-deadline", test_validation_and_deadline);
   g_test_add_func("/approval/metadata-revoke", test_metadata_and_revoke);
   g_test_add_func("/approval/headless-defaults", test_headless_defaults);
+  g_test_add_func("/approval/remote-headless", test_remote_headless);
+  g_test_add_func("/approval/connect-scope-hints", test_connect_scope_hints);
   g_test_add_func("/approval/policy-recheck", test_policy_recheck);
   gint result = g_test_run();
   gchar *file = g_build_filename(config, "gnostr", "signer-grants.ini", NULL);

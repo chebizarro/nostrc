@@ -24,7 +24,10 @@ typedef enum {
   BUNKER_STATE_STOPPED,
   BUNKER_STATE_STARTING,
   BUNKER_STATE_RUNNING,
-  BUNKER_STATE_ERROR
+  BUNKER_STATE_ERROR,
+  BUNKER_STATE_DEGRADED,
+  BUNKER_STATE_OFFLINE,
+  BUNKER_STATE_STOPPING
 } BunkerState;
 
 /* Connection info */
@@ -50,6 +53,15 @@ typedef struct {
 /* Callback types */
 typedef void (*BunkerStateChangedCb)(BunkerState state, const gchar *error, gpointer user_data);
 typedef void (*BunkerConnectionCb)(const BunkerConnection *conn, gpointer user_data);
+/* Owner-thread lookup: TRUE only for persisted paired admission; returns an
+ * allocated pinned account identity when identity is non-NULL. NULL asks only
+ * for admission. G06 supplies new-pairing/token hooks. */
+typedef gboolean (*BunkerClientLookupCb)(const gchar *client_hex, gchar **identity, gpointer data);
+void bunker_service_set_client_lookup(BunkerService *, BunkerClientLookupCb, gpointer);
+void bunker_service_set_no_approval_ui(BunkerService *, gboolean);
+const gchar *bunker_service_get_error(BunkerService *);
+const gchar *bunker_service_get_transport_pubkey(BunkerService *);
+
 typedef gboolean (*BunkerAuthorizeCb)(const BunkerSignRequest *req, gpointer user_data);
 
 /* Create a new bunker service */
@@ -68,6 +80,12 @@ gboolean bunker_service_start(BunkerService *bs,
 
 /* Stop the bunker service */
 void bunker_service_stop(BunkerService *bs);
+gboolean bunker_service_restart(BunkerService *bs);
+void bunker_service_fail_transport(BunkerService *bs);
+gboolean bunker_service_replay_healthy(BunkerService *bs);
+/* ONLY after authenticated endpoint rotation and revocation of all pairings;
+ * requires a stopped listener. Never clear replay guards on an ordinary restart. */
+gboolean bunker_service_reset_replay(BunkerService *bs);
 
 /* Get current state */
 BunkerState bunker_service_get_state(BunkerService *bs);
@@ -87,10 +105,10 @@ gboolean bunker_service_disconnect_client(BunkerService *bs, const gchar *client
 /* Set allowed methods */
 void bunker_service_set_allowed_methods(BunkerService *bs, const gchar *const *methods);
 
-/* Set allowed public keys (empty = allow all) */
+/* Admission-only legacy inventory: empty admits no unpaired clients. */
 void bunker_service_set_allowed_pubkeys(BunkerService *bs, const gchar *const *pubkeys);
 
-/* Set auto-approve event kinds */
+/* Deprecated compatibility no-op: global kinds never grant permission. */
 void bunker_service_set_auto_approve_kinds(BunkerService *bs, const gchar *const *kinds);
 
 /* Set state change callback */

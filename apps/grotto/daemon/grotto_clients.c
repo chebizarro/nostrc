@@ -157,6 +157,15 @@ gboolean grotto_clients_set_tier(GrottoClients *c, const gchar *p, SignerTrustTi
     return invalid(error, "trust requires explicit client consent");
   g_autoptr(GKeyFile) next = copy_records(c); g_key_file_set_integer(next, id, "tier", tier); return commit(c, next, error);
 }
+gchar *grotto_clients_paired_identity(GrottoClients *c, const gchar *principal) {
+  if (!c || !grotto_clients_principal_valid(principal) || !g_str_has_prefix(principal, "nip46:")) return NULL;
+  g_autofree gchar *id = record_id(principal);
+  if (!g_key_file_get_boolean(c->records, id, "paired", NULL) ||
+      !g_key_file_get_uint64(c->records, id, "first-consented-at", NULL)) return NULL;
+  gchar *identity = g_key_file_get_string(c->records, id, "identity", NULL);
+  if (identity && *identity) return identity;
+  g_free(identity); return NULL;
+}
 gboolean grotto_clients_set_pairing(GrottoClients *c, const gchar *p, gboolean paired,
     const gchar *const *relays, GError **error) {
   g_autofree gchar *id = NULL;

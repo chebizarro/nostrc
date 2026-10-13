@@ -84,6 +84,7 @@ typedef struct _SubscriptionPrivate {
     _Atomic bool events_channel_closed;
     _Atomic int64_t last_seen_created_at;
     SeenCursorEvents *seen_cursor_events; /* guarded by sub_mutex */
+    bool deliver_duplicates; /* opt-in RPC response replay, guarded by sub_mutex */
     int64_t replay_boundary_created_at;  /* current REQ's inclusive since, guarded by sub_mutex */
     SeenCursorEvents *replay_boundary_events; /* guarded by sub_mutex */
     CancelFunc cancel;

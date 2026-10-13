@@ -12,6 +12,7 @@ GVariant *grotto_clients_list(GrottoClients *clients);
 gboolean grotto_clients_principal_valid(const gchar *principal);
 /* A record exists (consent, remembered decision or management permission),
  * which is not Low-tier admission: see grotto_clients_trust()'s consented. */
+gchar *grotto_clients_paired_identity(GrottoClients *, const gchar *principal);
 gboolean grotto_clients_known(GrottoClients *clients, const gchar *principal);
 SignerTrustTier grotto_clients_trust(const gchar *principal, gboolean *consented, gpointer clients);
 /* NULL metadata preserves observed values (permission-only edits). */

@@ -2,6 +2,7 @@
 #define NOSTR_NIP46_BUNKER_H
 
 #include "nostr/nip46/nip46_types.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,11 +17,37 @@ typedef struct {
     void *user_data;
 } NostrNip46BunkerCallbacks;
 
+/* Opt-in deferred server API. Relay-delivered requests are decrypted and bound
+ * to a signature-verified event author/recipient. Direct handle_cipher callers
+ * must verify the outer event themselves (see below). Retain the borrowed
+ * request before returning; complete/unref it on any thread. Completion is
+ * once-only and is suppressed after stop. Result is a JSON token, not raw text.
+ * Install handlers/transport before listen; stop before replacing handlers. */
+typedef struct NostrNip46BunkerRequest NostrNip46BunkerRequest;
+typedef void (*NostrNip46RequestHandler)(NostrNip46BunkerRequest *, void *);
+typedef void (*NostrNip46BunkerRelayHandler)(const char *relay, const char *state, void *);
+int nostr_nip46_bunker_get_transport_pubkey(const NostrNip46Session *, char **out_hex);
+int nostr_nip46_bunker_set_transport_key(NostrNip46Session *, const unsigned char key[32]);
+int nostr_nip46_bunker_set_request_handler(NostrNip46Session *, NostrNip46RequestHandler, void *);
+int nostr_nip46_bunker_set_relay_handler(NostrNip46Session *, NostrNip46BunkerRelayHandler, void *);
+void nostr_nip46_bunker_stop(NostrNip46Session *);
+NostrNip46BunkerRequest *nostr_nip46_bunker_request_ref(NostrNip46BunkerRequest *);
+void nostr_nip46_bunker_request_unref(NostrNip46BunkerRequest *);
+const NostrNip46Request *nostr_nip46_bunker_request_rpc(const NostrNip46BunkerRequest *);
+const char *nostr_nip46_bunker_request_client(const NostrNip46BunkerRequest *);
+const char *nostr_nip46_bunker_request_event_id(const NostrNip46BunkerRequest *);
+int64_t nostr_nip46_bunker_request_created_at(const NostrNip46BunkerRequest *);
+int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *, const char *result_json, const char *error);
+
 NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs);
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote_signer_pubkey_hex, const char *const *relays, size_t n_relays, const char *secret, char **out_uri);
 int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req, const char *result_or_json, const char *error_or_null);
-/* Decrypt with the session-owned transport mode, dispatch, and encrypt the response with that same mode. */
+/* Decrypt with the session-owned transport mode and dispatch. Legacy mode
+ * returns an encrypted response (0); request-aware mode returns deferred (1)
+ * with *out_cipher_reply == NULL. Direct callers MUST authenticate the outer
+ * event signature, author and recipient before passing client_pubkey_hex.
+ * Direct requests have no event ID; use relay delivery for replay-safe adapters. */
 int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                                      const char *client_pubkey_hex,
                                      const char *ciphertext,
@@ -43,6 +70,8 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
  * with the ACL just granted (secret is never re-checked — the client
  * validates it on receipt of this event).
  *
+ * With a request-aware handler installed, no ACL is granted and an explicit
+ * transport key must already be installed. Admission remains the handler's job.
  * Returns 0 on success, -1 on error. */
 int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s, const char *nostrconnect_uri);
 

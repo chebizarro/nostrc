@@ -105,6 +105,83 @@ Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/custom.sock
 Environment=G_MESSAGES_DEBUG=all
 ```
 
+## Remote signing and headless deployment (G05)
+
+`grotto-daemon --bunker` uses a persistent **transport credential**, not an
+account key, to receive NIP-46 envelopes. Its public key names the endpoint;
+`get_public_key` and content cryptography use the authenticated client's pinned
+account through the same scoped approval gate as local applications.
+
+Configure `org.nostr.Grotto` GSettings explicitly: `bunker-enabled`,
+`bunker-relays`, `bunker-allowed-methods`, and `default-identity`. There are no
+fallback relays. Only `wss://` or loopback `ws://` are accepted; Tor is not
+supported. `bunker-allowed-pubkeys` is legacy **admission inventory**, not a
+pairing or signing grant; empty admits no new clients. Global
+`bunker-auto-approve-kinds` and GUI client sessions are not signing authority.
+
+The credential lives in Secret Service schema
+`org.nostr.Grotto.BunkerTransport`, attribute `slot=default`, or Keychain service
+`Grotto Bunker Transport`, account `default`. It is never an identity-list item.
+A missing/unavailable credential produces `ERROR`, never automatic regeneration.
+Control1 `ResetBunkerEndpoint` requires the Grotto approver check; on PID-attested
+Linux an ordinary shell `gdbus` caller is not an approver. UID-only buses retain
+the documented same-UID approver exception (see `docs/dbus-interface.md`); do not
+claim caller isolation on those buses. Reset stops remote work,
+revokes all remote clients/permissions, replaces the transport key and restarts
+when enabled. Clients must re-pair. During profile reset/uninstall, the owner
+should also remove this distinct credential using their key manager; do not
+change the default keychain or its search list.
+
+Runtime is reported by Control1 `GetStatus`: `DISABLED`, `STARTING`,
+`LISTENING` (EOSE on every configured relay), `DEGRADED` (some usable relays),
+`OFFLINE`, `STOPPING`, or `ERROR`. Opening a websocket alone is not readiness.
+CLOSED, AUTH challenges and rejected response publications remove relay
+readiness; AUTH is not silently signed. Journal state/error messages are
+sanitised. Pairing tokens, `nostrconnect://` acknowledgement, camera scanning and
+live `ConfigureBunker` are G06, not shipped setup flows in G05.
+
+For unattended service use **`--bunker --no-approval-ui`**, with
+`headless-bunker.conf.example` installed as a user-service drop-in (examples are
+under `share/doc/grotto/examples`). The explicit `ExecStart` override matters;
+relaxing the IP filter alone does not enable bunker/headless mode. Already
+paired clients operate within their scopes; anything requiring review fails
+promptly with `org.nostr.Signer.Error.NoApprovalAgent` (`NO_APPROVER`). This mode
+also suppresses approval UI activation for local/socket calls; existing scoped
+and first-party grants continue to work.
+
+Provision the transport credential and explicit client consent before enabling
+headless mode. The daemon-owned, versioned files are:
+
+- `$XDG_CONFIG_HOME/grotto/clients.ini` v1: `[meta] version=1`, one section named
+  SHA-256 of `nip46:<lowercase-client-hex>`, containing `principal`,
+  `transport=NIP46`, `identity=<canonical account npub>`, `label`, `claimed-name`,
+  `tier` (0 Low / 1 Medium / 2 Full), `paired=true`, `relays` (GKeyFile string
+  list), `first-consented-at` and `last-used-at` (Unix seconds). A permission-only
+  record without explicit first consent and paired admission cannot connect
+  unattended. Offline operator provisioning is an explicit consent action, not
+  a migration from an allowlist or from client-supplied permission hints.
+- `$XDG_CONFIG_HOME/gnostr/signer-permissions-v2.ini`: scoped principal/account/
+  operation/event-kind decisions with absolute expiry; use Control1 permission
+  management (or the canonical `SignerPermissions` writer), not broad legacy
+  event allows. Encryption/decryption are separate grants; pairing is not one.
+- `$XDG_CONFIG_HOME/grotto/bunker-seen.ini` v1: bounded replay metadata only
+  (event IDs, hashed RPC identities/parameter digests, expiry). Written durably
+  **before** execution. Never delete it on an ordinary restart. A corrupt or
+  unwritable guard fails closed; only authenticated endpoint rotation may clear
+  it after revoking pairings. Recent response bodies stay in memory, are wiped
+  on eviction, expire after ten minutes and are capped at 1,024 entries.
+
+Keep directories private (0700) and files private (0600). Future file versions
+are not silently accepted. The E2E test's `provision_headless()` demonstrates
+canonical file writers with disposable keys; the test-only file credential
+backend requires `NOSTRC_TEST_ISOLATION` and is not a production backend.
+
+Pause/revoke, deadlines, explicit client cancellation, disable/reconfiguration
+and shutdown cancel outstanding gate continuations. Replayed old successes
+cannot bypass current pairing, pause, permission revision/expiry or account
+binding. Clients should retry with fresh RPC IDs after a policy change; identical
+pending arguments share the common gate's review, never create a new grant.
+
 ## Security
 
 ### Hardening Features

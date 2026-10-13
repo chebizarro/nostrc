@@ -12,12 +12,18 @@ typedef struct {
     GHashTable *subscriptions; /* sub id -> complete REQ array */
 } RelayClient;
 
+typedef struct { RelayClient *client; JsonArray *frame; } HeldAck;
+static void held_ack_free(gpointer data) { HeldAck *ack = data; json_array_unref(ack->frame); g_free(ack); }
+
 struct BunkerTestRelay {
     SoupServer *server;
     gchar *url;
     GPtrArray *clients;
     JsonArray *events;
     guint connections, requests;
+    gboolean reject_subscriptions, reject_publishes, hold_acks;
+    GPtrArray *held_acks;
+    BunkerTestRelayEventCb event_cb; gpointer event_data;
 };
 
 static void send_frame(RelayClient *client, JsonArray *frame)
@@ -97,6 +103,12 @@ static void message(SoupWebsocketConnection *socket, SoupWebsocketDataType type,
         relay->requests++;
         g_autofree gchar *filters = json_to_string(json_parser_get_root(parser), FALSE);
         g_print("relay REQ %s\n", filters);
+        if (relay->reject_subscriptions) {
+            JsonArray *closed = json_array_new();
+            json_array_add_string_element(closed, "CLOSED"); json_array_add_string_element(closed, id);
+            json_array_add_string_element(closed, "auth-required: test fixture");
+            send_frame(client, closed); return;
+        }
         g_hash_table_replace(client->subscriptions, g_strdup(id), json_array_ref(frame));
         for (guint i = 0; i < json_array_get_length(relay->events); i++) {
             JsonNode *event = json_array_get_element(relay->events, i);
@@ -115,10 +127,16 @@ static void message(SoupWebsocketConnection *socket, SoupWebsocketDataType type,
         JsonArray *ok = json_array_new();
         json_array_add_string_element(ok, "OK");
         json_array_add_string_element(ok, json_object_get_string_member(json_node_get_object(event), "id"));
-        json_array_add_boolean_element(ok, valid);
-        json_array_add_string_element(ok, valid ? "" : "invalid: bad signature");
-        send_frame(client, ok);
+        gboolean accepted = valid && !relay->reject_publishes;
+        json_array_add_boolean_element(ok, accepted);
+        json_array_add_string_element(ok, !valid ? "invalid: bad signature" : !accepted ? "blocked: test fixture" : "");
+        if (relay->hold_acks) {
+            HeldAck *ack = g_new0(HeldAck, 1); ack->client = client; ack->frame = ok;
+            g_ptr_array_add(relay->held_acks, ack);
+        } else send_frame(client, ok);
         if (!valid) return;
+        if (relay->event_cb) relay->event_cb(serialized, relay->event_data);
+        if (!accepted) return;
         json_array_add_element(relay->events, json_node_copy(event));
         for (guint i = 0; i < relay->clients->len; i++) {
             RelayClient *recipient = g_ptr_array_index(relay->clients, i);
@@ -163,6 +181,7 @@ BunkerTestRelay *bunker_test_relay_new(void)
 {
     BunkerTestRelay *relay = g_new0(BunkerTestRelay, 1);
     relay->clients = g_ptr_array_new_with_free_func(client_free);
+    relay->held_acks = g_ptr_array_new_with_free_func(held_ack_free);
     relay->events = json_array_new();
     relay->server = soup_server_new(NULL, NULL);
     soup_server_add_websocket_handler(relay->server, "/", NULL, NULL, connected, relay, NULL);
@@ -181,9 +200,45 @@ void bunker_test_relay_stats(BunkerTestRelay *relay, guint *connections, guint *
     *connections = relay->connections; *requests = relay->requests;
     *published = json_array_get_length(relay->events);
 }
+void bunker_test_relay_set_event_callback(BunkerTestRelay *relay, BunkerTestRelayEventCb cb, gpointer data) {
+    relay->event_cb = cb; relay->event_data = data;
+}
+void bunker_test_relay_inject(BunkerTestRelay *relay, const gchar *event_json) {
+    g_autoptr(JsonParser) parser = json_parser_new();
+    g_assert_true(json_parser_load_from_data(parser, event_json, -1, NULL));
+    JsonNode *event = json_parser_get_root(parser);
+    NostrEvent *parsed = nostr_event_new();
+    g_assert_cmpint(nostr_event_deserialize(parsed, event_json), ==, 0);
+    g_assert_true(nostr_event_check_signature(parsed)); nostr_event_free(parsed);
+    json_array_add_element(relay->events, json_node_copy(event));
+    for (guint i = 0; i < relay->clients->len; i++) {
+        RelayClient *client = relay->clients->pdata[i];
+        GHashTableIter it; gpointer id;
+        g_hash_table_iter_init(&it, client->subscriptions);
+        while (g_hash_table_iter_next(&it, &id, NULL)) deliver(client, id, event);
+    }
+}
+void bunker_test_relay_reject_subscriptions(BunkerTestRelay *r, gboolean enabled) { r->reject_subscriptions = enabled; }
+void bunker_test_relay_reject_publishes(BunkerTestRelay *r, gboolean enabled) { r->reject_publishes = enabled; }
+void bunker_test_relay_hold_acks(BunkerTestRelay *r, gboolean enabled) {
+    r->hold_acks = enabled;
+    if (!enabled) {
+        for (guint i = 0; i < r->held_acks->len; i++) {
+            HeldAck *ack = r->held_acks->pdata[i]; send_frame(ack->client, json_array_ref(ack->frame));
+        }
+        g_ptr_array_set_size(r->held_acks, 0);
+    }
+}
+void bunker_test_relay_challenge(BunkerTestRelay *r) {
+    for (guint i = 0; i < r->clients->len; i++) {
+        JsonArray *frame = json_array_new(); json_array_add_string_element(frame, "AUTH");
+        json_array_add_string_element(frame, "test-challenge"); send_frame(r->clients->pdata[i], frame);
+    }
+}
 void bunker_test_relay_free(BunkerTestRelay *relay)
 {
     soup_server_disconnect(relay->server);
+    g_ptr_array_unref(relay->held_acks);
     g_ptr_array_unref(relay->clients);
     g_object_unref(relay->server);
     json_array_unref(relay->events);

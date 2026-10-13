@@ -1,20 +1,14 @@
-# Drop-in: run grotto-daemon with NIP-46 bunker mode enabled.
-#
-# Install as ~/.config/systemd/user/grotto-daemon.service.d/bunker.conf
-# then: systemctl --user daemon-reload && systemctl --user restart grotto-daemon
-#
-# The daemon refuses to start in bunker mode (journal: BUNKER_*) unless the
-# grotto settings (GSettings org.nostr.Grotto) have:
-#   bunker-enabled          true
-#   bunker-relays           the relays clients reach the bunker through
-#   bunker-allowed-pubkeys  the client pubkeys (hex) allowed to connect;
-#                           never empty, an empty list would admit anyone
-# and a default or active identity with a private key. Requests are signed
-# without prompting only for bunker-auto-approve-kinds or clients with a
-# session approved in the grotto GUI; the daemon refuses the rest.
+# Install as ~/.config/systemd/user/grotto-daemon.service.d/bunker.conf,
+# then systemctl --user daemon-reload && systemctl --user restart grotto-daemon.
+# Requires enabled GSettings, explicit relays/default identity and a persistent
+# transport credential created by authenticated ResetBunkerEndpoint.
+# Legacy allowed pubkeys are admission-only: a new connect still needs review.
+# Global auto-approve kinds and GUI client sessions never grant signing access.
+# Existing paired clients use the shared scoped permission gate; other requests
+# summon the trusted approval UI. For no UI, use headless-bunker.conf.example.
 
 [Service]
 ExecStart=
 ExecStart=/usr/bin/grotto-daemon --bunker
-# The base unit only permits loopback IP; bunker mode must reach its relays.
+# The base unit only permits loopback; enabling remote signing is explicit.
 IPAddressDeny=

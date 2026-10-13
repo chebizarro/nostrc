@@ -33,6 +33,9 @@ typedef struct NostrSubscription {
  * (nostr_relay_prepare_subscription() registers it immediately). */
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
 void               nostr_subscription_free(NostrSubscription *sub);
+/* Opt in before firing when the consumer owns deduplication and must reply to
+ * redelivered RPC envelopes. Default false preserves cursor-boundary dedup. */
+void nostr_subscription_set_duplicate_delivery(NostrSubscription *sub, bool enabled);
 
 /**
  * nostr_subscription_ref:

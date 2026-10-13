@@ -41,14 +41,20 @@ static const gchar LIFELINE_SH[] =
   "shift 3\n"
   "\"$@\" <\"$in\" 3<&- 5<&- &\n"
   "child=$!\n"
-  "exec 4>&-\n"
+    "exec 4>&-\n"
+    /* Tests may restart one supervised daemon while the bus stays alive.
+   * A signal to the supervisor must not orphan its child. */
+  "stop_child() {\n"
+  "  kill -TERM \"$child\" 2>/dev/null\n"
+  "  wait \"$child\"\n"
+  "  if [ -n \"$dir\" ]; then\n"
+  "    read -r _ <&5\n"
+  "    rm -rf \"$dir\" \"$sock\"\n"
+  "  fi\n"
+  "}\n"
+  "trap 'stop_child; exit 0' TERM\n"
   "read -r _ <&3\n"
-  "kill -TERM \"$child\" 2>/dev/null\n"
-  "wait \"$child\"\n"
-  "if [ -n \"$dir\" ]; then\n"
-  "  read -r _ <&5\n"
-  "  rm -rf \"$dir\" \"$sock\"\n"
-  "fi\n";
+  "stop_child\n";
 
 /* Seconds nostrc_test_bus_down() waits for connections to notice the bus
  * stopped; a failure bound, never a source of progress. */

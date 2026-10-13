@@ -203,6 +203,11 @@ int nostr_nip55l_clear_owner(const char *selector);
 /* Outputs: has_owner=1 if present; if present, uid_out and username_out (caller frees username_out). */
 int nostr_nip55l_get_owner(const char *selector, int *has_owner, uid_t *uid_out, char **username_out);
 
+/* Daemon transport-role custody. These never enumerate/cache an identity.
+ * Load does not regenerate a missing entry. Caller wipes the 32-byte output. */
+int nostr_nip55l_bunker_transport_load(unsigned char key[32]);
+int nostr_nip55l_bunker_transport_store(const unsigned char key[32]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -30,6 +30,16 @@ G_DECLARE_FINAL_TYPE(GNostrNip46Bunker, gnostr_nip46_bunker, GNOSTR, NIP46_BUNKE
  */
 GNostrNip46Bunker *gnostr_nip46_bunker_new(void);
 
+/* Opt-in async path, installed before listen. "request" carries a borrowed
+ * NostrNip46BunkerRequest* (see core nip46_bunker.h); retain it for deferred
+ * completion. "relay-state" carries relay URL and EOSE/CLOSED/AUTH/OFFLINE.
+ * Both run on the construction thread's GMainContext. No legacy crypto/ACL
+ * callback is consulted when requests are enabled. Stop invalidates queued
+ * deliveries and deferred completions, and releases the relay subscriptions. */
+gboolean gnostr_nip46_bunker_enable_requests(GNostrNip46Bunker *self);
+gboolean gnostr_nip46_bunker_set_transport_key(GNostrNip46Bunker *self, const guint8 key[32], GError **error);
+void gnostr_nip46_bunker_stop(GNostrNip46Bunker *self);
+
 /**
  * gnostr_nip46_bunker_listen:
  * @self: a #GNostrNip46Bunker
