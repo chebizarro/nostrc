@@ -225,6 +225,12 @@ void nostr_simple_pool_stop(NostrSimplePool *pool);
  * serializes against in-flight notifications; no public struct/ABI change. */
 typedef void (*NostrPoolSubscriptionCallback)(NostrRelay *, const char *state, const char *reason, void *);
 void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, NostrPoolSubscriptionCallback, void *);
+/* Configure new subscriptions before subscribe(): reconnect from now-seconds,
+ * never from an untrusted received timestamp. The consumer must enforce its
+ * admission/freshness window and durable replay guard; use unique=false when
+ * retry deliveries need replies. Zero preserves default cursor recovery.
+ * Returns false if the pool's private subscription registry is unavailable. */
+bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
 void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_subscribe_async:

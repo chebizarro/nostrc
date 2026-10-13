@@ -135,19 +135,20 @@ static void wire_init(Wire *w, BunkerTestRelay *relay, const gchar *transport) {
     g_assert_cmpint(nostr_nip46_client_set_secret(w->sender, w->secret), ==, 0);
     bunker_test_relay_set_event_callback(relay, wire_capture, w);
 }
-static void wire_inject(Wire *w, const gchar *method) {
+static void wire_inject_at(Wire *w, const gchar *method, gint64 created) {
     g_clear_pointer(&w->response, g_free);
     g_autofree gchar *plain = nostr_nip46_request_build(method, method, NULL, 0);
     gchar *cipher = NULL;
     g_assert_cmpint(nostr_nip46_client_nip44_encrypt(w->sender, w->transport, plain, &cipher), ==, 0);
     NostrEvent *event = nostr_event_new(); nostr_event_set_kind(event, NOSTR_EVENT_KIND_NIP46);
-    nostr_event_set_pubkey(event, w->client); nostr_event_set_created_at(event, time(NULL));
+    nostr_event_set_pubkey(event, w->client); nostr_event_set_created_at(event, created);
     nostr_event_set_content(event, cipher); free(cipher);
     nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("p", w->transport, NULL)));
     g_assert_cmpint(nostr_event_sign(event, w->secret), ==, 0);
     g_autofree gchar *json = nostr_event_serialize(event); nostr_event_free(event);
     bunker_test_relay_inject(w->relay, json);
 }
+static void wire_inject(Wire *w, const gchar *method) { wire_inject_at(w, method, time(NULL)); }
 static void wire_expect(Wire *w, const gchar *error) {
     guint bound = g_timeout_add_seconds(10, failure_bound, NULL);
     while (!w->response) g_main_context_iteration(NULL, TRUE);
@@ -211,6 +212,37 @@ static void test_request_boundary(void) {
     g_assert_cmpint(nostr_nip46_bunker_request_complete(w.pending, "\"late\"", NULL), ==, -1);
     nostr_nip46_bunker_request_unref(w.pending);
     wire_clear(&w); bunker_test_relay_free(relay);
+}
+static void recovery_request(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest *request, gpointer data) {
+    (void)bunker; Wire *w = data;
+    g_assert_cmpstr(nostr_nip46_bunker_request_client(request), ==, w->client);
+    gint64 created = nostr_nip46_bunker_request_created_at(request), now = time(NULL);
+    const gchar *error = created < now - 600 || created > now + 600 ? "stale_request" : NULL;
+    g_assert_cmpint(nostr_nip46_bunker_request_complete(request, error ? NULL : "\"handled\"", error), ==, 0);
+    if (!error) w->dispatched++;
+}
+static void test_recovery_window(void) {
+    guint8 key[32] = {0}; key[31] = 5;
+    g_autoptr(GNostrNip46Bunker) bunker = gnostr_nip46_bunker_new();
+    g_assert_true(gnostr_nip46_bunker_set_transport_key(bunker, key, NULL));
+    g_assert_true(gnostr_nip46_bunker_enable_requests(bunker));
+    gchar *transport = NULL;
+    g_assert_cmpint(nostr_nip46_bunker_get_transport_pubkey(gnostr_nip46_bunker_get_session(bunker), &transport), ==, 0);
+    BunkerTestRelay *relay = bunker_test_relay_new(); Wire w = {0}; wire_init(&w, relay, transport); free(transport);
+    g_signal_connect(bunker, "request", G_CALLBACK(recovery_request), &w);
+    const gchar *relays[] = {bunker_test_relay_url(relay)};
+    g_assert_true(gnostr_nip46_bunker_listen(bunker, relays, 1, NULL));
+    guint bound = g_timeout_add_seconds(15, failure_bound, NULL), connections, requests, published;
+    do { g_main_context_iteration(NULL, TRUE); bunker_test_relay_stats(relay, &connections, &requests, &published); } while (!requests);
+    wire_inject_at(&w, "future", time(NULL) + 1200); wire_expect(&w, "stale_request");
+    g_clear_pointer(&w.response, g_free); bunker_test_relay_disconnect(relay);
+    do { g_main_context_iteration(NULL, TRUE); bunker_test_relay_stats(relay, &connections, &requests, &published); } while (requests < 2);
+    gint64 since = bunker_test_relay_last_since(relay), now = time(NULL);
+    g_assert_cmpint(since, >=, now - 601); g_assert_cmpint(since, <=, now - 599);
+    wire_expect(&w, "stale_request"); /* hostile future backfill still receives a denial */
+    wire_inject(&w, "ping"); wire_expect(&w, NULL);
+    g_assert_cmpuint(w.dispatched, ==, 1); /* only the admitted current envelope */
+    g_source_remove(bound); gnostr_nip46_bunker_stop(bunker); wire_clear(&w); bunker_test_relay_free(relay);
 }
 static void counted_request(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest *request, gpointer data) {
     (void)bunker; Wire *w = data; g_assert_true(g_thread_self() == w->owner); w->dispatched++;
@@ -317,6 +349,7 @@ int main(int argc, char **argv)
     g_test_add_func("/bunker/lifecycle", test_lifecycle);
     g_test_add_func("/bunker/invalid-config", test_invalid_config);
     g_test_add_func("/bunker/request-boundary", test_request_boundary);
+    g_test_add_func("/bunker/recovery-window", test_recovery_window);
     g_test_add_func("/bunker/owner-queue-bound", test_owner_queue_bound);
     g_test_add_func("/bunker/method-ceiling", test_method_ceiling);
     g_test_add_func("/bunker/relay-rejections", test_relay_rejections);

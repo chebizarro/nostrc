@@ -4,6 +4,7 @@
 #include "accounts_store.h"
 #include "signer_gate.h"
 #include "signer_approval_service.h"
+#include "nip55l_dbus_errors.h"
 #include <nostr/nip55l/signer_ops.h>
 #include <nostr/nip55l/error.h>
 #include <nostr/nip46/nip46_bunker.h>
@@ -259,6 +260,28 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
   if (r) {
     if (strcmp(r->digest, digest)) REJECT("duplicate_rpc_changed_params");
     if (r->completed) {
+      /* A result is not a continuing grant. Re-evaluate the exact pinned
+       * scope without resolving an account or submitting another key use.
+       * Paired CONNECT is admission-only; its ack conveys no signing scope. */
+      if (!r->error && strcmp(r->method, "connect")) {
+        gint kind = -1;
+        const gchar *operation = r->method;
+        if (!strcmp(operation, "sign_event")) {
+          operation = "event";
+          g_autoptr(JsonParser) event = json_parser_new();
+          if (!json_parser_load_from_data(event, rpc->params[0], -1, NULL) ||
+              !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(event))) REJECT("invalid_params");
+          JsonObject *object = json_node_get_object(json_parser_get_root(event));
+          if (!json_object_has_member(object, "kind")) REJECT("invalid_params");
+          kind = json_object_get_int_member(object, "kind");
+        }
+        g_autofree gchar *principal = g_strdup_printf("nip46:%s", client);
+        SignerPermissionResult permission = signer_permissions_evaluate(
+            signer_approval_service_permissions(approval), principal, r->identity,
+            operation, kind, FALSE, NULL);
+        if (permission == SIGNER_PERMISSION_ERROR) REJECT("policy_unavailable");
+        if (permission != SIGNER_PERMISSION_ALLOW) REJECT(ORG_NOSTR_SIGNER_ERR_APPROVAL);
+      }
       if (r->generation != generation || r->revision != revision ||
           g_strcmp0(r->identity, pinned_identity) ||
           !signer_permissions_revision_is_current(signer_approval_service_permissions(approval), r->revision)) REJECT("replay_policy_changed");

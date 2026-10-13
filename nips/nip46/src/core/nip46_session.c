@@ -602,7 +602,7 @@ static void session_destroy(NostrNip46Session *s) {
     /* free ACL */
     struct PermEntry *it = s->acl_head; while (it) { struct PermEntry *nx = it->next; if (it->client_pk) free(it->client_pk); if (it->methods){ for(size_t i=0;i<it->n_methods;++i) free(it->methods[i]); free(it->methods);} free(it); it = nx; }
     if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
-    if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
+    if (s->bunker_secret_hex) { secure_wipe(s->bunker_secret_hex, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
     /* cancel and free leftover pending requests */
     pthread_mutex_lock(&s->pending_mutex);
@@ -2925,6 +2925,9 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
 
     if (s->request_handler) {
         nostr_simple_pool_set_subscription_callback(s->pool, bunker_relay_notify, s);
+        /* RPC admission happens after authenticated decryption. Do not derive
+         * recovery from envelopes which have not passed that admission. */
+        if (!nostr_simple_pool_set_recovery_window(s->pool, 600)) return -1;
         for (size_t i = 0; i < s->pool->relay_count; i++) {
             nostr_relay_set_state_callback_full(s->pool->relays[i], bunker_relay_state,
                 nostr_nip46_session_ref(s), (NostrRelayDestroyNotify)nostr_nip46_session_unref);

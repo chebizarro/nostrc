@@ -48,6 +48,7 @@ typedef struct SubscriptionRegistry {
     pthread_mutex_t mutex;
     GoChannel *cleanup_queue;  // Queue of entries to cleanup
     _Atomic bool shutdown_requested; /* nostrc-val0v: polled by the cleanup worker, set by pool free */
+    _Atomic unsigned recovery_window; /* configured before subscribe; no public layout change */
 } SubscriptionRegistry;
 
 static SubscriptionRegistry *subscription_registry_new(void) {
@@ -59,6 +60,7 @@ static SubscriptionRegistry *subscription_registry_new(void) {
     pthread_mutex_init(&reg->mutex, NULL);
     reg->cleanup_queue = go_channel_create(256);  // Buffered queue
     reg->shutdown_requested = false;
+    reg->recovery_window = 0;
     
     return reg;
 }
@@ -432,6 +434,16 @@ void nostr_simple_pool_set_subscription_callback(NostrSimplePool *pool, NostrPoo
         if (o) { o->pool = pool; o->callback = cb; o->data = data; o->next = observers; observers = o; }
     }
     pthread_mutex_unlock(&observer_mutex);
+}
+bool nostr_simple_pool_set_recovery_window(NostrSimplePool *pool, unsigned seconds) {
+    SubscriptionRegistry *registry = pool ? pool->sub_registry : NULL;
+    if (!registry) return false;
+    atomic_store(&registry->recovery_window, seconds);
+    return true;
+}
+static unsigned pool_recovery_window(NostrSimplePool *pool) {
+    SubscriptionRegistry *registry = pool->sub_registry;
+    return registry ? atomic_load(&registry->recovery_window) : 0;
 }
 static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay, const char *state, const char *reason) {
     pthread_mutex_lock(&observer_mutex);
@@ -1160,6 +1172,7 @@ static void pool_reconcile_subs(NostrSimplePool *pool) {
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
+        nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             fprintf(stderr, "[simplepool] resubscribe fire failed on %s: %s\n",
@@ -1482,6 +1495,7 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
         NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
         if (!sub) continue;
         nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
+        nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             /* nostrc-el92: log instead of swallowing; the worker loop's

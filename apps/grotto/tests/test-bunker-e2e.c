@@ -39,7 +39,8 @@ typedef struct {
     const gchar *daemon_binary;
     GSubprocess *daemon;
     GFileMonitor *restart_monitor;
-    gboolean restarted, restart_ok;
+    gboolean restarted, restart_ok, reconnected;
+    gint64 reconnect_since;
     GPtrArray *deferred_ids;
     gboolean ready, passed, timed_out;
 } Fixture;
@@ -121,7 +122,7 @@ static gboolean control(Fixture *f, const gchar *method, GVariant *args) {
     if (error) g_printerr("%s: %s\n", method, error->message);
     return reply != NULL;
 }
-static gboolean grant_scoped_account_ops(Fixture *f) {
+static gboolean grant_scoped_account_ops(Fixture *f, guint crypto_ttl) {
     g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto",
         "org.nostr.Grotto.Control1", "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
     REQUIRE(reply != NULL, "read permission revision before explicit scoped provisioning");
@@ -139,11 +140,71 @@ static gboolean grant_scoped_account_ops(Fixture *f) {
         g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string(operations[i]));
         g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string("allow"));
         g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(i == 2 ? NOSTR_KIND_TEXT_NOTE : -1));
-        g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(time(NULL) + 600));
+        g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(time(NULL) + (i >= 3 ? crypto_ttl : 600)));
         g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
     }
     gboolean ok = control(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", principal, identity, g_variant_builder_end(&rows), revision));
     free(identity); return ok;
+}
+typedef struct { Fixture *f; guint delay_ms; gboolean done; } ExpiryWait;
+static gboolean expiry_elapsed(gpointer data) {
+    ExpiryWait *wait = data;
+    g_mutex_lock(&wait->f->capture_mutex); wait->done = TRUE;
+    g_cond_broadcast(&wait->f->capture_cond); g_mutex_unlock(&wait->f->capture_mutex);
+    return G_SOURCE_REMOVE;
+}
+static gboolean arm_expiry(gpointer data) {
+    ExpiryWait *wait = data; g_timeout_add(wait->delay_ms, expiry_elapsed, wait); return G_SOURCE_REMOVE;
+}
+static void await_expiry(Fixture *f, gint64 expires) {
+    /* The absolute permission expiry is the event under test, not a readiness
+     * sleep/poll. Wake the worker once that boundary has elapsed. */
+    ExpiryWait wait = {f, (guint)MAX(1, expires - time(NULL) + 1) * 1000, FALSE};
+    g_mutex_lock(&f->capture_mutex); g_idle_add(arm_expiry, &wait);
+    while (!wait.done) g_cond_wait(&f->capture_cond, &f->capture_mutex);
+    g_mutex_unlock(&f->capture_mutex);
+}
+static guint64 activity_sequence(Fixture *f) {
+    g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto",
+        "org.nostr.Grotto.Control1", "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    g_assert_nonnull(reply); g_autoptr(GVariant) status = g_variant_get_child_value(reply, 0);
+    guint64 sequence = 0; g_assert_true(g_variant_lookup(status, "activity_sequence", "t", &sequence)); return sequence;
+}
+static gboolean expiry_replay(Fixture *f) {
+    const guint ttl = 5;
+    REQUIRE(grant_scoped_account_ops(f, ttl), "explicit short-lived crypto scopes");
+    gint64 expires = time(NULL) + ttl;
+    const gchar *encrypt_params[] = {f->peer_pk, "cached expiry secret"};
+    g_autofree gchar *encrypt = request_event(f, "expiry-encrypt", "nip44_encrypt", encrypt_params, 2, time(NULL), FALSE);
+    NostrNip46Session *peer = nostr_nip46_client_new(); nostr_nip46_client_set_secret(peer, f->peer_sk);
+    gchar *cipher = NULL;
+    g_assert_cmpint(nostr_nip46_client_nip44_encrypt(peer, f->account_pk, "cached decrypted secret", &cipher), ==, 0);
+    nostr_nip46_session_free(peer);
+    const gchar *decrypt_params[] = {f->peer_pk, cipher};
+    g_autofree gchar *decrypt = request_event(f, "expiry-decrypt", "nip44_decrypt", decrypt_params, 2, time(NULL), FALSE);
+    free(cipher);
+    REQUIRE(raw_expect(f, "expiry-encrypt", encrypt, NULL) && raw_expect(f, "expiry-decrypt", decrypt, NULL),
+        "approved short-lived scopes produce encrypt and decrypt results");
+    await_expiry(f, expires);
+    guint64 before = activity_sequence(f);
+    REQUIRE(raw_expect(f, "expiry-encrypt", encrypt, ORG_NOSTR_SIGNER_ERR_APPROVAL) &&
+        raw_expect(f, "expiry-decrypt", decrypt, ORG_NOSTR_SIGNER_ERR_APPROVAL),
+        "same RPC ids after absolute expiry deny cached ciphertext and plaintext");
+    REQUIRE(activity_sequence(f) == before, "expired cache replays never enter gate/backend or record another key operation");
+    REQUIRE(grant_scoped_account_ops(f, 600), "restore scopes for remaining lifecycle checks");
+    guint8 public_key[32]; gchar *identity = NULL;
+    g_assert_true(nostr_hex2bin(public_key, f->account_pk, 32));
+    g_assert_cmpint(nostr_nip19_encode_npub(public_key, &identity), ==, 0);
+    g_autofree gchar *principal = g_strdup_printf("nip46:%s", f->client_pk);
+    g_autoptr(SignerPermissions) permissions = signer_permissions_new(NULL);
+    REQUIRE(signer_permissions_reload(permissions, NULL) &&
+        signer_permissions_remember(permissions, principal, identity, "nip44_decrypt", -1, FALSE, 600, NULL),
+        "explicitly revoke just the decrypt scope while retaining pairing");
+    free(identity); before = activity_sequence(f);
+    REQUIRE(raw_expect(f, "expiry-decrypt", decrypt, ORG_NOSTR_SIGNER_ERR_APPROVAL), "scope revoke denies same RPC id");
+    REQUIRE(activity_sequence(f) == before, "revoked cache replay has no gate/backend invocation");
+    REQUIRE(grant_scoped_account_ops(f, 600), "restore explicitly provisioned scope");
+    return TRUE;
 }
 typedef struct { NostrNip46Session *client; const gchar *content; gchar *result; gint rc; } DualSign;
 static gpointer sign_worker(gpointer data) {
@@ -194,6 +255,39 @@ static gboolean restart_daemon(Fixture *f) {
     }
     gboolean ok = f->restart_ok; g_mutex_unlock(&f->capture_mutex); return ok;
 }
+static void reconnect_request(JsonArray *request, gpointer data) {
+    Fixture *f = data;
+    for (guint i = 2; i < json_array_get_length(request); i++) {
+        JsonObject *filter = json_array_get_object_element(request, i);
+        if (!json_object_has_member(filter, "#p")) continue;
+        JsonArray *targets = json_object_get_array_member(filter, "#p");
+        for (guint j = 0; j < json_array_get_length(targets); j++) {
+            if (g_strcmp0(json_array_get_string_element(targets, j), f->transport_pk)) continue;
+            g_mutex_lock(&f->capture_mutex);
+            f->reconnect_since = json_object_get_int_member(filter, "since"); f->reconnected = TRUE;
+            g_cond_broadcast(&f->capture_cond); g_mutex_unlock(&f->capture_mutex);
+            bunker_test_relay_set_request_callback(f->relay, NULL, NULL); return;
+        }
+    }
+}
+static gboolean reconnect_on_main(gpointer data) {
+    Fixture *f = data;
+    bunker_test_relay_set_request_callback(f->relay, reconnect_request, f);
+    bunker_test_relay_disconnect_recipient(f->relay, f->transport_pk); return G_SOURCE_REMOVE;
+}
+static gboolean reconnect_bunker(Fixture *f) {
+    g_mutex_lock(&f->capture_mutex); g_idle_add(reconnect_on_main, f);
+    gint64 bound = g_get_monotonic_time() + 15 * G_USEC_PER_SEC;
+    while (!f->reconnected) {
+        if (!g_cond_wait_until(&f->capture_cond, &f->capture_mutex, bound)) {
+            g_mutex_unlock(&f->capture_mutex); return FALSE;
+        }
+    }
+    gint64 since = f->reconnect_since, now = time(NULL); g_mutex_unlock(&f->capture_mutex);
+    REQUIRE(since >= now - 601 && since <= now - 599, "daemon reconnect REQ stays in bounded recovery window, not rejected future timestamp");
+    g_autofree gchar *normal = request_event(f, "after-future-reconnect", "get_public_key", NULL, 0, time(NULL), FALSE);
+    return raw_expect(f, "after-future-reconnect", normal, NULL);
+}
 static gboolean run_rpc_flow(Fixture *f)
 {
     /* The remote lane may be in ERROR, but the exported local signer survives. */
@@ -226,7 +320,7 @@ static gboolean run_rpc_flow(Fixture *f)
      * Rapid synthetic UI decisions must not race the production prompt throttle;
      * no sleep, throttle disable or client-requested grant is involved. Kind 3
      * remains ungranted and exercises two interleaved deferred reviews below. */
-    if (!f->headless) REQUIRE(grant_scoped_account_ops(f), "explicit scoped account operations");
+    if (!f->headless) REQUIRE(grant_scoped_account_ops(f, 600), "explicit scoped account operations");
     g_autofree gchar *pubkey = NULL;
     REQUIRE(nostr_nip46_client_get_public_key_rpc(f->client, &pubkey) == 0, "get_public_key RPC reply");
     REQUIRE(g_strcmp0(pubkey, f->account_pk) == 0, "get_public_key must return the disposable account key");
@@ -300,14 +394,19 @@ static gboolean run_rpc_flow(Fixture *f)
     g_autofree gchar *relays = request_event(f, "raw-relays", "get_relays", NULL, 0, now, FALSE);
     REQUIRE(raw_expect(f, "raw-relays", relays, NULL), "get_relays returns configured data");
     g_autofree gchar *replay = request_event(f, "raw-sign", "sign_event", (const gchar *const *)&unsigned_json, 1, now, FALSE);
+    guint64 signing_sequence = activity_sequence(f);
     REQUIRE(raw_expect(f, "raw-sign", replay, NULL), "fresh sign request");
+    REQUIRE(activity_sequence(f) == signing_sequence + 1, "exactly one gate operation produces the signature");
     REQUIRE(raw_expect(f, "raw-sign", replay, NULL), "identical replay uses cached response");
+    REQUIRE(activity_sequence(f) == signing_sequence + 1, "cached replay does not submit a second signing operation");
     g_autofree gchar *changed = request_event(f, "raw-sign", "get_public_key", NULL, 0, now, FALSE);
     REQUIRE(raw_expect(f, "raw-sign", changed, "duplicate_rpc_changed_params"), "changed RPC rejected");
+    REQUIRE(expiry_replay(f), "expiry and scope-revoke cache authority regression");
     g_autofree gchar *stale = request_event(f, "raw-stale", "sign_event", (const gchar *const *)&unsigned_json, 1, now - 601, FALSE);
     REQUIRE(raw_expect(f, "raw-stale", stale, "stale_request"), "hostile relay backfill outside window rejected");
     g_autofree gchar *future = request_event(f, "raw-future", "sign_event", (const gchar *const *)&unsigned_json, 1, now + 1200, FALSE);
     REQUIRE(raw_expect(f, "raw-future", future, "stale_request"), "future request outside skew rejected");
+    REQUIRE(reconnect_bunker(f), "rejected future envelope cannot suppress a normal paired RPC after reconnect");
     g_autofree gchar *wrong = request_event(f, "raw-wrong", "sign_event", (const gchar *const *)&unsigned_json, 1, now, TRUE);
     REQUIRE(raw_expect(f, "raw-wrong", wrong, "not_paired"), "verified wrong-client envelope cannot sign");
     g_autofree gchar *unsupported = request_event(f, "raw-switch", "switch_relays", NULL, 0, now, FALSE);
@@ -412,18 +511,37 @@ static gboolean deadline(gpointer data)
 }
 
 /* Observe encrypted traffic only. This session never listens or answers RPCs. */
+static void count_rpc(GHashTable *counts, const gchar *key) {
+    guint count = GPOINTER_TO_UINT(g_hash_table_lookup(counts, key));
+    g_hash_table_replace(counts, g_strdup(key), GUINT_TO_POINTER(count + 1));
+}
 static gboolean audit_frames(Fixture *f)
 {
     JsonArray *events = bunker_test_relay_events(f->relay);
     REQUIRE(events != NULL, "relay capture is an array");
     g_autoptr(GHashTable) requests = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     g_autoptr(GHashTable) replies = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_autoptr(GHashTable) deliveries = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+    g_autoptr(GHashTable) signatures = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    g_autoptr(GHashTable) successes = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     NostrNip46Session *observer = nostr_nip46_client_new();
     REQUIRE(observer != NULL, "create transport observation session");
     nostr_nip46_client_set_secret(observer, f->transport_sk);
     NostrNip46Session *wrong_client = nostr_nip46_client_new();
     nostr_nip46_client_set_secret(wrong_client, f->peer_sk);
     gboolean valid = TRUE;
+    JsonArray *delivered = bunker_test_relay_deliveries(f->relay);
+    for (guint i = 0; i < json_array_get_length(delivered); i++) {
+        JsonObject *envelope = json_array_get_object_element(delivered, i);
+        const gchar *author = json_object_get_string_member(envelope, "pubkey");
+        if (!g_strcmp0(author, f->transport_pk)) continue;
+        gchar *plain = NULL; NostrNip46Request req = {0};
+        REQUIRE(!nostr_nip46_client_nip44_decrypt(observer, author,
+            json_object_get_string_member(envelope, "content"), &plain), "decrypt counted request delivery");
+        REQUIRE(!nostr_nip46_request_parse(plain, &req) && req.id, "counted delivery has RPC id");
+        g_autofree gchar *key = g_strdup_printf("%s:%s", author, req.id);
+        count_rpc(deliveries, key); nostr_nip46_request_free(&req); free(plain);
+    }
     for (guint i = 0; i < json_array_get_length(events); i++) {
         JsonNode *node = json_array_get_element(events, i);
         g_autofree gchar *event_json = json_to_string(node, FALSE);
@@ -456,7 +574,8 @@ static gboolean audit_frames(Fixture *f)
             valid = nostr_nip46_request_parse(plain, &req) == 0 && req.id && req.method;
             if (valid) {
                 gchar *key = g_strdup_printf("%s:%s", author, req.id);
-                g_hash_table_insert(requests, key, g_strdup(req.method));
+                if (!g_hash_table_contains(requests, key)) g_hash_table_insert(requests, key, g_strdup(req.method));
+                else g_free(key);
                 g_print("relay request method=%s id=%s signature=valid target=transport\n", req.method, req.id);
             }
             nostr_nip46_request_free(&req);
@@ -466,7 +585,17 @@ static gboolean audit_frames(Fixture *f)
             g_autofree gchar *key = valid ? g_strdup_printf("%s:%s", target, resp.id) : NULL;
             valid = valid && g_hash_table_contains(requests, key);
             if (valid) {
-                g_hash_table_add(replies, g_strdup(key));
+                count_rpc(replies, key);
+                if (resp.result && !resp.error && !g_strcmp0(g_hash_table_lookup(requests, key), "sign_event")) {
+                    NostrEvent *signed_event = nostr_event_new();
+                    valid = !nostr_event_deserialize(signed_event, resp.result) && nostr_event_check_signature(signed_event) &&
+                        !g_strcmp0(nostr_event_get_pubkey(signed_event), f->account_pk);
+                    nostr_event_free(signed_event);
+                    const gchar *previous = g_hash_table_lookup(signatures, key);
+                    valid = valid && (!previous || !strcmp(previous, resp.result));
+                    if (!previous) g_hash_table_insert(signatures, g_strdup(key), g_strdup(resp.result));
+                    count_rpc(successes, key);
+                }
                 g_print("relay response id=%s matched decrypted request\n", resp.id);
             }
             nostr_nip46_response_free(&resp);
@@ -481,6 +610,26 @@ static gboolean audit_frames(Fixture *f)
     if (f->passed) {
         REQUIRE(g_hash_table_size(requests) >= 14 && g_hash_table_size(replies) == g_hash_table_size(requests),
             "every unique client/RPC identity has a matching response");
+        GHashTableIter counts; gpointer key, value;
+        g_hash_table_iter_init(&counts, deliveries);
+        while (g_hash_table_iter_next(&counts, &key, &value)) {
+            guint expected = GPOINTER_TO_UINT(value), actual = GPOINTER_TO_UINT(g_hash_table_lookup(replies, key));
+            if (expected != actual) g_printerr("RPC %s deliveries=%u terminal replies=%u\n", (gchar *)key, expected, actual);
+            REQUIRE(expected == actual, "exactly one terminal reply per delivered RPC, including intentional cache/backfill retries");
+        }
+        g_autofree gchar *raw_key = g_strdup_printf("%s:raw-sign", f->client_pk);
+        REQUIRE(GPOINTER_TO_UINT(g_hash_table_lookup(successes, raw_key)) == 2,
+            "one original signature and its identical cached delivery; zero successes after pause/revoke/restart");
+        const gchar *cancelled[] = {"pending-pause", "pending-revoke", "headless-review", "raw-stale", "raw-future", "raw-wrong"};
+        for (guint i = 0; i < G_N_ELEMENTS(cancelled); i++) {
+            g_autofree gchar *denied = g_strdup_printf("%s:%s", i == 5 ? f->peer_pk : f->client_pk, cancelled[i]);
+            REQUIRE(!g_hash_table_contains(successes, denied), "cancelled/revoked/rejected RPC has zero account signatures");
+        }
+        g_hash_table_iter_init(&counts, successes);
+        while (g_hash_table_iter_next(&counts, &key, &value)) {
+            if (!strcmp(key, raw_key)) continue;
+            REQUIRE(GPOINTER_TO_UINT(value) == 1, "exactly one successful account signature per fresh RPC id");
+        }
         const gchar *methods[] = {"connect", "get_public_key", "sign_event", "nip44_encrypt", "nip44_decrypt", "nip04_encrypt", "nip04_decrypt", "ping", "get_relays"};
         for (guint i = 0; i < G_N_ELEMENTS(methods); i++) {
             gboolean found = FALSE;
@@ -649,11 +798,11 @@ int main(int argc, char **argv)
     g_main_loop_unref(f.loop);
     g_hash_table_unref(f.captured); g_mutex_clear(&f.capture_mutex); g_cond_clear(&f.capture_cond);
     g_free(f.log_path);
-    memset(f.account_sk, 0, strlen(f.account_sk)); free(f.account_sk); free(f.account_pk);
-    memset(f.client_sk, 0, strlen(f.client_sk)); free(f.client_sk); free(f.client_pk);
-    memset(f.second_sk, 0, strlen(f.second_sk)); free(f.second_sk); free(f.second_pk);
-    memset(f.peer_sk, 0, strlen(f.peer_sk)); free(f.peer_sk); free(f.peer_pk);
-    memset(f.transport_sk, 0, strlen(f.transport_sk)); free(f.transport_sk); free(f.transport_pk);
+    secure_wipe(f.account_sk, strlen(f.account_sk)); free(f.account_sk); free(f.account_pk);
+    secure_wipe(f.client_sk, strlen(f.client_sk)); free(f.client_sk); free(f.client_pk);
+    secure_wipe(f.second_sk, strlen(f.second_sk)); free(f.second_sk); free(f.second_pk);
+    secure_wipe(f.peer_sk, strlen(f.peer_sk)); free(f.peer_sk); free(f.peer_pk);
+    secure_wipe(f.transport_sk, strlen(f.transport_sk)); free(f.transport_sk); free(f.transport_pk);
     g_unsetenv("NOSTR_SIGNER_TEST_TRANSPORT_BACKEND");
     g_unsetenv("NOSTR_SIGNER_TEST_APPROVERS");
     g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
