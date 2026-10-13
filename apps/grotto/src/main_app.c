@@ -13,6 +13,7 @@
 #include "i18n.h"
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
+#include "approval-controller.h"
 
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
@@ -27,37 +28,18 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
 // Approval dialog API
 #include "ui/approval_dialog.h"
 
-typedef struct {
-  GtkLabel *status;
-  GtkButton *btn;
-  GtkStack *stack;
-  GtkButton *nav_home;
-  GtkButton *nav_perms;
-  GtkButton *nav_settings;
-  guint watch_id;
-  GDBusConnection *bus;
-  GtkWindow *win;
-  AccountsStore *accounts;
-  GtkWidget *settings_page;
-  /* Track pending approval request_ids to avoid duplicate dialogs. Each
-   * entry holds the application: started as a D-Bus service for a request,
-   * it has no window, and would otherwise quit before the prompt is
-   * answered. */
-  GHashTable *pending;
-} AppUI;
-
 static GtkApplication *global_app;
+static GrottoApprovalController *approval_controller;
+static gchar *queued_review;
+static gchar *queued_deny;
+static GCancellable *startup_cancel;
+static gboolean shutting_down, setup_held;
+static guint setup_timeout;
 
-static void ui_pending_add(AppUI *ui, const gchar *request_id) {
-  if (!ui || !ui->pending || !request_id) return;
-  g_hash_table_insert(ui->pending, g_strdup(request_id), GINT_TO_POINTER(1));
-  if (global_app) g_application_hold(G_APPLICATION(global_app));
-}
-
-static void ui_pending_remove(AppUI *ui, const gchar *request_id) {
-  if (!ui || !ui->pending || !request_id) return;
-  if (g_hash_table_remove(ui->pending, request_id) && global_app)
-    g_application_release(G_APPLICATION(global_app));
+static GtkWindow *management_window(GtkApplication *app) {
+  for (GList *l = gtk_application_get_windows(app); l; l = l->next)
+    if (SIGNER_IS_WINDOW(l->data) || ONBOARDING_IS_ASSISTANT(l->data)) return l->data;
+  return NULL;
 }
 
 /* Forward declarations */
@@ -69,26 +51,11 @@ static gboolean should_use_high_contrast(void);
 
 /* Global application instance for callbacks that need it */
 
-static void set_status(AppUI *ui, const char *text, const char *css_key) {
-  gtk_label_set_text(ui->status, text);
-  GtkWidget *w = GTK_WIDGET(ui->status);
-  gtk_widget_remove_css_class(w, "status-ok");
-  gtk_widget_remove_css_class(w, "status-error");
-  if (css_key) {
-    if (g_strcmp0(css_key, "ok") == 0) {
-      gtk_widget_add_css_class(w, "status-ok");
-    } else if (g_strcmp0(css_key, "error") == 0) {
-      gtk_widget_add_css_class(w, "status-error");
-    }
-  }
-}
-
-
 static void on_app_preferences(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *win = gtk_application_get_active_window(app);
-  if (!win) return;
+  if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_page((SignerWindow*)win, "settings");
 }
 
@@ -116,7 +83,7 @@ static void on_app_new_profile(GSimpleAction *action, GVariant *param, gpointer 
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *win = gtk_application_get_active_window(app);
-  if (!win) return;
+  if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_new_profile((SignerWindow*)win);
 }
 
@@ -125,7 +92,7 @@ static void on_app_import_profile(GSimpleAction *action, GVariant *param, gpoint
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *win = gtk_application_get_active_window(app);
-  if (!win) return;
+  if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_import_profile((SignerWindow*)win);
 }
 
@@ -134,7 +101,7 @@ static void on_app_export(GSimpleAction *action, GVariant *param, gpointer user_
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *win = gtk_application_get_active_window(app);
-  if (!win) return;
+  if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_backup((SignerWindow*)win);
 }
 
@@ -143,405 +110,8 @@ static void on_app_lock(GSimpleAction *action, GVariant *param, gpointer user_da
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *win = gtk_application_get_active_window(app);
-  if (!win) return;
+  if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_lock_session((SignerWindow*)win);
-}
-
-typedef struct {
-  AppUI *ui;
-  gchar *request_id;
-  gchar *app_id;      /* principal verified by the signer ("" = unidentified) */
-  gchar *identity;
-  gchar *kind;        /* ApprovalRequested kind: remembered decisions are per kind */
-  gchar *preview;
-  gboolean decision;
-  gboolean remember;
-  guint64 ttl_seconds;
-  GnostrApprovalDialog *dialog;  /* approval dialog (if shown) */
-  guint expiry_timer_id;         /* closes stale dialog after TTL */
-} ApproveCtx;
-
-static void approve_ctx_free(ApproveCtx *c) {
-  if (!c) return;
-  if (c->expiry_timer_id) { g_source_remove(c->expiry_timer_id); c->expiry_timer_id = 0; }
-  g_free(c->request_id); g_free(c->app_id); g_free(c->identity);
-  g_free(c->kind); g_free(c->preview);
-  g_free(c);
-}
-
-typedef struct {
-  AppUI *ui;
-  gchar *request_id;
-  gchar *app_id;
-  gchar *identity;
-  gboolean decision;
-  gboolean remember;
-  guint64 ttl_seconds;
-} RetryCtx;
-
-/* Forward declaration */
-static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_data);
-
-/* File-scope callback: invoked after a successful secret import to retry approval */
-static void on_import_success_retry(const char *identity, gpointer user_data){
-  RetryCtx *rc2 = (RetryCtx*)user_data;
-  if (!rc2 || !rc2->ui || !rc2->ui->bus) { if (rc2){ g_free(rc2->request_id); g_free(rc2->app_id); g_free(rc2->identity); g_free(rc2);} return; }
-  if (identity && *identity) {
-    g_free(rc2->identity);
-    rc2->identity = g_strdup(identity);
-  }
-  /* Re-send ApproveRequest with the same decision/remember */
-  ApproveCtx *n = g_new0(ApproveCtx, 1);
-  n->ui = rc2->ui; n->request_id = rc2->request_id; n->app_id = rc2->app_id; n->identity = rc2->identity; n->decision = rc2->decision; n->remember = rc2->remember; n->ttl_seconds = rc2->ttl_seconds;
-  n->kind = g_strdup(REQUEST_KIND_EVENT);
-  rc2->request_id = NULL; rc2->app_id = NULL; rc2->identity = NULL;
-  g_dbus_connection_call(n->ui->bus,
-                         SIGNER_NAME,
-                         SIGNER_PATH,
-                         SIGNER_NAME,
-                         "ApproveRequest",
-                         g_variant_new("(sbbt)", n->request_id, n->decision, n->remember, n->ttl_seconds),
-                         G_VARIANT_TYPE("(b)"),
-                         G_DBUS_CALL_FLAGS_NONE,
-                         5000,
-                         NULL,
-                         approve_call_done,
-                         n);
-  g_free(rc2);
-}
-
-static void approve_call_done(GObject *source, GAsyncResult *res, gpointer user_data){
-  (void)source;
-  GError *err=NULL; GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
-  gboolean ok = TRUE;
-  gboolean expired = FALSE;
-  if (err) {
-    g_warning("ApproveRequest failed: %s", err->message);
-    ok = FALSE;
-    g_autofree gchar *remote = g_dbus_error_get_remote_error(err);
-    if (g_strcmp0(remote, "org.nostr.Signer.Error.NotFound") == 0)
-      expired = TRUE;
-    g_clear_error(&err);
-  }
-  if (ret) {
-    g_variant_get(ret, "(b)", &ok);
-    g_variant_unref(ret);
-  }
-  ApproveCtx *ctx = (ApproveCtx*)user_data;
-  g_message("approve_call_done: request_id=%s ok=%s expired=%s",
-            ctx && ctx->request_id?ctx->request_id:"(null)",
-            ok?"true":"false", expired?"true":"false");
-  /* Done with this request_id: allow future prompts for same id */
-  if (ctx) ui_pending_remove(ctx->ui, ctx->request_id);
-  /* Expired request: the daemon no longer has this pending request.
-   * Show a clear message instead of the confusing import dialog. */
-  if (expired && ctx && ctx->ui && ctx->ui->win) {
-    GtkAlertDialog *dlg = gtk_alert_dialog_new(
-      "%s", "This request expired; ask the app to try again.");
-    gtk_alert_dialog_show(dlg, ctx->ui->win);
-    g_object_unref(dlg);
-    approve_ctx_free(ctx);
-    return;
-  }
-  /* The import-and-retry path is for a signature the signer could not make
-   * (no key); other kinds fail for reasons an import does not fix. */
-  if (!ok && ctx && ctx->ui && ctx->ui->win && ctx->ui->accounts &&
-      g_strcmp0(ctx->kind, REQUEST_KIND_EVENT) == 0) {
-    /* Likely missing session secret for selected identity: prompt import, then retry */
-    RetryCtx *rc = g_new0(RetryCtx, 1);
-    rc->ui = ctx->ui;
-    rc->request_id = g_strdup(ctx->request_id);
-    rc->app_id = g_strdup(ctx->app_id);
-    rc->identity = g_strdup(ctx->identity);
-    rc->decision = ctx->decision;
-    rc->remember = ctx->remember;
-    /* free the original ctx now */
-    approve_ctx_free(ctx);
-    gnostr_settings_open_import_dialog_with_callback(rc->ui->win, rc->ui->accounts, rc->identity, on_import_success_retry, rc);
-    return;
-  }
-  approve_ctx_free(ctx);
-}
-
-static void on_user_decision(gboolean decision, gboolean remember, gpointer user_data){
-  ApproveCtx *ctx = (ApproveCtx*)user_data;
-  if (!ctx || !ctx->ui || !ctx->ui->bus) { approve_ctx_free(ctx); return; }
-  ctx->decision = decision;
-  ctx->remember = remember;
-  g_message("user_decision: request_id=%s kind=%s decision=%s remember=%s identity=%s ttl=%" G_GUINT64_FORMAT,
-            ctx->request_id?ctx->request_id:"(null)", ctx->kind?ctx->kind:"(null)",
-            decision?"accept":"reject", remember?"true":"false",
-            ctx->identity?ctx->identity:"(null)", ctx->ttl_seconds);
-  /* remember=TRUE: the signer daemon keeps the decision per (principal,
-   * identity, kind) in signer-grants.ini and answers from it; the
-   * Permissions page lists and revokes it (nostrc-yjky). */
-  g_message("sending ApproveRequest: id=%s decision=%s remember=%s", ctx->request_id?ctx->request_id:"(null)", decision?"true":"false", remember?"true":"false");
-  g_dbus_connection_call(ctx->ui->bus,
-                         SIGNER_NAME,
-                         SIGNER_PATH,
-                         SIGNER_NAME,
-                         "ApproveRequest",
-                         g_variant_new("(sbbt)", ctx->request_id, decision, remember, ctx->ttl_seconds),
-                         G_VARIANT_TYPE("(b)"),
-                         G_DBUS_CALL_FLAGS_NONE,
-                         5000,
-                         NULL,
-                         approve_call_done,
-                         ctx);
-}
-
-/* Adapter to consume selected identity and ttl from dialog and forward to existing handler */
-static void on_user_decision_with_identity(gboolean decision, gboolean remember, const char *selected_identity, guint64 ttl_seconds, gpointer user_data){
-  ApproveCtx *ctx = (ApproveCtx*)user_data;
-  g_message("dialog callback: decision=%s remember=%s selected_identity=%s ttl=%" G_GUINT64_FORMAT,
-            decision?"accept":"reject", remember?"true":"false",
-            selected_identity?selected_identity:"(null)", ttl_seconds);
-  if (selected_identity && *selected_identity && (!ctx->identity || g_strcmp0(ctx->identity, selected_identity) != 0)) {
-    g_free(ctx->identity);
-    ctx->identity = g_strdup(selected_identity);
-  }
-  /* Fallback: if identity remains empty, choose the first account from store */
-  if ((!ctx->identity || ctx->identity[0] == '\0') && ctx->ui && ctx->ui->accounts) {
-    extern GPtrArray *accounts_store_list(struct _AccountsStore*);
-    GPtrArray *items = accounts_store_list(ctx->ui->accounts);
-    if (items && items->len > 0) {
-      typedef struct { char *id; char *label; } AccountEntry;
-      AccountEntry *e = g_ptr_array_index(items, 0);
-      if (e && e->id && *e->id) {
-        g_clear_pointer(&ctx->identity, g_free);
-        ctx->identity = g_strdup(e->id);
-        g_message("fallback identity selected from store: %s", ctx->identity);
-      }
-      /* entries are freed by the array's free func (accounts_store_entry_free) */
-      g_ptr_array_free(items, TRUE);
-    }
-  }
-  ctx->ttl_seconds = ttl_seconds;
-  on_user_decision(decision, remember, ctx);
-}
-
-/* Timer: close stale approval dialog after the daemon's TTL + grace period.
- * The daemon's PENDING_TTL_S is 300 s; we add 5 s for signal propagation. */
-#define APPROVAL_EXPIRY_GRACE_S 305
-
-static gboolean on_request_expired_timer(gpointer user_data) {
-  ApproveCtx *ctx = (ApproveCtx *)user_data;
-  ctx->expiry_timer_id = 0;  /* source is removed after returning G_SOURCE_REMOVE */
-  g_message("approval dialog expiry timer: request_id=%s",
-            ctx->request_id ? ctx->request_id : "(null)");
-  if (ctx->dialog) {
-    gnostr_approval_dialog_set_callback(ctx->dialog, NULL, NULL);
-    adw_dialog_force_close(ADW_DIALOG(ctx->dialog));
-    ctx->dialog = NULL;
-  }
-  ui_pending_remove(ctx->ui, ctx->request_id);
-  if (ctx->ui && ctx->ui->win) {
-    GtkAlertDialog *dlg = gtk_alert_dialog_new(
-      "%s", "This request expired; ask the app to try again.");
-    gtk_alert_dialog_show(dlg, ctx->ui->win);
-    g_object_unref(dlg);
-  }
-  approve_ctx_free(ctx);
-  return G_SOURCE_REMOVE;
-}
-
-static void show_request_dialog(ApproveCtx *ctx, const gchar *claimed, gboolean verified) {
-  /* If the request was already resolved (expired or answered elsewhere),
-   * do not show a dialog that would immediately become stale. */
-  if (ctx->ui && ctx->ui->pending && ctx->request_id &&
-      !g_hash_table_contains(ctx->ui->pending, ctx->request_id)) {
-    g_message("show_request_dialog: request_id=%s already resolved, skipping",
-              ctx->request_id);
-    if (ctx->ui->win) {
-      GtkAlertDialog *dlg = gtk_alert_dialog_new(
-        "%s", "This request expired; ask the app to try again.");
-      gtk_alert_dialog_show(dlg, ctx->ui->win);
-      g_object_unref(dlg);
-    }
-    approve_ctx_free(ctx);
-    return;
-  }
-  g_autofree gchar *display = signer_principal_display_name(ctx->app_id);
-  ctx->dialog = gnostr_show_approval_request_dialog(
-      ctx->ui->win ? GTK_WIDGET(ctx->ui->win) : NULL,
-      ctx->identity, ctx->kind, display, claimed, verified,
-      ctx->preview, ctx->ui->accounts,
-      on_user_decision_with_identity, ctx);
-  ctx->expiry_timer_id = g_timeout_add_seconds(APPROVAL_EXPIRY_GRACE_S,
-                                               on_request_expired_timer, ctx);
-}
-
-static void on_approval_info(GObject *source, GAsyncResult *res, gpointer user_data) {
-  ApproveCtx *ctx = user_data;
-  GError *err = NULL;
-  GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
-  const gchar *claimed = NULL;
-  gboolean verified = ctx->app_id && *ctx->app_id && !g_str_has_prefix(ctx->app_id, "claimed:");
-  GVariant *info = NULL;
-  if (ret) {
-    info = g_variant_get_child_value(ret, 0);
-    g_variant_lookup(info, "claimed_app_id", "&s", &claimed);
-    g_variant_lookup(info, "verified", "b", &verified);
-  } else {
-    /* nip55l < 0.4.0 has no GetApprovalInfo: the signal is all there is. */
-    g_debug("GetApprovalInfo: %s", err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  show_request_dialog(ctx, claimed, verified);
-  if (info) g_variant_unref(info);
-  if (ret) g_variant_unref(ret);
-}
-
-/* A request awaits the person's answer: from the ApprovalRequested signal,
- * or listed by the daemon when this UI started after the request. */
-static void request_arrived(AppUI *ui, const gchar *app_id, const gchar *identity,
-                            const gchar *kind, const gchar *preview, const gchar *request_id){
-  /* The main window can be created after the subscription (onboarding runs
-   * first on a fresh install), so parent the dialog on whatever is active. */
-  ui->win = global_app ? gtk_application_get_active_window(global_app) : NULL;
-  g_message("ApprovalRequested: app_id=%s identity=%s kind=%s request_id=%s", app_id?app_id:"(null)", identity?identity:"(null)", kind?kind:"(null)", request_id?request_id:"(null)");
-  /* De-dup: if we already have a pending prompt for this request_id, ignore duplicates */
-  if (ui && ui->pending && request_id && *request_id) {
-    if (g_hash_table_contains(ui->pending, request_id)) {
-      return;
-    }
-    /* Insert as pending now to avoid races; remove in approve_call_done */
-    ui_pending_add(ui, request_id);
-  }
-  /* nip55l >= 0.4.0 sends the npub it resolved; older signers may send the
-   * caller's selector, often empty: fall back to the active identity. */
-  gchar *effective_identity = NULL;
-  if (identity && identity[0] != '\0') {
-    effective_identity = g_strdup(identity);
-  } else if (ui->accounts) {
-    accounts_store_get_active(ui->accounts, &effective_identity, NULL);
-  }
-  ApproveCtx *ctx = g_new0(ApproveCtx, 1);
-  ctx->ui = ui;
-  ctx->request_id = g_strdup(request_id);
-  ctx->app_id = g_strdup(app_id);
-  ctx->identity = effective_identity ? effective_identity : g_strdup(identity);
-  ctx->kind = g_strdup((kind && *kind) ? kind : REQUEST_KIND_EVENT);
-  ctx->preview = g_strdup(preview);
-  if (ui->bus) {
-    g_dbus_connection_call(ui->bus, SIGNER_NAME, SIGNER_PATH, SIGNER_NAME, "GetApprovalInfo",
-                           g_variant_new("(s)", request_id), G_VARIANT_TYPE("(a{sv})"),
-                           G_DBUS_CALL_FLAGS_NONE, 5000, NULL, on_approval_info, ctx);
-  } else {
-    show_request_dialog(ctx, NULL, FALSE);
-  }
-}
-
-static void on_approval_requested(GDBusConnection *connection,
-                                  const gchar *sender_name,
-                                  const gchar *object_path,
-                                  const gchar *interface_name,
-                                  const gchar *signal_name,
-                                  GVariant *parameters,
-                                  gpointer user_data){
-  (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
-  const gchar *app_id=NULL, *identity=NULL, *kind=NULL, *preview=NULL, *request_id=NULL;
-  g_variant_get(parameters, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id);
-  request_arrived((AppUI*)user_data, app_id, identity, kind, preview, request_id);
-}
-
-/* ListPendingRequests answered: prompt for what was already waiting. The
- * hold taken before the call ends here; prompts hold on their own. */
-static void on_pending_listed(GObject *source, GAsyncResult *res, gpointer user_data) {
-  AppUI *ui = user_data;
-  g_autoptr(GError) err = NULL;
-  g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
-  if (!r) {
-    /* A daemon older than nip55l 0.7.0 has no such method: nothing to catch up on. */
-    g_debug("ListPendingRequests: %s", err ? err->message : "?");
-  } else {
-    g_autoptr(GVariantIter) it = NULL;
-    const gchar *app_id, *identity, *kind, *preview, *request_id;
-    g_variant_get(r, "(a(sssss))", &it);
-    while (g_variant_iter_loop(it, "(&s&s&s&s&s)", &app_id, &identity, &kind, &preview, &request_id))
-      request_arrived(ui, app_id, identity, kind, preview, request_id);
-  }
-  if (global_app) g_application_release(G_APPLICATION(global_app));
-}
-
-static void name_appeared(GDBusConnection *conn, const gchar *name, const char *owner, gpointer user_data) {
-  (void)conn; (void)name; (void)owner;
-  AppUI *ui = user_data;
-  set_status(ui, "Signer: Available", "ok");
-  gtk_widget_set_sensitive(GTK_WIDGET(ui->btn), TRUE);
-}
-
-static void name_vanished(GDBusConnection *conn, const gchar *name, gpointer user_data) {
-  (void)conn; (void)name;
-  AppUI *ui = user_data;
-  set_status(ui, "Signer: Unavailable", "error");
-  gtk_widget_set_sensitive(GTK_WIDGET(ui->btn), FALSE);
-}
-
-static void on_introspect_done(GObject *source, GAsyncResult *res, gpointer user_data) {
-  (void)source;
-  GtkWindow *win = GTK_WINDOW(user_data);
-  GError *err = NULL;
-  GVariant *ret = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), res, &err);
-  if (err) {
-    GtkAlertDialog *dlg = gtk_alert_dialog_new("Introspect failed: %s", err->message);
-    gtk_alert_dialog_show(dlg, win);
-    g_error_free(err);
-    g_object_unref(dlg);
-    return;
-  }
-  // We don't display the XML; showing success is enough for smoke test.
-  GtkAlertDialog *dlg = gtk_alert_dialog_new("Signer Introspect OK");
-  gtk_alert_dialog_show(dlg, win);
-  g_object_unref(dlg);
-  if (ret) g_variant_unref(ret);
-}
-
-static void on_btn_clicked(GtkButton *button, gpointer user_data) {
-  (void)button;
-  GtkWindow *win = GTK_WINDOW(user_data);
-  g_dbus_connection_call(
-      g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL),
-      SIGNER_NAME,
-      SIGNER_PATH,
-      "org.freedesktop.DBus.Introspectable",
-      "Introspect",
-      NULL,
-      G_VARIANT_TYPE("(s)"),
-      G_DBUS_CALL_FLAGS_NONE,
-      3000,
-      NULL,
-      on_introspect_done,
-      win);
-}
-
-static void switch_page(AppUI *ui, const char *name) {
-  gtk_stack_set_visible_child_name(ui->stack, name);
-}
-
-static void on_nav_home(GtkButton *b, gpointer user_data) { (void)b; switch_page(user_data, "home"); }
-static void on_nav_perms(GtkButton *b, gpointer user_data) { (void)b; switch_page(user_data, "permissions"); }
-static void on_nav_settings(GtkButton *b, gpointer user_data) { (void)b; switch_page(user_data, "settings"); }
-
-static GtkWidget *build_home_header(AppUI *ui, GtkWindow *win) {
-  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
-  ui->status = GTK_LABEL(gtk_label_new("Signer: Unknown"));
-  gtk_box_append(GTK_BOX(box), GTK_WIDGET(ui->status));
-  ui->btn = GTK_BUTTON(gtk_button_new_with_label("DBus Introspect"));
-  gtk_widget_set_sensitive(GTK_WIDGET(ui->btn), FALSE);
-  g_signal_connect(ui->btn, "clicked", G_CALLBACK(on_btn_clicked), win);
-  gtk_box_append(GTK_BOX(box), GTK_WIDGET(ui->btn));
-  /* App menu (Quit) */
-  GtkWidget *menu_btn = gtk_menu_button_new();
-  gtk_widget_set_halign(menu_btn, GTK_ALIGN_END);
-  gtk_widget_set_valign(menu_btn, GTK_ALIGN_CENTER);
-  gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
-  GMenu *menu = g_menu_new();
-  g_menu_append(menu, "Quit", "app.quit");
-  gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), G_MENU_MODEL(menu));
-  g_object_unref(menu);
-  gtk_box_append(GTK_BOX(box), menu_btn);
-  return box;
 }
 
 /* Global high-contrast CSS provider (loaded once, added/removed as needed) */
@@ -681,85 +251,90 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
   gtk_window_present(GTK_WINDOW(win));
 }
 
-/* Callback when async secrets sync completes */
-static void on_secrets_sync_complete(AccountsStore *as, gpointer user_data) {
-  (void)user_data;
-  STARTUP_TIME_END(STARTUP_PHASE_SECRETS);
-
-  g_debug("Accounts sync with secrets completed, %u accounts loaded",
-          as ? accounts_store_count(as) : 0);
-
-  /* Generate and log startup report */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_READY);
-  STARTUP_TIME_END(STARTUP_PHASE_READY);
-  startup_timing_report();
-}
-
 /* Global deferred state for D-Bus connection */
 static GDBusConnection *deferred_dbus_conn = NULL;
-static guint deferred_dbus_signal_subscription = 0;
-static guint deferred_dbus_completed_subscription = 0;
-/* Lives for the process: the signal subscriptions reference it. */
-static AppUI *approval_ui = NULL;
-
-/* ApprovalCompleted: the daemon resolved a request (here, from another
- * client, or on its own). Forget it so a later prompt is not suppressed. */
-static void on_approval_completed(GDBusConnection *connection,
-                                  const gchar *sender_name,
-                                  const gchar *object_path,
-                                  const gchar *interface_name,
-                                  const gchar *signal_name,
-                                  GVariant *parameters,
-                                  gpointer user_data){
-  (void)connection; (void)sender_name; (void)object_path; (void)interface_name; (void)signal_name;
-  AppUI *ui = (AppUI*)user_data;
-  const gchar *request_id = NULL; gboolean decision = FALSE;
-  g_variant_get(parameters, "(&sb)", &request_id, &decision);
-  g_debug("ApprovalCompleted: request_id=%s decision=%s", request_id ? request_id : "(null)",
-          decision ? "allow" : "deny");
-  ui_pending_remove(ui, request_id);
+static void on_approval_message(GrottoApprovalController *controller, const char *message, gpointer data) {
+  (void)controller; GtkApplication *app = data;
+  if (shutting_down) return;
+  GtkWindow *win = gtk_application_get_active_window(app);
+  if (g_strcmp0(message, "That request is no longer waiting.") == 0 ||
+      g_strcmp0(message, "No requests are waiting.") == 0) {
+    g_application_activate(G_APPLICATION(app)); win = management_window(app);
+  }
+  if (win) {
+    /* G10 hosts the pending group on Home; retain today's management page. */
+    AdwDialog *alert = adw_alert_dialog_new("Grotto", message);
+    adw_alert_dialog_add_response(ADW_ALERT_DIALOG(alert), "close", "Close");
+    adw_dialog_present(alert, GTK_WIDGET(win));
+  }
+}
+static void on_review_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)data; const char *id = g_variant_get_string(parameter, NULL);
+  if (approval_controller) grotto_approval_controller_review(approval_controller, id);
+  else { g_free(queued_review); queued_review = g_strdup(id); }
+}
+static void deny_done(GObject *source, GAsyncResult *result, gpointer data) {
+  g_autoptr(GApplication) app = data;
+  g_autoptr(GError) error = NULL;
+  if (!grotto_approval_controller_decide_finish(GROTTO_APPROVAL_CONTROLLER(source), result, &error))
+    on_approval_message(GROTTO_APPROVAL_CONTROLLER(source), "That request is no longer waiting.", app);
+}
+static void on_reconciled(GrottoApprovalController *controller, gpointer data) {
+  (void)data;
+  if (queued_deny) {
+    g_autofree gchar *id = g_steal_pointer(&queued_deny);
+    grotto_approval_controller_decide_async(controller, id, FALSE, FALSE, 0, NULL, deny_done, g_object_ref(global_app));
+  }
+}
+static void on_deny_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)data;
+  g_free(queued_deny); queued_deny = g_strdup(g_variant_get_string(parameter, NULL));
+  if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
+}
+static void on_shutdown(GApplication *app, gpointer data) {
+  (void)data;
+  shutting_down = TRUE;
+  if (setup_timeout) { g_source_remove(setup_timeout); setup_timeout = 0; }
+  if (startup_cancel) g_cancellable_cancel(startup_cancel);
+  g_clear_object(&startup_cancel);
+  if (setup_held) { setup_held = FALSE; g_application_release(app); }
+  if (approval_controller) grotto_approval_controller_stop(approval_controller);
+  g_clear_pointer(&queued_review, g_free); g_clear_pointer(&queued_deny, g_free);
+  g_clear_object(&deferred_dbus_conn);
 }
 
 /* Callback when async D-Bus connection completes */
 static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
-  AccountsStore *as = (AccountsStore*)user_data;
-
-  GError *err = NULL;
-  deferred_dbus_conn = g_bus_get_finish(res, &err);
-
-  if (err) {
-    g_warning("Deferred D-Bus connection failed: %s", err->message);
-    g_clear_error(&err);
-    STARTUP_TIME_END(STARTUP_PHASE_DBUS);
+  g_autoptr(GApplication) app = user_data;
+  g_autoptr(GError) err = NULL;
+  g_autoptr(GDBusConnection) bus = g_bus_get_finish(res, &err);
+  if (setup_timeout) { g_source_remove(setup_timeout); setup_timeout = 0; }
+  if (setup_held) { setup_held = FALSE; g_application_release(app); }
+  STARTUP_TIME_END(STARTUP_PHASE_DBUS);
+  if (shutting_down) return;
+  if (!bus) {
+    g_warning("Deferred D-Bus connection failed: %s", err ? err->message : "unavailable");
     return;
   }
-
+  deferred_dbus_conn = g_steal_pointer(&bus);
   g_debug("D-Bus connection established in deferred init");
-
-  /* Subscribe to the daemon's approval signals. Without this, a SignEvent
-   * that needs the user's decision waits on a prompt nobody shows. */
-  approval_ui = g_new0(AppUI, 1);
-  approval_ui->bus = deferred_dbus_conn;
-  approval_ui->accounts = as;
-  approval_ui->pending = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
-  deferred_dbus_signal_subscription = g_dbus_connection_signal_subscribe(
-      deferred_dbus_conn, SIGNER_NAME, SIGNER_NAME, "ApprovalRequested", SIGNER_PATH,
-      NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_approval_requested, approval_ui, NULL);
-  deferred_dbus_completed_subscription = g_dbus_connection_signal_subscribe(
-      deferred_dbus_conn, SIGNER_NAME, SIGNER_NAME, "ApprovalCompleted", SIGNER_PATH,
-      NULL, G_DBUS_SIGNAL_FLAGS_NONE, on_approval_completed, approval_ui, NULL);
-  g_debug("Subscribed to %s approval signals (ids %u, %u)", SIGNER_NAME,
-          deferred_dbus_signal_subscription, deferred_dbus_completed_subscription);
-  /* Requests made before this subscription (the daemon may have started this
-   * app for one) are only known by asking. Hold until the answer arrives:
-   * as a D-Bus service with no window the app would quit first. */
-  if (global_app) g_application_hold(G_APPLICATION(global_app));
-  g_dbus_connection_call(deferred_dbus_conn, SIGNER_NAME, SIGNER_PATH, SIGNER_NAME, "ListPendingRequests",
-                         NULL, G_VARIANT_TYPE("(a(sssss))"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL,
-                         on_pending_listed, approval_ui);
+  approval_controller = grotto_approval_controller_new(G_APPLICATION(global_app), deferred_dbus_conn);
+  g_object_set_data_full(G_OBJECT(global_app), "grotto-approval-controller", approval_controller, g_object_unref);
+  g_signal_connect(approval_controller, "message", G_CALLBACK(on_approval_message), global_app);
+  g_signal_connect(approval_controller, "reconciled", G_CALLBACK(on_reconciled), global_app);
+  if (queued_review) {
+    grotto_approval_controller_review(approval_controller, queued_review);
+    g_clear_pointer(&queued_review, g_free);
+  }
 
   STARTUP_TIME_END(STARTUP_PHASE_DBUS);
+}
+
+static gboolean cancel_setup(gpointer data) {
+  (void)data; setup_timeout = 0;
+  if (startup_cancel) g_cancellable_cancel(startup_cancel);
+  return G_SOURCE_REMOVE;
 }
 
 /* Deferred initialization callback - runs after window is presented */
@@ -771,21 +346,12 @@ static gboolean deferred_init_cb(gpointer user_data) {
 
   gint64 deferred_start = startup_timing_measure_start();
 
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_ACCOUNTS);
-
-  /* Create account store (fast - just INI file) */
-  AccountsStore *as = accounts_store_new();
-  accounts_store_load(as, NULL);
-
-  STARTUP_TIME_END(STARTUP_PHASE_ACCOUNTS);
-
-  /* Async sync with secrets (slow - D-Bus to libsecret/Keychain) */
-  STARTUP_TIME_BEGIN(STARTUP_PHASE_SECRETS);
-  accounts_store_sync_with_secrets_async(as, on_secrets_sync_complete, NULL);
-
-  /* Start async D-Bus connection (for approval signal subscription) */
+  if (shutting_down) return G_SOURCE_REMOVE;
+  /* Approvals use the daemon's pinned identity, never a second GUI account
+   * store or eager keyring enumeration. Management owns its account model. */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_DBUS);
-  g_bus_get(G_BUS_TYPE_SESSION, NULL, on_dbus_connected, as);
+  setup_timeout = g_timeout_add_seconds(5, cancel_setup, NULL);
+  g_bus_get(G_BUS_TYPE_SESSION, startup_cancel, on_dbus_connected, g_object_ref(global_app));
 
   startup_timing_measure_end(deferred_start, "deferred-init-scheduled", 50);
 
@@ -808,6 +374,8 @@ static void indicator_quit(GnStatusNotifier *indicator, GApplication *app) {
 
 static void on_startup(GtkApplication *app, gpointer user_data) {
   (void)user_data;
+  startup_cancel = g_cancellable_new();
+  g_application_hold(G_APPLICATION(app)); setup_held = TRUE;
   g_idle_add(deferred_init_cb, NULL);
   GnStatusNotifier *indicator = gn_status_notifier_new(G_APPLICATION(app), "org.nostr.Grotto", "Grotto");
   g_signal_connect(indicator, "activate", G_CALLBACK(indicator_activate), app);
@@ -818,6 +386,12 @@ static void on_startup(GtkApplication *app, gpointer user_data) {
 static void on_activate(GtkApplication *app, gpointer user_data) {
   (void)user_data;
 
+  GtkWindow *existing = management_window(app);
+  if (existing) {
+    gtk_window_present(existing);
+    if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
+    return;
+  }
   STARTUP_TIME_MARK("activate-start");
 
   /* Initialize settings manager and apply theme preference after GTK is initialized */
@@ -903,6 +477,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   }
 
   gtk_window_present(GTK_WINDOW(win));
+  if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
   STARTUP_TIME_END(STARTUP_PHASE_WINDOW);
 
   STARTUP_TIME_MARK("window-presented");
@@ -1060,6 +635,8 @@ int main(int argc, char **argv) {
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
+    { "review-request", on_review_request, "s", NULL, NULL },
+    { "deny-request", on_deny_request, "s", NULL, NULL },
     { "preferences", on_app_preferences, NULL, NULL, NULL },
     { "about", on_app_about, NULL, NULL, NULL },
     { "new-profile", on_app_new_profile, NULL, NULL, NULL },
@@ -1096,6 +673,7 @@ int main(int argc, char **argv) {
   const char *shortcuts_accels[] = { "<Primary>question", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.show-shortcuts", shortcuts_accels);
 
+  g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
   int status = g_application_run(G_APPLICATION(app), argc, argv);

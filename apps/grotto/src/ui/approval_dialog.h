@@ -95,7 +95,7 @@ void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
  * @as: the accounts store
  * @selected_npub: the initially selected npub, or NULL
  *
- * Populates the identity dropdown with available accounts.
+ * Sets the fixed identity; account inventory is not an authorization source.
  */
 void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
                                          AccountsStore *as,
@@ -158,9 +158,7 @@ void gnostr_show_approval_dialog_full(GtkWidget *parent,
  * @self: a #GnostrApprovalDialog
  * @client_pubkey: the client's public key (hex format)
  *
- * Sets the client public key for session management integration.
- * This allows the dialog to check for existing sessions and
- * create new sessions when "remember" is selected.
+ * Retained for source compatibility. Does not create authorization sessions.
  */
 void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self,
                                               const char *client_pubkey);
@@ -178,10 +176,8 @@ void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self,
  * @cb: callback for the decision
  * @user_data: user data for callback
  *
- * Shows approval dialog with session management integration.
- * If an active session exists for the client+identity, this may
- * auto-approve based on session state. The callback will include
- * session creation when "remember" is checked.
+ * Legacy entry point. Always shows a review; never auto-approves or creates
+ * GUI-owned signing sessions.
  *
  * Returns: %TRUE if dialog was shown, %FALSE if auto-approved by session
  */
@@ -216,6 +212,18 @@ GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, con
                                          const char *claimed_app_id, gboolean verified,
                                          const char *preview, AccountsStore *as,
                                          GnostrApprovalCallback cb, gpointer user_data);
+
+/* Daemon snapshot rendering. Signals: deferred(), step(int),
+ * change-trust-level(string). Identity is immutable for live decisions. */
+void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *client_name);
+void gnostr_approval_dialog_set_position(GnostrApprovalDialog *self, guint position, guint count);
+/* NULL means no consented client record yet; changing a tier is unavailable. */
+void gnostr_approval_dialog_set_trust_level(GnostrApprovalDialog *self, const char *tier);
+const char *gnostr_approval_kind_name(guint32 kind);
+gboolean gnostr_approval_info_can_approve(GVariant *info);
+/* Visible immutable flow members only. approve-selected emits a borrowed
+ * string vector of opaque IDs; it never writes remembered permissions. */
+void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows);
 
 G_END_DECLS
 

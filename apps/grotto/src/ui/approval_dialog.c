@@ -1,1002 +1,624 @@
-/**
- * GnostrApprovalDialog - Modern AdwDialog-based approval dialog for event signing requests
- *
- * Features:
- * - Request header with event type icon
- * - Event metadata display (Event Type, From app, Identity, Timestamp)
- * - Event content preview with truncation and expand option
- * - Approve button (primary/suggested style)
- * - Deny button (destructive style)
- * - Remember decision with TTL options
- * - Identity selector for multiple accounts
- */
-
-#include <adwaita.h>
-#include <gtk/gtk.h>
-#include <time.h>
-#include "../accounts_store.h"
-#include "../client_session.h"
-#include "../keyboard-nav.h"
-
-// Callback signature for decision results
-// decision: TRUE=Approve, FALSE=Deny; remember: TRUE to persist policy;
-// selected_identity may be NULL; ttl_seconds: 0=Forever or no TTL
-typedef void (*GnostrApprovalCallback)(gboolean decision, gboolean remember,
-                                       const char *selected_identity,
-                                       guint64 ttl_seconds, gpointer user_data);
-
-#define GNOSTR_TYPE_APPROVAL_DIALOG (gnostr_approval_dialog_get_type())
-G_DECLARE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, GNOSTR,
-                     APPROVAL_DIALOG, AdwDialog)
+#include "approval_dialog.h"
+#include "nostr-kinds.h"
+#include <string.h>
 
 struct _GnostrApprovalDialog {
   AdwDialog parent_instance;
-
-  /* Template widgets - matching approval-dialog.blp */
   GtkImage *header_icon;
-  GtkLabel *header_title;
-  GtkLabel *label_event_kind;
-  GtkLabel *label_from;
-  GtkLabel *label_identity;
-  GtkLabel *label_timestamp;
-  GtkLabel *content_preview;
+  GtkLabel *header_title, *subtitle_label, *label_from, *label_event_kind;
+  GtkLabel *label_identity, *label_reason, *label_expiry, *label_scope, *label_details,
+      *label_timestamp;
+  GtkLabel *content_preview, *label_position;
   GtkFrame *content_frame;
-  GtkExpander *details_expander;
-  GtkBox *identity_selector_box;
-  GtkDropDown *identity_dropdown;
+  GtkExpander *details_expander, *batch_expander;
+  GtkBox *batch_box;
+  GtkButton *btn_approve_selected;
+  GtkBox *stepper;
   GtkCheckButton *chk_remember;
-  GtkDropDown *ttl_dropdown;
-  GtkButton *btn_deny;
-  GtkButton *btn_approve;
-  GtkLabel *subtitle_label;
-  GtkLabel *label_kind_caption;
-  GtkLabel *label_content_caption;
-
-  /* State */
+  GtkDropDown *ttl_dropdown, *trust_dropdown;
+  GtkButton *btn_deny, *btn_approve, *btn_not_now, *btn_previous, *btn_next, *btn_change_trust;
   GnostrApprovalCallback callback;
   gpointer user_data;
-  gboolean finished;  /* a decision was made; do_finish() is a no-op after */
-  GtkStringList *identity_model;
-  gchar *full_content;
-  int current_event_kind;
-
-  /* Session integration */
-  gchar *client_pubkey;    /* Client's public key for session management */
+  gchar *identity, *client_pubkey;
+  gboolean finished, confirming, ready;
+  guint position, count;
 };
-
 G_DEFINE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, ADW_TYPE_DIALOG)
+enum { DEFERRED, STEP, CHANGE_TRUST, APPROVE_SELECTED, N_SIGNALS };
+static guint signals[N_SIGNALS];
 
-/* Content preview length before truncation */
-#define PREVIEW_MAX_CHARS 200
-
-static const char *get_event_type_name(int kind) {
+const char *gnostr_approval_kind_name(guint32 kind) {
   switch (kind) {
-  case 0:
-    return "Metadata";
-  case 1:
-    return "Short Text Note";
-  case 2:
-    return "Recommend Relay";
-  case 3:
-    return "Contacts";
-  case 4:
-    return "Encrypted Direct Message";
-  case 5:
-    return "Event Deletion";
-  case 6:
+  case NOSTR_KIND_PROFILE_METADATA:
+    return "Profile metadata";
+  case NOSTR_KIND_TEXT_NOTE:
+    return "Text note";
+  case NOSTR_KIND_FOLLOW_LIST:
+    return "Contact list";
+  case NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE:
+    return "Encrypted message";
+  case NOSTR_KIND_DELETION:
+    return "Delete events";
+  case NOSTR_KIND_REPOST:
+  case NOSTR_KIND_GENERIC_REPOST:
     return "Repost";
-  case 7:
+  case NOSTR_KIND_REACTION:
     return "Reaction";
-  case 8:
-    return "Badge Award";
-  case 40:
-    return "Channel Creation";
-  case 41:
-    return "Channel Metadata";
-  case 42:
-    return "Channel Message";
-  case 43:
-    return "Channel Hide Message";
-  case 44:
-    return "Channel Mute User";
-  case 1984:
-    return "Reporting";
-  case 9734:
-    return "Zap Request";
-  case 9735:
-    return "Zap";
-  case 10000:
-    return "Mute List";
-  case 10001:
-    return "Pin List";
-  case 10002:
-    return "Relay List Metadata";
-  case 22242:
-    return "Client Authentication";
-  case 24133:
-    return "Nostr Connect";
-  case 30000:
-    return "Categorized People List";
-  case 30001:
-    return "Categorized Bookmark List";
-  case 30008:
-    return "Profile Badges";
-  case 30009:
-    return "Badge Definition";
-  case 30023:
-    return "Long-form Content";
-  case 30078:
-    return "Application-specific Data";
+  case NOSTR_KIND_ARTICLE:
+    return "Article";
+  case NOSTR_KIND_COMMENT:
+    return "Comment";
+  case NOSTR_KIND_SEAL:
+  case NOSTR_KIND_GIFT_WRAP:
+    return "Encrypted message";
+  case NOSTR_KIND_DIRECT_MESSAGE:
+  case NOSTR_KIND_FILE_MESSAGE:
+    return "Private message";
+  case NOSTR_KIND_RELAY_LIST_METADATA:
+    return "Relay list";
+  case NOSTR_KIND_CLIENT_AUTHENTICATION:
+    return "Relay authentication";
+  case NOSTR_KIND_ZAP_REQUEST:
+    return "Zap request";
+  case NOSTR_KIND_ZAP:
+    return "Zap receipt";
+  case NOSTR_KIND_NOSTR_CONNECT:
+    return "Remote signer message";
   default:
-    if (kind >= 10000 && kind < 20000)
-      return "Replaceable Event";
-    if (kind >= 20000 && kind < 30000)
-      return "Ephemeral Event";
-    if (kind >= 30000 && kind < 40000)
-      return "Parameterized Replaceable Event";
-    return "Unknown Event";
+    return "Custom event";
   }
 }
-
-static const char *get_event_type_icon(int kind) {
-  switch (kind) {
-  case 0:
-    return "user-info-symbolic";
-  case 1:
-    return "edit-symbolic";
-  case 3:
-    return "contact-new-symbolic";
-  case 4:
-    return "mail-send-symbolic";
-  case 5:
-    return "user-trash-symbolic";
-  case 6:
-    return "emblem-shared-symbolic";
-  case 7:
-    return "emblem-favorite-symbolic";
-  case 9734:
-  case 9735:
-    return "starred-symbolic";
-  case 22242:
-    return "dialog-password-symbolic";
-  case 24133:
-    return "network-server-symbolic";
-  case 30023:
-    return "x-office-document-symbolic";
-  default:
-    return "mail-unread-symbolic";
-  }
+static const char *field(GVariant *info, const char *key) {
+  const char *s = "";
+  if (info)
+    g_variant_lookup(info, key, "&s", &s);
+  return s;
 }
-
-static void on_remember_toggled(GtkCheckButton *btn, gpointer user_data) {
-  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(user_data);
-  gboolean active = gtk_check_button_get_active(btn);
-  gtk_widget_set_sensitive(GTK_WIDGET(self->ttl_dropdown), active);
-
-  /* Update accessibility state for screen readers (nostrc-qfdg) */
-  if (active) {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->ttl_dropdown),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                   "Select how long to remember this decision. Available options: 10 minutes, 1 hour, 24 hours, or Forever.",
-                                   -1);
-  } else {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->ttl_dropdown),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                   "Duration selector is disabled. Check 'Remember this decision' to enable.",
-                                   -1);
-  }
+static gchar *bounded(const char *text, glong max) {
+  g_autofree gchar *valid = g_utf8_make_valid(text ? text : "", -1);
+  glong n = g_utf8_strlen(valid, -1);
+  if (n <= max)
+    return g_steal_pointer(&valid);
+  g_autofree gchar *head = g_utf8_substring(valid, 0, max);
+  return g_strconcat(head, "…", NULL);
 }
-
-
-static void do_finish(GnostrApprovalDialog *self, gboolean decision) {
-  /* Approve and Ctrl+A (or a second click) can both land before the close
-   * animation ends: decide once, so no second client session is created. */
-  if (self->finished) return;
+static void finish_now(GnostrApprovalDialog *self, gboolean allow, gboolean remember, guint64 ttl) {
+  if (self->finished || (allow && !self->ready) ||
+      !gtk_widget_get_sensitive(GTK_WIDGET(allow ? self->btn_approve : self->btn_deny)))
+    return;
   self->finished = TRUE;
-
-  gboolean remember = gtk_check_button_get_active(self->chk_remember);
-  guint64 ttl_seconds = 0;
-
-  if (remember) {
-    guint idx = gtk_drop_down_get_selected(self->ttl_dropdown);
-    switch ((int)idx) {
-    case 0:
-      ttl_seconds = 600;
-      break; /* 10 minutes */
-    case 1:
-      ttl_seconds = 3600;
-      break; /* 1 hour */
-    case 2:
-      ttl_seconds = 86400;
-      break; /* 24 hours */
-    case 3:
-    default:
-      ttl_seconds = 0;
-      break; /* Forever (persistent) */
-    }
-  }
-
-  const char *selected = NULL;
-  if (self->identity_model) {
-    guint idx = gtk_drop_down_get_selected(self->identity_dropdown);
-    guint n = g_list_model_get_n_items(G_LIST_MODEL(self->identity_model));
-    if (n > 0) {
-      if (idx >= n)
-        idx = 0;
-      selected = gtk_string_list_get_string(self->identity_model, idx);
-    }
-  }
-
-  /* If approved with "Remember", create a client session */
-  if (decision && remember && self->client_pubkey && selected) {
-    GnClientSessionManager *csm = gn_client_session_manager_get_default();
-
-    /* Get app name from label_from */
-    const char *app_name = gtk_label_get_text(self->label_from);
-
-    /* Determine if session should be persistent (Forever option) */
-    gboolean persistent = (ttl_seconds == 0);
-
-    /* Grant signing permission for remembered approvals */
-    guint permissions = GN_PERM_SIGN_EVENT;
-
-    /* Convert ttl_seconds: 0 means forever (-1 internally), otherwise use value */
-    gint64 ttl = (ttl_seconds == 0) ? -1 : (gint64)ttl_seconds;
-
-    GnClientSession *session = gn_client_session_manager_create_session(
-      csm,
-      self->client_pubkey,
-      selected,
-      app_name,
-      permissions,
-      persistent,
-      ttl
-    );
-
-    if (session) {
-      /* nostrc-0vmy: scope the remembered grant to the event kind the
-       * user actually approved — a kind-1 note approval must not silently
-       * pre-authorize kind-4 DM signing. */
-      gn_client_session_add_allowed_kind(session,
-                                         (guint16)MAX(self->current_event_kind, 0));
-      g_debug("approval-dialog: Created client session for %s -> %s (ttl=%ld, kind=%d)",
-              self->client_pubkey, selected, (long)ttl_seconds,
-              self->current_event_kind);
-    }
-  }
-
-  /* Fire once: clear before closing, or on_dialog_closed() reports a second
-   * (reject) decision on the caller's already-freed context (device smoke
-   * 2026-10-01: SIGSEGV in approve_call_done). */
   GnostrApprovalCallback cb = self->callback;
   self->callback = NULL;
-  if (cb) {
-    cb(decision, remember, selected, ttl_seconds, self->user_data);
-  }
-
+  if (cb)
+    cb(allow, remember, self->identity, ttl, self->user_data);
   adw_dialog_close(ADW_DIALOG(self));
 }
-
-static void on_approve_clicked(GtkButton *btn, gpointer user_data) {
-  (void)btn;
-  do_finish(GNOSTR_APPROVAL_DIALOG(user_data), TRUE);
+typedef struct {
+  GnostrApprovalDialog *dialog;
+  gboolean allow;
+} Forever;
+static void forever_done(GObject *source, GAsyncResult *result, gpointer data) {
+  Forever *f = data;
+  const char *response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+  f->dialog->confirming = FALSE;
+  if (!strcmp(response, "remember"))
+    finish_now(f->dialog, f->allow, TRUE, 0);
+  g_object_unref(f->dialog);
+  g_free(f);
 }
-
-static void on_deny_clicked(GtkButton *btn, gpointer user_data) {
-  (void)btn;
-  do_finish(GNOSTR_APPROVAL_DIALOG(user_data), FALSE);
-}
-
-static void on_dialog_closed(AdwDialog *dialog) {
-  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(dialog);
-
-  /* Treat close as denial if not already handled */
-  self->finished = TRUE;
-  GnostrApprovalCallback cb = self->callback;
-  self->callback = NULL; /* Prevent double-call, even if cb re-enters */
-  if (cb) {
-    cb(FALSE, FALSE, NULL, 0, self->user_data);
+static void do_finish(GnostrApprovalDialog *self, gboolean allow) {
+  if (self->finished || self->confirming || (allow && !self->ready) ||
+      !gtk_widget_get_sensitive(GTK_WIDGET(allow ? self->btn_approve : self->btn_deny)))
+    return;
+  gboolean remember = gtk_check_button_get_active(self->chk_remember) &&
+                      gtk_widget_get_sensitive(GTK_WIDGET(self->chk_remember));
+  static const guint64 durations[] = {600, 3600, 86400, 0};
+  guint index = gtk_drop_down_get_selected(self->ttl_dropdown);
+  if (remember && index >= G_N_ELEMENTS(durations))
+    return;
+  guint64 ttl = remember ? durations[index] : 0;
+  if (remember && !ttl) {
+    self->confirming = TRUE;
+    g_autofree gchar *body =
+        g_strdup_printf("%s forever: %s. This permission does not raise the client's trust level.",
+                        allow ? "Allow" : "Deny", gtk_label_get_text(self->label_scope));
+    AdwDialog *alert = adw_alert_dialog_new("Remember forever?", body);
+    adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", "Cancel", "remember",
+                                   "Remember forever", NULL);
+    adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
+    adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
+    Forever *f = g_new0(Forever, 1);
+    f->dialog = g_object_ref(self);
+    f->allow = allow;
+    adw_alert_dialog_choose(ADW_ALERT_DIALOG(alert), GTK_WIDGET(self), NULL, forever_done, f);
+    return;
   }
-
-  /* libadwaita < 1.6 has no default ::closed handler (NULL): an unguarded
-   * chain-up SEGVs on every close on Ubuntu 24.04's 1.5 (nostrc-n98j). */
+  finish_now(self, allow, remember, ttl);
+}
+static void approve_clicked(GtkButton *button, gpointer data) {
+  (void)button;
+  do_finish(data, TRUE);
+}
+static void deny_clicked(GtkButton *button, gpointer data) {
+  (void)button;
+  do_finish(data, FALSE);
+}
+static void not_now_clicked(GtkButton *button, gpointer data) {
+  (void)button;
+  GnostrApprovalDialog *self = data;
+  if (self->finished || self->confirming)
+    return;
+  self->finished = TRUE;
+  self->callback = NULL;
+  g_signal_emit(self, signals[DEFERRED], 0);
+  adw_dialog_close(ADW_DIALOG(self));
+}
+static void selection_toggled(GtkCheckButton *button, gpointer data) {
+  (void)button;
+  GnostrApprovalDialog *self = data;
+  gboolean selected = FALSE;
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)); child;
+       child = gtk_widget_get_next_sibling(child))
+    selected |= gtk_check_button_get_active(GTK_CHECK_BUTTON(child));
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve_selected),
+                           selected && self->ready && !self->finished);
+}
+static void selected_clicked(GtkButton *button, gpointer data) {
+  GnostrApprovalDialog *self = data;
+  if (!self->ready || self->finished || self->confirming ||
+      !gtk_widget_get_sensitive(GTK_WIDGET(button)))
+    return;
+  g_autoptr(GPtrArray) ids = g_ptr_array_new_with_free_func(g_free);
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (gtk_check_button_get_active(GTK_CHECK_BUTTON(child)))
+      g_ptr_array_add(ids, g_strdup(g_object_get_data(G_OBJECT(child), "request-id")));
+  if (!ids->len)
+    return;
+  g_ptr_array_add(ids, NULL);
+  self->finished = TRUE;
+  self->callback = NULL;
+  g_signal_emit(self, signals[APPROVE_SELECTED], 0, ids->pdata);
+  adw_dialog_close(ADW_DIALOG(self));
+}
+static void previous_clicked(GtkButton *button, gpointer data) {
+  (void)button;
+  g_signal_emit(data, signals[STEP], 0, -1);
+}
+static void next_clicked(GtkButton *button, gpointer data) {
+  (void)button;
+  g_signal_emit(data, signals[STEP], 0, 1);
+}
+static void remember_toggled(GtkCheckButton *button, gpointer data) {
+  GnostrApprovalDialog *self = data;
+  gtk_widget_set_sensitive(GTK_WIDGET(self->ttl_dropdown), gtk_check_button_get_active(button));
+}
+typedef struct {
+  GnostrApprovalDialog *dialog;
+  const char *tier;
+} TierChange;
+static void tier_confirmed(GObject *source, GAsyncResult *result, gpointer data) {
+  TierChange *change = data;
+  GnostrApprovalDialog *self = change->dialog;
+  const char *response = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+  self->confirming = FALSE;
+  if (!self->finished && !strcmp(response, "change") &&
+      gtk_widget_get_sensitive(GTK_WIDGET(self->btn_change_trust))) {
+    g_signal_emit(self, signals[CHANGE_TRUST], 0, change->tier);
+  }
+  g_object_unref(self);
+  g_free(change);
+}
+static void change_trust_clicked(GtkButton *button, gpointer data) {
+  GnostrApprovalDialog *self = data;
+  if (self->finished || self->confirming || !gtk_widget_get_sensitive(GTK_WIDGET(button)))
+    return;
+  static const char *tiers[] = {"low", "medium", "full"};
+  guint index = gtk_drop_down_get_selected(self->trust_dropdown);
+  if (index >= G_N_ELEMENTS(tiers))
+    return;
+  TierChange *change = g_new0(TierChange, 1);
+  change->dialog = g_object_ref(self);
+  change->tier = tiers[index];
+  self->confirming = TRUE;
+  g_autofree gchar *heading = g_strdup_printf("Change client to %s trust?", tiers[index]);
+  AdwDialog *alert = adw_alert_dialog_new(
+      heading,
+      "This changes future requests immediately. Full auto-signs permitted operations except "
+      "required confirmations; Medium allows public publishing. Explicit permissions remain. This "
+      "does not approve this request.");
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", "Cancel", "change",
+                                 "Change trust level", NULL);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
+  adw_alert_dialog_choose(ADW_ALERT_DIALOG(alert), GTK_WIDGET(self), NULL, tier_confirmed, change);
+}
+static void closed(AdwDialog *dialog) {
+  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(dialog);
+  GnostrApprovalCallback cb = self->callback;
+  self->callback = NULL;
+  self->finished = TRUE;
+  if (cb)
+    cb(FALSE, FALSE, self->identity, 0, self->user_data);
   if (ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed)
     ADW_DIALOG_CLASS(gnostr_approval_dialog_parent_class)->closed(dialog);
 }
-
-static void gnostr_approval_dialog_dispose(GObject *object) {
+static void finalize(GObject *object) {
   GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(object);
-
-  g_clear_pointer(&self->full_content, g_free);
-  g_clear_pointer(&self->client_pubkey, g_free);
-  g_clear_object(&self->identity_model);
-
-  G_OBJECT_CLASS(gnostr_approval_dialog_parent_class)->dispose(object);
+  g_free(self->identity);
+  g_free(self->client_pubkey);
+  G_OBJECT_CLASS(gnostr_approval_dialog_parent_class)->finalize(object);
 }
-
 static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) {
-  GObjectClass *object_class = G_OBJECT_CLASS(klass);
-  GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
-  AdwDialogClass *dialog_class = ADW_DIALOG_CLASS(klass);
-
-  object_class->dispose = gnostr_approval_dialog_dispose;
-  dialog_class->closed = on_dialog_closed;
-
-  gtk_widget_class_set_template_from_resource(
-      widget_class, "/org/gnostr/signer/ui/approval-dialog.ui");
-
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       header_icon);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       header_title);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_event_kind);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_from);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_identity);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_timestamp);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       content_preview);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       content_frame);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       details_expander);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       identity_selector_box);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       identity_dropdown);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       chk_remember);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       ttl_dropdown);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       btn_deny);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       btn_approve);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       subtitle_label);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_kind_caption);
-  gtk_widget_class_bind_template_child(widget_class, GnostrApprovalDialog,
-                                       label_content_caption);
+  G_OBJECT_CLASS(klass)->finalize = finalize;
+  ADW_DIALOG_CLASS(klass)->closed = closed;
+  GtkWidgetClass *w = GTK_WIDGET_CLASS(klass);
+  gtk_widget_class_set_template_from_resource(w, "/org/gnostr/signer/ui/approval-dialog.ui");
+#define BIND(name) gtk_widget_class_bind_template_child(w, GnostrApprovalDialog, name)
+  BIND(header_icon);
+  BIND(header_title);
+  BIND(subtitle_label);
+  BIND(label_from);
+  BIND(label_event_kind);
+  BIND(label_identity);
+  BIND(label_reason);
+  BIND(label_expiry);
+  BIND(label_scope);
+  BIND(label_details);
+  BIND(label_timestamp);
+  BIND(batch_expander);
+  BIND(batch_box);
+  BIND(btn_approve_selected);
+  BIND(content_preview);
+  BIND(label_position);
+  BIND(content_frame);
+  BIND(details_expander);
+  BIND(stepper);
+  BIND(chk_remember);
+  BIND(ttl_dropdown);
+  BIND(trust_dropdown);
+  BIND(btn_deny);
+  BIND(btn_approve);
+  BIND(btn_not_now);
+  BIND(btn_previous);
+  BIND(btn_next);
+  BIND(btn_change_trust);
+#undef BIND
+  signals[APPROVE_SELECTED] =
+      g_signal_new("approve-selected", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                   NULL, G_TYPE_NONE, 1, G_TYPE_STRV);
+  signals[DEFERRED] = g_signal_new("deferred", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL,
+                                   NULL, NULL, G_TYPE_NONE, 0);
+  signals[STEP] = g_signal_new("step", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                               NULL, G_TYPE_NONE, 1, G_TYPE_INT);
+  signals[CHANGE_TRUST] =
+      g_signal_new("change-trust-level", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
+                   NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
 }
-
-/* Callback for Ctrl+A keyboard shortcut (Approve) */
-static gboolean on_shortcut_approve(GtkWidget *widget, GVariant *args, gpointer user_data) {
-  (void)widget; (void)args; (void)user_data;
-  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(widget);
-  if (gtk_widget_get_sensitive(GTK_WIDGET(self->btn_approve))) {
-    do_finish(self, TRUE);
-  }
+static gboolean shortcut(GtkWidget *widget, GVariant *args, gpointer data) {
+  (void)args;
+  do_finish(GNOSTR_APPROVAL_DIALOG(widget), GPOINTER_TO_INT(data));
   return TRUE;
 }
-
-/* Callback for Ctrl+D keyboard shortcut (Deny) */
-static gboolean on_shortcut_deny(GtkWidget *widget, GVariant *args, gpointer user_data) {
-  (void)widget; (void)args; (void)user_data;
-  GnostrApprovalDialog *self = GNOSTR_APPROVAL_DIALOG(widget);
-  do_finish(self, FALSE);
-  return TRUE;
-}
-
 static void gnostr_approval_dialog_init(GnostrApprovalDialog *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
-
-  self->full_content = NULL;
-  self->identity_model = NULL;
-  self->callback = NULL;
-  self->user_data = NULL;
-  self->current_event_kind = 1;
-
-  /* Setup TTL dropdown model */
-  GtkStringList *ttl_model = gtk_string_list_new(NULL);
-  gtk_string_list_append(ttl_model, "10 minutes");
-  gtk_string_list_append(ttl_model, "1 hour");
-  gtk_string_list_append(ttl_model, "24 hours");
-  gtk_string_list_append(ttl_model, "Forever");
-  gtk_drop_down_set_model(self->ttl_dropdown, G_LIST_MODEL(ttl_model));
+  self->ready = TRUE;
+  const char *durations[] = {"10 minutes", "1 hour", "24 hours", "Forever", NULL};
+  g_autoptr(GtkStringList) ttl = gtk_string_list_new(durations);
+  gtk_drop_down_set_model(self->ttl_dropdown, G_LIST_MODEL(ttl));
   gtk_drop_down_set_selected(self->ttl_dropdown, 0);
-  g_object_unref(ttl_model);
-
-  /* Connect signals */
-  g_signal_connect(self->chk_remember, "toggled",
-                   G_CALLBACK(on_remember_toggled), self);
-  g_signal_connect(self->btn_approve, "clicked", G_CALLBACK(on_approve_clicked),
-                   self);
-  g_signal_connect(self->btn_deny, "clicked", G_CALLBACK(on_deny_clicked),
-                   self);
-
-  /* Setup keyboard shortcuts using GtkShortcutController */
-  GtkEventController *shortcut_ctrl = gtk_shortcut_controller_new();
-  gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), GTK_SHORTCUT_SCOPE_LOCAL);
-
-  /* Ctrl+A: Approve */
-  GtkShortcutTrigger *approve_trigger = gtk_shortcut_trigger_parse_string("<Primary>a");
-  GtkShortcutAction *approve_action = gtk_callback_action_new(on_shortcut_approve, NULL, NULL);
-  GtkShortcut *approve_shortcut = gtk_shortcut_new(approve_trigger, approve_action);
-  gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), approve_shortcut);
-
-  /* Ctrl+D: Deny */
-  GtkShortcutTrigger *deny_trigger = gtk_shortcut_trigger_parse_string("<Primary>d");
-  GtkShortcutAction *deny_action = gtk_callback_action_new(on_shortcut_deny, NULL, NULL);
-  GtkShortcut *deny_shortcut = gtk_shortcut_new(deny_trigger, deny_action);
-  gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(shortcut_ctrl), deny_shortcut);
-
-  gtk_widget_add_controller(GTK_WIDGET(self), shortcut_ctrl);
-
-  /* Setup keyboard navigation - focus deny button first (safer default),
-   * with approve as the action button (nostrc-qfdg) */
-  gn_keyboard_nav_setup_dialog(ADW_DIALOG(self),
-                               GTK_WIDGET(self->btn_deny),
-                               GTK_WIDGET(self->btn_approve));
-
-  /* Setup focus chain for proper tab navigation order (nostrc-qfdg) */
-  GtkWidget *focus_widgets[] = {
-    GTK_WIDGET(self->identity_dropdown),
-    GTK_WIDGET(self->chk_remember),
-    GTK_WIDGET(self->ttl_dropdown),
-    GTK_WIDGET(self->btn_deny),
-    GTK_WIDGET(self->btn_approve),
-    NULL
-  };
-  gn_keyboard_nav_setup_focus_chain(focus_widgets);
+  const char *tiers[] = {"Low — ask for every request", "Medium — ask for sensitive operations",
+                         "Full — auto-sign permitted requests", NULL};
+  g_autoptr(GtkStringList) trust = gtk_string_list_new(tiers);
+  gtk_drop_down_set_model(self->trust_dropdown, G_LIST_MODEL(trust));
+  gtk_drop_down_set_selected(self->trust_dropdown, 0);
+#define CONNECT(widget, fn) g_signal_connect(self->widget, "clicked", G_CALLBACK(fn), self)
+  CONNECT(btn_approve_selected, selected_clicked);
+  CONNECT(btn_approve, approve_clicked);
+  CONNECT(btn_deny, deny_clicked);
+  CONNECT(btn_not_now, not_now_clicked);
+  CONNECT(btn_previous, previous_clicked);
+  CONNECT(btn_next, next_clicked);
+  CONNECT(btn_change_trust, change_trust_clicked);
+#undef CONNECT
+  g_signal_connect(self->chk_remember, "toggled", G_CALLBACK(remember_toggled), self);
+  GtkEventController *controller = gtk_shortcut_controller_new();
+  gtk_shortcut_controller_set_scope(GTK_SHORTCUT_CONTROLLER(controller), GTK_SHORTCUT_SCOPE_LOCAL);
+  const char *triggers[] = {"<Primary>d", "<Primary>a"};
+  for (guint i = 0; i < G_N_ELEMENTS(triggers); i++)
+    gtk_shortcut_controller_add_shortcut(
+        GTK_SHORTCUT_CONTROLLER(controller),
+        gtk_shortcut_new(gtk_shortcut_trigger_parse_string(triggers[i]),
+                         gtk_callback_action_new(shortcut, GUINT_TO_POINTER(i), NULL)));
+  gtk_widget_add_controller(GTK_WIDGET(self), controller);
+  adw_dialog_set_focus(ADW_DIALOG(self), GTK_WIDGET(self->btn_deny));
+  /* No default approve widget: Enter on a dropdown or Details is not consent. */
 }
-
-/**
- * gnostr_approval_dialog_new:
- *
- * Creates a new approval dialog.
- *
- * Returns: (transfer full): a new #GnostrApprovalDialog
- */
 GnostrApprovalDialog *gnostr_approval_dialog_new(void) {
   return g_object_new(GNOSTR_TYPE_APPROVAL_DIALOG, NULL);
 }
-
-/**
- * gnostr_approval_dialog_set_event_type:
- * @self: a #GnostrApprovalDialog
- * @kind: the Nostr event kind number
- *
- * Sets the event type display based on the kind number.
- */
-void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  self->current_event_kind = kind;
-  const char *type_name = get_event_type_name(kind);
-  const char *icon_name = get_event_type_icon(kind);
-
-  /* Format: "4 (Encrypted Direct Message)" */
-  g_autofree gchar *display = g_strdup_printf("%d (%s)", kind, type_name);
-  gtk_label_set_text(self->label_event_kind, display);
-
-  /* Update accessibility description for screen readers */
-  g_autofree gchar *accessible_desc = g_strdup_printf("Event type: %s, kind number %d", type_name, kind);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_event_kind),
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                 -1);
-
-  gtk_image_set_from_icon_name(self->header_icon, icon_name);
-}
-
-/**
- * gnostr_approval_dialog_set_app_name:
- * @self: a #GnostrApprovalDialog
- * @app_name: the requesting application name
- *
- * Sets the requesting application name.
- */
-void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self,
-                                         const char *app_name) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  const char *display_name = app_name ? app_name : "Unknown Application";
-  gtk_label_set_text(self->label_from, display_name);
-
-  /* Update accessibility for screen readers */
-  g_autofree gchar *accessible_desc = g_strdup_printf("Requesting application: %s", display_name);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_from),
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                 -1);
-
-  /* Update dialog accessible label to include app name for screen reader context */
-  g_autofree gchar *dialog_label = g_strdup_printf("Signature approval request from %s", display_name);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, dialog_label,
-                                 -1);
-}
-
-/**
- * gnostr_approval_dialog_set_identity:
- * @self: a #GnostrApprovalDialog
- * @identity_npub: the identity npub string
- *
- * Sets the identity display.
- */
-void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self,
-                                         const char *identity_npub) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  if (identity_npub && *identity_npub) {
-    /* Truncate long npub for display */
-    if (strlen(identity_npub) > 20) {
-      g_autofree gchar *truncated = g_strdup_printf("%.12s...%.8s", identity_npub,
-                                         identity_npub + strlen(identity_npub) - 8);
-      gtk_label_set_text(self->label_identity, truncated);
-    } else {
-      gtk_label_set_text(self->label_identity, identity_npub);
-    }
-
-    /* Update accessibility with full identity for screen readers */
-    g_autofree gchar *accessible_desc = g_strdup_printf("Signing identity: %s", identity_npub);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-  } else {
-    gtk_label_set_text(self->label_identity, "Not specified");
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_identity),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Signing identity: Not specified",
-                                   -1);
-  }
-}
-
-/**
- * gnostr_approval_dialog_set_timestamp:
- * @self: a #GnostrApprovalDialog
- * @timestamp: Unix timestamp, or 0 for current time
- *
- * Sets the timestamp display.
- */
-void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self,
-                                          guint64 timestamp) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  /* nostrc-3dry: the timestamp comes from the requester. A crafted value
-   * (e.g. G_MAXUINT64) becomes a negative or out-of-range time_t and
-   * localtime() may return NULL — crashing the approval gate itself. */
-  time_t t;
-  if (timestamp == 0 || timestamp > (guint64)4102444800 /* 2100-01-01 */) {
-    t = time(NULL);
-  } else {
-    t = (time_t)timestamp;
-  }
-
-  char buffer[64];
-  struct tm *tm_info = localtime(&t);
-  if (!tm_info ||
-      strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", tm_info) == 0) {
-    g_strlcpy(buffer, "(unknown time)", sizeof(buffer));
-  }
-
-  gtk_label_set_text(self->label_timestamp, buffer);
-}
-
-/**
- * gnostr_approval_dialog_set_content:
- * @self: a #GnostrApprovalDialog
- * @content: the event content to preview
- *
- * Sets the content preview. Long content will be truncated.
- */
-void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self,
-                                        const char *content) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  g_clear_pointer(&self->full_content, g_free);
-
-  if (!content || !*content) {
-    gtk_label_set_text(self->content_preview, "(No content)");
-    gtk_widget_set_visible(GTK_WIDGET(self->content_frame), FALSE);
-
-    /* Update accessibility */
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Event has no content",
-                                   -1);
-    return;
-  }
-
-  gtk_widget_set_visible(GTK_WIDGET(self->content_frame), TRUE);
-  self->full_content = g_strdup(content);
-
-  if (strlen(content) > PREVIEW_MAX_CHARS) {
-    g_autofree gchar *truncated = g_strndup(content, PREVIEW_MAX_CHARS);
-    g_autofree gchar *display = g_strdup_printf("%s...", truncated);
-    gtk_label_set_text(self->content_preview, display);
-
-    /* Update accessibility for truncated content */
-    g_autofree gchar *accessible_desc = g_strdup_printf("Event content preview (truncated, %zu characters total)", strlen(content));
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-  } else {
-    gtk_label_set_text(self->content_preview, content);
-
-    /* Update accessibility for full content */
-    g_autofree gchar *accessible_desc = g_strdup_printf("Event content: %s", content);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->content_preview),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-  }
-}
-
-/**
- * gnostr_approval_dialog_set_accounts:
- * @self: a #GnostrApprovalDialog
- * @as: the accounts store
- * @selected_npub: the initially selected npub, or NULL
- *
- * Populates the identity dropdown with available accounts.
- * Watch-only accounts are excluded since they cannot sign.
- */
-void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self,
-                                         AccountsStore *as,
-                                         const char *selected_npub) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  g_clear_object(&self->identity_model);
-  self->identity_model = gtk_string_list_new(NULL);
-
-  guint selected_idx = 0;
-  guint count = 0;
-  gboolean selected_is_watch_only = FALSE;
-
-  if (as) {
-    GPtrArray *items = accounts_store_list(as);
-    if (items) {
-      for (guint i = 0; i < items->len; i++) {
-        AccountEntry *e = g_ptr_array_index(items, i);
-
-        /* Skip watch-only accounts - they cannot sign */
-        if (e->watch_only) {
-          /* Check if the requested identity is watch-only */
-          if (selected_npub && g_strcmp0(selected_npub, e->id) == 0) {
-            selected_is_watch_only = TRUE;
-          }
-          continue; /* entries are freed by the array (accounts_store_entry_free) */
-        }
-
-        gtk_string_list_append(self->identity_model, e->id);
-        if (selected_npub && g_strcmp0(selected_npub, e->id) == 0) {
-          selected_idx = count;
-        }
-        count++;
-      }
-      g_ptr_array_free(items, TRUE);
-    }
-  }
-
-  /* If no accounts but we have a selected npub, add it (unless it's watch-only) */
-  if (count == 0 && selected_npub && *selected_npub && !selected_is_watch_only) {
-    gtk_string_list_append(self->identity_model, selected_npub);
-    count = 1;
-    selected_idx = 0;
-  }
-
-  gtk_drop_down_set_model(self->identity_dropdown,
-                          G_LIST_MODEL(self->identity_model));
-  gtk_drop_down_set_selected(self->identity_dropdown, selected_idx);
-
-  /* Show selector only if multiple accounts */
-  gtk_widget_set_visible(GTK_WIDGET(self->identity_selector_box), count > 1);
-
-  /* Disable approve if no signable identity available */
-  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), count > 0);
-
-  /* Update accessibility for the identity dropdown (nostrc-qfdg) */
-  if (count > 1) {
-    g_autofree gchar *accessible_desc = g_strdup_printf("Select signing identity. %u accounts available.", count);
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->identity_dropdown),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, accessible_desc,
-                                   -1);
-  }
-
-  /* Update approve button accessibility based on state (nostrc-qfdg) */
-  if (count == 0) {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                   "Approve button is disabled. No accounts available for signing.",
-                                   -1);
-  } else {
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
-                                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
-                                   "Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.",
-                                   -1);
-  }
-
-  /* Show warning if selected identity is watch-only */
-  if (selected_is_watch_only && count == 0) {
-    /* Update header to show watch-only warning */
-    gtk_label_set_text(self->header_title, "Cannot Sign (Watch-only)");
-    gtk_widget_remove_css_class(GTK_WIDGET(self->header_title), "pending-title");
-    gtk_widget_add_css_class(GTK_WIDGET(self->header_title), "warning");
-
-    /* Announce watch-only warning to screen readers */
-    gtk_accessible_update_property(GTK_ACCESSIBLE(self->header_title),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                   "Warning: Cannot sign. This is a watch-only account without signing capability.",
-                                   -1);
-  }
-}
-
-/**
- * gnostr_approval_dialog_set_callback:
- * @self: a #GnostrApprovalDialog
- * @callback: the callback function
- * @user_data: user data for the callback
- *
- * Sets the callback to be invoked when the user makes a decision.
- */
 void gnostr_approval_dialog_set_callback(GnostrApprovalDialog *self,
-                                         GnostrApprovalCallback callback,
-                                         gpointer user_data) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
+                                         GnostrApprovalCallback callback, gpointer data) {
   self->callback = callback;
-  self->user_data = user_data;
+  self->user_data = data;
 }
-
-/**
- * gnostr_show_approval_dialog:
- * @parent: the parent widget
- * @identity_npub: the requesting identity npub
- * @app_name: the requesting application name
- * @preview: the event content preview
- * @as: the accounts store
- * @cb: callback for the decision
- * @user_data: user data for callback
- *
- * Convenience function to show an approval dialog.
- * This is the legacy API maintained for compatibility.
- */
-void gnostr_show_approval_dialog(GtkWidget *parent, const char *identity_npub,
-                                 const char *app_name, const char *preview,
-                                 AccountsStore *as, GnostrApprovalCallback cb,
-                                 gpointer user_data) {
-  GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
-
-  gnostr_approval_dialog_set_app_name(dialog, app_name);
-  gnostr_approval_dialog_set_identity(dialog, identity_npub);
-  gnostr_approval_dialog_set_content(dialog, preview);
-  gnostr_approval_dialog_set_timestamp(dialog, 0);
-  gnostr_approval_dialog_set_event_type(dialog, 1); /* Default to text note */
-  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
-  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
-
-  adw_dialog_present(ADW_DIALOG(dialog), parent);
+void gnostr_approval_dialog_set_identity(GnostrApprovalDialog *self, const char *identity) {
+  g_free(self->identity);
+  self->identity = g_strdup(identity);
+  g_autofree gchar *label = g_strdup_printf(
+      "Signing as: %s",
+      identity && *identity ? identity : "No identity (identity-independent operation)");
+  gtk_label_set_text(self->label_identity, label);
 }
-
-/**
- * gnostr_show_approval_dialog_full:
- * @parent: the parent widget
- * @identity_npub: the requesting identity npub
- * @app_name: the requesting application name
- * @content: the event content
- * @event_kind: the Nostr event kind
- * @timestamp: the event timestamp (0 for current time)
- * @as: the accounts store
- * @cb: callback for the decision
- * @user_data: user data for callback
- *
- * Full-featured approval dialog with all event metadata.
- */
-void gnostr_show_approval_dialog_full(GtkWidget *parent,
-                                      const char *identity_npub,
-                                      const char *app_name, const char *content,
-                                      int event_kind, guint64 timestamp,
-                                      AccountsStore *as,
-                                      GnostrApprovalCallback cb,
-                                      gpointer user_data) {
-  GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
-
-  gnostr_approval_dialog_set_app_name(dialog, app_name);
-  gnostr_approval_dialog_set_identity(dialog, identity_npub);
-  gnostr_approval_dialog_set_content(dialog, content);
-  gnostr_approval_dialog_set_timestamp(dialog, timestamp);
-  gnostr_approval_dialog_set_event_type(dialog, event_kind);
-  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
-  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
-
-  adw_dialog_present(ADW_DIALOG(dialog), parent);
+void gnostr_approval_dialog_set_app_name(GnostrApprovalDialog *self, const char *name) {
+  gtk_label_set_text(self->label_from, name ? name : "Unverified app");
 }
-
-/* ---- kind-aware requests (nostrc-f7hk) ----
- * org.nostr.Signer raises ApprovalRequested for several request kinds; each
- * gets copy that says what approving actually hands over. */
-typedef struct {
-  const char *kind;
-  const char *title;
-  const char *action;           /* approve button */
-  const char *body;             /* %s = requesting application */
-  const char *icon;
-  const char *what;             /* "Request:" row */
-  const char *content_caption;  /* NULL = no content row */
-} RequestCopy;
-
-static const RequestCopy request_copy[] = {
-  { "event", "Sign an event?", "Sign",
-    "%s wants to publish an event signed with your key.",
-    "document-edit-symbolic", "Event signature", "Content:" },
-  { "nip44_conversation_key", "Share a decryption key?", "Share Key",
-    "%s asks for the NIP-44 key shared between your identity and the public key below. "
-    "Whoever holds it can read every NIP-44 message exchanged with that key \u2014 for "
-    "example, to open a file sealed for you.",
-    "dialog-password-symbolic", "NIP-44 conversation key", "Details:" },
-  { "nip04_decrypt", "Decrypt a message?", "Decrypt",
-    "%s wants to read a private message (NIP-04) that was sent to you.",
-    "mail-read-symbolic", "Decrypt (NIP-04)", "Details:" },
-  { "nip44_decrypt", "Decrypt a message?", "Decrypt",
-    "%s wants to read a private message (NIP-44) that was sent to you.",
-    "mail-read-symbolic", "Decrypt (NIP-44)", "Details:" },
-  { "nip04_encrypt", "Encrypt a message?", "Encrypt",
-    "%s wants to encrypt a message as you (NIP-04). Encrypting does not send it.",
-    "mail-send-symbolic", "Encrypt (NIP-04)", "Details:" },
-  { "nip44_encrypt", "Encrypt a message?", "Encrypt",
-    "%s wants to encrypt a message as you (NIP-44). Encrypting does not send it.",
-    "mail-send-symbolic", "Encrypt (NIP-44)", "Details:" },
-  { "get_public_key", "Share your public key?", "Share",
-    "%s wants to know which Nostr identity (npub) you use.",
-    "avatar-default-symbolic", "Public key", NULL },
-  { "get_relays", "Share your relay list?", "Share",
-    "%s wants to read the relays you configured.",
-    "network-server-symbolic", "Relay list", NULL },
-  { "zap_decrypt", "Decrypt a private zap?", "Decrypt",
-    "%s wants to read who sent you a private zap and its message.",
-    "starred-symbolic", "Private zap", "Details:" },
-};
-
-/**
- * gnostr_approval_dialog_set_request:
- * @kind: ApprovalRequested kind
- * @app_display: human-readable name of the requesting application
- * @claimed_app_id: (nullable): the app_id the caller passed (unverified)
- * @verified: whether the signer identified the caller from its connection
- * @preview: the signer's preview text
- */
+void gnostr_approval_dialog_set_event_type(GnostrApprovalDialog *self, int kind) {
+  g_autofree gchar *label =
+      g_strdup_printf("%s (kind %d)", gnostr_approval_kind_name((guint32)kind), kind);
+  gtk_label_set_text(self->label_event_kind, label);
+}
+void gnostr_approval_dialog_set_timestamp(GnostrApprovalDialog *self, guint64 timestamp) {
+  g_autofree gchar *text = g_strdup_printf("Request time: %" G_GUINT64_FORMAT, timestamp);
+  gtk_label_set_text(self->label_timestamp, text);
+}
+void gnostr_approval_dialog_set_content(GnostrApprovalDialog *self, const char *content) {
+  g_autofree gchar *preview = bounded(content, 280);
+  gtk_label_set_text(self->content_preview, *preview ? preview : "No content");
+}
+/* Compatibility callers cannot change the identity pinned by the daemon.
+ * Account metadata is never an authorization source or a first-key fallback. */
+void gnostr_approval_dialog_set_accounts(GnostrApprovalDialog *self, AccountsStore *store,
+                                         const char *selected) {
+  (void)store;
+  gnostr_approval_dialog_set_identity(self, selected);
+}
+void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self, const char *key) {
+  g_free(self->client_pubkey);
+  self->client_pubkey = g_strdup(key);
+}
 void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *kind,
-                                        const char *app_display, const char *claimed_app_id,
-                                        gboolean verified, const char *preview) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-  static const RequestCopy generic = { NULL, "Allow this request?", "Allow",
-                                       "%s sent a request to the signer.",
-                                       "dialog-question-symbolic", NULL, "Details:" };
-  const RequestCopy *c = &generic;
-  for (gsize i = 0; i < G_N_ELEMENTS(request_copy); i++)
-    if (g_strcmp0(kind, request_copy[i].kind) == 0) { c = &request_copy[i]; break; }
-  const char *app = (app_display && *app_display) ? app_display : "An unidentified application";
-
-  gtk_label_set_text(self->header_title, c->title);
-  gtk_image_set_from_icon_name(self->header_icon, c->icon);
-  GString *sub = g_string_new(NULL);
-  g_string_append_printf(sub, c->body, app);
-  if (!verified)
-    g_string_append(sub, "\nThe signer could not verify which application this is.");
-  if (claimed_app_id && *claimed_app_id && g_strcmp0(claimed_app_id, app_display) != 0)
-    g_string_append_printf(sub, "\nIt calls itself \u201c%s\u201d; that name is not verified.",
-                           claimed_app_id);
-  gtk_label_set_text(self->subtitle_label, sub->str);
-  gtk_label_set_wrap(self->subtitle_label, TRUE);
-  g_string_free(sub, TRUE);
-
-  gtk_label_set_text(self->label_kind_caption, "Request:");
-  g_autofree gchar *what = c->what ? g_strdup(c->what) : g_strdup(kind ? kind : "unknown");
-  gtk_label_set_text(self->label_event_kind, what);
-  g_autofree gchar *kind_desc = g_strdup_printf("Request type: %s", what);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->label_event_kind),
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, kind_desc, -1);
-
+                                        const char *app, const char *claimed, gboolean verified,
+                                        const char *preview) {
   gnostr_approval_dialog_set_app_name(self, app);
-  g_autofree gchar *dialog_label = g_strdup_printf("%s \u2014 %s", c->title, app);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self), GTK_ACCESSIBLE_PROPERTY_LABEL, dialog_label, -1);
-
-  if (c->content_caption) {
-    gtk_label_set_text(self->label_content_caption, c->content_caption);
-    gtk_widget_set_visible(GTK_WIDGET(self->label_content_caption), TRUE);
-    gnostr_approval_dialog_set_content(self, preview);
-  } else {
-    gtk_widget_set_visible(GTK_WIDGET(self->label_content_caption), FALSE);
-    gtk_widget_set_visible(GTK_WIDGET(self->content_frame), FALSE);
-  }
-
-  gtk_button_set_label(self->btn_approve, c->action);
-  g_autofree gchar *approve_desc = g_strdup_printf("%s. Keyboard shortcut: Ctrl+A.", c->action);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(self->btn_approve),
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, approve_desc, -1);
-
-  /* The signer resolves the identity itself (ApprovalRequested carries the
-   * npub it will use); picking another account here would not change it. */
-  gtk_widget_set_visible(GTK_WIDGET(self->identity_selector_box), FALSE);
+  gtk_label_set_text(self->label_event_kind, kind ? kind : "Unknown request");
+  g_autofree gchar *details =
+      g_strdup_printf("%s%s%s", verified ? "Verified caller" : "Unverified app",
+                      claimed && *claimed ? "\nClaimed name (unverified): " : "",
+                      claimed && *claimed ? claimed : "");
+  gtk_label_set_text(self->label_details, details);
+  gnostr_approval_dialog_set_content(self, preview);
+  gtk_button_set_label(self->btn_approve, "Approve");
 }
-
-GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity_npub,
-                                         const char *kind, const char *app_display,
-                                         const char *claimed_app_id, gboolean verified,
-                                         const char *preview, AccountsStore *as,
-                                         GnostrApprovalCallback cb, gpointer user_data) {
+void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows) {
+  while (gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)))
+    gtk_box_remove(self->batch_box, gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)));
+  gtk_widget_set_visible(GTK_WIDGET(self->batch_expander), rows && g_variant_n_children(rows) > 1);
+  if (!rows)
+    return;
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    g_autoptr(GVariant) summary =
+        g_variant_lookup_value(row, "event_summary", G_VARIANT_TYPE_VARDICT);
+    guint32 kind;
+    g_autofree gchar *operation =
+        g_variant_lookup(row, "event_kind", "u", &kind)
+            ? g_strdup_printf("%s · %s (kind %u)", field(row, "operation"),
+                              gnostr_approval_kind_name(kind), kind)
+            : g_strdup(field(row, "operation"));
+    g_autofree gchar *label = g_strdup_printf(
+        "%s\nPeer: %s", operation, *field(summary, "peer") ? field(summary, "peer") : "None");
+    GtkWidget *check = gtk_check_button_new_with_label(label);
+    g_object_set_data_full(G_OBJECT(check), "request-id", g_strdup(field(row, "request_id")),
+                           g_free);
+    g_signal_connect(check, "toggled", G_CALLBACK(selection_toggled), self);
+    gtk_box_append(self->batch_box, check);
+  }
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve_selected), FALSE);
+}
+void gnostr_approval_dialog_set_trust_level(GnostrApprovalDialog *self, const char *tier) {
+  guint index = g_strcmp0(tier, "full") == 0 ? 2 : g_strcmp0(tier, "medium") == 0 ? 1 : 0;
+  gtk_drop_down_set_selected(self->trust_dropdown, index);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust), tier != NULL && self->ready);
+  gtk_widget_set_tooltip_text(GTK_WIDGET(self->btn_change_trust),
+                              tier
+                                  ? "Changes the client's policy, not this request's Remember scope"
+                                  : "Available after the client's first consent");
+}
+void gnostr_approval_dialog_set_position(GnostrApprovalDialog *self, guint position, guint count) {
+  self->position = position;
+  self->count = count;
+  g_autofree gchar *label = g_strdup_printf("%u of %u", position, count);
+  gtk_label_set_text(self->label_position, label);
+  gtk_widget_set_visible(GTK_WIDGET(self->stepper), count > 1);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_previous), position > 1);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_next), position < count);
+}
+gboolean gnostr_approval_info_can_approve(GVariant *info) {
+  const char *op = field(info, "operation");
+  if (!strcmp(op, "sign_event")) {
+    guint32 kind, count;
+    if (!g_variant_lookup(info, "event_kind", "u", &kind) || kind > G_MAXUINT16 ||
+        !*field(info, "identity"))
+      return FALSE;
+    g_autoptr(GVariant) summary =
+        g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+    if (kind == NOSTR_KIND_DELETION)
+      return summary && g_variant_lookup(summary, "target_count", "u", &count);
+    if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION)
+      return *field(summary, "relay") != '\0';
+    if (kind == NOSTR_KIND_REPOST || kind == NOSTR_KIND_GENERIC_REPOST ||
+        kind == NOSTR_KIND_REACTION)
+      return *field(summary, "target") != '\0';
+  }
+  return TRUE;
+}
+void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info, const char *name) {
+  const char *op = field(info, "operation");
+  gboolean verified = FALSE, rememberable = FALSE;
+  g_variant_lookup(info, "verified", "b", &verified);
+  g_variant_lookup(info, "rememberable", "b", &rememberable);
+  gnostr_approval_dialog_set_request(self, op, name, field(info, "claimed_app_id"), verified,
+                                     field(info, "preview"));
+  gnostr_approval_dialog_set_identity(self, field(info, "identity"));
+  g_autofree gchar *caller =
+      g_strdup_printf("From: %s\n%s%s", name, verified ? "Verified caller: " : "Unverified app",
+                      verified ? field(info, "principal") : "");
+  gtk_label_set_text(self->label_from, caller);
+  guint32 remaining = 0;
+  g_variant_lookup(info, "remaining_seconds", "u", &remaining);
+  g_autofree gchar *expiry = g_strdup_printf("Expires in at most %u seconds", remaining);
+  gtk_label_set_text(self->label_expiry, expiry);
+  self->ready = remaining > 0 && !strcmp(field(info, "state"), "PENDING");
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_deny), self->ready);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->chk_remember), rememberable);
+  gtk_check_button_set_active(self->chk_remember, FALSE);
+  const char *reason = field(info, "reason");
+  g_autofree gchar *reason_text = bounded(reason, 160);
+  g_autofree gchar *reason_label = g_strdup_printf("%s: %s",
+                                                   !strcmp(field(info, "reason_source"), "caller")
+                                                       ? "Reason supplied by the application"
+                                                       : "Signer explanation",
+                                                   reason_text);
+  gtk_label_set_text(self->label_reason, reason_label);
+  gtk_widget_set_visible(GTK_WIDGET(self->label_reason), *reason != '\0');
+  guint32 kind = 0;
+  gboolean has_kind = g_variant_lookup(info, "event_kind", "u", &kind);
+  if (has_kind && kind <= G_MAXUINT16)
+    gnostr_approval_dialog_set_event_type(self, (int)kind);
+  else if (!strcmp(op, "sign_event")) {
+    self->ready = FALSE;
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);
+    gtk_label_set_text(self->label_event_kind, "Invalid or missing event kind");
+  }
+  g_autofree gchar *scope =
+      has_kind ? g_strdup_printf("%s · %s · %s · kind %u", name, field(info, "identity"), op, kind)
+               : g_strdup_printf("%s · %s · %s", name, field(info, "identity"), op);
+  if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt") ||
+      !strcmp(op, "nip44_conversation_key")) {
+    gchar *specific = scope;
+    scope = g_strconcat(specific, " · all peers", NULL);
+    g_free(specific);
+  }
+  gtk_label_set_text(self->label_scope, scope);
+  g_autoptr(GVariant) summary =
+      g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  const char *peer = field(summary, "peer");
+  g_autofree gchar *preview = NULL;
+  const char *impact = "Approving authorizes this operation only; it does not publish anything.";
+  if (!strcmp(op, "sign_event")) {
+    guint32 tags = 0, targets = 0;
+    if (summary) {
+      g_variant_lookup(summary, "tag_count", "u", &tags);
+      g_variant_lookup(summary, "target_count", "u", &targets);
+    }
+    switch (kind) {
+    case NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE:
+    case NOSTR_KIND_SEAL:
+    case NOSTR_KIND_GIFT_WRAP:
+    case NOSTR_KIND_DIRECT_MESSAGE:
+    case NOSTR_KIND_FILE_MESSAGE:
+    case NOSTR_KIND_NOSTR_CONNECT:
+      preview = g_strdup("Encrypted message — private content is not shown.");
+      break;
+    case NOSTR_KIND_DELETION:
+      preview = g_strdup_printf(
+          "Delete %u target(s). Deletion is a permanent request; copies may remain elsewhere.",
+          targets);
+      break;
+    case NOSTR_KIND_CLIENT_AUTHENTICATION:
+      preview = g_strdup_printf(
+          "Relay: %s\nAuthentication exposes this identity to this exact relay.",
+          *field(summary, "relay") ? field(summary, "relay") : "Not supplied by daemon");
+      break;
+    case NOSTR_KIND_REPOST:
+    case NOSTR_KIND_GENERIC_REPOST:
+    case NOSTR_KIND_REACTION:
+      preview = g_strdup_printf("Target: %s\n%s",
+                                *field(summary, "target") ? field(summary, "target")
+                                                          : "Not supplied by daemon",
+                                field(summary, "preview"));
+      break;
+    case NOSTR_KIND_TEXT_NOTE:
+    case NOSTR_KIND_ARTICLE:
+    case NOSTR_KIND_COMMENT:
+      preview = bounded(
+          *field(summary, "content") ? field(summary, "content") : field(summary, "preview"), 280);
+      break;
+    default:
+      preview = g_strdup_printf("Kind %u · %u structured tags\n%s", kind, tags,
+                                field(summary, "preview"));
+      break;
+    }
+  } else if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt") ||
+             !strcmp(op, "nip44_conversation_key")) {
+    preview = g_strdup_printf("%s\nPeer fingerprint: %s\nPrivate message bodies are not shown.", op,
+                              peer);
+    if (!strcmp(op, "nip44_conversation_key"))
+      impact =
+          "Warning: this conversation key can open every NIP-44 message exchanged with this peer.";
+  } else if (!strcmp(op, "connect")) {
+    preview = g_strdup_printf("Client transport-key fingerprint: %s\nClaimed name (unverified): "
+                              "%s\nRequested permissions (hints only): %s\nRelays: %s",
+                              field(info, "principal"), field(info, "claimed_app_id"),
+                              field(summary, "permissions"), field(summary, "relays"));
+    impact = "Pairing is not a signing permission. Low trust asks for every request.";
+  }
+  if (preview)
+    gnostr_approval_dialog_set_content(self, preview);
+  if (!gnostr_approval_info_can_approve(info)) {
+    self->ready = FALSE;
+    gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);
+    impact = "The daemon did not supply the required preview details. Update Grotto before "
+             "approving; you can still deny this request.";
+  }
+  gtk_label_set_text(self->subtitle_label, impact);
+  g_autofree gchar *details =
+      g_strdup_printf("%s\nPrincipal: %s\nTransport: %s\nClaimed name (unverified): %s",
+                      verified ? "Verified caller" : "Unverified app", field(info, "principal"),
+                      field(info, "transport"), field(info, "claimed_app_id"));
+  gtk_label_set_text(self->label_details, details);
+  gtk_widget_set_sensitive(GTK_WIDGET(self->btn_change_trust),
+                           verified && *field(info, "principal"));
+}
+GnostrApprovalDialog *gnostr_show_approval_request_dialog(GtkWidget *parent, const char *identity,
+                                                          const char *kind, const char *name,
+                                                          const char *claimed, gboolean verified,
+                                                          const char *preview, AccountsStore *store,
+                                                          GnostrApprovalCallback callback,
+                                                          gpointer data) {
+  (void)store;
   GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
-  gnostr_approval_dialog_set_identity(dialog, identity_npub);
-  gnostr_approval_dialog_set_timestamp(dialog, 0);
-  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
-  gnostr_approval_dialog_set_request(dialog, kind, app_display, claimed_app_id, verified, preview);
-  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
+  gnostr_approval_dialog_set_identity(dialog, identity);
+  gnostr_approval_dialog_set_request(dialog, kind, name, claimed, verified, preview);
+  gnostr_approval_dialog_set_callback(dialog, callback, data);
   adw_dialog_present(ADW_DIALOG(dialog), parent);
   return dialog;
 }
-
-/**
- * gnostr_approval_dialog_set_client_pubkey:
- * @self: a #GnostrApprovalDialog
- * @client_pubkey: the client's public key (hex format)
- *
- * Sets the client public key for session management integration.
- */
-void gnostr_approval_dialog_set_client_pubkey(GnostrApprovalDialog *self,
-                                              const char *client_pubkey) {
-  g_return_if_fail(GNOSTR_IS_APPROVAL_DIALOG(self));
-
-  g_free(self->client_pubkey);
-  self->client_pubkey = g_strdup(client_pubkey);
-}
-
-/**
- * gnostr_show_approval_dialog_with_session:
- *
- * Shows approval dialog with session management integration.
- * If an active session exists for the client+identity, this may
- * auto-approve based on session state.
- *
- * Returns: %TRUE if dialog was shown, %FALSE if auto-approved by session
- */
-gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent,
-                                                  const char *client_pubkey,
-                                                  const char *identity_npub,
-                                                  const char *app_name,
-                                                  const char *content,
-                                                  int event_kind,
-                                                  guint64 timestamp,
-                                                  AccountsStore *as,
-                                                  GnostrApprovalCallback cb,
-                                                  gpointer user_data) {
-  /* Check for existing active session */
-  if (client_pubkey && identity_npub) {
-    GnClientSessionManager *csm = gn_client_session_manager_get_default();
-
-    if (gn_client_session_manager_has_active_session(csm, client_pubkey, identity_npub)) {
-      GnClientSession *session = gn_client_session_manager_get_session(
-        csm, client_pubkey, identity_npub);
-
-      if (session && gn_client_session_has_permission(session, GN_PERM_SIGN_EVENT) &&
-          gn_client_session_allows_kind(session, (guint16)MAX(event_kind, 0))) {
-        /* Auto-approve: update activity and call callback immediately */
-        gn_client_session_manager_touch_session(csm, client_pubkey, identity_npub);
-
-        g_debug("approval-dialog: Auto-approved via existing session for %s", client_pubkey);
-
-        if (cb) {
-          /* remember=TRUE since this is from a remembered session, ttl=0 (unchanged) */
-          cb(TRUE, TRUE, identity_npub, 0, user_data);
-        }
-
-        return FALSE;  /* Dialog was NOT shown - auto-approved */
-      }
-    }
-  }
-
-  /* No active session - show the dialog */
-  GnostrApprovalDialog *dialog = gnostr_approval_dialog_new();
-
-  gnostr_approval_dialog_set_client_pubkey(dialog, client_pubkey);
-  gnostr_approval_dialog_set_app_name(dialog, app_name);
-  gnostr_approval_dialog_set_identity(dialog, identity_npub);
-  gnostr_approval_dialog_set_content(dialog, content);
+void gnostr_show_approval_dialog_full(GtkWidget *parent, const char *identity, const char *name,
+                                      const char *content, int kind, guint64 timestamp,
+                                      AccountsStore *store, GnostrApprovalCallback callback,
+                                      gpointer data) {
+  GnostrApprovalDialog *dialog = gnostr_show_approval_request_dialog(
+      parent, identity, "sign_event", name, NULL, FALSE, content, store, callback, data);
+  gnostr_approval_dialog_set_event_type(dialog, kind);
   gnostr_approval_dialog_set_timestamp(dialog, timestamp);
-  gnostr_approval_dialog_set_event_type(dialog, event_kind);
-  gnostr_approval_dialog_set_accounts(dialog, as, identity_npub);
-  gnostr_approval_dialog_set_callback(dialog, cb, user_data);
-
-  adw_dialog_present(ADW_DIALOG(dialog), parent);
-
-  return TRUE;  /* Dialog was shown */
+}
+void gnostr_show_approval_dialog(GtkWidget *parent, const char *identity, const char *name,
+                                 const char *content, AccountsStore *store,
+                                 GnostrApprovalCallback callback, gpointer data) {
+  gnostr_show_approval_dialog_full(parent, identity, name, content, NOSTR_KIND_TEXT_NOTE, 0, store,
+                                   callback, data);
+}
+gboolean gnostr_show_approval_dialog_with_session(GtkWidget *parent, const char *client,
+                                                  const char *identity, const char *name,
+                                                  const char *content, int kind, guint64 timestamp,
+                                                  AccountsStore *store,
+                                                  GnostrApprovalCallback callback, gpointer data) {
+  (void)client;
+  /* Legacy entry point retained, but GUI sessions never authorize signing. */
+  gnostr_show_approval_dialog_full(parent, identity, name, content, kind, timestamp, store,
+                                   callback, data);
+  return TRUE;
 }

@@ -7,350 +7,235 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrApprovalDialog" parent="AdwDialog">
-    <property name="title" translatable="yes">Signature Request</property>
-    <property name="content-width">400</property>
-    <property name="content-height">-1</property>
+    <property name="title" translatable="yes">Review request</property>
+    <property name="content-width">440</property>
     <property name="width-request">300</property>
-    <property name="can-close">true</property>
     <property name="follows-content-size">true</property>
-    <accessibility>
-      <property name="label">Signature approval dialog</property>
-      <property name="description">An application is requesting permission to sign an event. Review the details and approve or deny.</property>
-    </accessibility>
     <child>
       <object class="AdwToolbarView">
         <child type="top">
           <object class="AdwHeaderBar">
             <property name="show-title">false</property>
-            <style>
-              <class name="flat"/>
-            </style>
           </object>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">1</property>
-            <property name="spacing">16</property>
-            <property name="margin-start">20</property>
-            <property name="margin-end">20</property>
-            <property name="margin-bottom">20</property>
+          <object class="GtkScrolledWindow">
+            <property name="hscrollbar-policy">2</property>
+            <property name="propagate-natural-height">true</property>
             <child>
-              <object class="GtkBox" id="status_banner">
+              <object class="GtkBox">
                 <property name="orientation">1</property>
-                <property name="spacing">4</property>
-                <property name="halign">3</property>
-                <style>
-                  <class name="status-banner"/>
-                  <class name="pending"/>
-                </style>
+                <property name="spacing">12</property>
+                <property name="margin-start">20</property>
+                <property name="margin-end">20</property>
+                <property name="margin-bottom">20</property>
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">0</property>
-                    <property name="spacing">8</property>
-                    <property name="halign">3</property>
-                    <child>
-                      <object class="GtkImage" id="header_icon">
-                        <property name="icon-name">dialog-question-symbolic</property>
-                        <property name="pixel-size">20</property>
-                        <style>
-                          <class name="pending-icon"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="header_title">
-                        <property name="label" translatable="yes">Pending Signature Request</property>
-                        <style>
-                          <class name="title-3"/>
-                          <class name="pending-title"/>
-                        </style>
-                      </object>
-                    </child>
+                  <object class="GtkImage" id="header_icon">
+                    <property name="icon-name">dialog-question-symbolic</property>
+                    <property name="pixel-size">24</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="header_title">
+                    <property name="label" translatable="yes">Review request</property>
+                    <property name="wrap">true</property>
+                    <style>
+                      <class name="title-3"/>
+                    </style>
                   </object>
                 </child>
                 <child>
                   <object class="GtkLabel" id="subtitle_label">
-                    <property name="label" translatable="yes">A client is requesting a signature</property>
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_from">
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="xalign">0</property>
+                    <property name="selectable">true</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_event_kind">
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_identity">
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="xalign">0</property>
+                    <property name="selectable">true</property>
+                    <style>
+                      <class name="monospace"/>
+                    </style>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_reason">
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="xalign">0</property>
+                    <property name="visible">false</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel" id="label_expiry">
+                    <property name="wrap">true</property>
+                    <property name="xalign">0</property>
                     <style>
                       <class name="dim-label"/>
                     </style>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox" id="details_box">
-                <property name="orientation">1</property>
-                <property name="spacing">12</property>
-                <property name="margin-top">8</property>
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">0</property>
-                    <property name="spacing">8</property>
+                  <object class="GtkFrame" id="content_frame">
                     <child>
-                      <object class="GtkLabel" id="label_kind_caption">
-                        <property name="label" translatable="yes">Event Kind:</property>
-                        <property name="xalign">0</property>
-                        <property name="hexpand">false</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkLabel" id="label_event_kind">
-                        <property name="label" translatable="yes">Unknown</property>
-                        <property name="xalign">0</property>
-                        <property name="hexpand">true</property>
+                      <object class="GtkLabel" id="content_preview">
                         <property name="wrap">true</property>
-                        <accessibility>
-                          <property name="description">The type of Nostr event being signed</property>
-                        </accessibility>
+                        <property name="wrap-mode">2</property>
+                        <property name="xalign">0</property>
+                        <property name="selectable">true</property>
+                        <property name="margin-start">8</property>
+                        <property name="margin-end">8</property>
+                        <property name="margin-top">8</property>
+                        <property name="margin-bottom">8</property>
                       </object>
                     </child>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">0</property>
-                    <property name="spacing">8</property>
+                  <object class="GtkBox" id="stepper">
+                    <property name="homogeneous">true</property>
+                    <property name="visible">false</property>
                     <child>
-                      <object class="GtkLabel">
-                        <property name="label" translatable="yes">From:</property>
-                        <property name="xalign">0</property>
-                        <property name="hexpand">false</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
+                      <object class="GtkButton" id="btn_previous">
+                        <property name="label" translatable="yes">Previous</property>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="label_from">
-                        <property name="label" translatable="yes">Unknown Application</property>
-                        <property name="xalign">0</property>
-                        <property name="hexpand">true</property>
-                        <property name="ellipsize">3</property>
-                        <accessibility>
-                          <property name="description">The application requesting the signature</property>
-                        </accessibility>
+                      <object class="GtkLabel" id="label_position">
+                        <property name="label" translatable="yes">1 of 1</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_next">
+                        <property name="label" translatable="yes">Next</property>
                       </object>
                     </child>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkBox">
-                    <property name="orientation">1</property>
-                    <property name="spacing">4</property>
+                  <object class="GtkExpander" id="batch_expander">
+                    <property name="label" translatable="yes">Requests in this flow</property>
+                    <property name="visible">false</property>
                     <child>
-                      <object class="GtkLabel" id="label_content_caption">
-                        <property name="label" translatable="yes">Message:</property>
-                        <property name="xalign">0</property>
-                        <style>
-                          <class name="dim-label"/>
-                        </style>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkFrame" id="content_frame">
-                        <property name="margin-top">4</property>
-                        <style>
-                          <class name="view"/>
-                        </style>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
+                        <property name="spacing">8</property>
                         <child>
-                          <object class="GtkLabel" id="content_preview">
-                            <property name="wrap">true</property>
-                            <property name="wrap-mode">2</property>
-                            <property name="xalign">0</property>
-                            <property name="yalign">0</property>
-                            <property name="max-width-chars">50</property>
-                            <property name="ellipsize">3</property>
-                            <property name="lines">3</property>
-                            <property name="selectable">true</property>
-                            <property name="margin-top">8</property>
-                            <property name="margin-bottom">8</property>
-                            <property name="margin-start">8</property>
-                            <property name="margin-end">8</property>
-                            <accessibility>
-                              <property name="label">Event content</property>
-                              <property name="description">The content of the event to be signed</property>
-                            </accessibility>
-                            <style>
-                              <class name="body"/>
-                            </style>
+                          <object class="GtkBox" id="batch_box">
+                            <property name="orientation">1</property>
+                            <property name="spacing">8</property>
+                          </object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_approve_selected">
+                            <property name="label" translatable="yes">Approve selected once</property>
+                            <property name="sensitive">false</property>
                           </object>
                         </child>
                       </object>
                     </child>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">8</property>
-                <accessibility>
-                  <property name="label">Remember preference options</property>
-                  <property name="description">Options to remember this decision for future requests</property>
-                </accessibility>
+                <child>
+                  <object class="GtkLabel" id="label_scope">
+                    <property name="wrap">true</property>
+                    <property name="wrap-mode">2</property>
+                    <property name="xalign">0</property>
+                    <style>
+                      <class name="dim-label"/>
+                    </style>
+                  </object>
+                </child>
                 <child>
                   <object class="GtkCheckButton" id="chk_remember">
-                    <property name="label" translatable="yes">Remember this decision</property>
-                    <accessibility>
-                      <property name="label">Remember this decision</property>
-                      <property name="description">Check to remember your approval or denial for future similar requests</property>
-                    </accessibility>
+                    <property name="label" translatable="yes">Remember this decision for this scope</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkDropDown" id="ttl_dropdown">
                     <property name="sensitive">false</property>
-                    <property name="halign">2</property>
-                    <property name="hexpand">true</property>
-                    <accessibility>
-                      <property name="label">Duration to remember</property>
-                      <property name="description">Select how long to remember this decision</property>
-                    </accessibility>
                   </object>
                 </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkBox">
-                <property name="orientation">0</property>
-                <property name="spacing">12</property>
-                <property name="homogeneous">true</property>
-                <property name="margin-top">8</property>
-                <accessibility>
-                  <property name="label">Action buttons</property>
-                  <property name="description">Approve or deny this signature request</property>
-                </accessibility>
-                <child>
-                  <object class="GtkButton" id="btn_approve">
-                    <property name="label" translatable="yes">Approve</property>
-                    <property name="hexpand">true</property>
-                    <property name="focusable">true</property>
-                    <property name="receives-default">true</property>
-                    <property name="tooltip-text" translatable="yes">Approve this request (Ctrl+A)</property>
-                    <accessibility>
-                      <property name="label">Approve signature request</property>
-                      <property name="description">Click to approve and sign this event with your private key. Keyboard shortcut: Ctrl+A.</property>
-                    </accessibility>
-                    <style>
-                      <class name="pill"/>
-                      <class name="suggested-action"/>
-                    </style>
-                  </object>
-                </child>
-                <child>
-                  <object class="GtkButton" id="btn_deny">
-                    <property name="label" translatable="yes">Deny</property>
-                    <property name="hexpand">true</property>
-                    <property name="focusable">true</property>
-                    <property name="tooltip-text" translatable="yes">Deny this request (Ctrl+D, Escape)</property>
-                    <accessibility>
-                      <property name="label">Deny signature request</property>
-                      <property name="description">Click to deny this signing request. The application will not receive a signature. Keyboard shortcut: Ctrl+D or Escape.</property>
-                    </accessibility>
-                    <style>
-                      <class name="pill"/>
-                    </style>
-                  </object>
-                </child>
-              </object>
-            </child>
-            <child>
-              <object class="GtkExpander" id="details_expander">
-                <property name="label" translatable="yes">Details</property>
-                <property name="margin-top">4</property>
-                <style>
-                  <class name="details-expander"/>
-                </style>
                 <child>
                   <object class="GtkBox">
-                    <property name="orientation">1</property>
+                    <property name="homogeneous">true</property>
                     <property name="spacing">8</property>
-                    <property name="margin-top">8</property>
                     <child>
-                      <object class="GtkBox" id="identity_row">
-                        <property name="orientation">0</property>
-                        <property name="spacing">8</property>
-                        <child>
-                          <object class="GtkLabel">
-                            <property name="label" translatable="yes">Identity:</property>
-                            <property name="xalign">0</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
-                          </object>
-                        </child>
-                        <child>
-                          <object class="GtkLabel" id="label_identity">
-                            <property name="label" translatable="yes">npub...</property>
-                            <property name="xalign">0</property>
-                            <property name="hexpand">true</property>
-                            <property name="ellipsize">2</property>
-                            <property name="selectable">true</property>
-                            <style>
-                              <class name="monospace"/>
-                            </style>
-                            <accessibility>
-                              <property name="description">The Nostr identity that will be used for signing</property>
-                            </accessibility>
-                          </object>
-                        </child>
+                      <object class="GtkButton" id="btn_deny">
+                        <property name="label" translatable="yes">Deny</property>
+                        <property name="tooltip-text" translatable="yes">Deny once (Ctrl+D, Escape)</property>
                       </object>
                     </child>
                     <child>
-                      <object class="GtkBox" id="timestamp_row">
-                        <property name="orientation">0</property>
+                      <object class="GtkButton" id="btn_approve">
+                        <property name="label" translatable="yes">Approve</property>
+                        <property name="receives-default">false</property>
+                        <property name="tooltip-text" translatable="yes">Approve (Ctrl+A)</property>
+                        <style>
+                          <class name="suggested-action"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_not_now">
+                        <property name="label" translatable="yes">Not now</property>
+                        <property name="tooltip-text" translatable="yes">Keep this request waiting</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkExpander" id="details_expander">
+                    <property name="label" translatable="yes">Details</property>
+                    <child>
+                      <object class="GtkBox">
+                        <property name="orientation">1</property>
                         <property name="spacing">8</property>
                         <child>
-                          <object class="GtkLabel">
-                            <property name="label" translatable="yes">Time:</property>
+                          <object class="GtkLabel" id="label_details">
+                            <property name="wrap">true</property>
+                            <property name="wrap-mode">2</property>
                             <property name="xalign">0</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
+                            <property name="selectable">true</property>
                           </object>
                         </child>
                         <child>
                           <object class="GtkLabel" id="label_timestamp">
-                            <property name="label" translatable="yes">Now</property>
+                            <property name="wrap">true</property>
                             <property name="xalign">0</property>
-                            <property name="hexpand">true</property>
-                            <accessibility>
-                              <property name="description">When this signature request was received</property>
-                            </accessibility>
                           </object>
                         </child>
-                      </object>
-                    </child>
-                    <child>
-                      <object class="GtkBox" id="identity_selector_box">
-                        <property name="orientation">0</property>
-                        <property name="spacing">8</property>
-                        <property name="visible">false</property>
-                        <accessibility>
-                          <property name="label">Identity selector</property>
-                          <property name="description">Select which identity to use for signing when multiple accounts are available</property>
-                        </accessibility>
                         <child>
                           <object class="GtkLabel">
-                            <property name="label" translatable="yes">Sign as:</property>
+                            <property name="label" translatable="yes">Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions.</property>
+                            <property name="wrap">true</property>
                             <property name="xalign">0</property>
-                            <style>
-                              <class name="dim-label"/>
-                            </style>
                           </object>
                         </child>
                         <child>
-                          <object class="GtkDropDown" id="identity_dropdown">
-                            <property name="hexpand">true</property>
-                            <accessibility>
-                              <property name="label">Select signing identity</property>
-                              <property name="description">Choose which account to use for this signature</property>
-                            </accessibility>
+                          <object class="GtkDropDown" id="trust_dropdown"></object>
+                        </child>
+                        <child>
+                          <object class="GtkButton" id="btn_change_trust">
+                            <property name="label" translatable="yes">Change trust level</property>
+                            <property name="sensitive">false</property>
                           </object>
                         </child>
                       </object>

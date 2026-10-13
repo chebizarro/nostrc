@@ -490,6 +490,28 @@ if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_def
   add_dependencies(signer-tests test-clients test-activity)
 endif()
 
+# G07: production controller and dialog, with I/O mocked only at the bus.
+add_library(grotto_approval_test_core STATIC
+  ../src/approval-controller.c ../src/ui/approval_dialog.c)
+target_include_directories(grotto_approval_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
+target_link_libraries(grotto_approval_test_core PUBLIC PkgConfig::GTK4 PkgConfig::ADWAITA PkgConfig::GLIB)
+target_compile_options(grotto_approval_test_core PRIVATE -Wall -Wextra -Werror)
+add_executable(test-approval-controller test-approval-controller.c)
+target_link_libraries(test-approval-controller PRIVATE grotto_approval_test_core nostrc-test-bus)
+add_test(NAME signer/approval-controller COMMAND test-approval-controller)
+set_tests_properties(signer/approval-controller PROPERTIES TIMEOUT 90 LABELS "signer;unit")
+add_dependencies(signer-tests test-approval-controller)
+if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
+  add_executable(test-approval-integration test-approval-integration.c ${_APPROVAL_GRESOURCE_C})
+  target_link_libraries(test-approval-integration PRIVATE grotto_approval_test_core nostrc-test-bus ${SIGNER_TEST_LIBS})
+  target_link_directories(test-approval-integration PRIVATE ${SIGNER_TEST_LINK_DIRS})
+  add_dependencies(test-approval-integration grotto-daemon grotto-schemas)
+  add_test(NAME signer/approval-integration COMMAND test-approval-integration $<TARGET_FILE:grotto-daemon>)
+  set_tests_properties(signer/approval-integration PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;integration"
+    ENVIRONMENT "${_UI_TEST_ENV}")
+  add_dependencies(signer-tests test-approval-integration)
+endif()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

@@ -1,357 +1,301 @@
-/* test-approval-dialog.c - regression tests for the approval dialog (nostrc-n98j)
- *
- * Drives the real src/ui/approval_dialog.c (and its real template) against
- * stubs for the accounts store, client sessions and keyboard navigation, to
- * pin the two crashes found on the 2026-10-01 macOS device smoke:
- *
- *  1. The decision callback must fire exactly once. do_finish() used to call
- *     it and then adw_dialog_close() with it still set, so the "closed" class
- *     handler reported a second (reject) decision on the caller's already-
- *     freed context (SIGSEGV in approve_call_done after every Approve).
- *
- *  2. accounts_store_list() entries are owned by the array (its free func).
- *     gnostr_approval_dialog_set_accounts() used to g_free() each entry and
- *     then free the array: a double free on every signing request. The stub
- *     counts entry frees, and the double free itself aborts under ASAN or the
- *     allocator's own double-free check.
- *
- * Every test presents the dialog in a window, so the close path is
- * libadwaita's own: adw_dialog_close() -> ::closed -> the class handler.
- */
+#include "nostr-kinds.h"
 #include "nostrc-test-gdk-frame.h"
-#include <adwaita.h>
-#include <gtk/gtk.h>
+#include "ui/approval_dialog.h"
 #include <string.h>
 
-#include "accounts_store.h"
-#include "client_session.h"
-#include "keyboard-nav.h"
-#include "ui/approval_dialog.h"
-
-/* ---- stubs for approval_dialog.c's collaborators ------------------------ */
-
-/* Opaque to the dialog; it only has to be non-NULL for set_accounts(). */
-static int fake_store_storage;
-#define FAKE_STORE ((AccountsStore *)&fake_store_storage)
-
-static guint entries_freed;
-static guint sessions_created;
-static GPtrArray *(*next_list)(void);
-
-static void stub_entry_free(gpointer p) {
-  AccountEntry *e = p;
-  entries_freed++;
-  g_free(e->id);
-  g_free(e->label);
-  g_free(e);
-}
-
-static AccountEntry *stub_entry(const char *id, gboolean watch_only) {
-  AccountEntry *e = g_new0(AccountEntry, 1);
-  e->id = g_strdup(id);
-  e->label = g_strdup("label");
-  e->has_secret = !watch_only;
-  e->watch_only = watch_only;
-  return e;
-}
-
-#define NPUB_A "npub1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-#define NPUB_B "npub1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-#define NPUB_W "npub1wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww"
-
-/* The shape accounts_store_list() really returns: the array owns entries. */
-static GPtrArray *three_accounts(void) {
-  GPtrArray *arr = g_ptr_array_new_with_free_func(stub_entry_free);
-  g_ptr_array_add(arr, stub_entry(NPUB_A, FALSE));
-  g_ptr_array_add(arr, stub_entry(NPUB_W, TRUE));
-  g_ptr_array_add(arr, stub_entry(NPUB_B, FALSE));
-  return arr;
-}
-
-GPtrArray *accounts_store_list(AccountsStore *as) {
-  (void)as;
-  return next_list ? next_list() : g_ptr_array_new_with_free_func(stub_entry_free);
-}
-
-GnClientSessionManager *gn_client_session_manager_get_default(void) {
-  return NULL;
-}
-
-GnClientSession *gn_client_session_manager_create_session(
-    GnClientSessionManager *self, const gchar *client_pubkey,
-    const gchar *identity, const gchar *app_name, guint permissions,
-    gboolean persistent, gint64 ttl_seconds) {
-  (void)self; (void)client_pubkey; (void)identity; (void)app_name;
-  (void)permissions; (void)persistent; (void)ttl_seconds;
-  sessions_created++;
-  return NULL;
-}
-
-GnClientSession *gn_client_session_manager_get_session(
-    GnClientSessionManager *self, const gchar *client_pubkey, const gchar *identity) {
-  (void)self; (void)client_pubkey; (void)identity;
-  return NULL;
-}
-
-gboolean gn_client_session_manager_has_active_session(
-    GnClientSessionManager *self, const gchar *client_pubkey, const gchar *identity) {
-  (void)self; (void)client_pubkey; (void)identity;
-  return FALSE;
-}
-
-gboolean gn_client_session_manager_touch_session(
-    GnClientSessionManager *self, const gchar *client_pubkey, const gchar *identity) {
-  (void)self; (void)client_pubkey; (void)identity;
-  return FALSE;
-}
-
-gboolean gn_client_session_has_permission(GnClientSession *self,
-                                          GnClientSessionPermission perm) {
-  (void)self; (void)perm;
-  return FALSE;
-}
-
-gboolean gn_client_session_allows_kind(GnClientSession *self, guint16 kind) {
-  (void)self; (void)kind;
-  return FALSE;
-}
-
-void gn_client_session_add_allowed_kind(GnClientSession *self, guint16 kind) {
-  (void)self; (void)kind;
-}
-
-void gn_keyboard_nav_setup_dialog(AdwDialog *dialog, GtkWidget *first_focus,
-                                  GtkWidget *default_button) {
-  (void)dialog; (void)first_focus; (void)default_button;
-}
-
-void gn_keyboard_nav_setup_focus_chain(GtkWidget **widgets) {
-  (void)widgets;
-}
-
-/* ---- decision recorder --------------------------------------------------- */
-
 typedef struct {
-  guint calls;
-  gboolean decision;
-  gchar *selected;
-} Decision;
-
-static void on_decision(gboolean decision, gboolean remember, const char *selected,
-                        guint64 ttl_seconds, gpointer user_data) {
-  (void)remember; (void)ttl_seconds;
-  Decision *d = user_data;
-  d->calls++;
-  d->decision = decision;
-  g_free(d->selected);
-  d->selected = g_strdup(selected);
-}
-
-static void reset_stubs(void) {
-  entries_freed = 0;
-  sessions_created = 0;
-  next_list = NULL;
-}
-
-/* A presented dialog: libadwaita only emits ::closed (and so runs the
- * dialog's closed class handler) for a dialog that was presented. */
-typedef struct {
-  GtkWidget *win;
-  GnostrApprovalDialog *dlg;
-  Decision d;
-  gboolean closed;
+  GtkWidget *window;
+  GnostrApprovalDialog *dialog;
+  guint calls, deferred, selected;
+  gchar **selected_ids;
+  gboolean decision, remember, closed;
+  guint64 ttl;
+  gchar *identity;
 } Fixture;
-
-static void on_closed(AdwDialog *dialog, gpointer user_data) {
+static void decision(gboolean allow, gboolean remember, const char *identity, guint64 ttl,
+                     gpointer data) {
+  Fixture *f = data;
+  f->calls++;
+  f->decision = allow;
+  f->remember = remember;
+  f->ttl = ttl;
+  g_free(f->identity);
+  f->identity = g_strdup(identity);
+}
+static void selected(GnostrApprovalDialog *dialog, gchar **ids, gpointer data) {
   (void)dialog;
-  ((Fixture *)user_data)->closed = TRUE;
+  Fixture *f = data;
+  f->selected++;
+  g_strfreev(f->selected_ids);
+  f->selected_ids = g_strdupv(ids);
 }
-
-static gboolean on_timeout(gpointer user_data);
-
-static gboolean count_frame(GtkWidget *w, GdkFrameClock *clock, gpointer user_data) {
-  (void)w; (void)clock;
-  guint *frames = user_data;
-  return ++*frames < 2 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+static void closed(AdwDialog *dialog, gpointer data) {
+  (void)dialog;
+  ((Fixture *)data)->closed = TRUE;
 }
-
-/* Run the main loop until @w is on screen: mapped and two frames drawn (or
- * 10 s pass). A user only clicks a dialog they can see; and libadwaita 1.5
- * drops a close requested before the dialog's first frames (on X11, where
- * mapping is asynchronous, ::closed then never comes). */
-static void wait_shown(GtkWidget *w) {
-  gboolean timed_out = FALSE;
-  guint frames = 0;
-  guint id = g_timeout_add_seconds(10, on_timeout, &timed_out);
-  while (!gtk_widget_get_mapped(w) && !timed_out)
-    g_main_context_iteration(NULL, TRUE);
-  g_assert_true(gtk_widget_get_mapped(w));
-  gtk_widget_add_tick_callback(w, count_frame, &frames, NULL);
-  while (frames < 2 && !timed_out)
-    g_main_context_iteration(NULL, TRUE);
-  if (!timed_out)
-    g_source_remove(id);
-  g_assert_cmpuint(frames, >=, 2);
+static void deferred(GnostrApprovalDialog *dialog, gpointer data) {
+  (void)dialog;
+  ((Fixture *)data)->deferred++;
 }
-
-static void fixture_setup(Fixture *f, gconstpointer data) {
-  GPtrArray *(*list)(void) = (GPtrArray *(*)(void))data;
-  reset_stubs();
-  next_list = list;
-  memset(&f->d, 0, sizeof f->d);
-  f->closed = FALSE;
-  f->dlg = gnostr_approval_dialog_new();
-  g_object_ref_sink(f->dlg);
-  gnostr_approval_dialog_set_callback(f->dlg, on_decision, &f->d);
-  g_signal_connect(f->dlg, "closed", G_CALLBACK(on_closed), f);
-  /* An AdwWindow hosts the dialog in-window; a plain GtkWindow would make
-   * it a separate toplevel, whose close never completes on WM-less Xvfb. */
-  f->win = adw_window_new();
-  /* Room for the floating dialog the app shows (not a bottom sheet). */
-  gtk_window_set_default_size(GTK_WINDOW(f->win), 800, 600);
-  gtk_window_present(GTK_WINDOW(f->win));
-  adw_dialog_present(ADW_DIALOG(f->dlg), f->win);
-  wait_shown(GTK_WIDGET(f->dlg));
-}
-
-static void fixture_teardown(Fixture *f, gconstpointer data) {
+static gboolean failure_bound(gpointer data) {
   (void)data;
-  gtk_window_destroy(GTK_WINDOW(f->win));
-  while (g_main_context_iteration(NULL, FALSE))
-    ;
-  g_object_unref(f->dlg);
-  g_free(f->d.selected);
-}
-
-static gboolean on_timeout(gpointer user_data) {
-  *(gboolean *)user_data = TRUE;
+  g_error("Approval dialog did not complete");
   return G_SOURCE_REMOVE;
 }
-
-/* Run the main loop until the dialog has closed (or 10 s pass), then a
- * little longer so a late second decision would be seen. */
-static void wait_closed(Fixture *f) {
-  gboolean timed_out = FALSE;
-  guint id = g_timeout_add_seconds(10, on_timeout, &timed_out);
-  while (!f->closed && !timed_out)
+static gboolean frame(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)widget;
+  (void)clock;
+  return ++*(guint *)data < 2 ? G_SOURCE_CONTINUE : G_SOURCE_REMOVE;
+}
+static void setup(Fixture *f, gconstpointer data) {
+  (void)data;
+  f->dialog = gnostr_approval_dialog_new();
+  g_object_ref_sink(f->dialog);
+  gnostr_approval_dialog_set_identity(f->dialog, "npub-pinned-by-daemon");
+  gnostr_approval_dialog_set_callback(f->dialog, decision, f);
+  g_signal_connect(f->dialog, "closed", G_CALLBACK(closed), f);
+  g_signal_connect(f->dialog, "deferred", G_CALLBACK(deferred), f);
+  g_signal_connect(f->dialog, "approve-selected", G_CALLBACK(selected), f);
+  f->window = adw_window_new();
+  gtk_window_set_default_size(GTK_WINDOW(f->window), 800, 700);
+  gtk_window_present(GTK_WINDOW(f->window));
+  adw_dialog_present(ADW_DIALOG(f->dialog), f->window);
+  guint timeout = g_timeout_add_seconds(10, failure_bound, NULL), frames = 0;
+  while (!gtk_widget_get_mapped(GTK_WIDGET(f->dialog)))
     g_main_context_iteration(NULL, TRUE);
-  if (!timed_out)
-    g_source_remove(id);
-  while (g_main_context_iteration(NULL, FALSE))
-    ;
-  g_assert_true(f->closed);
+  gtk_widget_add_tick_callback(GTK_WIDGET(f->dialog), frame, &frames, NULL);
+  while (frames < 2)
+    g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout);
 }
-
-static GtkWidget *child(GnostrApprovalDialog *dlg, const char *name) {
-  GObject *o = gtk_widget_get_template_child(GTK_WIDGET(dlg),
-                                             GNOSTR_TYPE_APPROVAL_DIALOG, name);
-  g_assert_nonnull(o);
-  return GTK_WIDGET(o);
-}
-
-static void click(GnostrApprovalDialog *dlg, const char *button) {
-  g_signal_emit_by_name(child(dlg, button), "clicked");
-}
-
-/* ---- tests --------------------------------------------------------------- */
-
-/* Approve -> callback(TRUE) -> adw_dialog_close() -> ::closed: the closed
- * handler must not report a second (reject) decision. */
-static void test_approve_fires_once(Fixture *f, gconstpointer data) {
+static void teardown(Fixture *f, gconstpointer data) {
   (void)data;
-  click(f->dlg, "btn_approve");
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  wait_closed(f);
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  g_assert_true(f->d.decision);
+  gnostr_approval_dialog_set_callback(f->dialog, NULL, NULL);
+  gtk_window_destroy(GTK_WINDOW(f->window));
+  while (g_main_context_iteration(NULL, FALSE)) {
+  }
+  g_object_unref(f->dialog);
+  g_free(f->identity);
+  g_strfreev(f->selected_ids);
 }
-
-static void test_deny_fires_once(Fixture *f, gconstpointer data) {
+static GtkWidget *child(Fixture *f, const char *name) {
+  GtkWidget *w = GTK_WIDGET(
+      gtk_widget_get_template_child(GTK_WIDGET(f->dialog), GNOSTR_TYPE_APPROVAL_DIALOG, name));
+  g_assert_nonnull(w);
+  return w;
+}
+static void click(Fixture *f, const char *button) {
+  g_signal_emit_by_name(child(f, button), "clicked");
+}
+static void wait_closed(Fixture *f) {
+  guint timeout = g_timeout_add_seconds(10, failure_bound, NULL);
+  while (!f->closed)
+    g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout);
+  while (g_main_context_iteration(NULL, FALSE)) {
+  }
+}
+static GVariant *info(guint32 kind, const char *operation, guint remaining) {
+  GVariantBuilder b, summary;
+  g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+#define S(key, value) g_variant_builder_add(&b, "{sv}", key, g_variant_new_string(value))
+  S("identity", "npub-pinned-by-daemon");
+  S("principal", "org.example.Client");
+  S("transport", "DBUS");
+  S("operation", operation);
+  S("state", "PENDING");
+  S("reason", "Send my note");
+  S("reason_source", "caller");
+  S("claimed_app_id", "Bogus name");
+#undef S
+  g_variant_builder_add(&b, "{sv}", "event_kind", g_variant_new_uint32(kind));
+  g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(remaining));
+  g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&summary, "{sv}", "preview",
+                        g_variant_new_string("ciphertext must not be displayed"));
+  g_variant_builder_add(&summary, "{sv}", "target", g_variant_new_string("target-event-id"));
+  g_variant_builder_add(&summary, "{sv}", "relay", g_variant_new_string("wss://nos.lol"));
+  g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string("peer-fingerprint"));
+  g_variant_builder_add(&summary, "{sv}", "target_count", g_variant_new_uint32(3));
+  g_variant_builder_add(&summary, "{sv}", "tag_count", g_variant_new_uint32(4));
+  g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
+  return g_variant_ref_sink(g_variant_builder_end(&b));
+}
+static void approve_once(Fixture *f, gconstpointer data) {
   (void)data;
-  click(f->dlg, "btn_deny");
+  click(f, "btn_approve");
+  click(f, "btn_approve");
   wait_closed(f);
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  g_assert_false(f->d.decision);
+  g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_true(f->decision);
+  g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
 }
-
-/* Closed without a decision (Escape, parent gone): one denial. */
-static void test_close_without_decision_denies_once(Fixture *f, gconstpointer data) {
+static void deny_once(Fixture *f, gconstpointer data) {
   (void)data;
-  adw_dialog_close(ADW_DIALOG(f->dlg));
+  click(f, "btn_deny");
   wait_closed(f);
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  g_assert_false(f->d.decision);
+  g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_false(f->decision);
 }
-
-/* Approve twice (button and Ctrl+A before the close completes): one decision
- * and one remembered client session, not two. */
-static void test_second_approve_is_noop(Fixture *f, gconstpointer data) {
+static void close_denies(Fixture *f, gconstpointer data) {
   (void)data;
-  gnostr_approval_dialog_set_client_pubkey(f->dlg, "ab12");
-  gnostr_approval_dialog_set_accounts(f->dlg, FAKE_STORE, NULL);
-  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f->dlg, "chk_remember")), TRUE);
-
-  click(f->dlg, "btn_approve");
-  click(f->dlg, "btn_approve");
+  adw_dialog_close(ADW_DIALOG(f->dialog));
   wait_closed(f);
-
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  g_assert_true(f->d.decision);
-  g_assert_cmpstr(f->d.selected, ==, NPUB_A);
-  g_assert_cmpuint(sessions_created, ==, 1);
+  g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_false(f->decision);
+  g_assert_false(f->remember);
 }
-
-/* The array owns its entries: each is freed exactly once, by the array (a
- * manual free as well is a double free). The identity model keeps its own
- * copies, so the selection survives the array. */
-static void test_set_accounts_leaves_entries_to_array(Fixture *f, gconstpointer data) {
+static void not_now(Fixture *f, gconstpointer data) {
   (void)data;
-  gnostr_approval_dialog_set_accounts(f->dlg, FAKE_STORE, NPUB_B);
-  g_assert_cmpuint(entries_freed, ==, 3);
-
-  /* Again, as each signing request does. */
-  gnostr_approval_dialog_set_accounts(f->dlg, FAKE_STORE, NPUB_B);
-  g_assert_cmpuint(entries_freed, ==, 6);
-
-  /* The watch-only account is not offered; the requested one is selected. */
-  GListModel *model = gtk_drop_down_get_model(GTK_DROP_DOWN(child(f->dlg, "identity_dropdown")));
-  g_assert_nonnull(model);
-  g_assert_cmpuint(g_list_model_get_n_items(model), ==, 2);
-
-  click(f->dlg, "btn_approve");
+  click(f, "btn_not_now");
   wait_closed(f);
-  g_assert_cmpuint(f->d.calls, ==, 1);
-  g_assert_cmpstr(f->d.selected, ==, NPUB_B);
+  g_assert_cmpuint(f->calls, ==, 0);
+  g_assert_cmpuint(f->deferred, ==, 1);
 }
-
-int main(int argc, char *argv[]) {
-  /* Same skip contract as test-ui.c: no window-system connection, no GTK. */
-  if (g_getenv("GNOSTR_SKIP_UI_TESTS") && *g_getenv("GNOSTR_SKIP_UI_TESTS")) {
-    g_print("TAP version 14\n1..0 # SKIP UI tests disabled via GNOSTR_SKIP_UI_TESTS\n");
+static void disabled_approve(Fixture *f, gconstpointer data) {
+  (void)data;
+  gtk_widget_set_sensitive(child(f, "btn_approve"), FALSE);
+  click(f, "btn_approve");
+  g_assert_cmpuint(f->calls, ==, 0);
+  g_assert_false(f->closed);
+}
+static void fixed_identity_remember(Fixture *f, gconstpointer data) {
+  (void)data;
+  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "sign_event", 120);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Verified client");
+  g_assert_nonnull(
+      strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_identity"))), "npub-pinned-by-daemon"));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_scope"))), "kind 1"));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_reason"))),
+                          "Reason supplied by the application"));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_remember")), TRUE);
+  gtk_drop_down_set_selected(GTK_DROP_DOWN(child(f, "ttl_dropdown")), 1);
+  click(f, "btn_approve");
+  wait_closed(f);
+  g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
+  g_assert_true(f->remember);
+  g_assert_cmpuint(f->ttl, ==, 3600);
+}
+static void unicode(Fixture *f, gconstpointer data) {
+  (void)data;
+  GString *s = g_string_new(NULL);
+  for (guint i = 0; i < 400; i++)
+    g_string_append(s, "🌲");
+  gnostr_approval_dialog_set_content(f->dialog, s->str);
+  g_string_free(s, TRUE);
+  const char *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+  g_assert_true(g_utf8_validate(preview, -1, NULL));
+  g_assert_cmpint(g_utf8_strlen(preview, -1), ==, 281);
+  gnostr_approval_dialog_set_content(f->dialog, "bad\xff");
+  g_assert_true(
+      g_utf8_validate(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), -1, NULL));
+}
+static void completion_cancels(Fixture *f, gconstpointer data) {
+  (void)data;
+  gnostr_approval_dialog_set_callback(f->dialog, NULL, NULL);
+  adw_dialog_force_close(ADW_DIALOG(f->dialog));
+  wait_closed(f);
+  g_assert_cmpuint(f->calls, ==, 0);
+}
+static void previews(Fixture *f, gconstpointer data) {
+  (void)data;
+  const guint32 kinds[] = {NOSTR_KIND_GIFT_WRAP, NOSTR_KIND_DELETION,
+                           NOSTR_KIND_CLIENT_AUTHENTICATION, NOSTR_KIND_REACTION};
+  const char *expected[] = {"Encrypted message", "Delete 3 target(s)", "wss://nos.lol",
+                            "target-event-id"};
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+    g_autoptr(GVariant) row = info(kinds[i], "sign_event", 120);
+    gnostr_approval_dialog_set_info(f->dialog, row, "Client");
+    const char *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+    g_assert_nonnull(strstr(preview, expected[i]));
+    if (i == 0)
+      g_assert_null(strstr(preview, "ciphertext"));
+  }
+  g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "nip44_conversation_key", 120);
+  gnostr_approval_dialog_set_info(f->dialog, row, "Client");
+  g_assert_nonnull(
+      strstr(gtk_label_get_text(GTK_LABEL(child(f, "subtitle_label"))), "every NIP-44 message"));
+  g_assert_nonnull(
+      strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), "peer-fingerprint"));
+}
+static void stepper_focus(Fixture *f, gconstpointer data) {
+  (void)data;
+  gnostr_approval_dialog_set_position(f->dialog, 1, 3);
+  g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(child(f, "label_position"))), ==, "1 of 3");
+  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_previous")));
+  g_assert_true(gtk_widget_get_sensitive(child(f, "btn_next")));
+  g_assert_true(adw_dialog_get_focus(ADW_DIALOG(f->dialog)) == child(f, "btn_deny"));
+  g_assert_null(adw_dialog_get_default_widget(ADW_DIALOG(f->dialog)));
+}
+static void batch_selection(Fixture *f, gconstpointer data) {
+  (void)data;
+  GVariantBuilder rows;
+  g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
+  for (guint i = 0; i < 2; i++) {
+    GVariantBuilder row;
+    g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&row, "{sv}", "request_id", g_variant_new_string(i ? "second" : "first"));
+    g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string("sign_event"));
+    g_variant_builder_add(&row, "{sv}", "event_kind", g_variant_new_uint32(NOSTR_KIND_TEXT_NOTE));
+    g_variant_builder_add_value(&rows, g_variant_builder_end(&row));
+  }
+  g_autoptr(GVariant) list = g_variant_ref_sink(g_variant_builder_end(&rows));
+  gnostr_approval_dialog_set_batch(f->dialog, list);
+  g_assert_false(gtk_widget_get_sensitive(child(f, "btn_approve_selected")));
+  GtkWidget *first = gtk_widget_get_first_child(child(f, "batch_box"));
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(first)));
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(first), TRUE);
+  click(f, "btn_approve_selected");
+  wait_closed(f);
+  g_assert_cmpuint(f->selected, ==, 1);
+  g_assert_cmpstr(f->selected_ids[0], ==, "first");
+  g_assert_null(f->selected_ids[1]);
+  g_assert_cmpuint(f->calls, ==, 0);
+}
+static void legacy_no_session(Fixture *f, gconstpointer data) {
+  (void)data;
+  /* The implementation links without client_session.c: reintroducing a GUI
+   * authorization/session call makes this production-dialog target fail link. */
+  gnostr_approval_dialog_set_client_pubkey(f->dialog, "client-key");
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_remember")), TRUE);
+  click(f, "btn_approve");
+  wait_closed(f);
+  g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_true(f->remember);
+  g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
+}
+int main(int argc, char **argv) {
+  if (g_getenv("GNOSTR_SKIP_UI_TESTS")) {
+    g_print("1..0 # SKIP UI disabled\n");
     return 0;
   }
 #ifndef __APPLE__
   if (!g_getenv("DISPLAY") && !g_getenv("WAYLAND_DISPLAY")) {
-    g_print("TAP version 14\n1..0 # SKIP needs a display (DISPLAY/WAYLAND_DISPLAY not set)\n");
+    g_print("1..0 # SKIP display required\n");
     return 0;
   }
 #endif
-
   g_test_init(&argc, &argv, NULL);
   nostrc_test_tolerate_gdk_frame_warning();
   gtk_init();
   adw_init();
   g_object_set(gtk_settings_get_default(), "gtk-enable-animations", FALSE, NULL);
-
-#define ADD(path, fn, list) \
-  g_test_add("/signer/approval-dialog/" path, Fixture, (gconstpointer)(list), \
-             fixture_setup, fn, fixture_teardown)
-  ADD("approve-fires-once", test_approve_fires_once, NULL);
-  ADD("deny-fires-once", test_deny_fires_once, NULL);
-  ADD("close-without-decision-denies-once", test_close_without_decision_denies_once, NULL);
-  ADD("second-approve-is-noop", test_second_approve_is_noop, three_accounts);
-  ADD("set-accounts-leaves-entries-to-array", test_set_accounts_leaves_entries_to_array,
-      three_accounts);
+#define ADD(name, fn)                                                                              \
+  g_test_add("/signer/approval-dialog/" name, Fixture, NULL, setup, fn, teardown)
+  ADD("approve-once", approve_once);
+  ADD("deny-once", deny_once);
+  ADD("close-denies", close_denies);
+  ADD("not-now", not_now);
+  ADD("disabled-approve", disabled_approve);
+  ADD("fixed-identity-remember", fixed_identity_remember);
+  ADD("unicode", unicode);
+  ADD("completion-cancels", completion_cancels);
+  ADD("previews", previews);
+  ADD("stepper-focus", stepper_focus);
+  ADD("batch-selection", batch_selection);
+  ADD("legacy-no-session", legacy_no_session);
 #undef ADD
   return g_test_run();
 }

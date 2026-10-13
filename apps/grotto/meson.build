@@ -108,6 +108,7 @@ nips_inc = include_directories(
 # Source files
 app_sources = files(
   'src/main_app.c',
+  'src/approval-controller.c',
   '../../gnome/common/gn-session-bus-probe.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
