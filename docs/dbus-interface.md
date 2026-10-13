@@ -97,19 +97,30 @@ string, so `""`, a `key_id`, the npub and the hex pubkey hit the same grant
 If the active identity changes while a request is pending, approving it
 fails instead of using the new key.
 
-**Grants.** `$XDG_CONFIG_HOME/gnostr/signer-grants.ini`, one section per
-request kind, key `<principal>|<npub>` (or `<principal>|*` for any
-identity), value `allow`, `deny`, `allow:<until-unix-ts>` or
-`deny:<until-unix-ts>`. Kinds: `event`, `nip44_conversation_key`,
-`get_public_key`, `get_relays`, `nip04_encrypt`, `nip04_decrypt`,
-`nip44_encrypt`, `nip44_decrypt` (also the B64 variants), `zap_decrypt`.
-Remembering one kind never covers another. The pre-0.4.0
+**Permissions (0.7.0).** `$XDG_CONFIG_HOME/gnostr/signer-permissions-v2.ini`
+stores principal + pinned identity + operation + optional validated event kind.
+Event approvals and denials are exact-kind by default; crypto operations remain
+separate (`nip44_conversation_key`, `nip04_encrypt/decrypt`,
+`nip44_encrypt/decrypt`, `zap_decrypt`). Raw/B64 variants share the same operation
+scope. Expiry is absolute Unix seconds, 0 = forever, never extended by use.
+Explicit deny wins, including legacy operation-wide/wildcard denials;
+required-confirmation kinds always prompt despite remembered allows or trust tiers.
+Identity-wildcard allows are supported only for identity-independent `get_relays`.
+The single nip55l evaluator applies live per-client Low/Medium/Full policy (unknown
+clients Low) through an injectable lookup; the client store/Control1 is G04 work.
+The compatibility `signer-grants.ini` is re-sanitised on every load: valid
+non-event rows migrate once; broad event denies remain operation-wide; broad
+event allows are removed from the legacy file before evaluation is enabled and
+stored as non-executable **Needs review**, pruned after 90 days. No bunker global
+auto-approval or remote allowlist becomes signing authority. Migration/storage
+failure fails closed. See [55L](proposals/55L.md#scoped-permission-storage-and-migration-070).
+The pre-0.4.0
 `~/.config/gnostr/signer-acl.ini` (keyed on the claimed `app_id`) is ignored.
 Built-in defaults cover first-party services that run without a UI
 (`get_public_key`/`get_relays` for the nostr-homed helpers and
 `nostr-notify-daemon`, `nip44_decrypt` for `nostr-homectl`), matched on the
 installed executable's path and inode; CMake `NIP55L_DEFAULT_GRANTS`. An
-explicit entry in the grants file wins.
+explicit deny in the permission store wins; these defaults go through the same evaluator.
 
 **Approval.** Without a grant the call is parked and `ApprovalRequested`
 is emitted with `app_id` = principal and `identity` = resolved npub.
@@ -512,8 +523,12 @@ Responds to a pending approval request (from UI).
 **Parameters**:
 - `request_id` (string): ID from `ApprovalRequested` signal
 - `decision` (boolean): True to approve, false to deny
-- `remember` (boolean): Remember the decision for (principal, identity, kind)
-  in the grants file; ignored for an unidentified caller
+- `remember` (boolean): Remember the decision for (principal, pinned identity,
+  operation, validated event kind) in the v2 permission store; ignored for an
+  unidentified caller. Since 0.7.0, `event` no longer grants every event kind.
+  Required-confirmation kinds still require fresh approval on subsequent calls;
+  remembered denial wins. Persistence failure returns failure, never confirmed
+  remembered access.
 - `ttl_seconds` (uint64): How long to remember (0 = forever)
 
 **Returns**:
@@ -581,8 +596,8 @@ full executable/operation list are documented in [55L](proposals/55L.md#built-in
 
 #### ListGrants / RevokeGrant
 
-*Additive (nostrc-yjky).* The remembered decisions the signer keeps in
-`signer-grants.ini`, for the approval UI's permissions page (approval-UI
+*Additive (nostrc-yjky), tightened in 0.7.0.* The operation-wide remembered
+rows in the v2 permission store, for older approval UIs (approval-UI
 callers only, like `ApproveRequest`; others get `Error.PermissionDenied`).
 The UI never reads the file itself.
 
@@ -601,8 +616,13 @@ The UI never reads the file itself.
 Each grant is `(kind, principal, identity, allow, expires_at)`: `identity`
 is an npub or `*`; `expires_at` is unix seconds, `0` = never (expired
 entries are listed so they can be cleaned up). Built-in defaults for
-first-party services are not listed. `RevokeGrant` removes one entry and
-returns whether it existed; the next matching call prompts again. Empty
+first-party services and tier-derived permissions are not listed. Scoped event
+rows and Needs review markers are not listed; new management uses ListPermissions
+(G04). `RevokeGrant("event", principal, identity)` removes **all** event scopes
+for the pair, including operation-wide denies and Needs review. Other operations
+remove their operation-wide row. Successful removal cancels that principal's
+pending/queued work. Removing an explicit row does not remove a live tier's
+permission; otherwise the next matching call prompts again. Empty
 arguments: `Error.InvalidInput`.
 
 ---

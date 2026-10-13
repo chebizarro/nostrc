@@ -64,9 +64,7 @@ struct _SignerApprovalService {
  GThreadPool *backend;
  gboolean paused, stopped;
  guint64 generation;
- GKeyFile *grants_kf;
- gint64 grants_mtime;
- goffset grants_size;
+ SignerPermissions *permissions;
 #ifdef NIP55L_TEST_TRUST_ENV
  void (*after_backend)(gpointer);
  gpointer after_backend_data;
@@ -84,7 +82,7 @@ struct _Request {
  gboolean resolved, no_identity, announced, decision, remember;
  gboolean finished;
  gint cancelled; /* atomic: worker checks before touching the backend */
- guint64 generation, ttl;
+ guint64 generation, ttl, permission_revision;
  gint64 deadline, expires_at;
  GSource *timeout;
  gboolean has_kind;
@@ -103,6 +101,7 @@ static void reply_value(const Reply *r, const char *result) {
 }
 
 static void backend_worker(gpointer data, gpointer unused);
+static void permissions_changed(gpointer data);
 static gboolean owner_ok(SignerApprovalService *s) { return g_thread_self() == s->owner; }
 static void finish(Request *r, SignerRequestState state, const gchar *error, const gchar *message);
 static void request_unref(gpointer data);
@@ -144,7 +143,9 @@ SignerApprovalService *signer_approval_service_new(GMainContext *context) {
   s->prompt_rates = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   s->subscribers = g_ptr_array_new_with_free_func(g_free);
   s->backend = g_thread_pool_new(backend_worker, NULL, 1, FALSE, NULL);
-  s->grants_mtime = -1; s->grants_size = -1; s->generation = 1;
+  s->permissions = signer_permissions_new(NULL);
+  signer_permissions_set_changed(s->permissions, permissions_changed, s);
+  s->generation = 1;
   return s;
 }
 SignerApprovalService *signer_approval_service_ref(SignerApprovalService *s) {
@@ -155,7 +156,7 @@ void signer_approval_service_unref(SignerApprovalService *s) {
   g_assert(g_hash_table_size(s->requests) == 0);
   g_thread_pool_free(s->backend, FALSE, FALSE);
   g_hash_table_unref(s->requests); g_hash_table_unref(s->prompt_rates); g_ptr_array_unref(s->subscribers);
-  if (s->grants_kf) g_key_file_unref(s->grants_kf);
+  signer_permissions_free(s->permissions);
   g_main_context_unref(s->context); g_free(s);
 }
 guint signer_approval_service_subscribe(SignerApprovalService *s, SignerApprovalNotifyFn fn, gpointer data) {
@@ -272,84 +273,11 @@ void signer_gate_cancel(SignerGateHandle *h) {
 
 /* ---- grants ------------------------------------------------------------- */
 
-/* nip55l < 0.4.0 kept "<app_id>:<identity>" entries in signer-acl.ini. Those
- * were keyed on a string any caller could claim, so they are not carried
- * over; the file is left alone and nothing reads it any more. */
-static gchar *grants_file_path(void){
-  const char *conf = g_get_user_config_dir();
-  if (!conf) conf = g_get_home_dir();
-  gchar *dir = g_build_filename(conf, "gnostr", NULL);
-  g_mkdir_with_parents(dir, 0700);
-  gchar *path = g_build_filename(dir, "signer-grants.ini", NULL);
-  g_free(dir);
-  return path;
-}
-
-
-/* The grants file, reloaded when it changes on disk. Borrowed; never NULL. */
-static GKeyFile *grants_get(SignerApprovalService *service){
-  gchar *path = grants_file_path();
-  GStatBuf st;
-  gint64 mtime = -2; goffset size = -2;
-  if (g_stat(path, &st) == 0) { mtime = (gint64)st.st_mtime; size = (goffset)st.st_size; }
-  if (!service->grants_kf || mtime != service->grants_mtime || size != service->grants_size) {
-    if (service->grants_kf) g_key_file_unref(service->grants_kf);
-    service->grants_kf = g_key_file_new();
-    if (mtime != -2) g_key_file_load_from_file(service->grants_kf, path, G_KEY_FILE_NONE, NULL);
-    service->grants_mtime = mtime; service->grants_size = size;
-  }
-  g_free(path);
-  return service->grants_kf;
-}
-
-/* Value "allow" | "deny" | "allow:<until>" | "deny:<until>" (until 0 =
- * never). FALSE when absent or unparseable. */
-static gboolean grant_parse(const char *val, gboolean *allow, guint64 *until){
-  if (!val) return FALSE;
-  const char *rest;
-  if (g_str_has_prefix(val, "allow")) { *allow = TRUE; rest = val + 5; }
-  else if (g_str_has_prefix(val, "deny")) { *allow = FALSE; rest = val + 4; }
-  else return FALSE;
-  *until = 0;
-  if (*rest == ':') *until = g_ascii_strtoull(rest + 1, NULL, 10);
-  else if (*rest != '\0') return FALSE;
-  return TRUE;
-}
-
-/* As grant_parse, and FALSE when expired. */
-static gboolean grant_value(const char *val, gboolean *allow){
-  gboolean a;
-  guint64 until;
-  if (!grant_parse(val, &a, &until)) return FALSE;
-  if (until > 0 && (guint64)(g_get_real_time() / 1000000) >= until) return FALSE;
-  *allow = a;
-  return TRUE;
-}
-
-static gboolean grants_lookup_file(SignerApprovalService *service, const char *kind, const char *principal, const char *npub,
-                                   gboolean *allow){
-  GKeyFile *kf = grants_get(service);
-  const char *ids[2] = { npub, "*" };
-  gboolean matched_allow = FALSE;
-  for (int i = 0; i < 2; i++) {
-    if (!ids[i] || !*ids[i]) continue;
-    g_autofree gchar *key = g_strdup_printf("%s|%s", principal, ids[i]);
-    g_autofree gchar *val = g_key_file_get_string(kf, kind, key, NULL);
-    gboolean decision = FALSE;
-    if (grant_value(val, &decision)) {
-      if (!decision) { *allow = FALSE; return TRUE; }
-      matched_allow = TRUE;
-    }
-  }
-  if (matched_allow) *allow = TRUE;
-  return matched_allow;
-}
-
 /* Built-in grants for first-party services that run without a UI (the
  * nostr-homed session helpers read the npub/relays and open the secrets
  * envelope at login). Matched on the caller's executable by path AND
- * device/inode, for unsandboxed same-user callers only; an explicit entry in
- * the grants file (e.g. a deny) takes precedence.
+ * device/inode, for unsandboxed same-user callers only. This returns a
+ * candidate default to the single evaluator; explicit denial takes precedence.
  * NIP55L_DEFAULT_GRANTS: "<kind>[,<kind>...]@<exe>[:<exe>...]" groups
  * separated by '+'. */
 #ifndef NIP55L_DEFAULT_GRANTS
@@ -380,61 +308,6 @@ static gboolean grants_lookup_default(const char *kind, const SignerCaller *who)
     }
   }
   return hit;
-}
-
-static gboolean grants_lookup(SignerApprovalService *service, const char *kind, const SignerCaller *who, const char *npub,
-                              gboolean *allow){
-  if (who->principal && grants_lookup_file(service, kind, who->principal, npub, allow)) return TRUE;
-  if (who->kind != SIGNER_CALLER_WEB_ORIGIN && grants_lookup_default(kind, who)) {
-    *allow = TRUE;
-    return TRUE;
-  }
-  return FALSE;
-}
-
-static gboolean grants_write(SignerApprovalService *service, GKeyFile *kf){
-  gsize len = 0;
-  g_autofree gchar *data = g_key_file_to_data(kf, &len, NULL);
-  g_autofree gchar *path = grants_file_path();
-  GError *err = NULL;
-  gboolean ok = data && g_file_set_contents_full(path, data, (gssize)len,
-                                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err);
-  if (!ok) {
-    g_warning("nostr-signer: cannot save grants to %s: %s", path, err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  service->grants_mtime = -1; /* reload on next use */
-  return ok;
-}
-
-static gboolean grants_save(SignerApprovalService *service, const char *kind, const char *principal, const char *npub,
-                            gboolean allow, guint64 ttl_seconds){
-  if (!kind || !principal || !*principal) return FALSE;
-  GKeyFile *kf = grants_get(service);
-  g_autofree gchar *key = g_strdup_printf("%s|%s", principal, (npub && *npub) ? npub : "*");
-  g_autofree gchar *val = NULL;
-  if (ttl_seconds > 0) {
-    guint64 until = (guint64)(g_get_real_time() / 1000000) + ttl_seconds;
-    val = g_strdup_printf("%s:%" G_GUINT64_FORMAT, allow ? "allow" : "deny", until);
-  } else {
-    val = g_strdup(allow ? "allow" : "deny");
-  }
-  g_key_file_set_string(kf, kind, key, val);
-  return grants_write(service, kf);
-}
-
-/* Remove one entry (and its section when that empties). */
-static gboolean grants_remove(SignerApprovalService *service, const char *kind, const char *principal, const char *identity,
-                              gboolean *removed){
-  *removed = FALSE;
-  GKeyFile *kf = grants_get(service);
-  g_autofree gchar *key = g_strdup_printf("%s|%s", principal, identity);
-  if (!g_key_file_remove_key(kf, kind, key, NULL)) return TRUE;
-  *removed = TRUE;
-  gsize n = 0;
-  g_auto(GStrv) left = g_key_file_get_keys(kf, kind, &n, NULL);
-  if (n == 0) g_key_file_remove_group(kf, kind, NULL);
-  return grants_write(service, kf);
 }
 
 /* ---- errors ------------------------------------------------------------- */
@@ -733,6 +606,8 @@ typedef struct {
   gboolean resolve;
   gchar *npub, *selector;
   gint rc;
+  guint64 permission_revision;
+  gboolean stale_policy;
   GPtrArray *results;
 #ifdef NIP55L_TEST_TRUST_ENV
   void (*after_backend)(gpointer);
@@ -755,9 +630,18 @@ static void job_free(gpointer data) {
 }
 static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
+static SignerPermissionResult request_policy(Request *r) {
+  return signer_permissions_evaluate(r->service->permissions, r->who->principal,
+      r->npub, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
+      grants_lookup_default(op_info[r->op].kind, r->who), NULL);
+}
 static gboolean policy_denies(Request *r) {
-  gboolean allow = FALSE;
-  return grants_lookup(r->service, op_info[r->op].kind, r->who, r->npub, &allow) && !allow;
+  SignerPermissionResult policy = request_policy(r);
+  return policy == SIGNER_PERMISSION_DENY || policy == SIGNER_PERMISSION_ERROR;
+}
+static gboolean remember_permission(Request *r, gboolean allow) {
+  return signer_permissions_remember(r->service->permissions, r->who->principal,
+      r->npub, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1, allow, r->ttl, NULL);
 }
 static void execute(Request *r) {
   if (r->finished) return;
@@ -767,8 +651,17 @@ static void execute(Request *r) {
   if (g_get_monotonic_time() >= r->deadline) {
     finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out"); return;
   }
-  if (policy_denies(r)) {
+  r->permission_revision = signer_permissions_revision(r->service->permissions);
+  SignerPermissionResult policy = request_policy(r);
+  if (r->finished) return;
+  if (policy == SIGNER_PERMISSION_ERROR) {
+    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions"); return;
+  }
+  if (policy == SIGNER_PERMISSION_DENY) {
     finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy"); return;
+  }
+  if (!r->decision && policy != SIGNER_PERMISSION_ALLOW) {
+    finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permissions changed before execution"); return;
   }
   r->state = SIGNER_REQUEST_EXECUTING;
   queue_job(r, FALSE);
@@ -780,9 +673,13 @@ static void resolved(Request *r) {
   if (s->paused || r->generation != s->generation) {
     finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_PAUSED, "signing is paused"); return;
   }
-  gboolean allow = FALSE;
-  if (grants_lookup(s, op_info[r->op].kind, r->who, r->npub, &allow)) {
-    if (allow) execute(r);
+  SignerPermissionResult policy = request_policy(r);
+  if (r->finished) return; /* a reload can invalidate this request */
+  if (policy == SIGNER_PERMISSION_ERROR) {
+    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions"); return;
+  }
+  if (policy != SIGNER_PERMISSION_ASK) {
+    if (policy == SIGNER_PERMISSION_ALLOW) execute(r);
     else finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
     return;
   }
@@ -851,13 +748,16 @@ static gboolean job_done(gpointer data) {
   if (policy_denies(r)) {
     finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy"); return G_SOURCE_REMOVE;
   }
+  if (j->stale_policy || (!r->decision && request_policy(r) != SIGNER_PERMISSION_ALLOW)) {
+    finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permissions changed before execution"); return G_SOURCE_REMOVE;
+  }
   gboolean ok = TRUE;
   for (guint i = 0; i < j->results->len; i++) {
     Result *out = j->results->pdata[i];
     if (out->handle->request == r && out->error) ok = FALSE;
   }
   if (ok && r->remember && r->who->principal &&
-      !grants_save(r->service, op_info[r->op].kind, r->who->principal, r->npub, TRUE, r->ttl)) {
+      !remember_permission(r, TRUE)) {
     finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission"); return G_SOURCE_REMOVE;
   }
   for (guint i = 0; i < j->results->len && !r->finished; i++) {
@@ -887,6 +787,9 @@ static void backend_worker(gpointer data, gpointer unused) {
       free(npub); if (selector) { secure_wipe(selector, strlen(selector)); free(selector); }
     } else {
       for (guint i = 0; i < j->results->len; i++) {
+        if (j->permission_revision != signer_permissions_revision(j->service->permissions)) {
+          j->stale_policy = TRUE; break;
+        }
         Result *out = j->results->pdata[i];
         if (g_atomic_int_get(&r->cancelled)) break;
         if (g_atomic_int_get(&out->handle->done)) continue;
@@ -902,6 +805,9 @@ static void backend_worker(gpointer data, gpointer unused) {
         }
         if (g_atomic_int_get(&r->cancelled)) break;
         if (g_atomic_int_get(&out->handle->done)) continue;
+        if (j->permission_revision != signer_permissions_revision(j->service->permissions)) {
+          j->stale_policy = TRUE; break;
+        }
         Call call = {r->op, r->a, r->b, r->selector, {capture, out}};
         perform(&call, r->claimed);
 #ifdef NIP55L_TEST_TRUST_ENV
@@ -921,6 +827,7 @@ static void queue_job(Request *r, gboolean resolve) {
   Job *j = g_new0(Job, 1);
   j->request = request_ref(r); j->service = signer_approval_service_ref(r->service); j->resolve = resolve;
   j->results = g_ptr_array_new_with_free_func(result_free);
+  j->permission_revision = r->permission_revision;
 #ifdef NIP55L_TEST_TRUST_ENV
   j->after_backend = r->service->after_backend; j->after_backend_data = r->service->after_backend_data;
 #endif
@@ -1003,11 +910,12 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
  * for jobs already admitted to the worker queue. Mark the whole affected
  * set before invoking transport callbacks (which can re-enter the service).
  * The worker's atomic cancellation checks precede identity/key use. */
-static void invalidate_denied_work(SignerApprovalService *s, Request *decision) {
+static void permissions_changed(gpointer data) {
+  SignerApprovalService *s = data;
   g_autoptr(GPtrArray) affected = requests_copy(s);
   for (guint i = affected->len; i > 0; i--) {
     Request *r = affected->pdata[i - 1];
-    if (r == decision || !r->resolved || r->finished || !policy_denies(r))
+    if (!r->resolved || r->finished || !policy_denies(r))
       g_ptr_array_remove_index(affected, i - 1);
     else g_atomic_int_set(&r->cancelled, TRUE);
   }
@@ -1027,10 +935,9 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
   else if (allow) execute(r);
   else {
     gboolean saved = remember && r->who->principal;
-    if (saved && !grants_save(s, op_info[r->op].kind, r->who->principal, r->npub, FALSE, ttl))
+    if (saved && !remember_permission(r, FALSE))
       finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission");
     else {
-      if (saved) invalidate_denied_work(s, r);
       finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
     }
   }
@@ -1055,26 +962,12 @@ GVariant *signer_approval_service_list_pending(SignerApprovalService *s) {
 }
 GVariant *signer_approval_service_list_grants(SignerApprovalService *s) {
   g_return_val_if_fail(owner_ok(s), NULL);
-  GKeyFile *kf = grants_get(s);
-  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE("a(sssbt)"));
-  g_auto(GStrv) kinds = g_key_file_get_groups(kf, NULL);
-  for (guint i = 0; kinds && kinds[i]; i++) {
-    g_auto(GStrv) keys = g_key_file_get_keys(kf, kinds[i], NULL, NULL);
-    for (guint j = 0; keys && keys[j]; j++) {
-      const gchar *bar = strrchr(keys[j], '|');
-      g_autofree gchar *val = g_key_file_get_string(kf, kinds[i], keys[j], NULL);
-      gboolean allow; guint64 until;
-      if (!bar || bar == keys[j] || !bar[1] || !grant_parse(val, &allow, &until)) continue;
-      g_autofree gchar *principal = g_strndup(keys[j], bar - keys[j]);
-      g_variant_builder_add(&b, "(sssbt)", kinds[i], principal, bar + 1, allow, until);
-    }
-  }
-  return g_variant_ref_sink(g_variant_builder_end(&b));
+  return signer_permissions_list_legacy(s->permissions, NULL);
 }
 gboolean signer_approval_service_revoke_grant(SignerApprovalService *s,
     const gchar *kind, const gchar *principal, const gchar *identity, gboolean *removed) {
   g_return_val_if_fail(owner_ok(s), FALSE);
-  gboolean ok = grants_remove(s, kind, principal, identity, removed);
+  gboolean ok = signer_permissions_clear(s->permissions, principal, identity, kind, removed, NULL);
   if (ok && *removed) signer_approval_service_cancel_principal(s, principal);
   return ok;
 }
@@ -1143,6 +1036,9 @@ void signer_approval_service_set_paused(SignerApprovalService *s, gboolean pause
 }
 gboolean signer_approval_service_is_paused(SignerApprovalService *s) { return s->paused; }
 guint64 signer_approval_service_generation(SignerApprovalService *s) { return s->generation; }
+SignerPermissions *signer_approval_service_permissions(SignerApprovalService *s) {
+  g_return_val_if_fail(owner_ok(s), NULL); return s->permissions;
+}
 #ifdef NIP55L_TEST_TRUST_ENV
 void signer_approval_service_test_after_backend(SignerApprovalService *s, void (*hook)(gpointer), gpointer data) {
   g_return_if_fail(owner_ok(s) && g_hash_table_size(s->requests) == 0);

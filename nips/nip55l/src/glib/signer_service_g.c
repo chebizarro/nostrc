@@ -304,13 +304,14 @@ static gboolean handle_list_pending_requests(NostrSigner *o, GDBusMethodInvocati
 static gboolean handle_list_grants(NostrSigner *o, GDBusMethodInvocation *inv) {
   if (!require_approver(inv)) return TRUE;
   g_autoptr(GVariant) grants = signer_approval_service_list_grants(approval_service);
-  nostr_signer_complete_list_grants(o, inv, grants); return TRUE;
+  if (!grants) g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions");
+  else nostr_signer_complete_list_grants(o, inv, grants);
+  return TRUE;
 }
 static gboolean handle_revoke_grant(NostrSigner *o, GDBusMethodInvocation *inv,
     const gchar *kind, const gchar *principal, const gchar *identity) {
   if (!require_approver(inv)) return TRUE;
-  if (!kind || !*kind || !principal || !*principal || !identity || !*identity ||
-      strchr(principal, '|') || strchr(identity, '|')) {
+    if (!kind || !*kind || !principal || !*principal || !identity || !*identity) {
     g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "kind, principal and identity are required"); return TRUE;
   }
   gboolean removed = FALSE;

@@ -1,6 +1,7 @@
 #ifndef NIP55L_SIGNER_APPROVAL_SERVICE_H
 #define NIP55L_SIGNER_APPROVAL_SERVICE_H
 #include "signer_gate.h"
+#include "signer_permissions.h"
 G_BEGIN_DECLS
 
 typedef struct _SignerApprovalService SignerApprovalService;
@@ -46,6 +47,9 @@ void signer_approval_service_fail_request(SignerApprovalService *service, const 
 void signer_approval_service_set_paused(SignerApprovalService *service, gboolean paused);
 gboolean signer_approval_service_is_paused(SignerApprovalService *service);
 guint64 signer_approval_service_generation(SignerApprovalService *service);
+/* Borrowed evaluator; G04 management mutates it on the service owner thread.
+ * Changes automatically invalidate denied queued work and advance admission revision. */
+SignerPermissions *signer_approval_service_permissions(SignerApprovalService *service);
 void signer_approval_service_shutdown(SignerApprovalService *service);
 /* Borrowed exported instance, NULL before export/after unexport. */
 SignerApprovalService *signer_get_approval_service(void);

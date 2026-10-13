@@ -19,6 +19,8 @@
  * produced throughout; every frame still parsing proves fd 1 isolation.
  */
 #include "native_messaging.h"
+/* Header-only registry dependency; keep the standalone host GLib-only. */
+#include "../../../../libnostr/include/nostr-kinds.h"
 
 #include <gio/gio.h>
 #include <glib/gstdio.h>
@@ -41,6 +43,7 @@
 
 #define SK_HEX "0000000000000000000000000000000000000000000000000000000000000003"
 #define PK_HEX "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+#define NPUB "npub1lycg5qvjtrp3qjf5f7zl382j9x6nrjz9sdhenvyxq8c3808qxmus6gq266"
 
 #define CHECK(c) do { if (!(c)) { g_printerr("FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
@@ -200,13 +203,14 @@ static void wait_for_approval(E2E *e) {
   CHECK(e->last_request_id != NULL);
 }
 
-static void approve(E2E *e, gboolean decision) {
+static void approve(E2E *e, gboolean decision, gboolean remember) {
   g_autoptr(GError) err = NULL;
   g_autoptr(GVariant) r = g_dbus_connection_call_sync(
       e->bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer", "ApproveRequest",
-      g_variant_new("(sbbt)", e->last_request_id, decision, FALSE, (guint64)0),
+      g_variant_new("(sbbt)", e->last_request_id, decision, remember, (guint64)600),
       G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, &err);
   CHECK(r != NULL);
+  gboolean ok = FALSE; g_variant_get(r, "(b)", &ok); CHECK(ok);
   g_clear_pointer(&e->last_request_id, g_free);
 }
 
@@ -223,6 +227,24 @@ static gchar *self_exe(void) {
   CHECK(!"unsupported platform");
   return NULL;
 #endif
+}
+
+static void spawn_host(E2E *e) {
+  g_autoptr(GError) err = NULL;
+  /* The host must not see the signer key; it only needs the bus. */
+  g_autoptr(GSubprocessLauncher) l = g_subprocess_launcher_new(
+      G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE);
+  g_subprocess_launcher_unsetenv(l, "NOSTR_SIGNER_SECKEY_HEX");
+  g_subprocess_launcher_setenv(l, "NOSTR_SIGNER_BRIDGE_DEBUG", "1", TRUE);
+  g_subprocess_launcher_setenv(l, "G_MESSAGES_DEBUG", "all", TRUE);
+  g_subprocess_launcher_setenv(l, "NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS", "4000", TRUE);
+  /* Browser-style argv: Firefox passes manifest path + extension id. */
+  e->host = g_subprocess_launcher_spawn(l, &err, NMH_HOST_PATH,
+                                        "/usr/lib/mozilla/native-messaging-hosts/org.nostr.signer_bridge.json",
+                                        "signer-bridge@gnostr.org", NULL);
+  CHECK(e->host);
+  e->to_host = g_subprocess_get_stdin_pipe(e->host);
+  e->from_host = g_subprocess_get_stdout_pipe(e->host);
 }
 
 static void setup(E2E *e) {
@@ -246,7 +268,10 @@ static void setup(E2E *e) {
   g_unsetenv("NOSTR_SIGNER_ALLOW_KEY_MUTATIONS");
   g_setenv("NOSTR_SIGNER_SECKEY_HEX", SK_HEX, TRUE);
 
-  /* nip55l 0.4.0 grants: [kind] "<principal>|<npub or *>". Web origins are
+  /* Non-event legacy permissions use the exact disposable identity. Only
+   * identity-independent relay access retains an identity wildcard. Broad
+   * event allows are deliberately absent: the test obtains an exact-kind
+   * remembered grant through the real daemon. Web origins are
    * principals only when asserted by the trusted bridge (this build-tree
    * host, via the test-build NOSTR_SIGNER_TEST_ORIGIN_BRIDGES); the host
    * calls GetPublicKey/GetRelays/NIP-04/44 without an app_id, so those run
@@ -262,14 +287,13 @@ static void setup(E2E *e) {
    * Add only hermetic test grants for that fallback; Linux still exercises
    * executable and bridge-origin principals through its own entries. */
   g_autofree gchar *body = g_strdup_printf(
-      "[event]\nhttps://allowed.example|*=allow\nhttps://denied.example|*=deny\n"
-      "claimed:https://allowed.example|*=allow\nclaimed:https://denied.example|*=deny\n"
-      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
+      "[event]\nhttps://denied.example|*=deny\nclaimed:https://denied.example|*=deny\n"
+      "[get_public_key]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
       "[get_relays]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip04_encrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip04_decrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip44_encrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip44_decrypt]\nexe:%1$s|*=allow\nclaimed:|*=allow\n", host_real);
+      "[nip04_encrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
+      "[nip04_decrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
+      "[nip44_encrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n"
+      "[nip44_decrypt]\nexe:%1$s|%2$s=allow\nclaimed:|%2$s=allow\n", host_real, NPUB);
   write_file(grants, body);
   e->relays_path = g_build_filename(ndir, "relays.conf", NULL);
   write_file(e->relays_path, "[\"wss://relay.example\", \"wss://nos.lol\"]\n");
@@ -295,20 +319,7 @@ static void setup(E2E *e) {
                                      "ApprovalRequested", "/org/nostr/signer", NULL,
                                      G_DBUS_SIGNAL_FLAGS_NONE, on_approval_requested, e, NULL);
 
-  /* The host must not see the signer key; it only needs the bus. */
-  g_autoptr(GSubprocessLauncher) l = g_subprocess_launcher_new(
-      G_SUBPROCESS_FLAGS_STDIN_PIPE | G_SUBPROCESS_FLAGS_STDOUT_PIPE);
-  g_subprocess_launcher_unsetenv(l, "NOSTR_SIGNER_SECKEY_HEX");
-  g_subprocess_launcher_setenv(l, "NOSTR_SIGNER_BRIDGE_DEBUG", "1", TRUE);
-  g_subprocess_launcher_setenv(l, "G_MESSAGES_DEBUG", "all", TRUE);
-  g_subprocess_launcher_setenv(l, "NOSTR_SIGNER_BRIDGE_APPROVAL_TIMEOUT_MS", "4000", TRUE);
-  /* Browser-style argv: Firefox passes manifest path + extension id. */
-  e->host = g_subprocess_launcher_spawn(l, &err, NMH_HOST_PATH,
-                                        "/usr/lib/mozilla/native-messaging-hosts/org.nostr.signer_bridge.json",
-                                        "signer-bridge@gnostr.org", NULL);
-  CHECK(e->host);
-  e->to_host = g_subprocess_get_stdin_pipe(e->host);
-  e->from_host = g_subprocess_get_stdout_pipe(e->host);
+  spawn_host(e);
 }
 
 static void teardown(E2E *e) {
@@ -349,14 +360,28 @@ int main(void) {
   json_node_unref(r);
   g_print("ok getPublicKey -> %s\n", PK_HEX);
 
-  /* signEvent, ACL allow: extra/forged fields are dropped by the host */
-  r = call(&e, "{\"id\":\"s1\",\"method\":\"signEvent\",\"origin\":\"https://allowed.example\","
-               "\"params\":{\"event\":{\"kind\":1,\"created_at\":1700000000,\"tags\":[[\"t\",\"nip07\"]],"
-               "\"content\":\"hello from the bridge\",\"id\":\"forged\",\"sig\":\"forged\",\"x\":1}}}");
-  CHECK(g_strcmp0(reply_id(r), "s1") == 0);
-  assert_valid_signed(result_of(r), 1, 1700000000, "hello from the bridge");
+  /* Remember a real, validated note approval; forged fields still get dropped. */
+  g_autofree gchar *note = g_strdup_printf(
+      "{\"id\":\"s1\",\"method\":\"signEvent\",\"origin\":\"https://allowed.example\","
+      "\"params\":{\"event\":{\"kind\":%d,\"created_at\":1700000000,\"tags\":[[\"t\",\"nip07\"]],"
+      "\"content\":\"hello from the bridge\",\"id\":\"forged\",\"sig\":\"forged\",\"x\":1}}}", NOSTR_KIND_TEXT_NOTE);
+  send_frame(&e, note); wait_for_approval(&e);
+  assert_approval_origin(&e, "https://allowed.example"); approve(&e, TRUE, TRUE);
+  r = recv_frame(&e); CHECK(g_strcmp0(reply_id(r), "s1") == 0);
+  assert_valid_signed(result_of(r), NOSTR_KIND_TEXT_NOTE, 1700000000, "hello from the bridge");
   json_node_unref(r);
-  g_print("ok signEvent (ACL allow, id recomputed)\n");
+  /* Reconnect the actual browser host: permission belongs to the principal,
+   * not a process/session. No sleep or fresh implicit authority is involved. */
+  CHECK(g_output_stream_close(e.to_host, NULL, NULL));
+  CHECK(g_subprocess_wait_check(e.host, NULL, NULL)); g_clear_object(&e.host);
+  spawn_host(&e);
+  g_autofree gchar *remembered = g_strdup_printf(
+      "{\"id\":\"s1-remembered\",\"method\":\"signEvent\",\"origin\":\"https://allowed.example\","
+      "\"params\":{\"event\":{\"kind\":%d,\"created_at\":1700000002,\"tags\":[],\"content\":\"remembered note\"}}}", NOSTR_KIND_TEXT_NOTE);
+  r = call(&e, remembered); CHECK(g_strcmp0(reply_id(r), "s1-remembered") == 0);
+  assert_valid_signed(result_of(r), NOSTR_KIND_TEXT_NOTE, 1700000002, "remembered note");
+  json_node_unref(r); CHECK(e.last_request_id == NULL);
+  g_print("ok signEvent (exact-kind remembered grant after host reconnect, id recomputed)\n");
 
   /* signEvent, ACL deny */
   r = call(&e, "{\"id\":\"s2\",\"method\":\"signEvent\",\"origin\":\"https://denied.example\","
@@ -365,22 +390,23 @@ int main(void) {
   json_node_unref(r);
   g_print("ok signEvent (ACL deny -> rejected)\n");
 
-  /* signEvent, interactive approve — and a getPublicKey answered while the
-   * approval is pending (out-of-order correlation). */
-  send_frame(&e, "{\"id\":\"s3\",\"method\":\"signEvent\",\"origin\":\"https://prompt.example\","
-                 "\"params\":{\"event\":{\"kind\":7,\"created_at\":1700000001,\"tags\":[[\"e\",\"" PK_HEX "\"]],"
-                 "\"content\":\"+\"}}}");
-  wait_for_approval(&e);
-  assert_approval_origin(&e, "https://prompt.example");
+  /* The SAME origin's remembered note grant must not cover reactions.
+   * Also prove out-of-order getPublicKey while this approval is pending. */
+  g_autofree gchar *reaction = g_strdup_printf(
+      "{\"id\":\"s3\",\"method\":\"signEvent\",\"origin\":\"https://allowed.example\","
+      "\"params\":{\"event\":{\"kind\":%d,\"created_at\":1700000001,\"tags\":[[\"e\",\"" PK_HEX "\"]],"
+      "\"content\":\"+\"}}}", NOSTR_KIND_REACTION);
+  send_frame(&e, reaction); wait_for_approval(&e);
+  assert_approval_origin(&e, "https://allowed.example");
   r = call(&e, "{\"id\":\"pk2\",\"method\":\"getPublicKey\",\"origin\":\"https://other.example\"}");
   CHECK(g_strcmp0(reply_id(r), "pk2") == 0);
   json_node_unref(r);
-  approve(&e, TRUE);
+  approve(&e, TRUE, FALSE);
   r = recv_frame(&e);
   CHECK(g_strcmp0(reply_id(r), "s3") == 0);
-  assert_valid_signed(result_of(r), 7, 1700000001, "+");
+  assert_valid_signed(result_of(r), NOSTR_KIND_REACTION, 1700000001, "+");
   json_node_unref(r);
-  g_print("ok signEvent (ApprovalRequested app_id=https://prompt.example, approved; pk2 answered first)\n");
+  g_print("ok signEvent (same origin's different kind needs approval; pk2 answered first)\n");
 
   g_usleep(200 * 1000); /* daemon rate-limits un-ACL'd SignEvent per sender */
 
@@ -389,7 +415,7 @@ int main(void) {
                  "\"params\":{\"event\":{\"kind\":1,\"tags\":[],\"content\":\"deny me\"}}}");
   wait_for_approval(&e);
   assert_approval_origin(&e, "http://localhost:5173");
-  approve(&e, FALSE);
+  approve(&e, FALSE, FALSE);
   r = recv_frame(&e);
   assert_error(r, "s4", "rejected");
   json_node_unref(r);

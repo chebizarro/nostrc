@@ -95,6 +95,8 @@
 #endif
 
 #include "signer_caller.h"
+#include "signer_permissions.h"
+#include <nostr-kinds.h>
 
 #ifndef NIP55L_DAEMON_PATH
 #error "NIP55L_DAEMON_PATH must be defined by the build (path to nostr-signer-daemon)"
@@ -245,8 +247,12 @@ typedef struct {
   char *npub;     /* npub of the pk */
   char *principal; /* how the daemon identifies this process (app_id "") */
   char *grants_path;
+  char *permission_fixture;
   gboolean attested; /* the bus reports our PID (Linux); FALSE on macOS */
 } Ctx;
+static GVariant *interactive(Ctx *ctx, const char *method, GVariant *args,
+    const char *want_kind, const char *want_app_id, gboolean decision,
+    gboolean remember, char **preview_out, GError **err_out);
 
 /* ---------------------------------------------------------------------------
  * Exit cleanup (nostrc-oauv)
@@ -421,6 +427,31 @@ static char *expand_line(const Ctx *ctx, const char *line, const char *principal
   return g_string_free(o, FALSE);
 }
 
+/* Translate the old concise fixture notation into intentional exact v2
+ * permissions. This is test provisioning, not migration: broad event allows
+ * must never be fed to the running daemon as executable authority. */
+static void seed_fixture_permissions(Ctx *ctx, const gchar *body, const gchar *npub) {
+  if (!body) return;
+  g_autofree gchar *dir = g_path_get_dirname(ctx->grants_path);
+  g_autofree gchar *config = g_path_get_dirname(dir);
+  g_autoptr(SignerPermissions) permissions = signer_permissions_new(config);
+  g_autoptr(GKeyFile) kf = g_key_file_new();
+  CHECK(g_key_file_load_from_data(kf, body, -1, G_KEY_FILE_NONE, NULL));
+  g_auto(GStrv) ops = g_key_file_get_groups(kf, NULL);
+  for (guint i = 0; ops[i]; i++) {
+    g_auto(GStrv) keys = g_key_file_get_keys(kf, ops[i], NULL, NULL);
+    for (guint j = 0; keys && keys[j]; j++) {
+      const gchar *bar = strrchr(keys[j], '|'); CHECK(bar != NULL);
+      g_autofree gchar *principal = g_strndup(keys[j], bar - keys[j]);
+      g_autofree gchar *decision = g_key_file_get_string(kf, ops[i], keys[j], NULL);
+      gboolean allow = !strcmp(decision, "allow"); CHECK(allow || !strcmp(decision, "deny"));
+      const gchar *identity = allow && !strcmp(bar + 1, "*") && strcmp(ops[i], "get_relays") ? npub : bar + 1;
+      gint kind = allow && !strcmp(ops[i], "event") ? NOSTR_KIND_TEXT_NOTE : -1;
+      CHECK(signer_permissions_remember(permissions, principal, identity, ops[i], kind, allow, 0, NULL));
+    }
+  }
+}
+
 static char *expand_grants(const Ctx *ctx, const char *tmpl) {
   static const char *claims[] = { "claimed:", "claimed:contract-test" };
   GString *o = g_string_new(NULL);
@@ -528,9 +559,8 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
   {
     ctx->grants_path = g_build_filename(gnostr_dir, "signer-grants.ini", NULL);
     if (grants) {
-      char *body = expand_grants(ctx, grants);
-      write_file(ctx->grants_path, body);
-      g_free(body);
+      ctx->permission_fixture = expand_grants(ctx, grants);
+      seed_fixture_permissions(ctx, ctx->permission_fixture, ctx->npub);
     }
     /* The pre-0.4.0 ACL, keyed on claimed app_ids: must be ignored. */
     char *legacy = g_build_filename(gnostr_dir, "signer-acl.ini", NULL);
@@ -637,6 +667,7 @@ static void ctx_teardown(Ctx *ctx) {
   free(ctx->npub);
   g_free(ctx->principal);
   g_free(ctx->grants_path);
+  g_free(ctx->permission_fixture);
 }
 
 /* ---------------------------------------------------------------------------
@@ -693,15 +724,14 @@ static void test_sign_event_ok(Ctx *ctx) {
 
   /* Zero created_at is filled with the current time. */
   int64_t before = (int64_t)time(NULL);
-  ret = call(ctx->bus, "SignEvent",
-             g_variant_new("(sss)",
-                           "{\"kind\":22242,\"created_at\":0,"
-                           "\"tags\":[[\"challenge\",\"abc\"]],\"content\":\"\"}",
-                           "", "contract-test"),
-             "(s)", &err);
+  g_autofree gchar *auth = g_strdup_printf("{\"kind\":%d,\"created_at\":0,"
+      "\"tags\":[[\"challenge\",\"abc\"]],\"content\":\"\"}", NOSTR_KIND_CLIENT_AUTHENTICATION);
+  /* AUTH always needs fresh consent, even in a fixture with publishing grants. */
+  ret = interactive(ctx, "SignEvent", g_variant_new("(sss)", auth, "", "contract-test"),
+      "event", pr(ctx, "contract-test"), TRUE, FALSE, NULL, &err);
   CHECK(ret != NULL);
   g_variant_get(ret, "(&s)", &signed_json);
-  assert_signed_event(signed_json, ctx->pk_hex, 22242, before);
+  assert_signed_event(signed_json, ctx->pk_hex, NOSTR_KIND_CLIENT_AUTHENTICATION, before);
   g_variant_unref(ret);
 }
 
@@ -1078,15 +1108,25 @@ static char *incoming_nip44(Ctx *ctx, const char *peer_sk, const char *msg) {
 }
 
 static int grants_has(Ctx *ctx, const char *section, const char *key, const char *want_value) {
-  GKeyFile *kf = g_key_file_new();
-  int found = 0;
-  if (g_key_file_load_from_file(kf, ctx->grants_path, G_KEY_FILE_NONE, NULL)) {
-    char *v = g_key_file_get_string(kf, section, key, NULL);
-    found = v && (!want_value || g_str_has_prefix(v, want_value));
-    g_free(v);
+  const gchar *bar = strrchr(key, '|'); CHECK(bar != NULL);
+  g_autofree gchar *principal = g_strndup(key, bar - key);
+  g_autofree gchar *dir = g_path_get_dirname(ctx->grants_path);
+  g_autofree gchar *config = g_path_get_dirname(dir);
+  g_autoptr(SignerPermissions) permissions = signer_permissions_new(config);
+  g_autoptr(GVariant) rows = signer_permissions_list(permissions, principal, NULL);
+  CHECK(rows != NULL);
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i);
+    const gchar *op, *identity, *decision; gint kind;
+    CHECK(g_variant_lookup(row, "operation", "&s", &op));
+    CHECK(g_variant_lookup(row, "identity", "&s", &identity));
+    CHECK(g_variant_lookup(row, "decision", "&s", &decision));
+    CHECK(g_variant_lookup(row, "event-kind", "i", &kind));
+    if (!strcmp(op, section) && !strcmp(identity, bar + 1) &&
+        (strcmp(section, "event") || kind == NOSTR_KIND_TEXT_NOTE) &&
+        (!want_value || !strcmp(decision, want_value))) return TRUE;
   }
-  g_key_file_unref(kf);
-  return found;
+  return FALSE;
 }
 
 static GDBusConnection *open_conn(void);
@@ -1428,6 +1468,30 @@ static void test_gating(Ctx *ctx) {
   g_free(ct);
   g_usleep(150 * 1000);
 
+  /* G03: another event kind never inherits the note grant. A fresh bus
+   * connection avoids the per-sender prompt cooldown, not permission checks. */
+  {
+    Ctx other_connection = *ctx; other_connection.bus = open_conn();
+    g_autofree gchar *reaction = g_strdup_printf("{\"kind\":%d,\"created_at\":0,\"tags\":[],\"content\":\"+\"}", NOSTR_KIND_REACTION);
+    r = interactive(&other_connection, "SignEvent", g_variant_new("(sss)", reaction, "", "contract-test"),
+        "event", pr(ctx, "contract-test"), FALSE, TRUE, NULL, &err);
+    CHECK(r == NULL); expect_remote_error(err, ERR_DENIED); g_clear_error(&err);
+    close_conn(other_connection.bus);
+    r = call(ctx->bus, "ListGrants", NULL, "(a(sssbt))", &err); CHECK(r != NULL);
+    g_autoptr(GVariant) legacy_rows = g_variant_get_child_value(r, 0);
+    for (gsize i = 0; i < g_variant_n_children(legacy_rows); i++) {
+      g_autoptr(GVariant) row = g_variant_get_child_value(legacy_rows, i); const gchar *op = NULL;
+      g_variant_get_child(row, 0, "&s", &op); CHECK(strcmp(op, "event") != 0);
+    }
+    g_variant_unref(r);
+    r = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "event", pr(ctx, "contract-test"), ctx->npub), "(b)", &err);
+    CHECK(r != NULL); gboolean removed = FALSE; g_variant_get(r, "(b)", &removed); CHECK(removed); g_variant_unref(r);
+    g_autofree gchar *key = g_strdup_printf("%s|%s", pr(ctx, "contract-test"), ctx->npub);
+    CHECK(!grants_has(ctx, "event", key, "allow"));
+    r = call(ctx->bus, "RevokeGrant", g_variant_new("(sss)", "event", pr(ctx, "contract-test"), ctx->npub), "(b)", &err);
+    CHECK(r != NULL); g_variant_get(r, "(b)", &removed); CHECK(!removed); g_variant_unref(r);
+  }
+
   /* Convkey: remembered deny → denied by policy without a prompt. */
   r = interactive(ctx, "NIP44DeriveConversationKey", g_variant_new("(sss)", peer_pk, "", "contract-ask"),
                   "nip44_conversation_key", pr(ctx, "contract-ask"), FALSE, TRUE, &preview, &err);
@@ -1481,6 +1545,9 @@ static void test_gating(Ctx *ctx) {
    * limited instead (nostrc-oauv). */
   {
     write_file(ctx->grants_path, "");
+    g_autofree gchar *dir = g_path_get_dirname(ctx->grants_path);
+    g_autofree gchar *v2 = g_build_filename(dir, "signer-permissions-v2.ini", NULL);
+    CHECK(g_unlink(v2) == 0);
     Watch w;
     watch_start(ctx, &w);
     for (guint i = 0; i < 9; i++) {
@@ -2071,11 +2138,12 @@ static void test_nip5f_gating(Ctx *ctx, const Nip5fSock *sock) {
                                  principal, ctx->npub, principal);
     /* Keep the remembered get_public_key grant: append. */
     char *old = NULL;
-    CHECK(g_file_get_contents(ctx->grants_path, &old, NULL, NULL));
+    /* Remembered permissions are v2-only; legacy input may be absent. */
+    if (!g_file_get_contents(ctx->grants_path, &old, NULL, NULL)) old = g_strdup("");
     char *all = g_strconcat(old, body, NULL);
     write_file(ctx->grants_path, all);
     g_free(old); g_free(all); g_free(body);
-    g_usleep(1100 * 1000); /* the daemon reloads on mtime/size change */
+    /* The evaluator re-sanitises every load; no mtime sleep is needed. */
     char *req = g_strdup_printf("{\"id\":\"4\",\"method\":\"nip44_encrypt\",\"params\":"
                                 "{\"peer_pub\":\"%s\",\"plaintext\":\"a \\\"quoted\\\" line\\n\"}}", peer_pk);
     resp = n5f_no_prompt(ctx, fd, req);
@@ -2460,6 +2528,10 @@ static void seed(const SecretSchema *schema, const char *label, const char *secr
  * from stdin, so no prompter is ever needed) and seed legacy items. */
 static void phase3_pre_daemon(Ctx *ctx, gpointer data) {
   Phase3 *p = data;
+  const gchar *identities[] = {p->legacy_signer.npub, p->legacy_helper.npub,
+    p->pre_bml6.npub, p->client.npub, p->client_dup.npub, p->client_foreign.npub, p->client_hw.npub};
+  for (guint i = 0; i < G_N_ELEMENTS(identities); i++)
+    seed_fixture_permissions(ctx, ctx->permission_fixture, identities[i]);
   gchar *gk = g_find_program_in_path("gnome-keyring-daemon");
   CHECK(gk != NULL);
   GError *err = NULL;
@@ -3078,6 +3150,14 @@ typedef struct { const char *mode; const char *stored_sk; const char *other_sk; 
  * a key with two items) and a copy of the fixture's environment key. */
 static void fake_secrets_pre_daemon(Ctx *ctx, gpointer data) {
   const FakeSecrets *fs = data;
+  const gchar *keys[] = {fs->stored_sk, fs->other_sk};
+  for (guint i = 0; i < G_N_ELEMENTS(keys); i++) {
+    if (!keys[i]) continue;
+    g_autofree gchar *hex = nostr_key_get_public(keys[i]); guint8 pk[32]; gchar *npub = NULL;
+    CHECK(hex && nostr_hex2bin(pk, hex, sizeof pk));
+    CHECK(nostr_nip19_encode_npub(pk, &npub) == 0);
+    seed_fixture_permissions(ctx, ctx->permission_fixture, npub); free(npub);
+  }
   GError *err = NULL;
   char *exe = self_exe();
   if (fs->stored_sk && fs->other_sk)

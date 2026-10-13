@@ -4,6 +4,9 @@
 #include "nip55l_dbus_errors.h"
 #include <glib/gstdio.h>
 #include <string.h>
+#include <nostr-kinds.h>
+#include <sys/resource.h>
+#include <signal.h>
 
 static const gchar KEY[] = "0000000000000000000000000000000000000000000000000000000000000001";
 static const gchar PEER[] = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
@@ -45,6 +48,11 @@ static const gchar *request_id(Watch *w, guint index) {
   g_assert_cmpuint(strlen(id), ==, 64); return id;
 }
 static SignerApprovalService *start(Watch *w) {
+  const gchar *files[] = {"signer-grants.ini", "signer-permissions-v2.ini"};
+  for (guint i = 0; i < G_N_ELEMENTS(files); i++) {
+    g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "gnostr", files[i], NULL);
+    g_unlink(path);
+  }
   w->pending = g_ptr_array_new_with_free_func((GDestroyNotify)g_variant_unref);
   SignerApprovalService *s = signer_approval_service_new(NULL);
   signer_approval_service_subscribe(s, changed, w); return s;
@@ -180,9 +188,73 @@ static void test_deny_queued_execution(void) {
   wait_count(&sentinel.count, 1); wait_count(&sentinel_decision.count, 1);
   g_mutex_lock(&barrier.lock); g_assert_cmpuint(barrier.executions, ==, 2); g_mutex_unlock(&barrier.lock);
   g_assert_cmpuint(queued.count, ==, 1); g_assert_nonnull(sentinel.result);
-  gchar *file = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-grants.ini", NULL);
+  gchar *file = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-permissions-v2.ini", NULL);
   g_assert_cmpint(g_unlink(file), ==, 0); g_free(file);
   reply_clear(&occupied); reply_clear(&queued); reply_clear(&deny); reply_clear(&sentinel);
+  signer_approval_service_test_after_backend(s, NULL, NULL); stop(s, &w);
+  g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
+}
+static SignerTrustTier full_trust(const gchar *principal, gboolean *consented, gpointer data) {
+  (void)principal; *consented = TRUE; return *(SignerTrustTier *)data;
+}
+static void test_tier_lowered_queued_revision(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  Barrier barrier = {0}; g_mutex_init(&barrier.lock); g_cond_init(&barrier.cond);
+  SignerTrustTier tier = SIGNER_TRUST_FULL;
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  signer_permissions_set_trust_lookup(permissions, full_trust, &tier);
+  signer_approval_service_test_after_backend(s, after_backend, &barrier);
+  Reply blocker = {0}, queued = {0}, sentinel = {0}; Decision first = {0}, last = {0};
+  g_autoptr(SignerGateHandle) hb = submit(s, &who, "blocker", SIGNER_GATE_CONNECT, NULL, NULL, &blocker);
+  wait_prompts(&w, 1); signer_approval_service_decide(s, request_id(&w, 0), TRUE, FALSE, 0, decided, &first);
+  g_mutex_lock(&barrier.lock); gint64 bound = g_get_monotonic_time() + 20 * G_USEC_PER_SEC;
+  while (!barrier.ready) g_assert_true(g_cond_wait_until(&barrier.cond, &barrier.lock, bound));
+  g_mutex_unlock(&barrier.lock);
+  /* Full auto-admits PING, queued behind the blocked worker. No denial is
+   * introduced: only a revision change can prevent the old auto-authority. */
+  g_autoptr(SignerGateHandle) hq = submit(s, &who, "queued", SIGNER_GATE_PING, NULL, NULL, &queued);
+  g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(queued.count, ==, 0);
+  tier = SIGNER_TRUST_LOW; signer_permissions_policy_changed(permissions);
+  g_mutex_lock(&barrier.lock); barrier.release = TRUE; g_cond_signal(&barrier.cond); g_mutex_unlock(&barrier.lock);
+  wait_count(&queued.count, 1);
+  g_assert_cmpstr(queued.error, ==, ORG_NOSTR_SIGNER_ERR_CANCELLED); g_assert_null(queued.result);
+  g_autoptr(SignerGateHandle) hs = submit(s, &who, "sentinel", SIGNER_GATE_CONNECT, NULL, NULL, &sentinel);
+  wait_prompts(&w, 2); signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &last);
+  wait_count(&sentinel.count, 1); wait_count(&last.count, 1);
+  g_mutex_lock(&barrier.lock); g_assert_cmpuint(barrier.executions, ==, 2); g_mutex_unlock(&barrier.lock);
+  reply_clear(&blocker); reply_clear(&queued); reply_clear(&sentinel);
+  signer_approval_service_test_after_backend(s, NULL, NULL); stop(s, &w);
+  g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
+}
+static gboolean release_expired_worker(gpointer data) {
+  Barrier *barrier = data;
+  g_mutex_lock(&barrier->lock); barrier->release = TRUE;
+  g_cond_signal(&barrier->cond); g_mutex_unlock(&barrier->lock); return G_SOURCE_REMOVE;
+}
+static void test_expiry_queued_revision(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  Barrier barrier = {0}; g_mutex_init(&barrier.lock); g_cond_init(&barrier.cond);
+  signer_approval_service_test_after_backend(s, after_backend, &barrier);
+  Reply blocker = {0}, queued = {0}, sentinel = {0}; Decision first = {0}, last = {0};
+  g_autoptr(SignerGateHandle) hb = submit(s, &who, "blocker", SIGNER_GATE_CONNECT, NULL, NULL, &blocker);
+  wait_prompts(&w, 1); signer_approval_service_decide(s, request_id(&w, 0), TRUE, FALSE, 0, decided, &first);
+  g_mutex_lock(&barrier.lock); gint64 bound = g_get_monotonic_time() + 20 * G_USEC_PER_SEC;
+  while (!barrier.ready) g_assert_true(g_cond_wait_until(&barrier.cond, &barrier.lock, bound));
+  g_mutex_unlock(&barrier.lock);
+  SignerPermissions *permissions = signer_approval_service_permissions(s);
+  g_assert_true(signer_permissions_remember(permissions, who.principal, NULL, "ping", -1, TRUE, 1, NULL));
+  g_autoptr(SignerGateHandle) hq = submit(s, &who, "queued", SIGNER_GATE_PING, NULL, NULL, &queued);
+  g_assert_cmpuint(w.pending->len, ==, 1); g_assert_cmpuint(queued.count, ==, 0);
+  /* This source advances a real permission's absolute expiry, not relay
+   * delivery. No policy mutation occurs while the job is queued. */
+  g_timeout_add(2000, release_expired_worker, &barrier);
+  wait_count(&queued.count, 1);
+  g_assert_cmpstr(queued.error, ==, ORG_NOSTR_SIGNER_ERR_CANCELLED); g_assert_null(queued.result);
+  g_autoptr(SignerGateHandle) hs = submit(s, &who, "sentinel", SIGNER_GATE_CONNECT, NULL, NULL, &sentinel);
+  wait_prompts(&w, 2); signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &last);
+  wait_count(&sentinel.count, 1); wait_count(&last.count, 1);
+  g_mutex_lock(&barrier.lock); g_assert_cmpuint(barrier.executions, ==, 2); g_mutex_unlock(&barrier.lock);
+  reply_clear(&blocker); reply_clear(&queued); reply_clear(&sentinel);
   signer_approval_service_test_after_backend(s, NULL, NULL); stop(s, &w);
   g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
 }
@@ -222,6 +294,53 @@ static void test_pause_after_backend(void) {
   g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
 }
 #endif
+static void test_scoped_remember_and_revoke(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  g_autofree gchar *note = g_strdup_printf("{\"kind\":%d,\"tags\":[],\"content\":\"note\"}", NOSTR_KIND_TEXT_NOTE);
+  g_autofree gchar *reaction = g_strdup_printf("{\"kind\":%d,\"tags\":[],\"content\":\"+\"}", NOSTR_KIND_REACTION);
+  Reply first = {0}, repeat = {0}, other = {0}, after_revoke = {0}; Decision d = {0}, e = {0};
+  g_autoptr(SignerGateHandle) h1 = submit(s, &who, "first", SIGNER_GATE_SIGN_EVENT, note, NULL, &first);
+  wait_prompts(&w, 1);
+  const gchar *identity = NULL; g_assert_true(g_variant_lookup(w.pending->pdata[0], "identity", "&s", &identity));
+  signer_approval_service_decide(s, request_id(&w, 0), TRUE, TRUE, 600, decided, &d);
+  wait_count(&first.count, 1); g_assert_nonnull(first.result); g_assert_true(d.ok);
+  g_autoptr(GVariant) legacy = signer_approval_service_list_grants(s);
+  g_assert_cmpuint(g_variant_n_children(legacy), ==, 0);
+  g_autoptr(GVariant) rows = signer_permissions_list(signer_approval_service_permissions(s), who.principal, NULL);
+  g_assert_cmpuint(g_variant_n_children(rows), ==, 1);
+  g_autoptr(GVariant) row = g_variant_get_child_value(rows, 0); gint kind;
+  g_assert_true(g_variant_lookup(row, "event-kind", "i", &kind)); g_assert_cmpint(kind, ==, NOSTR_KIND_TEXT_NOTE);
+  g_autoptr(SignerGateHandle) h2 = submit(s, &who, "repeat", SIGNER_GATE_SIGN_EVENT, note, NULL, &repeat);
+  wait_count(&repeat.count, 1); g_assert_nonnull(repeat.result); g_assert_cmpuint(w.pending->len, ==, 1);
+  g_autoptr(SignerGateHandle) h3 = submit(s, &who, "other", SIGNER_GATE_SIGN_EVENT, reaction, NULL, &other);
+  wait_prompts(&w, 2); signer_approval_service_decide(s, request_id(&w, 1), FALSE, TRUE, 600, decided, &e);
+  g_assert_cmpstr(other.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_true(e.ok);
+  gboolean removed = FALSE;
+  g_assert_true(signer_approval_service_revoke_grant(s, "event", who.principal, identity, &removed)); g_assert_true(removed);
+  g_autoptr(SignerGateHandle) h4 = submit(s, &who, "after-revoke", SIGNER_GATE_SIGN_EVENT, note, NULL, &after_revoke);
+  wait_prompts(&w, 3); signer_gate_cancel(h4);
+  reply_clear(&first); reply_clear(&repeat); reply_clear(&other); reply_clear(&after_revoke); stop(s, &w);
+}
+static void test_remember_write_failure(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  Reply result = {0}; Decision d = {0};
+  g_autofree gchar *note = g_strdup_printf("{\"kind\":%d,\"tags\":[],\"content\":\"not delivered\"}", NOSTR_KIND_TEXT_NOTE);
+  g_autoptr(SignerGateHandle) h = submit(s, &who, "failure", SIGNER_GATE_SIGN_EVENT, note, NULL, &result);
+  wait_prompts(&w, 1);
+  /* Real atomic-write failure, not a parser/load failure: cap file growth
+   * only after successful policy load and restore the process limit afterwards. */
+  struct rlimit original, limited;
+  g_assert_cmpint(getrlimit(RLIMIT_FSIZE, &original), ==, 0); limited = original; limited.rlim_cur = 1;
+  void (*handler)(int) = signal(SIGXFSZ, SIG_IGN);
+  g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &limited), ==, 0);
+  signer_approval_service_decide(s, request_id(&w, 0), TRUE, TRUE, 600, decided, &d);
+  wait_count(&result.count, 1); wait_count(&d.count, 1);
+  g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &original), ==, 0); signal(SIGXFSZ, handler);
+  g_assert_cmpstr(result.error, ==, ORG_NOSTR_SIGNER_ERR_INTERNAL); g_assert_null(result.result); g_assert_false(d.ok);
+  g_autoptr(GVariant) rows = signer_permissions_list(signer_approval_service_permissions(s), who.principal, NULL);
+  g_assert_nonnull(rows); g_assert_cmpuint(g_variant_n_children(rows), ==, 0);
+  reply_clear(&result); stop(s, &w);
+}
 static void test_nip04_roundtrip(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
   Reply encrypted = {0}, decrypted = {0}; Decision a = {0}, b = {0};
@@ -345,7 +464,11 @@ int main(int argc, char **argv) {
 #ifdef NIP55L_TEST_TRUST_ENV
   g_test_add_func("/approval/pause-after-backend", test_pause_after_backend);
   g_test_add_func("/approval/deny-queued-execution", test_deny_queued_execution);
+  g_test_add_func("/approval/tier-lowered-queued-revision", test_tier_lowered_queued_revision);
+  g_test_add_func("/approval/expiry-queued-revision", test_expiry_queued_revision);
 #endif
+  g_test_add_func("/approval/scoped-remember-revoke", test_scoped_remember_and_revoke);
+  g_test_add_func("/approval/remember-write-failure", test_remember_write_failure);
   g_test_add_func("/approval/nip04-roundtrip", test_nip04_roundtrip);
   g_test_add_func("/approval/validation-deadline", test_validation_and_deadline);
   g_test_add_func("/approval/metadata-revoke", test_metadata_and_revoke);
@@ -354,6 +477,7 @@ int main(int argc, char **argv) {
   gint result = g_test_run();
   gchar *file = g_build_filename(config, "gnostr", "signer-grants.ini", NULL);
   g_unlink(file); g_free(file);
+  file = g_build_filename(config, "gnostr", "signer-permissions-v2.ini", NULL); g_unlink(file); g_free(file);
   file = g_build_filename(config, "gnostr", NULL); g_rmdir(file); g_free(file);
   g_rmdir(config); g_free(config); return result;
 }
