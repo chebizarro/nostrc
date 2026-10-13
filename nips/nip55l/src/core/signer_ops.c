@@ -84,7 +84,11 @@ int nostr_nip55l_test_keychain_lookup_status(OSStatus status){
 #endif
 
 static int is_hex_64(const char *s) {
-  if (!s) return 0; size_t n = strlen(s); if (n != 64) return 0; for (size_t i=0;i<n;i++){ char c=s[i]; if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0; } return 1;
+  if (!s) return 0;
+  size_t n = strlen(s);
+  if (n != 64) return 0;
+  for (size_t i=0;i<n;i++){ char c=s[i]; if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F'))) return 0; }
+  return 1;
 }
 
 /* --- In-process active-account cache (nostrc-7g9d) --------------------------
@@ -516,7 +520,8 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
  * exposing it to any signing or encryption operation.
  */
 static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
-  if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_sk_hex=NULL;
+  if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_sk_hex=NULL;
   /* nostrc-7g9d: honour the in-process cache before the env/libsecret path
    * so a key freshly stored via StoreKey is visible immediately. When the
    * caller supplies a specific selector (identity) we only match if the
@@ -732,7 +737,8 @@ static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
 }
 
 int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub){
-  if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub = NULL;
+  if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npub = NULL;
   char *sk_hex = NULL; int rc = resolve_seckey_hex(current_user, &sk_hex);
   if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
   rc = is_hex_64(sk_hex) ? sk_hex_to_npub(sk_hex, out_npub) : NOSTR_SIGNER_ERROR_INVALID_KEY;
@@ -792,8 +798,45 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
   return rc == 0 ? NOSTR_SIGNER_ERROR_NOT_FOUND : rc;
 }
 
+#ifdef NIP55L_HAVE_NIP49_EXPORT
+#include <nostr/nip49/nip49_g.h>
+#include <nostr/nip49/nip49.h>
+#endif
+int nostr_nip55l_export_identity(const char *identity, const char *format,
+                                const char *passphrase, char **out_backup) {
+  if (!out_backup) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_backup = NULL;
+  if (!identity || !*identity || !format || strlen(identity) > 4096)
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  int raw = strcmp(format, "nsec") == 0;
+  if (!raw && strcmp(format, "ncryptsec")) return NOSTR_SIGNER_ERROR_NOT_SUPPORTED;
+  if (!raw) {
+    if (!passphrase || !*passphrase || strlen(passphrase) > 1024) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+#ifndef NIP55L_HAVE_NIP49_EXPORT
+    return NOSTR_SIGNER_ERROR_NOT_SUPPORTED;
+#else
+    if (!g_utf8_validate(passphrase, -1, NULL)) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+#endif
+  }
+  nostr_secure_buf key = {0};
+  int rc = resolve_seckey_secure(identity, &key);
+  if (rc) return rc;
+  if (raw) rc = nostr_nip19_encode_nsec(key.ptr, out_backup) == 0 ? 0 : NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+#ifdef NIP55L_HAVE_NIP49_EXPORT
+  else rc = nostr_nip49_encrypt_g(key.ptr, NOSTR_NIP49_SECURITY_UNKNOWN, passphrase, 16,
+                                  out_backup, NULL) ? 0 : NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+#endif
+  secure_free(&key);
+  if (rc || !*out_backup) {
+    if (*out_backup) { secure_wipe(*out_backup, strlen(*out_backup)); free(*out_backup); *out_backup = NULL; }
+    return rc ? rc : NOSTR_SIGNER_ERROR_BACKEND;
+  }
+  return 0;
+}
+
 int nostr_nip55l_get_public_key(char **out_npub){
-  if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_npub=NULL;
+  if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npub=NULL;
   /* Fast path: return the cached active npub if StoreKey populated it.
    * Bypasses libsecret entirely and closes the smoke-test race that
    * saw GetPublicKey report NoKeyConfigured after a successful
@@ -905,7 +948,8 @@ sign_hash_cleanup:
 
 int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64){
-  if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_cipher_b64=NULL;
+  if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_cipher_b64=NULL;
   int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   char *err=NULL; char *ct=NULL;
   int enc_rc = nostr_nip04_encrypt_secure(plaintext, peer_pub_hex, &sb, &ct, &err);
@@ -916,7 +960,8 @@ int nostr_nip55l_nip04_encrypt(const char *plaintext, const char *peer_pub_hex,
 
 int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext){
-  if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_plaintext=NULL;
+  if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_plaintext=NULL;
   int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   char *err=NULL; char *pt=NULL;
   int dec_rc = nostr_nip04_decrypt_secure(cipher_b64, peer_pub_hex, &sb, &pt, &err);
@@ -927,7 +972,8 @@ int nostr_nip55l_nip04_decrypt(const char *cipher_b64, const char *peer_pub_hex,
 
 int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
                                const char *current_user, char **out_cipher_b64){
-  if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_cipher_b64=NULL;
+  if(!plaintext || !peer_pub_hex || !out_cipher_b64) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_cipher_b64=NULL;
   int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   uint8_t *sk = (uint8_t*)sb.ptr;
   if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
@@ -940,7 +986,8 @@ int nostr_nip55l_nip44_encrypt(const char *plaintext, const char *peer_pub_hex,
 
 int nostr_nip55l_nip44_decrypt(const char *cipher_b64, const char *peer_pub_hex,
                                const char *current_user, char **out_plaintext){
-  if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_plaintext=NULL;
+  if(!cipher_b64 || !peer_pub_hex || !out_plaintext) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_plaintext=NULL;
   int rc; nostr_secure_buf sb = {0}; rc = resolve_seckey_secure(current_user, &sb); if(rc!=0) return rc;
   uint8_t *sk = (uint8_t*)sb.ptr;
   if (!is_hex_64(peer_pub_hex)) return NOSTR_SIGNER_ERROR_INVALID_KEY;
@@ -1032,7 +1079,8 @@ int nostr_nip55l_nip44_conversation_key(const char *peer_pub_hex,
 
 int nostr_nip55l_decrypt_zap_event(const char *event_json,
                                     const char *current_user, char **out_json){
-  if(!out_json || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_json=NULL;
+  if(!out_json || !event_json) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_json=NULL;
   /* Strategy: parse event; find first 'p' tag as peer; attempt NIP-44 v2 decrypt of content,
    * then fallback to NIP-04. If decrypt ok, replace content and return serialized event. */
   int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if (rc!=0) return rc;
@@ -1256,7 +1304,8 @@ static char *relays_conf_path(void){
 }
 
 int nostr_nip55l_get_relays(char **out_relays_json){
-  if(!out_relays_json) return NOSTR_SIGNER_ERROR_INVALID_ARG; *out_relays_json=NULL;
+  if(!out_relays_json) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_relays_json=NULL;
   char *path = relays_conf_path();
   if (!path) return NOSTR_SIGNER_ERROR_NOT_FOUND;
   FILE *fp = fopen(path, "rb");

@@ -462,6 +462,34 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
         TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;bunker;nip46;integration")
 endif()
 
+# G04: real Control1 dispatcher, shared gate/evaluator, private message bus.
+if (TARGET nostr_nip55l_glib)
+  get_target_property(_nip55l_definitions nostr_nip55l_glib COMPILE_DEFINITIONS)
+endif()
+if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
+  add_executable(test-control-untrusted test-control-untrusted.c)
+  target_link_libraries(test-control-untrusted PRIVATE PkgConfig::GLIB)
+  foreach(suite clients activity)
+    add_executable(test-${suite} test-${suite}.c)
+    target_include_directories(test-${suite} PRIVATE ${CMAKE_SOURCE_DIR}
+      ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
+    target_compile_definitions(test-${suite} PRIVATE NIP55L_TEST_TRUST_ENV
+      CONTROL_UNTRUSTED_BIN="$<TARGET_FILE:test-control-untrusted>"
+      GROTTO_DAEMON_BIN="$<TARGET_FILE:grotto-daemon>")
+    target_link_libraries(test-${suite} PRIVATE grotto_control_core nostrc-test-bus)
+    if (TARGET nostr_nip49_glib)
+      target_compile_definitions(test-${suite} PRIVATE GROTTO_HAVE_NIP49_EXPORT=1)
+      target_link_libraries(test-${suite} PRIVATE nostr_nip49_glib)
+    endif()
+    add_dependencies(test-${suite} test-control-untrusted grotto-daemon)
+    add_test(NAME signer/${suite} COMMAND test-${suite})
+    set_tests_properties(signer/${suite} PROPERTIES
+      TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;control;integration"
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/../data;GSETTINGS_BACKEND=memory")
+  endforeach()
+  add_dependencies(signer-tests test-clients test-activity)
+endif()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

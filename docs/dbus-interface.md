@@ -1,6 +1,6 @@
 # GNostr Signer D-Bus Interface
 
-This document describes the D-Bus interface exposed by the `gnostr-signer-daemon` for secure Nostr key management and cryptographic operations.
+This document describes the D-Bus interfaces exposed by `grotto-daemon` for secure Nostr key management and cryptographic operations.
 
 ## Overview
 
@@ -12,7 +12,7 @@ The GNostr Signer provides a secure D-Bus service for:
 - **Zap Processing**: Decryption of zap receipt events (NIP-57)
 - **User Approval**: Interactive approval flow for sensitive operations
 
-The daemon isolates private keys from client applications, ensuring keys never leave the secure process boundary.
+Client signing/encryption APIs never return private keys. The trusted Grotto management UI may explicitly request an encrypted backup or a separately deliberate raw-key reveal; management export is never reachable through client permissions.
 
 ## Bus Name and Object Path
 
@@ -22,6 +22,143 @@ The daemon isolates private keys from client applications, ensuring keys never l
 | **Object Path** | `/org/nostr/signer` |
 | **Interface** | `org.nostr.Signer` |
 | **Bus Type** | Session bus (default) or System bus (`--system` flag) |
+
+## Grotto management: `org.nostr.Grotto.Control1` (G04)
+
+Canonical XML: [`apps/grotto/data/org.nostr.Grotto.Control1.xml`](../apps/grotto/data/org.nostr.Grotto.Control1.xml).
+It is exported on the **existing daemon connection**, bus **`org.nostr.Signer`**,
+object **`/org/nostr/signer/grotto`**. The GUI's `org.nostr.Grotto` name is not the
+service destination and owning that name grants no authority. Legacy
+`org.nostr.Signer` signatures and activation remain unchanged.
+
+### Authentication and compatibility
+
+Every sensitive read and mutation uses a **fresh** `signer_caller_is_approver()`
+check (verified installed path + device/inode, or attested approval-UI app).
+Grotto consumes the nip55l implementation headers with PRIVATE build includes;
+they are installed under `libexec/grotto/private/nip55l`, not advertised as a
+public authorization API. The UID-only-bus limitation below also applies here.
+Two owner-confirmed exceptions (2026-10-12): **any same-session, same-UID caller**
+may read the coarse, identity-free `GetStatus`, or call **`SetPaused(true)`**.
+`SetPaused(false)` still requires the approver. This lets the untrusted Shell
+indicator inspect status and reduce capability, never resume or approve.
+
+`GetStatus` returns `control_version:u = 1`, `control_epoch:s`,
+`capabilities:a{sb}`, `paused:b`, `pending_count:u`, `bunker_enabled:b`,
+`bunker_state:s`, `key_state:s`, `key_lock_enforced:b`, and
+`activity_log_healthy:b`, `client_store_healthy:b`, `permission_store_healthy:b`.
+It includes no identity, client, request contents, reason or activity records.
+`key_state="unknown"` and `key_lock_enforced=false` do **not** claim a locked keyring.
+Pairing/configuration/reset, mnemonic-export, rotation and key-lock capabilities
+are false until their real implementations land; raw-nsec-export is separate
+from NIP-49 export, which is advertised only when its backend is built.
+
+A GUI must feature-detect Control1/version/capabilities: absence or an older
+version means a read-only **Update Grotto** state, not legacy mutation fallback.
+The daemon keeps the preserved legacy client/approval contract for older UIs.
+G04 establishes the daemon side; GUI version-skew presentation belongs to G07/G10.
+
+### Methods
+
+All errors below use `org.nostr.Grotto.Control1.Error.<name>`. Invalid signatures
+are rejected by GDBus using the canonical XML before dispatch.
+
+| Method | Input → output | Current behavior |
+|---|---|---|
+| `GetStatus` | `() → a{sv}` | Coarse version, capabilities, runtime and store health |
+| `ListRequests` | `() → aa{sv}` | Full pending snapshots from the shared approval service |
+| `ListClients` | `() → aa{sv}` | Durable consent/permission clients, trust tier, pairing/relays, permission count and needs-review flag |
+| `ListPermissions` | `(principal:s) → aa{sv}` | G03's explicit/needs-review rows, unmodified; live tier policy is in the client record, never expanded into fake persisted grants |
+| `SetPermissions` | `(principal:s, identity:s, permissions:aa{sv}, expected_revision:t) → ()` | G03 validates/persists a complete replacement for this principal/identity pair; stale revision → `Conflict` |
+| `RevokeClient` | `(principal:s) → ()` | Cancel pending/queued work, remove tier/pairing admission, clear G03 permissions and disconnect bunker bookkeeping; retry is idempotent |
+| `SetClientLabel` | `(principal:s, label:s) → ()` | Edit an existing client, never register a forged caller |
+| `SetClientTrust` | `(principal:s, tier:s) → ()` | `low`, `medium`, `full`; requires prior explicit consent; persist before live G03 policy invalidation |
+| `SetPaused` | `(paused:b) → ()` | Session-only generation-fenced pause; asymmetric authority as above |
+| `SetDefaultIdentityForLegacy` | `(identity:s) → ()` | Resolve a stored signable identity; update daemon GSettings default, or clear with empty input; explicit consumers are unchanged |
+| `ExportIdentity` | `(identity:s, format:s, passphrase:s) → s` | NIP-49 `ncryptsec` (empty format defaults to it); explicit nonempty identity and nonempty UTF-8 passphrase ≤1024 bytes; `log_n=16`, NFKC normalization |
+| `ExportRawIdentity` | `(identity:s) → s` | Separate authenticated raw-nsec reveal, never accepted through `ExportIdentity` |
+| `RotateIdentity` | `(identity:s) → s` | Authenticated `NotSupported`; owner-confirmed G09 custody/policy follow-up |
+| `ConfigureBunker` | `(config:a{sv}) → a{sv}` | Authenticated typed unavailable response; G06 implements durable desired config + live apply |
+| `CreatePairing` | `(identity:s, label:s) → a{sv}` | Authenticated typed unavailable response; G05/G06 implement account-bound, single-use pairing |
+| `AcceptConnectURI` | `(uri:s, identity:s) → s` | Authenticated typed unavailable response; G06 validates/reviews/acks, no relay contact now |
+| `CancelPairing` | `(pairing_id:s) → ()` | Authenticated typed unavailable response; G06 invalidates token + request |
+| `ResetBunkerEndpoint` | `() → ()` | Authenticated typed unavailable response; G05/G06 rotate transport custody and revoke pairing |
+| `ListActivity` | `(before_sequence:t, limit:u) → aa{sv}` | Newest first; 0 cursor = latest, otherwise strictly before cursor; limit 0 = empty, >100 → `InvalidInput` |
+| `ClearActivity` | `() → ()` | UI confirms first; atomic clear, preserving sequence high-water mark |
+
+Bunker unavailable responses consult the actual `BunkerService`: **`NotReady`**
+when absent/stopped/starting/error, **`NotSupported`** when its current state is
+RUNNING but the management feature is not implemented. They never return a fake
+pairing URI, claim durable config or call the legacy nonfunctional connect path.
+Each dispatcher branch names its G05/G06 owner. The prospective `bunker.ini` v1
+(`enabled`, `relays`, `allowed-methods`) is G06-owned: G04 does not manufacture or
+accept it through an unavailable ConfigureBunker method. Runtime state still
+comes from the existing service; it does not claim protocol-proven LISTENING.
+
+`ExportIdentity(format="mnemonic")` is `NotSupported` until G09 adds custody-held
+mnemonics. `format="nsec"` is deliberately rejected: the UI must use the separate
+raw method after its warning. Exports use the nip55l custody resolver, not the
+GUI's secret store, run off the daemon main loop (one at a time), wipe owned
+passphrases/key buffers/results, re-attest the approver before secret delivery,
+and suppress delivery during shutdown. They create no signing grant or secret
+history entry. Private material necessarily transiently exists in the trusted
+UI and D-Bus message buffers; this is not a same-user malware boundary.
+
+### Revisions, lost updates and signals
+
+`RequestsChanged(t)`, `ClientsChanged(t)`, `StatusChanged(t)` carry monotonic
+**snapshot revisions within one daemon epoch**. The corresponding `GetStatus`
+fields are `requests_revision`, `clients_revision`, `status_revision`; permission
+replacement uses the distinct opaque `permissions_revision`. The latter combines
+a random process epoch with G03's admission counter, so remembered legacy writes,
+scoped edits and trust changes invalidate stale replacements and a pre-restart
+revision cannot normally ABA into the new process. Revisions are not credentials.
+On name-owner/epoch changes, discard all old snapshots/cursors for mutations.
+For array snapshots (including empty ones), bracket reads with GetStatus and
+reject/re-read if their revision changed, in addition to subscribing **before**
+listing. Never poll on a timer. `SetPermissions` returns `Conflict` without
+replacing authority after any revision mismatch; re-read and reapply the edit.
+
+`ActivityChanged(t)` carries the **activity record sequence**, not a snapshot
+revision. The persistent high-water mark is `activity_sequence`. Pagination is
+strictly `before_sequence`; on a change, fetch the newest page and stop merging
+when the prior sequence is reached. Clear/retention removal can signal the same
+high-water mark; re-read the page rather than treating this as a new record.
+
+### Daemon storage and failure semantics
+
+`$XDG_CONFIG_HOME/grotto/clients.ini`, schema **v1**, is daemon-owned: SHA-256
+encoded record sections, canonical principal, most recent transport, label,
+untrusted `claimed-name`, selected `identity`, `tier` (Low default), `paired`,
+`relays`, `first-consented-at`, `last-used-at`. Browser origins are separate
+principals, not the bridge's identity. Local records arise only from explicit
+consent or successfully created permissions, never arbitrary failed requests.
+Pairing admission never grants signing. New directories are 0700, atomic durable
+files 0600; profile guards refuse the real profile under tests. Unsupported
+versions/malformed admission records refuse startup, not silently reset trust.
+
+The **existing `event_history.c` manager** has a daemon metadata mode stored in
+`$XDG_CONFIG_HOME/grotto/activity.json`, envelope v1 (`version`, `sequence`,
+`records`), distinct from the non-authoritative legacy GUI `event_history.json`.
+No competing logger or legacy-content import is introduced. Terminal shared-gate
+notifications produce exactly one record per request (joined continuations share
+that request): `sequence:t`, `request_id:s`, `timestamp:t`, `transport:s`,
+`principal:s`, `identity:s`, `operation:s`, optional `event_kind:u`, `outcome:s`,
+sanitized `error_code:s`. Outcomes: `success`, `denied`, `expired`,
+`expired-caller` (last caller continuation disappeared), `cancelled`, `failed`.
+No previews, raw JSON, reasons, URIs, decrypted messages, ciphertext or crypto
+results are retained. Retention is 30 days / 10,000 records, newest-first.
+Unsupported/corrupt activity schemas are read-only/unhealthy and never overwritten.
+
+Logging failure never changes a crypto result; health is exposed in status.
+Activity clear and client edits fail rather than reporting an unpersisted change.
+G03 permission-persistence failure leaves authority unchanged. Permission and
+client metadata are separate atomic files: if permissions persist but the
+subsequent client metadata save fails, the method reports `PersistenceFailed`,
+revision/health reflect the partial result, and the UI **must re-read**, not
+assume permissions were rolled back. Revoke likewise cancels work immediately
+and may remove admission before reporting a later permission-storage failure.
+For an emergency capability reduction independent of persistence, use Pause.
 
 ### D-Bus Service Activation
 
@@ -108,7 +245,9 @@ required-confirmation kinds always prompt despite remembered allows or trust tie
 New identity-wildcard allows are supported only for `get_relays`; valid inherited
 non-event wildcard allows are preserved during the one-time legacy import.
 The single nip55l evaluator applies live per-client Low/Medium/Full policy (unknown
-clients Low) through an injectable lookup; the client store/Control1 is G04 work.
+clients Low) through Grotto's daemon-owned `clients.ini` trust lookup. Control1
+trust/admission mutations invalidate the same evaluator immediately; lowering a
+tier preserves explicit grants and denies.
 Conversation-key export requires an explicit allow, not a tier/default shortcut;
 pairing cannot inherit a remembered allow.
 The compatibility `signer-grants.ini` is re-sanitised on every load, but imported

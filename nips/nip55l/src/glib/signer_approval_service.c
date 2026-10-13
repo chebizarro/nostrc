@@ -65,6 +65,8 @@ struct _SignerApprovalService {
  gboolean paused, stopped;
  guint64 generation;
  SignerPermissions *permissions;
+ void (*changed)(gpointer);
+ gpointer changed_data;
 #ifdef NIP55L_TEST_TRUST_ENV
  void (*after_backend)(gpointer);
  gpointer after_backend_data;
@@ -80,7 +82,7 @@ struct _Request {
  SignerTransport transport;
  SignerRequestState state;
  gboolean resolved, no_identity, announced, decision, remember;
- gboolean finished;
+ gboolean finished, caller_disconnected;
  gint cancelled; /* atomic: worker checks before touching the backend */
  guint64 generation, ttl, permission_revision;
  gint64 deadline, expires_at;
@@ -170,8 +172,13 @@ void signer_approval_service_unsubscribe(SignerApprovalService *s, guint id) {
   for (guint i = 0; i < s->subscribers->len; i++)
     if (((Subscriber *)s->subscribers->pdata[i])->id == id) { g_ptr_array_remove_index(s->subscribers, i); break; }
 }
+void signer_approval_service_set_changed(SignerApprovalService *s, void (*fn)(gpointer), gpointer data) {
+  g_return_if_fail(owner_ok(s)); s->changed = fn; s->changed_data = data;
+}
+static void table_changed(SignerApprovalService *s) { if (s->changed) s->changed(s->changed_data); }
 static void notify_request(Request *r) {
   SignerApprovalService *s = r->service;
+  table_changed(s);
   g_autoptr(GVariant) info = snapshot(r);
   /* Copy IDs, not callbacks: an observer may unsubscribe itself or another. */
   GArray *ids = g_array_new(FALSE, FALSE, sizeof(guint));
@@ -215,6 +222,9 @@ static GVariant *snapshot(Request *r) {
   g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(r->who->principal != NULL));
   g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(r->calls->len));
   g_variant_builder_add(&b, "{sv}", "approval_requested", g_variant_new_boolean(r->announced));
+  g_variant_builder_add(&b, "{sv}", "explicit_consent", g_variant_new_boolean(r->announced && r->decision));
+  g_variant_builder_add(&b, "{sv}", "remember", g_variant_new_boolean(r->remember));
+  g_variant_builder_add(&b, "{sv}", "caller_disconnected", g_variant_new_boolean(r->caller_disconnected));
   g_variant_builder_add(&b, "{sv}", "expires_at", g_variant_new_uint64(r->expires_at));
   gint64 left = MAX((gint64)0, r->deadline - g_get_monotonic_time());
   g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32((left + G_USEC_PER_SEC - 1) / G_USEC_PER_SEC));
@@ -268,6 +278,7 @@ void signer_gate_cancel(SignerGateHandle *h) {
   g_ptr_array_remove(r->calls, c);
   complete_call(r, c, ORG_NOSTR_SIGNER_ERR_CANCELLED, "request cancelled", NULL);
   if (!r->calls->len) finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "request cancelled");
+  else table_changed(r->service);
   request_unref(r);
 }
 
@@ -665,6 +676,7 @@ static void execute(Request *r) {
   }
   r->state = SIGNER_REQUEST_EXECUTING;
   queue_job(r, FALSE);
+  table_changed(r->service);
 }
 static void resolved(Request *r) {
   SignerApprovalService *s = r->service;
@@ -701,6 +713,7 @@ static void resolved(Request *r) {
     r->finished = TRUE;
     if (r->timeout) { g_source_destroy(r->timeout); g_clear_pointer(&r->timeout, g_source_unref); }
     g_hash_table_remove(s->requests, r->id);
+    table_changed(s);
     return;
   }
   guint mine = 0, total = 0;
@@ -919,6 +932,7 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
  * The worker's atomic cancellation checks precede identity/key use. */
 static void permissions_changed(gpointer data) {
   SignerApprovalService *s = data;
+  table_changed(s);
   g_autoptr(GPtrArray) affected = requests_copy(s);
   for (guint i = affected->len; i > 0; i--) {
     Request *r = affected->pdata[i - 1];
@@ -1026,7 +1040,11 @@ void signer_approval_service_connection_closed(SignerApprovalService *s, const g
       if (!g_strcmp0(c->connection, key)) g_ptr_array_add(handles, signer_gate_handle_ref(c->handle));
     }
   }
-  for (guint i = 0; i < handles->len; i++) signer_gate_cancel(handles->pdata[i]);
+  for (guint i = 0; i < handles->len; i++) {
+    SignerGateHandle *h = handles->pdata[i];
+    if (h->request && h->request->calls->len == 1) h->request->caller_disconnected = TRUE;
+    signer_gate_cancel(h);
+  }
 }
 void signer_approval_service_cancel_principal(SignerApprovalService *s, const gchar *principal) {
   g_return_if_fail(owner_ok(s));
@@ -1047,6 +1065,7 @@ void signer_approval_service_set_paused(SignerApprovalService *s, gboolean pause
   g_return_if_fail(owner_ok(s));
   if (s->paused == paused) return;
   s->paused = paused;
+  table_changed(s);
   if (!paused) return;
   s->generation++;
   g_autoptr(GPtrArray) requests = requests_copy(s);

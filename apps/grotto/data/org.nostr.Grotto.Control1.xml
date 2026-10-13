@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Canonical daemon management contract. Bus org.nostr.Signer,
+     object /org/nostr/signer/grotto; NOT the approver's org.nostr.Grotto name.
+     Sensitive reads and mutations require signer_caller_is_approver().
+     GetStatus is an identity-free coarse status for any same-session user;
+     SetPaused(true) may also be called by any same-session user. -->
+<node name="/org/nostr/signer/grotto">
+  <interface name="org.nostr.Grotto.Control1">
+    <method name="GetStatus"><arg name="status" type="a{sv}" direction="out"/></method>
+    <method name="ListRequests"><arg name="requests" type="aa{sv}" direction="out"/></method>
+    <method name="ListClients"><arg name="clients" type="aa{sv}" direction="out"/></method>
+    <method name="ListPermissions">
+      <arg name="principal" type="s" direction="in"/>
+      <arg name="permissions" type="aa{sv}" direction="out"/>
+    </method>
+    <method name="SetPermissions">
+      <arg name="principal" type="s" direction="in"/><arg name="identity" type="s" direction="in"/>
+      <arg name="permissions" type="aa{sv}" direction="in"/><arg name="expected_revision" type="t" direction="in"/>
+    </method>
+    <method name="RevokeClient"><arg name="principal" type="s" direction="in"/></method>
+    <method name="SetPaused"><arg name="paused" type="b" direction="in"/></method>
+    <method name="SetClientLabel"><arg name="principal" type="s" direction="in"/><arg name="label" type="s" direction="in"/></method>
+    <method name="SetClientTrust"><arg name="principal" type="s" direction="in"/><arg name="tier" type="s" direction="in"/></method>
+    <method name="SetDefaultIdentityForLegacy"><arg name="identity" type="s" direction="in"/></method>
+    <method name="ExportIdentity">
+      <arg name="identity" type="s" direction="in"/><arg name="format" type="s" direction="in"/>
+      <arg name="passphrase" type="s" direction="in"/><arg name="backup" type="s" direction="out"/>
+    </method>
+    <method name="ExportRawIdentity"><arg name="identity" type="s" direction="in"/><arg name="nsec" type="s" direction="out"/></method>
+    <method name="RotateIdentity"><arg name="identity" type="s" direction="in"/><arg name="new_identity" type="s" direction="out"/></method>
+    <method name="ConfigureBunker"><arg name="config" type="a{sv}" direction="in"/><arg name="state" type="a{sv}" direction="out"/></method>
+    <method name="CreatePairing"><arg name="identity" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="pairing" type="a{sv}" direction="out"/></method>
+    <method name="AcceptConnectURI"><arg name="uri" type="s" direction="in"/><arg name="identity" type="s" direction="in"/><arg name="request_id" type="s" direction="out"/></method>
+    <method name="CancelPairing"><arg name="pairing_id" type="s" direction="in"/></method>
+    <method name="ResetBunkerEndpoint"/>
+    <method name="ListActivity"><arg name="before_sequence" type="t" direction="in"/><arg name="limit" type="u" direction="in"/><arg name="records" type="aa{sv}" direction="out"/></method>
+    <method name="ClearActivity"/>
+    <signal name="RequestsChanged"><arg name="revision" type="t"/></signal>
+    <signal name="ClientsChanged"><arg name="revision" type="t"/></signal>
+    <signal name="StatusChanged"><arg name="revision" type="t"/></signal>
+    <signal name="ActivityChanged"><arg name="sequence" type="t"/></signal>
+  </interface>
+</node>

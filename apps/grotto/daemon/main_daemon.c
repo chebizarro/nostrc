@@ -13,6 +13,7 @@
 #include <glib/gstdio.h>
 #include "settings_manager.h"
 #include "accounts_store.h"
+#include "grotto_control.h"
 
 // Use nip55l GLib implementation. This exports the full signer protocol.
 // Prototypes provided by nips/nip55l/src/glib/signer_service_g.c
@@ -34,6 +35,7 @@ static int g_exit_status = 0;
 // NIP-46 bunker mode (--bunker)
 static gboolean g_bunker_requested = FALSE;
 static BunkerService *g_bunker = NULL;
+static GrottoControl *g_control = NULL;
 
 // Daemon version and build info
 #define DAEMON_VERSION "0.1.0"
@@ -54,6 +56,16 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     return;
   }
   
+  g_autoptr(GError) control_error = NULL;
+  g_control = grotto_control_new(connection, signer_get_approval_service(), NULL, &control_error);
+  if (!g_control) {
+    g_critical("CONTROL_EXPORT_FAILED: %s", control_error ? control_error->message : "unknown error");
+    g_exit_status = 1;
+    if (loop) g_main_loop_quit(loop);
+    return;
+  }
+  grotto_control_set_bunker(g_control, NULL, g_bunker_requested);
+
   g_message("grotto: D-Bus interface exported at %s on %s", 
             ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
   
@@ -170,6 +182,7 @@ static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpo
    * service in ERROR until shutdown, rather than resetting it to STOPPED. */
   if (g_bunker_requested && !g_bunker) {
     bunker_mode_start();
+    grotto_control_set_bunker(g_control, g_bunker, TRUE);
   }
 }
 
@@ -199,6 +212,7 @@ static void on_name_lost(GDBusConnection *connection, const gchar *name, gpointe
     signer_unexport(connection, obj_reg_id);
     obj_reg_id = 0;
   }
+  g_clear_pointer(&g_control, grotto_control_free);
   
   // Stop IPC server
   if (ipc_srv) {
@@ -410,7 +424,12 @@ int main(int argc, char **argv) {
 
   g_message("main loop exited, cleaning up");
 
-  /* Cleanup */
+  /* Finish outstanding work while Control1 still records terminal outcomes. */
+  if (obj_reg_id && g_dbus_conn) {
+    signer_unexport(g_dbus_conn, obj_reg_id);
+    obj_reg_id = 0;
+  }
+  g_clear_pointer(&g_control, grotto_control_free);
   g_clear_pointer(&g_bunker, bunker_service_free);
   g_bus_unown_name(owner_id);
 

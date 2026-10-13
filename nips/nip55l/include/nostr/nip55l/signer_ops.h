@@ -163,6 +163,17 @@ typedef struct {
 } nostr_nip55l_keyring_migration;
 int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
 
+/* Explicit custody export for a management UI, never a gated client operation.
+ * The daemon MUST authenticate the approver and require a separately deliberate
+ * raw-key action. identity must be nonempty and name a stored identity (never
+ * secret material). format is ncryptsec (NIP-49, log_n=16, nonempty UTF-8
+ * passphrase <=1024 bytes), or nsec (passphrase ignored). ncryptsec requires
+ * the NIP-49 GLib adapter at build time; otherwise NOT_SUPPORTED. No mnemonic
+ * or rotation is synthesized. Output uses malloc; caller wipes then free().
+ * This call may block on keyring unlock/KDF: never run on the daemon main loop. */
+int nostr_nip55l_export_identity(const char *identity, const char *format,
+                                const char *passphrase, char **out_backup);
+
 /* Optional private key storage using libsecret when available. */
 int nostr_nip55l_store_key(const char *key, const char *identity);
 int nostr_nip55l_clear_key(const char *identity);

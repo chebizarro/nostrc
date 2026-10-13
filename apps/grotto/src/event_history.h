@@ -407,5 +407,16 @@ gboolean gn_event_history_export_to_file(GnEventHistory *self,
                                           GPtrArray *entries,
                                           GError **error);
 
+/* Daemon-owned metadata mode of this history manager. Legacy GUI history is
+ * not authoritative; its event_history.json is neither imported nor returned.
+ * All calls run on the daemon's owning thread. activity.json is schema v1.
+ * No previews, reasons, ciphertext, URI or crypto result enters this API. */
+GnEventHistory *gn_event_history_new_activity(const gchar *config_home);
+guint64 gn_event_history_record_activity(GnEventHistory *self, GVariant *terminal_snapshot);
+GVariant *gn_event_history_list_activity(GnEventHistory *self, guint64 before_sequence, guint limit);
+gboolean gn_event_history_clear_activity(GnEventHistory *self, GError **error);
+gboolean gn_event_history_activity_healthy(GnEventHistory *self);
+guint64 gn_event_history_activity_sequence(GnEventHistory *self);
+
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_EVENT_HISTORY_H */

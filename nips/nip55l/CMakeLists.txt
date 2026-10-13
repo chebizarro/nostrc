@@ -38,6 +38,12 @@ find_package(Threads REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
 target_link_libraries(nostr_nip55l_core PRIVATE Threads::Threads)
+# Custody-owned NIP-49 management export (G04), with the adapter's once-only
+# Unicode NFKC normalization. Core-only builds still support explicit raw nsec.
+if (TARGET nostr_nip49_glib)
+  target_link_libraries(nostr_nip55l_core PRIVATE nostr_nip49_glib)
+  target_compile_definitions(nostr_nip55l_core PRIVATE NIP55L_HAVE_NIP49_EXPORT=1)
+endif()
 
 # Key storage backend. auto: the Keychain on macOS, libsecret elsewhere.
 # "libsecret" on macOS is for smoke and test builds, which must never write
@@ -216,6 +222,12 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   # The interface definition, for clients' gdbus-codegen / introspection.
   # This file is the only copy in the tree (nostrc-56id).
   install(FILES ${DBUS_XML} DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
+  # Grotto shares the exact caller check and gate/evaluator, not a public
+  # authorization wrapper. These implementation headers have no API/ABI promise
+  # and are not added to the target's PUBLIC include directories.
+  install(FILES src/glib/signer_caller.h src/glib/signer_gate.h
+    src/glib/signer_approval_service.h src/glib/signer_permissions.h
+    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/grotto/private/nip55l)
 
   add_executable(nostr-signer-daemon ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/daemon_main.c)
   target_link_libraries(nostr-signer-daemon PRIVATE nostr_nip55l_glib PkgConfig::GIO)

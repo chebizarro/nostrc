@@ -2390,6 +2390,10 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
   uint8_t pk[32]; CHECK(nostr_hex2bin(pk, fresh_pk, 32));
   char *fresh_npub = NULL;
   CHECK(nostr_nip19_encode_npub(pk, &fresh_npub) == 0 && fresh_npub);
+  /* Remembered permissions are exact per identity (G03): provision the
+   * fixture's "*" grants for this runtime identity as for every seeded one.
+   * The daemon re-reads permissions per evaluation; no restart is needed. */
+  seed_fixture_permissions(ctx, ctx->permission_fixture, fresh_npub);
 
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "StoreKey",
@@ -2758,6 +2762,7 @@ static void run_phase3(void) {
     g_usleep(600 * 1000);
     TestKey kept;
     test_key_new(&kept);
+    seed_fixture_permissions(&ctx, ctx.permission_fixture, kept.npub);
     GError *err = NULL;
     GVariant *ret = call(ctx.bus, "StoreKey", g_variant_new("(ss)", kept.sk_hex, ""), "(bs)", &err);
     if (!ret) { g_printerr("StoreKey(kept): %s\n", err ? err->message : "?"); exit(1); }

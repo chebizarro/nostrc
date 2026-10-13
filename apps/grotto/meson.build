@@ -261,6 +261,11 @@ install_data('data/org.nostr.Grotto.gschema.xml',
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',
 )
 
+# CMake builds the daemon; Meson currently builds only the GUI. Keep the
+# canonical management XML available to clients in either installation.
+install_data('data/org.nostr.Grotto.Control1.xml',
+  install_dir: get_option('datadir') / 'dbus-1' / 'interfaces')
+
 # Install D-Bus activation file, configured with the absolute daemon path
 dbus_service_conf = configuration_data()
 dbus_service_conf.set('CMAKE_INSTALL_FULL_BINDIR', get_option('prefix') / get_option('bindir'))

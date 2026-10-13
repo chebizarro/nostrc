@@ -24,6 +24,12 @@ G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignerApprovalService, signer_approval_service_unr
 guint signer_approval_service_subscribe(SignerApprovalService *service,
                                        SignerApprovalNotifyFn fn, gpointer data);
 void signer_approval_service_unsubscribe(SignerApprovalService *service, guint id);
+/* Private daemon observer for snapshot revisions: pending joins/detaches,
+ * execution transitions, pause and permission changes as well as lifecycle
+ * notifications. Observational only: must not mutate/re-enter the service.
+ * Does not duplicate legacy ApprovalRequested or completion notifications. */
+void signer_approval_service_set_changed(SignerApprovalService *service,
+                                         void (*changed)(gpointer), gpointer data);
 SignerGateHandle *signer_approval_service_submit(SignerApprovalService *service,
     const SignerCaller *who, const gchar *conn_key, SignerGateOp op,
     const gchar *a, const gchar *b, const gchar *selector,

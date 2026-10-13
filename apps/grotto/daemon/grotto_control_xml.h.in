@@ -1,0 +1,2 @@
+/* Generated from the canonical Control1 XML by CMake. Do not edit output. */
+static const gchar grotto_control_xml[] = "@GROTTO_CONTROL_XML_C@";
