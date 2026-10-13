@@ -220,6 +220,17 @@ void nostr_simple_pool_stop(NostrSimplePool *pool);
  * @filters: (transfer none): filters to subscribe
  * @unique: whether to de-duplicate events
  */
+/* Subscription lifecycle observer (EOSE/CLOSED). Runs on the pool worker;
+ * must not call this setter or free the pool from inside the callback. Setter
+ * serializes against in-flight notifications; no public struct/ABI change. */
+typedef void (*NostrPoolSubscriptionCallback)(NostrRelay *, const char *state, const char *reason, void *);
+void nostr_simple_pool_set_subscription_callback(NostrSimplePool *, NostrPoolSubscriptionCallback, void *);
+/* Configure new subscriptions before subscribe(): reconnect from now-seconds,
+ * never from an untrusted received timestamp. The consumer must enforce its
+ * admission/freshness window and durable replay guard; use unique=false when
+ * retry deliveries need replies. Zero preserves default cursor recovery.
+ * Returns false if the pool's private subscription registry is unavailable. */
+bool nostr_simple_pool_set_recovery_window(NostrSimplePool *, unsigned seconds);
 void nostr_simple_pool_subscribe(NostrSimplePool *pool, const char **urls, size_t url_count, NostrFilters filters, bool unique);
 /**
  * nostr_simple_pool_subscribe_async:
@@ -252,6 +263,9 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
 /**
  * Convenience configuration API
  */
+/* Middleware takes ownership of each incoming->event (free it or retain it);
+ * the incoming wrapper and relay are borrowed for the call. This also applies
+ * to the extended and batch variants below. */
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
                                              void (*cb)(NostrIncomingEvent *));
 void nostr_simple_pool_set_event_middleware_ex(NostrSimplePool *pool,

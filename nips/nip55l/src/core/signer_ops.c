@@ -1324,6 +1324,104 @@ int nostr_nip55l_get_relays(char **out_relays_json){
   return rc;
 }
 
+/* The transport role is never stored in the identity schema/cache. Missing
+ * credentials are an error; only the authenticated management reset mints one.
+ * Tests explicitly select a disposable file backend, guarded by isolation. */
+#ifdef NIP55L_HAVE_LIBSECRET
+static const SecretSchema bunker_transport_schema = {
+  "org.nostr.Grotto.BunkerTransport", SECRET_SCHEMA_NONE,
+  { {"slot", SECRET_SCHEMA_ATTRIBUTE_STRING}, {NULL, 0} }
+};
+#endif
+static int transport_credential(gboolean store, unsigned char key[32]) {
+  if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  const char *test = g_getenv("NOSTR_SIGNER_TEST_TRANSPORT_BACKEND");
+  gboolean file_backend = test && !strcmp(test, "file");
+  if (file_backend && !nostrc_profile_guard_under_test()) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+  char *hex = NULL;
+  int rc = 0;
+  if (store) hex = bin_to_hex(key, 32);
+  if (store && !hex) return NOSTR_SIGNER_ERROR_BACKEND;
+  if (store) {
+    char *public_key = nostr_key_get_public(hex);
+    if (!public_key) { secure_wipe(hex, strlen(hex)); free(hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+    free(public_key);
+  }
+  if (file_backend) {
+    g_autofree gchar *dir = g_build_filename(g_get_user_config_dir(), "grotto", NULL);
+    g_autofree gchar *path = g_build_filename(dir, "test-bunker-transport", NULL);
+    if (nostrc_profile_guard_refuses_path(path)) rc = NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+    else if (store) {
+      if (g_mkdir_with_parents(dir, 0700) || !g_file_set_contents_full(path, hex, 64,
+            G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL)) rc = NOSTR_SIGNER_ERROR_BACKEND;
+    } else {
+      gsize len = 0;
+      if (!g_file_get_contents(path, &hex, &len, NULL)) rc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+      else if (len != 64) rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+    }
+  } else if (key_store_refused("BunkerTransport")) rc = NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+#ifdef NIP55L_HAVE_LIBSECRET
+  else if (store) {
+    if (!secret_password_store_sync(&bunker_transport_schema, SECRET_COLLECTION_DEFAULT,
+          "Grotto Bunker Transport", hex, NULL, NULL, "slot", "default", NULL)) rc = NOSTR_SIGNER_ERROR_BACKEND;
+  } else {
+    GError *error = NULL;
+    gchar *password = secret_password_lookup_sync(&bunker_transport_schema, NULL, &error, "slot", "default", NULL);
+    if (error) { g_error_free(error); rc = NOSTR_SIGNER_ERROR_BACKEND; }
+    else if (!password) rc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+    else hex = strdup(password);
+    if (password) secret_password_free(password);
+  }
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  else {
+    CFMutableDictionaryRef query = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+    CFDictionarySetValue(query, kSecAttrService, CFSTR("Grotto Bunker Transport"));
+    CFDictionarySetValue(query, kSecAttrAccount, CFSTR("default"));
+    CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
+    if (store) {
+      CFMutableDataRef value = CFDataCreateMutable(NULL, 32);
+      if (!value) { CFRelease(query); secure_wipe(hex, strlen(hex)); free(hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+      CFDataAppendBytes(value, key, 32);
+      CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+      CFDictionarySetValue(attrs, kSecValueData, value);
+      OSStatus st = SecItemUpdate(query, attrs);
+      if (st == errSecItemNotFound) { CFDictionarySetValue(query, kSecValueData, value); st = SecItemAdd(query, NULL); }
+      rc = keychain_lookup_status(st);
+      CFRelease(attrs); secure_wipe(CFDataGetMutableBytePtr(value), CFDataGetLength(value)); CFRelease(value);
+    } else {
+      CFDictionarySetValue(query, kSecReturnData, kCFBooleanTrue);
+      CFTypeRef value = NULL;
+      OSStatus st = kc_copy_matching(query, &value);
+      rc = keychain_lookup_status(st);
+      if (!rc && value && CFGetTypeID(value) == CFDataGetTypeID() && CFDataGetLength(value) == 32) {
+        memcpy(key, CFDataGetBytePtr(value), 32);
+        hex = bin_to_hex(key, 32);
+      } else if (!rc) rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+      if (value) CFRelease(value);
+    }
+    CFRelease(query);
+  }
+#else
+  else rc = NOSTR_SIGNER_ERROR_NOT_FOUND;
+#endif
+  if (!store && !rc && (!is_hex_64(hex) || !nostr_hex2bin(key, hex, 32))) rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+  if (!rc) {
+    char *check = hex ? nostr_key_get_public(hex) : NULL;
+    if (!check) rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+    free(check);
+  }
+  if (hex) { secure_wipe(hex, strlen(hex)); free(hex); }
+  if (!store && rc) secure_wipe(key, 32);
+  return rc;
+}
+int nostr_nip55l_bunker_transport_load(unsigned char key[32]) { return transport_credential(FALSE, key); }
+int nostr_nip55l_bunker_transport_store(const unsigned char key[32]) {
+  if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  unsigned char copy[32]; memcpy(copy, key, 32);
+  int rc = transport_credential(TRUE, copy); secure_wipe(copy, sizeof(copy)); return rc;
+}
+
 int nostr_nip55l_store_key(const char *key, const char *identity){
   if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   if (key_store_refused("StoreKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;

@@ -7,6 +7,7 @@
 #include <nostr-tag.h>
 #include <nostr-json.h>
 #include <nostr-utils.h>
+#include <nostr/nip19/nip19.h>
 #include <secure_buf.h>
 #include <glib/gstdio.h>
 #include <stdlib.h>
@@ -62,7 +63,7 @@ struct _SignerApprovalService {
  GPtrArray *subscribers;
  guint next_subscriber;
  GThreadPool *backend;
- gboolean paused, stopped;
+ gboolean paused, stopped, no_approval_ui;
  guint64 generation;
  SignerPermissions *permissions;
  void (*changed)(gpointer);
@@ -81,7 +82,7 @@ struct _Request {
  SignerOp op;
  SignerTransport transport;
  SignerRequestState state;
- gboolean resolved, no_identity, announced, decision, remember;
+ gboolean resolved, no_identity, no_approval_ui, existing_pairing, announced, decision, remember;
  gboolean finished, caller_disconnected;
  gint cancelled; /* atomic: worker checks before touching the backend */
  guint64 generation, ttl, permission_revision;
@@ -94,7 +95,7 @@ struct _Request {
  gpointer decision_data;
 };
 typedef struct { SignerGateReplyFn fn; gpointer ud; } Reply;
-typedef struct { SignerOp op; gchar *a, *b, *selector; Reply reply; } Call;
+typedef struct { SignerOp op; gchar *a, *b, *selector; Reply reply; SignerTransport transport; } Call;
 static void reply_error(const Reply *r, const char *name, const char *message) {
  r->fn(r->ud, name, message, NULL);
 }
@@ -294,6 +295,25 @@ static void summary_event(GVariantBuilder *summary, Request *r) {
   }
   nostr_event_free(event);
 }
+/* Display-only wire scope hints. Unknown text/URLs/tokens are never echoed;
+ * neither this list nor connect consent is a signing grant. */
+static GVariant *connect_hints(const gchar *csv) {
+  const gchar *names[] = {"connect", "get_public_key", "sign_event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "ping", "get_relays", NULL};
+  GVariantBuilder hints; g_variant_builder_init(&hints, G_VARIANT_TYPE("as"));
+  g_auto(GStrv) parts = g_strsplit(csv ? csv : "", ",", 65);
+  for (guint i = 0; parts[i] && i < 64; i++) {
+    const gchar *part = g_strstrip(parts[i]);
+    if (g_strv_contains(names, part)) g_variant_builder_add(&hints, "s", part);
+    else if (g_str_has_prefix(part, "sign_event:") && g_ascii_isdigit(part[11])) {
+      gchar *end = NULL; guint64 kind = g_ascii_strtoull(part + 11, &end, 10);
+      if (end && !*end && kind <= 65535) {
+        g_autofree gchar *scope = g_strdup_printf("sign_event:%u", (guint)kind);
+        g_variant_builder_add(&hints, "s", scope);
+      }
+    }
+  }
+  return g_variant_builder_end(&hints);
+}
 static GVariant *snapshot(Request *r) {
   GVariantBuilder b, summary;
   g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
@@ -333,6 +353,10 @@ static GVariant *snapshot(Request *r) {
     g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(r->b));
   if (r->op == OP_CONVKEY)
     g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(r->a));
+  if (r->op == SIGNER_GATE_CONNECT) {
+    g_variant_builder_add(&summary, "{sv}", "requested_permissions_hint", connect_hints(r->a));
+    g_variant_builder_add(&summary, "{sv}", "requested_permissions_source", g_variant_new_string("client-hints"));
+  }
   if (r->op == OP_SIGN_EVENT) summary_event(&summary, r);
   g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
   return g_variant_ref_sink(g_variant_builder_end(&b));
@@ -530,10 +554,10 @@ static gchar *build_preview(SignerOp op, const char *a, const char *b){
     case OP_CONVKEY:           return g_strdup_printf("derive NIP-44 conversation key with %s", a);
     case OP_GET_PUBLIC_KEY:    return g_strdup("read your public key");
     case OP_GET_RELAYS:        return g_strdup("read your relay list");
-    case OP_NIP04_ENCRYPT:
+    case OP_NIP04_ENCRYPT: return g_strdup_printf("encrypt a message for %s using legacy NIP-04 (no message authentication)", b);
     case OP_NIP44_ENCRYPT:
     case OP_NIP44_ENCRYPT_B64: return g_strdup_printf("encrypt a message for %s", b);
-    case OP_NIP04_DECRYPT:
+    case OP_NIP04_DECRYPT: return g_strdup_printf("decrypt a message from %s using legacy NIP-04 (no message authentication)", b);
     case OP_NIP44_DECRYPT:
     case OP_NIP44_DECRYPT_B64: return g_strdup_printf("decrypt a message from %s", b);
     case OP_DECRYPT_ZAP:       return g_strdup("decrypt a private zap");
@@ -620,6 +644,13 @@ static int perform(const Call *c, const char *claimed_app_id){
       return_string(inv, out, FALSE);
       return 0;
     case OP_GET_RELAYS:
+      if (c->transport == SIGNER_TRANSPORT_NIP46) {
+        /* Remote transport supplies its validated configured relay list; it
+         * must not read the local NIP-07 relay file or fetch from the network. */
+        rc = nostr_nip55l_relays_normalize_json(c->a, c->a ? strlen(c->a) : 0, &out);
+        if (rc || !out) { free(out); reply_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "invalid configured relays"); return rc; }
+        return_string(inv, out, FALSE); return 0;
+      }
       return perform_get_relays(inv);
     case OP_NIP04_ENCRYPT:     rc = nostr_nip55l_nip04_encrypt(c->a, c->b, c->selector, &out);     emsg = "nip04 encrypt failed"; break;
     case OP_NIP04_DECRYPT:     rc = nostr_nip55l_nip04_decrypt(c->a, c->b, c->selector, &out);     emsg = "nip04 decrypt failed"; break;
@@ -734,9 +765,36 @@ static void job_free(gpointer data) {
 static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
 static SignerPermissionResult request_policy(Request *r) {
-  return signer_permissions_evaluate(r->service->permissions, r->who->principal,
+  SignerPermissionResult policy = signer_permissions_evaluate(r->service->permissions, r->who->principal,
       r->npub, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
       grants_lookup_default(op_info[r->op].kind, r->who), NULL);
+  /* Reconnecting an explicitly paired client is not new pairing consent.
+   * Explicit deny / persistence errors still win; no signing scope is granted. */
+  if (policy == SIGNER_PERMISSION_ASK && r->op == SIGNER_GATE_CONNECT && r->existing_pairing)
+    return SIGNER_PERMISSION_ALLOW;
+  return policy;
+}
+/* A canonical remote public selector is enough to reject an ASK in headless
+ * mode. This is negative-only: ALLOW still resolves/pins the real backend key
+ * and re-evaluates policy before execution. No keyring unlock for a denial. */
+static gboolean headless_reject_before_backend(Request *r) {
+  if (!(r->no_approval_ui || r->service->no_approval_ui) ||
+      r->transport != SIGNER_TRANSPORT_NIP46 || r->who->kind != SIGNER_CALLER_NIP46)
+    return FALSE;
+  guint8 pubkey[32]; char *npub = NULL;
+  gboolean valid = is_hex64(r->selector) ? nostr_hex2bin(pubkey, r->selector, sizeof pubkey) :
+      nostr_nip19_decode_npub(r->selector, pubkey) == 0;
+  if (!valid || nostr_nip19_encode_npub(pubkey, &npub) || !npub) { free(npub); return FALSE; }
+  r->npub = g_strdup(npub); free(npub);
+  SignerPermissionResult policy = request_policy(r);
+  if (r->finished) return TRUE;
+  if (policy == SIGNER_PERMISSION_ALLOW) { g_clear_pointer(&r->npub, g_free); return FALSE; }
+  if (policy == SIGNER_PERMISSION_ASK)
+    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_NO_APPROVER, "approval UI disabled");
+  else if (policy == SIGNER_PERMISSION_DENY)
+    finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
+  else finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions");
+  return TRUE;
 }
 static gboolean policy_denies(Request *r) {
   SignerPermissionResult policy = request_policy(r);
@@ -786,6 +844,9 @@ static void resolved(Request *r) {
     if (policy == SIGNER_PERMISSION_ALLOW) execute(r);
     else finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
     return;
+  }
+  if (r->no_approval_ui || s->no_approval_ui) {
+    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_NO_APPROVER, "approval UI disabled"); return;
   }
   r->join_key = join_key(r);
   GHashTableIter it; gpointer value;
@@ -920,7 +981,7 @@ static void backend_worker(gpointer data, gpointer unused) {
         if (!r->decision && !signer_permissions_revision_is_current(j->service->permissions, j->permission_revision)) {
           j->stale_policy = TRUE; break;
         }
-        Call call = {r->op, r->a, r->b, r->selector, {capture, out}};
+        Call call = {r->op, r->a, r->b, r->selector, {capture, out}, r->transport};
         perform(&call, r->claimed);
 #ifdef NIP55L_TEST_TRUST_ENV
         if (j->after_backend) j->after_backend(j->after_backend_data);
@@ -950,6 +1011,9 @@ static void queue_job(Request *r, gboolean resolve) {
   }
   g_thread_pool_push(r->service->backend, j, NULL);
 }
+void signer_approval_service_set_no_approval_ui(SignerApprovalService *s, gboolean disabled) {
+  g_return_if_fail(owner_ok(s)); s->no_approval_ui = disabled;
+}
 SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
     const SignerCaller *who, const gchar *conn_key, SignerGateOp op,
     const gchar *a, const gchar *b, const gchar *selector,
@@ -964,6 +1028,7 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
                    !bounded_text(context->flow_id, 64, -1) || !bounded_text(context->claimed_name, 4096, -1) ||
                    context->transport < SIGNER_TRANSPORT_DBUS || context->transport > SIGNER_TRANSPORT_MANAGEMENT))) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
   else if ((op_info[op].peer_arg && !is_hex64(b)) || (op == OP_CONVKEY && !is_hex64(a)) ||
+      (context && context->existing_pairing && (op != SIGNER_GATE_CONNECT || context->transport != SIGNER_TRANSPORT_NIP46 || who->kind != SIGNER_CALLER_NIP46)) ||
       (context && context->no_identity && ((op != SIGNER_GATE_CONNECT && op != SIGNER_GATE_PING) || (selector && *selector))) ||
       ((op_info[op].peer_arg || op == OP_DECRYPT_ZAP || op == OP_SIGN_EVENT) && !a)) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
   else if (s->paused) { error = ORG_NOSTR_SIGNER_ERR_PAUSED; message = "signing is paused"; }
@@ -977,6 +1042,8 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   r->selector = g_strdup(selector ? selector : "");
   r->transport = context ? context->transport : SIGNER_TRANSPORT_NIP5F;
   r->no_identity = !op_info[op].has_identity || (context && context->no_identity);
+  r->no_approval_ui = context && context->no_approval_ui;
+  r->existing_pairing = context && context->existing_pairing;
   r->claimed = g_strdup(context ? context->claimed_name : "");
   r->reason = g_strdup(context ? context->reason : ""); r->purpose = g_strdup(context ? context->purpose : "");
   r->flow_id = g_strdup(context ? context->flow_id : ""); r->generation = s->generation;
@@ -1014,7 +1081,11 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
     if (context && context->deadline > 0) r->deadline = MIN(r->deadline, context->deadline);
     r->expires_at = g_get_real_time() / G_USEC_PER_SEC + MAX((gint64)0, r->deadline - now) / G_USEC_PER_SEC;
     if (r->deadline <= now) finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out");
-    else { set_timeout(r); if (r->no_identity) resolved(r); else queue_job(r, TRUE); }
+    else {
+      set_timeout(r);
+      if (r->no_identity) resolved(r);
+      else if (!headless_reject_before_backend(r)) queue_job(r, TRUE);
+    }
   }
   request_unref(r); return handle;
 }

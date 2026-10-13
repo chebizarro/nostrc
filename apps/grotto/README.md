@@ -11,7 +11,11 @@ Grotto is the signer for **every** Nostr app that speaks one of:
   (`org.nostr.Signer`, see `docs/dbus-interface.md`). Groundhog, gnostr and
   the browser bridge can use this when configured for Grotto.
 - **NIP-46 (Nostr Connect)** — remote apps over relays, with Grotto as the
-  bunker (Settings › Listen for new connections, or `grotto-daemon --bunker`).
+  bunker (`grotto-daemon --bunker`; shared-gate signing with a distinct persistent
+  transport key). See [daemon deployment](DAEMON_DEPLOYMENT.md#remote-signing-and-headless-deployment-g05)
+  for custody, scoped/headless operation and the explicit network drop-in.
+  Pairing/QR and live relay configuration UI are the later G06 work, not the
+  old log-only “Listen for new connections” control.
 
 One Grotto serves all of them at once. Each app names the identity it uses
 and Grotto asks you, per app, what it may do. That includes several

@@ -33,6 +33,14 @@ typedef struct NostrSubscription {
  * (nostr_relay_prepare_subscription() registers it immediately). */
 NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filters);
 void               nostr_subscription_free(NostrSubscription *sub);
+/* Opt in before firing when the consumer owns deduplication and must reply to
+ * redelivered RPC envelopes. Default false preserves cursor-boundary dedup. */
+void nostr_subscription_set_duplicate_delivery(NostrSubscription *sub, bool enabled);
+/* Opt-in bounded recovery for RPC consumers which enforce freshness and own
+ * durable deduplication. No received event advances a recovery watermark;
+ * reconnect uses now-seconds instead. Set before firing; zero restores normal
+ * enqueue-derived cursors. This does not filter delivery or alter admission. */
+void nostr_subscription_set_recovery_window(NostrSubscription *sub, unsigned seconds);
 
 /**
  * nostr_subscription_ref:

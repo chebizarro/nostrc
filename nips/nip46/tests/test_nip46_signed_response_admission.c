@@ -122,8 +122,12 @@ static void ctx_free(Ctx *c) {
 }
 
 static void feed(Ctx *c, NostrEvent *ev) {
-    NostrIncomingEvent in = { .event = ev, .relay = c->relay };
+    /* The pool transfers each envelope to middleware; the pre-signed fixture
+     * retains its own copy independently for cleanup below. */
+    NostrIncomingEvent in = { .event = nostr_event_copy(ev), .relay = c->relay };
+    assert(in.event);
     nip46_persistent_client_cb(&in);
+    assert(in.event == NULL); /* rejection consumes the transferred envelope */
 }
 
 static int pending_count(NostrNip46Session *s) {

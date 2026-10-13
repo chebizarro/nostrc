@@ -35,6 +35,8 @@ typedef struct {
   const gchar *reason;
   const gchar *purpose;
   const gchar *flow_id;
+  gboolean existing_pairing; /* CONNECT only: authenticated NIP-46 adapter verified persisted admission */
+  gboolean no_approval_ui; /* fail promptly if scoped policy requires review */
   gint64 deadline; /* monotonic microseconds; 0 = service's 300 s bound */
 } SignerGateContext;
 

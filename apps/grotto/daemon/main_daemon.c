@@ -34,6 +34,8 @@ static int g_exit_status = 0;
 
 // NIP-46 bunker mode (--bunker)
 static gboolean g_bunker_requested = FALSE;
+static gboolean g_no_approval_ui = FALSE;
+static gboolean g_bunker_started = FALSE;
 static BunkerService *g_bunker = NULL;
 static GrottoControl *g_control = NULL;
 
@@ -56,6 +58,7 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     return;
   }
   
+  signer_approval_service_set_no_approval_ui(signer_get_approval_service(), g_no_approval_ui);
   g_autoptr(GError) control_error = NULL;
   g_control = grotto_control_new(connection, signer_get_approval_service(), NULL, &control_error);
   if (!g_control) {
@@ -64,7 +67,9 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
     if (loop) g_main_loop_quit(loop);
     return;
   }
-  grotto_control_set_bunker(g_control, NULL, g_bunker_requested);
+  g_bunker = bunker_service_new();
+  bunker_service_set_no_approval_ui(g_bunker, g_no_approval_ui);
+  grotto_control_set_bunker(g_control, g_bunker, g_bunker_requested);
 
   g_message("grotto: D-Bus interface exported at %s on %s", 
             ORG_NOSTR_SIGNER_OBJECT_PATH, ORG_NOSTR_SIGNER_BUS);
@@ -103,18 +108,6 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
 
 #define SIGNER_SETTINGS_SCHEMA "org.nostr.Grotto"
 
-/* The daemon has no approval UI. A sign request that is neither an
- * auto-approved kind nor covered by a client session the user approved in
- * the GUI is refused, never signed silently. */
-static gboolean bunker_deny_unattended(const BunkerSignRequest *req, gpointer user_data) {
-  (void)user_data;
-  g_message("grotto: bunker: refused sign_event kind=%d from %s: no approval UI in the daemon "
-            "(add the kind to bunker-auto-approve-kinds or approve a session in grotto)",
-            req ? req->event_kind : -1,
-            (req && req->client_pubkey) ? req->client_pubkey : "(unknown)");
-  return FALSE;
-}
-
 /* Start NIP-46 bunker mode from the grotto settings. Fails fast, with
  * a journal line naming the missing setting, rather than running a bunker
  * that is misconfigured or open to any client. */
@@ -139,12 +132,6 @@ static gboolean bunker_mode_start(void) {
     return FALSE;
   }
   g_auto(GStrv) allowed = settings_manager_get_bunker_allowed_pubkeys(sm);
-  if (!allowed || !allowed[0]) {
-    g_critical("BUNKER_OPEN_ACL: refusing to start: %s bunker-allowed-pubkeys is empty, which would "
-               "admit any client that learns the bunker URI; list the client pubkeys (hex) first",
-               SIGNER_SETTINGS_SCHEMA);
-    return FALSE;
-  }
   g_autofree gchar *identity = g_strdup(settings_manager_get_default_identity(sm));
   if (!identity || !*identity) {
     g_clear_pointer(&identity, g_free);
@@ -156,20 +143,16 @@ static gboolean bunker_mode_start(void) {
   }
 
   g_auto(GStrv) methods = settings_manager_get_bunker_allowed_methods(sm);
-  g_auto(GStrv) kinds = settings_manager_get_bunker_auto_approve_kinds(sm);
 
-  g_bunker = bunker_service_new();
   bunker_service_set_allowed_pubkeys(g_bunker, (const gchar *const *)allowed);
   bunker_service_set_allowed_methods(g_bunker, (const gchar *const *)methods);
-  bunker_service_set_auto_approve_kinds(g_bunker, (const gchar *const *)kinds);
-  bunker_service_set_authorize_callback(g_bunker, bunker_deny_unattended, NULL);
   if (!bunker_service_start(g_bunker, (const gchar *const *)relays, identity)) {
     g_critical("BUNKER_START_FAILED: state=ERROR; bunker service did not start; "
                "local signer remains available");
     return FALSE;
   }
-  g_message("grotto: NIP-46 bunker running for %s on %u relay(s), %u allowed client(s)",
-            identity, g_strv_length(relays), g_strv_length(allowed));
+  g_message("grotto: NIP-46 bunker state=STARTING on %u relay(s); LISTENING requires EOSE",
+            g_strv_length(relays));
   return TRUE;
 }
 
@@ -180,7 +163,8 @@ static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpo
    * daemons never answer the same NIP-46 relays. */
   /* Remote startup failure must not stop the local signer. Keep a failed
    * service in ERROR until shutdown, rather than resetting it to STOPPED. */
-  if (g_bunker_requested && !g_bunker) {
+  if (g_bunker_requested && !g_bunker_started) {
+    g_bunker_started = TRUE;
     bunker_mode_start();
     grotto_control_set_bunker(g_control, g_bunker, TRUE);
   }
@@ -285,7 +269,9 @@ static void print_usage(const char *prog_name) {
   g_print("                          NOSTR_SIGNER_ALLOW_SYSTEM_BUS=1; see source notes)\n");
   g_print("  --bunker                Also serve NIP-46 remote signing (bunker mode) using the\n");
   g_print("                          grotto settings bunker-relays, bunker-allowed-pubkeys,\n");
-  g_print("                          bunker-allowed-methods and bunker-auto-approve-kinds\n");
+  g_print("                          bunker-allowed-methods and persistent transport custody\n");
+  g_print("  --no-approval-ui        Existing scoped grants only; review-required requests\n");
+  g_print("                          fail closed without summoning the approval UI\n");
   g_print("\n");
   g_print("Environment Variables:\n");
   g_print("  NOSTR_SIGNER_ENDPOINT   IPC endpoint (unix:/path, tcp:host:port)\n");
@@ -358,6 +344,8 @@ int main(int argc, char **argv) {
       bus_type = G_BUS_TYPE_SYSTEM;
     } else if (g_strcmp0(argv[i], "--bunker") == 0) {
       g_bunker_requested = TRUE;
+    } else if (g_strcmp0(argv[i], "--no-approval-ui") == 0) {
+      g_no_approval_ui = TRUE;
     } else {
       g_printerr("Unknown option: %s\n", argv[i]);
       print_usage(argv[0]);

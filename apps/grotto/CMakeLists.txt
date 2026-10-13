@@ -179,7 +179,8 @@ target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB 
 target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})
 # Link NIP-46 core for bunker service
 if (TARGET nostr_nip46_core)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core nostr_nip55l_glib)
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
 endif()
 # Link NIP-19 for bech32 encoding
 if (TARGET nip19)
@@ -341,7 +342,8 @@ target_include_directories(grotto_bunker_core
           ${CMAKE_SOURCE_DIR}/nips/nip19/include ${CMAKE_SOURCE_DIR}/libnostr/include
           ${CMAKE_SOURCE_DIR}/nostr-gobject/include ${CMAKE_SOURCE_DIR})
 target_link_libraries(grotto_bunker_core PUBLIC
-  PkgConfig::GLIB PkgConfig::JSON_GLIB nostr_gobject nostr_nip55l_core)
+  PkgConfig::GLIB PkgConfig::JSON_GLIB nostr_gobject nostr_nip55l_core nostr_nip55l_glib)
+target_include_directories(grotto_bunker_core PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
 if (TARGET nostr_nip46_core)
   target_link_libraries(grotto_bunker_core PUBLIC nostr_nip46_core)
 endif()
@@ -483,7 +485,11 @@ endif()
 # Systemd user unit (daemon) — Unix only
 if(NOT WIN32)
   install(FILES daemon/packaging/systemd/user/grotto-daemon.service
-          DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
+  install(FILES
+    daemon/packaging/systemd/user/grotto-daemon.service.d/bunker.conf.example
+    daemon/packaging/systemd/user/grotto-daemon.service.d/headless-bunker.conf.example
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/grotto/examples)
 endif()
 # Desktop file (canonical; AppImage uses packaging/appimage/grotto.desktop separately)
 install(FILES data/org.nostr.Grotto.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)

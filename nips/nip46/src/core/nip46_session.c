@@ -147,6 +147,12 @@ typedef struct SessionRegistryEntry {
 static pthread_mutex_t s_session_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SessionRegistryEntry *s_session_registry = NULL;
 
+typedef struct BunkerReply {
+    char *client, *json;
+    struct BunkerReply *next;
+} BunkerReply;
+static void *bunker_reply_worker(void *);
+
 /* Session struct definition */
 struct NostrNip46Session {
     /* Session metadata */
@@ -169,8 +175,20 @@ struct NostrNip46Session {
     NostrSimplePool *pool;                /* relay pool for sending/receiving */
     char *bunker_pubkey_hex;              /* our bunker identity pubkey (x-only hex) */
     char *bunker_secret_hex;              /* our bunker identity secret key (hex) */
-    int listening;                        /* whether bunker is actively listening */
+    _Atomic int listening;               /* owner/relay/response-worker boundary */
     char *current_request_client_pubkey;  /* client pubkey for current request context */
+
+    pthread_mutex_t bunker_mutex; /* deferred completion vs stop */
+    _Atomic unsigned bunker_generation;
+    pthread_cond_t bunker_reply_cond;
+    pthread_t bunker_reply_thread;
+    int bunker_reply_started;
+    size_t bunker_reply_count;
+    BunkerReply *bunker_reply_head, *bunker_reply_tail;
+    NostrNip46RequestHandler request_handler;
+    void *request_handler_data;
+    NostrNip46BunkerRelayHandler relay_handler;
+    void *relay_handler_data;
 
     /* Client mode transport: persistent pool and subscription for RPC */
     NostrSimplePool *client_pool;         /* Persistent pool for client RPC calls */
@@ -424,6 +442,8 @@ static NostrNip46Session *session_new(const char *note) {
     NostrNip46Session *s = (NostrNip46Session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
     pthread_mutex_init(&s->pending_mutex, NULL);
+    pthread_mutex_init(&s->bunker_mutex, NULL);
+    pthread_cond_init(&s->bunker_reply_cond, NULL);
     /* nostrc-prkl: RPC rate limiting gate */
     pthread_mutex_init(&s->rpc_gate_mutex, NULL);
     pthread_cond_init(&s->rpc_gate_cond, NULL);
@@ -582,7 +602,7 @@ static void session_destroy(NostrNip46Session *s) {
     /* free ACL */
     struct PermEntry *it = s->acl_head; while (it) { struct PermEntry *nx = it->next; if (it->client_pk) free(it->client_pk); if (it->methods){ for(size_t i=0;i<it->n_methods;++i) free(it->methods[i]); free(it->methods);} free(it); it = nx; }
     if (s->bunker_pubkey_hex) { free(s->bunker_pubkey_hex); }
-    if (s->bunker_secret_hex) { memset(s->bunker_secret_hex, 0, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
+    if (s->bunker_secret_hex) { secure_wipe(s->bunker_secret_hex, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
     if (s->current_request_client_pubkey) { free(s->current_request_client_pubkey); }
     /* cancel and free leftover pending requests */
     pthread_mutex_lock(&s->pending_mutex);
@@ -595,6 +615,8 @@ static void session_destroy(NostrNip46Session *s) {
     s->pending_requests = NULL;
     pthread_mutex_unlock(&s->pending_mutex);
     pthread_mutex_destroy(&s->pending_mutex);
+    pthread_mutex_destroy(&s->bunker_mutex);
+    pthread_cond_destroy(&s->bunker_reply_cond);
     pthread_mutex_destroy(&s->rpc_gate_mutex);
     pthread_cond_destroy(&s->rpc_gate_cond);
     pthread_mutex_destroy(&s->q_mutex);
@@ -690,6 +712,8 @@ void nostr_nip46_session_free(NostrNip46Session *s) {
         }
     }
     pthread_mutex_unlock(&s->rpc_gate_mutex);
+
+    nostr_nip46_bunker_stop(s);
 
     /* 6. transport teardown - nobody is inside the RPC path anymore */
     nostr_nip46_client_stop(s);
@@ -838,7 +862,7 @@ static int nip46_try_deliver_unsolicited_connect(NostrNip46Session *s,
                                                  const char *sender_pubkey_hex,
                                                  const char *plaintext_json);
 
-static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
+static void nip46_process_client_event(NostrIncomingEvent *incoming) {
     if (!incoming || !incoming->event || !incoming->relay) return;
 
     NostrEvent *ev = incoming->event;
@@ -968,6 +992,13 @@ static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
     free(resp_id);
 done:
     nostr_nip46_session_unref(session);
+}
+
+/* SimplePool transfers the event to middleware. A pending request retains
+ * copied/decrypted JSON, never this envelope. */
+static void nip46_persistent_client_cb(NostrIncomingEvent *incoming) {
+    nip46_process_client_event(incoming);
+    if (incoming) { nostr_event_free(incoming->event); incoming->event = NULL; }
 }
 
 static int64_t nip46_now_ms(void);
@@ -2621,6 +2652,8 @@ int nostr_nip46_client_nip44_decrypt_b64_rpc(NostrNip46Session *s, const char *p
     return 0;
 }
 
+static int bunker_dispatch_deferred(NostrNip46Session *, const char *, const char *, const char *, int64_t);
+
 /* Bunker API */
 NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) {
     NostrNip46Session *s = session_new("bunker");
@@ -2649,7 +2682,7 @@ NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs) 
  * session's ACL still gates `sign_event` (via `handle_cipher`), so a rogue
  * client cannot obtain a signature merely by reaching the middleware.
  */
-static void nip46_event_middleware(NostrIncomingEvent *incoming) {
+static void nip46_process_bunker_event(NostrIncomingEvent *incoming) {
     if (!incoming || !incoming->event || !incoming->relay) return;
 
     NostrEvent *ev = incoming->event;
@@ -2686,7 +2719,7 @@ static void nip46_event_middleware(NostrIncomingEvent *incoming) {
 
     /* Only bunker-listening sessions dispatch RPCs here; client sessions
      * use their own persistent-client callback. */
-    if (!session->secret || !session->listening ||
+    if (!session->listening ||
         !session->bunker_pubkey_hex || !session->bunker_secret_hex ||
         !session->pool) {
         nostr_nip46_session_unref(session);
@@ -2736,8 +2769,14 @@ static void nip46_event_middleware(NostrIncomingEvent *incoming) {
         return;
     }
 
-    /* Dispatch. handle_cipher decrypts, parses, calls ACL, builds and
-     * encrypts the reply. */
+    if (session->request_handler) {
+        bunker_dispatch_deferred(session, sender_pubkey, content, ev->id,
+                                 nostr_event_get_created_at(ev));
+        nostr_nip46_session_unref(session);
+        return;
+    }
+
+    /* Legacy dispatch. */
     char *cipher_reply = NULL;
     int rc = nostr_nip46_bunker_handle_cipher(session, sender_pubkey, content,
                                               &cipher_reply);
@@ -2792,15 +2831,34 @@ static void nip46_event_middleware(NostrIncomingEvent *incoming) {
     free(cipher_reply);
     nostr_nip46_session_unref(session);
 
-    /* Event ownership: the pool will free the incoming event after we
-     * return. */
+}
+
+static void nip46_event_middleware(NostrIncomingEvent *incoming) {
+    nip46_process_bunker_event(incoming);
+    /* Deferred handlers retain immutable RPC data, not the pool envelope. */
+    if (incoming) { nostr_event_free(incoming->event); incoming->event = NULL; }
+}
+
+static void bunker_relay_notify(NostrRelay *relay, const char *state, const char *reason, void *data) {
+    NostrNip46Session *s = data;
+    if (reason && !strncmp(reason, "auth-required:", 14)) state = "AUTH";
+    if (s->relay_handler) s->relay_handler(nostr_relay_get_url_const(relay), state, s->relay_handler_data);
+}
+static void bunker_relay_state(NostrRelay *relay, NostrRelayConnectionState old_state, NostrRelayConnectionState state, void *data) {
+    (void)old_state;
+    if (state != NOSTR_RELAY_STATE_CONNECTED) bunker_relay_notify(relay, "OFFLINE", NULL, data);
+}
+static void bunker_relay_auth(NostrRelay *relay, const char *challenge, void *data) {
+    (void)challenge;
+    /* Fail closed: this server does not silently sign a relay AUTH request. */
+    bunker_relay_notify(relay, "AUTH", NULL, data);
 }
 
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays) {
     if (!s || !relays || n_relays == 0) return -1;
 
     /* Bunker requires a secret key for decryption and signing */
-    if (!s->secret) {
+    if (!nip46_transport_secret_hex(s)) {
         if (getenv("NOSTR_DEBUG")) {
             fprintf(stderr, "[nip46] bunker_listen: no secret set, cannot listen\n");
         }
@@ -2809,7 +2867,7 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
 
     /* Derive bunker public key from secret if not already set */
     if (!s->bunker_pubkey_hex) {
-        char *pk = nostr_key_get_public(s->secret);
+        char *pk = nostr_key_get_public(nip46_transport_secret_hex(s));
         if (!pk) {
             if (getenv("NOSTR_DEBUG")) {
                 fprintf(stderr, "[nip46] bunker_listen: failed to derive pubkey\n");
@@ -2860,7 +2918,21 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
     /* Ensure all relays are connected */
     for (size_t i = 0; i < n_relays; ++i) {
         if (relays[i] && *relays[i]) {
-            nostr_simple_pool_ensure_relay(s->pool, relays[i]);
+            if (s->request_handler) nostr_simple_pool_ensure_relay_async(s->pool, relays[i]);
+            else nostr_simple_pool_ensure_relay(s->pool, relays[i]);
+        }
+    }
+
+    if (s->request_handler) {
+        nostr_simple_pool_set_subscription_callback(s->pool, bunker_relay_notify, s);
+        /* RPC admission happens after authenticated decryption. Do not derive
+         * recovery from envelopes which have not passed that admission. */
+        if (!nostr_simple_pool_set_recovery_window(s->pool, 600)) return -1;
+        for (size_t i = 0; i < s->pool->relay_count; i++) {
+            nostr_relay_set_state_callback_full(s->pool->relays[i], bunker_relay_state,
+                nostr_nip46_session_ref(s), (NostrRelayDestroyNotify)nostr_nip46_session_unref);
+            nostr_relay_set_auth_callback_full(s->pool->relays[i], bunker_relay_auth,
+                nostr_nip46_session_ref(s), (NostrRelayDestroyNotify)nostr_nip46_session_unref);
         }
     }
 
@@ -2884,6 +2956,8 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
         nostr_filter_set_tags(f, filter_tags);
     }
 
+    if (s->request_handler) nostr_filter_set_since(f, (int64_t)time(NULL) - 600);
+
     /* Move filter into filters collection */
     NostrFilter f_copy = *f;
     free(f); /* free the shell, contents moved */
@@ -2893,14 +2967,23 @@ int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, s
     }
 
     /* Subscribe to all relays */
-    nostr_simple_pool_subscribe(s->pool, (const char **)relays, n_relays, *filters, true /* dedup */);
+    if (s->request_handler)
+        nostr_simple_pool_subscribe_async(s->pool, (const char **)relays, n_relays, *filters, false /* adapter owns replay */);
+    else nostr_simple_pool_subscribe(s->pool, (const char **)relays, n_relays, *filters, true);
 
     /* nostrc-zcll.7: register the bunker pool so `nip46_event_middleware`
      * can look up this session from an incoming event's relay pointer and
      * dispatch RPCs. Idempotent — safe if already registered. */
     session_registry_add(s->pool, s);
 
-    /* Start the pool worker thread */
+    /* Register before the first frame can arrive. */
+    s->listening = 1;
+    if (s->request_handler && !s->bunker_reply_started) {
+        if (pthread_create(&s->bunker_reply_thread, NULL, bunker_reply_worker, s)) {
+            s->listening = 0; return -1;
+        }
+        s->bunker_reply_started = 1;
+    }
     nostr_simple_pool_start(s->pool);
 
     /* Free the filters wrapper (subscription made a copy) */
@@ -3022,18 +3105,31 @@ static int nip46_publish_response(NostrNip46Session *s, const char *client_pubke
     int published = 0;
     pthread_mutex_t *pool_mutex = &s->pool->pool_mutex;
     pthread_mutex_lock(pool_mutex);
-    for (size_t i = 0; i < s->pool->relay_count; ++i) {
-        NostrRelay *relay = s->pool->relays[i];
+    size_t relay_count = s->pool->relay_count;
+    NostrRelay **relays = calloc(relay_count, sizeof(*relays));
+    if (relays) for (size_t i = 0; i < relay_count; i++) relays[i] = nostr_relay_ref(s->pool->relays[i]);
+    else relay_count = 0;
+    pthread_mutex_unlock(pool_mutex);
+    /* ACK waits must not hold the pool mutex: its dispatcher must remain able
+     * to admit another client's request while publication is outstanding. */
+    for (size_t i = 0; i < relay_count; ++i) {
+        if (s->request_handler && !s->listening) break;
+        NostrRelay *relay = relays[i];
         if (relay && nostr_relay_is_connected(relay)) {
-            nostr_relay_publish(relay, ev);
-            published++;
+            if (s->request_handler) {
+                /* Only the dedicated response worker waits for OK; never the
+                 * relay dispatcher or signer's main context. */
+                if (nostr_relay_publish_and_wait(relay, ev, 3000, NULL)) published++;
+                else if (s->relay_handler) s->relay_handler(nostr_relay_get_url_const(relay), "REJECTED", s->relay_handler_data);
+            } else { nostr_relay_publish(relay, ev); published++; }
             if (getenv("NOSTR_DEBUG")) {
                 const char *url = nostr_relay_get_url_const(relay);
                 fprintf(stderr, "[nip46] published response to relay: %s\n", url ? url : "(unknown)");
             }
         }
     }
-    pthread_mutex_unlock(pool_mutex);
+    for (size_t i = 0; i < relay_count; i++) nostr_relay_unref(relays[i]);
+    free(relays);
 
     free(cipher);
     nostr_event_free(ev);
@@ -3045,8 +3141,153 @@ static int nip46_publish_response(NostrNip46Session *s, const char *client_pubke
     return published > 0 ? 0 : -1;
 }
 
+static void bunker_reply_free(BunkerReply *reply) {
+    free(reply->client); secure_wipe(reply->json, strlen(reply->json)); free(reply->json); free(reply);
+}
+static void *bunker_reply_worker(void *data) {
+    NostrNip46Session *s = data;
+    pthread_mutex_lock(&s->bunker_mutex);
+    while (s->listening) {
+        if (!s->bunker_reply_head) { pthread_cond_wait(&s->bunker_reply_cond, &s->bunker_mutex); continue; }
+        BunkerReply *reply = s->bunker_reply_head;
+        s->bunker_reply_head = reply->next;
+        if (!s->bunker_reply_head) s->bunker_reply_tail = NULL;
+        s->bunker_reply_count--;
+        pthread_mutex_unlock(&s->bunker_mutex);
+        nip46_publish_response(s, reply->client, reply->json);
+        bunker_reply_free(reply);
+        pthread_mutex_lock(&s->bunker_mutex);
+    }
+    pthread_mutex_unlock(&s->bunker_mutex); return NULL;
+}
+
+struct NostrNip46BunkerRequest {
+    int refs, completed;
+    NostrNip46Session *session;
+    unsigned generation;
+    NostrNip46Request rpc;
+    char *client, *event_id;
+    int64_t created_at;
+};
+
+int nostr_nip46_bunker_get_transport_pubkey(const NostrNip46Session *s, char **out_hex) {
+    if (!s || !out_hex || !s->bunker_pubkey_hex) return -1;
+    *out_hex = strdup(s->bunker_pubkey_hex); return *out_hex ? 0 : -1;
+}
+int nostr_nip46_bunker_set_transport_key(NostrNip46Session *s, const unsigned char key[32]) {
+    if (!s || !key || s->listening) return -1;
+    char hex[65];
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < 32; i++) { hex[2*i] = digits[key[i] >> 4]; hex[2*i+1] = digits[key[i] & 15]; }
+    hex[64] = 0;
+    char *pk = nostr_key_get_public(hex);
+    if (!pk) { secure_wipe(hex, sizeof(hex)); return -1; }
+    char *sk = strdup(hex);
+    secure_wipe(hex, sizeof(hex));
+    if (!sk) { free(pk); return -1; }
+    if (s->bunker_secret_hex) { secure_wipe(s->bunker_secret_hex, strlen(s->bunker_secret_hex)); free(s->bunker_secret_hex); }
+    free(s->bunker_pubkey_hex);
+    s->bunker_secret_hex = sk; s->bunker_pubkey_hex = pk;
+    return 0;
+}
+int nostr_nip46_bunker_set_request_handler(NostrNip46Session *s, NostrNip46RequestHandler cb, void *data) {
+    if (!s || s->listening) return -1;
+    s->request_handler = cb; s->request_handler_data = data; return 0;
+}
+int nostr_nip46_bunker_set_relay_handler(NostrNip46Session *s, NostrNip46BunkerRelayHandler cb, void *data) {
+    if (!s || s->listening) return -1;
+    s->relay_handler = cb; s->relay_handler_data = data; return 0;
+}
+void nostr_nip46_bunker_stop(NostrNip46Session *s) {
+    if (!s) return;
+    pthread_mutex_lock(&s->bunker_mutex);
+    s->listening = 0; s->bunker_generation++;
+    pthread_cond_broadcast(&s->bunker_reply_cond);
+    pthread_mutex_unlock(&s->bunker_mutex);
+    if (s->bunker_reply_started) {
+        pthread_join(s->bunker_reply_thread, NULL); s->bunker_reply_started = 0;
+    }
+    while (s->bunker_reply_head) {
+        BunkerReply *reply = s->bunker_reply_head; s->bunker_reply_head = reply->next; bunker_reply_free(reply);
+    }
+    s->bunker_reply_tail = NULL; s->bunker_reply_count = 0;
+    if (s->pool) {
+        session_registry_remove(s->pool);
+        nostr_simple_pool_stop(s->pool);
+        nostr_simple_pool_free(s->pool);
+        s->pool = NULL;
+    }
+}
+NostrNip46BunkerRequest *nostr_nip46_bunker_request_ref(NostrNip46BunkerRequest *r) {
+    if (r) __atomic_add_fetch(&r->refs, 1, __ATOMIC_RELAXED);
+    return r;
+}
+void nostr_nip46_bunker_request_unref(NostrNip46BunkerRequest *r) {
+    if (!r || __atomic_sub_fetch(&r->refs, 1, __ATOMIC_ACQ_REL)) return;
+    for (size_t i = 0; r->rpc.params && i < r->rpc.n_params; i++)
+        if (r->rpc.params[i]) secure_wipe(r->rpc.params[i], strlen(r->rpc.params[i]));
+    nostr_nip46_request_free(&r->rpc); free(r->client); free(r->event_id);
+    nostr_nip46_session_unref(r->session); free(r);
+}
+const NostrNip46Request *nostr_nip46_bunker_request_rpc(const NostrNip46BunkerRequest *r) { return r ? &r->rpc : NULL; }
+const char *nostr_nip46_bunker_request_client(const NostrNip46BunkerRequest *r) { return r ? r->client : NULL; }
+const char *nostr_nip46_bunker_request_event_id(const NostrNip46BunkerRequest *r) { return r ? r->event_id : NULL; }
+int64_t nostr_nip46_bunker_request_created_at(const NostrNip46BunkerRequest *r) { return r ? r->created_at : 0; }
+int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *r, const char *result, const char *error) {
+    if (!r || (!result && !error)) return -1;
+    if (__atomic_exchange_n(&r->completed, 1, __ATOMIC_ACQ_REL)) return -1;
+    char *json = error ? nostr_nip46_response_build_err(r->rpc.id, error) : nostr_nip46_response_build_ok(r->rpc.id, result);
+    if (!json) return -1;
+    NostrNip46Session *s = r->session;
+    pthread_mutex_lock(&s->bunker_mutex);
+    int rc = -1;
+    if (s->listening && r->generation == s->bunker_generation && s->bunker_reply_count < 1024) {
+        BunkerReply *reply = calloc(1, sizeof(*reply));
+        if (reply) {
+            reply->client = strdup(r->client); reply->json = json;
+            if (reply->client) {
+                if (s->bunker_reply_tail) s->bunker_reply_tail->next = reply; else s->bunker_reply_head = reply;
+                s->bunker_reply_tail = reply; s->bunker_reply_count++; json = NULL; rc = 0;
+                pthread_cond_signal(&s->bunker_reply_cond);
+            } else free(reply);
+        }
+    }
+    pthread_mutex_unlock(&s->bunker_mutex);
+    if (json) { secure_wipe(json, strlen(json)); free(json); }
+    return rc;
+}
+static int bunker_dispatch_deferred(NostrNip46Session *s, const char *client, const char *cipher, const char *event_id, int64_t created_at) {
+    if (!s || !s->request_handler || !is_valid_pubkey_hex_relaxed(client) || strlen(cipher) > 262144) return -1;
+    char *plain = NULL;
+    if (nostr_nip46_transport_decrypt(s, client, cipher, &plain) || !plain) return -1;
+    NostrNip46BunkerRequest *r = calloc(1, sizeof(*r));
+    if (!r) { secure_wipe(plain, strlen(plain)); free(plain); return -1; }
+    r->refs = 1;
+    int rc = nostr_nip46_request_parse(plain, &r->rpc);
+    /* The legacy parser accepts object parameters for older consumers. The
+     * request-aware wire boundary accepts only NIP-46 string parameters. */
+    json_t *root = rc ? NULL : json_loads(plain, JSON_REJECT_DUPLICATES, NULL);
+    json_t *params = root ? json_object_get(root, "params") : NULL;
+    bool valid_params = json_is_array(params);
+    for (size_t i = 0; valid_params && i < json_array_size(params); i++)
+        valid_params = json_is_string(json_array_get(params, i));
+    json_decref(root);
+    secure_wipe(plain, strlen(plain)); free(plain);
+    if (rc || !r->rpc.id || !r->rpc.method || strlen(r->rpc.id) > 128 || strlen(r->rpc.method) > 64 || r->rpc.n_params > 16) {
+        nostr_nip46_request_free(&r->rpc); free(r); return -1;
+    }
+    r->session = nostr_nip46_session_ref(s); r->generation = s->bunker_generation;
+    r->client = strdup(client); r->event_id = event_id ? strdup(event_id) : NULL;
+    r->created_at = created_at;
+    if (!r->client || (event_id && !r->event_id)) { nostr_nip46_bunker_request_unref(r); return -1; }
+    if (valid_params) s->request_handler(r, s->request_handler_data);
+    else nostr_nip46_bunker_request_complete(r, NULL, "invalid_params");
+    nostr_nip46_bunker_request_unref(r);
+    return 1; /* deferred; never enter the legacy ACL/crypto dispatcher */
+}
+
 int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req, const char *result_or_json, const char *error_or_null) {
-    if (!s || !req || !req->id) return -1;
+    if (!s || !req || !req->id || s->request_handler) return -1;
     char *json = NULL;
     if (error_or_null) {
         json = nostr_nip46_response_build_err(req->id, error_or_null);
@@ -3085,7 +3326,9 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
                                      char **out_cipher_reply) {
     if (!s || !client_pubkey_hex || !ciphertext || !out_cipher_reply) return -1;
     *out_cipher_reply = NULL;
-    if (!s->secret) return -1; /* need our secret to decrypt/encrypt */
+    if (s->request_handler)
+        return bunker_dispatch_deferred(s, client_pubkey_hex, ciphertext, NULL, (int64_t)time(NULL));
+    if (!s->secret) return -1; /* legacy account secret */
 
     /* Store client pubkey for response routing (used by bunker_reply if transport is active) */
     if (s->current_request_client_pubkey) {
@@ -3813,7 +4056,8 @@ int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
 
     /* Ensure bunker has a signing key. If the caller has not supplied one
      * via set_secret / an existing session, mint a fresh identity. */
-    if (!s->secret) {
+    if (!nip46_transport_secret_hex(s)) {
+        if (s->request_handler) { nostr_nip46_uri_connect_free(&u); return -1; }
         char *sk = nostr_key_generate_private();
         if (!sk) { nostr_nip46_uri_connect_free(&u); return -1; }
         s->secret = sk;
@@ -3829,7 +4073,7 @@ int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
 
     /* Grant ACL for the client so subsequent sign_event/get_public_key from
      * this client are honoured. */
-    if (is_valid_pubkey_hex_relaxed(u.client_pubkey_hex)) {
+    if (!s->request_handler && is_valid_pubkey_hex_relaxed(u.client_pubkey_hex)) {
         acl_set_perms(s, u.client_pubkey_hex, u.perms_csv);
     }
 

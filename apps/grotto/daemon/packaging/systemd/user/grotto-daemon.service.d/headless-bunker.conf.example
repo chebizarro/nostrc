@@ -1,0 +1,12 @@
+# Explicit headless remote signing. Choose this OR bunker.conf.example.
+# Install as ~/.config/systemd/user/grotto-daemon.service.d/bunker.conf,
+# then systemctl --user daemon-reload && systemctl --user restart grotto-daemon.
+# Provision transport custody, paired clients and scoped permissions first
+# (see DAEMON_DEPLOYMENT.md). No global kind/session/allow-all bypass exists.
+# Requests requiring review fail with NoApprovalAgent; no GUI is activated.
+
+[Service]
+ExecStart=
+ExecStart=/usr/bin/grotto-daemon --bunker --no-approval-ui
+# The base unit permits loopback only; remote network access is opt-in.
+IPAddressDeny=

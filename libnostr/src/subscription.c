@@ -189,6 +189,8 @@ NostrSubscription *nostr_subscription_new(NostrRelay *relay, NostrFilters *filte
     atomic_store(&sub->priv->events_channel_closed, false);
     atomic_store(&sub->priv->last_seen_created_at, 0);
     sub->priv->seen_cursor_events = NULL;
+    sub->priv->deliver_duplicates = false;
+    sub->priv->recovery_window = 0;
     sub->priv->replay_boundary_created_at = 0;
     sub->priv->replay_boundary_events = NULL;
     sub->priv->owns_filters = false;
@@ -432,6 +434,20 @@ void *nostr_subscription_start(void *arg) {
     return NULL;
 }
 
+void nostr_subscription_set_recovery_window(NostrSubscription *sub, unsigned seconds) {
+    if (!sub) return;
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    sub->priv->recovery_window = seconds;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+}
+
+void nostr_subscription_set_duplicate_delivery(NostrSubscription *sub, bool enabled) {
+    if (!sub) return;
+    nsync_mu_lock(&sub->priv->sub_mutex);
+    sub->priv->deliver_duplicates = enabled;
+    nsync_mu_unlock(&sub->priv->sub_mutex);
+}
+
 void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event) {
     if (!sub || !event)
         return;
@@ -462,7 +478,8 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
             ids = &sub->priv->replay_boundary_events;
         }
         char event_id[65];
-        bool track = (ev_created_at >= cursor || ev_created_at == boundary) && ev_created_at > 0;
+        bool track = !sub->priv->recovery_window &&
+            (ev_created_at >= cursor || ev_created_at == boundary) && ev_created_at > 0;
         if (track) {
             if (!event->id || strlen(event->id) != 64) {
                 nsync_mu_unlock(&sub->priv->sub_mutex);
@@ -471,7 +488,7 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
                 nostr_metric_counter_add("sub_event_invalid_id_drop", 1);
                 return;
             }
-            if (ids && seen_cursor_contains(*ids, event->id)) {
+            if (!sub->priv->deliver_duplicates && ids && seen_cursor_contains(*ids, event->id)) {
                 nsync_mu_unlock(&sub->priv->sub_mutex);
                 nostr_event_free(event);
                 nostr_metric_counter_add("sub_event_duplicate", 1);
@@ -507,7 +524,7 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
                     atomic_store(&sub->priv->last_seen_created_at, ev_created_at);
                     ids = &sub->priv->seen_cursor_events;
                 }
-                if (ids) seen_cursor_add(ids, event_id);
+                if (ids && !seen_cursor_contains(*ids, event_id)) seen_cursor_add(ids, event_id);
             }
 
             /* Get actual channel depth for warnings (nostrc-dw3)
@@ -567,7 +584,9 @@ void nostr_subscription_dispatch_event(NostrSubscription *sub, NostrEvent *event
 int64_t nostr_subscription_prepare_refire(NostrSubscription *sub) {
     if (!sub || !sub->priv) return 0;
     nsync_mu_lock(&sub->priv->sub_mutex);
-    int64_t cursor = atomic_load(&sub->priv->last_seen_created_at);
+    int64_t cursor = sub->priv->recovery_window
+        ? (int64_t)time(NULL) - sub->priv->recovery_window
+        : atomic_load(&sub->priv->last_seen_created_at);
     free(sub->priv->replay_boundary_events);
     sub->priv->replay_boundary_events = NULL;
     sub->priv->replay_boundary_created_at = cursor;

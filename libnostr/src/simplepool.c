@@ -48,6 +48,7 @@ typedef struct SubscriptionRegistry {
     pthread_mutex_t mutex;
     GoChannel *cleanup_queue;  // Queue of entries to cleanup
     _Atomic bool shutdown_requested; /* nostrc-val0v: polled by the cleanup worker, set by pool free */
+    _Atomic unsigned recovery_window; /* configured before subscribe; no public layout change */
 } SubscriptionRegistry;
 
 static SubscriptionRegistry *subscription_registry_new(void) {
@@ -59,6 +60,7 @@ static SubscriptionRegistry *subscription_registry_new(void) {
     pthread_mutex_init(&reg->mutex, NULL);
     reg->cleanup_queue = go_channel_create(256);  // Buffered queue
     reg->shutdown_requested = false;
+    reg->recovery_window = 0;
     
     return reg;
 }
@@ -413,6 +415,43 @@ NostrSimplePool *nostr_simple_pool_new(void) {
 }
 
 /* Convenience configuration API implementations */
+typedef struct PoolObserver {
+    NostrSimplePool *pool;
+    NostrPoolSubscriptionCallback callback;
+    void *data;
+    struct PoolObserver *next;
+} PoolObserver;
+static pthread_mutex_t observer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static PoolObserver *observers;
+void nostr_simple_pool_set_subscription_callback(NostrSimplePool *pool, NostrPoolSubscriptionCallback cb, void *data) {
+    if (!pool) return;
+    pthread_mutex_lock(&observer_mutex);
+    PoolObserver **p = &observers;
+    while (*p && (*p)->pool != pool) p = &(*p)->next;
+    if (*p) { PoolObserver *old = *p; *p = old->next; free(old); }
+    if (cb) {
+        PoolObserver *o = calloc(1, sizeof(*o));
+        if (o) { o->pool = pool; o->callback = cb; o->data = data; o->next = observers; observers = o; }
+    }
+    pthread_mutex_unlock(&observer_mutex);
+}
+bool nostr_simple_pool_set_recovery_window(NostrSimplePool *pool, unsigned seconds) {
+    SubscriptionRegistry *registry = pool ? pool->sub_registry : NULL;
+    if (!registry) return false;
+    atomic_store(&registry->recovery_window, seconds);
+    return true;
+}
+static unsigned pool_recovery_window(NostrSimplePool *pool) {
+    SubscriptionRegistry *registry = pool->sub_registry;
+    return registry ? atomic_load(&registry->recovery_window) : 0;
+}
+static void pool_subscription_notify(NostrSimplePool *pool, NostrRelay *relay, const char *state, const char *reason) {
+    pthread_mutex_lock(&observer_mutex);
+    for (PoolObserver *o = observers; o; o = o->next)
+        if (o->pool == pool) { o->callback(relay, state, reason, o->data); break; }
+    pthread_mutex_unlock(&observer_mutex);
+}
+
 void nostr_simple_pool_set_event_middleware(NostrSimplePool *pool,
                                              void (*cb)(NostrIncomingEvent *)) {
     if (!pool) return;
@@ -462,6 +501,8 @@ void nostr_simple_pool_free(NostrSimplePool *pool) {
         /* Already disposed by another thread/path */
         return;
     }
+
+    nostr_simple_pool_set_subscription_callback(pool, NULL, NULL);
 
     /* fp-ieg8: retire the redial worker before anything it touches is torn
      * down. It holds a ref on any relay it is dialling, so the relay itself
@@ -615,9 +656,8 @@ static NostrRelay *pool_register_relay(NostrSimplePool *pool, const char *url,
     }
     pthread_mutex_unlock(&pool->pool_mutex);
 
-    GoContext *ctx = go_context_background();
     Error *err = NULL;
-    NostrRelay *relay = nostr_relay_new(ctx, url, &err);
+    NostrRelay *relay = nostr_relay_new(NULL, url, &err);
     if (err) free_error(err);
     if (!relay) {
         /* nostrc-py1: Record failure even if relay creation fails */
@@ -1065,6 +1105,8 @@ static void pool_drain_all(NostrSimplePool *pool,
         GoChannel *ch_closed = nostr_subscription_get_closed_channel(sub);
         void *closed_msg = NULL;
         if (ch_closed && go_channel_try_receive(ch_closed, &closed_msg) == 0) {
+            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), "CLOSED", closed_msg);
+            free(closed_msg);
             pthread_mutex_lock(&pool->pool_mutex);
             for (size_t j = 0; j < pool->subs_count; j++) {
                 if (pool->subs[j] == sub) {
@@ -1082,6 +1124,7 @@ static void pool_drain_all(NostrSimplePool *pool,
         /* --- EOSE signal: optionally auto-unsubscribe --- */
         GoChannel *ch_eose = nostr_subscription_get_eose_channel(sub);
         if (ch_eose && go_channel_try_receive(ch_eose, NULL) == 0) {
+            pool_subscription_notify(pool, nostr_subscription_get_relay(sub), "EOSE", NULL);
             if (pool->auto_unsub_on_eose) {
                 pthread_mutex_lock(&pool->pool_mutex);
                 for (size_t j = 0; j < pool->subs_count; j++) {
@@ -1110,7 +1153,6 @@ static void pool_drain_all(NostrSimplePool *pool,
  * resubscribe in a loop. Called from the worker loop (≤200ms cadence). */
 static void pool_reconcile_subs(NostrSimplePool *pool) {
     if (!pool || pool->auto_unsub_on_eose) return;
-    GoContext *bg = go_context_background();
     pthread_mutex_lock(&pool->pool_mutex);
     if (!pool->filters_shared) {
         pthread_mutex_unlock(&pool->pool_mutex);
@@ -1127,8 +1169,10 @@ static void pool_reconcile_subs(NostrSimplePool *pool) {
             }
         }
         if (has_sub) continue;
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, pool->filters_shared);
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
         if (!sub) continue;
+        nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
+        nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             fprintf(stderr, "[simplepool] resubscribe fire failed on %s: %s\n",
@@ -1439,7 +1483,6 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
         }
     }
     // Replace pool->filters_shared (must hold mutex — concurrent subscribe calls race)
-    GoContext *bg = go_context_background();
     pthread_mutex_lock(&pool->pool_mutex);
     if (pool->filters_shared) {
         nostr_filters_free(pool->filters_shared);
@@ -1449,8 +1492,10 @@ static void pool_subscribe_impl(NostrSimplePool *pool, const char **urls,
     for (size_t i = 0; i < pool->relay_count; i++) {
         NostrRelay *relay = pool->relays[i];
         if (!relay) continue;
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, pool->filters_shared);
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, pool->filters_shared);
         if (!sub) continue;
+        nostr_subscription_set_duplicate_delivery(sub, !pool->dedup_unique);
+        nostr_subscription_set_recovery_window(sub, pool_recovery_window(pool));
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {
             /* nostrc-el92: log instead of swallowing; the worker loop's
@@ -1510,7 +1555,6 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
     }
 
     // ONESHOT path: create ephemeral subscriptions, deliver first event via middleware, then close.
-    GoContext *bg = go_context_background();
     for (size_t i = 0; i < url_count; i++) {
         const char *url = urls[i];
         if (!url || !*url) continue;
@@ -1530,7 +1574,7 @@ void nostr_simple_pool_query_single(NostrSimplePool *pool, const char **urls, si
         NostrFilter *dup = nostr_filter_copy(&filter);
         if (dup) { NostrFilter tmp = *dup; free(dup); (void)nostr_filters_add(fs, &tmp); } else { NostrFilter tmp = {0}; (void)nostr_filters_add(fs, &tmp); }
 
-        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, bg, fs);
+        NostrSubscription *sub = nostr_relay_prepare_subscription(relay, NULL, fs);
         if (!sub) { nostr_filters_free(fs); continue; }
         Error *err = NULL;
         if (!nostr_subscription_fire(sub, &err)) {

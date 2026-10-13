@@ -419,17 +419,19 @@ if(TARGET grotto_bunker_core)
         LABELS "signer;security;unit")
 endif()
 
-# G01: only startup failure against the real service, not the broad G05 suite.
+# G05: real lifecycle/custody/configuration service coverage.
 if(UNIX AND TARGET grotto_bunker_core)
-    add_executable(test-bunker-startup test-bunker.c)
-    target_link_libraries(test-bunker-startup PRIVATE grotto_bunker_core)
+    pkg_check_modules(G00_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+    add_executable(test-bunker-startup test-bunker.c bunker_test_relay.c)
+    target_link_libraries(test-bunker-startup PRIVATE grotto_bunker_core PkgConfig::G00_SOUP)
     target_compile_features(test-bunker-startup PRIVATE c_std_11)
     target_compile_options(test-bunker-startup PRIVATE -Wall -Wextra -Werror)
     apply_test_sanitizers(test-bunker-startup)
     add_dependencies(test-bunker-startup grotto-schemas)
     add_dependencies(signer-tests test-bunker-startup)
     add_test(NAME signer/bunker-startup COMMAND test-bunker-startup)
-    set_tests_properties(signer/bunker-startup PROPERTIES
+    add_test(NAME signer/bunker COMMAND test-bunker-startup)
+    set_tests_properties(signer/bunker-startup signer/bunker PROPERTIES
         TIMEOUT 30 LABELS "signer;bunker;nip46;unit"
         ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto")
 endif()
@@ -439,9 +441,10 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
     find_program(G00_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
     pkg_check_modules(G00_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
     add_executable(test-bunker-e2e test-bunker-e2e.c bunker_test_relay.c)
-    target_include_directories(test-bunker-e2e PRIVATE ${SIGNER_INCLUDE_DIRS})
+    target_include_directories(test-bunker-e2e PRIVATE ${SIGNER_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/apps/grotto/daemon ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_link_libraries(test-bunker-e2e PRIVATE
-        ${SIGNER_TEST_LIBS} nostr_nip46_core PkgConfig::G00_SOUP nostrc-test-bus)
+        ${SIGNER_TEST_LIBS} nostr_nip46_core nostr_nip55l_core grotto_control_core PkgConfig::G00_SOUP nostrc-test-bus)
     target_link_directories(test-bunker-e2e PRIVATE ${SIGNER_TEST_LINK_DIRS})
     target_compile_features(test-bunker-e2e PRIVATE c_std_11)
     target_compile_options(test-bunker-e2e PRIVATE -Wall -Wextra -Werror)
@@ -452,13 +455,12 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
         $<TARGET_FILE:grotto-daemon>
         ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
         ${G00_GLIB_COMPILE_SCHEMAS})
-    # G00 nonfunctional baseline: encrypted connect must still fail today.
-    # G01 captures honest ERROR output and still runs the real client flow.
-    # G05 (nostrc-u6v55.6) must remove WILL_FAIL and make the test pass.
-    # G01 (nostrc-u6v55.2) only reports ERROR instead of RUNNING; this test
-    # must still exercise that nonfunctional daemon, with the inversion kept.
-    set_tests_properties(signer/bunker-e2e PROPERTIES
-        WILL_FAIL TRUE
+    add_test(NAME signer/bunker-headless COMMAND test-bunker-e2e
+        $<TARGET_FILE:grotto-daemon>
+        ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
+        ${G00_GLIB_COMPILE_SCHEMAS} --headless)
+    # G05: normal success, no inverted nonfunctional baseline.
+    set_tests_properties(signer/bunker-e2e signer/bunker-headless PROPERTIES
         TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;bunker;nip46;integration")
 endif()
 

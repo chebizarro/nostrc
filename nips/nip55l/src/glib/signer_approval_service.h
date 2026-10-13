@@ -50,6 +50,9 @@ void signer_approval_service_fail_request(SignerApprovalService *service, const 
                                          const gchar *error, const gchar *message);
 /* Hook for G04 SetPaused; session-only. Pause increments generation, cancels
  * queued work and suppresses in-flight results, even across pause/resume. */
+/* Startup headless policy: scoped allows continue; ASK returns NO_APPROVER
+ * without announcing/summoning a GUI. Does not create or expand grants. */
+void signer_approval_service_set_no_approval_ui(SignerApprovalService *, gboolean);
 void signer_approval_service_set_paused(SignerApprovalService *service, gboolean paused);
 gboolean signer_approval_service_is_paused(SignerApprovalService *service);
 guint64 signer_approval_service_generation(SignerApprovalService *service);

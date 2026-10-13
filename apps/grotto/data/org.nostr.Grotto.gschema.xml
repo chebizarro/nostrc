@@ -145,19 +145,19 @@
     <key name="bunker-allowed-pubkeys" type="as">
       <default>[]</default>
       <summary>Allowed bunker pubkeys</summary>
-      <description>Public keys allowed to connect to this bunker (empty = all).</description>
+      <description>Legacy client keys admitted to manual connect review, not paired or granted signing scopes. An empty list admits no new clients; persisted paired clients are checked separately.</description>
     </key>
 
     <key name="bunker-allowed-methods" type="as">
-      <default>['get_public_key', 'sign_event', 'nip04_encrypt', 'nip04_decrypt', 'nip44_encrypt', 'nip44_decrypt']</default>
+      <default>['get_public_key', 'sign_event', 'nip04_encrypt', 'nip04_decrypt', 'nip44_encrypt', 'nip44_decrypt', 'ping', 'get_relays']</default>
       <summary>Allowed bunker methods</summary>
-      <description>NIP-46 methods clients are allowed to call.</description>
+      <description>Server method ceiling, never a permission grant. Each call also requires paired admission and shared-gate policy. Empty disables these methods; connect is handled separately.</description>
     </key>
 
     <key name="bunker-auto-approve-kinds" type="as">
       <default>['1', '6', '7']</default>
-      <summary>Auto-approve event kinds</summary>
-      <description>Event kinds to auto-approve without prompting (notes, reposts, reactions).</description>
+<summary>Deprecated event-kind preference</summary>
+        <description>Ignored by the daemon. Remote signing uses per-client, per-account, per-event-kind permissions and trust policy through the shared signer gate.</description>
     </key>
 
     <!-- Client Session Settings (nostrc-09n) -->

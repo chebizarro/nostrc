@@ -5,8 +5,8 @@
  *   - "sign-request"      → replaces NostrNip46SignFn
  *
  * Signal handlers run synchronously on the bunker's dispatch thread,
- * so they must return quickly. For async authorization UIs, use
- * handle_cipher from a GTask thread and block on user input there.
+ * so they must return quickly. New consumers use the opt-in request signal,
+ * delivered asynchronously on the construction GMainContext, never a blocking UI wait.
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -27,6 +27,8 @@ enum {
     SIGNAL_AUTHORIZE_REQUEST,
     SIGNAL_SIGN_REQUEST,
     SIGNAL_ERROR,
+    SIGNAL_REQUEST,
+    SIGNAL_RELAY_STATE,
     N_SIGNALS
 };
 
@@ -37,6 +39,11 @@ static guint signals[N_SIGNALS] = { 0 };
 struct _GNostrNip46Bunker {
     GObject parent_instance;
     NostrNip46Session *session;     /* Core NIP-46 session (owned) */
+    GMainContext *context;
+    GWeakRef weak_self;
+    GMutex lifecycle;
+    gint generation;
+    gint queued_requests; /* producer-to-owner boundary, before the gate quota */
 };
 
 G_DEFINE_TYPE(GNostrNip46Bunker, gnostr_nip46_bunker, G_TYPE_OBJECT)
@@ -73,6 +80,54 @@ gobject_sign_cb(const char *event_json, void *user_data)
         return result;
     }
     return NULL;
+}
+
+typedef struct {
+    GNostrNip46Bunker *self;
+    gint generation;
+    NostrNip46BunkerRequest *request;
+    gchar *relay, *state;
+} Delivery;
+static gboolean deliver(gpointer data) {
+    Delivery *d = data;
+    if (d->generation == g_atomic_int_get(&d->self->generation)) {
+        if (d->request) g_signal_emit(d->self, signals[SIGNAL_REQUEST], 0, d->request);
+        else g_signal_emit(d->self, signals[SIGNAL_RELAY_STATE], 0, d->relay, d->state);
+    }
+    return G_SOURCE_REMOVE;
+}
+static void delivery_free(gpointer data) {
+    Delivery *d = data;
+    if (d->request) g_atomic_int_add(&d->self->queued_requests, -1);
+    nostr_nip46_bunker_request_unref(d->request);
+    g_free(d->relay); g_free(d->state); g_object_unref(d->self); g_free(d);
+}
+static void queue_delivery(Delivery *d) {
+    d->generation = g_atomic_int_get(&d->self->generation);
+    GSource *source = g_idle_source_new();
+    g_source_set_callback(source, deliver, d, delivery_free);
+    g_source_attach(source, d->self->context); g_source_unref(source);
+}
+static void request_cb(NostrNip46BunkerRequest *request, void *data) {
+    GNostrNip46Bunker *self = data;
+    GNostrNip46Bunker *strong = g_weak_ref_get(&self->weak_self);
+    if (!strong) return;
+    /* Bound decrypted payloads waiting for the owner context, independently of
+     * its per-caller/global gate quotas. Rejection never reaches account ops. */
+    if (g_atomic_int_add(&strong->queued_requests, 1) >= 256) {
+        g_atomic_int_add(&strong->queued_requests, -1);
+        nostr_nip46_bunker_request_complete(request, NULL, "rate_limited");
+        g_object_unref(strong); return;
+    }
+    Delivery *d = g_new0(Delivery, 1); d->self = strong;
+    d->request = nostr_nip46_bunker_request_ref(request); queue_delivery(d);
+}
+static void relay_cb(const char *relay, const char *state, void *data) {
+    GNostrNip46Bunker *self = data;
+    GNostrNip46Bunker *strong = g_weak_ref_get(&self->weak_self);
+    if (!strong) return;
+    Delivery *d = g_new0(Delivery, 1); d->self = strong;
+    d->relay = g_strdup(relay); d->state = g_strdup(state); queue_delivery(d);
 }
 
 /* ── Signal accumulators ───────────────────────────────────────── */
@@ -116,6 +171,9 @@ gnostr_nip46_bunker_finalize(GObject *object)
         self->session = NULL;
     }
 
+    g_mutex_clear(&self->lifecycle);
+    g_weak_ref_clear(&self->weak_self);
+    g_main_context_unref(self->context);
     G_OBJECT_CLASS(gnostr_nip46_bunker_parent_class)->finalize(object);
 }
 
@@ -166,6 +224,11 @@ gnostr_nip46_bunker_class_init(GNostrNip46BunkerClass *klass)
                      G_TYPE_STRING, 1,
                      G_TYPE_STRING);
 
+    signals[SIGNAL_REQUEST] = g_signal_new("request", G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_POINTER);
+    signals[SIGNAL_RELAY_STATE] = g_signal_new("relay-state", G_TYPE_FROM_CLASS(klass),
+        G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_STRING, G_TYPE_STRING);
+
     /**
      * GNostrNip46Bunker::error:
      * @self: the bunker
@@ -184,6 +247,9 @@ gnostr_nip46_bunker_class_init(GNostrNip46BunkerClass *klass)
 static void
 gnostr_nip46_bunker_init(GNostrNip46Bunker *self)
 {
+    self->context = g_main_context_ref_thread_default();
+    g_weak_ref_init(&self->weak_self, self);
+    g_mutex_init(&self->lifecycle);
     NostrNip46BunkerCallbacks cbs = {
         .authorize_cb = gobject_authorize_cb,
         .sign_cb = gobject_sign_cb,
@@ -210,7 +276,9 @@ gnostr_nip46_bunker_listen(GNostrNip46Bunker *self,
     g_return_val_if_fail(self->session != NULL, FALSE);
     g_return_val_if_fail(relays != NULL && n_relays > 0, FALSE);
 
+    g_mutex_lock(&self->lifecycle);
     int rc = nostr_nip46_bunker_listen(self->session, relays, n_relays);
+    g_mutex_unlock(&self->lifecycle);
     if (rc != 0) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED,
                             "Failed to start bunker listener");
@@ -220,11 +288,40 @@ gnostr_nip46_bunker_listen(GNostrNip46Bunker *self,
     return TRUE;
 }
 
+gboolean gnostr_nip46_bunker_set_transport_key(GNostrNip46Bunker *self, const guint8 key[32], GError **error) {
+    g_return_val_if_fail(GNOSTR_IS_NIP46_BUNKER(self), FALSE);
+    g_mutex_lock(&self->lifecycle);
+    int rc = nostr_nip46_bunker_set_transport_key(self->session, key);
+    g_mutex_unlock(&self->lifecycle);
+    if (rc) {
+        g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_INVALID_KEY, "Invalid transport key or active listener");
+        return FALSE;
+    }
+    return TRUE;
+}
+gboolean gnostr_nip46_bunker_enable_requests(GNostrNip46Bunker *self) {
+    g_return_val_if_fail(GNOSTR_IS_NIP46_BUNKER(self), FALSE);
+    g_mutex_lock(&self->lifecycle);
+    gboolean ok = !nostr_nip46_bunker_set_request_handler(self->session, request_cb, self) &&
+           !nostr_nip46_bunker_set_relay_handler(self->session, relay_cb, self);
+    g_mutex_unlock(&self->lifecycle); return ok;
+}
+void gnostr_nip46_bunker_stop(GNostrNip46Bunker *self) {
+    g_return_if_fail(GNOSTR_IS_NIP46_BUNKER(self));
+    g_mutex_lock(&self->lifecycle);
+    /* Fence queued listen jobs as well as producer deliveries during stop. */
+    g_atomic_int_inc(&self->generation);
+    nostr_nip46_bunker_stop(self->session);
+    g_atomic_int_inc(&self->generation);
+    g_mutex_unlock(&self->lifecycle);
+}
+
 /* ── Async listen ──────────────────────────────────────────────── */
 
 typedef struct {
     gchar **relays;
     gsize n_relays;
+    gint generation;
 } ListenAsyncData;
 
 static void
@@ -250,12 +347,15 @@ listen_thread(GTask        *task,
         return;
     }
 
-    if (gnostr_nip46_bunker_listen(self, (const gchar *const *)d->relays,
-                                    d->n_relays, &error)) {
-        g_task_return_boolean(task, TRUE);
-    } else {
-        g_task_return_error(task, g_steal_pointer(&error));
+    g_mutex_lock(&self->lifecycle);
+    if (d->generation != g_atomic_int_get(&self->generation)) {
+        g_mutex_unlock(&self->lifecycle);
+        g_task_return_new_error(task, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Bunker start was cancelled"); return;
     }
+    int rc = nostr_nip46_bunker_listen(self->session, (const gchar *const *)d->relays, d->n_relays);
+    g_mutex_unlock(&self->lifecycle);
+    if (!rc) g_task_return_boolean(task, TRUE);
+    else g_task_return_new_error(task, NOSTR_ERROR, NOSTR_ERROR_CONNECTION_FAILED, "Failed to start bunker listener");
 }
 
 void
@@ -275,6 +375,7 @@ gnostr_nip46_bunker_listen_async(GNostrNip46Bunker   *self,
     ListenAsyncData *d = g_new0(ListenAsyncData, 1);
     d->relays = g_strdupv((gchar **)relays);
     d->n_relays = n_relays;
+    d->generation = g_atomic_int_get(&self->generation);
     g_task_set_task_data(task, d, listen_async_data_free);
 
     g_task_run_in_thread(task, listen_thread);
@@ -289,6 +390,10 @@ gnostr_nip46_bunker_listen_finish(GNostrNip46Bunker *self,
     g_return_val_if_fail(GNOSTR_IS_NIP46_BUNKER(self), FALSE);
     g_return_val_if_fail(g_task_is_valid(result, self), FALSE);
 
+    ListenAsyncData *d = g_task_get_task_data(G_TASK(result));
+    if (d->generation != g_atomic_int_get(&self->generation)) {
+        g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "Bunker start was cancelled"); return FALSE;
+    }
     return g_task_propagate_boolean(G_TASK(result), error);
 }
 
@@ -340,7 +445,7 @@ gnostr_nip46_bunker_handle_cipher(GNostrNip46Bunker *self,
                                                client_pubkey_hex,
                                                ciphertext,
                                                &reply);
-    if (rc != 0) {
+    if (rc != 0 && rc != 1) {
         g_set_error_literal(error, NOSTR_ERROR, NOSTR_ERROR_ENCRYPTION_FAILED,
                             "Failed to handle cipher request");
         return FALSE;

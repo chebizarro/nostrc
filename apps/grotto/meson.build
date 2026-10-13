@@ -42,6 +42,9 @@ nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
   dirs: [cmake_build_dir / 'nostr-gobject'],
   static: false)
 nostr_gobject_inc = include_directories('../../nostr-gobject/include')
+# BunkerService now submits to the shared daemon gate (no GUI crypto path).
+nip55l_glib_lib = cc.find_library('nostr_nip55l_glib', dirs: [cmake_build_dir / 'nips/nip55l'])
+nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 'nips/nip55l'])
 nostr_gobject_dep = declare_dependency(
   dependencies: nostr_gobject_shared,
   include_directories: nostr_gobject_inc)
@@ -98,6 +101,7 @@ nips_inc = include_directories(
   '../../nips/nip53/include',
   '../../nips/nip54/include',
   '../../nips/nip55l/include',
+  '../../nips/nip55l/src/glib',
   '../../nips/nip5f/include',
   '../../nips/nip77/include',
   '../../nips/nip86/include',
@@ -245,7 +249,7 @@ executable(app_bin,
     libgo_inc,
     nips_inc,
   ],
-  dependencies: app_deps,
+  dependencies: app_deps + [nip55l_glib_lib, nip55l_core_lib],
   c_args: [
     '-DAPP_ID="@0@"'.format(app_id),
     '-DAPP_NAME="@0@"'.format(app_name),
