@@ -29,6 +29,19 @@ typedef struct {
 
 static gboolean run_rpc_flow(Fixture *f)
 {
+    /* The remote lane may be in ERROR, but the exported local signer survives. */
+    g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
+    REQUIRE(bus != NULL, "connect to isolated signer bus");
+    g_autoptr(GVariant) local = g_dbus_connection_call_sync(bus,
+        "org.nostr.Signer", "/org/nostr/signer", "org.freedesktop.DBus.Introspectable",
+        "Introspect", NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NO_AUTO_START,
+        4000, NULL, NULL);
+    REQUIRE(local != NULL, "local signer must remain exported after bunker startup failure");
+    const gchar *xml = NULL;
+    g_variant_get(local, "(&s)", &xml);
+    REQUIRE(strstr(xml, "org.nostr.Signer") != NULL, "local signer interface remains available");
+    g_print("local org.nostr.Signer remains available\n");
+
     g_autofree gchar *encoded = g_uri_escape_string(bunker_test_relay_url(f->relay), NULL, FALSE);
     g_autofree gchar *uri = g_strdup_printf("bunker://%s?relay=%s", f->account_pk, encoded);
     REQUIRE(nostr_nip46_client_connect(f->client, uri, NULL) == 0, "parse real daemon bunker endpoint");
@@ -100,12 +113,19 @@ static void check_daemon_log(Fixture *f)
     if (f->ready) return;
     g_autofree gchar *log = NULL;
     if (!g_file_get_contents(f->log_path, &log, NULL, NULL)) return;
-    if (strstr(log, "NIP-46 bunker running for")) {
+    gboolean running = strstr(log, "NIP-46 bunker running for") != NULL;
+    gboolean failed = strstr(log, "BUNKER_START_FAILED: state=ERROR") != NULL;
+    if (running && failed) {
+        g_printerr("ASSERTION FAILED: daemon claimed RUNNING after listener failure\n");
+        g_main_loop_quit(f->loop);
+    } else if (running || failed) {
         f->ready = TRUE;
         guint connections, requests, published;
         bunker_test_relay_stats(f->relay, &connections, &requests, &published);
-        g_print("daemon claimed RUNNING; before client: connections=%u REQ=%u\n",
-            connections, requests);
+        g_print("daemon reported %s; before client: connections=%u REQ=%u\n",
+            failed ? "ERROR (no RUNNING claim)" : "RUNNING", connections, requests);
+        /* G01 fixes reporting only. Still exercise the nonfunctional daemon
+         * and fail at encrypted connect; WILL_FAIL stays until G05. */
         f->worker = g_thread_new("bunker-client", rpc_worker, f);
     } else if (strstr(log, "BUNKER_START_FAILED") || strstr(log, "BUNKER_NO_") ||
                strstr(log, "BUNKER_DISABLED") || strstr(log, "BUNKER_OPEN_ACL")) {

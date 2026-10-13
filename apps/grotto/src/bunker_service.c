@@ -376,6 +376,11 @@ gboolean bunker_service_start(BunkerService *bs,
     return FALSE;
   }
 
+  if (!relays || !relays[0]) {
+    set_state(bs, BUNKER_STATE_ERROR, "No bunker relays configured");
+    return FALSE;
+  }
+
   set_state(bs, BUNKER_STATE_STARTING, NULL);
 
   /* Store identity */
@@ -422,17 +427,15 @@ gboolean bunker_service_start(BunkerService *bs,
   g_signal_connect(bs->bunker, "sign-request",
                    G_CALLBACK(on_bunker_sign_request), bs);
 
-  /* Start listening */
-  if (bs->relays && bs->n_relays > 0) {
-    GError *error = NULL;
-    if (!gnostr_nip46_bunker_listen(bs->bunker,
-                                     (const gchar *const *)bs->relays,
-                                     bs->n_relays, &error)) {
-      g_warning("bunker: listen failed: %s (may be expected for stub)",
-                error ? error->message : "unknown");
-      g_clear_error(&error);
-      /* Don't fail - the library may not have full relay support yet */
-    }
+  /* Do not expose transport errors: they may contain relay URLs or secrets. */
+  GError *error = NULL;
+  if (!gnostr_nip46_bunker_listen(bs->bunker,
+                                (const gchar *const *)bs->relays,
+                                bs->n_relays, &error)) {
+    g_clear_error(&error);
+    g_clear_object(&bs->bunker);
+    set_state(bs, BUNKER_STATE_ERROR, "Failed to start bunker listener");
+    return FALSE;
   }
 
   set_state(bs, BUNKER_STATE_RUNNING, NULL);

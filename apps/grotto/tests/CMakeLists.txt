@@ -143,22 +143,8 @@ set_tests_properties(signer/session PROPERTIES
     ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
 )
 
-# ==============================================================================
-# Test: NIP-46 Bunker service (remote signing)
-# ==============================================================================
-add_executable(test-bunker test-bunker.c)
-target_include_directories(test-bunker PRIVATE ${SIGNER_INCLUDE_DIRS})
-target_link_libraries(test-bunker PRIVATE ${SIGNER_TEST_LIBS})
-target_link_directories(test-bunker PRIVATE ${SIGNER_TEST_LINK_DIRS})
-target_compile_features(test-bunker PRIVATE c_std_11)
-apply_test_sanitizers(test-bunker)
-
-add_test(NAME signer/bunker COMMAND test-bunker)
-set_tests_properties(signer/bunker PROPERTIES
-    TIMEOUT 30
-    LABELS "signer;bunker;nip46;unit"
-    ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto"
-)
+# signer/bunker's duplicate MockBunkerService was not production coverage.
+# G05 (nostrc-u6v55.6) will register the broad real service suite after its rewrite.
 
 # ==============================================================================
 # Test: D-Bus interface integration tests
@@ -404,7 +390,7 @@ set_tests_properties(signer/signer-core PROPERTIES
 # All signer tests target (convenience)
 # ==============================================================================
 add_custom_target(signer-tests
-    DEPENDS test-crypto test-identity test-session test-bunker test-dbus test-rate-limiter test-ui test-approval-dialog test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
+    DEPENDS test-crypto test-identity test-session test-dbus test-rate-limiter test-ui test-approval-dialog test-hsm-provider test-core test-secure-mem test-social-recovery test-signer-core
     COMMENT "Building all grotto tests"
 )
 
@@ -433,6 +419,21 @@ if(TARGET grotto_bunker_core)
         LABELS "signer;security;unit")
 endif()
 
+# G01: only startup failure against the real service, not the broad G05 suite.
+if(UNIX AND TARGET grotto_bunker_core)
+    add_executable(test-bunker-startup test-bunker.c)
+    target_link_libraries(test-bunker-startup PRIVATE grotto_bunker_core)
+    target_compile_features(test-bunker-startup PRIVATE c_std_11)
+    target_compile_options(test-bunker-startup PRIVATE -Wall -Wextra -Werror)
+    apply_test_sanitizers(test-bunker-startup)
+    add_dependencies(test-bunker-startup grotto-schemas)
+    add_dependencies(signer-tests test-bunker-startup)
+    add_test(NAME signer/bunker-startup COMMAND test-bunker-startup)
+    set_tests_properties(signer/bunker-startup PROPERTIES
+        TIMEOUT 30 LABELS "signer;bunker;nip46;unit"
+        ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto")
+endif()
+
 # G00 baseline: the real daemon over a signature-validating loopback relay.
 if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
     find_program(G00_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
@@ -451,7 +452,8 @@ if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
         $<TARGET_FILE:grotto-daemon>
         ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
         ${G00_GLIB_COMPILE_SCHEMAS})
-    # G00 nonfunctional baseline: the unchanged assertions must fail today.
+    # G00 nonfunctional baseline: encrypted connect must still fail today.
+    # G01 captures honest ERROR output and still runs the real client flow.
     # G05 (nostrc-u6v55.6) must remove WILL_FAIL and make the test pass.
     # G01 (nostrc-u6v55.2) only reports ERROR instead of RUNNING; this test
     # must still exercise that nonfunctional daemon, with the inversion kept.

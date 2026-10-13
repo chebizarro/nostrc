@@ -152,8 +152,8 @@ static gboolean bunker_mode_start(void) {
   bunker_service_set_auto_approve_kinds(g_bunker, (const gchar *const *)kinds);
   bunker_service_set_authorize_callback(g_bunker, bunker_deny_unattended, NULL);
   if (!bunker_service_start(g_bunker, (const gchar *const *)relays, identity)) {
-    g_critical("BUNKER_START_FAILED: bunker service did not start for %s", identity);
-    g_clear_pointer(&g_bunker, bunker_service_free);
+    g_critical("BUNKER_START_FAILED: state=ERROR; bunker service did not start; "
+               "local signer remains available");
     return FALSE;
   }
   g_message("grotto: NIP-46 bunker running for %s on %u relay(s), %u allowed client(s)",
@@ -166,9 +166,10 @@ static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpo
   g_message("grotto: name acquired %s", ORG_NOSTR_SIGNER_BUS);
   /* Only the process that owns the signer name runs the bunker, so two
    * daemons never answer the same NIP-46 relays. */
-  if (g_bunker_requested && !g_bunker && !bunker_mode_start()) {
-    g_exit_status = 1;
-    if (loop) g_main_loop_quit(loop);
+  /* Remote startup failure must not stop the local signer. Keep a failed
+   * service in ERROR until shutdown, rather than resetting it to STOPPED. */
+  if (g_bunker_requested && !g_bunker) {
+    bunker_mode_start();
   }
 }
 
