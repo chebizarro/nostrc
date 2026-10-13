@@ -2132,18 +2132,16 @@ static void test_nip5f_gating(Ctx *ctx, const Nip5fSock *sock) {
     g_free(pt); g_free(resp); g_free(req); g_free(ct);
   }
 
-  /* A grant written to signer-grants.ini for this principal applies. */
+  /* Only v2 can change authority after migration. Keep the remembered
+   * public-key grant while adding an encryption allow and event deny. */
   {
-    char *body = g_strdup_printf("[nip44_encrypt]\n%s|%s=allow\n[event]\n%s|*=deny\n",
-                                 principal, ctx->npub, principal);
-    /* Keep the remembered get_public_key grant: append. */
-    char *old = NULL;
-    /* Remembered permissions are v2-only; legacy input may be absent. */
-    if (!g_file_get_contents(ctx->grants_path, &old, NULL, NULL)) old = g_strdup("");
-    char *all = g_strconcat(old, body, NULL);
-    write_file(ctx->grants_path, all);
-    g_free(old); g_free(all); g_free(body);
-    /* The evaluator re-sanitises every load; no mtime sleep is needed. */
+    g_autofree gchar *dir = g_path_get_dirname(ctx->grants_path);
+    g_autofree gchar *config = g_path_get_dirname(dir);
+    g_autoptr(SignerPermissions) permissions = signer_permissions_new(config);
+    CHECK(signer_permissions_remember(permissions, principal, ctx->npub,
+                                     "nip44_encrypt", -1, TRUE, 0, NULL));
+    CHECK(signer_permissions_remember(permissions, principal, "*",
+                                     "event", -1, FALSE, 0, NULL));
     char *req = g_strdup_printf("{\"id\":\"4\",\"method\":\"nip44_encrypt\",\"params\":"
                                 "{\"peer_pub\":\"%s\",\"plaintext\":\"a \\\"quoted\\\" line\\n\"}}", peer_pk);
     resp = n5f_no_prompt(ctx, fd, req);

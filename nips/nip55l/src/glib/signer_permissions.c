@@ -39,12 +39,18 @@ static gboolean known_operation(const gchar *op) {
 static gboolean valid_row(Row *r) {
   if (!r->principal || !*r->principal || !r->identity || !r->decision ||
       !g_utf8_validate(r->principal, -1, NULL) || !g_utf8_validate(r->identity, -1, NULL) ||
-      strlen(r->principal) > 4096 || strlen(r->identity) > 4096 || !known_operation(r->operation) ||
+      strlen(r->principal) > 4096 || strlen(r->identity) > 4096 || !r->operation || !*r->operation ||
+      strlen(r->operation) > 64 || !g_utf8_validate(r->operation, -1, NULL) ||
+      (!known_operation(r->operation) && strcmp(r->decision, "deny")) ||
       (strcmp(r->decision, "allow") && strcmp(r->decision, "deny") && strcmp(r->decision, "review"))) return FALSE;
   gboolean event = !strcmp(r->operation, "event");
   if (r->kind < -1 || r->kind > G_MAXUINT16 || (!event && r->kind != -1)) return FALSE;
   if (event && r->kind == -1 && !strcmp(r->decision, "allow")) return FALSE;
-  if (!strcmp(r->decision, "allow") && !strcmp(r->identity, "*") && strcmp(r->operation, "get_relays")) return FALSE;
+  /* Only one-time migration may grandfather previously valid non-event
+   * wildcard allows. New grants still permit wildcard identity only for relays. */
+  gboolean inherited = !event && r->legacy && !strcmp(r->legacy, "identity-wildcard non-event allow");
+  if (!strcmp(r->decision, "allow") && !strcmp(r->identity, "*") &&
+      strcmp(r->operation, "get_relays") && !inherited) return FALSE;
   if (!*r->identity && strcmp(r->operation, "get_relays") && strcmp(r->operation, "ping") && strcmp(r->operation, "connect")) return FALSE;
   if (!strcmp(r->decision, "review") && (!r->created || !r->legacy || !*r->legacy)) return FALSE;
   return TRUE;
@@ -126,16 +132,21 @@ static gchar *path_for(SignerPermissions *p, const gchar *name, GError **error) 
   }
   return path;
 }
-static gboolean load_optional(GKeyFile *kf, const gchar *path, GError **error) {
+static gboolean load_optional(GKeyFile *kf, const gchar *path, gboolean *exists, GError **error) {
   GError *local = NULL;
-  if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &local)) return TRUE;
+  if (exists) *exists = FALSE;
+  if (g_key_file_load_from_file(kf, path, G_KEY_FILE_NONE, &local)) {
+    if (exists) *exists = TRUE;
+    return TRUE;
+  }
   if (g_error_matches(local, G_FILE_ERROR, G_FILE_ERROR_NOENT)) { g_error_free(local); return TRUE; }
   g_propagate_error(error, local); return FALSE;
 }
 static gboolean save_file(GKeyFile *kf, const gchar *path, GError **error) {
   g_autofree gchar *dir = g_path_get_dirname(path);
-  if (g_mkdir_with_parents(dir, 0700) || g_chmod(dir, 0700))
-    return fail(error, G_IO_ERROR_PERMISSION_DENIED, "cannot secure permission directory");
+  /* Create privately when absent, but never chmod the shared gnostr directory. */
+  if (g_mkdir_with_parents(dir, 0700))
+    return fail(error, G_IO_ERROR_PERMISSION_DENIED, "cannot create permission directory");
   gsize size;
   g_autofree gchar *data = g_key_file_to_data(kf, &size, error);
   return data && g_file_set_contents_full(path, data, size,
@@ -159,12 +170,12 @@ void signer_permissions_free(SignerPermissions *p) {
 }
 guint64 signer_permissions_revision(SignerPermissions *p) {
   g_mutex_lock(&p->lock);
-  /* Absolute expiry can invalidate queued auto-authority without a mutation
-   * or owner-context timer running. Workers read only this locked clock fence. */
-  if (p->next_expiry && now_seconds() >= p->next_expiry) {
-    p->next_expiry = 0; p->revision++;
-  }
   guint64 revision = p->revision; g_mutex_unlock(&p->lock); return revision;
+}
+gboolean signer_permissions_revision_is_current(SignerPermissions *p, guint64 revision) {
+  g_mutex_lock(&p->lock);
+  gboolean current = p->revision == revision && (!p->next_expiry || now_seconds() < p->next_expiry);
+  g_mutex_unlock(&p->lock); return current;
 }
 void signer_permissions_set_changed(SignerPermissions *p, SignerPermissionsChanged fn, gpointer data) {
   p->changed = fn; p->changed_data = data;
@@ -190,7 +201,6 @@ static void update_expiry_fence(SignerPermissions *p, GKeyFile *records) {
     g_autoptr(Row) r = read_row(records, groups[i], NULL);
     if (r && r->expires > now && (!next_expiry || r->expires < next_expiry)) next_expiry = r->expires;
   }
-  signer_permissions_revision(p);
   g_mutex_lock(&p->lock); p->next_expiry = next_expiry; g_mutex_unlock(&p->lock);
 }
 static gboolean same_data(GKeyFile *a, GKeyFile *b) {
@@ -209,9 +219,8 @@ static gboolean parse_legacy(const gchar *val, gboolean *allow, guint64 *expires
   gchar *end = NULL; errno = 0; *expires = g_ascii_strtoull(tail, &end, 10);
   return !errno && end && !*end;
 }
-/* Import fingerprints are tombstones too: a cleared v2 row cannot be
- * resurrected by an unchanged compatibility file on the next restart. */
-static gboolean migrate(GKeyFile *records, GKeyFile *legacy, gboolean *dirty) {
+/* Initial import only. Existing v2 rows always win, including their expiry. */
+static void migrate(GKeyFile *records, GKeyFile *legacy) {
   g_auto(GStrv) ops = g_key_file_get_groups(legacy, NULL);
   for (guint i = 0; ops[i]; i++) {
     g_auto(GStrv) keys = g_key_file_get_keys(legacy, ops[i], NULL, NULL);
@@ -220,25 +229,45 @@ static gboolean migrate(GKeyFile *records, GKeyFile *legacy, gboolean *dirty) {
       gboolean allow = FALSE; guint64 expires = 0;
       const gchar *bar = strrchr(keys[j], '|');
       gboolean unsafe = !strcmp(ops[i], "event") && val && g_str_has_prefix(val, "allow");
-      if (unsafe) { g_key_file_remove_key(legacy, ops[i], keys[j], NULL); *dirty = TRUE; }
-      if (!bar || bar == keys[j] || !bar[1] || !val || !parse_legacy(val, &allow, &expires)) continue;
+      if (!bar || bar == keys[j] || !bar[1] || !val || !parse_legacy(val, &allow, &expires)) {
+        g_message("nostr-signer: skipped invalid legacy permission record"); continue;
+      }
       g_autoptr(Row) r = g_new0(Row, 1);
       r->principal = g_strndup(keys[j], bar - keys[j]); r->identity = g_strdup(bar + 1);
       r->operation = g_strdup(ops[i]); r->kind = -1; r->expires = expires;
       r->decision = g_strdup(unsafe ? "review" : allow ? "allow" : "deny");
       if (unsafe) { r->created = now_seconds(); r->legacy = g_strdup("operation-wide event allow"); }
-      if (!valid_row(r)) continue;
+      else if (allow && !strcmp(r->identity, "*")) r->legacy = g_strdup("identity-wildcard non-event allow");
+      if (!valid_row(r)) { g_message("nostr-signer: skipped invalid legacy permission record"); continue; }
       g_autofree gchar *id = row_id(r);
-      g_autofree gchar *fingerprint = g_compute_checksum_for_string(G_CHECKSUM_SHA256, val, -1);
-      g_autofree gchar *previous = g_key_file_get_string(records, "imports", id, NULL);
-      g_autofree gchar *existing = g_key_file_get_string(records, id, "decision", NULL);
-      if (!g_strcmp0(previous, fingerprint) && (!unsafe || existing)) continue;
-      /* Never replace an explicit broad denial with a legacy review marker. */
-      if (g_strcmp0(existing, "deny") || !strcmp(r->decision, "deny")) write_row(records, r);
-      g_key_file_set_string(records, "imports", id, fingerprint);
+      if (!g_key_file_has_group(records, id)) write_row(records, r);
     }
   }
-  return TRUE;
+}
+/* After import the legacy file is sanitation-only input, never authority. */
+static gboolean sanitize_legacy(GKeyFile *legacy) {
+  gboolean dirty = FALSE;
+  g_auto(GStrv) keys = g_key_file_get_keys(legacy, "event", NULL, NULL);
+  for (guint i = 0; keys && keys[i]; i++) {
+    g_autofree gchar *value = g_key_file_get_string(legacy, "event", keys[i], NULL);
+    if (value && g_str_has_prefix(value, "allow")) {
+      g_key_file_remove_key(legacy, "event", keys[i], NULL); dirty = TRUE;
+    }
+  }
+  return dirty;
+}
+/* A semantically bad group stays on disk for repair, but has no allow
+ * authority. If its scope is readable, quarantine only that scope as denied. */
+static gboolean quarantined_scope_matches(GKeyFile *kf, const gchar *group,
+    const gchar *principal, const gchar *identity, const gchar *op, gint kind) {
+  g_autofree gchar *who = g_key_file_get_string(kf, group, "principal", NULL);
+  g_autofree gchar *id = g_key_file_get_string(kf, group, "identity", NULL);
+  g_autofree gchar *operation = g_key_file_get_string(kf, group, "operation", NULL);
+  if (!who || !*who || !id || !operation || !*operation || g_strcmp0(principal, who) ||
+      (identity && strcmp(id, "*") && strcmp(identity, id)) || (op && strcmp(op, operation))) return FALSE;
+  g_autoptr(GError) error = NULL;
+  gint scope = g_key_file_get_integer(kf, group, "event-kind", &error);
+  return kind == -1 || error || scope < -1 || scope > G_MAXUINT16 || scope == -1 || scope == kind;
 }
 gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   g_autofree gchar *path = path_for(p, "signer-permissions-v2.ini", error);
@@ -247,30 +276,50 @@ gboolean signer_permissions_reload(SignerPermissions *p, GError **error) {
   if (!old_path) return FALSE;
   g_autoptr(GKeyFile) next = new_records();
   g_autoptr(GKeyFile) legacy = g_key_file_new();
-  if (!load_optional(next, path, error) || !load_optional(legacy, old_path, error)) return FALSE;
+  gboolean exists = FALSE;
+  if (!load_optional(next, path, &exists, error)) return FALSE;
   if (g_key_file_get_integer(next, "permissions", "version", NULL) != 2)
     return fail(error, G_IO_ERROR_NOT_SUPPORTED, "unsupported permissions file version");
+  /* Pre-marker v2 files from G03 are already authoritative. Never re-import
+   * legacy data merely because an older v2 writer did not know this marker. */
+  gboolean imported = exists;
+  gboolean complete = exists && (!g_key_file_has_key(next, "permissions", "legacy-complete", NULL) ||
+      g_key_file_get_boolean(next, "permissions", "legacy-complete", NULL));
+  g_autoptr(GError) legacy_error = NULL;
+  gboolean corrupt_legacy = !load_optional(legacy, old_path, NULL, &legacy_error);
+  if (corrupt_legacy) {
+    g_message("nostr-signer: ignored unreadable legacy permission file");
+    g_clear_pointer(&legacy, g_key_file_unref); legacy = g_key_file_new();
+  }
+  g_autofree gchar *before = g_key_file_to_data(next, NULL, NULL);
+  if (!imported) {
+    migrate(next, legacy);
+    g_key_file_set_boolean(next, "permissions", "legacy-imported", TRUE);
+    g_key_file_set_boolean(next, "permissions", "legacy-complete", FALSE);
+    /* Persist the import exactly once, before removing rollback authority.
+     * A crash or failed legacy write retries sanitation, never the import. */
+    if (!save_file(next, path, error)) return FALSE;
+  }
+  gboolean dirty = sanitize_legacy(legacy) || corrupt_legacy;
+  if (dirty) {
+    g_autoptr(GError) write_error = NULL;
+    if (!save_file(legacy, old_path, &write_error)) {
+      if (!complete) { g_propagate_error(error, g_steal_pointer(&write_error)); return FALSE; }
+      g_message("nostr-signer: could not re-sanitise legacy permission file; v2 remains authoritative");
+    }
+  }
+  g_key_file_set_boolean(next, "permissions", "legacy-imported", TRUE);
+  g_key_file_set_boolean(next, "permissions", "legacy-complete", TRUE);
   g_auto(GStrv) groups = g_key_file_get_groups(next, NULL);
   for (guint i = 0; groups[i]; i++) {
     if (!strcmp(groups[i], "permissions") || !strcmp(groups[i], "imports")) continue;
-    g_autoptr(Row) r = read_row(next, groups[i], error);
-    if (!r) return FALSE;
-  }
-  g_autofree gchar *before = g_key_file_to_data(next, NULL, NULL);
-  gboolean dirty = FALSE; migrate(next, legacy, &dirty);
-  g_clear_pointer(&groups, g_strfreev); groups = g_key_file_get_groups(next, NULL);
-  for (guint i = 0; groups[i]; i++) {
-    if (!g_str_has_prefix(groups[i], "record-")) continue;
-    g_autoptr(Row) r = read_row(next, groups[i], error);
-    if (!r) return FALSE;
+    g_autoptr(Row) r = read_row(next, groups[i], NULL);
+    if (!r) { g_message("nostr-signer: quarantined invalid permission record"); continue; }
     if (!strcmp(r->decision, "review") && now_seconds() >= r->created &&
         now_seconds() - r->created >= REVIEW_LIFETIME) g_key_file_remove_group(next, groups[i], NULL);
   }
   g_autofree gchar *after = g_key_file_to_data(next, NULL, NULL);
-  /* Durable review marker first, then remove unsafe rollback authority.
-   * Neither snapshot is enabled until BOTH writes have succeeded. */
   if (strcmp(before, after) && !save_file(next, path, error)) return FALSE;
-  if (dirty && !save_file(legacy, old_path, error)) return FALSE;
   gboolean differs = !same_data(p->records, next);
   update_expiry_fence(p, next);
   g_key_file_unref(p->records); p->records = g_steal_pointer(&next);
@@ -286,27 +335,35 @@ SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
     const gchar *principal, const gchar *identity, const gchar *op, gint kind,
     gboolean first_party_default, GError **error) {
   if (!signer_permissions_reload(p, error)) return SIGNER_PERMISSION_ERROR;
-  if (!known_operation(op) || kind < -1 || kind > G_MAXUINT16 ||
-      (!strcmp(op, "event") ? kind < 0 : kind != -1)) return SIGNER_PERMISSION_ASK;
+  gboolean valid_input = known_operation(op) && kind >= -1 && kind <= G_MAXUINT16 &&
+      (!g_strcmp0(op, "event") ? kind >= 0 : kind == -1);
   gboolean allow = FALSE;
   g_auto(GStrv) groups = g_key_file_get_groups(p->records, NULL);
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
-    g_autoptr(Row) r = read_row(p->records, groups[i], error);
-    if (!r) return SIGNER_PERMISSION_ERROR;
-    if (g_strcmp0(principal, r->principal) || strcmp(op, r->operation) || !row_live(r) ||
+    g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
+    if (!r) {
+      if (op && quarantined_scope_matches(p->records, groups[i], principal, identity ? identity : "", op, kind))
+        return SIGNER_PERMISSION_DENY;
+      continue;
+    }
+    if (g_strcmp0(principal, r->principal) || g_strcmp0(op, r->operation) || !row_live(r) ||
         (g_strcmp0(identity ? identity : "", r->identity) && strcmp(r->identity, "*")) ||
         (r->kind != -1 && r->kind != kind)) continue;
     if (!strcmp(r->decision, "deny")) return SIGNER_PERMISSION_DENY;
     if (!strcmp(r->decision, "allow")) allow = TRUE;
   }
+  if (!valid_input) return SIGNER_PERMISSION_ASK;
   if (!strcmp(op, "event") && contains_kind((guint32 *)p->required->data, p->required->len, kind))
     return SIGNER_PERMISSION_ASK;
-  /* Export is never implied by a tier (and no raw-key client operation exists). */
+  /* Pairing never inherits a cached signing permission. Conversation-key
+   * export requires explicit consent: only a scoped allow (including an
+   * inherited legacy allow) can authorise it, never a tier/default shortcut. */
+  if (!principal || !strcmp(op, "connect") || (!strcmp(op, "nip44_conversation_key") && !allow))
+    return SIGNER_PERMISSION_ASK;
   if (allow || first_party_default) return SIGNER_PERMISSION_ALLOW;
   gboolean consented = FALSE;
-  SignerTrustTier tier = principal && p->trust ? p->trust(principal, &consented, p->trust_data) : SIGNER_TRUST_LOW;
-  if (!principal || !strcmp(op, "nip44_conversation_key") || !strcmp(op, "connect")) return SIGNER_PERMISSION_ASK;
+  SignerTrustTier tier = p->trust ? p->trust(principal, &consented, p->trust_data) : SIGNER_TRUST_LOW;
   if (tier == SIGNER_TRUST_FULL) return SIGNER_PERMISSION_ALLOW;
   if (tier == SIGNER_TRUST_MEDIUM && (!strcmp(op, "get_public_key") || !strcmp(op, "get_relays") ||
       !strcmp(op, "ping") || (!strcmp(op, "event") && contains_kind(signer_public_publishing_kinds,
@@ -333,7 +390,7 @@ GVariant *signer_permissions_list(SignerPermissions *p, const gchar *principal, 
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
-    if ((!principal || !strcmp(principal, r->principal)) && row_live(r)) variant_row(&b, r);
+    if (r && (!principal || !strcmp(principal, r->principal)) && row_live(r)) variant_row(&b, r);
   }
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
@@ -359,29 +416,11 @@ static void remove_rows(GKeyFile *kf, const gchar *principal, const gchar *ident
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(kf, groups[i], NULL);
-    if (r && matches(r, principal, identity, op)) { g_key_file_remove_group(kf, groups[i], NULL); *removed = TRUE; }
-  }
-}
-static gboolean clear_legacy(SignerPermissions *p, const gchar *principal, const gchar *identity, const gchar *op, GError **error) {
-  g_autofree gchar *path = path_for(p, "signer-grants.ini", error);
-  if (!path) return FALSE;
-  g_autoptr(GKeyFile) legacy = g_key_file_new();
-  if (!load_optional(legacy, path, error)) return FALSE;
-  gboolean dirty = FALSE;
-  g_auto(GStrv) groups = g_key_file_get_groups(legacy, NULL);
-  for (guint i = 0; groups[i]; i++) {
-    if (op && strcmp(op, groups[i])) continue;
-    g_auto(GStrv) keys = g_key_file_get_keys(legacy, groups[i], NULL, NULL);
-    for (guint j = 0; keys && keys[j]; j++) {
-      const gchar *bar = strrchr(keys[j], '|');
-      if (!bar) continue;
-      g_autofree gchar *who = g_strndup(keys[j], bar - keys[j]);
-      if (!strcmp(who, principal) && (!identity || !strcmp(bar + 1, identity))) {
-        g_key_file_remove_key(legacy, groups[i], keys[j], NULL); dirty = TRUE;
-      }
+    if ((r && matches(r, principal, identity, op)) ||
+        (!r && quarantined_scope_matches(kf, groups[i], principal, identity, op, -1))) {
+      g_key_file_remove_group(kf, groups[i], NULL); *removed = TRUE;
     }
   }
-  return !dirty || save_file(legacy, path, error);
 }
 static gboolean commit(SignerPermissions *p, GKeyFile *next, GError **error) {
   g_autofree gchar *path = path_for(p, "signer-permissions-v2.ini", error);
@@ -398,7 +437,7 @@ gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
   g_autoptr(GKeyFile) next = copy_records(p);
   gboolean found = FALSE; remove_rows(next, principal, identity, op, &found);
   if (!found) return TRUE;
-  if (!clear_legacy(p, principal, identity, op, error) || !commit(p, next, error)) return FALSE;
+  if (!commit(p, next, error)) return FALSE;
   *removed = TRUE; return TRUE;
 }
 gboolean signer_permissions_remember(SignerPermissions *p, const gchar *principal,
@@ -410,8 +449,6 @@ gboolean signer_permissions_remember(SignerPermissions *p, const gchar *principa
   if (!valid_row(&row)) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid remembered permission scope");
   if (!signer_permissions_reload(p, error)) return FALSE;
   g_autoptr(GKeyFile) next = copy_records(p); write_row(next, &row);
-  /* Retire any old operation-wide row for this exact scope. */
-  if (kind == -1 && !clear_legacy(p, principal, row.identity, op, error)) return FALSE;
   return commit(p, next, error);
 }
 gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal,
@@ -435,13 +472,18 @@ gboolean signer_permissions_replace(SignerPermissions *p, const gchar *principal
       .decision=(gchar *)decision, .kind=kind, .expires=expires};
     /* Review entries may be retained, but only using the existing migration metadata. */
     g_autofree gchar *key = row_id(&row);
-    g_autoptr(Row) previous = !strcmp(decision, "review") ? read_row(p->records, key, NULL) : NULL;
-    if (previous && !strcmp(previous->decision, "review")) { row.created = previous->created; row.legacy = previous->legacy; }
+    g_autoptr(Row) previous = read_row(p->records, key, NULL);
+    if (previous && !strcmp(decision, "review") && !strcmp(previous->decision, "review")) {
+      row.created = previous->created; row.legacy = previous->legacy;
+    } else if (previous && !strcmp(decision, "allow") && !strcmp(previous->decision, "allow") &&
+               previous->legacy && previous->expires == expires) {
+      /* Retain, never manufacture or extend, a grandfathered wildcard scope. */
+      row.legacy = previous->legacy;
+    }
     if (!valid_row(&row) || !g_hash_table_add(ids, g_strdup(key)))
       return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid or duplicate replacement record");
     write_row(next, &row);
   }
-  if (!clear_legacy(p, principal, identity, NULL, error)) return FALSE;
   return commit(p, next, error);
 }
 GVariant *signer_permissions_list_legacy(SignerPermissions *p, GError **error) {
@@ -451,7 +493,7 @@ GVariant *signer_permissions_list_legacy(SignerPermissions *p, GError **error) {
   for (guint i = 0; groups[i]; i++) {
     if (!g_str_has_prefix(groups[i], "record-")) continue;
     g_autoptr(Row) r = read_row(p->records, groups[i], NULL);
-    if (r->kind == -1 && strcmp(r->decision, "review"))
+    if (r && r->kind == -1 && strcmp(r->decision, "review"))
       g_variant_builder_add(&b, "(sssbt)", r->operation, r->principal, r->identity, !strcmp(r->decision, "allow"), r->expires);
   }
   return g_variant_ref_sink(g_variant_builder_end(&b));

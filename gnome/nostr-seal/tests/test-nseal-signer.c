@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "nostr-seal.h"
+#include "signer_permissions.h"
 #include <keys.h>
 #include <nostr-utils.h>
 
@@ -142,13 +143,13 @@ int main(void) {
   g_autofree char *theirs_out = g_build_filename(tmp, "theirs.out", NULL);
   CHECK(!g_file_test(theirs_out, G_FILE_TEST_EXISTS));
 
-  /* The signer's policy now says no for this key (the daemon reloads a
-   * changed grants file). */
-  g_autofree char *deny_body = g_strdup_printf(
-      "[get_public_key]\nexe:%1$s|*=allow\nclaimed:|*=allow\n"
-      "[nip44_conversation_key]\nexe:%1$s|%2$s=deny\nclaimed:org.nostr.Seal|%2$s=deny\n",
-      cli_real, me);
-  CHECK(g_file_set_contents(grants, deny_body, -1, NULL));
+  /* After the one-time legacy import, only v2 can change authority. */
+  g_autoptr(SignerPermissions) permissions = signer_permissions_new(cfg);
+  g_autofree char *exe_principal = g_strdup_printf("exe:%s", cli_real);
+  CHECK(signer_permissions_remember(permissions, exe_principal, me,
+                                   "nip44_conversation_key", -1, FALSE, 0, NULL));
+  CHECK(signer_permissions_remember(permissions, "claimed:org.nostr.Seal", me,
+                                   "nip44_conversation_key", -1, FALSE, 0, NULL));
   rc = run_cli(NULL, &r, "decrypt", "-o", "denied.out", "report.pdf.nsealed", NULL);
   CHECK(rc != 0 && strstr(r, "denied"));
   g_free(r);

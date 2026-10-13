@@ -651,8 +651,8 @@ static void execute(Request *r) {
   if (g_get_monotonic_time() >= r->deadline) {
     finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out"); return;
   }
-  r->permission_revision = signer_permissions_revision(r->service->permissions);
   SignerPermissionResult policy = request_policy(r);
+  r->permission_revision = signer_permissions_revision(r->service->permissions);
   if (r->finished) return;
   if (policy == SIGNER_PERMISSION_ERROR) {
     finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot load permissions"); return;
@@ -748,8 +748,15 @@ static gboolean job_done(gpointer data) {
   if (policy_denies(r)) {
     finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy"); return G_SOURCE_REMOVE;
   }
-  if (j->stale_policy || (!r->decision && request_policy(r) != SIGNER_PERMISSION_ALLOW)) {
+  if (!r->decision && request_policy(r) != SIGNER_PERMISSION_ALLOW) {
     finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permissions changed before execution"); return G_SOURCE_REMOVE;
+  }
+  if (j->stale_policy) {
+    /* Automatic admission has one continuation (joining happens only while
+     * awaiting explicit consent). The worker stopped before perform: recheck
+     * on the owner thread, then re-admit without duplicating cryptography. */
+    g_assert(!r->decision && j->results->len == 1);
+    execute(r); return G_SOURCE_REMOVE;
   }
   gboolean ok = TRUE;
   for (guint i = 0; i < j->results->len; i++) {
@@ -787,7 +794,7 @@ static void backend_worker(gpointer data, gpointer unused) {
       free(npub); if (selector) { secure_wipe(selector, strlen(selector)); free(selector); }
     } else {
       for (guint i = 0; i < j->results->len; i++) {
-        if (j->permission_revision != signer_permissions_revision(j->service->permissions)) {
+        if (!r->decision && !signer_permissions_revision_is_current(j->service->permissions, j->permission_revision)) {
           j->stale_policy = TRUE; break;
         }
         Result *out = j->results->pdata[i];
@@ -805,7 +812,7 @@ static void backend_worker(gpointer data, gpointer unused) {
         }
         if (g_atomic_int_get(&r->cancelled)) break;
         if (g_atomic_int_get(&out->handle->done)) continue;
-        if (j->permission_revision != signer_permissions_revision(j->service->permissions)) {
+        if (!r->decision && !signer_permissions_revision_is_current(j->service->permissions, j->permission_revision)) {
           j->stale_policy = TRUE; break;
         }
         Call call = {r->op, r->a, r->b, r->selector, {capture, out}};
@@ -968,7 +975,19 @@ gboolean signer_approval_service_revoke_grant(SignerApprovalService *s,
     const gchar *kind, const gchar *principal, const gchar *identity, gboolean *removed) {
   g_return_val_if_fail(owner_ok(s), FALSE);
   gboolean ok = signer_permissions_clear(s->permissions, principal, identity, kind, removed, NULL);
-  if (ok && *removed) signer_approval_service_cancel_principal(s, principal);
+  if (ok && *removed) {
+    g_autoptr(GPtrArray) affected = requests_copy(s);
+    for (guint i = affected->len; i > 0; i--) {
+      Request *r = affected->pdata[i - 1];
+      if (!r->resolved || r->finished || g_strcmp0(r->who->principal, principal) ||
+          (kind && strcmp(op_info[r->op].kind, kind)) ||
+          (identity && strcmp(identity, "*") && g_strcmp0(r->npub ? r->npub : "", identity)))
+        g_ptr_array_remove_index(affected, i - 1);
+      else g_atomic_int_set(&r->cancelled, TRUE);
+    }
+    for (guint i = 0; i < affected->len; i++)
+      finish(affected->pdata[i], SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permission revoked");
+  }
   return ok;
 }
 guint signer_approval_service_pending_count(SignerApprovalService *s) {

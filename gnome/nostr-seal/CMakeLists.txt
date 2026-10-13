@@ -135,7 +135,8 @@ if(BUILD_TESTING)
   if(TARGET nostr-signer-daemon)
     add_executable(test-nostr-seal-signer tests/test-nseal-signer.c)
     target_compile_options(test-nostr-seal-signer PRIVATE -Wall -Wextra -Werror)
-    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core)
+    target_link_libraries(test-nostr-seal-signer PRIVATE nostr_seal_core nostr_nip55l_glib)
+    target_include_directories(test-nostr-seal-signer PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
     target_compile_definitions(test-nostr-seal-signer PRIVATE
       "NSEAL_DAEMON_PATH=\"$<TARGET_FILE:nostr-signer-daemon>\""
       "NSEAL_CLI_PATH=\"$<TARGET_FILE:nostr-seal>\"")

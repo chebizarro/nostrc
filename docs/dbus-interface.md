@@ -105,15 +105,25 @@ separate (`nip44_conversation_key`, `nip04_encrypt/decrypt`,
 scope. Expiry is absolute Unix seconds, 0 = forever, never extended by use.
 Explicit deny wins, including legacy operation-wide/wildcard denials;
 required-confirmation kinds always prompt despite remembered allows or trust tiers.
-Identity-wildcard allows are supported only for identity-independent `get_relays`.
+New identity-wildcard allows are supported only for `get_relays`; valid inherited
+non-event wildcard allows are preserved during the one-time legacy import.
 The single nip55l evaluator applies live per-client Low/Medium/Full policy (unknown
 clients Low) through an injectable lookup; the client store/Control1 is G04 work.
-The compatibility `signer-grants.ini` is re-sanitised on every load: valid
-non-event rows migrate once; broad event denies remain operation-wide; broad
-event allows are removed from the legacy file before evaluation is enabled and
-stored as non-executable **Needs review**, pruned after 90 days. No bunker global
-auto-approval or remote allowlist becomes signing authority. Migration/storage
-failure fails closed. See [55L](proposals/55L.md#scoped-permission-storage-and-migration-070).
+Conversation-key export requires an explicit allow, not a tier/default shortcut;
+pairing cannot inherit a remembered allow.
+The compatibility `signer-grants.ini` is re-sanitised on every load, but imported
+only before v2 exists. Valid non-event rows retain their original expiry (including
+forever); broad event denies remain operation-wide. Broad event allows become
+non-executable **Needs review**, pruned after 90 days, and are removed before initial
+evaluation is enabled. After that v2 alone is authoritative: later legacy writes
+cannot add, widen, deny or resurrect permissions, and create no new review rows.
+A corrupt legacy file is ignored/sanitised; a bad v2 record is quarantined only for
+its recoverable scope, with sanitised logging, not a global evaluation failure.
+Existing shared directory modes are unchanged; atomic permission files use 0600.
+No bunker global auto-approval or remote allowlist becomes signing authority.
+Initial migration/storage failures fail closed. Queued automatic requests recheck
+changed revisions/expiry and proceed if still allowed; explicit approvals survive
+unrelated changes. Covering deny/revoke invalidates queued work. See [55L](proposals/55L.md#scoped-permission-storage-and-migration-070).
 The pre-0.4.0
 `~/.config/gnostr/signer-acl.ini` (keyed on the claimed `app_id`) is ignored.
 Built-in defaults cover first-party services that run without a UI

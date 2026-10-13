@@ -23,6 +23,9 @@ void signer_permissions_free(SignerPermissions *permissions);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignerPermissions, signer_permissions_free)
 gboolean signer_permissions_reload(SignerPermissions *permissions, GError **error);
 guint64 signer_permissions_revision(SignerPermissions *permissions);
+/* Worker freshness fence: no callbacks/I/O. A changed revision or elapsed
+ * absolute expiry requires an owner-thread recheck, not blanket cancellation. */
+gboolean signer_permissions_revision_is_current(SignerPermissions *permissions, guint64 revision);
 void signer_permissions_set_changed(SignerPermissions *permissions,
                                      SignerPermissionsChanged fn, gpointer data);
 void signer_permissions_set_trust_lookup(SignerPermissions *permissions,
