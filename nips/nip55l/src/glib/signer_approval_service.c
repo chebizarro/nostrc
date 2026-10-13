@@ -202,6 +202,98 @@ static const gchar *transport_name(SignerTransport transport) {
   static const gchar *names[] = {"DBUS", "NIP5F", "NIP46", "MANAGEMENT"};
   return names[transport];
 }
+/* Approval summaries expose public identifiers and bounded public text, never
+ * arbitrary tag values or private event bodies. Omit ambiguous/unsafe fields. */
+static gboolean summary_hex_id(const gchar *value) {
+  if (!value || strlen(value) != 64) return FALSE;
+  for (guint i = 0; i < 64; i++) if (!g_ascii_isxdigit(value[i])) return FALSE;
+  return TRUE;
+}
+static void summary_id(GVariantBuilder *summary, const gchar *key, const gchar *value) {
+  if (!summary_hex_id(value)) return;
+  g_autofree gchar *lower = g_ascii_strdown(value, -1);
+  g_variant_builder_add(summary, "{sv}", key, g_variant_new_string(lower));
+}
+static gchar *summary_text(const gchar *text) {
+  g_autofree gchar *valid = g_utf8_make_valid(text ? text : "", -1);
+  gchar *out = g_utf8_substring(valid, 0, MIN((glong)280, g_utf8_strlen(valid, -1)));
+  for (gchar *p = out; *p; p++) if ((guchar)*p < 32 || *p == 127) *p = ' ';
+  return out;
+}
+static gboolean summary_private_kind(guint32 kind) {
+  return kind == NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE || kind == NOSTR_KIND_SEAL ||
+         kind == NOSTR_KIND_GIFT_WRAP || kind == NOSTR_KIND_DIRECT_MESSAGE ||
+         kind == NOSTR_KIND_FILE_MESSAGE || kind == NOSTR_KIND_NOSTR_CONNECT;
+}
+static void summary_event(GVariantBuilder *summary, Request *r) {
+  NostrEvent *event = nostr_event_new();
+  if (!event) return;
+  if (nostr_event_deserialize(event, r->a) != 0) { nostr_event_free(event); return; }
+  NostrTags *tags = nostr_event_get_tags(event);
+  guint32 count = nostr_tags_size(tags), deletes = 0, relay_count = 0;
+  const gchar *target = NULL, *peer = NULL, *relay = NULL, *target_kind = NULL;
+  g_autoptr(GHashTable) counts = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  for (guint32 i = 0; i < count; i++) {
+    NostrTag *tag = nostr_tags_get(tags, i);
+    const gchar *name = nostr_tag_get_key(tag), *value = nostr_tag_get_value(tag);
+    if (!name) continue;
+    if (!strcmp(name, "e")) target = value; /* Last e/p is the reaction target. */
+    if (!strcmp(name, "p")) peer = value;
+    if (!strcmp(name, "k")) target_kind = value;
+    if (!strcmp(name, "e") || !strcmp(name, "a")) deletes++;
+    if (!strcmp(name, "relay")) { relay = value; relay_count++; }
+    /* Names only: exclude long identifiers, control characters and payloads
+     * disguised as names; cap distinct names to keep the wire summary bounded. */
+    gboolean safe = *name && strlen(name) <= 32;
+    for (const gchar *p = name; safe && *p; p++)
+      safe = g_ascii_isalnum(*p) || *p == '_' || *p == '-';
+    if (safe && (g_hash_table_contains(counts, name) || g_hash_table_size(counts) < 64)) {
+      guint n = GPOINTER_TO_UINT(g_hash_table_lookup(counts, name));
+      g_hash_table_replace(counts, g_strdup(name), GUINT_TO_POINTER(n + 1));
+    }
+  }
+  g_variant_builder_add(summary, "{sv}", "tag_count", g_variant_new_uint32(count));
+  GVariantBuilder names;
+  g_variant_builder_init(&names, G_VARIANT_TYPE("a{su}"));
+  /* Sorted output keeps reconciliation equality stable. */
+  GList *keys = g_hash_table_get_keys(counts);
+  keys = g_list_sort(keys, (GCompareFunc)g_strcmp0);
+  for (GList *key = keys; key; key = key->next)
+    g_variant_builder_add(&names, "{su}", (gchar *)key->data,
+                          GPOINTER_TO_UINT(g_hash_table_lookup(counts, key->data)));
+  g_list_free(keys);
+  g_variant_builder_add(summary, "{sv}", "tag_counts", g_variant_builder_end(&names));
+  if (r->event_kind == NOSTR_KIND_DELETION)
+    g_variant_builder_add(summary, "{sv}", "delete_target_count", g_variant_new_uint32(deletes));
+  gboolean safe_relay = relay && strlen(relay) <= 2048;
+  for (const gchar *p = relay; safe_relay && *p; p++)
+    safe_relay = (guchar)*p > 32 && (guchar)*p < 127;
+  if (r->event_kind == NOSTR_KIND_CLIENT_AUTHENTICATION && relay_count == 1 && safe_relay) {
+    g_autoptr(GUri) uri = g_uri_parse(relay, G_URI_FLAGS_NONE, NULL);
+    if (uri && g_uri_get_host(uri) && *g_uri_get_host(uri) &&
+        (!g_strcmp0(g_uri_get_scheme(uri), "wss") || !g_strcmp0(g_uri_get_scheme(uri), "ws")) &&
+        !g_uri_get_userinfo(uri) && !g_uri_get_query(uri) && !g_uri_get_fragment(uri))
+      g_variant_builder_add(summary, "{sv}", "auth_relay", g_variant_new_string(relay));
+  }
+  gboolean repost = r->event_kind == NOSTR_KIND_REPOST || r->event_kind == NOSTR_KIND_GENERIC_REPOST;
+  if (repost || r->event_kind == NOSTR_KIND_REACTION) {
+    summary_id(summary, "target_event_id", target);
+    guint64 number;
+    if (target_kind && g_ascii_string_to_unsigned(target_kind, 10, 0, G_MAXUINT16, &number, NULL))
+      g_variant_builder_add(summary, "{sv}", "target_kind", g_variant_new_uint32(number));
+    if (r->event_kind == NOSTR_KIND_REACTION) {
+      g_autofree gchar *reaction = summary_text(nostr_event_get_content(event));
+      g_variant_builder_add(summary, "{sv}", "reaction_value", g_variant_new_string(reaction));
+    }
+  }
+  if (summary_private_kind(r->event_kind)) summary_id(summary, "recipient_peer", peer);
+  if (r->event_kind == NOSTR_KIND_TEXT_NOTE || r->event_kind == NOSTR_KIND_ARTICLE ||
+      r->event_kind == NOSTR_KIND_COMMENT) {
+    g_autofree gchar *content = summary_text(nostr_event_get_content(event));
+    g_variant_builder_add(summary, "{sv}", "content", g_variant_new_string(content));
+  }
+  nostr_event_free(event);
+}
 static GVariant *snapshot(Request *r) {
   GVariantBuilder b, summary;
   g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
@@ -231,17 +323,17 @@ static GVariant *snapshot(Request *r) {
   if (r->has_kind) g_variant_builder_add(&b, "{sv}", "event_kind", g_variant_new_uint32(r->event_kind));
   g_variant_builder_add(&summary, "{sv}", "type", g_variant_new_string(r->op == OP_SIGN_EVENT ? "event" : op_info[r->op].kind));
   /* Preview helpers contain only public event content/operation/peer. */
-  g_variant_builder_add(&summary, "{sv}", "preview", g_variant_new_string(r->preview ? r->preview : ""));
+  const gchar *preview = r->preview ? r->preview : "";
+  if (r->op == OP_SIGN_EVENT && r->event_kind != NOSTR_KIND_TEXT_NOTE &&
+      r->event_kind != NOSTR_KIND_ARTICLE && r->event_kind != NOSTR_KIND_COMMENT)
+    preview = summary_private_kind(r->event_kind) ? "Encrypted message" : "Event signing";
+  g_autofree gchar *safe_preview = summary_text(preview);
+  g_variant_builder_add(&summary, "{sv}", "preview", g_variant_new_string(safe_preview));
   if (op_info[r->op].peer_arg && r->b)
     g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(r->b));
   if (r->op == OP_CONVKEY)
     g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(r->a));
-  if (r->op == OP_SIGN_EVENT) {
-    NostrEvent *event = nostr_event_new();
-    if (event && nostr_event_deserialize(event, r->a) == 0)
-      g_variant_builder_add(&summary, "{sv}", "tag_count", g_variant_new_uint32(nostr_tags_size(nostr_event_get_tags(event))));
-    if (event) nostr_event_free(event);
-  }
+  if (r->op == OP_SIGN_EVENT) summary_event(&summary, r);
   g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }

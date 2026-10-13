@@ -55,12 +55,16 @@ static void clear_reply(Reply *r) {
   g_clear_error(&r->error);
   memset(r, 0, sizeof *r);
 }
-static void sign(GDBusConnection *bus, guint32 kind, const char *content, Reply *r) {
+static void sign_tags(GDBusConnection *bus, guint32 kind, const char *tags, const char *content,
+                      Reply *r) {
   g_autofree gchar *json = g_strdup_printf(
-      "{\"kind\":%u,\"created_at\":1,\"tags\":[],\"content\":\"%s\"}", kind, content);
+      "{\"kind\":%u,\"created_at\":1,\"tags\":%s,\"content\":\"%s\"}", kind, tags, content);
   g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
                          "SignEvent", g_variant_new("(sss)", json, "", "spoofed-name"),
                          G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, bus_done, r);
+}
+static void sign(GDBusConnection *bus, guint32 kind, const char *content, Reply *r) {
+  sign_tags(bus, kind, "[]", content, r);
 }
 static gboolean ready(GrottoApprovalController *controller) {
   GListModel *pending = grotto_approval_controller_get_pending(controller);
@@ -104,7 +108,7 @@ static GtkWidget *find_button(GtkWidget *root, const char *label) {
   return NULL;
 }
 static void click_review(GrottoApprovalController *controller, GApplication *app, const char *id,
-                         gboolean allow, gboolean remember) {
+                         gboolean allow, gboolean remember, const char *expected_preview) {
   grotto_approval_controller_review(controller, id);
   GList *windows = gtk_application_get_windows(GTK_APPLICATION(app));
   g_assert_nonnull(windows);
@@ -114,6 +118,12 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
   guint frames = 0;
   gtk_widget_add_tick_callback(GTK_WIDGET(dialog), count_frame, &frames, NULL);
   WAIT(frames >= 2);
+  GtkLabel *preview = GTK_LABEL(gtk_widget_get_template_child(
+      GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "content_preview"));
+  if (expected_preview)
+    g_assert_nonnull(strstr(gtk_label_get_text(preview), expected_preview));
+  g_assert_null(strstr(gtk_label_get_text(preview), "PRIVATE-CIPHERTEXT"));
+  g_assert_null(strstr(gtk_label_get_text(preview), "PAIRING-TOKEN"));
   GtkCheckButton *check = GTK_CHECK_BUTTON(gtk_widget_get_template_child(
       GTK_WIDGET(dialog), GNOSTR_TYPE_APPROVAL_DIALOG, "chk_remember"));
   gtk_check_button_set_active(check, remember);
@@ -186,7 +196,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   g_assert_cmpstr(principal, !=, "spoofed-name");
 #ifndef __APPLE__
   if (gui) {
-    click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE);
+    click_review(controller, app, grotto_approval_request_get_id(request), TRUE, TRUE, "first");
     decision.done = 1;
   } else
 #endif
@@ -204,6 +214,70 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   verify(&result, NOSTR_KIND_TEXT_NOTE);
   g_assert_cmpuint(g_list_model_get_n_items(pending), ==, 0);
   clear_reply(&result);
+  const gchar *peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+  g_autofree gchar *target_tags =
+      g_strdup_printf("[[\"e\",\"%s\"],[\"k\",\"%u\"]]", peer, NOSTR_KIND_TEXT_NOTE);
+  g_autofree gchar *private_tags = g_strdup_printf("[[\"p\",\"%s\"]]", peer);
+  struct {
+    guint32 kind;
+    const gchar *tags, *body, *preview, *key, *value;
+  } cases[] = {{NOSTR_KIND_CLIENT_AUTHENTICATION,
+                "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "",
+                "wss://nos.lol", "auth_relay", "wss://nos.lol"},
+               {NOSTR_KIND_DELETION, target_tags, "", "Delete 1 target(s)", NULL, NULL},
+               {NOSTR_KIND_REPOST, target_tags, "", peer, "target_event_id", peer},
+               {NOSTR_KIND_GENERIC_REPOST, target_tags, "", peer, "target_event_id", peer},
+               {NOSTR_KIND_REACTION, target_tags, "♥", "Reaction: ♥", "reaction_value", "♥"},
+               {NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE, private_tags, "PRIVATE-CIPHERTEXT",
+                "Encrypted message", "recipient_peer", peer},
+               {NOSTR_KIND_GIFT_WRAP, private_tags, "PRIVATE-CIPHERTEXT", "Encrypted message",
+                "recipient_peer", peer}};
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    g_autoptr(GDBusConnection) caller =
+        g_dbus_connection_new_for_address_sync(g_getenv("DBUS_SESSION_BUS_ADDRESS"),
+                                               G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
+                                                   G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION,
+                                               NULL, NULL, NULL);
+    g_assert_nonnull(caller);
+    sign_tags(caller, cases[i].kind, cases[i].tags, cases[i].body, &result);
+    WAIT(ready(controller) || result.done);
+    g_assert_no_error(result.error);
+    g_assert_true(ready(controller));
+    g_clear_object(&request);
+    request = g_list_model_get_item(pending, 0);
+    g_autoptr(GVariant) summary = g_variant_lookup_value(grotto_approval_request_get_info(request),
+                                                         "event_summary", G_VARIANT_TYPE_VARDICT);
+    g_assert_nonnull(summary);
+    if (cases[i].key) {
+      const gchar *value = NULL;
+      g_assert_true(g_variant_lookup(summary, cases[i].key, "&s", &value));
+      g_assert_cmpstr(value, ==, cases[i].value);
+    } else {
+      guint count = 0;
+      g_assert_true(g_variant_lookup(summary, "delete_target_count", "u", &count));
+      g_assert_cmpuint(count, ==, 1);
+    }
+    g_autofree gchar *dump = g_variant_print(summary, FALSE);
+    g_assert_null(strstr(dump, "PRIVATE-CIPHERTEXT"));
+    g_assert_null(strstr(dump, "PAIRING-TOKEN"));
+#ifndef __APPLE__
+    if (gui) {
+      click_review(controller, app, grotto_approval_request_get_id(request), TRUE, FALSE,
+                   cases[i].preview);
+      decision.done = 1;
+    } else
+#endif
+      grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(request),
+                                              TRUE, FALSE, 0, NULL, decision_done, &decision);
+    WAIT(result.done && decision.done);
+    verify(&result, cases[i].kind);
+    g_assert_no_error(decision.error);
+    WAIT(g_list_model_get_n_items(pending) == 0 &&
+         grotto_approval_controller_get_holds(controller) == 0);
+    clear_reply(&result);
+    clear_reply(&decision);
+    g_dbus_connection_close_sync(caller, NULL, NULL);
+  }
   /* A new connection avoids the deliberate per-connection prompt-rate limit;
    * its verified principal is unchanged (no sleeps or policy bypass). */
   g_autoptr(GDBusConnection) extra = NULL;
@@ -226,7 +300,7 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
   request = g_list_model_get_item(pending, 0);
 #ifndef __APPLE__
   if (gui) {
-    click_review(controller, app, grotto_approval_request_get_id(request), FALSE, FALSE);
+    click_review(controller, app, grotto_approval_request_get_id(request), FALSE, FALSE, NULL);
     decision.done = 1;
   } else
 #endif
@@ -250,7 +324,6 @@ static void run_flow(GDBusConnection *connection, GDBusConnection *consumer, GAp
 typedef struct {
   guint done;
   gboolean ok;
-  gchar *output;
   GError *error;
 } WorkerReply;
 static void worker_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -334,7 +407,6 @@ int main(int argc, char **argv) {
     nostrc_test_bus_dump_log(bus, "g07-gui.log");
     g_assert_no_error(r.error);
     g_assert_true(r.ok);
-    g_free(r.output);
   } else
 #endif
   {

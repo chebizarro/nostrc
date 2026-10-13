@@ -558,6 +558,91 @@ static void test_headless_defaults(void) {
   reply_clear(&encrypt); reply_clear(&decrypt); reply_clear(&sign); reply_clear(&denied);
   stop(s, &w); g_unsetenv("NOSTR_SIGNER_TEST_DEFAULT_GRANTS"); g_free(exe);
 }
+static GVariant *event_summary(SignerApprovalService *s, Watch *w, guint32 kind,
+                               const gchar *tags, const gchar *content) {
+  guint index = w->pending->len;
+  g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"tags\":%s,\"content\":\"%s\"}",
+                                          kind, tags, content);
+  g_autofree gchar *connection = g_strdup_printf("summary-%u", index);
+  SignerCaller who = local_caller();
+  Reply result = {0};
+  g_autoptr(SignerGateHandle) h = submit(s, &who, connection, SIGNER_GATE_SIGN_EVENT, json, NULL, &result);
+  wait_prompts(w, index + 1);
+  g_autoptr(GVariant) info = signer_approval_service_info(s, request_id(w, index));
+  GVariant *summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  g_assert_nonnull(summary);
+  signer_gate_cancel(h);
+  reply_clear(&result);
+  return summary;
+}
+static void assert_summary_string(GVariant *summary, const gchar *key, const gchar *expected) {
+  const gchar *value = NULL;
+  g_assert_true(g_variant_lookup(summary, key, "&s", &value));
+  g_assert_cmpstr(value, ==, expected);
+}
+static void test_readable_summaries(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w);
+  g_autoptr(GVariant) auth = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "PRIVATE-PAYLOAD");
+  assert_summary_string(auth, "auth_relay", "wss://nos.lol");
+  g_autofree gchar *auth_dump = g_variant_print(auth, FALSE);
+  g_assert_null(strstr(auth_dump, "PAIRING-TOKEN"));
+  g_assert_null(strstr(auth_dump, "PRIVATE-PAYLOAD"));
+  g_autoptr(GVariant) unsafe = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "[[\"relay\",\"wss://user:password@nos.lol/?token=SECRET\"]]", "");
+  g_assert_null(g_variant_lookup_value(unsafe, "auth_relay", NULL));
+  g_autoptr(GVariant) ambiguous = event_summary(s, &w, NOSTR_KIND_CLIENT_AUTHENTICATION,
+      "[[\"relay\",\"wss://nos.lol\"],[\"relay\",\"wss://relay.nostr.band\"]]", "");
+  g_assert_null(g_variant_lookup_value(ambiguous, "auth_relay", NULL));
+  g_autoptr(GVariant) deletion = event_summary(s, &w, NOSTR_KIND_DELETION,
+      "[[\"e\",\"target-1\"],[\"e\",\"target-2\"],[\"a\",\"address\"],[\"k\",\"1\"]]", "");
+  guint count = 0;
+  g_assert_true(g_variant_lookup(deletion, "delete_target_count", "u", &count));
+  g_assert_cmpuint(count, ==, 3);
+  g_autofree gchar *targets = g_strdup_printf("[[\"e\",\"%s\"],[\"k\",\"%u\"]]", PEER, NOSTR_KIND_TEXT_NOTE);
+  const guint32 kinds[] = {NOSTR_KIND_REPOST, NOSTR_KIND_GENERIC_REPOST, NOSTR_KIND_REACTION};
+  for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
+    g_autoptr(GVariant) target = event_summary(s, &w, kinds[i], targets,
+                                             kinds[i] == NOSTR_KIND_REACTION ? "♥" : "EMBEDDED-PRIVATE-JSON");
+    assert_summary_string(target, "target_event_id", PEER);
+    g_assert_true(g_variant_lookup(target, "target_kind", "u", &count));
+    g_assert_cmpuint(count, ==, NOSTR_KIND_TEXT_NOTE);
+    if (kinds[i] == NOSTR_KIND_REACTION) assert_summary_string(target, "reaction_value", "♥");
+    g_autofree gchar *dump = g_variant_print(target, FALSE);
+    g_assert_null(strstr(dump, "EMBEDDED-PRIVATE-JSON"));
+  }
+  g_autoptr(GVariant) invalid = event_summary(s, &w, NOSTR_KIND_REACTION,
+      "[[\"e\",\"NOT-AN-ID\"],[\"k\",\"65536\"]]", "+");
+  g_assert_null(g_variant_lookup_value(invalid, "target_event_id", NULL));
+  g_assert_null(g_variant_lookup_value(invalid, "target_kind", NULL));
+  const guint32 private_kinds[] = {NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE, NOSTR_KIND_SEAL,
+      NOSTR_KIND_GIFT_WRAP, NOSTR_KIND_DIRECT_MESSAGE, NOSTR_KIND_FILE_MESSAGE, NOSTR_KIND_NOSTR_CONNECT};
+  g_autofree gchar *recipient = g_strdup_printf("[[\"p\",\"%s\"],[\"secret\",\"SECRET-KEY\"]]", PEER);
+  for (guint i = 0; i < G_N_ELEMENTS(private_kinds); i++) {
+    g_autoptr(GVariant) private = event_summary(s, &w, private_kinds[i], recipient, "PRIVATE-CIPHERTEXT");
+    assert_summary_string(private, "recipient_peer", PEER);
+    g_autofree gchar *dump = g_variant_print(private, FALSE);
+    g_assert_null(strstr(dump, "PRIVATE-CIPHERTEXT"));
+    g_assert_null(strstr(dump, "SECRET-KEY"));
+    g_assert_null(g_variant_lookup_value(private, "content", NULL));
+  }
+  g_autoptr(GVariant) custom = event_summary(s, &w, 65535,
+      "[[\"x\",\"PRIVATE-TAG\"],[\"x\",\"TOKEN\"],[\"y\",\"KEY\"],[\"bad name\",\"PAYLOAD\"]]", "PRIVATE-CONTENT");
+  g_autoptr(GVariant) names = g_variant_lookup_value(custom, "tag_counts", G_VARIANT_TYPE("a{su}"));
+  g_assert_true(g_variant_lookup(names, "x", "u", &count)); g_assert_cmpuint(count, ==, 2);
+  g_assert_true(g_variant_lookup(names, "y", "u", &count)); g_assert_cmpuint(count, ==, 1);
+  g_assert_cmpuint(g_variant_n_children(names), ==, 2);
+  g_autofree gchar *custom_dump = g_variant_print(custom, FALSE);
+  g_assert_null(strstr(custom_dump, "PRIVATE-"));
+  GString *long_text = g_string_new(NULL);
+  for (guint i = 0; i < 281; i++) g_string_append(long_text, "界");
+  g_autoptr(GVariant) public = event_summary(s, &w, NOSTR_KIND_TEXT_NOTE, "[]", long_text->str);
+  const gchar *content = NULL;
+  g_assert_true(g_variant_lookup(public, "content", "&s", &content));
+  g_assert_true(g_utf8_validate(content, -1, NULL)); g_assert_cmpint(g_utf8_strlen(content, -1), ==, 280);
+  g_string_free(long_text, TRUE);
+  stop(s, &w);
+}
 int main(int argc, char **argv) {
   /* Fresh config for repeatable grant assertions; never the owner's store. */
   gchar *config = g_dir_make_tmp("nip55l-approval-XXXXXX", NULL);
@@ -583,6 +668,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/nip04-roundtrip", test_nip04_roundtrip);
   g_test_add_func("/approval/validation-deadline", test_validation_and_deadline);
   g_test_add_func("/approval/metadata-revoke", test_metadata_and_revoke);
+  g_test_add_func("/approval/readable-summaries", test_readable_summaries);
   g_test_add_func("/approval/headless-defaults", test_headless_defaults);
   g_test_add_func("/approval/policy-recheck", test_policy_recheck);
   gint result = g_test_run();

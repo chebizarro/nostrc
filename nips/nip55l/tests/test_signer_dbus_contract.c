@@ -1264,6 +1264,54 @@ static void context_reject(Ctx *ctx, const gchar *method, GVariant *arguments, G
 static GVariant *context_arguments(void) {
   return g_variant_new("(sss)", "{\"kind\":1,\"tags\":[],\"content\":\"test\"}", "", "");
 }
+static void test_readable_summary_contract(Ctx *ctx) {
+  const gchar *id = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+  g_autofree gchar *targets = g_strdup_printf("[[\"e\",\"%s\"],[\"k\",\"%u\"]]", id, NOSTR_KIND_TEXT_NOTE);
+  g_autofree gchar *recipient = g_strdup_printf("[[\"p\",\"%s\"]]", id);
+  struct { guint32 kind; const gchar *tags, *content, *key, *expected; } cases[] = {
+    {NOSTR_KIND_CLIENT_AUTHENTICATION, "[[\"relay\",\"wss://nos.lol\"],[\"challenge\",\"PAIRING-TOKEN\"]]", "", "auth_relay", "wss://nos.lol"},
+    {NOSTR_KIND_DELETION, targets, "", NULL, NULL},
+    {NOSTR_KIND_REPOST, targets, "EMBEDDED-PRIVATE-JSON", "target_event_id", id},
+    {NOSTR_KIND_GENERIC_REPOST, targets, "", "target_event_id", id},
+    {NOSTR_KIND_REACTION, targets, "♥", "reaction_value", "♥"},
+    {NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE, recipient, "PRIVATE-CIPHERTEXT", "recipient_peer", id},
+    {65535, "[[\"x\",\"PRIVATE-TAG\"],[\"x\",\"PRIVATE-TAG\"]]", "PRIVATE-PAYLOAD", NULL, NULL}
+  };
+  for (guint i = 0; i < G_N_ELEMENTS(cases); i++) {
+    Watch w; watch_start(ctx, &w);
+    GDBusConnection *consumer = open_conn(); /* fresh sender; no prompt-limit sleep */
+    g_autofree gchar *json = g_strdup_printf("{\"kind\":%u,\"tags\":%s,\"content\":\"%s\"}",
+                                            cases[i].kind, cases[i].tags, cases[i].content);
+    w.a.pending_replies++;
+    g_dbus_connection_call(consumer, BUS_NAME, OBJ_PATH, IFACE, "SignEvent",
+        g_variant_new("(sss)", json, ctx->npub, "summary-contract"), G_VARIANT_TYPE("(s)"),
+        G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+    watch_wait_request(&w, 1);
+    g_autoptr(GError) error = NULL;
+    g_autoptr(GVariant) info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &error);
+    CHECK(info != NULL && error == NULL);
+    g_autoptr(GVariant) row = g_variant_get_child_value(info, 0);
+    g_autoptr(GVariant) summary = g_variant_lookup_value(row, "event_summary", G_VARIANT_TYPE_VARDICT);
+    CHECK(summary != NULL);
+    if (cases[i].key) {
+      const gchar *value = NULL;
+      CHECK(g_variant_lookup(summary, cases[i].key, "&s", &value));
+      CHECK(g_strcmp0(value, cases[i].expected) == 0);
+    } else if (cases[i].kind == NOSTR_KIND_DELETION) {
+      guint count = 0; CHECK(g_variant_lookup(summary, "delete_target_count", "u", &count)); CHECK(count == 1);
+    } else {
+      g_autoptr(GVariant) names = g_variant_lookup_value(summary, "tag_counts", G_VARIANT_TYPE("a{su}"));
+      guint count = 0; CHECK(names && g_variant_lookup(names, "x", "u", &count)); CHECK(count == 2);
+    }
+    g_autofree gchar *dump = g_variant_print(summary, FALSE);
+    CHECK(strstr(dump, "PRIVATE-") == NULL && strstr(dump, "PAIRING-TOKEN") == NULL);
+    approve(ctx, w.a.req_id, FALSE, FALSE);
+    watch_wait_replies(&w);
+    CHECK(w.a.replies->len == 1 && w.a.replies->pdata[0] == NULL);
+    close_conn(consumer);
+    watch_stop(ctx, &w);
+  }
+}
 static void test_call_with_context(Ctx *ctx) {
   const gchar *reject[] = {"StoreKey", "ApproveRequest", "ListIdentities", "ListGrants", "CallWithContext", "Unknown",
     "GetPublicKey", "GetRelays", "GetPublicKeyForApp", "NIP44EncryptB64", "DecryptZapEvent", "EnableTypedApprovalErrors"};
@@ -3652,6 +3700,7 @@ int main(int argc, char **argv) {
   {
     Ctx ctx;
     ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    test_readable_summary_contract(&ctx);
     test_call_with_context(&ctx);
     ctx_teardown(&ctx);
     g_print("PASS CallWithContext whitelist, signatures, bounded metadata and output tuple\n");

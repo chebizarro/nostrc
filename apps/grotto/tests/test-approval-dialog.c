@@ -115,11 +115,19 @@ static GVariant *info(guint32 kind, const char *operation, guint remaining) {
   g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(TRUE));
   g_variant_builder_add(&summary, "{sv}", "preview",
                         g_variant_new_string("ciphertext must not be displayed"));
-  g_variant_builder_add(&summary, "{sv}", "target", g_variant_new_string("target-event-id"));
-  g_variant_builder_add(&summary, "{sv}", "relay", g_variant_new_string("wss://nos.lol"));
+  g_variant_builder_add(&summary, "{sv}", "target_event_id",
+                        g_variant_new_string("target-event-id"));
+  g_variant_builder_add(&summary, "{sv}", "auth_relay", g_variant_new_string("wss://nos.lol"));
   g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string("peer-fingerprint"));
-  g_variant_builder_add(&summary, "{sv}", "target_count", g_variant_new_uint32(3));
+  g_variant_builder_add(&summary, "{sv}", "recipient_peer",
+                        g_variant_new_string("recipient-fingerprint"));
+  g_variant_builder_add(&summary, "{sv}", "reaction_value", g_variant_new_string("+"));
+  g_variant_builder_add(&summary, "{sv}", "delete_target_count", g_variant_new_uint32(3));
   g_variant_builder_add(&summary, "{sv}", "tag_count", g_variant_new_uint32(4));
+  GVariantBuilder counts;
+  g_variant_builder_init(&counts, G_VARIANT_TYPE("a{su}"));
+  g_variant_builder_add(&counts, "{su}", "x", 2);
+  g_variant_builder_add(&summary, "{sv}", "tag_counts", g_variant_builder_end(&counts));
   g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
@@ -202,17 +210,35 @@ static void completion_cancels(Fixture *f, gconstpointer data) {
 static void previews(Fixture *f, gconstpointer data) {
   (void)data;
   const guint32 kinds[] = {NOSTR_KIND_GIFT_WRAP, NOSTR_KIND_DELETION,
-                           NOSTR_KIND_CLIENT_AUTHENTICATION, NOSTR_KIND_REACTION};
+                           NOSTR_KIND_CLIENT_AUTHENTICATION, NOSTR_KIND_REACTION, 65535};
   const char *expected[] = {"Encrypted message", "Delete 3 target(s)", "wss://nos.lol",
-                            "target-event-id"};
+                            "Reaction: +", "x: 2"};
   for (guint i = 0; i < G_N_ELEMENTS(kinds); i++) {
     g_autoptr(GVariant) row = info(kinds[i], "sign_event", 120);
     gnostr_approval_dialog_set_info(f->dialog, row, "Client");
     const char *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
     g_assert_nonnull(strstr(preview, expected[i]));
-    if (i == 0)
+    if (i == 0) {
+      g_assert_null(strstr(preview, "ciphertext"));
+      g_assert_nonnull(strstr(preview, "recipient-fingerprint"));
+    }
+    if (kinds[i] == 65535)
       g_assert_null(strstr(preview, "ciphertext"));
   }
+  /* Exact AUTH relay must not be cut at the public-content preview bound. */
+  g_autoptr(GVariant) auth = info(NOSTR_KIND_CLIENT_AUTHENTICATION, "sign_event", 120);
+  g_autoptr(GVariant) old_summary =
+      g_variant_lookup_value(auth, "event_summary", G_VARIANT_TYPE_VARDICT);
+  GVariantDict summary, outer;
+  g_variant_dict_init(&summary, old_summary);
+  g_autofree gchar *path = g_strnfill(300, 'a');
+  g_autofree gchar *relay = g_strconcat("wss://nos.lol/", path, "/exact-end", NULL);
+  g_variant_dict_insert(&summary, "auth_relay", "s", relay);
+  g_variant_dict_init(&outer, auth);
+  g_variant_dict_insert_value(&outer, "event_summary", g_variant_dict_end(&summary));
+  g_autoptr(GVariant) exact = g_variant_ref_sink(g_variant_dict_end(&outer));
+  gnostr_approval_dialog_set_info(f->dialog, exact, "Client");
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "content_preview"))), relay));
   g_autoptr(GVariant) row = info(NOSTR_KIND_TEXT_NOTE, "nip44_conversation_key", 120);
   gnostr_approval_dialog_set_info(f->dialog, row, "Client");
   g_assert_nonnull(

@@ -406,8 +406,11 @@ void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows
             ? g_strdup_printf("%s · %s (kind %u)", field(row, "operation"),
                               gnostr_approval_kind_name(kind), kind)
             : g_strdup(field(row, "operation"));
-    g_autofree gchar *label = g_strdup_printf(
-        "%s\nPeer: %s", operation, *field(summary, "peer") ? field(summary, "peer") : "None");
+    g_autofree gchar *label =
+        g_strdup_printf("%s\nPeer: %s", operation,
+                        *field(summary, "peer")             ? field(summary, "peer")
+                        : *field(summary, "recipient_peer") ? field(summary, "recipient_peer")
+                                                            : "None");
     GtkWidget *check = gtk_check_button_new_with_label(label);
     g_object_set_data_full(G_OBJECT(check), "request-id", g_strdup(field(row, "request_id")),
                            g_free);
@@ -444,12 +447,21 @@ gboolean gnostr_approval_info_can_approve(GVariant *info) {
     g_autoptr(GVariant) summary =
         g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
     if (kind == NOSTR_KIND_DELETION)
-      return summary && g_variant_lookup(summary, "target_count", "u", &count);
+      return summary && g_variant_lookup(summary, "delete_target_count", "u", &count);
     if (kind == NOSTR_KIND_CLIENT_AUTHENTICATION)
-      return *field(summary, "relay") != '\0';
+      return *field(summary, "auth_relay") != '\0';
     if (kind == NOSTR_KIND_REPOST || kind == NOSTR_KIND_GENERIC_REPOST ||
-        kind == NOSTR_KIND_REACTION)
-      return *field(summary, "target") != '\0';
+        kind == NOSTR_KIND_REACTION) {
+      if (!*field(summary, "target_event_id"))
+        return FALSE;
+      if (kind == NOSTR_KIND_REACTION) {
+        g_autoptr(GVariant) value =
+            summary ? g_variant_lookup_value(summary, "reaction_value", G_VARIANT_TYPE_STRING)
+                    : NULL;
+        return value != NULL;
+      }
+      return TRUE;
+    }
   }
   return TRUE;
 }
@@ -511,7 +523,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     guint32 tags = 0, targets = 0;
     if (summary) {
       g_variant_lookup(summary, "tag_count", "u", &tags);
-      g_variant_lookup(summary, "target_count", "u", &targets);
+      g_variant_lookup(summary, "delete_target_count", "u", &targets);
     }
     switch (kind) {
     case NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE:
@@ -520,7 +532,9 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     case NOSTR_KIND_DIRECT_MESSAGE:
     case NOSTR_KIND_FILE_MESSAGE:
     case NOSTR_KIND_NOSTR_CONNECT:
-      preview = g_strdup("Encrypted message — private content is not shown.");
+      preview = g_strdup_printf("Encrypted message — private content is not shown.\nRecipient: %s",
+                                *field(summary, "recipient_peer") ? field(summary, "recipient_peer")
+                                                                  : "Not visible in this event");
       break;
     case NOSTR_KIND_DELETION:
       preview = g_strdup_printf(
@@ -530,26 +544,46 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     case NOSTR_KIND_CLIENT_AUTHENTICATION:
       preview = g_strdup_printf(
           "Relay: %s\nAuthentication exposes this identity to this exact relay.",
-          *field(summary, "relay") ? field(summary, "relay") : "Not supplied by daemon");
+          *field(summary, "auth_relay") ? field(summary, "auth_relay") : "Not supplied by daemon");
       break;
     case NOSTR_KIND_REPOST:
     case NOSTR_KIND_GENERIC_REPOST:
-    case NOSTR_KIND_REACTION:
-      preview = g_strdup_printf("Target: %s\n%s",
-                                *field(summary, "target") ? field(summary, "target")
-                                                          : "Not supplied by daemon",
-                                field(summary, "preview"));
+    case NOSTR_KIND_REACTION: {
+      guint32 target_kind = 0;
+      g_autofree gchar *type = NULL;
+      if (summary && g_variant_lookup(summary, "target_kind", "u", &target_kind))
+        type = g_strdup_printf("\nTarget type: %s (kind %u)",
+                               gnostr_approval_kind_name(target_kind), target_kind);
+      preview =
+          g_strdup_printf("Target: %s%s%s%s",
+                          *field(summary, "target_event_id") ? field(summary, "target_event_id")
+                                                             : "Not supplied by daemon",
+                          type ? type : "", kind == NOSTR_KIND_REACTION ? "\nReaction: " : "",
+                          kind == NOSTR_KIND_REACTION ? field(summary, "reaction_value") : "");
       break;
+    }
     case NOSTR_KIND_TEXT_NOTE:
     case NOSTR_KIND_ARTICLE:
     case NOSTR_KIND_COMMENT:
       preview = bounded(
           *field(summary, "content") ? field(summary, "content") : field(summary, "preview"), 280);
       break;
-    default:
-      preview = g_strdup_printf("Kind %u · %u structured tags\n%s", kind, tags,
-                                field(summary, "preview"));
+    default: {
+      GString *text = g_string_new(NULL);
+      g_string_append_printf(text, "Kind %u · %u structured tags", kind, tags);
+      g_autoptr(GVariant) counts =
+          summary ? g_variant_lookup_value(summary, "tag_counts", G_VARIANT_TYPE("a{su}")) : NULL;
+      if (counts) {
+        GVariantIter iter;
+        const gchar *name;
+        guint32 count;
+        g_variant_iter_init(&iter, counts);
+        while (g_variant_iter_next(&iter, "{&su}", &name, &count))
+          g_string_append_printf(text, "\n%s: %u", name, count);
+      }
+      preview = g_string_free(text, FALSE);
       break;
+    }
     }
   } else if (g_str_has_suffix(op, "encrypt") || g_str_has_suffix(op, "decrypt") ||
              !strcmp(op, "nip44_conversation_key")) {
@@ -566,7 +600,7 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     impact = "Pairing is not a signing permission. Low trust asks for every request.";
   }
   if (preview)
-    gnostr_approval_dialog_set_content(self, preview);
+    gtk_label_set_text(self->content_preview, preview);
   if (!gnostr_approval_info_can_approve(info)) {
     self->ready = FALSE;
     gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), FALSE);

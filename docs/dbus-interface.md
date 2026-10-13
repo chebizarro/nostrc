@@ -728,6 +728,29 @@ monotonic snapshot). No private bodies, ciphertext, keys or pairing tokens
 are exposed in the summary. Unknown fields may be ignored by legacy UIs.
 Unknown request: `Error.NotFound`.
 
+`event_summary` keys (additive in unreleased 0.7.0):
+
+| Key | Type | Meaning / redaction |
+| --- | --- | --- |
+| `type` | `s` | `event`, or the validated operation name |
+| `preview` | `s` | Bounded public note/article/comment preview; otherwise generic event or encrypted-message text. Crypto operations contain only operation/peer metadata. |
+| `content` | `s` | Public note/article/comment plain text only; valid UTF-8, at most 280 Unicode characters, ASCII controls replaced with spaces |
+| `peer` | `s` | Validated public peer fingerprint for encrypt/decrypt/conversation-key operations, never a private message body |
+| `tag_count` | `u` | Total tag count for signing |
+| `tag_counts` | `a{su}` | Sorted counts keyed by tag name, not values: ASCII alphanumeric/underscore/hyphen names of 1–32 bytes, at most 64 distinct names; other names omitted |
+| `auth_relay` | `s` | Exact sole AUTH relay URI, printable ASCII and at most 2048 bytes; valid `ws`/`wss` host, no credentials, query or fragment. Missing for unsafe/ambiguous relay tags. Challenges are never included. |
+| `delete_target_count` | `u` | Number of `e`/`a` deletion target tags; no target payloads |
+| `target_event_id` | `s` | Last `e` tag for repost/generic repost/reaction, only when a validated 64-hex public event ID; lowercase |
+| `target_kind` | `u` | Last `k` tag for those operations, only when a validated decimal kind in 0–65535 |
+| `reaction_value` | `s` | Public reaction text, valid UTF-8 and bounded to 280 characters (including empty, the protocol's default reaction) |
+| `recipient_peer` | `s` | Last `p` tag of private/encrypted-message signing, only when a validated 64-hex public recipient fingerprint; lowercase. May be absent for sealed events. |
+
+No embedded repost JSON, unknown/custom-event content, arbitrary tag values,
+private bodies, ciphertext, secrets or pairing tokens are copied into the summary.
+Missing fields must not be invented from raw JSON by an approval UI; essential
+AUTH/deletion/target metadata must be present before approving those operations.
+These are presentation fields, not permission grants or fetched profile data.
+
 #### CallWithContext
 
 *Additive in 0.7.0.* `(method:s, arguments:v, context:a{sv}) → reply:v`.
