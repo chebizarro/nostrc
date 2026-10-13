@@ -65,6 +65,13 @@ static void job_unref(Job *j) {
 /* Main context. */
 static void on_reply(gpointer ud, const gchar *error_name, const gchar *message, const gchar *result) {
   Job *j = ud;
+  /* Preserve the NIP-5F wire's legacy approval-error names; the shared
+   * internal service supplies typed outcomes to newer transport adapters. */
+  if (error_name && (!strcmp(error_name, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT) ||
+                     !strcmp(error_name, ORG_NOSTR_SIGNER_ERR_NO_APPROVER) ||
+                     !strcmp(error_name, ORG_NOSTR_SIGNER_ERR_IDENTITY_CHANGED) ||
+                     !strcmp(error_name, ORG_NOSTR_SIGNER_ERR_CANCELLED)))
+    error_name = ORG_NOSTR_SIGNER_ERR_APPROVAL;
   g_mutex_lock(&j->lock);
   j->error_name = g_strdup(error_name);
   j->message = g_strdup(message);
@@ -77,7 +84,8 @@ static void on_reply(gpointer ud, const gchar *error_name, const gchar *message,
 
 static gboolean submit_idle(gpointer data) {
   Job *j = data;
-  signer_gate_submit(j->who, j->key, j->op, j->a, j->b, j->selector, on_reply, j);
+  g_autoptr(SignerGateHandle) handle = signer_gate_submit(
+      j->who, j->key, j->op, j->a, j->b, j->selector, on_reply, j);
   return G_SOURCE_REMOVE;
 }
 

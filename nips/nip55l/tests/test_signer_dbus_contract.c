@@ -1211,6 +1211,83 @@ static void test_disconnected_sender_before_cleanup(Ctx *ctx) {
 
 /* nostrc-y02q / phk4 / 1e31 / eie5 / f7hk. Fixture: no grants except a
  * web-origin one this process must NOT inherit, approvals answered here. */
+static GVariant *context_one(const gchar *key, GVariant *value) {
+  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  if (key) g_variant_builder_add(&b, "{sv}", key, value);
+  return g_variant_builder_end(&b);
+}
+static void context_reject(Ctx *ctx, const gchar *method, GVariant *arguments, GVariant *context) {
+  GError *error = NULL;
+  GVariant *result = call(ctx->bus, "CallWithContext", g_variant_new("(sv@a{sv})", method, arguments, context), "(v)", &error);
+  CHECK(result == NULL); expect_remote_error(error, ERR_INVALID); g_clear_error(&error);
+}
+static GVariant *context_arguments(void) {
+  return g_variant_new("(sss)", "{\"kind\":1,\"tags\":[],\"content\":\"test\"}", "", "");
+}
+static void test_call_with_context(Ctx *ctx) {
+  const gchar *reject[] = {"StoreKey", "ApproveRequest", "ListIdentities", "ListGrants", "CallWithContext", "Unknown",
+    "GetPublicKey", "GetRelays", "GetPublicKeyForApp", "NIP44EncryptB64", "DecryptZapEvent", "EnableTypedApprovalErrors"};
+  for (guint i = 0; i < G_N_ELEMENTS(reject); i++)
+    context_reject(ctx, reject[i], g_variant_new("(s)", "not allowed"), context_one(NULL, NULL));
+  context_reject(ctx, "SignEvent", g_variant_new("(s)", "wrong tuple"), context_one(NULL, NULL));
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("unknown", g_variant_new_string("x")));
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("reason", g_variant_new_uint32(1)));
+  gchar *long_text = g_strnfill(161, 'x');
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("reason", g_variant_new_string(long_text)));
+  g_free(long_text);
+  GString *unicode = g_string_new(NULL);
+  for (guint i = 0; i < 129; i++) g_string_append(unicode, "\U0001f600");
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("reason", g_variant_new_string(unicode->str)));
+  g_string_free(unicode, TRUE);
+  long_text = g_strnfill(65, 'x');
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("purpose", g_variant_new_string(long_text)));
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_id", g_variant_new_string(long_text)));
+  g_free(long_text);
+  GVariantBuilder context;
+  g_variant_builder_init(&context, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&context, "{sv}", "reason", g_variant_new_string("one"));
+  g_variant_builder_add(&context, "{sv}", "reason", g_variant_new_string("two"));
+  context_reject(ctx, "SignEvent", context_arguments(), g_variant_builder_end(&context));
+
+  Watch w; watch_start(ctx, &w);
+  g_variant_builder_init(&context, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&context, "{sv}", "reason", g_variant_new_string("Publish this note"));
+  g_variant_builder_add(&context, "{sv}", "purpose", g_variant_new_string("posting"));
+  g_variant_builder_add(&context, "{sv}", "flow_id", g_variant_new_string("test-flow"));
+  w.a.pending_replies++;
+  g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "CallWithContext",
+    g_variant_new("(sv@a{sv})", "SignEvent", g_variant_new("(sss)",
+      "{\"kind\":1,\"tags\":[[\"t\",\"test\"]],\"content\":\"context\"}", ctx->npub, "context-client"),
+      g_variant_builder_end(&context)), G_VARIANT_TYPE("(v)"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, on_async_reply, &w.a);
+  watch_wait_request(&w, 1);
+  GError *error = NULL;
+  GVariant *result = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &error);
+  CHECK(result != NULL && error == NULL);
+  GVariant *info = g_variant_get_child_value(result, 0);
+  const gchar *text = NULL; guint32 kind = 0, remaining = 0; guint64 expires = 0;
+  CHECK(g_variant_lookup(info, "transport", "&s", &text) && !strcmp(text, "DBUS"));
+  CHECK(g_variant_lookup(info, "operation", "&s", &text) && !strcmp(text, "sign_event"));
+  CHECK(g_variant_lookup(info, "event_kind", "u", &kind) && kind == 1);
+  CHECK(g_variant_lookup(info, "reason", "&s", &text) && !strcmp(text, "Publish this note"));
+  CHECK(g_variant_lookup(info, "reason_source", "&s", &text) && !strcmp(text, "caller"));
+  CHECK(g_variant_lookup(info, "flow_id", "&s", &text) && !strcmp(text, "test-flow"));
+  CHECK(g_variant_lookup(info, "state", "&s", &text) && !strcmp(text, "PENDING"));
+  CHECK(g_variant_lookup(info, "expires_at", "t", &expires) && expires > (guint64)time(NULL));
+  CHECK(g_variant_lookup(info, "remaining_seconds", "u", &remaining) && remaining > 0 && remaining <= 300);
+  GVariant *summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+  CHECK(summary != NULL);
+  CHECK(g_variant_lookup(summary, "tag_count", "u", &kind) && kind == 1);
+  g_variant_unref(summary); g_variant_unref(info); g_variant_unref(result);
+  approve(ctx, w.a.req_id, TRUE, FALSE); watch_wait_replies(&w);
+  CHECK(w.a.replies->pdata[0] != NULL && w.a.errors->pdata[0] == NULL);
+  GVariant *wrapped = g_variant_get_child_value(w.a.replies->pdata[0], 0);
+  GVariant *tuple = g_variant_get_variant(wrapped);
+  CHECK(g_variant_is_of_type(tuple, G_VARIANT_TYPE("(s)")));
+  g_variant_get(tuple, "(&s)", &text);
+  assert_signed_event(text, ctx->pk_hex, 1, (int64_t)time(NULL));
+  g_variant_unref(tuple); g_variant_unref(wrapped); watch_stop(ctx, &w);
+}
+
 static void test_gating(Ctx *ctx) {
   char *peer_sk = nostr_key_generate_private();
   char *peer_pk = nostr_key_get_public(peer_sk);
@@ -1368,8 +1445,7 @@ static void test_gating(Ctx *ctx) {
     watch_start(ctx, &w);
     char *cts[3];
     for (int i = 0; i < 3; i++) {
-      char msg[16]; g_snprintf(msg, sizeof msg, "burst %d", i);
-      cts[i] = incoming_nip44(ctx, peer_sk, msg);
+      cts[i] = g_strdup("identical plaintext");
     }
     /* A fresh kind (encrypt) so the remembered decrypt deny does not apply. */
     for (int i = 0; i < 3; i++)
@@ -1420,24 +1496,21 @@ static void test_gating(Ctx *ctx) {
     expect_approval_error(w.a.errors->pdata[0], "org.nostr.Signer.Error.RateLimited",
                           "too many of this application's requests are awaiting approval");
     g_free(w.a.req_id); w.a.req_id = NULL;
-    /* Deny the parked eight by id: ids are req-N, consecutive. */
-    GVariant *info = NULL;
+    /* IDs are opaque: enumerate the preserved pending snapshot instead. */
+    GVariant *info = call(ctx->bus, "ListPendingRequests", NULL, "(a(sssss))", NULL);
+    CHECK(info != NULL);
+    GVariant *rows = g_variant_get_child_value(info, 0);
     guint denied = 0;
-    for (guint n = 1; n < 200 && denied < 8; n++) {
-      gchar *id = g_strdup_printf("req-%u", n);
-      info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", id), "(a{sv})", NULL);
-      if (info) {
-        GVariant *d = g_variant_get_child_value(info, 0);
-        const char *claimed = NULL;
-        if (g_variant_lookup(d, "claimed_app_id", "&s", &claimed) && g_strcmp0(claimed, "contract-cap") == 0) {
-          approve(ctx, id, FALSE, FALSE);
-          denied++;
-        }
-        g_variant_unref(d);
-        g_variant_unref(info);
-      }
-      g_free(id);
+    for (gsize n = 0; n < g_variant_n_children(rows); n++) {
+      GVariant *row = g_variant_get_child_value(rows, n);
+      const gchar *id = NULL;
+      g_variant_get_child(row, 4, "&s", &id);
+      CHECK(strlen(id) == 64);
+      approve(ctx, id, FALSE, FALSE);
+      denied++;
+      g_variant_unref(row);
     }
+    g_variant_unref(rows); g_variant_unref(info);
     CHECK(denied == 8);
     watch_wait_replies(&w);
     watch_stop(ctx, &w);
@@ -3490,6 +3563,15 @@ int main(int argc, char **argv) {
     g_print("PASS gating (decrypt/pubkey/relays gated,%s remember round-trip, kind-keyed "
             "remember, coalescing, no-agent rejected)\n",
             attested ? " spoofed app_id denied," : " [unattested bus: claimed-app_id principals],");
+  }
+
+  /* G02 additive context and metadata contract, without remembered grants. */
+  {
+    Ctx ctx;
+    ctx_setup_full(&ctx, FALSE, FALSE, NULL, &TRUST_UI, NULL, NULL);
+    test_call_with_context(&ctx);
+    ctx_teardown(&ctx);
+    g_print("PASS CallWithContext whitelist, signatures, bounded metadata and output tuple\n");
   }
 
   /* The approval UI is started by the bus for a request (nostrc-sh5h). */

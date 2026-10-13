@@ -56,6 +56,7 @@ typedef enum {
   SIGNER_CALLER_SYSTEMD_SCOPE,
   SIGNER_CALLER_EXE,
   SIGNER_CALLER_WEB_ORIGIN,
+  SIGNER_CALLER_NIP46, /* signature-authenticated transport key, not a local UI */
 } SignerCallerKind;
 
 typedef struct {
@@ -72,6 +73,12 @@ typedef struct {
   gchar            *via;        /* WEB_ORIGIN: the bridge's principal */
   gboolean          unattested; /* same uid, but the bus cannot attest the process */
 } SignerCaller;
+
+/* Called only by a transport that has verified the NIP-46 event signature
+ * and decryption/client binding. Invalid hex returns NULL. Uppercase input is
+ * canonicalised; principal and sender/conn_key are nip46:<lowercase hex>.
+ * Identified and rememberable, never same_uid, unattested or an approver. */
+SignerCaller *signer_caller_for_nip46(const gchar *verified_client_hex);
 
 void          signer_caller_free(SignerCaller *c);
 SignerCaller *signer_caller_copy(const SignerCaller *c);

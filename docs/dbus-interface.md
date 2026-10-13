@@ -44,7 +44,8 @@ approval-gated: `GetPublicKey`, `GetRelays`, `SignEvent`, `NIP04Encrypt`,
 `NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`, `NIP44EncryptB64`,
 `NIP44DecryptB64`, `NIP44DeriveConversationKey`, `DecryptZapEvent` and their
 `*ForApp` variants (nostrc-y02q, nostrc-1e31). `StoreKey`/`ClearKey` keep
-their own gate (`NOSTR_SIGNER_ALLOW_KEY_MUTATIONS`).
+their own trusted-approver gate (the daemon's explicit
+`NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` override is only for tests/scripts).
 
 **Who is calling (principal).** Derived by the daemon from the bus
 connection, never from an argument (nostrc-phk4):
@@ -104,14 +105,19 @@ explicit entry in the grants file wins.
 
 **Approval.** Without a grant the call is parked and `ApprovalRequested`
 is emitted with `app_id` = principal and `identity` = resolved npub.
-Identical calls from the same connection join the pending request, so a
-burst of DM decrypts raises one prompt. Only the installed approval UI —
-`<bindir>/gnostr-signer` (path + inode) or the `org.gnostr.Signer` Flatpak —
-may call `ApproveRequest`/`GetApprovalInfo`; others get
-`Error.PermissionDenied`. When no process owns `org.gnostr.Signer` (no
-approval UI running) a call that needs a prompt fails at once with
-`Error.ApprovalDenied`. Unanswered requests expire after 300 s, and are
-dropped when the caller disconnects.
+Only identical principal + pinned identity + operation + canonical argument
+digest calls join a pending request; different payloads/peers do not share
+consent. A disconnect removes its continuations, not another connection's
+joined work. Request IDs are opaque CSPRNG values. Only the installed
+approval UI — `<bindir>/grotto` (path + inode) or attested `org.nostr.Grotto`
+Flatpak — may answer/read approvals; others get `Error.PermissionDenied`.
+If `org.nostr.Grotto` has no owner, the daemon asynchronously asks the bus
+to start it; failed activation returns `Error.NoApprovalAgent` to opted-in
+clients (`ApprovalDenied` otherwise). Unanswered requests expire after
+300 s or an earlier authenticated transport deadline. The shared service
+serializes backend work off its owner context, rechecks pinned identity and
+denies before execution, and suppresses in-flight results on pause/revoke.
+The session pause/generation hook is internal until G04 adds Control1.
 
 **Limits of the model.** An unsandboxed process of the same user can also
 edit the grants file or ptrace other processes, so for those callers the
@@ -452,7 +458,9 @@ Stores a private key in the secure backend (libsecret/Keychain).
 - `org.nostr.Signer.InvalidKey`: Invalid private key format
 - `org.nostr.Signer.SecretServiceUnavailable`: Backend unavailable
 
-**Security**: Requires `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` environment variable.
+**Security**: Trusted approval UI only (fresh path/inode or attested Flatpak
+identity check; unattested callers refused). Other callers require the
+explicit daemon tests/scripts override `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`.
 
 ---
 
@@ -473,7 +481,9 @@ Removes a private key from the secure backend.
 **Returns**:
 - `ok` (boolean): True if removed successfully
 
-**Security**: Requires `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` environment variable.
+**Security**: Trusted approval UI only (fresh path/inode or attested Flatpak
+identity check; unattested callers refused). Other callers require the
+explicit daemon tests/scripts override `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`.
 
 ---
 
@@ -525,7 +535,41 @@ Keys: `request_id`, `kind`, `principal`, `principal_kind` (`flatpak`,
 principal), `claimed_app_id` (the caller's unverified `app_id` argument),
 `identity`, `preview` (all `s`); `attested`, `verified`, `rememberable`
 (`b`); `calls` (`u`, calls that joined the request).
+Added in 0.7.0 (all existing fields and signatures preserved): `transport`,
+`operation`, `reason`, `reason_source` (`caller` or `signer`), `flow_id`,
+`state` (`s`); `event_kind` (`u`, only when present; absence is not kind 0);
+`event_summary` (`a{sv}`, safe validated type/preview/tag count/peer metadata);
+`expires_at` (`t`, Unix seconds); `remaining_seconds` (`u`, authoritative
+monotonic snapshot). No private bodies, ciphertext, keys or pairing tokens
+are exposed in the summary. Unknown fields may be ignored by legacy UIs.
 Unknown request: `Error.NotFound`.
+
+#### CallWithContext
+
+*Additive in 0.7.0.* `(method:s, arguments:v, context:a{sv}) → reply:v`.
+`arguments` wraps the exact existing input **tuple**; `reply` wraps the
+existing output tuple, currently `(s)`. Whitelist: `SignEvent`,
+`NIP44DeriveConversationKey`, `NIP04Encrypt`,
+`NIP04Decrypt`, `NIP44Encrypt`, `NIP44Decrypt`. All use the same validated
+shared-service submission as their direct handlers; no self-D-Bus calls.
+`GetPublicKey`/`GetRelays` remain direct-only because D-Bus cannot encode
+their empty input tuple inside `v`; no special sentinel is accepted.
+`*ForApp`, `*B64`, `DecryptZapEvent` and `EnableTypedApprovalErrors` remain
+direct-only, as do management methods. Unknown names, recursion, wrong
+signatures and invalid context return `Error.InvalidInput`.
+
+Context keys: `reason:s` (≤160 Unicode characters and ≤512 UTF-8 bytes),
+`purpose:s`, `flow_id:s` (≤64 bytes each). Duplicate/unknown keys or wrong
+types are rejected. Context never grants authority or overrides a principal
+or identity. The calling connection's typed-error opt-in applies to wrapped
+calls. Consumers feature-detect and fall back to direct methods if absent.
+
+The GTK-free `SignerApprovalService` is shared by D-Bus and NIP-5F and
+provides NIP-46-ready `NIP04*`, `CONNECT`/`PING` (explicit no-identity mode),
+cancel handles and authenticated `nip46:<lowercase client hex>` principals.
+Remote callers are identified/rememberable, never approvers; G05 owns their
+transport admission and runtime wiring. Retained headless defaults and the
+full executable/operation list are documented in [55L](proposals/55L.md#built-in-first-party-headless-grants).
 
 #### ListGrants / RevokeGrant
 

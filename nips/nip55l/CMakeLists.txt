@@ -130,6 +130,7 @@ if (GIO_FOUND AND ENABLE_NIP55L)
 
   add_library(nostr_nip55l_glib
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_service_g.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_approval_service.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_caller.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/glib/signer_nip5f.c
     ${GENERATED_DBUS_C}
@@ -347,6 +348,16 @@ if (BUILD_TESTING)
       target_link_libraries(test_nip55l_dbus_contract PRIVATE gnostr-secret)
       target_compile_definitions(test_nip55l_dbus_contract PRIVATE NIP55L_TEST_HAVE_LIBSECRET)
     endif()
+    add_executable(test_nip55l_approval_service
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_approval_service.c)
+    target_link_libraries(test_nip55l_approval_service PRIVATE nostr_nip55l_glib)
+    target_include_directories(test_nip55l_approval_service PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)
+    target_compile_options(test_nip55l_approval_service PRIVATE -Wall -Wextra -Werror)
+    if (NIP55L_TEST_TRUST_ENV)
+      target_compile_definitions(test_nip55l_approval_service PRIVATE NIP55L_TEST_TRUST_ENV)
+    endif()
+    add_test(NAME nip55l_approval_service COMMAND test_nip55l_approval_service)
+    set_tests_properties(nip55l_approval_service PROPERTIES LABELS "nip55l;signer;unit" TIMEOUT 60)
     add_test(NAME nip55l_dbus_contract COMMAND test_nip55l_dbus_contract)
     set_tests_properties(nip55l_dbus_contract PROPERTIES
       LABELS "nip55l;signer;integration;dbus"

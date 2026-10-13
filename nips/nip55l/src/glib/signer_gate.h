@@ -1,41 +1,64 @@
-/* signer_gate.h - the org.nostr.Signer access-control path (grants, then
- * ApprovalRequested / ApproveRequest; see signer_service_g.c) for transports
- * other than D-Bus. The NIP-5F socket uses it (nostrc-q23h), so a request
- * over the socket is decided exactly like the same D-Bus call from the same
- * process: same principal, same signer-grants.ini entries, same prompt.
- *
- * Main context only (the one the D-Bus service runs on). */
+/* Shared authorisation gate. All submission/cancellation and reply callbacks
+ * run on the exported signer's owning GMainContext. Transport adapters marshal
+ * authenticated immutable inputs there; never identify a remote peer by a label. */
 #ifndef NIP55L_SIGNER_GATE_H
 #define NIP55L_SIGNER_GATE_H
-
 #include "signer_caller.h"
-
 G_BEGIN_DECLS
 
 typedef enum {
-  SIGNER_GATE_GET_PUBLIC_KEY,  /* result: npub of the active identity */
-  SIGNER_GATE_SIGN_EVENT,      /* a = event JSON; result: signed event JSON */
-  SIGNER_GATE_NIP44_ENCRYPT,   /* a = plaintext, b = peer pubkey hex; result: payload */
-  SIGNER_GATE_NIP44_DECRYPT,   /* a = payload, b = peer pubkey hex; result: plaintext */
+  SIGNER_GATE_GET_PUBLIC_KEY,
+  SIGNER_GATE_SIGN_EVENT,
+  SIGNER_GATE_NIP44_ENCRYPT,
+  SIGNER_GATE_NIP44_DECRYPT,
+  SIGNER_GATE_NIP04_ENCRYPT,
+  SIGNER_GATE_NIP04_DECRYPT,
+  SIGNER_GATE_CONNECT,
+  SIGNER_GATE_PING,
+  SIGNER_GATE_GET_RELAYS,
+  SIGNER_GATE_CONVERSATION_KEY,
+  SIGNER_GATE_NIP44_ENCRYPT_B64,
+  SIGNER_GATE_NIP44_DECRYPT_B64,
+  SIGNER_GATE_DECRYPT_ZAP,
+  SIGNER_GATE_OP_COUNT
 } SignerGateOp;
 
-/* Exactly one call per request, possibly before signer_gate_submit returns:
- * either @error_name (an org.nostr.Signer.Error.* name) and @message, or
- * @result. All borrowed; @result may be plaintext, so copy and wipe it. */
+typedef enum {
+  SIGNER_TRANSPORT_DBUS, SIGNER_TRANSPORT_NIP5F,
+  SIGNER_TRANSPORT_NIP46, SIGNER_TRANSPORT_MANAGEMENT
+} SignerTransport;
+
+typedef struct {
+  SignerTransport transport;
+  gboolean no_identity; /* only CONNECT/PING; selector must be empty */
+  const gchar *claimed_name; /* untrusted display label, never a credential */
+  const gchar *reason;
+  const gchar *purpose;
+  const gchar *flow_id;
+  gint64 deadline; /* monotonic microseconds; 0 = service's 300 s bound */
+} SignerGateContext;
+
+typedef struct _SignerGateHandle SignerGateHandle;
+/* Exactly once, including cancellation; all strings borrowed. Result can be
+ * plaintext: copy only when needed and wipe the copy. May run before submit
+ * returns. Callers may release a handle without cancelling the operation. */
 typedef void (*SignerGateReplyFn)(gpointer user_data, const gchar *error_name,
                                   const gchar *message, const gchar *result);
+SignerGateHandle *signer_gate_handle_ref(SignerGateHandle *handle);
+void signer_gate_handle_unref(SignerGateHandle *handle);
+void signer_gate_cancel(SignerGateHandle *handle);
+G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignerGateHandle, signer_gate_handle_unref)
 
-/* Decide and run @op for @who. @conn_key names the connection: calls queued
- * on one connection share a prompt, and signer_gate_connection_closed drops
- * them. @selector: identity as the caller named it (NULL/"" = active). The
- * D-Bus service must be exported (signer_export) for prompts to be raised. */
-void signer_gate_submit(const SignerCaller *who, const gchar *conn_key, SignerGateOp op,
-                        const gchar *a, const gchar *b, const gchar *selector,
+/* Existing arguments preserved; the new return value is an owned cancel
+ * handle. Identical principal+identity+op+canonical arguments share a prompt,
+ * not a backend execution. Disconnect removes only that connection's replies. */
+SignerGateHandle *signer_gate_submit(const SignerCaller *who, const gchar *conn_key,
+                        SignerGateOp op, const gchar *a, const gchar *b,
+                        const gchar *selector, SignerGateReplyFn reply, gpointer user_data);
+SignerGateHandle *signer_gate_submit_full(const SignerCaller *who, const gchar *conn_key,
+                        SignerGateOp op, const gchar *a, const gchar *b,
+                        const gchar *selector, const SignerGateContext *context,
                         SignerGateReplyFn reply, gpointer user_data);
-
-/* @conn_key closed: fail its parked requests and forget its rate limits. */
 void signer_gate_connection_closed(const gchar *conn_key);
-
 G_END_DECLS
-
-#endif /* NIP55L_SIGNER_GATE_H */
+#endif

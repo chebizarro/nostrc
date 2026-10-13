@@ -10,7 +10,10 @@
          (that principal, the npub the identity selector resolves to,
          request kind); without one the call is parked and
          ApprovalRequested(app_id = principal, identity = npub, kind,
-         preview, request_id) is emitted. Kinds: event,
+         preview, request_id) is emitted. Only identical principal, pinned
+         identity, operation and canonical arguments share a request; each
+         continuation is cancelled independently on disconnect. IDs are
+         opaque CSPRNG values, not enumerable counters. Kinds: event,
          nip44_conversation_key, get_public_key, get_relays, nip04_encrypt,
          nip04_decrypt, nip44_encrypt, nip44_decrypt, zap_decrypt.
          An app_id argument is a web-origin sub-principal only when the
@@ -46,6 +49,24 @@
          replies; a pre-0.5.0 service answers with UnknownMethod. Method
          calls on one connection are handled in order, so a client may send
          this, unawaited, right before a gated call. -->
+    <!-- CallWithContext (0.7.0, additive): arguments is the exact input tuple
+         of SignEvent, NIP44DeriveConversationKey,
+         NIP04Encrypt/Decrypt or NIP44Encrypt/Decrypt; reply wraps that method's
+         output tuple. Same caller authentication, gate and backend as direct
+         calls. GetPublicKey/GetRelays remain direct-only: D-Bus cannot encode
+         their empty input tuple inside v. ForApp, B64, DecryptZapEvent, EnableTypedApprovalErrors,
+         management, recursion and unknown names are not supported here.
+         Context: reason:s (160 characters AND 512 UTF-8 bytes), purpose:s
+         and flow_id:s (64 bytes each). Unknown/duplicate keys, wrong types,
+         wrong tuples and oversized values return Error.InvalidInput.
+         Context is untrusted display/grouping data, never authority.
+         Per-connection typed-error opt-in applies to wrapped calls too. -->
+    <method name="CallWithContext">
+      <arg type="s" direction="in" name="method" />
+      <arg type="v" direction="in" name="arguments" />
+      <arg type="a{sv}" direction="in" name="context" />
+      <arg type="v" direction="out" name="reply" />
+    </method>
     <method name="EnableTypedApprovalErrors" />
     <method name="GetPublicKey">
       <arg type="s" direction="out" name="npub" />
@@ -231,7 +252,13 @@
          systemd-scope | executable | website | unidentified), app_id, exe,
          via (web origins: the bridge's principal), claimed_app_id (the
          caller's unverified app_id argument), identity, preview (s);
-         attested, rememberable (b); calls (u). -->
+         attested, verified, rememberable (b); calls (u).
+         Additive 0.7.0 fields: transport, operation, reason, reason_source
+         (caller or signer), flow_id, state (s); event_kind (u, only when
+         present); event_summary (a{sv}, safe validated metadata only);
+         expires_at (t, unix seconds), remaining_seconds (u, authoritative
+         monotonic snapshot). No keys, pairing tokens, ciphertext bodies or
+         decrypted private payloads are returned in the new summary. -->
     <method name="GetApprovalInfo">
       <arg type="s" direction="in" name="request_id" />
       <arg type="a{sv}" direction="out" name="info" />
@@ -279,8 +306,9 @@
     </signal>
     <!-- CreateProfile (nip55l 0.6.0, additive, approval UI only): generates a
          new random Nostr keypair, stores the secret key in the backend
-         (libsecret or Keychain), and returns the npub. Requires
-         NOSTR_SIGNER_ALLOW_KEY_MUTATIONS; without it, Error.PermissionDenied.
+         (libsecret or Keychain), and returns the npub. Trusted approval UI
+         only, as StoreKey/ClearKey above; NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1
+         is the explicit tests/scripts override, not a prerequisite for UI.
          display_name is stored as the key's label; passphrase, recovery_hint
          and label are reserved for future use (pass "" for each).
          use_hardware_key is reserved (pass FALSE). -->

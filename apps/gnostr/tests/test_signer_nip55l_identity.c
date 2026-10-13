@@ -520,11 +520,13 @@ test_error_map(void)
 static void
 test_error_map_contract(void)
 {
-  g_autofree char *src = NULL;
-  if (!g_file_get_contents(NIP55L_SIGNER_SERVICE_SRC, &src, NULL, NULL)) {
-    g_test_skip("nip55l daemon source not found");
-    return;
-  }
+  g_autofree char *adapter = NULL;
+  g_autofree char *approval = NULL;
+  g_assert_true(g_file_get_contents(NIP55L_SIGNER_SERVICE_SRC, &adapter, NULL, NULL));
+  g_assert_true(g_file_get_contents(NIP55L_SIGNER_APPROVAL_SRC, &approval, NULL, NULL));
+  /* G02 moves consent failures into the shared service; activation errors
+   * remain in the D-Bus adapter. Retain every legacy phrase assertion. */
+  g_autofree char *src = g_strconcat(adapter, approval, NULL);
   static const struct { const char *phrase; int code; } reasons[] = {
     { "approval required but no approval agent is running (start Grotto)",
       GNOSTR_SIGNER_ERROR_NO_APPROVER },

@@ -66,8 +66,22 @@ signer_caller_kind_to_string(SignerCallerKind kind)
     case SIGNER_CALLER_SYSTEMD_SCOPE: return "systemd-scope";
     case SIGNER_CALLER_EXE:           return "executable";
     case SIGNER_CALLER_WEB_ORIGIN:    return "website";
+    case SIGNER_CALLER_NIP46:         return "nip46";
   }
   return "unidentified";
+}
+
+SignerCaller *
+signer_caller_for_nip46(const gchar *hex)
+{
+  if (!hex || strlen(hex) != 64) return NULL;
+  for (const gchar *p = hex; *p; p++) if (!g_ascii_isxdigit(*p)) return NULL;
+  g_autofree gchar *lower = g_ascii_strdown(hex, -1);
+  SignerCaller *c = g_new0(SignerCaller, 1);
+  c->kind = SIGNER_CALLER_NIP46;
+  c->principal = g_strconcat("nip46:", lower, NULL);
+  c->sender = g_strdup(c->principal);
+  return c;
 }
 
 /* ---- pure parsers ---- */
@@ -201,6 +215,7 @@ signer_caller_build_principal(SignerCallerKind kind, const gchar *app_id, const 
     case SIGNER_CALLER_WEB_ORIGIN:
       if (signer_caller_is_web_origin(app_id)) p = g_strdup(app_id);
       break;
+    case SIGNER_CALLER_NIP46: /* only signer_caller_for_nip46 may construct it */
     case SIGNER_CALLER_UNKNOWN:
       break;
   }
@@ -348,7 +363,7 @@ signer_caller_may_assert_origin(const SignerCaller *c)
 gboolean
 signer_caller_is_approver(const SignerCaller *c)
 {
-  if (!c || !c->same_uid) return FALSE;
+  if (!c || c->kind == SIGNER_CALLER_NIP46 || !c->same_uid) return FALSE;
   /* No PID from the bus (macOS): the approval UI cannot be told apart. */
   if (c->unattested) return TRUE;
   if (c->kind == SIGNER_CALLER_FLATPAK) {

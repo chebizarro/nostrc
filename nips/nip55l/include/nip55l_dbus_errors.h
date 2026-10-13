@@ -14,6 +14,8 @@
  * user approved (e.g. the active account switched during the prompt). */
 #define ORG_NOSTR_SIGNER_ERR_IDENTITY_CHANGED "org.nostr.Signer.Error.IdentityChanged"
 #define ORG_NOSTR_SIGNER_ERR_INVALID_INPUT  "org.nostr.Signer.Error.InvalidInput"
+#define ORG_NOSTR_SIGNER_ERR_PAUSED        "org.nostr.Signer.Error.Paused"
+#define ORG_NOSTR_SIGNER_ERR_CANCELLED     "org.nostr.Signer.Error.Cancelled"
 #define ORG_NOSTR_SIGNER_ERR_INTERNAL       "org.nostr.Signer.Error.Internal"
 #define ORG_NOSTR_SIGNER_ERR_NO_KEY         "org.nostr.Signer.Error.NoKeyConfigured"
 /* GetRelays: nothing configured. Callers fall back to their own relays. */

@@ -937,7 +937,8 @@ if (BUILD_TESTING)
     ${_NOSTR_CONFIG_DIR})
   target_compile_definitions(gnostr-test-signer-nip55l-identity PRIVATE
     SIGNER_DBUS_XML="${PROJECT_ROOT}/nips/nip55l/dbus/org.nostr.Signer.xml"
-    NIP55L_SIGNER_SERVICE_SRC="${PROJECT_ROOT}/nips/nip55l/src/glib/signer_service_g.c")
+    NIP55L_SIGNER_SERVICE_SRC="${PROJECT_ROOT}/nips/nip55l/src/glib/signer_service_g.c"
+    NIP55L_SIGNER_APPROVAL_SRC="${PROJECT_ROOT}/nips/nip55l/src/glib/signer_approval_service.c")
   target_link_libraries(gnostr-test-signer-nip55l-identity PRIVATE
     PkgConfig::GLIB PkgConfig::GIO PkgConfig::JSON_GLIB nostr_gobject nostr libgo
     nostrc-test-bus)
