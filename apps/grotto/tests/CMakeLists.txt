@@ -433,6 +433,33 @@ if(TARGET grotto_bunker_core)
         LABELS "signer;security;unit")
 endif()
 
+# G00 baseline: the real daemon over a signature-validating loopback relay.
+if(UNIX AND TARGET grotto-daemon AND TARGET nostr_nip46_core)
+    find_program(G00_GLIB_COMPILE_SCHEMAS glib-compile-schemas REQUIRED)
+    pkg_check_modules(G00_SOUP REQUIRED IMPORTED_TARGET libsoup-3.0)
+    add_executable(test-bunker-e2e test-bunker-e2e.c bunker_test_relay.c)
+    target_include_directories(test-bunker-e2e PRIVATE ${SIGNER_INCLUDE_DIRS})
+    target_link_libraries(test-bunker-e2e PRIVATE
+        ${SIGNER_TEST_LIBS} nostr_nip46_core PkgConfig::G00_SOUP nostrc-test-bus)
+    target_link_directories(test-bunker-e2e PRIVATE ${SIGNER_TEST_LINK_DIRS})
+    target_compile_features(test-bunker-e2e PRIVATE c_std_11)
+    target_compile_options(test-bunker-e2e PRIVATE -Wall -Wextra -Werror)
+    apply_test_sanitizers(test-bunker-e2e)
+    add_dependencies(test-bunker-e2e grotto-daemon grotto-schemas)
+    add_dependencies(signer-tests test-bunker-e2e)
+    add_test(NAME signer/bunker-e2e COMMAND test-bunker-e2e
+        $<TARGET_FILE:grotto-daemon>
+        ${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml
+        ${G00_GLIB_COMPILE_SCHEMAS})
+    # G00 nonfunctional baseline: the unchanged assertions must fail today.
+    # G05 (nostrc-u6v55.6) must remove WILL_FAIL and make the test pass.
+    # G01 (nostrc-u6v55.2) only reports ERROR instead of RUNNING; this test
+    # must still exercise that nonfunctional daemon, with the inversion kept.
+    set_tests_properties(signer/bunker-e2e PROPERTIES
+        WILL_FAIL TRUE
+        TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;bunker;nip46;integration")
+endif()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)
