@@ -34,8 +34,10 @@ target_include_directories(nostr_nip55l_core PUBLIC
   ${CMAKE_SOURCE_DIR}/nips/nip19/include
 )
 find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
 target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
+target_link_libraries(nostr_nip55l_core PRIVATE Threads::Threads)
 
 # Key storage backend. auto: the Keychain on macOS, libsecret elsewhere.
 # "libsecret" on macOS is for smoke and test builds, which must never write
@@ -348,6 +350,21 @@ if (BUILD_TESTING)
       target_link_libraries(test_nip55l_dbus_contract PRIVATE gnostr-secret)
       target_compile_definitions(test_nip55l_dbus_contract PRIVATE NIP55L_TEST_HAVE_LIBSECRET)
     endif()
+    # The test includes the real core with cache barriers, but no custody
+    # backend. It exercises publication/clear versus resolve/sign without
+    # ever reaching the developer's key store.
+    add_executable(test_nip55l_cache_concurrency
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_cache_concurrency.c)
+    target_include_directories(test_nip55l_cache_concurrency PRIVATE
+      $<TARGET_PROPERTY:nostr_nip55l_core,INCLUDE_DIRECTORIES>)
+    target_link_libraries(test_nip55l_cache_concurrency PRIVATE
+      nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
+      PkgConfig::GIO Threads::Threads)
+    target_compile_options(test_nip55l_cache_concurrency PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nip55l_cache_concurrency COMMAND test_nip55l_cache_concurrency)
+    set_tests_properties(nip55l_cache_concurrency PROPERTIES
+      LABELS "nip55l;signer;unit;concurrency" TIMEOUT 60)
+
     add_executable(test_nip55l_approval_service
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_approval_service.c)
     target_link_libraries(test_nip55l_approval_service PRIVATE nostr_nip55l_glib)

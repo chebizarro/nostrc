@@ -754,6 +754,7 @@ static void job_free(gpointer data) {
   g_free(j->npub); wipe_free(j->selector); g_ptr_array_unref(j->results); g_free(j);
 }
 static void queue_job(Request *r, gboolean resolve);
+static GPtrArray *requests_copy(SignerApprovalService *s);
 static gboolean policy_denies(Request *r) {
   gboolean allow = FALSE;
   return grants_lookup(r->service, op_info[r->op].kind, r->who, r->npub, &allow) && !allow;
@@ -998,6 +999,21 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   }
   request_unref(r); return handle;
 }
+/* A persisted deny takes effect before returning the decision, including
+ * for jobs already admitted to the worker queue. Mark the whole affected
+ * set before invoking transport callbacks (which can re-enter the service).
+ * The worker's atomic cancellation checks precede identity/key use. */
+static void invalidate_denied_work(SignerApprovalService *s, Request *decision) {
+  g_autoptr(GPtrArray) affected = requests_copy(s);
+  for (guint i = affected->len; i > 0; i--) {
+    Request *r = affected->pdata[i - 1];
+    if (r == decision || !r->resolved || r->finished || !policy_denies(r))
+      g_ptr_array_remove_index(affected, i - 1);
+    else g_atomic_int_set(&r->cancelled, TRUE);
+  }
+  for (guint i = 0; i < affected->len; i++)
+    finish(affected->pdata[i], SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
+}
 void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
     gboolean allow, gboolean remember, guint64 ttl, SignerApprovalDecisionFn fn, gpointer data) {
   g_return_if_fail(owner_ok(s) && fn);
@@ -1009,9 +1025,15 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
   r->decision = allow; r->remember = remember; r->ttl = ttl; r->decision_fn = fn; r->decision_data = data;
   if (g_get_monotonic_time() >= r->deadline) finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out");
   else if (allow) execute(r);
-  else if (remember && r->who->principal && !grants_save(s, op_info[r->op].kind, r->who->principal, r->npub, FALSE, ttl))
-    finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission");
-  else finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
+  else {
+    gboolean saved = remember && r->who->principal;
+    if (saved && !grants_save(s, op_info[r->op].kind, r->who->principal, r->npub, FALSE, ttl))
+      finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission");
+    else {
+      if (saved) invalidate_denied_work(s, r);
+      finish(r, SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "user denied");
+    }
+  }
   request_unref(r);
 }
 GVariant *signer_approval_service_info(SignerApprovalService *s, const gchar *id) {

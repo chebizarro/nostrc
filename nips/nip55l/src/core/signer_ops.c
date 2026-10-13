@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 
 #include <nostr-json.h>
 #include <nostr-event.h>
@@ -108,8 +109,17 @@ static int is_hex_64(const char *s) {
  * end-to-end unusable. */
 static char *g_cached_active_sk_hex = NULL;
 static char *g_cached_active_npub  = NULL;
+/* Protect the cache, not key-store I/O or cryptography. Readers take an
+ * owned copy while locked; management can then evict without invalidating
+ * that copy or waiting for a keyring unlock/signing job. */
+static pthread_mutex_t signer_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+#ifdef NIP55L_CACHE_TEST_HOOKS
+static void (*cache_copy_hook)(void *);
+static void (*cache_mutation_hook)(void *);
+static void *cache_hook_data;
+#endif
 
-static void signer_cache_clear(void){
+static void signer_cache_clear_locked(void){
   if (g_cached_active_sk_hex) {
     secure_wipe(g_cached_active_sk_hex, strlen(g_cached_active_sk_hex));
     free(g_cached_active_sk_hex);
@@ -121,10 +131,45 @@ static void signer_cache_clear(void){
   }
 }
 
+static void signer_cache_mutation_lock(void){
+#ifdef NIP55L_CACHE_TEST_HOOKS
+  if (cache_mutation_hook) cache_mutation_hook(cache_hook_data);
+#endif
+  pthread_mutex_lock(&signer_cache_lock);
+}
+
 static void signer_cache_set(const char *sk_hex, const char *npub){
-  signer_cache_clear();
+  signer_cache_mutation_lock();
+  signer_cache_clear_locked();
   if (sk_hex && is_hex_64(sk_hex)) g_cached_active_sk_hex = strdup(sk_hex);
   if (npub && *npub)               g_cached_active_npub  = strdup(npub);
+  pthread_mutex_unlock(&signer_cache_lock);
+}
+
+static void signer_cache_evict(const char *identity){
+  signer_cache_mutation_lock();
+  if (!identity || !*identity ||
+      (g_cached_active_npub && strcmp(identity, g_cached_active_npub) == 0))
+    signer_cache_clear_locked();
+  pthread_mutex_unlock(&signer_cache_lock);
+}
+
+/* Return whether the cache matched, including a failed allocation. Never
+ * expose a borrowed cache pointer beyond the mutex. */
+static int signer_cache_copy(const char *selector, int public_only, char **out){
+  int found = 0;
+  pthread_mutex_lock(&signer_cache_lock);
+  if (public_only ? (g_cached_active_npub && *g_cached_active_npub) :
+      (g_cached_active_sk_hex && (!selector || !*selector ||
+       (g_cached_active_npub && strcmp(selector, g_cached_active_npub) == 0)))) {
+#ifdef NIP55L_CACHE_TEST_HOOKS
+    if (cache_copy_hook) cache_copy_hook(cache_hook_data);
+#endif
+    *out = strdup(public_only ? g_cached_active_npub : g_cached_active_sk_hex);
+    found = 1;
+  }
+  pthread_mutex_unlock(&signer_cache_lock);
+  return found;
 }
 
 static char *bin_to_hex(const uint8_t *buf, size_t len){
@@ -477,14 +522,8 @@ static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
    * caller supplies a specific selector (identity) we only match if the
    * cached npub equals it — otherwise fall through to the selector-based
    * lookup below. */
-  if (g_cached_active_sk_hex) {
-    if (!current_user || !*current_user ||
-        (g_cached_active_npub &&
-         strcmp(current_user, g_cached_active_npub) == 0)) {
-      *out_sk_hex = strdup(g_cached_active_sk_hex);
-      return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
-    }
-  }
+  if (signer_cache_copy(current_user, 0, out_sk_hex))
+    return *out_sk_hex ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
   const char *cand = current_user;
   if (!cand || !*cand) {
     int rc_env = env_seckey_hex(out_sk_hex);
@@ -759,10 +798,8 @@ int nostr_nip55l_get_public_key(char **out_npub){
    * Bypasses libsecret entirely and closes the smoke-test race that
    * saw GetPublicKey report NoKeyConfigured after a successful
    * StoreKey (nostrc-7g9d). */
-  if (g_cached_active_npub && *g_cached_active_npub) {
-    *out_npub = strdup(g_cached_active_npub);
+  if (signer_cache_copy(NULL, 1, out_npub))
     return *out_npub ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
-  }
   return nostr_nip55l_resolve_npub(NULL, out_npub);
 }
 
@@ -1358,9 +1395,7 @@ int nostr_nip55l_clear_key(const char *identity){
    * in-process cache so the daemon stops answering with the just-cleared
    * key. Cache eviction is coupled to the caller's intent (“no more of
    * this account”) rather than to the storage backend's success. */
-  if (!identity || !*identity ||
-      (g_cached_active_npub && strcmp(identity, g_cached_active_npub) == 0))
-    signer_cache_clear();
+  signer_cache_evict(identity);
   if (key_store_refused("ClearKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
 #ifdef NIP55L_HAVE_LIBSECRET
   const char *sel = (identity && *identity) ? identity : "";

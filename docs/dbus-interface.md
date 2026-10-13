@@ -47,8 +47,8 @@ approval-gated: `GetPublicKey`, `GetRelays`, `SignEvent`, `NIP04Encrypt`,
 their own trusted-approver gate (the daemon's explicit
 `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1` override is only for tests/scripts).
 
-**Who is calling (principal).** Derived by the daemon from the bus
-connection, never from an argument (nostrc-phk4):
+**Who is calling (principal).** On PID-attested buses, derived by the daemon
+from the bus connection, never from an argument (nostrc-phk4):
 `GetConnectionCredentials` (uid, pid, pidfd when the bus offers it) and
 `/proc/<pid>`:
 
@@ -60,6 +60,14 @@ connection, never from an argument (nostrc-phk4):
 | `exe:<path>` | `/proc/<pid>/exe` | kernel |
 | `https://<site>` | the `app_id` argument, **only** from the installed browser bridge | bridge executable (path + inode) |
 | (none) | other uid, `/proc` unreadable, caller gone | — |
+
+**Known limitation — UID-only buses.** On buses that report the caller's UID
+but no PID (including the supported macOS compatibility path), claimed names
+remain the `claimed:<app_id>` principal, and unattested same-UID callers pass
+the approver check. Another same-UID process can therefore claim a remembered
+principal or answer approvals; the verified caller-isolation guarantee holds
+only on PID-attested Linux, not this inherited compatibility path.
+`CallWithContext` preserves the same limitation; its context is not a credential.
 
 A scoped caller is keyed on scope *and* executable: every program started
 from a terminal emulator shares the terminal's app scope, and every GJS or

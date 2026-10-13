@@ -137,12 +137,54 @@ static void test_pause_generation_and_no_identity(void) {
   reply_clear(&ping); reply_clear(&connect); stop(s, &w); g_setenv("NOSTR_SIGNER_SECKEY_HEX", KEY, TRUE);
 }
 #ifdef NIP55L_TEST_TRUST_ENV
-typedef struct { GMutex lock; GCond cond; gboolean ready, release; } Barrier;
+typedef struct { GMutex lock; GCond cond; gboolean ready, release; guint executions; } Barrier;
 static void after_backend(gpointer data) {
   Barrier *b = data;
-  g_mutex_lock(&b->lock); b->ready = TRUE; g_cond_signal(&b->cond);
+  g_mutex_lock(&b->lock); b->executions++; b->ready = TRUE; g_cond_signal(&b->cond);
   while (!b->release) g_cond_wait(&b->cond, &b->lock);
   g_mutex_unlock(&b->lock);
+}
+static void test_deny_queued_execution(void) {
+  Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
+  SignerCaller blocker = who; blocker.principal = "exe:/test/blocker";
+  Barrier barrier = {0}; g_mutex_init(&barrier.lock); g_cond_init(&barrier.cond);
+  signer_approval_service_test_after_backend(s, after_backend, &barrier);
+  Reply occupied = {0}, queued = {0}, deny = {0};
+  Decision occupied_decision = {0}, queued_decision = {0}, deny_decision = {0};
+  g_autoptr(SignerGateHandle) h0 = submit(s, &blocker, "blocker", SIGNER_GATE_GET_PUBLIC_KEY, NULL, NULL, &occupied);
+  g_autoptr(SignerGateHandle) h1 = submit(s, &who, "queued", SIGNER_GATE_SIGN_EVENT,
+      "{\"kind\":1,\"tags\":[],\"content\":\"queued A\"}", NULL, &queued);
+  g_autoptr(SignerGateHandle) h2 = submit(s, &who, "deny", SIGNER_GATE_SIGN_EVENT,
+      "{\"kind\":1,\"tags\":[],\"content\":\"deny B\"}", NULL, &deny);
+  wait_prompts(&w, 3);
+  signer_approval_service_decide(s, request_id(&w, 0), TRUE, FALSE, 0, decided, &occupied_decision);
+  g_mutex_lock(&barrier.lock);
+  gint64 bound = g_get_monotonic_time() + 20 * G_USEC_PER_SEC;
+  while (!barrier.ready) g_assert_true(g_cond_wait_until(&barrier.cond, &barrier.lock, bound));
+  g_mutex_unlock(&barrier.lock);
+  /* The worker cannot start A: it is still occupied by the first job. */
+  signer_approval_service_decide(s, request_id(&w, 1), TRUE, FALSE, 0, decided, &queued_decision);
+  g_assert_cmpuint(queued.count, ==, 0);
+  signer_approval_service_decide(s, request_id(&w, 2), FALSE, TRUE, 0, decided, &deny_decision);
+  g_assert_cmpuint(queued.count, ==, 1); g_assert_false(queued_decision.ok);
+  g_assert_cmpstr(queued.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL); g_assert_null(queued.result);
+  g_assert_cmpstr(deny.error, ==, ORG_NOSTR_SIGNER_ERR_APPROVAL);
+  g_mutex_lock(&barrier.lock); barrier.release = TRUE; g_cond_signal(&barrier.cond); g_mutex_unlock(&barrier.lock);
+  wait_count(&occupied.count, 1);
+  /* FIFO sentinel proves the cancelled job passed through the worker.
+   * Result suppression alone is insufficient: A must never call perform. */
+  Reply sentinel = {0}; Decision sentinel_decision = {0};
+  g_autoptr(SignerGateHandle) h3 = submit(s, &blocker, "sentinel", SIGNER_GATE_GET_PUBLIC_KEY, NULL, NULL, &sentinel);
+  wait_prompts(&w, 4);
+  signer_approval_service_decide(s, request_id(&w, 3), TRUE, FALSE, 0, decided, &sentinel_decision);
+  wait_count(&sentinel.count, 1); wait_count(&sentinel_decision.count, 1);
+  g_mutex_lock(&barrier.lock); g_assert_cmpuint(barrier.executions, ==, 2); g_mutex_unlock(&barrier.lock);
+  g_assert_cmpuint(queued.count, ==, 1); g_assert_nonnull(sentinel.result);
+  gchar *file = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-grants.ini", NULL);
+  g_assert_cmpint(g_unlink(file), ==, 0); g_free(file);
+  reply_clear(&occupied); reply_clear(&queued); reply_clear(&deny); reply_clear(&sentinel);
+  signer_approval_service_test_after_backend(s, NULL, NULL); stop(s, &w);
+  g_mutex_clear(&barrier.lock); g_cond_clear(&barrier.cond);
 }
 static void test_pause_after_backend(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w); SignerCaller who = local_caller();
@@ -302,6 +344,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/pause-generation-no-identity", test_pause_generation_and_no_identity);
 #ifdef NIP55L_TEST_TRUST_ENV
   g_test_add_func("/approval/pause-after-backend", test_pause_after_backend);
+  g_test_add_func("/approval/deny-queued-execution", test_deny_queued_execution);
 #endif
   g_test_add_func("/approval/nip04-roundtrip", test_nip04_roundtrip);
   g_test_add_func("/approval/validation-deadline", test_validation_and_deadline);

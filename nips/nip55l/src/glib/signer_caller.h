@@ -74,10 +74,13 @@ typedef struct {
   gboolean          unattested; /* same uid, but the bus cannot attest the process */
 } SignerCaller;
 
-/* Called only by a transport that has verified the NIP-46 event signature
- * and decryption/client binding. Invalid hex returns NULL. Uppercase input is
- * canonicalised; principal and sender/conn_key are nip46:<lowercase hex>.
- * Identified and rememberable, never same_uid, unattested or an approver. */
+/* PRECONDITION: the transport MUST have verified the NIP-46 event signature,
+ * successful NIP-44 request decryption and the authenticated client binding
+ * before calling (G05 is the first production consumer). This constructor
+ * does NOT authenticate: it only validates/canonicalises the supplied hex.
+ * Invalid hex returns NULL; principal and sender/conn_key are
+ * nip46:<lowercase hex>. Identified and rememberable, never same_uid,
+ * unattested or an approver. */
 SignerCaller *signer_caller_for_nip46(const gchar *verified_client_hex);
 
 void          signer_caller_free(SignerCaller *c);
