@@ -10,6 +10,9 @@ void grotto_clients_free(GrottoClients *clients);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(GrottoClients, grotto_clients_free)
 GVariant *grotto_clients_list(GrottoClients *clients);
 gboolean grotto_clients_principal_valid(const gchar *principal);
+/* A record exists (consent, remembered decision or management permission),
+ * which is not Low-tier admission: see grotto_clients_trust()'s consented. */
+gboolean grotto_clients_known(GrottoClients *clients, const gchar *principal);
 SignerTrustTier grotto_clients_trust(const gchar *principal, gboolean *consented, gpointer clients);
 /* NULL metadata preserves observed values (permission-only edits). */
 gboolean grotto_clients_record(GrottoClients *clients, const gchar *principal,

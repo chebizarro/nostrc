@@ -103,6 +103,10 @@ passphrases/key buffers/results, re-attest the approver before secret delivery,
 and suppress delivery during shutdown. They create no signing grant or secret
 history entry. Private material necessarily transiently exists in the trusted
 UI and D-Bus message buffers; this is not a same-user malware boundary.
+On UID-only buses (the macOS compatibility path, see the known limitation
+below) any unattested same-UID process passes the approver check, so it can call
+`ExportRawIdentity`/`ExportIdentity` and receive the key; delivery re-attestation
+does not change that. Approver isolation of exports holds on PID-attested Linux.
 
 ### Revisions, lost updates and signals
 
@@ -118,6 +122,12 @@ For array snapshots (including empty ones), bracket reads with GetStatus and
 reject/re-read if their revision changed, in addition to subscribing **before**
 listing. Never poll on a timer. `SetPermissions` returns `Conflict` without
 replacing authority after any revision mismatch; re-read and reapply the edit.
+The guarantee assumes the running daemon is the sole writer of
+`signer-permissions-v2.ini` (it is the only owner of `org.nostr.Signer`; remembered
+`ApproveRequest` writes and Control1 replacements both run on its owner thread).
+The revision check is not a cross-process file transaction: another program
+editing that file directly can lose an update without a `Conflict`. Such writers
+are unsupported; older GUIs write only the untrusted legacy `signer-grants.ini`.
 
 `ActivityChanged(t)` carries the **activity record sequence**, not a snapshot
 revision. The persistent high-water mark is `activity_sequence`. Pagination is
@@ -148,7 +158,9 @@ sanitized `error_code:s`. Outcomes: `success`, `denied`, `expired`,
 `expired-caller` (last caller continuation disappeared), `cancelled`, `failed`.
 No previews, raw JSON, reasons, URIs, decrypted messages, ciphertext or crypto
 results are retained. Retention is 30 days / 10,000 records, newest-first.
-Unsupported/corrupt activity schemas are read-only/unhealthy and never overwritten.
+Unsupported/corrupt activity schemas (including a stored `error_code` that is not
+a bare error name) are read-only/unhealthy and never overwritten; records made
+meanwhile stay in memory under the same 30-day / 10,000 bound.
 
 Logging failure never changes a crypto result; health is exposed in status.
 Activity clear and client edits fail rather than reporting an unpersisted change.

@@ -106,10 +106,42 @@ static void test_retention(ControlFixture *f, gconstpointer data) {
   g_autofree gchar *contents = NULL; g_file_get_contents(path, &contents, NULL, NULL); g_assert_nonnull(strstr(contents, "\"version\":2"));
   g_unlink(path); g_rmdir(dir); g_rmdir(root);
 }
+/* Review F1: a read-only (corrupt or unsupported) store keeps recording while
+ * signing continues; its in-memory records stay within the count bound with no
+ * intervening ListActivity, and the file it could not read is never rewritten. */
+static void record_past_cap(const gchar *contents) {
+  g_autofree gchar *root = g_dir_make_tmp("g04-activity-XXXXXX", NULL);
+  g_autofree gchar *dir = g_build_filename(root, "grotto", NULL); g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
+  g_autofree gchar *path = g_build_filename(dir, "activity.json", NULL);
+  g_assert_true(g_file_set_contents(path, contents, -1, NULL));
+  g_autoptr(GnEventHistory) history = gn_event_history_new_activity(root);
+  g_assert_false(gn_event_history_activity_healthy(history));
+  g_autoptr(GVariant) snapshot = terminal_snapshot("SUCCEEDED");
+  guint64 previous = gn_event_history_activity_sequence(history);
+  for (guint i = 0; i < 10001; i++) {
+    guint64 sequence = gn_event_history_record_activity(history, snapshot);
+    g_assert_cmpuint(sequence, ==, previous + 1); previous = sequence;
+  }
+  g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
+  g_assert_false(gn_event_history_activity_healthy(history));
+  g_autofree gchar *after = NULL; g_assert_true(g_file_get_contents(path, &after, NULL, NULL));
+  g_assert_cmpstr(after, ==, contents);
+  g_clear_object(&history); g_unlink(path); g_rmdir(dir); g_rmdir(root);
+}
+static void test_unhealthy_bound(ControlFixture *f, gconstpointer data) {
+  (void)f; (void)data;
+  record_past_cap("{\"version\":1,\"sequence\":"); /* corrupt */
+  record_past_cap("{\"version\":2,\"sequence\":0,\"records\":[]}"); /* unsupported schema */
+  /* A stored error code obeys the writer's name-only rule, or the file is corrupt. */
+  record_past_cap("{\"version\":1,\"sequence\":1,\"records\":[{\"sequence\":1,\"timestamp\":1,"
+      "\"request_id\":\"r\",\"transport\":\"DBUS\",\"principal\":\"p\",\"identity\":\"i\","
+      "\"operation\":\"ping\",\"outcome\":\"failed\",\"error_code\":\"secret://PRIVATE ERROR\"}]}");
+}
 int main(int argc, char **argv) {
   test_environment(argv[0]); g_test_init(&argc, &argv, NULL); if (!nostrc_test_bus_available()) return 77;
 #define ADD(name, fn) g_test_add(name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
   ADD("/activity/outcome-truth-private-bus", test_truth); ADD("/activity/write-failure-does-not-change-crypto", test_failure);
   ADD("/activity/retention-cap-restart-schema", test_retention);
+  ADD("/activity/unhealthy-store-stays-bounded", test_unhealthy_bound);
   return g_test_run();
 }

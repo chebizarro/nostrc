@@ -101,6 +101,11 @@ void grotto_clients_free(GrottoClients *c) {
   g_clear_pointer(&c->records, g_key_file_unref); g_free(c->path); g_free(c);
 }
 guint64 grotto_clients_revision(GrottoClients *c) { return c->revision; }
+gboolean grotto_clients_known(GrottoClients *c, const gchar *principal) {
+  if (!principal || !grotto_clients_principal_valid(principal)) return FALSE;
+  g_autofree gchar *id = record_id(principal);
+  return g_key_file_has_group(c->records, id);
+}
 SignerTrustTier grotto_clients_trust(const gchar *principal, gboolean *consented, gpointer data) {
   GrottoClients *c = data; *consented = FALSE;
   if (!principal || !grotto_clients_principal_valid(principal)) return SIGNER_TRUST_LOW;

@@ -7,17 +7,29 @@
 #include <nostr/nip49/nip49_g.h>
 #endif
 
-static GVariant *permission_rows(const gchar *principal, const gchar *identity) {
+static GVariant *operation_rows(const gchar *principal, const gchar *identity, const gchar *operation) {
   GVariantBuilder list, row; g_variant_builder_init(&list, G_VARIANT_TYPE("aa{sv}"));
   g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&row, "{sv}", "principal", g_variant_new_string(principal));
   g_variant_builder_add(&row, "{sv}", "identity", g_variant_new_string(identity));
-  g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string("get_relays"));
+  g_variant_builder_add(&row, "{sv}", "operation", g_variant_new_string(operation));
   g_variant_builder_add(&row, "{sv}", "decision", g_variant_new_string("allow"));
   g_variant_builder_add(&row, "{sv}", "event-kind", g_variant_new_int32(-1));
   g_variant_builder_add(&row, "{sv}", "expires-at", g_variant_new_uint64(0));
   g_variant_builder_add_value(&list, g_variant_builder_end(&row));
   return g_variant_ref_sink(g_variant_builder_end(&list));
+}
+static GVariant *permission_rows(const gchar *principal, const gchar *identity) {
+  return operation_rows(principal, identity, "get_relays");
+}
+static GVariant *client_row(ControlFixture *f, const gchar *principal) {
+  g_autoptr(GVariant) rows = get_rows(f, "ListClients", NULL);
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    GVariant *row = g_variant_get_child_value(rows, i); const gchar *p;
+    if (g_variant_lookup(row, "principal", "&s", &p) && !strcmp(p, principal)) return row;
+    g_variant_unref(row);
+  }
+  g_assert_not_reached();
 }
 static void test_contract(ControlFixture *f, gconstpointer data) {
   (void)data; g_autoptr(GVariant) status = get_status(f); guint32 version; const gchar *epoch;
@@ -105,6 +117,34 @@ static void test_transports(ControlFixture *f, gconstpointer data) {
       g_autoptr(GVariant) urls = g_variant_lookup_value(row, "relays", G_VARIANT_TYPE_STRING_ARRAY); g_assert_cmpuint(g_variant_n_children(urls), ==, 1); found = TRUE; }
   }
   g_assert_true(found);
+}
+/* Review F2: a client created by a management permission is a known record
+ * without Low admission. Its automatic (permission-allowed) successes are not
+ * consent decisions, yet they must still refresh the observed metadata. */
+static void test_permission_created_client(ControlFixture *f, gconstpointer data) {
+  (void)data; const gchar *p = "exe:/permission-created"; char *npub = NULL;
+  g_assert_cmpint(nostr_nip55l_get_public_key(&npub), ==, 0);
+  g_autoptr(GVariant) rows = operation_rows(p, npub, "get_public_key");
+  g_autoptr(GVariant) set = control_call(f, "SetPermissions",
+      g_variant_new("(ss@aa{sv}t)", p, npub, g_variant_ref(rows), get_revision(f)));
+  g_autoptr(GVariant) created = client_row(f, p); const gchar *identity, *transport, *tier; guint64 first, used;
+  g_assert_true(g_variant_lookup(created, "identity", "&s", &identity)); g_assert_cmpstr(identity, ==, "");
+  g_assert_true(g_variant_lookup(created, "last-used-at", "t", &used)); g_assert_cmpuint(used, ==, 0);
+  SignerCaller who = {.kind=SIGNER_CALLER_EXE, .principal=(gchar *)p, .sender="permission-created", .same_uid=TRUE};
+  TestReply reply = {0};
+  g_autoptr(SignerGateHandle) h = submit_request(f, &who, SIGNER_TRANSPORT_NIP5F, SIGNER_GATE_GET_PUBLIC_KEY, NULL, 0, &reply);
+  wait_count(&reply.count, 1); g_assert_null(reply.error); g_assert_cmpstr(reply.value, ==, npub);
+  wait_count(&f->finished, 1); g_assert_cmpuint(f->pending->len, ==, 0); /* allowed without a prompt */
+  g_autoptr(GVariant) row = client_row(f, p);
+  g_assert_true(g_variant_lookup(row, "identity", "&s", &identity)); g_assert_cmpstr(identity, ==, npub);
+  g_assert_true(g_variant_lookup(row, "transport", "&s", &transport)); g_assert_cmpstr(transport, ==, "NIP5F");
+  g_assert_true(g_variant_lookup(row, "last-used-at", "t", &used)); g_assert_cmpuint(used, >, 0);
+  /* Metadata only: no consent timestamp, no tier change, no Low admission. */
+  g_assert_true(g_variant_lookup(row, "first-consented-at", "t", &first)); g_assert_cmpuint(first, ==, 0);
+  g_assert_true(g_variant_lookup(row, "trust-tier", "&s", &tier)); g_assert_cmpstr(tier, ==, "low");
+  g_autoptr(GrottoClients) store = grotto_clients_new(NULL, NULL); gboolean consented = TRUE;
+  g_assert_nonnull(store); g_assert_cmpint(grotto_clients_trust(p, &consented, store), ==, SIGNER_TRUST_LOW);
+  g_assert_false(consented); clear_reply(&reply); free(npub);
 }
 static void test_failed_not_client(ControlFixture *f, gconstpointer data) {
   (void)data; SignerCaller who = {.kind=SIGNER_CALLER_EXE, .principal="exe:/never-consented", .sender="bad", .same_uid=TRUE};
@@ -253,6 +293,7 @@ int main(int argc, char **argv) {
   ADD("/control/auth-pause-asymmetry", test_auth); ADD("/control/real-daemon-export", test_daemon_export);
   ADD("/control/custody-export", test_export);
   ADD("/clients/transports-origins-identity", test_transports); ADD("/clients/failed-not-admitted", test_failed_not_client);
+  ADD("/clients/permission-created-observed-use", test_permission_created_client);
   ADD("/clients/persistence-failure-version", test_store_failures);
 #ifdef NIP55L_TEST_TRUST_ENV
   ADD("/clients/live-tier-lowering", test_live_tier_lowering);

@@ -112,12 +112,15 @@ static void approval_changed(gpointer data, GVariant *snapshot) {
     g_variant_lookup(snapshot, "principal", "&s", &principal); g_variant_lookup(snapshot, "transport", "&s", &transport);
     g_variant_lookup(snapshot, "claimed_app_id", "&s", &claimed); g_variant_lookup(snapshot, "identity", "&s", &identity);
     g_variant_lookup(snapshot, "explicit_consent", "b", &consented); g_variant_lookup(snapshot, "remember", "b", &remember);
-    gboolean was_consented; grotto_clients_trust(principal, &was_consented, c->clients);
+    gboolean known = grotto_clients_known(c->clients, principal);
     gboolean success = !g_strcmp0(state, "SUCCEEDED");
     /* No admission from denials, arbitrary failed calls, or cancelled work.
-     * A remembered denial is still a permission record, but not Low admission. */
+     * A remembered denial is still a permission record, but not Low admission.
+     * A success refreshes any known record's observed transport, identity and
+     * last use, including permission-created clients (whose automatic allows
+     * are not consent decisions); that never sets consent or changes tier. */
     gboolean admission = consented && (success || !g_strcmp0(state, "FAILED"));
-    if (*principal && (admission || (success && was_consented) || (!g_strcmp0(state, "DENIED") && remember))) {
+    if (*principal && (admission || (success && known) || (!g_strcmp0(state, "DENIED") && remember))) {
       c->client_healthy = grotto_clients_record(c->clients, principal, transport, claimed, identity,
           admission, success, NULL);
       if (admission && c->client_healthy) signer_permissions_policy_changed(permissions(c));

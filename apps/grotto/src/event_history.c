@@ -850,6 +850,12 @@ gn_event_history_export_to_file(GnEventHistory *self,
 static const gchar *activity_strings[] = {
   "request_id", "transport", "principal", "identity", "operation", "outcome", "error_code"
 };
+/* Error names only, never a backend message (which may contain secrets). */
+static gboolean activity_error_code_ok(const gchar *s) {
+  if (strlen(s) > 160) return FALSE;
+  for (const gchar *p = s; *p; p++) if (!g_ascii_isalnum(*p) && *p != '.' && *p != '_') return FALSE;
+  return TRUE;
+}
 static gboolean activity_outcome_ok(const gchar *s) {
   const gchar *names[] = {"success", "denied", "expired", "expired-caller", "cancelled", "failed"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) if (!g_strcmp0(s, names[i])) return TRUE;
@@ -870,7 +876,7 @@ static gboolean activity_retention_due(gpointer data) {
 }
 static void activity_schedule_retention(GnEventHistory *self) {
   if (self->activity_timer) { g_source_remove(self->activity_timer); self->activity_timer = 0; }
-  if (!self->activity_writable || !self->entries->len) return;
+  if (!self->entries->len) return;
   gint64 oldest = G_MAXINT64, now = g_get_real_time() / G_USEC_PER_SEC;
   for (guint i = 0; i < self->entries->len; i++)
     oldest = MIN(oldest, ((GnEventHistoryEntry *)self->entries->pdata[i])->timestamp);
@@ -880,12 +886,15 @@ static void activity_schedule_retention(GnEventHistory *self) {
   self->activity_timer = g_timeout_add_seconds(seconds, activity_retention_due, self);
 }
 static gboolean activity_save(GnEventHistory *self, GError **error) {
+  /* The bounds hold in memory whether or not the store can persist them:
+   * a read-only (unsupported/corrupt) store keeps recording while signing
+   * continues, so it must not grow without limit. */
+  activity_prune(self);
   if (!self->activity_writable || nostrc_profile_guard_refuses_path(self->path)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "activity store unavailable or unsupported schema");
-    self->activity_healthy = FALSE;
+    self->activity_healthy = FALSE; activity_schedule_retention(self);
     g_signal_emit_by_name(self, "activity-changed", self->activity_sequence); return FALSE;
   }
-  activity_prune(self);
   g_autoptr(JsonBuilder) builder = json_builder_new();
   json_builder_begin_object(builder);
   json_builder_set_member_name(builder, "version"); json_builder_add_int_value(builder, 1);
@@ -948,7 +957,8 @@ GnEventHistory *gn_event_history_new_activity(const gchar *config_home) {
     for (guint j = 0; j < G_N_ELEMENTS(activity_strings); j++) {
       const gchar *s = json_text(record, activity_strings[j]);
       if (!s || strlen(s) > 1024 || !g_utf8_validate(s, -1, NULL) ||
-          (!strcmp(activity_strings[j], "outcome") && !activity_outcome_ok(s))) {
+          (!strcmp(activity_strings[j], "outcome") && !activity_outcome_ok(s)) ||
+          (!strcmp(activity_strings[j], "error_code") && !activity_error_code_ok(s))) {
         g_variant_builder_clear(&row); goto invalid;
       }
       g_variant_builder_add(&row, "{sv}", activity_strings[j], g_variant_new_string(s));
@@ -1000,11 +1010,7 @@ guint64 gn_event_history_record_activity(GnEventHistory *self, GVariant *snapsho
     if (!strcmp(key, "outcome")) s = outcome;
     else g_variant_lookup(snapshot, key, "&s", &s);
     if (strlen(s) > 1024 || !g_utf8_validate(s, -1, NULL)) s = "";
-    /* Error names only, never a backend message (which may contain secrets). */
-    if (!strcmp(key, "error_code")) {
-      if (strlen(s) > 160) s = "";
-      for (const gchar *p = s; *p; p++) if (!g_ascii_isalnum(*p) && *p != '.' && *p != '_') { s = ""; break; }
-    }
+    if (!strcmp(key, "error_code") && !activity_error_code_ok(s)) s = "";
     g_variant_builder_add(&row, "{sv}", key, g_variant_new_string(s));
   }
   guint32 kind;
