@@ -420,11 +420,14 @@ jobs:
           read -ra tests <<< "$GROUNDHOG_SANITIZER_TESTS"
           regex="^($(IFS='|'; echo "${tests[*]}"))\$"
           # Every listed test is registered: none may silently drop out.
+          # ctest also selects the matched tests' FIXTURES_SETUP tests (the
+          # isolated test homes); those run too and are not missing tests.
           expected=$(printf '%s\n' "${tests[@]}" | sort)
           registered=$(ctest --test-dir build-asan -N -R "$regex" |
                        sed -n 's/^ *Test *#[0-9]*: *//p' | sort)
-          if [ "$registered" != "$expected" ]; then
-            diff <(echo "$expected") <(echo "$registered") || true
+          missing=$(comm -23 <(echo "$expected") <(echo "$registered"))
+          if [ -n "$missing" ]; then
+            echo "$missing"
             echo 'The sanitizer test set is incomplete' >&2
             exit 1
           fi

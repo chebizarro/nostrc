@@ -229,13 +229,15 @@ if [ "$MODE" = sanitizers ]; then
     echo "==> $GATE: THE PATH FILTER MISSES INPUTS OF THIS BUILD ($(stamp))"
     exit 1
   fi
-  # As the job does: every listed test is registered, none silently dropped.
+  # As the job does: every listed test is registered, none silently dropped
+  # (the matched tests'"'"' fixture setup tests are selected too, not missing).
   TEST_REGEX="^($(IFS="|"; echo "${GH_SAN_TESTS[*]}"))\$"
   expected="$(printf "%s\n" "${GH_SAN_TESTS[@]}" | sort)"
   registered="$(ctest --test-dir /work/build -N -R "$TEST_REGEX" |
                 sed -n "s/^ *Test *#[0-9]*: *//p" | sort)"
-  if [ "$registered" != "$expected" ]; then
-    diff <(echo "$expected") <(echo "$registered") || true
+  missing="$(comm -23 <(echo "$expected") <(echo "$registered"))"
+  if [ -n "$missing" ]; then
+    echo "$missing"
     echo "==> $GATE: THE SANITIZER TEST SET IS INCOMPLETE ($(stamp))"
     exit 1
   fi

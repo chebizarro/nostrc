@@ -979,12 +979,15 @@ carry_jobs(GhDmInbox *self)
       job_free(job);
   }
   GHashTableIter iter;
-  gpointer value;
+  gpointer key, value;
   g_hash_table_iter_init(&iter, self->deferred_ids);
-  while (g_hash_table_iter_next(&iter, NULL, &value)) {
+  while (g_hash_table_iter_next(&iter, &key, &value)) {
     if (value && self->carry.length < GH_DM_INBOX_QUEUE_LIMIT) {
       g_queue_push_tail(&self->carry, value);
+      /* Stealing skips both destroy functions: the job moves to the carry,
+       * the duplicated id key is still ours to free. */
       g_hash_table_iter_steal(&iter);
+      g_free(key);
     }
   }
 }
