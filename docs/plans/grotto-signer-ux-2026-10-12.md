@@ -288,7 +288,7 @@ Enforce the configured method allowlist **before execution** for every RPC (empt
 
 **Caller deadlines and retries:** where the caller's deadline is known (NIP-07 host approval timeout, default 120 s, `main_native_host.c:~211`, versus the daemon's 300 s request TTL) the request `deadline` is the earlier of the two and the host sends it with the call; NIP-46 retries with a fresh RPC ID are joined/superseded by the §5.2 join key so they do not create duplicate reviews; an approval arriving after the caller gave up creates no grant unless the user chose "remember" explicitly, and the activity record says `expired-caller`.
 
-**NIP-46 continuation cancellation triggers (replacing "transport disconnect"):** request deadline, `RevokeClient`, `SetPaused`, bunker disable or relay reconfiguration affecting the request, the client's own `disconnect`, and daemon shutdown.
+**NIP-46 continuation cancellation triggers (replacing "transport disconnect"):** request deadline, `RevokeClient`, `SetPaused`, bunker disable or relay reconfiguration affecting the request, pairing teardown (G06), and daemon shutdown. *Clarified during G05:* NIP-46 defines no `disconnect` RPC and none is added — "the client's own disconnect" means the internal cancellation hook that `RevokeClient` and pairing teardown invoke, not a wire method.
 
 **Transport-key loss/reset:** if the keyring entry `org.nostr.Grotto.BunkerTransport` is missing at start, bunker state is `ERROR("transport key missing")` with no silent regeneration; an explicit `ResetBunkerEndpoint()` generates a new key, revokes all persisted pairings and tells the user clients must re-pair; profile reset/uninstall documentation lists the entry.
 
