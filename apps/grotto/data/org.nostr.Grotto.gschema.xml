@@ -96,9 +96,9 @@
     </key>
 
     <key name="require-confirmation-kinds" type="as">
-      <default>['4', '30023']</default>
+      <default>[]</default>
       <summary>Kinds requiring confirmation</summary>
-      <description>Event kinds that always require user confirmation (e.g., DMs, long-form).</description>
+      <description>When unset, uses the named signer policy defaults. A user-set list overrides them; an explicit empty list clears event-type overrides, not key-export safeguards. Invalid entries make all event types require review until repaired.</description>
     </key>
 
     <!-- Network Settings -->

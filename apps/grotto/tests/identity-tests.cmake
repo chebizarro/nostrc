@@ -43,12 +43,22 @@ if(QRENCODE_FOUND)
   target_link_libraries(grotto_identity_ui_test_core PRIVATE PkgConfig::QRENCODE)
   target_compile_definitions(grotto_identity_ui_test_core PRIVATE HAVE_QRENCODE=1)
 endif()
+set(_identity_test_resource "${CMAKE_CURRENT_BINARY_DIR}/identity-resources.c")
+add_custom_command(OUTPUT ${_identity_test_resource}
+  COMMAND glib-compile-resources --generate-source --c-name=grotto_identity_tests
+    --target=${_identity_test_resource} --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/../data
+    ${CMAKE_CURRENT_SOURCE_DIR}/identity-resources.gresource.xml
+  DEPENDS identity-resources.gresource.xml ../data/ui/sheets/sheet-select-account.ui)
 foreach(suite onboarding home-model)
-  add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C})
+  add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C} ${_identity_test_resource})
   target_link_libraries(test-${suite} PRIVATE grotto_identity_ui_test_core nostrc-test-bus)
   apply_test_sanitizers(test-${suite})
-  add_test(NAME signer/${suite} COMMAND test-${suite})
-  set_tests_properties(signer/${suite} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;identity;unit"
+  set(_identity_suite ${suite})
+  if(suite STREQUAL "home-model")
+    set(_identity_suite identity-model)
+  endif()
+  add_test(NAME signer/${_identity_suite} COMMAND test-${suite})
+  set_tests_properties(signer/${_identity_suite} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;identity;unit"
       ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory")
   add_dependencies(test-${suite} grotto-schemas grotto_resources)
   add_dependencies(signer-tests test-${suite})

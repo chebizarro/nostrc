@@ -417,6 +417,8 @@ GVariant *gn_event_history_list_activity(GnEventHistory *self, guint64 before_se
 gboolean gn_event_history_clear_activity(GnEventHistory *self, GError **error);
 gboolean gn_event_history_activity_healthy(GnEventHistory *self);
 guint64 gn_event_history_activity_sequence(GnEventHistory *self);
+guint gn_event_history_signed_today(GnEventHistory *self);
+void gn_event_history_set_retention_days(GnEventHistory *self, guint days);
 
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_EVENT_HISTORY_H */

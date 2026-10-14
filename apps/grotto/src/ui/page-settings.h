@@ -5,5 +5,8 @@ G_BEGIN_DECLS
 #define TYPE_PAGE_SETTINGS (page_settings_get_type())
 G_DECLARE_FINAL_TYPE(PageSettings, page_settings, PAGE, SETTINGS, AdwPreferencesPage)
 PageSettings *page_settings_new(void);
+#include "../home-model.h"
+void page_settings_set_model(PageSettings *, GrottoHomeModel *);
+void page_settings_add_background_group(PageSettings *, AdwPreferencesGroup *);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_PAGE_SETTINGS_H */

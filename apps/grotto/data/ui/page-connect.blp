@@ -1,0 +1,36 @@
+using Gtk 4.0;
+using Adw 1;
+template $GrottoPageConnect: Adw.PreferencesPage {
+  title: _("Connect");
+  Adw.PreferencesGroup {
+    title: _("Connect an application");
+    description: _("Choose an identity and review the connection before any supplied relay is contacted. New apps start at Low trust.");
+    Adw.ActionRow paste {
+      title: _("Paste a Nostr Connect link"); subtitle: _("Preview a link from your clipboard"); activatable: true;
+      [prefix] Image { icon-name: "edit-paste-symbolic"; }
+      [suffix] Image { icon-name: "go-next-symbolic"; }
+    }
+    Adw.ActionRow scan {
+      title: _("Scan a QR code"); subtitle: _("Use your camera or a QR image"); activatable: true;
+      [prefix] Image { icon-name: "camera-photo-symbolic"; }
+      [suffix] Image { icon-name: "go-next-symbolic"; }
+    }
+    Adw.ActionRow open_link {
+      title: _("Open a link"); subtitle: _("Choose a bunker:// or nostrconnect:// link file"); activatable: true;
+      [prefix] Image { icon-name: "insert-link-symbolic"; }
+      [suffix] Image { icon-name: "go-next-symbolic"; }
+    }
+    Adw.ActionRow create_link {
+      title: _("Create a pairing link for an app"); subtitle: _("A single-use link and QR code, with an explicit identity"); activatable: true;
+      [prefix] Image { icon-name: "list-add-symbolic"; }
+      [suffix] Image { icon-name: "go-next-symbolic"; }
+    }
+  }
+  Adw.PreferencesGroup {
+    Adw.ActionRow runtime { title: _("Remote signing"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }
+    Label {
+      label: _("Local GNOME applications need no pairing. They ask the first time they call Grotto, and you choose what they may do. Remote apps need remote signing enabled in Settings; approving a connection does not grant signing permissions.");
+      wrap: true; xalign: 0;
+    }
+  }
+}

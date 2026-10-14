@@ -9,7 +9,7 @@ template $GnLockScreen: Box {
 
   accessibility {
     label: "Lock screen";
-    description: "The session is locked. Enter your password to unlock and access your keys.";
+    description: "Management is locked. Already-authorised signing continues unless signing is paused.";
   }
 
   ScrolledWindow {
@@ -42,7 +42,7 @@ template $GnLockScreen: Box {
 
             accessibility {
               label: "Lock icon";
-              description: "Indicates the session is currently locked";
+              description: "Indicates management is locked";
             }
 
             styles [
@@ -51,7 +51,7 @@ template $GnLockScreen: Box {
           }
 
           Label lbl_title {
-            label: _("Session Locked");
+            label: _("Management locked");
 
             accessibility {
               description: "Title indicating the current lock state";
@@ -123,8 +123,8 @@ template $GnLockScreen: Box {
           focusable: true;
 
           accessibility {
-            label: "Unlock session";
-            description: "Click to unlock the session with the entered password. Press Enter or Alt+U.";
+            label: "Unlock management";
+            description: "Click to unlock management with the entered password. Press Enter or Alt+U.";
           }
 
           styles [

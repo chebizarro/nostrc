@@ -13,7 +13,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="hexpand">true</property>
     <accessibility>
       <property name="label">Lock screen</property>
-      <property name="description">The session is locked. Enter your password to unlock and access your keys.</property>
+      <property name="description">Management is locked. Already-authorised signing continues unless signing is paused.</property>
     </accessibility>
     <child>
       <object class="GtkScrolledWindow">
@@ -45,7 +45,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="pixel-size">64</property>
                         <accessibility>
                           <property name="label">Lock icon</property>
-                          <property name="description">Indicates the session is currently locked</property>
+                          <property name="description">Indicates management is locked</property>
                         </accessibility>
                         <style>
                           <class name="dim-label"/>
@@ -54,7 +54,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkLabel" id="lbl_title">
-                        <property name="label" translatable="yes">Session Locked</property>
+                        <property name="label" translatable="yes">Management locked</property>
                         <accessibility>
                           <property name="description">Title indicating the current lock state</property>
                         </accessibility>
@@ -123,8 +123,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="width-request">200</property>
                     <property name="focusable">true</property>
                     <accessibility>
-                      <property name="label">Unlock session</property>
-                      <property name="description">Click to unlock the session with the entered password. Press Enter or Alt+U.</property>
+                      <property name="label">Unlock management</property>
+                      <property name="description">Click to unlock management with the entered password. Press Enter or Alt+U.</property>
                     </accessibility>
                     <style>
                       <class name="suggested-action"/>

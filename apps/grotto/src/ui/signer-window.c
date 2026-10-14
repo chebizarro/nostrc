@@ -3,17 +3,12 @@
 #include "onboarding-assistant.h"
 #include "pairing-flow.h"
 #include "app-resources.h"
-#include "page-permissions.h"
-#include "page-applications.h"
-#include "page-sessions.h"
+#include "page-home.h"
+#include "page-connect.h"
+#include "page-client-detail.h"
 #include "page-history.h"
 #include "page-settings.h"
 #include "lock-screen.h"
-#include "sheets/sheet-create-profile.h"
-#include "sheets/sheet-import-profile.h"
-#include "sheets/sheet-account-backup.h"
-#include "sheets/sheet-backup.h"
-#include "sheets/sheet-create-account.h"
 #include "../secret_store.h"
 #include "../startup-timing.h"
 #include "../session-manager.h"
@@ -39,9 +34,11 @@ struct _SignerWindow {
   GtkListBox *sidebar;
   AdwViewStack *stack;
   /* pages */
-  GtkWidget *page_permissions;
-  GtkWidget *page_applications;
-  GtkWidget *page_sessions;
+  GtkWidget *page_home;
+  GtkWidget *page_connect;
+  AdwToastOverlay *toast_overlay;
+  AdwNavigationView *detail_navigation;
+  GrottoHomeModel *model;
   GtkWidget *page_history;
   GtkWidget *page_settings;
   /* GSettings for persistence */
@@ -55,9 +52,25 @@ struct _SignerWindow {
   gulong session_unlocked_handler;
   gulong session_timeout_warning_handler;
   gint64 locked_at_time;
+  guint breakpoint_region;
 };
 
 G_DEFINE_TYPE(SignerWindow, signer_window, ADW_TYPE_APPLICATION_WINDOW)
+
+/* nostrc-9n2n9: GTK a6e1c8a57 fixes deferred-focus overwrite in 4.23.1.
+ * Clear focus before our hide/reparent transitions; do not alter fixed GTK. */
+static void clear_transition_focus(SignerWindow *self) {
+  if (gtk_get_major_version() == 4 && (gtk_get_minor_version() < 23 ||
+      (gtk_get_minor_version() == 23 && gtk_get_micro_version() < 1)))
+    gtk_window_set_focus(GTK_WINDOW(self), NULL);
+}
+static void signer_window_size_allocate(GtkWidget *widget, int width, int height, int baseline) {
+  SignerWindow *self = SIGNER_WINDOW(widget);
+  guint region = width <= 500 ? 2 : width <= 800 ? 1 : 0;
+  if (region != self->breakpoint_region) clear_transition_focus(self);
+  self->breakpoint_region = region;
+  GTK_WIDGET_CLASS(signer_window_parent_class)->size_allocate(widget, width, height, baseline);
+}
 
 /* Helper to get GSettings if schema is available */
 static GSettings *signer_window_get_settings(void) {
@@ -121,8 +134,8 @@ static void on_sidebar_row_activated(GtkListBox *box, GtkListBoxRow *row, gpoint
   SignerWindow *self = user_data;
   if (!self || !self->stack || !row) return;
   int idx = gtk_list_box_row_get_index(row);
-  const char *names[] = { "permissions", "applications", "sessions", "history", "settings" };
-  if (idx >= 0 && idx < 5) adw_view_stack_set_visible_child_name(self->stack, names[idx]);
+  const char *names[] = { "home", "activity", "connect", "settings" };
+  if (idx >= 0 && idx < 4) signer_window_show_page(self, names[idx]);
 
   /* On narrow screens when sidebar is collapsed, selecting a row should close the sidebar */
   if (self->split_view && adw_navigation_split_view_get_collapsed(self->split_view)) {
@@ -164,9 +177,12 @@ static void signer_window_dispose(GObject *object) {
     self->session_signals_connected = FALSE;
   }
 
+  if (self->model) grotto_home_model_stop(self->model);
+  g_clear_object(&self->model);
   /* Save state on dispose as a backup */
   signer_window_save_state(self);
   g_clear_object(&self->settings);
+  gtk_widget_dispose_template(GTK_WIDGET(self), TYPE_SIGNER_WINDOW);
   G_OBJECT_CLASS(signer_window_parent_class)->dispose(object);
 }
 
@@ -175,6 +191,7 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
   object_class->dispose = signer_window_dispose;
+  widget_class->size_allocate = signer_window_size_allocate;
 
   STARTUP_TIME_MARK("signer-window-class-init");
 
@@ -182,9 +199,8 @@ static void signer_window_class_init(SignerWindowClass *klass) {
    * This is tracked as STARTUP_PHASE_TYPES to separate from page data loading */
   STARTUP_TIME_BEGIN(STARTUP_PHASE_TYPES);
   g_type_ensure(GN_TYPE_LOCK_SCREEN);
-  g_type_ensure(TYPE_PAGE_PERMISSIONS);
-  g_type_ensure(TYPE_PAGE_APPLICATIONS);
-  g_type_ensure(GN_TYPE_PAGE_SESSIONS);
+  g_type_ensure(GROTTO_TYPE_PAGE_HOME);
+  g_type_ensure(GROTTO_TYPE_PAGE_CONNECT);
   g_type_ensure(GN_TYPE_PAGE_HISTORY);
   g_type_ensure(TYPE_PAGE_SETTINGS);
   STARTUP_TIME_END(STARTUP_PHASE_TYPES);
@@ -200,9 +216,10 @@ static void signer_window_class_init(SignerWindowClass *klass) {
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, menu_btn);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, sidebar);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, stack);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_permissions);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_applications);
-  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_sessions);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_home);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_connect);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, toast_overlay);
+  gtk_widget_class_bind_template_child(widget_class, SignerWindow, detail_navigation);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_history);
   gtk_widget_class_bind_template_child(widget_class, SignerWindow, page_settings);
 }
@@ -278,7 +295,27 @@ static void on_win_show_shortcuts(GSimpleAction *action, GVariant *param, gpoint
 }
 
 static void on_pair_application(GSimpleAction *action, GVariant *parameter, gpointer data) {
-  (void)action; (void)parameter; grotto_pairing_present(GTK_WIDGET(data), NULL);
+  (void)action; (void)parameter; signer_window_show_page(data, "connect");
+}
+static void on_activity(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)parameter; signer_window_show_page(data, "activity");
+}
+static void on_client_selected(GrottoPageHome *home, const gchar *principal, gpointer data) {
+  (void)home; SignerWindow *self = data;
+  adw_navigation_view_push(self->detail_navigation, ADW_NAVIGATION_PAGE(grotto_client_detail_new(self->model, principal)));
+}
+static void on_stack_changed(GObject *object, GParamSpec *pspec, gpointer data) {
+  (void)object; (void)pspec; SignerWindow *self = data;
+  const gchar *name = adw_view_stack_get_visible_child_name(self->stack);
+  const gchar *names[] = {"home", "activity", "connect", "settings"};
+  adw_navigation_view_pop(self->detail_navigation);
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++) if (!g_strcmp0(name, names[i])) gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, i));
+}
+static void on_window_mapped(GtkWidget *widget, gpointer data) {
+  (void)data; SignerWindow *self = SIGNER_WINDOW(widget); if (self->model) grotto_home_model_start(self->model);
+}
+static void on_window_unmapped(GtkWidget *widget, gpointer data) {
+  (void)data; SignerWindow *self = SIGNER_WINDOW(widget); if (self->model) grotto_home_model_stop(self->model);
 }
 
 /* Setup window-level actions and keyboard shortcuts using GtkShortcutController */
@@ -286,6 +323,8 @@ static void setup_window_shortcuts(SignerWindow *self) {
   /* Add window-level actions */
   static const GActionEntry win_entries[] = {
     { "pair-application", on_pair_application, NULL, NULL, NULL },
+    { "connect", on_pair_application, NULL, NULL, NULL },
+    { "activity", on_activity, NULL, NULL, NULL },
     { "new-profile", on_win_new_profile, NULL, NULL, NULL },
     { "import-profile", on_win_import_profile, NULL, NULL, NULL },
     { "export", on_win_export, NULL, NULL, NULL },
@@ -402,15 +441,10 @@ static void on_session_timeout_warning(GnSessionManager *sm, guint seconds_remai
   SignerWindow *self = SIGNER_WINDOW(user_data);
 
   /* Show a toast warning about impending timeout */
-  AdwToast *toast = adw_toast_new_format("Session will lock in %u seconds", seconds_remaining);
+  AdwToast *toast = adw_toast_new_format("Management will lock in %u seconds", seconds_remaining);
   adw_toast_set_timeout(toast, 3);
 
-  /* Find a toast overlay in the window or create notification */
-  g_debug("Window: session timeout warning - %u seconds remaining", seconds_remaining);
-
-  /* For now just log - could show in-app notification */
-  (void)toast;
-  g_object_unref(toast);
+  adw_toast_overlay_add_toast(self->toast_overlay, toast);
 }
 
 static void on_lock_screen_unlock_requested(GnLockScreen *lock_screen, gpointer user_data) {
@@ -478,6 +512,15 @@ static void signer_window_init(SignerWindow *self) {
   gint64 init_start = startup_timing_measure_start();
 
   gtk_widget_init_template(GTK_WIDGET(self));
+  self->model = grotto_home_model_new();
+  grotto_page_home_set_model(GROTTO_PAGE_HOME(self->page_home), self->model);
+  grotto_page_connect_set_model(GROTTO_PAGE_CONNECT(self->page_connect), self->model);
+  page_settings_set_model(PAGE_SETTINGS(self->page_settings), self->model);
+  gn_page_history_set_model(GN_PAGE_HISTORY(self->page_history), self->model);
+  g_signal_connect(self->page_home, "client-selected", G_CALLBACK(on_client_selected), self);
+  g_signal_connect(self->stack, "notify::visible-child-name", G_CALLBACK(on_stack_changed), self);
+  g_signal_connect(self, "map", G_CALLBACK(on_window_mapped), NULL);
+  g_signal_connect(self, "unmap", G_CALLBACK(on_window_unmapped), NULL);
 
   /* Initialize state */
   self->deferred_init_scheduled = FALSE;
@@ -530,8 +573,8 @@ static void signer_window_init(SignerWindow *self) {
 
     /* Profile section - use window actions for shortcuts */
     GMenu *profile_section = g_menu_new();
-    g_menu_append(profile_section, "New Profile\tCtrl+N", "win.new-profile");
-    g_menu_append(profile_section, "Import Profile\tCtrl+I", "win.import-profile");
+    g_menu_append(profile_section, "New identity\tCtrl+N", "win.new-profile");
+    g_menu_append(profile_section, "Import identity\tCtrl+I", "win.import-profile");
     g_menu_append(profile_section, "Export/Backup\tCtrl+E", "win.export");
     g_menu_append(profile_section, "Connect an application…", "win.pair-application");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
@@ -539,7 +582,7 @@ static void signer_window_init(SignerWindow *self) {
 
     /* Security section */
     GMenu *security_section = g_menu_new();
-    g_menu_append(security_section, "Lock Session\tCtrl+L", "win.lock");
+    g_menu_append(security_section, "Lock management\tCtrl+L", "win.lock");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
     g_object_unref(security_section);
 
@@ -561,7 +604,7 @@ static void signer_window_init(SignerWindow *self) {
   /* Select first row and show default page */
   GtkListBoxRow *first = gtk_list_box_get_row_at_index(self->sidebar, 0);
   if (first) gtk_list_box_select_row(self->sidebar, first);
-  if (self->stack) adw_view_stack_set_visible_child_name(self->stack, "permissions");
+  if (self->stack) adw_view_stack_set_visible_child_name(self->stack, "home");
 
   /* Connect sidebar toggle button for responsive navigation */
   if (self->sidebar_toggle_btn) {
@@ -570,16 +613,16 @@ static void signer_window_init(SignerWindow *self) {
   }
 
   /* Setup enhanced keyboard navigation for sidebar */
-  static const char *page_names[] = { "permissions", "applications", "sessions", "history", "settings", NULL };
+  static const char *page_names[] = { "home", "activity", "connect", "settings", NULL };
   gn_keyboard_nav_setup_sidebar(self->sidebar, self->stack, page_names);
 }
 
 void signer_window_add_background_group(SignerWindow *self, AdwPreferencesGroup *group) {
-  adw_preferences_page_add(ADW_PREFERENCES_PAGE(self->page_settings), group);
+  page_settings_add_background_group(PAGE_SETTINGS(self->page_settings), group);
 }
 
 void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group) {
-  page_permissions_set_pending_group(PAGE_PERMISSIONS(self->page_permissions), group);
+  grotto_page_home_set_pending_group(GROTTO_PAGE_HOME(self->page_home), group);
 }
 SignerWindow *signer_window_new(AdwApplication *app) {
   g_return_val_if_fail(ADW_IS_APPLICATION(app), NULL);
@@ -588,10 +631,16 @@ SignerWindow *signer_window_new(AdwApplication *app) {
 
 void signer_window_show_page(SignerWindow *self, const char *name) {
   g_return_if_fail(self != NULL && name != NULL);
-  if (self->stack) adw_view_stack_set_visible_child_name(self->stack, name);
-  if (!strcmp(name, "permissions")) {
-    gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, 0));
-    adw_preferences_page_scroll_to_top(ADW_PREFERENCES_PAGE(self->page_permissions));
+  const gchar *names[] = {"home", "activity", "connect", "settings"};
+  for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
+    if (strcmp(name, names[i])) continue;
+    clear_transition_focus(self);
+    adw_navigation_view_pop(self->detail_navigation);
+    adw_view_stack_set_visible_child_name(self->stack, name);
+    gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, i));
+    adw_navigation_split_view_set_show_content(self->split_view, TRUE);
+    if (!i) { adw_preferences_page_scroll_to_top(ADW_PREFERENCES_PAGE(self->page_home)); grotto_home_model_refresh(self->model); }
+    break;
   }
 }
 

@@ -22,12 +22,6 @@
 #define CONTROL_PATH "/org/nostr/signer/grotto"
 #define REQUEST_KIND_EVENT "event" /* ApprovalRequested kind for SignEvent */
 
-// Forward declarations for UI pages
-GtkWidget *gnostr_home_page_new(void);
-GtkWidget *gnostr_settings_page_new(AccountsStore *as);
-void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as);
-void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, AccountsStore *as, const char *initial_identity,
-                                                      void (*on_success)(const char*, gpointer), gpointer user_data);
 // Approval dialog API
 #include "ui/approval_dialog.h"
 
@@ -355,7 +349,7 @@ static GtkWindow *present_pending(GtkApplication *app) {
     }
   }
   attach_pending_group(win);
-  signer_window_show_page(SIGNER_WINDOW(win), "permissions");
+  signer_window_show_page(SIGNER_WINDOW(win), "home");
   gtk_window_present(win);
   return win;
 }
@@ -708,7 +702,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     attach_pending_group(existing);
     if (SIGNER_IS_WINDOW(existing) && approval_controller &&
         g_list_model_get_n_items(grotto_approval_controller_get_pending(approval_controller)))
-      signer_window_show_page(SIGNER_WINDOW(existing), "permissions");
+      signer_window_show_page(SIGNER_WINDOW(existing), "home");
     gtk_window_present(existing);
     if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
     return;

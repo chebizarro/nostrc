@@ -9,7 +9,7 @@
 #include <sys/resource.h>
 #ifndef __APPLE__
 #include "main_app.h"
-#include "ui/page-permissions.h"
+#include "ui/page-home.h"
 #include "ui/signer-window.h"
 #include <signal.h>
 #endif
@@ -245,9 +245,9 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   g_assert_nonnull(strstr(adw_preferences_group_get_description(ADW_PREFERENCES_GROUP(group)),
                           "Notifications unavailable"));
   GtkWidget *page = GTK_WIDGET(
-      gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "page_permissions"));
+      gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "page_home"));
   GtkWidget *grants =
-      GTK_WIDGET(gtk_widget_get_template_child(page, TYPE_PAGE_PERMISSIONS, "group_grants"));
+      GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_PAGE_HOME, "identity_card"));
   graphene_rect_t pending_bounds, grants_bounds;
   g_assert_true(gtk_widget_compute_bounds(group, page, &pending_bounds));
   g_assert_true(gtk_widget_compute_bounds(grants, page, &grants_bounds));
@@ -267,7 +267,7 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   WAIT(grotto_approval_controller_get_holds(controller) == 1);
   AdwViewStack *reopened_stack =
       ADW_VIEW_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-  g_assert_cmpstr(adw_view_stack_get_visible_child_name(reopened_stack), ==, "permissions");
+  g_assert_cmpstr(adw_view_stack_get_visible_child_name(reopened_stack), ==, "home");
   Desktop d = {0};
   g_autoptr(GDBusNodeInfo) xml = g_dbus_node_info_new_for_xml(desktop_xml, NULL);
   static const GDBusInterfaceVTable table = {.method_call = desktop_call};
@@ -295,7 +295,7 @@ static void pending_reachability(GrottoApprovalController *controller, GApplicat
   g_action_group_activate_action(G_ACTION_GROUP(app), "review-request", g_variant_new_string(""));
   AdwViewStack *stack =
       ADW_VIEW_STACK(gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-  g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "permissions");
+  g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
   GPtrArray *rows = g_object_get_data(G_OBJECT(group), "rows");
   g_assert_cmpuint(rows->len, ==, 1);
   g_assert_cmpstr(g_object_get_data(rows->pdata[0], "request-id"), ==, id);
@@ -449,7 +449,7 @@ static void stale_app_actions(GrottoApprovalController *controller, GApplication
       WAIT(stale_notice(win));
       AdwViewStack *stack = ADW_VIEW_STACK(
           gtk_widget_get_template_child(GTK_WIDGET(win), TYPE_SIGNER_WINDOW, "stack"));
-      g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "permissions");
+      g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
       g_assert_true(gtk_widget_get_visible(GTK_WIDGET(win)));
       g_assert_null(review_dialog(app));
       while (adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(win))) {

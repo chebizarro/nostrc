@@ -7,7 +7,7 @@
 project('grotto', 'c',
   version: '0.1.0',
   default_options: [
-    'c_std=c11',
+    'c_std=gnu11',
     'warning_level=2',
   ],
   meson_version: '>= 0.59.0',
@@ -27,9 +27,9 @@ localedir = get_option('prefix') / get_option('localedir')
 
 # Required dependencies
 gtk4_dep = dependency('gtk4', version: '>= 4.14')
-glib_dep = dependency('glib-2.0', version: '>= 2.56')
-gobject_dep = dependency('gobject-2.0', version: '>= 2.56')
-gio_dep = dependency('gio-2.0', version: '>= 2.56')
+glib_dep = dependency('glib-2.0', version: '>= 2.80')
+gobject_dep = dependency('gobject-2.0', version: '>= 2.80')
+gio_dep = dependency('gio-2.0', version: '>= 2.80')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 json_glib_dep = dependency('json-glib-1.0')
 native_camera_required = host_machine.system() == 'linux'
@@ -44,10 +44,12 @@ have_camera = gst_dep.found() and gst_video_dep.found() and gst_app_dep.found()
 libsecret_dep = dependency('libsecret-1', required: false)
 
 # ── nostr-gobject (pre-built by CMake) ────────────────────────────────
-cmake_build_dir = meson.current_source_dir() / '..' / '..' / 'build'
+cmake_build_dir = get_option('cmake_build_dir')
+if cmake_build_dir == ''
+  cmake_build_dir = meson.current_source_dir() / '..' / '..' / 'build'
+endif
 nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
-  dirs: [cmake_build_dir / 'nostr-gobject'],
-  static: false)
+  dirs: [cmake_build_dir / 'nostr-gobject'])
 nostr_gobject_inc = include_directories('../../nostr-gobject/include')
 # BunkerService now submits to the shared daemon gate (no GUI crypto path).
 nip55l_glib_lib = cc.find_library('nostr_nip55l_glib', dirs: [cmake_build_dir / 'nips/nip55l'])
@@ -55,6 +57,37 @@ nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 
 nostr_gobject_dep = declare_dependency(
   dependencies: nostr_gobject_shared,
   include_directories: nostr_gobject_inc)
+
+# Dependencies of the prebuilt archives, matching the CMake GUI linkage.
+# Meson owns the GUI/templates; the daemon and protocol libraries remain CMake-owned.
+protocol_deps = []
+foreach component : [
+  ['nostr_nip46_core', 'nips/nip46'], ['nip04', 'nips/nip04'], ['nip06', 'nips/nip06'],
+  ['nip19', 'nips/nip19'], ['nip11', 'nips/nip11'], ['nostr_nip44_core', 'nips/nip44'],
+  ['nostr_nip49_core', 'nips/nip49'], ['nostr_nip49_glib', 'nips/nip49'],
+  ['nostr_nip5f_core', 'nips/nip5f'], ['gnostr-secret', 'gnome/seahorse'],
+  ['nostr', 'libnostr'], ['nostrgo', 'libgo'], ['nostr-json', 'libjson'],
+  ['nostrdb_storage', 'components/nostrdb'], ['nostrdb_vendored', 'components/nostrdb'],
+  ['nostrdb', 'libnostr']]
+  protocol_deps += cc.find_library(component[0], dirs: [cmake_build_dir / component[1]])
+endforeach
+foreach library : ['openssl', 'libsodium', 'libsecp256k1', 'libwebsockets', 'jansson', 'libcurl']
+  protocol_deps += dependency(library)
+endforeach
+dependency_library_dirs = []
+dependency_include_dirs = []
+foreach prefix : get_option('dependency_prefixes')
+  dependency_library_dirs += prefix / 'lib'
+  dependency_include_dirs += include_directories(prefix / 'include')
+endforeach
+system_libdir = glib_dep.get_variable(pkgconfig: 'libdir')
+protocol_deps += cc.find_library('nsync', dirs: dependency_library_dirs + [system_libdir, cmake_build_dir / 'third_party/nsync'])
+flatcc_dep = cc.find_library('flatccrt', required: false,
+  dirs: dependency_library_dirs + [system_libdir, cmake_build_dir / 'components/nostrdb/flatcc/lib'])
+if flatcc_dep.found()
+  protocol_deps += flatcc_dep
+endif
+protocol_deps += dependency('threads')
 
 # Configure compile definitions
 conf_data = configuration_data()
@@ -64,8 +97,7 @@ conf_data.set_quoted('APP_RESOURCE_PATH', '/org/gnostr/signer')
 
 # Check for libsecret availability
 if libsecret_dep.found()
-  conf_data.set('GNOSTR_HAVE_LIBSECRET', 1)
-  message('libsecret found - secure storage enabled')
+  message('libsecret linked; daemon owns key writes')
 else
   message('libsecret not found - using fallback storage')
 endif
@@ -119,9 +151,13 @@ nips_inc = include_directories(
 # Source files
 app_sources = files(
   'src/main_app.c',
+  'src/legacy_dirs.c',
+  'src/home-model.c',
+  'src/gn-signer-error.c',
   'src/approval-controller.c',
   'src/background.c',
   '../../gnome/common/gn-session-bus-probe.c',
+  '../../gnome/common/gn-status-notifier.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
   'src/bunker_service.c',
@@ -170,65 +206,45 @@ app_sources = files(
 
 # UI source files
 app_ui_sources = files(
-  'src/ui/accounts_page.c',
   'src/ui/approval_dialog.c',
-  'src/ui/confirm-delete-dialog.c',
-  'src/ui/events-page.c',
-  'src/ui/hardware_keystore_widget.c',
-  'src/ui/home_page.c',
-  'src/ui/lazy-loader.c',
   'src/ui/lock-screen.c',
   'src/ui/onboarding-assistant.c',
+  'src/ui/page-home.c',
+  'src/ui/page-connect.c',
+  'src/ui/page-client-detail.c',
   'src/ui/page-identity-detail.c',
   'src/secret-clipboard.c',
-  'src/ui/page-applications.c',
   'src/ui/page-history.c',
-  'src/ui/page-permissions.c',
-  'src/ui/page-sessions.c',
   'src/ui/page-settings.c',
-  'src/ui/profile-dashboard.c',
-  'src/ui/settings_page.c',
   'src/ui/signer-window.c',
   'src/ui/pairing-flow.c',
-  'src/ui/welcome-page.c',
-  # Sheets
-  'src/ui/sheets/sheet-account-backup.c',
-  'src/ui/sheets/sheet-add-application.c',
-  'src/ui/sheets/sheet-backup.c',
-  'src/ui/sheets/sheet-change-password.c',
-  'src/ui/sheets/sheet-create-account.c',
   'src/ui/sheets/sheet-create-bunker.c',
-  'src/ui/sheets/sheet-create-multisig.c',
-  'src/ui/sheets/sheet-create-profile.c',
-  'src/ui/sheets/sheet-delegation.c',
-  'src/ui/sheets/sheet-event-details.c',
-  'src/ui/sheets/sheet-hw-wallet.c',
-  'src/ui/sheets/sheet-import-key.c',
-  'src/ui/sheets/sheet-import-profile.c',
-  'src/ui/sheets/sheet-key-rotation.c',
-  'src/ui/sheets/sheet-multisig-signing.c',
-  'src/ui/sheets/sheet-orbot-setup.c',
-  'src/ui/sheets/sheet-profile-editor.c',
   'src/ui/sheets/sheet-qr-display.c',
   'src/ui/sheets/sheet-qr-scanner.c',
-  'src/ui/sheets/sheet-relay-config.c',
-  'src/ui/sheets/sheet-select-account.c',
-  'src/ui/sheets/sheet-sign-message.c',
-  'src/ui/sheets/sheet-social-recovery.c',
-  'src/ui/sheets/sheet-user-list.c',
-  # Widgets
-  'src/ui/widgets/app-row.c',
   'src/ui/widgets/gn-secure-entry.c',
-  'src/ui/widgets/identity-row.c',
-  'src/ui/widgets/relay-row.c',
 )
 
 # GResource compilation
 gnome = import('gnome')
+blueprint = find_program('blueprint-compiler')
+if run_command(blueprint, '--version', check: true).stdout().strip() != '0.22.2'
+  error('Grotto Blueprint compiler is pinned to 0.22.2')
+endif
+blueprints = custom_target('blueprints',
+  input: files(
+    'data/ui/signer-window.blp', 'data/ui/page-home.blp', 'data/ui/page-connect.blp',
+    'data/ui/page-client-detail.blp', 'data/ui/page-history.blp', 'data/ui/page-settings.blp',
+    'data/ui/page-identity-detail.blp', 'data/ui/approval-dialog.blp',
+    'data/ui/lock-screen.blp', 'data/ui/onboarding-assistant.blp', 'data/ui/shortcuts-window.blp',
+    'data/ui/sheets/sheet-create-bunker.blp', 'data/ui/sheets/sheet-qr-display.blp',
+    'data/ui/sheets/sheet-qr-scanner.blp', 'data/ui/widgets/gn-secure-entry.blp'),
+  output: 'data',
+  command: [blueprint, 'batch-compile', '@OUTPUT@', meson.current_source_dir() / 'data', '@INPUT@'])
 app_resources = gnome.compile_resources(
   'grotto-resources',
   'data/resources.gresource.xml',
-  source_dir: 'data',
+  source_dir: [meson.current_build_dir() / 'data', 'data'],
+  dependencies: blueprints,
   c_name: 'gnostr_signer',
 )
 
@@ -265,12 +281,14 @@ executable(app_bin,
   app_ui_sources,
   app_resources,
   include_directories: [
+    include_directories(cmake_build_dir / 'libnostr/generated'),
     root_inc,
     libnostr_inc,
     libgo_inc,
     nips_inc,
-  ],
-  dependencies: app_deps + [nip55l_glib_lib, nip55l_core_lib],
+    nostr_gobject_inc,
+  ] + dependency_include_dirs,
+  dependencies: app_deps + [nip55l_glib_lib, nip55l_core_lib] + protocol_deps,
   c_args: [
     '-DAPP_ID="@0@"'.format(app_id),
     '-DAPP_NAME="@0@"'.format(app_name),
@@ -279,11 +297,15 @@ executable(app_bin,
     '-DLOCALEDIR="@0@"'.format(localedir),
     '-DGROTTO_EXECUTABLE="@0@/grotto"'.format(get_option('prefix') / get_option('bindir')),
     '-DGROTTO_AUTOSTART_TEMPLATE="@0@/org.nostr.Grotto-autostart.desktop"'.format(get_option('prefix') / get_option('datadir') / 'grotto'),
-    libsecret_dep.found() ? '-DGNOSTR_HAVE_LIBSECRET=1' : [],
+    '-DGDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14',
+    '-DGDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14',
+    '-DGTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14',
+    '-DADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5',
+    '-DADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5',
     qrencode_dep.found() ? '-DHAVE_QRENCODE=1' : [],
     zbar_dep.found() ? '-DHAVE_ZBAR=1' : [],
     have_camera ? '-DHAVE_GSTREAMER=1' : [],
-  ].flatten(),
+  ],
   install: true,
 )
 

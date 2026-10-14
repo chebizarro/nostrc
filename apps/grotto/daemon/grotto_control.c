@@ -4,6 +4,7 @@
 #include "session-lock.h"
 #include "grotto_control_xml.h"
 #include "signer_caller.h"
+#include "signer_permission_policy.h"
 #include "event_history.h"
 #include "settings_manager.h"
 #include "pairing_uri.h"
@@ -31,6 +32,8 @@ struct _GrottoControl {
   GrottoSessionLock *session_lock;
   GrottoClients *clients;
   GnEventHistory *history;
+  GSettings *settings;
+  gboolean confirmation_policy_valid;
   BunkerService *bunker;
   guint registration, subscription;
   gulong history_handler;
@@ -109,6 +112,32 @@ static GVariant *requests(GrottoControl *c) {
   }
   return g_variant_ref_sink(g_variant_builder_end(&rows));
 }
+static void management_settings_changed(GSettings *settings, const gchar *key, gpointer data) {
+  GrottoControl *c = data;
+  if (!key || !strcmp(key, "require-confirmation-kinds")) {
+    g_autoptr(GVariant) user = g_settings_get_user_value(settings, "require-confirmation-kinds");
+    g_autoptr(GArray) kinds = g_array_new(FALSE, FALSE, sizeof(guint32)); gboolean valid = TRUE;
+    if (user) {
+      g_auto(GStrv) values = g_variant_dup_strv(user, NULL);
+      for (guint i = 0; values[i]; i++) {
+        gchar *end = NULL; guint64 number = g_ascii_strtoull(values[i], &end, 10);
+        if (!*values[i] || *values[i] == '-' || *end || number > G_MAXUINT16) { valid = FALSE; break; }
+        guint32 kind = number; g_array_append_val(kinds, kind);
+      }
+    }
+    c->confirmation_policy_valid = valid;
+    if (!user) g_array_append_vals(kinds, signer_default_required_confirmation_kinds, G_N_ELEMENTS(signer_default_required_confirmation_kinds));
+    if (!valid) {
+      /* Invalid owner configuration must not silently weaken confirmation. */
+      g_array_set_size(kinds, 0);
+      for (guint32 kind = 0; kind <= G_MAXUINT16; kind++) g_array_append_val(kinds, kind);
+    }
+    signer_permissions_set_required_confirmation(permissions(c), (guint32 *)kinds->data, kinds->len, NULL);
+    refresh(c);
+  }
+  if (!key || !strcmp(key, "log-retention-days")) gn_event_history_set_retention_days(c->history, CLAMP(g_settings_get_int(settings, "log-retention-days"), 1, 30));
+  status_changed(c);
+}
 static GVariant *status(GrottoControl *c) {
   gboolean permission_healthy = signer_permissions_reload(permissions(c), NULL);
   refresh(c);
@@ -131,6 +160,7 @@ static GVariant *status(GrottoControl *c) {
   const gchar *disabled[] = {"key-lock"};
   for (guint i = 0; i < G_N_ELEMENTS(disabled); i++) g_variant_builder_add(&caps, "{sb}", disabled[i], FALSE);
   g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
+  g_variant_builder_add(&row, "{sv}", "confirmation_policy_valid", g_variant_new_boolean(c->confirmation_policy_valid));
   g_variant_builder_add(&row, "{sv}", "control_epoch", g_variant_new_string(c->epoch));
   g_variant_builder_add(&row, "{sv}", "capabilities", g_variant_builder_end(&caps));
   g_variant_builder_add(&row, "{sv}", "paused", g_variant_new_boolean(signer_approval_service_is_paused(c->approval)));
@@ -139,6 +169,9 @@ static GVariant *status(GrottoControl *c) {
   g_variant_builder_add(&row, "{sv}", "pause_on_screen_lock", g_variant_new_boolean(grotto_session_lock_enabled(c->session_lock)));
   g_autoptr(GVariant) pending = requests(c);
   g_variant_builder_add(&row, "{sv}", "pending_count", g_variant_new_uint32(g_variant_n_children(pending)));
+  g_autoptr(GVariant) clients = grotto_clients_list(c->clients);
+  g_variant_builder_add(&row, "{sv}", "client_count", g_variant_new_uint32(clients ? g_variant_n_children(clients) : 0));
+  g_variant_builder_add(&row, "{sv}", "signed_today", g_variant_new_uint32(gn_event_history_signed_today(c->history)));
   g_variant_builder_add(&row, "{sv}", "bunker_enabled", g_variant_new_boolean(c->desired_bunker));
   g_variant_builder_add(&row, "{sv}", "bunker_pending_pairing_acks", g_variant_new_uint32(bunker_service_pending_acks(c->bunker)));
   g_variant_builder_add(&row, "{sv}", "bunker_pending_pairing_requests", g_variant_new_uint32(bunker_service_pending_pairing_requests(c->bunker)));
@@ -826,7 +859,7 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
 static const GDBusInterfaceVTable vtable = {method_call, NULL, NULL, {0}};
 GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalService *approval,
     const gchar *config_home, GError **error) {
-  GrottoControl *c = g_new0(GrottoControl, 1); c->refs = 1;
+  GrottoControl *c = g_new0(GrottoControl, 1); c->refs = 1; c->confirmation_policy_valid = TRUE;
   c->accept_reviews = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   c->connection = g_object_ref(connection); c->approval = signer_approval_service_ref(approval);
   c->epoch = g_uuid_string_random();
@@ -854,6 +887,12 @@ GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalSer
   g_autoptr(GSettingsSchema) schema = schemas ? g_settings_schema_source_lookup(schemas, "org.nostr.Grotto", TRUE) : NULL;
   g_autoptr(GSettings) settings = schema && g_settings_schema_has_key(schema, "pause-on-screen-lock") ?
       g_settings_new_full(schema, NULL, NULL) : NULL;
+  if (settings) {
+    c->settings = g_object_ref(settings);
+    management_settings_changed(settings, NULL, c);
+    g_signal_connect(settings, "changed::require-confirmation-kinds", G_CALLBACK(management_settings_changed), c);
+    g_signal_connect(settings, "changed::log-retention-days", G_CALLBACK(management_settings_changed), c);
+  }
   c->session_lock = grotto_session_lock_new(approval, settings, NULL);
   g_signal_connect(c->session_lock, "changed", G_CALLBACK(session_lock_changed), c);
   return c;
@@ -891,6 +930,8 @@ void grotto_control_set_bunker(GrottoControl *c, BunkerService *bunker, gboolean
 void grotto_control_free(GrottoControl *c) {
   if (!c) return;
   c->closing = TRUE;
+  if (c->settings) g_signal_handlers_disconnect_by_data(c->settings, c);
+  g_clear_object(&c->settings);
   cancel_rotation_if_paused(c);
   if (c->session_lock) {
     g_signal_handlers_disconnect_by_data(c->session_lock, c);

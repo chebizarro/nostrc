@@ -17,7 +17,10 @@ set(DBUS_INTERFACE "org.nostr.Signer")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTK4 REQUIRED IMPORTED_TARGET gtk4>=4.14)
-pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0 gobject-2.0 gio-2.0)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0>=2.80 gobject-2.0>=2.80 gio-2.0>=2.80)
+add_compile_definitions(GDK_VERSION_MIN_REQUIRED=GDK_VERSION_4_14
+  GDK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14 GTK_VERSION_MAX_ALLOWED=GDK_VERSION_4_14
+  ADW_VERSION_MIN_REQUIRED=ADW_VERSION_1_5 ADW_VERSION_MAX_ALLOWED=ADW_VERSION_1_5)
 pkg_check_modules(ADWAITA REQUIRED IMPORTED_TARGET libadwaita-1>=1.5)
 pkg_check_modules(JSON_GLIB REQUIRED IMPORTED_TARGET json-glib-1.0)
 pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
@@ -113,14 +116,18 @@ endif()
 # Find blueprint-compiler for compiling .blp files to .ui files
 find_program(BLUEPRINT_COMPILER blueprint-compiler)
 if(BLUEPRINT_COMPILER)
-  message(STATUS "Found blueprint-compiler: ${BLUEPRINT_COMPILER}")
+  execute_process(COMMAND ${BLUEPRINT_COMPILER} --version OUTPUT_VARIABLE _blueprint_version OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT _blueprint_version STREQUAL "0.22.2")
+    message(FATAL_ERROR "Grotto Blueprint compiler is pinned to 0.22.2; found ${_blueprint_version}")
+  endif()
+  message(STATUS "Found pinned blueprint-compiler: ${BLUEPRINT_COMPILER}")
 else()
   message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
 endif()
 
 # Blueprint source files (.blp) - these are the source of truth for UI definitions
 # Note: Some files that failed decompilation are kept as .ui only
-file(GLOB_RECURSE BLUEPRINT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.blp)
+file(GLOB_RECURSE BLUEPRINT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.blp)
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
 set(SIGNER_COMPILED_UI_FILES)
@@ -148,14 +155,22 @@ if(BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
 endif()
 
 # Main GTK4 application (UI shell)
-file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c src/ui/*.c src/ui/sheets/*.c src/ui/widgets/*.c)
-if (NOT APP_SRC)
-  set(APP_SRC src/main_app.c)
-endif()
+file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c)
+# Explicit production UI inventory: dormant pages/sheets cannot re-enter via a glob.
+set(APP_UI_SRC
+  src/ui/approval_dialog.c src/ui/lock-screen.c src/ui/onboarding-assistant.c
+  src/ui/page-home.c src/ui/page-connect.c src/ui/page-client-detail.c
+  src/ui/page-identity-detail.c src/ui/page-history.c src/ui/page-settings.c
+  src/ui/pairing-flow.c src/ui/signer-window.c
+  src/ui/sheets/sheet-create-bunker.c src/ui/sheets/sheet-qr-display.c
+  src/ui/sheets/sheet-qr-scanner.c src/ui/widgets/gn-secure-entry.c)
+list(TRANSFORM APP_UI_SRC PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+list(APPEND APP_SRC ${APP_UI_SRC})
 set(APP_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
 set(APP_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
 # Rebuild resources.c whenever any referenced UI changes
-file(GLOB_RECURSE APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui)
+file(GLOB_RECURSE APP_UI_FILES CONFIGURE_DEPENDS
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/css/*.css)
 add_custom_command(
   OUTPUT ${APP_GRESOURCE_C}
   COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source

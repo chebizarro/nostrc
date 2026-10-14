@@ -1,5 +1,6 @@
 #include "test-control-common.h"
 #include <json-glib/json-glib.h>
+#include <nostr-kinds.h>
 
 static void signal_seen(GDBusConnection *connection, const gchar *sender, const gchar *path,
     const gchar *interface, const gchar *signal, GVariant *args, gpointer data) {
@@ -14,6 +15,32 @@ static void assert_outcome(ControlFixture *f, const gchar *outcome) {
   g_assert_true(g_variant_lookup(row, "outcome", "&s", &actual)); g_assert_cmpstr(actual, ==, outcome);
   const gchar *forbidden[] = {"preview", "content", "reason", "flow_id", "uri", "event_json", "ciphertext", "event_summary", "result"};
   for (guint i = 0; i < G_N_ELEMENTS(forbidden); i++) g_assert_null(g_variant_lookup_value(row, forbidden[i], NULL));
+}
+static void test_dashboard(ControlFixture *f, gconstpointer data) {
+  (void)data; SignerCaller who = {.kind=SIGNER_CALLER_EXE, .principal="exe:/dashboard", .sender="dashboard", .same_uid=TRUE};
+  g_test_message("dashboard: first consent");
+  TestReply consent = {0}; g_autoptr(SignerGateHandle) hc = submit_request(f, &who, SIGNER_TRANSPORT_DBUS, SIGNER_GATE_GET_PUBLIC_KEY, NULL, 0, &consent);
+  decision(f, pending_id(f, 0), TRUE, FALSE); wait_count(&consent.count, 1); clear_reply(&consent);
+  g_autoptr(GVariant) status = get_status(f); guint count;
+  g_assert_true(g_variant_lookup(status, "client_count", "u", &count)); g_assert_cmpuint(count, ==, 1);
+  g_assert_true(g_variant_lookup(status, "signed_today", "u", &count)); g_assert_cmpuint(count, ==, 0);
+  g_autofree gchar *event = g_strdup_printf("{\"kind\":%u,\"created_at\":1700000000,\"tags\":[],\"content\":\"\"}", NOSTR_KIND_TEXT_NOTE);
+  who.sender = "dashboard-sign"; /* Separate connection, same verified client. */
+  TestReply signed_event = {0}; g_autoptr(SignerGateHandle) hs = submit_request(f, &who, SIGNER_TRANSPORT_DBUS, SIGNER_GATE_SIGN_EVENT, event, 0, &signed_event);
+  g_test_message("dashboard: event submitted, replies=%u pending=%u", signed_event.count, f->pending->len);
+  guint bound = g_timeout_add_seconds(20, failure_bound, NULL);
+  while (f->pending->len < 2 && !signed_event.count) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(bound); g_test_message("dashboard: resolved=%u error=%s", signed_event.count, signed_event.error ? signed_event.error : "none");
+  g_assert_null(signed_event.error); g_assert_cmpuint(signed_event.count, ==, 0);
+  const gchar *id = pending_id(f, 1); g_test_message("dashboard: reviewing event"); g_clear_pointer(&status, g_variant_unref); status = get_status(f);
+  g_assert_true(g_variant_lookup(status, "pending_count", "u", &count)); g_assert_cmpuint(count, ==, 1);
+  decision(f, id, TRUE, FALSE); wait_count(&signed_event.count, 1); g_assert_null(signed_event.error); clear_reply(&signed_event);
+  g_clear_pointer(&status, g_variant_unref); status = get_status(f);
+  g_assert_true(g_variant_lookup(status, "signed_today", "u", &count)); g_assert_cmpuint(count, ==, 1);
+  g_assert_true(g_variant_lookup(status, "pending_count", "u", &count)); g_assert_cmpuint(count, ==, 0);
+  g_autoptr(GVariant) cleared = control_call(f, "ClearActivity", NULL);
+  g_clear_pointer(&status, g_variant_unref); status = get_status(f);
+  g_assert_true(g_variant_lookup(status, "signed_today", "u", &count)); g_assert_cmpuint(count, ==, 0);
 }
 static void test_truth(ControlFixture *f, gconstpointer data) {
   (void)data; guint64 seqs[2] = {0};
@@ -89,17 +116,24 @@ static void test_retention(ControlFixture *f, gconstpointer data) {
   gint64 now = g_get_real_time() / G_USEC_PER_SEC;
   for (guint i = 10002; i > 0; i--) {
     if (i != 10002) g_string_append_c(json, ',');
-    g_string_append_printf(json, "{\"sequence\":%u,\"timestamp\":%" G_GINT64_FORMAT ",\"request_id\":\"test\",\"transport\":\"DBUS\",\"principal\":\"p\",\"identity\":\"i\",\"operation\":\"ping\",\"outcome\":\"success\",\"error_code\":\"\"}", i, i == 10002 ? now - 31 * 24 * 60 * 60 : now);
+    g_string_append_printf(json, "{\"sequence\":%u,\"timestamp\":%" G_GINT64_FORMAT ",\"request_id\":\"test\",\"transport\":\"DBUS\",\"principal\":\"p\",\"identity\":\"i\",\"operation\":\"ping\",\"outcome\":\"success\",\"error_code\":\"\"}", i, i == 10002 ? now - 31 * 24 * 60 * 60 : i == 10001 ? now - 2 * 24 * 60 * 60 : now);
   }
   g_string_append(json, "]}"); g_assert_true(g_file_set_contents(path, json->str, json->len, NULL)); g_string_free(json, TRUE);
   g_autoptr(GnEventHistory) history = gn_event_history_new_activity(root); g_assert_true(gn_event_history_activity_healthy(history));
   g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
   g_autoptr(GVariant) snapshot = terminal_snapshot("SUCCEEDED");
+  g_assert_cmpuint(gn_event_history_signed_today(history), ==, 0);
   g_assert_cmpuint(gn_event_history_record_activity(history, snapshot), ==, 10003);
   gn_event_history_record_activity(history, snapshot); g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 10000);
+  g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
+  g_autoptr(GVariant) denied = terminal_snapshot("DENIED"); gn_event_history_record_activity(history, denied);
+  g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
+  gn_event_history_set_retention_days(history, 1);
+  g_assert_cmpuint(gn_event_history_get_entry_count(history), ==, 9999);
+  g_assert_cmpuint(gn_event_history_signed_today(history), ==, 2);
   g_autoptr(GVariant) rows = gn_event_history_list_activity(history, 0, 100); g_assert_cmpuint(g_variant_n_children(rows), ==, 100);
   g_assert_true(gn_event_history_clear_activity(history, NULL)); g_clear_object(&history);
-  history = gn_event_history_new_activity(root); g_assert_cmpuint(gn_event_history_activity_sequence(history), ==, 10004);
+  history = gn_event_history_new_activity(root); g_assert_cmpuint(gn_event_history_activity_sequence(history), ==, 10005);
   g_assert_true(g_file_set_contents(path, "{\"version\":2,\"sequence\":10004,\"records\":[]}", -1, NULL));
   g_clear_object(&history); history = gn_event_history_new_activity(root); g_assert_false(gn_event_history_activity_healthy(history));
   g_assert_false(gn_event_history_clear_activity(history, NULL));
@@ -141,6 +175,7 @@ int main(int argc, char **argv) {
   test_environment(argv[0]); g_test_init(&argc, &argv, NULL); if (!nostrc_test_bus_available()) return 77;
 #define ADD(name, fn) g_test_add(name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
   ADD("/activity/outcome-truth-private-bus", test_truth); ADD("/activity/write-failure-does-not-change-crypto", test_failure);
+  ADD("/activity/dashboard-real-gate-status", test_dashboard);
   ADD("/activity/retention-cap-restart-schema", test_retention);
   ADD("/activity/unhealthy-store-stays-bounded", test_unhealthy_bound);
   return g_test_run();

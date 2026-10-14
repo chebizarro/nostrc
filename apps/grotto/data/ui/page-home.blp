@@ -1,0 +1,66 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $GrottoPageHome: Adw.PreferencesPage {
+  title: _("Home");
+  Adw.PreferencesGroup {
+    Box pending_slot { orientation: vertical; }
+  }
+  Adw.PreferencesGroup {
+    title: _("Your identities");
+    Box {
+      orientation: vertical; spacing: 12;
+      ScrolledWindow {
+        hscrollbar-policy: automatic;
+        vscrollbar-policy: never;
+        Box avatars { spacing: 12; margin-top: 6; margin-bottom: 6; }
+      }
+      ListBox {
+        selection-mode: none; styles ["boxed-list"]
+        Adw.ActionRow identity_card {
+          title: _("Create or import an identity");
+          subtitle: _("Your management selection does not change an app’s identity.");
+          subtitle-lines: 2;
+          [suffix] Button copy_key {
+            icon-name: "edit-copy-symbolic"; valign: center;
+            tooltip-text: _("Copy public key");
+            accessibility { label: _("Copy public key"); }
+          }
+          [suffix] Button show_qr {
+            icon-name: "view-grid-symbolic"; valign: center;
+            tooltip-text: _("Show public-key QR code");
+            accessibility { label: _("Show public-key QR code"); }
+          }
+        }
+      }
+    }
+  }
+  Adw.PreferencesGroup {
+    Box {
+      homogeneous: true; spacing: 6;
+      Box { orientation: vertical; spacing: 6;
+        Label signed_today { label: "—"; styles ["title-1"] }
+        Label { label: _("Signed today"); wrap: true; }
+      }
+      Box { orientation: vertical; spacing: 6;
+        Label clients_count { label: "—"; styles ["title-1"] }
+        Label { label: _("Clients"); }
+      }
+      Box { orientation: vertical; spacing: 6;
+        Label pending_count { label: "—"; styles ["title-1"] }
+        Label { label: _("Pending"); }
+      }
+    }
+    Label status_message { wrap: true; margin-top: 12; }
+  }
+  Adw.PreferencesGroup {
+    title: _("Connected clients");
+    ListBox clients_list { selection-mode: none; styles ["boxed-list"] }
+    Adw.StatusPage empty_clients {
+      title: _("No connected apps");
+      description: _("Tap Connect to pair your first app");
+      icon-name: "network-wireless-symbolic";
+      Button { label: _("Connect"); halign: center; action-name: "win.connect"; styles ["suggested-action"] }
+    }
+  }
+}

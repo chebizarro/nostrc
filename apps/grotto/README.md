@@ -1,7 +1,8 @@
 # Grotto
 
 Grotto keeps your Nostr identities and signs, encrypts and decrypts for the
-apps you allow. Private keys never leave it.
+apps you allow. Client apps never receive the private key; explicit identity
+creation/import/backup in Grotto may transiently handle key material.
 
 ## One signer for all your Nostr apps
 
@@ -14,8 +15,9 @@ Grotto is the signer for **every** Nostr app that speaks one of:
   bunker (`grotto-daemon --bunker`; shared-gate signing with a distinct persistent
   transport key). See [daemon deployment](DAEMON_DEPLOYMENT.md#remote-signing-and-headless-deployment-g05)
   for custody, scoped/headless operation and the explicit network drop-in.
-  Pairing/QR and live relay configuration UI are the later G06 work, not the
-  old log-only “Listen for new connections” control.
+  Pair from **Connect** using paste, camera/file QR, or an identity-bound
+  single-use pairing link. [Pairing and live relay configuration](docs/pairing.md)
+  require explicit remote-signing enablement.
 
 One Grotto serves all of them at once. Each app names the identity it uses
 and Grotto asks you, per app, what it may do. That includes several
@@ -75,16 +77,53 @@ always visible, never minimized by those old settings.
 
 Desktop actions `grotto --new-identity` and `grotto --settings` reuse the existing
 management/onboarding window. The desktop entry handles `bunker:`, `nostrconnect:`
-and local `grotto:` activation, never `nostr:`. Until G06's identity-first pairing
-entry point lands, pairing links open the review path with an explicit unavailable
-message: they do not contact a relay or silently connect. The opportunistic
+and local `grotto:` activation, never `nostr:`. Pairing previews and the identity
+chooser precede supplied-relay contact. Another signer's `bunker://` link does not
+delegate custody: Grotto explains that unsupported use without contacting it. The opportunistic
 StatusNotifier uses `org.nostr.Grotto-symbolic`; it is Passive while the Shell signer
 module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
+
+## Management pages
+
+- **Home**: management-only identity selection, public-key copy/QR, pending reviews,
+  Signed today / Clients / Pending and connected clients. Signed today counts
+  successful daemon `sign_event` operations since local midnight, not publications;
+  clearing activity resets it. It reflects retained activity, not a lifetime ledger.
+- **Activity**: daemon metadata with event/client/outcome filters and explicit older
+  pages; no historical event JSON or message content is kept.
+- **Connect**: paste, camera/file QR, link entry and single-use pairing offers.
+  Local apps need no pairing. Approved remote connections waiting for relay OK
+  remain visibly incomplete, not paired.
+- **Settings**: background/login, appearance/accessibility, management lock,
+  screen-lock pause, required-confirmation event types, remote runtime/configuration,
+  1–30 day activity retention, and About. Required-confirmation defaults and Medium's
+  public-publishing set come from G03 policy data; final membership awaits owner sign-off.
+
+A client opens its label, verified principal, Full/Medium/Low trust, effective
+read-only policy rows, explicit editable permissions with absolute expiry, recent
+activity and Revoke. Lowering trust preserves explicit grants. Clearing remembered
+permissions is explicitly identity-scoped, as is `SetPermissions`; other identities
+are preserved. Editors use an owner/epoch/revision-bracketed permission snapshot,
+submit once with `expected_revision`, and surface conflicts instead of overwriting.
+Identity avatars open G09's pinned identity/backup page. “Default for older apps”
+is a separate daemon action, never changed by management selection.
+
+Blueprint is authoritative. Use **blueprint-compiler 0.22.2** (official GNOME
+release), GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80. Meson uses prebuilt nostrc libraries; select another CMake build with
+`meson setup <build> apps/grotto -Dcmake_build_dir=/absolute/path/to/cmake-build`.
+On macOS, add `-Ddependency_prefixes="$(brew --prefix)"` for installed nsync/flatcc libraries without pkg-config metadata.
+Both builds enforce the API
+ceiling; production source/resource inventories exclude the retired pages and
+unproven hardware/multisig/delegation/social features. `signer/blueprint-drift`
+checks committed `.ui` and the generated kind display catalogue. The native Linux
+`signer/ui-layout` renders real templates and saves light/dark 360px screenshots
+to `<build>/screenshots/`; `signer/home-model` drives the real model over a private
+bus. These are local source/layout proofs, not the G12 installed GNOME/Orca matrix.
 
 ## Features
 
 - **Secure Identity Management**: Securely store and manage Nostr identities
-- **Permission Control**: Granular control over which applications can access your keys
+- **Permission Control**: Scoped control over which applications may sign, encrypt or decrypt
 - **DBus Integration**: Provides a D-Bus interface for system integration
 - **Cross-Platform**: Works on Linux, macOS, and other platforms
 - **User Approval Flow**: Interactive approval dialogs for signing requests
@@ -101,9 +140,10 @@ The application consists of two main components:
 
 ### Dependencies
 
-- GTK 4.0+
-- libadwaita
-- GLib 2.68+
+- GTK 4.14+
+- libadwaita 1.5+
+- GLib 2.80+
+- blueprint-compiler 0.22.2
 - CMake 3.16+
 - pkg-config
 - Compiler with C11 support

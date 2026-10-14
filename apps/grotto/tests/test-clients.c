@@ -236,6 +236,27 @@ static void test_live_tier_lowering(ControlFixture *f, gconstpointer data) {
   g_mutex_clear(&b.mutex); g_cond_clear(&b.cond);
 }
 #endif
+static void test_confirmation_settings(ControlFixture *f, gconstpointer data) {
+  (void)data; SignerCaller who = {.kind=SIGNER_CALLER_EXE, .principal="exe:/confirmation-settings", .sender="policy", .same_uid=TRUE};
+  TestReply consent = {0}; g_autoptr(SignerGateHandle) h = submit_request(f, &who, SIGNER_TRANSPORT_DBUS, SIGNER_GATE_GET_PUBLIC_KEY, NULL, 0, &consent);
+  decision(f, pending_id(f, 0), TRUE, FALSE); wait_count(&consent.count, 1); clear_reply(&consent);
+  g_autoptr(GVariant) full = control_call(f, "SetClientTrust", g_variant_new("(ss)", who.principal, "full"));
+  SignerPermissions *policy = signer_approval_service_permissions(f->approval);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Grotto");
+  g_autofree gchar *note = g_strdup_printf("%u", NOSTR_KIND_TEXT_NOTE); const gchar *custom[] = {note, NULL};
+  guint64 before = get_revision(f); g_assert_true(g_settings_set_strv(settings, "require-confirmation-kinds", custom));
+  g_assert_cmpuint(get_revision(f), >, before);
+  g_assert_cmpint(signer_permissions_evaluate(policy, who.principal, "identity", "event", NOSTR_KIND_TEXT_NOTE, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  const gchar *empty[] = {NULL}; g_assert_true(g_settings_set_strv(settings, "require-confirmation-kinds", empty));
+  g_autoptr(GVariant) status = get_status(f);
+  g_assert_cmpint(signer_permissions_evaluate(policy, who.principal, "identity", "event", NOSTR_KIND_TEXT_NOTE, FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+  const gchar *invalid[] = {"-1", NULL}; g_assert_true(g_settings_set_strv(settings, "require-confirmation-kinds", invalid));
+  g_clear_pointer(&status, g_variant_unref); status = get_status(f);
+  g_assert_cmpint(signer_permissions_evaluate(policy, who.principal, "identity", "event", NOSTR_KIND_CLIENT_AUTHENTICATION, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  g_assert_cmpint(signer_permissions_evaluate(policy, who.principal, "identity", "event", NOSTR_KIND_TEXT_NOTE, FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+  gboolean valid = TRUE; g_assert_true(g_variant_lookup(status, "confirmation_policy_valid", "b", &valid)); g_assert_false(valid);
+  g_settings_reset(settings, "require-confirmation-kinds");
+}
 static void test_store_failures(ControlFixture *f, gconstpointer data) {
   (void)f; (void)data; g_autofree gchar *dir = g_dir_make_tmp("g04-clients-XXXXXX", NULL);
   g_autoptr(GError) error = NULL; g_autoptr(GrottoClients) c = grotto_clients_new(dir, &error); g_assert_no_error(error);
@@ -314,6 +335,7 @@ int main(int argc, char **argv) {
 #define ADD(name, fn) g_test_add(name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
   ADD("/control/contract", test_contract); ADD("/control/conflict-epoch", test_conflict);
   ADD("/control/auth-pause-asymmetry", test_auth); ADD("/control/real-daemon-export", test_daemon_export);
+  ADD("/control/confirmation-settings-live", test_confirmation_settings);
   ADD("/control/custody-export", test_export);
   ADD("/clients/transports-origins-identity", test_transports); ADD("/clients/failed-not-admitted", test_failed_not_client);
   ADD("/clients/permission-created-observed-use", test_permission_created_client);

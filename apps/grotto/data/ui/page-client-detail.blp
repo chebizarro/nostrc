@@ -1,0 +1,48 @@
+using Gtk 4.0;
+using Adw 1;
+template $GrottoClientDetail: Adw.NavigationPage {
+  title: _("Client");
+  child: Adw.NavigationView navigation {
+    Adw.NavigationPage {
+      title: _("Client");
+      child: Adw.ToolbarView {
+        [top] Adw.HeaderBar { show-start-title-buttons: false; show-end-title-buttons: false; }
+        Adw.PreferencesPage {
+          Adw.PreferencesGroup {
+            Adw.EntryRow label_entry { title: _("Client label"); show-apply-button: true; }
+            Adw.ActionRow fingerprint { title: _("Verified identity / fingerprint"); subtitle-lines: 3; }
+            Adw.ActionRow connected_since { title: _("Connected since"); }
+            Label message { wrap: true; xalign: 0; }
+          }
+          Adw.PreferencesGroup {
+            title: _("Trust level");
+            description: _("Required-confirmation events and key exports still need review. Explicit denials always win.");
+            Adw.ActionRow { title: _("Full"); subtitle: _("Auto-sign all requests");
+              activatable-widget: full;
+              [prefix] CheckButton full { accessibility { label: _("Full: Auto-sign all requests"); } }
+            }
+            Adw.ActionRow { title: _("Medium"); subtitle: _("Ask for sensitive operations");
+              activatable-widget: medium;
+              [prefix] CheckButton medium { group: full; accessibility { label: _("Medium: Ask for sensitive operations"); } }
+            }
+            Adw.ActionRow { title: _("Low"); subtitle: _("Ask for every request");
+              activatable-widget: low;
+              [prefix] CheckButton low { group: full; active: true; accessibility { label: _("Low: Ask for every request"); } }
+            }
+            Adw.ActionRow permissions { title: _("Permissions"); activatable: true;
+              [suffix] Image { icon-name: "go-next-symbolic"; }
+            }
+            Button clear_permissions { label: _("Clear remembered permissions"); halign: start; }
+          }
+          Adw.PreferencesGroup {
+            title: _("Recent activity");
+            ListBox activity { selection-mode: none; styles ["boxed-list"] }
+          }
+          Adw.PreferencesGroup {
+            Button revoke { label: _("Revoke client"); halign: start; styles ["destructive-action"] }
+          }
+        }
+      };
+    }
+  };
+}

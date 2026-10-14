@@ -508,6 +508,16 @@ if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_def
   add_dependencies(signer-tests test-clients test-activity)
 endif()
 
+# Real management templates and startup/actions, not test-only lookalikes.
+get_target_property(_g07_gui_sources grotto SOURCES)
+list(REMOVE_ITEM _g07_gui_sources "${APP_GRESOURCE_C}")
+add_library(grotto_app_test_core STATIC ${_g07_gui_sources})
+target_include_directories(grotto_app_test_core PRIVATE $<TARGET_PROPERTY:grotto,INCLUDE_DIRECTORIES>)
+target_compile_definitions(grotto_app_test_core PRIVATE GROTTO_APP_NO_MAIN=1
+  $<TARGET_PROPERTY:grotto,COMPILE_DEFINITIONS>)
+target_link_directories(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_DIRECTORIES>)
+target_link_libraries(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_LIBRARIES>)
+
 # G07: production controller and dialog, with I/O mocked only at the bus.
 add_library(grotto_approval_test_core STATIC
   ../src/approval-controller.c ../src/ui/approval_dialog.c)
@@ -522,15 +532,6 @@ set_tests_properties(signer/approval-controller PROPERTIES TIMEOUT 90 LABELS "si
 add_dependencies(signer-tests test-approval-controller)
 if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitions)
   if(NOT APPLE)
-    # Exercise the real main_app startup/actions and management page, not stubs.
-    get_target_property(_g07_gui_sources grotto SOURCES)
-    list(REMOVE_ITEM _g07_gui_sources "${APP_GRESOURCE_C}")
-    add_library(grotto_app_test_core STATIC ${_g07_gui_sources})
-    target_include_directories(grotto_app_test_core PRIVATE $<TARGET_PROPERTY:grotto,INCLUDE_DIRECTORIES>)
-    target_compile_definitions(grotto_app_test_core PRIVATE GROTTO_APP_NO_MAIN=1
-      $<TARGET_PROPERTY:grotto,COMPILE_DEFINITIONS>)
-    target_link_directories(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_DIRECTORIES>)
-    target_link_libraries(grotto_app_test_core PUBLIC $<TARGET_PROPERTY:grotto,LINK_LIBRARIES>)
     set(_g07_integration_resource "${APP_GRESOURCE_C}")
   else()
     set(_g07_integration_resource "${_APPROVAL_GRESOURCE_C}")
@@ -573,6 +574,23 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
 endif()
 
 include(identity-tests.cmake)
+add_executable(test-home-dashboard test-home-dashboard.c ../src/home-model.c)
+target_include_directories(test-home-dashboard PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-home-dashboard PRIVATE PkgConfig::GLIB nostrc-test-bus)
+target_compile_options(test-home-dashboard PRIVATE -Wall -Wextra -Werror)
+add_test(NAME signer/home-model COMMAND test-home-dashboard)
+set_tests_properties(signer/home-model PROPERTIES TIMEOUT 90 LABELS "signer;unit;home" ENVIRONMENT "GSETTINGS_BACKEND=memory")
+add_executable(test-ui-layout test-ui-layout.c ${APP_GRESOURCE_C})
+target_include_directories(test-ui-layout PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR})
+target_link_libraries(test-ui-layout PRIVATE grotto_app_test_core nostrc-test-bus)
+target_compile_definitions(test-ui-layout PRIVATE
+  G10_CONTROL_XML="${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.Control1.xml"
+  G10_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
+add_dependencies(test-ui-layout grotto-schemas grotto_resources)
+add_test(NAME signer/ui-layout COMMAND test-ui-layout)
+set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;home"
+  ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
+add_dependencies(signer-tests test-home-dashboard test-ui-layout)
 # G08: real background state machine, fake portal only on the private bus.
 if(UNIX)
   add_library(grotto_background_test_core STATIC ../src/background.c)
@@ -597,7 +615,7 @@ if(UNIX)
     ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto")
 endif()
 set(_g08_desktop_worker)
-if(TARGET grotto_app_test_core)
+if(TARGET grotto_app_test_core AND NOT APPLE)
   add_executable(test-desktop-activation test-desktop-activation.c ${APP_GRESOURCE_C})
   target_include_directories(test-desktop-activation PRIVATE ${SIGNER_INCLUDE_DIRS})
   target_link_libraries(test-desktop-activation PRIVATE grotto_app_test_core nostrc-test-bus)
@@ -607,6 +625,8 @@ if(TARGET grotto_app_test_core)
   set(_g08_desktop_worker $<TARGET_FILE:test-desktop-activation>)
 endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME signer/blueprint-drift COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test-blueprint-drift.py ${CMAKE_CURRENT_SOURCE_DIR}/..)
+set_tests_properties(signer/blueprint-drift PROPERTIES TIMEOUT 90 LABELS "signer;ui;blueprint")
 add_test(NAME signer/desktop-contract COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test-desktop-contract.py ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${_g08_desktop_worker})
 set_tests_properties(signer/desktop-contract PROPERTIES TIMEOUT 90 LABELS "signer;desktop;unit"

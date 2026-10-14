@@ -201,7 +201,7 @@ struct _GnEventHistory {
   gboolean dirty;       /* Whether data needs saving */
   gboolean activity_mode, activity_healthy, activity_writable;
   guint64 activity_sequence;
-  guint activity_timer;
+  guint activity_timer, activity_retention_days;
 };
 
 G_DEFINE_FINAL_TYPE(GnEventHistory, gn_event_history, G_TYPE_OBJECT)
@@ -846,7 +846,7 @@ gn_event_history_export_to_file(GnEventHistory *self,
 /* G04: the same history manager, in daemon metadata mode. The old process-local
  * GUI/bunker entries are not evidence of daemon operations and are not migrated. */
 #define ACTIVITY_MAX 10000u
-#define ACTIVITY_AGE (30 * 24 * 60 * 60)
+#define ACTIVITY_AGE ((self->activity_retention_days ? self->activity_retention_days : 30) * 24 * 60 * 60)
 static const gchar *activity_strings[] = {
   "request_id", "transport", "principal", "identity", "operation", "outcome", "error_code"
 };
@@ -1044,3 +1044,21 @@ gboolean gn_event_history_clear_activity(GnEventHistory *self, GError **error) {
 }
 gboolean gn_event_history_activity_healthy(GnEventHistory *self) { return self->activity_healthy; }
 guint64 gn_event_history_activity_sequence(GnEventHistory *self) { return self->activity_sequence; }
+void gn_event_history_set_retention_days(GnEventHistory *self, guint days) {
+  g_return_if_fail(self->activity_mode);
+  self->activity_retention_days = CLAMP(days, 1, 30);
+  if (self->entries->len) activity_save(self, NULL);
+  else activity_schedule_retention(self);
+}
+guint gn_event_history_signed_today(GnEventHistory *self) {
+  g_return_val_if_fail(self->activity_mode, 0);
+  g_autoptr(GDateTime) now = g_date_time_new_now_local();
+  g_autoptr(GDateTime) midnight = g_date_time_new_local(g_date_time_get_year(now), g_date_time_get_month(now), g_date_time_get_day_of_month(now), 0, 0, 0);
+  gint64 start = g_date_time_to_unix(midnight); guint count = 0;
+  for (guint i = 0; i < self->entries->len; i++) {
+    GnEventHistoryEntry *entry = self->entries->pdata[i]; const gchar *op = NULL, *outcome = NULL;
+    g_variant_lookup(entry->metadata, "operation", "&s", &op); g_variant_lookup(entry->metadata, "outcome", "&s", &outcome);
+    if (entry->timestamp >= start && !g_strcmp0(op, "sign_event") && !g_strcmp0(outcome, "success")) count++;
+  }
+  return count;
+}

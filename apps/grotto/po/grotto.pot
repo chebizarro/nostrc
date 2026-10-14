@@ -1,14 +1,14 @@
 # SOME DESCRIPTIVE TITLE.
-# Copyright (C) 2024 The grotto Authors
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
 # This file is distributed under the same license as the grotto package.
 # FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
 #
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: grotto 0.1.0\n"
-"Report-Msgid-Bugs-To: https://github.com/gnostr/grotto/issues\n"
-"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"Project-Id-Version: grotto\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-14 13:02-0700\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,654 +17,939 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: src/main_app.c
-msgid "Grotto"
+#: data/ui/approval-dialog.ui:10 data/ui/approval-dialog.ui:40
+msgid "Review request"
 msgstr ""
 
-#: src/main_app.c
-msgid "A secure Nostr key manager and remote signer"
+#: data/ui/approval-dialog.ui:117
+msgid "Previous"
 msgstr ""
 
-#: data/ui/welcome-page.ui
-msgid "Welcome to Grotto"
+#: data/ui/approval-dialog.ui:122
+msgid "1 of 1"
 msgstr ""
 
-#: data/ui/welcome-page.ui
-msgid "Securely manage your Nostr identities"
-msgstr ""
-
-#: data/ui/welcome-page.ui
-msgid "Create New Profile"
-msgstr ""
-
-#: data/ui/welcome-page.ui
-msgid "Import Existing Profile"
-msgstr ""
-
-#: data/ui/welcome-page.ui
-msgid "Connect Hardware Wallet"
-msgstr ""
-
-#: data/ui/lock-screen.ui
-msgid "Session Locked"
-msgstr ""
-
-#: data/ui/lock-screen.ui
-msgid "Enter your password to unlock"
-msgstr ""
-
-#: data/ui/lock-screen.ui
-msgid "Password"
-msgstr ""
-
-#: data/ui/lock-screen.ui
-msgid "Unlock"
-msgstr ""
-
-#: data/ui/lock-screen.ui
-msgid "Forgot Password?"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Signature Request"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "An application is requesting to sign an event"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Application"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Event Type"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Content Preview"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Deny"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Approve"
-msgstr ""
-
-#: data/ui/approval-dialog.ui
-msgid "Remember this decision"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "Home"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "Identities"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "Permissions"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "Sessions"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "History"
-msgstr ""
-
-#: data/ui/signer-window.ui
-msgid "Settings"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Appearance"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Theme"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "System"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Light"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Dark"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "High Contrast"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Language"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Security"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Auto-lock Timeout"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "minutes"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Require Password"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Change Password"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Network"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Use Tor"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Bootstrap Relays"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Advanced"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Hardware Keystore"
-msgstr ""
-
-#: data/ui/page-settings.ui
-msgid "Enable hardware-backed key storage"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Profile"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Public Key"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Copy"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "View Events"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Manage Relays"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Backup Keys"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Delegations"
-msgstr ""
-
-#: data/ui/profile-dashboard.ui
-msgid "Sign Message"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Create Profile"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Display Name"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Enter a name for this identity"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Passphrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Create a strong passphrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Confirm Passphrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Recovery Hint"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Optional hint to help remember your passphrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Use Hardware Key"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Create"
-msgstr ""
-
-#: data/ui/sheets/sheet-create-profile.ui
-msgid "Cancel"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Import Profile"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Import Method"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "NIP-49 Encrypted Backup"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Paste your encrypted backup key (ncryptsec...)"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Mnemonic Seed Phrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Enter your 12 or 24 word seed phrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Hardware Device"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Connect your Ledger or Trezor device"
-msgstr ""
-
-#: data/ui/sheets/sheet-import-key.ui
-msgid "Import"
-msgstr ""
-
-#: data/ui/sheets/sheet-backup.ui
-msgid "Backup Keys"
-msgstr ""
-
-#: data/ui/sheets/sheet-backup.ui
-msgid "Export Encrypted Backup"
-msgstr ""
-
-#: data/ui/sheets/sheet-backup.ui
-msgid "Show Recovery Phrase"
-msgstr ""
-
-#: data/ui/sheets/sheet-backup.ui
-msgid "Warning: Never share your recovery phrase or backup key with anyone"
-msgstr ""
-
-#: data/ui/page-history.ui
-msgid "Event History"
-msgstr ""
-
-#: data/ui/page-history.ui
-msgid "No events yet"
-msgstr ""
-
-#: data/ui/page-history.ui
-msgid "Signed events will appear here"
-msgstr ""
-
-#: data/ui/page-history.ui
-msgid "Clear History"
-msgstr ""
-
-#: data/ui/page-history.ui
-msgid "Export"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Keyboard Shortcuts"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "General"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Lock Session"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Quit"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Show Shortcuts"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Navigation"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Next Tab"
-msgstr ""
-
-#: data/ui/shortcuts-window.ui
-msgid "Previous Tab"
-msgstr ""
-
-#: data/ui/sheets/sheet-social-recovery.ui
-msgid "Social Recovery"
-msgstr ""
-
-#: data/ui/sheets/sheet-social-recovery.ui
-msgid "Set up trusted guardians to help recover your keys"
-msgstr ""
-
-#: data/ui/sheets/sheet-social-recovery.ui
-msgid "Add Guardian"
-msgstr ""
-
-#: data/ui/sheets/sheet-social-recovery.ui
-msgid "Threshold"
-msgstr ""
-
-#: data/ui/sheets/sheet-social-recovery.ui
-msgid "Number of guardians required to recover"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Delegations"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Grant signing permissions to other keys"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Create Delegation"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Delegatee Public Key"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Allowed Event Kinds"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Valid From"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Valid Until"
-msgstr ""
-
-#: data/ui/sheets/sheet-delegation.ui
-msgid "Revoke"
-msgstr ""
-
-#: data/ui/sheets/sheet-hw-wallet.ui
-msgid "Hardware Wallet"
-msgstr ""
-
-#: data/ui/sheets/sheet-hw-wallet.ui
-msgid "Connect your hardware wallet"
-msgstr ""
-
-#: data/ui/sheets/sheet-hw-wallet.ui
-msgid "Scanning for devices..."
-msgstr ""
-
-#: data/ui/sheets/sheet-hw-wallet.ui
-msgid "No devices found"
-msgstr ""
-
-#: data/ui/sheets/sheet-hw-wallet.ui
-msgid "Connect"
-msgstr ""
-
-#: data/ui/sheets/sheet-qr-display.ui
-msgid "QR Code"
-msgstr ""
-
-#: data/ui/sheets/sheet-qr-display.ui
-msgid "Scan this code to import"
-msgstr ""
-
-#: data/ui/sheets/sheet-qr-display.ui
-msgid "Copy to Clipboard"
-msgstr ""
-
-#: src/i18n.c
-msgid "English"
-msgstr ""
-
-#: src/i18n.c
-msgid "System Default"
-msgstr ""
-
-#. Language names - displayed in native script
-#: src/i18n.c
-msgid "Japanese"
-msgstr ""
-
-#: src/i18n.c
-msgid "Spanish"
-msgstr ""
-
-#: src/i18n.c
-msgid "Portuguese (Brazil)"
-msgstr ""
-
-#: src/i18n.c
-msgid "Indonesian"
-msgstr ""
-
-#: src/i18n.c
-msgid "Persian"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "About"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "Version"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "A secure NIP-46 remote signer for Nostr"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "Website"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "Report an Issue"
-msgstr ""
-
-#: src/ui/about_dialog.c
-msgid "License"
-msgstr ""
-
-#: src/session-manager.c
-msgid "Session locked due to inactivity"
-msgstr ""
-
-#: src/session-manager.c
-msgid "Session locked by user"
-msgstr ""
-
-#: src/session-manager.c
-msgid "Incorrect password"
-msgstr ""
-
-#: src/session-manager.c
-msgid "Too many failed attempts. Please wait."
-msgstr ""
-
-#: src/bunker_service.c
-msgid "Connection established"
-msgstr ""
-
-#: src/bunker_service.c
-msgid "Connection failed"
-msgstr ""
-
-#: src/bunker_service.c
-msgid "Request approved"
-msgstr ""
-
-#: src/bunker_service.c
-msgid "Request denied"
-msgstr ""
-
-#. Onboarding messages
-#: src/ui/onboarding-assistant.c
-msgid "Welcome"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "Let's set up your secure key management"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "Create Your First Identity"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "Or import an existing one"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "Setup Complete"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "You're all set to start using Grotto"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
-msgid "Get Started"
-msgstr ""
-
-#: src/ui/onboarding-assistant.c
+#: data/ui/approval-dialog.ui:127 data/ui/onboarding-assistant.ui:330
 msgid "Next"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c
+#: data/ui/approval-dialog.ui:134
+msgid "Requests in this flow"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:148
+msgid "Approve selected once"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:179
+msgid "Allow NIP-44 encryption for this client and identity for 10 minutes"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:184
+msgid ""
+"Allow encrypted-message seals within this flow's limit (up to 10 minutes)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:191
+msgid "Remember this decision for this scope"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:205
+msgid "Deny"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:206
+msgid "Deny once (Ctrl+D, Escape)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:211
+msgid "Approve"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:213
+msgid "Approve (Ctrl+A)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:221
+msgid "Not now"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:222
+msgid "Keep this request waiting"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:229
+msgid "Details"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:250
+msgid ""
+"Changing trust is separate from remembering this decision. Lowering trust "
+"keeps explicit permissions."
+msgstr ""
+
+#: data/ui/approval-dialog.ui:260
+msgid "Change trust level"
+msgstr ""
+
+#: data/ui/lock-screen.ui:57
+msgid "Management locked"
+msgstr ""
+
+#: data/ui/lock-screen.ui:68
+msgid "Enter your password to unlock"
+msgstr ""
+
+#: data/ui/lock-screen.ui:93 data/ui/widgets/gn-secure-entry.ui:28
+msgid "Password"
+msgstr ""
+
+#: data/ui/lock-screen.ui:120
+msgid "_Unlock"
+msgstr ""
+
+#: data/ui/lock-screen.ui:147
+msgid "Locked due to inactivity"
+msgstr ""
+
+#: data/ui/lock-screen.ui:156
+msgid "Locked at 12:00"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:10
+msgid "Set up Grotto"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:21
+msgid "Identity setup"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:26
+msgid "Skip setup"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:51
+msgid "Your identity, your control"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:52
+msgid ""
+"Keys live in your system keyring. Applications never receive your secret "
+"key, and each application asks for permission before signing. Grotto's "
+"explicit key-management screens may handle your recovery material briefly."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:66
+msgid "How would you like to start?"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:75 data/ui/onboarding-assistant.ui:104
+msgid "Create an identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:81 data/ui/onboarding-assistant.ui:136
+msgid "Import an identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:87 data/ui/onboarding-assistant.ui:189
+#: data/ui/page-connect.ui:13
+msgid "Connect an application"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:113
+msgid ""
+"Grotto generates a BIP-39 recovery phrase and stores it with your key in the "
+"system keyring. No extra creation password is used."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:120 data/ui/onboarding-assistant.ui:152
+msgid "Local label (optional)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:145
+msgid ""
+"Enter nsec, a 64-character private hex key, an encrypted NIP-49 key, or seed "
+"words. Input is validated before storage."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:157
+msgid "This is a BIP-39 recovery phrase"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:164
+msgid "Private key or recovery phrase"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:169
+msgid "NIP-49 decryption passphrase (encrypted imports only)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:190
+msgid ""
+"Local GNOME applications need no manual registration: their first call asks "
+"for consent. Remote applications pair from Connect after you have a signable "
+"identity. If you do not have one yet, go Back and create or import it first."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:204
+msgid "Verify your stored identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:213
+msgid ""
+"One review covers signing an unpublished event and verifying it, then NIP-44 "
+"encryption and decryption with an ephemeral peer. Nothing goes to relays, "
+"and no client permissions are created."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:220
+msgid "Retry self-test"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:236
+msgid "Back up your identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:245
+msgid ""
+"Anyone with these seed words has full control. Write them down privately; "
+"never paste them into software you do not trust. Grotto developers will "
+"never ask for them."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:260
+msgid "Copy seed words (clipboard managers may retain them)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:265
+msgid "Retry seed-word export"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:270
+msgid "Use encrypted backup instead…"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:275
+msgid "I have safely backed up my identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:288
+msgid "Ready to review signing requests"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:325 data/ui/sheets/sheet-qr-scanner.ui:207
 msgid "Back"
 msgstr ""
 
-#: src/ui/onboarding-assistant.c
-msgid "Skip"
+#: data/ui/page-home.ui:10 data/ui/signer-window.ui:100
+#: data/ui/signer-window.ui:116 data/ui/signer-window.ui:214
+#: data/ui/signer-window.ui:220
+msgid "Home"
 msgstr ""
 
-#. Common actions
-msgid "Save"
+#: data/ui/page-home.ui:22
+msgid "Your identities"
 msgstr ""
 
-msgid "Delete"
+#: data/ui/page-home.ui:48
+msgid "Create or import an identity"
 msgstr ""
 
-msgid "Edit"
+#: data/ui/page-home.ui:49
+msgid "Your management selection does not change an app’s identity."
 msgstr ""
 
+#: data/ui/page-home.ui:55 data/ui/page-home.ui:57
+msgid "Copy public key"
+msgstr ""
+
+#: data/ui/page-home.ui:65 data/ui/page-home.ui:67
+msgid "Show public-key QR code"
+msgstr ""
+
+#: data/ui/page-home.ui:99
+msgid "Signed today"
+msgstr ""
+
+#: data/ui/page-home.ui:119
+msgid "Clients"
+msgstr ""
+
+#: data/ui/page-home.ui:138
+msgid "Pending"
+msgstr ""
+
+#: data/ui/page-home.ui:155
+msgid "Connected clients"
+msgstr ""
+
+#: data/ui/page-home.ui:166
+msgid "No connected apps"
+msgstr ""
+
+#: data/ui/page-home.ui:167
+msgid "Tap Connect to pair your first app"
+msgstr ""
+
+#: data/ui/page-home.ui:171 data/ui/page-connect.ui:10
+#: data/ui/signer-window.ui:152 data/ui/signer-window.ui:168
+#: data/ui/signer-window.ui:240
+msgid "Connect"
+msgstr ""
+
+#: data/ui/page-connect.ui:14
+msgid ""
+"Choose an identity and review the connection before any supplied relay is "
+"contacted. New apps start at Low trust."
+msgstr ""
+
+#: data/ui/page-connect.ui:17
+msgid "Paste a Nostr Connect link"
+msgstr ""
+
+#: data/ui/page-connect.ui:18
+msgid "Preview a link from your clipboard"
+msgstr ""
+
+#: data/ui/page-connect.ui:34
+msgid "Scan a QR code"
+msgstr ""
+
+#: data/ui/page-connect.ui:35
+msgid "Use your camera or a QR image"
+msgstr ""
+
+#: data/ui/page-connect.ui:51
+msgid "Open a link"
+msgstr ""
+
+#: data/ui/page-connect.ui:52
+msgid "Choose a bunker:// or nostrconnect:// link file"
+msgstr ""
+
+#: data/ui/page-connect.ui:68
+msgid "Create a pairing link for an app"
+msgstr ""
+
+#: data/ui/page-connect.ui:69
+msgid "A single-use link and QR code, with an explicit identity"
+msgstr ""
+
+#: data/ui/page-connect.ui:89 data/ui/page-settings.ui:123
+msgid "Remote signing"
+msgstr ""
+
+#: data/ui/page-connect.ui:90 data/ui/page-settings.ui:127
+msgid "Connecting to signer…"
+msgstr ""
+
+#: data/ui/page-connect.ui:96
+msgid ""
+"Local GNOME applications need no pairing. They ask the first time they call "
+"Grotto, and you choose what they may do. Remote apps need remote signing "
+"enabled in Settings; approving a connection does not grant signing "
+"permissions."
+msgstr ""
+
+#: data/ui/page-client-detail.ui:10 data/ui/page-client-detail.ui:15
+msgid "Client"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:30
+msgid "Client label"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:36
+msgid "Verified identity / fingerprint"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:42
+msgid "Connected since"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:55
+msgid "Trust level"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:56
+msgid ""
+"Required-confirmation events and key exports still need review. Explicit "
+"denials always win."
+msgstr ""
+
+#: data/ui/page-client-detail.ui:59
+msgid "Full"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:60
+msgid "Auto-sign all requests"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:65
+msgid "Full: Auto-sign all requests"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:73
+msgid "Medium"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:74
+msgid "Ask for sensitive operations"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:80
+msgid "Medium: Ask for sensitive operations"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:88
+msgid "Low"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:89
+msgid "Ask for every request"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:96
+msgid "Low: Ask for every request"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:104
+msgid "Permissions"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:115
+msgid "Clear remembered permissions"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:123
+msgid "Recent activity"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:138
+msgid "Revoke client"
+msgstr ""
+
+#: data/ui/page-history.ui:10 data/ui/page-settings.ui:153
+#: data/ui/signer-window.ui:126 data/ui/signer-window.ui:142
+#: data/ui/signer-window.ui:230
+msgid "Activity"
+msgstr ""
+
+#: data/ui/page-history.ui:13
+msgid "Signer activity"
+msgstr ""
+
+#: data/ui/page-history.ui:14
+msgid ""
+"Daemon-recorded outcomes, not publication receipts. No content is stored."
+msgstr ""
+
+#: data/ui/page-history.ui:17
+msgid "Filter by client"
+msgstr ""
+
+#: data/ui/page-history.ui:19
+msgid "Filter activity by client"
+msgstr ""
+
+#: data/ui/page-history.ui:25
+msgid "Event type number (empty for all)"
+msgstr ""
+
+#: data/ui/page-history.ui:30
+msgid "Outcome"
+msgstr ""
+
+#: data/ui/page-history.ui:34
+msgid "All outcomes"
+msgstr ""
+
+#: data/ui/page-history.ui:65
+msgid "Load older activity"
+msgstr ""
+
+#: data/ui/page-history.ui:71
+msgid "Clear activity…"
+msgstr ""
+
+#: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:44
+#: data/ui/signer-window.ui:178 data/ui/signer-window.ui:194
+#: data/ui/signer-window.ui:250 data/org.nostr.Grotto.desktop:30
+msgid "Settings"
+msgstr ""
+
+#: data/ui/page-settings.ui:13
+msgid "Appearance and accessibility"
+msgstr ""
+
+#: data/ui/page-settings.ui:16
+msgid "Appearance"
+msgstr ""
+
+#: data/ui/page-settings.ui:20 data/ui/page-settings.ui:54
+msgid "System"
+msgstr ""
+
+#: data/ui/page-settings.ui:21
+msgid "Light"
+msgstr ""
+
+#: data/ui/page-settings.ui:22
+msgid "Dark"
+msgstr ""
+
+#: data/ui/page-settings.ui:23
+msgid "High contrast"
+msgstr ""
+
+#: data/ui/page-settings.ui:31
+msgid "Force high contrast"
+msgstr ""
+
+#: data/ui/page-settings.ui:36
+msgid "High-contrast colours"
+msgstr ""
+
+#: data/ui/page-settings.ui:40
+msgid "Black on white"
+msgstr ""
+
+#: data/ui/page-settings.ui:41
+msgid "White on black"
+msgstr ""
+
+#: data/ui/page-settings.ui:42
+msgid "Yellow on black"
+msgstr ""
+
+#: data/ui/page-settings.ui:50
+msgid "Language (restart required)"
+msgstr ""
+
+#: data/ui/page-settings.ui:70
+msgid "Security"
+msgstr ""
+
+#: data/ui/page-settings.ui:71
+msgid ""
+"UI lock protects management, not the key backend. Pause signing stops "
+"authorised requests too."
+msgstr ""
+
+#: data/ui/page-settings.ui:74
+msgid "Lock management after"
+msgstr ""
+
+#: data/ui/page-settings.ui:78
+msgid "Never"
+msgstr ""
+
+#: data/ui/page-settings.ui:79
+msgid "1 minute"
+msgstr ""
+
+#: data/ui/page-settings.ui:80
+msgid "5 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:81
+msgid "15 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:82
+msgid "30 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:83
+msgid "1 hour"
+msgstr ""
+
+#: data/ui/page-settings.ui:91
+msgid "Lock management on system idle"
+msgstr ""
+
+#: data/ui/page-settings.ui:96
+msgid "Pause signing on screen lock"
+msgstr ""
+
+#: data/ui/page-settings.ui:97
+msgid "Resume requires an unlocked, observed session"
+msgstr ""
+
+#: data/ui/page-settings.ui:102
+msgid "Always confirm these event types"
+msgstr ""
+
+#: data/ui/page-settings.ui:103
+msgid "Overrides remembered allows and trust levels"
+msgstr ""
+
+#: data/ui/page-settings.ui:114
+msgid "Pause signing"
+msgstr ""
+
+#: data/ui/page-settings.ui:126
+msgid "Runtime status"
+msgstr ""
+
+#: data/ui/page-settings.ui:133
+msgid "Relays and method allowlist"
+msgstr ""
+
+#: data/ui/page-settings.ui:134
+msgid "Changes apply without restarting the signer"
+msgstr ""
+
+#: data/ui/page-settings.ui:145
+msgid "Reset remote endpoint…"
+msgstr ""
+
+#: data/ui/page-settings.ui:154
+msgid "Metadata only — no messages, secrets or event content."
+msgstr ""
+
+#: data/ui/page-settings.ui:157
+msgid "Keep activity (days)"
+msgstr ""
+
+#: data/ui/page-settings.ui:170
+msgid "View activity"
+msgstr ""
+
+#: data/ui/page-settings.ui:181
+msgid "About Grotto (Preview)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:10
+msgid "Identity and backup"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:34
+msgid "Identity to manage"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:59
+msgid "Local identity label"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:64
+msgid "Save local label"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:69
+msgid "Key backup and safety tips"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:70
+msgid ""
+"Your secret key gives full control. Never paste it into software you do not "
+"trust. Grotto developers never ask for it. Keep a private backup. Clipboard "
+"managers can retain anything you copy."
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:73
+msgid "Show seed words"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:74
+msgid "Primary backup for identities created in Grotto"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:78
+msgid "Show"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:99
+msgid "I have safely backed up this identity"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:104
+msgid "Confirm backup"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:109
+msgid "Encrypted export passphrase (NIP-49 only)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:121
+msgid "Export encrypted key (NIP-49)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:126
+msgid "Show encrypted key QR code"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:131
+msgid "Copy secret key…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:139
+msgid "Identity management"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:140
+msgid ""
+"Managing this identity never switches identities for another application."
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:143
+msgid "Default for older apps"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:144
+msgid "Only applications that do not specify an identity use this default"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:147
+msgid "Set default"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:157
+msgid "Retry identity self-test"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:162
+msgid "Create successor identity…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:167
+msgid "Export saved migration announcement"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:172
+msgid "Remove this identity…"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:14
+msgid "Management"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:209
+#: data/org.nostr.Grotto.desktop:3 packaging/appimage/grotto.desktop:3
+msgid "Grotto"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:20
+msgid "New identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:26
+msgid "Import identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:32
+msgid "Backup identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:38
+msgid "Lock management"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:50
+msgid "Close window"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:56
+msgid "Quit approval UI (authorised signing continues)"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:62
+msgid "Keyboard shortcuts"
+msgstr ""
+
+#: data/ui/signer-window.ui:15
+msgid "Grotto main window"
+msgstr ""
+
+#: data/ui/signer-window.ui:55 data/ui/signer-window.ui:57
+msgid "Toggle sidebar"
+msgstr ""
+
+#: data/ui/signer-window.ui:64
+msgid "Preview"
+msgstr ""
+
+#: data/ui/signer-window.ui:71
+msgid "Application menu"
+msgstr ""
+
+#: data/ui/signer-window.ui:83
+msgid "Sections"
+msgstr ""
+
+#: data/ui/signer-window.ui:95
+msgid "Navigation sections"
+msgstr ""
+
+#: data/ui/signer-window.ui:272
+msgid "Bottom navigation"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:10
+#: data/ui/sheets/sheet-create-bunker.ui:28
+msgid "Connect with which identity?"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:22
+msgid "Choose the identity this application may request."
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:33
+msgid "Client label (optional)"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:38
+msgid "Remote signing relays"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:44
+msgid "Explicit relay URLs, separated by spaces"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:49
+msgid ""
+"Relays see your network address and connection timing. No default relays or "
+"Tor proxy are used."
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:55
+msgid "Enable remote signing"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:60
+msgid "Apply relay settings (no restart)"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:65
+msgid "Reading daemon status…"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:71
+msgid "Create single-use pairing link"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:77
+msgid "Set up / Reset remote signing endpoint…"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:82
 msgid "Close"
 msgstr ""
 
-msgid "OK"
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:52
+msgid "QR Code"
 msgstr ""
 
-msgid "Yes"
+#: data/ui/sheets/sheet-qr-display.ui:26
+msgid "Done"
 msgstr ""
 
-msgid "No"
+#: data/ui/sheets/sheet-qr-display.ui:87 data/ui/sheets/sheet-qr-scanner.ui:161
+msgid "Type"
 msgstr ""
 
-msgid "Confirm"
+#: data/ui/sheets/sheet-qr-display.ui:100
+#: data/ui/sheets/sheet-qr-scanner.ui:179
+msgid "Data"
 msgstr ""
 
-msgid "Error"
+#: data/ui/sheets/sheet-qr-display.ui:140
+msgid "Warning message"
 msgstr ""
 
-msgid "Warning"
+#: data/ui/sheets/sheet-qr-display.ui:155
+msgid "Copy to Clipboard"
 msgstr ""
 
-msgid "Success"
+#: data/ui/sheets/sheet-qr-scanner.ui:10
+msgid "Scan QR Code"
 msgstr ""
 
-msgid "Loading..."
+#: data/ui/sheets/sheet-qr-scanner.ui:26
+msgid "Cancel"
 msgstr ""
 
-msgid "Please wait..."
+#: data/ui/sheets/sheet-qr-scanner.ui:51
+msgid "Ready to scan"
 msgstr ""
 
-#. Time units
-msgid "second"
-msgid_plural "seconds"
-msgstr[0] ""
-msgstr[1] ""
-
-msgid "minute"
-msgid_plural "minutes"
-msgstr[0] ""
-msgstr[1] ""
-
-msgid "hour"
-msgid_plural "hours"
-msgstr[0] ""
-msgstr[1] ""
-
-msgid "day"
-msgid_plural "days"
-msgstr[0] ""
-msgstr[1] ""
-
-#. Event types
-msgid "Note"
+#: data/ui/sheets/sheet-qr-scanner.ui:68
+msgid "Start Camera"
 msgstr ""
 
-msgid "Direct Message"
+#: data/ui/sheets/sheet-qr-scanner.ui:86
+msgid "Paste from Clipboard"
 msgstr ""
 
-msgid "Reaction"
+#: data/ui/sheets/sheet-qr-scanner.ui:95
+msgid "Open File"
 msgstr ""
 
-msgid "Repost"
+#: data/ui/sheets/sheet-qr-scanner.ui:108
+msgid "Scan an nsec, ncryptsec, or hex key QR code"
 msgstr ""
 
-msgid "Zap Request"
+#: data/ui/sheets/sheet-qr-scanner.ui:152
+msgid "QR Code Scanned"
 msgstr ""
 
-msgid "Profile Update"
+#: data/ui/sheets/sheet-qr-scanner.ui:216
+msgid "Import Key"
 msgstr ""
 
-msgid "Contact List"
+#: data/ui/widgets/gn-secure-entry.ui:29
+msgid "Enter your password. Characters are hidden for security."
 msgstr ""
 
-msgid "Relay List"
+#: data/ui/widgets/gn-secure-entry.ui:38
+msgid "Show password"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:41
+msgid "Toggle password visibility"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:42
+msgid "Press to show or hide the password text"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:75
+msgid "Password strength meter"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:76
+msgid "Indicates the strength of your password from weak to very strong"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:82
+msgid "Weak"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:118
+msgid "Caps Lock is on"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:121
+msgid "Warning: Caps Lock is enabled"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
+msgid "Nostr Signer"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:5
+msgid ""
+"Keeps your Nostr keys and signs for all your Nostr apps (NIP-55L, NIP-46)"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:11
+msgid "nostr;signer;keys;identity;crypto;signing;"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:26
+msgid "New Identity"
+msgstr ""
+
+#: packaging/appimage/grotto.desktop:5
+msgid "Authorize Nostr app requests securely"
 msgstr ""

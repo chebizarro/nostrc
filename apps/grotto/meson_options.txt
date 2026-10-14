@@ -1,0 +1,2 @@
+option('cmake_build_dir', type: 'string', value: '', description: 'Prebuilt nostrc CMake directory (default: ../../build)')
+option('dependency_prefixes', type: 'array', value: [], description: 'Additional install prefixes for non-pkg-config dependencies such as nsync and flatccrt')

@@ -257,6 +257,13 @@ image.accent {
 
 /* ===== Approval Dialog Styles ===== */
 
+.grotto-badge {
+    border: 1px solid alpha(currentColor, 0.18);
+    border-radius: 999px;
+    padding: 2px 6px;
+    font-size: 0.82em;
+}
+
 /* Status banner for pending signature request */
 .status-banner {
   padding: 12px 16px;

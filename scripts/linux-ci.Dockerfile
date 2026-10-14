@@ -10,7 +10,7 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # toolchain (all workflows; clang for nostrc-ci, signet-ci, libgo-ci)
-    build-essential cmake ninja-build pkg-config clang \
+    build-essential cmake ninja-build meson pkg-config clang \
     # groundhog-ci.yml "Install build and display dependencies"
     libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
@@ -29,6 +29,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # local tooling: sources, debugging, the gate's tree sync and lock
     git python3 ca-certificates curl gdb rsync util-linux \
  && rm -rf /var/lib/apt/lists/*
+# Grotto Blueprint drift is checked with the same compiler on both supported
+# distributions, independently of their distro package version. Official tarball.
+RUN curl --fail --location --retry 3 \
+      https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz \
+      --output /tmp/blueprint.tar.xz \
+ && echo '231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  /tmp/blueprint.tar.xz' | sha256sum --check \
+ && mkdir -p /opt/blueprint \
+ && tar -xJf /tmp/blueprint.tar.xz --strip-components=1 -C /opt/blueprint \
+ && meson setup /tmp/blueprint-build /opt/blueprint --prefix=/usr/local \
+      -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+ && meson compile -C /tmp/blueprint-build \
+ && meson install -C /tmp/blueprint-build \
+ && blueprint-compiler --version | grep -x 0.22.2 \
+ && rm /tmp/blueprint.tar.xz
 # Ubuntu's stripped libsecret needs its matching dbgsym for LSan to match the
 # narrow secret_collection_signal suppression (nostrc-eixk6).
 RUN version="$(dpkg-query -W -f='${Version}' libsecret-1-0)" \
