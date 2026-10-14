@@ -540,6 +540,7 @@ static void signer_window_init(SignerWindow *self) {
     g_menu_append(app_section, "Keyboard Shortcuts\tCtrl+?", "win.show-shortcuts");
     g_menu_append(app_section, "About Grotto\tF1", "win.about");
     g_menu_append(app_section, "Pause signing", "app.pause-signing");
+    g_menu_append(app_section, "Resume signing…", "app.resume-signing");
     g_menu_append(app_section, "Quit approval UI (authorised signing continues)\tCtrl+Q", "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
@@ -618,10 +619,19 @@ GSettings *signer_get_app_settings(void) {
  *
  * Opens the create new profile dialog.
  */
+static void new_profile_closed(AdwDialog *dialog, SignerWindow *self) {
+  if (g_object_get_data(G_OBJECT(self), "grotto-new-profile") == dialog)
+    g_object_set_data(G_OBJECT(self), "grotto-new-profile", NULL);
+}
 void signer_window_show_new_profile(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  SheetCreateProfile *dialog = sheet_create_profile_new();
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+  AdwDialog *dialog = g_object_get_data(G_OBJECT(self), "grotto-new-profile");
+  if (!dialog) {
+    dialog = ADW_DIALOG(sheet_create_profile_new());
+    g_object_set_data(G_OBJECT(self), "grotto-new-profile", dialog);
+    g_signal_connect_object(dialog, "closed", G_CALLBACK(new_profile_closed), self, 0);
+  }
+  adw_dialog_present(dialog, GTK_WIDGET(self));
 }
 
 /**

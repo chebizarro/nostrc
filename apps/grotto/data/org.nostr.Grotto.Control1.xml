@@ -3,7 +3,11 @@
      object /org/nostr/signer/grotto; NOT the approver's org.nostr.Grotto name.
      Sensitive reads and mutations require signer_caller_is_approver().
      GetStatus is an identity-free coarse status for any same-session user;
-     SetPaused(true) may also be called by any same-session user. -->
+     SetPaused(true) may also be called by any same-session user.
+     SetPaused(false) requires the trusted approver and refuses a known locked
+     session (SessionLocked); with pause-on-screen-lock enabled, unavailable
+     lock observation also refuses resume. GetStatus exposes only coarse
+     session_lock_available, session_locked and pause_on_screen_lock booleans. -->
 <node name="/org/nostr/signer/grotto">
   <interface name="org.nostr.Grotto.Control1">
     <method name="GetStatus"><arg name="status" type="a{sv}" direction="out"/></method>

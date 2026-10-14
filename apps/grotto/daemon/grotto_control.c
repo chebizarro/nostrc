@@ -1,5 +1,6 @@
 #include "grotto_control.h"
 #include "grotto_clients.h"
+#include "session-lock.h"
 #include "grotto_control_xml.h"
 #include "signer_caller.h"
 #include "event_history.h"
@@ -17,6 +18,7 @@ struct _GrottoControl {
   gboolean closing, export_busy, reset_busy, trust_installed;
   GDBusConnection *connection;
   SignerApprovalService *approval;
+  GrottoSessionLock *session_lock;
   GrottoClients *clients;
   GnEventHistory *history;
   BunkerService *bunker;
@@ -32,6 +34,9 @@ static void emit(GrottoControl *c, const gchar *signal, guint64 revision) {
       GROTTO_CONTROL_INTERFACE, signal, g_variant_new("(t)", revision), NULL);
 }
 static void status_changed(GrottoControl *c) { emit(c, "StatusChanged", ++c->status_revision); }
+static void session_lock_changed(GrottoSessionLock *lock, gpointer data) {
+  (void)lock; status_changed(data);
+}
 static void activity_changed(GnEventHistory *history, guint64 sequence, gpointer data) {
   (void)history; GrottoControl *c = data;
   emit(c, "ActivityChanged", sequence); status_changed(c);
@@ -93,6 +98,9 @@ static GVariant *status(GrottoControl *c) {
   g_variant_builder_add(&row, "{sv}", "control_epoch", g_variant_new_string(c->epoch));
   g_variant_builder_add(&row, "{sv}", "capabilities", g_variant_builder_end(&caps));
   g_variant_builder_add(&row, "{sv}", "paused", g_variant_new_boolean(signer_approval_service_is_paused(c->approval)));
+  g_variant_builder_add(&row, "{sv}", "session_lock_available", g_variant_new_boolean(grotto_session_lock_available(c->session_lock)));
+  g_variant_builder_add(&row, "{sv}", "session_locked", g_variant_new_boolean(grotto_session_lock_locked(c->session_lock)));
+  g_variant_builder_add(&row, "{sv}", "pause_on_screen_lock", g_variant_new_boolean(grotto_session_lock_enabled(c->session_lock)));
   g_autoptr(GVariant) pending = requests(c);
   g_variant_builder_add(&row, "{sv}", "pending_count", g_variant_new_uint32(g_variant_n_children(pending)));
   g_variant_builder_add(&row, "{sv}", "bunker_enabled", g_variant_new_boolean(c->desired_bunker));
@@ -359,6 +367,10 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     if (c->bunker && g_str_has_prefix(p, "nip46:")) bunker_service_disconnect_client(c->bunker, p + 6);
     refresh(c);
   } else if (!strcmp(method, "SetPaused")) {
+    if (!pause && !grotto_session_lock_can_resume(c->session_lock)) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "SessionLocked",
+          "Unlock the session before confirming resume; lock monitoring must be available when enabled"); return;
+    }
     gboolean changed = signer_approval_service_is_paused(c->approval) != pause;
     signer_approval_service_set_paused(c->approval, pause); if (changed) status_changed(c);
   } else if (!strcmp(method, "ListActivity")) {
@@ -441,6 +453,12 @@ GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalSer
   c->trust_installed = TRUE;
   c->subscription = signer_approval_service_subscribe(approval, approval_changed, c);
   signer_approval_service_set_changed(approval, approval_table_changed, c);
+  GSettingsSchemaSource *schemas = g_settings_schema_source_get_default();
+  g_autoptr(GSettingsSchema) schema = schemas ? g_settings_schema_source_lookup(schemas, "org.nostr.Grotto", TRUE) : NULL;
+  g_autoptr(GSettings) settings = schema && g_settings_schema_has_key(schema, "pause-on-screen-lock") ?
+      g_settings_new_full(schema, NULL, NULL) : NULL;
+  c->session_lock = grotto_session_lock_new(approval, settings, NULL);
+  g_signal_connect(c->session_lock, "changed", G_CALLBACK(session_lock_changed), c);
   return c;
 }
 static gboolean bunker_lookup(const gchar *client, gchar **identity, gpointer data) {
@@ -470,6 +488,10 @@ void grotto_control_set_bunker(GrottoControl *c, BunkerService *bunker, gboolean
 void grotto_control_free(GrottoControl *c) {
   if (!c) return;
   c->closing = TRUE;
+  if (c->session_lock) {
+    g_signal_handlers_disconnect_by_data(c->session_lock, c);
+    grotto_session_lock_stop(c->session_lock); g_clear_object(&c->session_lock);
+  }
   if (c->bunker) {
     bunker_service_set_client_lookup(c->bunker, NULL, NULL);
     bunker_service_set_state_callback(c->bunker, NULL, NULL);

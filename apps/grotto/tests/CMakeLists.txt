@@ -538,10 +538,15 @@ if(UNIX)
   target_include_directories(grotto_background_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
   target_link_libraries(grotto_background_test_core PUBLIC PkgConfig::GLIB)
   target_compile_definitions(grotto_background_test_core PRIVATE
-    g_application_hold=g08_test_hold g_application_release=g08_test_release)
+    g_application_hold=g08_test_hold g_application_release=g08_test_release
+    GROTTO_AUTOSTART_TEMPLATE="${CMAKE_BINARY_DIR}/apps/grotto/org.nostr.Grotto-autostart.desktop"
+    GROTTO_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto")
   target_compile_options(grotto_background_test_core PRIVATE -Wall -Wextra -Werror)
   add_executable(test-background test-background.c)
   target_link_libraries(test-background PRIVATE grotto_background_test_core nostrc-test-bus)
+  target_compile_definitions(test-background PRIVATE
+    G08_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto"
+    G08_TEMPLATE="${CMAKE_BINARY_DIR}/apps/grotto/org.nostr.Grotto-autostart.desktop")
   target_compile_options(test-background PRIVATE -Wall -Wextra -Werror)
   add_dependencies(test-background grotto-schemas)
   add_dependencies(signer-tests test-background)
@@ -565,6 +570,19 @@ add_test(NAME signer/desktop-contract COMMAND ${Python3_EXECUTABLE}
   ${CMAKE_CURRENT_SOURCE_DIR}/test-desktop-contract.py ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${_g08_desktop_worker})
 set_tests_properties(signer/desktop-contract PROPERTIES TIMEOUT 90 LABELS "signer;desktop;unit"
   ENVIRONMENT "${_UI_TEST_ENV}")
+
+if(UNIX)
+  add_executable(test-session-lock test-session-lock.c)
+  target_include_directories(test-session-lock PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../daemon
+    ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
+  target_link_libraries(test-session-lock PRIVATE grotto_control_core nostrc-test-bus)
+  target_compile_options(test-session-lock PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-session-lock grotto-schemas)
+  add_dependencies(signer-tests test-session-lock)
+  add_test(NAME signer/session-lock COMMAND test-session-lock)
+  set_tests_properties(signer/session-lock PROPERTIES TIMEOUT 60 LABELS "signer;security;unit"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto")
+endif()
 
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.

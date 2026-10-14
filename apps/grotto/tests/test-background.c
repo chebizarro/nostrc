@@ -5,7 +5,8 @@
 static NostrcTestBus *bus;
 static GDBusConnection *service, *client;
 static guint registration, request_registration, acquired, released, requests, statuses, closes;
-static guint version = 2;
+static guint version = 2, response_code;
+static gboolean method_error;
 static gboolean grant, defer_response, portal_launch, early_response;
 static gchar *response_path, *response_peer;
 static const char xml[] =
@@ -40,7 +41,7 @@ static void send_response(void) {
   g_variant_builder_add(&values, "{sv}", "background", g_variant_new_boolean(grant));
   g_variant_builder_add(&values, "{sv}", "autostart", g_variant_new_boolean(portal_launch && grant));
   g_assert_true(g_dbus_connection_emit_signal(service, response_peer, response_path,
-      "org.freedesktop.portal.Request", "Response", g_variant_new("(ua{sv})", 0, &values), NULL));
+      "org.freedesktop.portal.Request", "Response", g_variant_new("(ua{sv})", response_code, &values), NULL));
 }
 static GVariant *property(GDBusConnection *connection, const char *sender, const char *path,
     const char *interface, const char *name, GError **error, gpointer data) {
@@ -59,8 +60,18 @@ static void method(GDBusConnection *connection, const char *sender, const char *
     g_assert_cmpstr(parent, ==, "");
     g_assert_true(g_variant_lookup(options, "handle_token", "&s", &token));
     g_assert_true(g_variant_lookup(options, "autostart", "b", &portal_launch));
+    gboolean activatable = TRUE;
+    g_assert_true(g_variant_lookup(options, "dbus-activatable", "b", &activatable));
+    g_assert_false(activatable);
+    if (method_error) {
+      requests++;
+      g_dbus_method_invocation_return_dbus_error(invocation, "org.freedesktop.DBus.Error.NotSupported", "Unavailable"); return;
+    }
     g_autoptr(GVariant) command = g_variant_lookup_value(options, "commandline", G_VARIANT_TYPE_STRING_ARRAY);
-    const char *flag; g_variant_get_child(command, 1, "&s", &flag);
+    const char *executable, *flag;
+    g_variant_get_child(command, 0, "&s", &executable);
+    g_assert_cmpstr(executable, ==, G08_EXECUTABLE);
+    g_variant_get_child(command, 1, "&s", &flag);
     g_assert_cmpstr(flag, ==, "--gapplication-service");
     g_autofree gchar *peer = g_strdup(sender + 1);
     for (gchar *p = peer; *p; p++) if (*p == '.') *p = '_';
@@ -98,7 +109,7 @@ static void own(gboolean enabled) {
 static GSettings *settings(void) {
   GSettings *s = g_settings_new("org.nostr.Grotto");
   const char *keys[] = { "autostart", "start-minimized", "run-in-background", "launch-on-login",
-    "pause-on-screen-lock", "settings-migration-version", "background-disclosure-accepted" };
+    "pause-on-screen-lock", "settings-migration-version", "background-disclosure-accepted", "portal-autostart-created" };
   for (guint i = 0; i < G_N_ELEMENTS(keys); i++) g_settings_reset(s, keys[i]);
   return s;
 }
@@ -112,6 +123,9 @@ static void test_absent(void) {
   g_settings_set_boolean(config, "background-disclosure-accepted", TRUE);
   g_autoptr(GApplication) app = application();
   g_autoptr(GrottoBackground) bg = grotto_background_new(app, client, config, TRUE);
+  /* This must be true before running the portal/name-watch main loop. */
+  g_assert_cmpuint(grotto_background_get_holds(bg), ==, 1);
+  g_assert_cmpuint(acquired, ==, 1);
   await_state(bg, GROTTO_BACKGROUND_UNAVAILABLE);
   g_assert_cmpuint(grotto_background_get_holds(bg), ==, 1);
   /* G07's independent per-request hold survives background release. */
@@ -218,7 +232,7 @@ static void test_v1(void) {
   g_assert_true(portal_launch);
   grotto_background_set_status(bg, TRUE, TRUE);
   g_assert_cmpuint(statuses, ==, before);
-  g_autofree gchar *file = g_build_filename(g_get_user_config_dir(), "autostart", "org.nostr.Grotto.desktop", NULL);
+  g_autofree gchar *file = g_build_filename(g_get_user_config_dir(), "autostart", "org.nostr.Grotto-login.desktop", NULL);
   g_assert_false(g_file_test(file, G_FILE_TEST_EXISTS));
   guint request_count = requests;
   g_settings_set_boolean(config, "run-in-background", FALSE);
@@ -239,11 +253,28 @@ static void test_migration(void) {
   g_assert_false(g_settings_get_boolean(config, "background-disclosure-accepted"));
   g_assert_cmpuint(g_settings_get_uint(config, "settings-migration-version"), ==, 1);
   g_assert_true(grotto_background_sync_autostart(config, TRUE, NULL));
-  g_autofree gchar *file = g_build_filename(g_get_user_config_dir(), "autostart", "org.nostr.Grotto.desktop", NULL);
+  g_autofree gchar *file = g_build_filename(g_get_user_config_dir(), "autostart", "org.nostr.Grotto-login.desktop", NULL);
+  g_assert_false(g_file_test(file, G_FILE_TEST_EXISTS)); /* Migration is not consent. */
+  g_settings_set_boolean(config, "background-disclosure-accepted", TRUE);
+  g_assert_true(grotto_background_sync_autostart(config, TRUE, NULL));
   g_autoptr(GKeyFile) entry = g_key_file_new();
   g_assert_true(g_key_file_load_from_file(entry, file, 0, NULL));
   g_autofree gchar *exec = g_key_file_get_string(entry, "Desktop Entry", "Exec", NULL);
-  g_assert_nonnull(strstr(exec, "--gapplication-service"));
+  g_autofree gchar *expected = g_strdup_printf("\"%s\" --gapplication-service", G08_EXECUTABLE);
+  g_assert_cmpstr(exec, ==, expected);
+  g_assert_true(g_key_file_get_boolean(entry, "Desktop Entry", "NoDisplay", NULL));
+  g_assert_false(g_key_file_has_key(entry, "Desktop Entry", "DBusActivatable", NULL));
+  g_autofree gchar *written = NULL, *template = NULL;
+  g_assert_true(g_file_get_contents(file, &written, NULL, NULL));
+  g_assert_true(g_file_get_contents(G08_TEMPLATE, &template, NULL, NULL));
+  g_autoptr(GKeyFile) original = g_key_file_new();
+  g_assert_true(g_key_file_load_from_data(original, template, -1, G_KEY_FILE_NONE, NULL));
+  g_auto(GStrv) names = g_key_file_get_keys(original, "Desktop Entry", NULL, NULL);
+  for (guint i = 0; names[i]; i++) {
+    g_autofree gchar *one = g_key_file_get_value(entry, "Desktop Entry", names[i], NULL);
+    g_autofree gchar *two = g_key_file_get_value(original, "Desktop Entry", names[i], NULL);
+    g_assert_cmpstr(one, ==, two);
+  }
   g_settings_set_boolean(config, "launch-on-login", FALSE);
   grotto_background_migrate_settings(config);
   g_assert_false(g_settings_get_boolean(config, "launch-on-login"));
@@ -256,6 +287,56 @@ static void test_migration(void) {
   grotto_background_migrate_settings(config);
   g_assert_false(g_settings_get_boolean(config, "run-in-background"));
   g_assert_false(g_settings_get_boolean(config, "launch-on-login"));
+}
+static void test_unavailable_responses(void) {
+  own(TRUE); grant = TRUE; defer_response = FALSE; version = 2;
+  for (guint scenario = 1; scenario <= 3; scenario++) {
+    response_code = scenario < 3 ? scenario : 0; method_error = scenario == 3;
+    for (guint native = 0; native <= 1; native++) {
+      g_autoptr(GSettings) config = settings();
+      g_settings_set_boolean(config, "background-disclosure-accepted", TRUE);
+      g_autoptr(GApplication) app = application();
+      g_autoptr(GrottoBackground) bg = grotto_background_new(app, client, config, native);
+      await_state(bg, GROTTO_BACKGROUND_UNAVAILABLE);
+      g_assert_cmpuint(grotto_background_get_holds(bg), ==, native);
+      grotto_background_stop(bg); g_assert_cmpuint(acquired, ==, released);
+    }
+  }
+  response_code = 0; method_error = FALSE;
+}
+static void test_portal_restart_cleanup(void) {
+  own(TRUE); grant = TRUE; defer_response = FALSE; version = 2;
+  g_autoptr(GSettings) config = settings();
+  g_settings_set_boolean(config, "background-disclosure-accepted", TRUE);
+  g_settings_set_boolean(config, "launch-on-login", TRUE);
+  g_autoptr(GApplication) app = application();
+  g_autoptr(GrottoBackground) bg = grotto_background_new(app, client, config, FALSE);
+  await_state(bg, GROTTO_BACKGROUND_REGISTERED);
+  g_assert_true(g_settings_get_boolean(config, "portal-autostart-created"));
+  grotto_background_stop(bg); g_clear_object(&bg);
+  own(FALSE);
+  /* Another process changes policy while the GUI is stopped. */
+  g_settings_set_boolean(config, "launch-on-login", FALSE);
+  g_settings_set_boolean(config, "run-in-background", FALSE);
+  guint before = requests;
+  bg = grotto_background_new(app, client, config, FALSE);
+  g_assert_cmpuint(grotto_background_get_holds(bg), ==, 1); /* Cleanup startup also lives until the watch callback. */
+  guint changes = 0; g_signal_connect(bg, "state-changed", G_CALLBACK(changed), &changes);
+  await_counter(&changes, 1);
+  g_assert_true(g_settings_get_boolean(config, "portal-autostart-created"));
+  own(TRUE); await_counter(&requests, before + 1);
+  await_state(bg, GROTTO_BACKGROUND_DISABLED);
+  g_assert_false(portal_launch);
+  g_assert_false(g_settings_get_boolean(config, "portal-autostart-created"));
+  g_assert_cmpuint(grotto_background_get_holds(bg), ==, 0);
+  g_settings_set_boolean(config, "run-in-background", TRUE);
+  await_state(bg, GROTTO_BACKGROUND_REGISTERED);
+  g_assert_cmpuint(grotto_background_get_holds(bg), ==, 1);
+  g_settings_set_boolean(config, "run-in-background", FALSE);
+  await_state(bg, GROTTO_BACKGROUND_DISABLED);
+  g_settings_set_boolean(config, "run-in-background", TRUE);
+  await_state(bg, GROTTO_BACKGROUND_REGISTERED);
+  grotto_background_stop(bg); g_assert_cmpuint(acquired, ==, released);
 }
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
@@ -273,6 +354,8 @@ int main(int argc, char **argv) {
   nostrc_test_bus_add_func("/background/cancel-late-response", test_cancel);
   nostrc_test_bus_add_func("/background/portal-v1-autostart", test_v1);
   nostrc_test_bus_add_func("/background/migration-v1", test_migration);
+  nostrc_test_bus_add_func("/background/cancel-error-unavailable", test_unavailable_responses);
+  nostrc_test_bus_add_func("/background/portal-restart-cleanup", test_portal_restart_cleanup);
   int status = g_test_run();
   g_dbus_connection_unregister_object(service, registration);
   if (request_registration) g_dbus_connection_unregister_object(service, request_registration);

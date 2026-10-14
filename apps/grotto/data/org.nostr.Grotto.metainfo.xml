@@ -3,7 +3,7 @@
 <component type="desktop-application">
   <id>org.nostr.Grotto</id>
 
-  <name>Grotto</name>
+  <name>Grotto (Preview)</name>
   <summary>Keeps your Nostr keys and signs for all your Nostr apps</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
@@ -88,6 +88,10 @@
     <binary>grotto</binary>
     <binary>grotto-daemon</binary>
     <dbus type="session">org.nostr.Signer</dbus>
+    <dbus type="session">org.nostr.Grotto</dbus>
+    <mediatype>x-scheme-handler/bunker</mediatype>
+    <mediatype>x-scheme-handler/nostrconnect</mediatype>
+    <mediatype>x-scheme-handler/grotto</mediatype>
   </provides>
 
   <requires>

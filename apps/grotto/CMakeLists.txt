@@ -305,7 +305,7 @@ string(REPLACE "\"" "\\\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 string(REPLACE "\n" "\\n\"\n\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 configure_file(daemon/grotto_control_xml.h.in grotto_control_xml.h @ONLY)
 install(FILES "${GROTTO_CONTROL_XML}" DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
-add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c)
+add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c daemon/session-lock.c)
 target_include_directories(grotto_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/daemon
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib ${CMAKE_SOURCE_DIR})
 target_link_libraries(grotto_control_core PUBLIC nostr_nip55l_glib grotto_bunker_core)
@@ -496,7 +496,8 @@ configure_file(data/org.nostr.Grotto-autostart.desktop.in org.nostr.Grotto-autos
 # This is a template, not a system-wide enabled login entry.
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto-autostart.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/grotto)
-target_compile_definitions(grotto PRIVATE GROTTO_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto")
+target_compile_definitions(grotto PRIVATE GROTTO_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto"
+  GROTTO_AUTOSTART_TEMPLATE="${CMAKE_INSTALL_FULL_DATAROOTDIR}/grotto/org.nostr.Grotto-autostart.desktop")
 
 # Desktop file (canonical; AppImage uses packaging/appimage/grotto.desktop separately)
 install(FILES data/org.nostr.Grotto.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)

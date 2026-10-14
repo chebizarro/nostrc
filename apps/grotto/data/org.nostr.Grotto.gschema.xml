@@ -199,7 +199,12 @@
     <key name="pause-on-screen-lock" type="b">
       <default>false</default>
       <summary>Pause signing when the desktop locks</summary>
-      <description>Unlocking does not resume signing. Resume explicitly in Grotto.</description>
+      <description>The daemon watches the user's logind session even when the approval UI is closed. If monitoring is unavailable while enabled, signing remains paused. Unlocking never resumes signing; confirm Resume in Grotto.</description>
+    </key>
+    <key name="portal-autostart-created" type="b">
+      <default>false</default>
+      <summary>A portal login entry may need removal</summary>
+      <description>Internal durable marker, cleared only after the portal confirms autostart removal.</description>
     </key>
     <key name="settings-migration-version" type="u">
       <default>0</default>
