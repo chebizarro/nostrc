@@ -38,8 +38,8 @@ const char *nostr_nip46_bunker_request_client(const NostrNip46BunkerRequest *);
 const char *nostr_nip46_bunker_request_event_id(const NostrNip46BunkerRequest *);
 int64_t nostr_nip46_bunker_request_created_at(const NostrNip46BunkerRequest *);
 int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *, const char *result_json, const char *error);
-/* Called once off the owner thread after OK, rejection or shutdown. On a
- * successful enqueue, notify owns data; on enqueue failure the caller owns it. */
+/* Called once on the publication worker or stopping thread; marshal any
+ * thread-affine work. Enqueue success transfers data to notify; failure does not. */
 typedef void (*NostrNip46PublishNotify)(int accepted, void *data);
 typedef struct NostrNip46CancelHandle NostrNip46CancelHandle;
 int nostr_nip46_bunker_request_complete_full(NostrNip46BunkerRequest *, const char *result_json,
