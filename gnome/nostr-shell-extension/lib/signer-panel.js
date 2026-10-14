@@ -38,6 +38,7 @@ class SignerIndicator extends PanelMenu.Button {
         this._openItem = this.menu.addAction(_('Open Grotto'), () => this._monitor.open());
         this._pauseItem = this.menu.addAction(_('Pause signing'), () => this._monitor.pause());
         this._resumeItem = this.menu.addAction(_('Resume signing'), () => this._monitor.resume());
+        this._quitItem = this.menu.addAction(_('Quit approval UI'), () => this._monitor.quit());
         this._monitor = new SignerMonitor(state => this._render(state));
         this._menuId = this.menu.connect('open-state-changed', (menu, open) => {
             if (open)
@@ -52,7 +53,7 @@ class SignerIndicator extends PanelMenu.Button {
     }
 
     _render(state) {
-        const waiting = ngettext('%d request waiting', '%d requests waiting', state.pendingCount)
+        const waiting = ngettext('%d request waiting', '%d requests waiting', state.pendingCount ?? 0)
             .replace('%d', String(state.pendingCount));
         const bunkerLabel = state.bunkerState === 'DEGRADED' ? _('Bunker degraded') :
             state.bunkerState === 'OFFLINE' ? _('Bunker offline') :
@@ -60,6 +61,7 @@ class SignerIndicator extends PanelMenu.Button {
             state.bunkerState === 'STOPPING' ? _('Bunker stopping…') : _('Bunker unavailable');
         const labels = {
             stopped: _('Signer not running'), unavailable: _('Signer status unavailable — update or open Grotto'),
+            refreshing: _('Refreshing signer status…'),
             ready: _('Ready'), waiting, paused: _('Signing paused'),
             bunker: bunkerLabel,
         };
@@ -71,9 +73,11 @@ class SignerIndicator extends PanelMenu.Button {
         this._icon.gicon = this._icons[iconState];
         this._badge.text = state.badge;
         this._badge.visible = state.pendingCount > 0;
-        this._reviewItem.label.text = `${_('Review requests')} (${state.pendingCount})`;
+        this._reviewItem.label.text = state.pendingCount === null ? _('Review requests') :
+            `${_('Review requests')} (${state.pendingCount})`;
         this._reviewItem.setSensitive(state.pendingCount > 0 && !state.busy);
         this._openItem.setSensitive(!state.busy);
+        this._quitItem.setSensitive(!state.busy);
         this._pauseItem.visible = state.running && !state.paused;
         this._pauseItem.setSensitive(state.canPause);
         this._resumeItem.visible = state.paused;

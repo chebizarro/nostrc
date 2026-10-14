@@ -8,6 +8,8 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 mkdir -p "$tmp/services"
 printf '[D-BUS Service]\nName=org.nostr.Signer\nExec=/usr/bin/touch %s/activated\n' \
     "$tmp" > "$tmp/services/org.nostr.Signer.service"
+printf '[D-BUS Service]\nName=org.nostr.Grotto\nExec=/usr/bin/touch %s/gui-activated\n' \
+    "$tmp" > "$tmp/services/org.nostr.Grotto.service"
 cat > "$tmp/bus.conf" <<CONF
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">

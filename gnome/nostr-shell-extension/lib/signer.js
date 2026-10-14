@@ -21,6 +21,9 @@ export class SignerMonitor {
         this._proxyIds = [];
         this._nameId = 0;
         this._serial = 0;
+        this._requestsRevision = 0n;
+        this._statusRevision = 0n;
+        this._refreshing = false;
         this._fetching = false;
         this._fetchAgain = false;
         this._status = null;
@@ -32,11 +35,12 @@ export class SignerMonitor {
     get state() {
         const running = !!this._proxy?.get_name_owner();
         const status = running ? this._status : null;
-        const pendingCount = status?.pendingCount ?? 0;
+        const pendingCount = status?.pendingCount ?? null;
         const paused = status?.paused ?? false;
         const bunkerState = status?.bunkerState ?? 'DISABLED';
         const bunkerProblem = !!status?.bunkerEnabled && bunkerState !== 'LISTENING';
-        const phase = !running ? 'stopped' : !status ? 'unavailable' :
+        const phase = !running ? 'stopped' : !status ?
+            (this._refreshing ? 'refreshing' : 'unavailable') :
             paused ? 'paused' : pendingCount ? 'waiting' : bunkerProblem ? 'bunker' : 'ready';
         return {
             running, phase, pendingCount, badge: pendingCount ? String(pendingCount) : '',
@@ -67,12 +71,24 @@ export class SignerMonitor {
                     return;
                 this._proxy = proxy;
                 this._proxyIds = [
-                    proxy.connect('g-signal', (p, sender, signal) => {
-                        if (signal === 'RequestsChanged' || signal === 'StatusChanged')
+                    proxy.connect('g-signal', (p, sender, signal, params) => {
+                        if (sender !== p.get_name_owner() || params.get_type_string() !== '(t)')
+                            return;
+                        const key = signal === 'RequestsChanged' ? '_requestsRevision' :
+                            signal === 'StatusChanged' ? '_statusRevision' : null;
+                        if (!key)
+                            return;
+                        // uint64 epochs exceed JS Number precision; compare losslessly.
+                        const revision = BigInt(params.get_child_value(0).print(false));
+                        if (revision > this[key]) {
+                            this[key] = revision;
                             this.refresh();
+                        }
                     }),
                     proxy.connect('notify::g-name-owner', () => {
                         this._status = null;
+                        this._requestsRevision = 0n;
+                        this._statusRevision = 0n;
                         this._actionError = null;
                         this.refresh();
                         this._emit();
@@ -87,6 +103,9 @@ export class SignerMonitor {
         if (this._destroyed)
             return;
         this._serial++;
+        this._status = null;
+        this._refreshing = !!this._proxy?.get_name_owner();
+        this._emit();
         if (this._fetching) {
             this._fetchAgain = true;
             return;
@@ -116,13 +135,25 @@ export class SignerMonitor {
             if (version !== 1 || paused === undefined || pendingCount === undefined ||
                 bunkerEnabled === undefined || bunkerState === undefined)
                 throw new Error('Unsupported coarse status');
+            const requests = row.lookup_value('requests_revision', new GLib.VariantType('t'));
+            const status = row.lookup_value('status_revision', new GLib.VariantType('t'));
+            if (!requests || !status)
+                throw new Error('Missing status revisions');
+            const requestsRevision = BigInt(requests.print(false));
+            const statusRevision = BigInt(status.print(false));
             if (this._current(owner, serial)) {
+                if (requestsRevision < this._requestsRevision || statusRevision < this._statusRevision)
+                    throw new Error('Superseded status revisions');
+                this._requestsRevision = requestsRevision;
+                this._statusRevision = statusRevision;
+                this._refreshing = false;
                 this._status = {paused, pendingCount, bunkerEnabled, bunkerState,
                     canPause: value('capabilities', 'a{sb}')?.pause === true};
                 this._emit();
             }
         } catch (e) {
             if (!isCancelled(e) && this._current(owner, serial)) {
+                this._refreshing = false;
                 this._status = null;
                 this._emit();
             }
@@ -165,10 +196,14 @@ export class SignerMonitor {
             params: new GLib.Variant('(a{sv})', [{}])}, 'open');
     }
 
-    _activateAction(action, targets) {
+    quit() {
+        return this._activateAction('quit', [], Gio.DBusCallFlags.NO_AUTO_START);
+    }
+
+    _activateAction(action, targets, flags = Gio.DBusCallFlags.NONE) {
         return this._action({name: APP_NAME, path: APP_PATH,
             iface: 'org.freedesktop.Application', method: 'ActivateAction',
-            params: new GLib.Variant('(sava{sv})', [action, targets, {}])}, action);
+            params: new GLib.Variant('(sava{sv})', [action, targets, {}]), flags}, action);
     }
 
     async _action(call, action) {

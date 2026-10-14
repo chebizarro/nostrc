@@ -105,6 +105,13 @@ It reads only the identity-free `GetStatus` on `org.nostr.Signer`, object
 on owner changes, `RequestsChanged`, `StatusChanged`, and menu open — **no
 signer polling**. Reads are pinned to the observed unique owner, superseded
 snapshots are discarded, and neither the proxy nor reads auto-start the daemon.
+A refresh invalidates the displayed count immediately: the panel says
+**Refreshing signer status…**, with no badge or asserted zero/Ready state.
+Newer signals supersede an in-flight read and coalesce into one successor;
+equal/older signals are ignored. Owner-scoped request/status revision watermarks
+use lossless uint64 comparisons (daemon epochs can exceed JavaScript Number
+precision). A reply below either watermark is unavailable, never rendered;
+recovery awaits the next real signal/menu action, not a retry/polling loop.
 
 | State | Panel / menu |
 | --- | --- |
@@ -113,7 +120,8 @@ snapshots are discarded, and neither the proxy nor reads auto-start the daemon.
 | Pending requests | Numeric badge; N requests waiting; Review requests (N) |
 | Paused | Signing paused; Resume signing |
 | Enabled bunker not listening | Bunker degraded/offline (also shown as a separate row when waiting/paused) |
-| Control1 missing, unsupported, or read failed | Signer status unavailable; no stale badge or pause action |
+| Refresh pending | Refreshing signer status…; request count unknown; no badge or count-sensitive action |
+| Control1 missing, unsupported, read failed, or snapshot behind revision | Signer status unavailable; no stale badge or pause action |
 
 **Review requests** activates `org.freedesktop.Application.ActivateAction` on
 `org.nostr.Grotto` at `/org/nostr/Grotto`, with action `review-request` and
@@ -121,7 +129,9 @@ snapshots are discarded, and neither the proxy nor reads auto-start the daemon.
 Pause signing sends only `SetPaused(true)`, which reduces capability and is
 open to same-session callers. Resume signing activates `resume-signing`, so
 the trusted Grotto GUI asks for confirmation and performs the authenticated
-resume. The extension never calls `ApproveRequest`, lists requests/identities,
+resume. **Quit approval UI** activates Grotto's existing `quit` action with
+`NO_AUTO_START`: it never launches a stopped GUI just to quit it, and never
+terminates the signer daemon. The extension never calls `ApproveRequest`, lists requests/identities,
 or reads signing payloads. No telemetry, Gtk, or Adw in the Shell process.
 
 While enabled it owns `org.nostr.Shell.Signer1`, the G08 contract that hides
@@ -154,8 +164,13 @@ glib-compile-schemas --strict --dry-run schemas
 `test-signer.js` runs the production monitor against the canonical Control1 XML
 on a private bus with isolated activation services. It covers badge updates,
 status/bunker transitions, pause failure/success, the exact review target,
-GUI-only resume, owner loss/replacement, superseded replies, version skew,
+GUI-only resume/quit, owner loss/replacement, superseded replies, version skew,
 no automatic activation, name release, and disable during an in-flight call.
+The held-read race asserts unknown status at the invalidation boundary for
+0→N and N→0, then the latest badge after exactly one coalesced successor read.
+It also covers lower/equal/newer signal/snapshot revisions, adjacent uint64
+values above 2^53, rejection below announced/accepted watermarks and
+watermark reset when the daemon owner changes.
 `nostr-shell-extension-signer` also registers in CTest when gjs and
 `dbus-run-session` are available. Syntax can be checked without loading unavailable Shell resources:
 
@@ -178,15 +193,20 @@ Use a disposable user/profile and throwaway Secret Service, not developer keys.
 | Click Review requests (N) | Empty-string action target opens inbox/compact review; panel shows no identity/request content |
 | Deny/complete disposable requests, including several pending | Badge matches remaining count and clears at zero |
 | Click Pause signing, then Resume signing | Pause round-trip reports paused; resume opens GUI confirmation; cancel stays paused, explicit confirmation resumes |
+| Click Quit approval UI with GUI running, then absent | Only GUI exits; daemon still owns its name; stopped GUI is not auto-started |
 | Enable bunker and disrupt its test relay, then recover | Degraded/offline only for enabled bunker; waiting badge remains usable; recovery updates from StatusChanged |
 | Stop/restart daemon while requests/status read are pending | No stale badge or Ready state; replacement owner refreshes correctly |
 | Enable Ubuntu AppIndicator with Grotto running | Shell signer name owned; Grotto StatusNotifier hidden (no duplicate icon) |
 | Disable extension; repeat enable/disable and lock/unlock | Name released on disable; notifier may return; no orphan actors, callbacks, names, or Shell journal errors; re-enable has exactly one icon |
 | Inspect menu and accessibility text at large text/light/dark themes | Four symbolic states and numeric badge legible; Open remains usable when unavailable |
 
-Version impact: extension **0.4.0 → 0.5.0 (MINOR)** for additive functionality.
-Grotto's optional package recommendation is PATCH-class folded into unreleased
-**0.1.0**; no signing/management ABI changes. See `VERSION_MANIFEST.md`.
+Version impact: initial G13 extension **0.4.0 → 0.5.0 (MINOR)**, then review
+remediation **0.5.0 → 0.6.0 (MINOR)**: take the highest bump for the newly
+exposed panel Quit action alongside PATCH-class status corrections.
+Grotto's optional package recommendation remains folded into unreleased
+**0.1.0**; remediation reuses its existing quit action without any GUI/daemon
+or signing/management ABI change. Review docs/tests need no separate bump.
+See `VERSION_MANIFEST.md`.
 
 ## Settings
 
