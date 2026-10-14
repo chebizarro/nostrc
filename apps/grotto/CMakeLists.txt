@@ -75,8 +75,12 @@ if (GROTTO_WITH_HW_WALLET)
   endif()
 endif()
 
-# Optional libqrencode for QR code generation
-pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+# Pairing link QR generation is required on the supported native Linux GUI.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
+else()
+  pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+endif()
 if (QRENCODE_FOUND)
   message(STATUS "libqrencode found - QR code generation enabled")
 else()
@@ -84,8 +88,14 @@ else()
   message(STATUS "  Install libqrencode: brew install qrencode (macOS), apt install libqrencode-dev (Linux)")
 endif()
 
-# Optional zbar for QR code scanning
-pkg_check_modules(ZBAR QUIET IMPORTED_TARGET zbar)
+# Camera pairing is required for the supported native Linux GUI (OC-8).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  pkg_check_modules(ZBAR REQUIRED IMPORTED_TARGET zbar)
+  pkg_check_modules(GST REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0)
+else()
+  pkg_check_modules(ZBAR QUIET IMPORTED_TARGET zbar)
+  pkg_check_modules(GST QUIET IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0)
+endif()
 if (ZBAR_FOUND)
   message(STATUS "zbar found - QR code scanning enabled")
 else()
@@ -94,7 +104,6 @@ else()
 endif()
 
 # Optional GStreamer for camera-based QR scanning
-pkg_check_modules(GST QUIET IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0)
 if (GST_FOUND)
   message(STATUS "GStreamer found - Camera QR scanning enabled")
 else()
@@ -330,7 +339,7 @@ target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core n
 # into a static library for the headless daemon; the GUI keeps compiling its
 # own copy through APP_SRC.
 add_library(grotto_bunker_core STATIC
-  src/bunker_service.c src/accounts_store.c src/client_session.c
+  src/bunker_service.c src/pairing_uri.c src/accounts_store.c src/client_session.c
   src/event_history.c src/gn-signer-error.c src/key_provider.c
   src/key_provider_secp256k1.c src/rate-limiter.c src/secret_store.c
   src/secure-delete.c src/secure-mem.c src/secure-memory.c

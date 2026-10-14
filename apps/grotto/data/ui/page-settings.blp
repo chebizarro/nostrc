@@ -332,6 +332,7 @@ template $PageSettings: Adw.PreferencesPage {
     }
 
     Adw.ActionRow {
+      visible: false;
       title: _("Tor/Orbot setup");
 
       accessibility {
@@ -356,10 +357,10 @@ template $PageSettings: Adw.PreferencesPage {
     }
 
     Adw.ActionRow {
-      title: _("Relays");
+      title: _("Remote signing and pairing");
 
       accessibility {
-        description: "Manage Nostr relay connections for reading and writing events";
+        description: "Configure daemon-owned remote signing relays, runtime state, and pairing links";
       }
 
       [suffix]
@@ -380,6 +381,7 @@ template $PageSettings: Adw.PreferencesPage {
     }
 
     Adw.ActionRow {
+      visible: false;
       title: _("Listen for new connections");
 
       accessibility {

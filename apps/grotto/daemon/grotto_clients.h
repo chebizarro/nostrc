@@ -27,6 +27,10 @@ gboolean grotto_clients_set_tier(GrottoClients *clients, const gchar *principal,
  * Requires an existing explicitly consented record; never creates admission. */
 gboolean grotto_clients_set_pairing(GrottoClients *clients, const gchar *principal,
     gboolean paired, const gchar *const *relays, GError **error);
+/* Atomically commit pairing admission, approved relays, and an optional
+ * explicit tier (-1 preserves Low/existing) and user label. */
+gboolean grotto_clients_finish_pairing(GrottoClients *, const gchar *principal,
+    const gchar *const *relays, gint tier, const gchar *label, GError **error);
 gboolean grotto_clients_remove(GrottoClients *clients, const gchar *principal, GError **error);
 guint64 grotto_clients_revision(GrottoClients *clients);
 G_END_DECLS

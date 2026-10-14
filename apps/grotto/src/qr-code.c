@@ -4,6 +4,7 @@
  * Falls back gracefully when libraries are not available.
  */
 #include "qr-code.h"
+#include <secure_buf.h>
 
 #include <string.h>
 #include <stdlib.h>
@@ -101,6 +102,8 @@ gboolean gn_qr_scanning_available(void) {
 
 void gn_qr_scan_result_free(GnQrScanResult *result) {
   if (!result) return;
+  if (result->data) secure_wipe(result->data, strlen(result->data));
+  if (result->decoded_key) secure_wipe(result->decoded_key, strlen(result->decoded_key));
   g_free(result->data);
   g_free(result->decoded_key);
   g_free(result);

@@ -1,120 +1,177 @@
 #include "sheet-create-bunker.h"
 #include "sheet-qr-display.h"
 #include "../app-resources.h"
-#include "../../accounts_store.h"
-#include "../../settings_manager.h"
-#include "nostr/nip55l/signer_ops.h"
-#include "nostr/nip19/nip19.h"
-#include <stdlib.h>
+#include "../../pairing_uri.h"
 #include <string.h>
 
-struct _SheetCreateBunker { AdwDialog parent_instance; GtkButton *btn_cancel; GtkButton *btn_create; GtkEntry *entry_name; GtkEntry *entry_relay; };
+struct _SheetCreateBunker {
+  AdwDialog parent_instance;
+  GtkWidget *btn_cancel, *btn_create, *btn_apply, *btn_reset, *entry_name, *entry_relay, *identities, *enabled, *status;
+  GDBusConnection *bus;
+  GCancellable *cancel;
+  gchar **methods;
+  guint subscription;
+  gboolean closed, loaded, listening;
+};
 G_DEFINE_TYPE(SheetCreateBunker, sheet_create_bunker, ADW_TYPE_DIALOG)
-
-static void sheet_create_bunker_class_init(SheetCreateBunkerClass *klass){
-  GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass);
+static void refresh(SheetCreateBunker *self);
+static void update_create(SheetCreateBunker *self) {
+  gtk_widget_set_sensitive(self->btn_create, !self->closed && self->listening &&
+      gtk_drop_down_get_selected(GTK_DROP_DOWN(self->identities)) != GTK_INVALID_LIST_POSITION);
+}
+static void status_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetCreateBunker *s = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (!s->closed) {
+    if (!reply) gtk_label_set_text(GTK_LABEL(s->status), "Update or start the Grotto daemon to configure remote signing.");
+    else {
+      g_autoptr(GVariant) status = g_variant_get_child_value(reply, 0);
+      const gchar *state = "Unavailable"; g_variant_lookup(status, "bunker_state", "&s", &state);
+      s->listening = !strcmp(state, "LISTENING");
+      g_autofree gchar *message = g_strdup_printf("Bunker: %s. A link is available only after a relay subscription reaches EOSE.", state);
+      gtk_label_set_text(GTK_LABEL(s->status), message);
+      if (!s->loaded) {
+        g_auto(GStrv) relays = NULL; gboolean enabled = FALSE;
+        g_variant_lookup(status, "bunker_relays", "^as", &relays);
+        g_variant_lookup(status, "bunker_allowed_methods", "^as", &s->methods);
+        g_variant_lookup(status, "bunker_enabled", "b", &enabled);
+        g_autofree gchar *text = relays ? g_strjoinv(" ", relays) : g_strdup("");
+        gtk_editable_set_text(GTK_EDITABLE(s->entry_relay), text); gtk_check_button_set_active(GTK_CHECK_BUTTON(s->enabled), enabled);
+        s->loaded = TRUE;
+      }
+    }
+    update_create(s);
+  }
+  g_object_unref(s);
+}
+static void refresh(SheetCreateBunker *s) {
+  if (!s->bus || s->closed) return;
+  g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "GetStatus", NULL,
+      G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, s->cancel, status_ready, g_object_ref(s));
+}
+static void status_changed(GDBusConnection *bus, const gchar *sender, const gchar *path, const gchar *interface,
+    const gchar *signal, GVariant *args, gpointer data) {
+  (void)bus; (void)sender; (void)path; (void)interface; (void)signal; (void)args; refresh(data);
+}
+static void identities_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetCreateBunker *s = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (!s->closed && reply) {
+    g_auto(GStrv) ids = NULL; g_variant_get(reply, "(^as)", &ids);
+    GtkStringList *model = gtk_string_list_new((const gchar *const *)ids);
+    gtk_drop_down_set_model(GTK_DROP_DOWN(s->identities), G_LIST_MODEL(model)); g_object_unref(model);
+    gtk_drop_down_set_selected(GTK_DROP_DOWN(s->identities), GTK_INVALID_LIST_POSITION);
+  }
+  g_object_unref(s);
+}
+static void configured(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetCreateBunker *s = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (!s->closed) {
+    gtk_widget_set_sensitive(s->btn_apply, TRUE); gtk_widget_set_sensitive(s->btn_reset, TRUE);
+    if (!reply) gtk_label_set_text(GTK_LABEL(s->status), "The remote signing change failed. Check daemon status and key availability, then retry.");
+    else refresh(s);
+  }
+  g_object_unref(s);
+}
+static void apply(GtkButton *button, gpointer data) {
+  (void)button; SheetCreateBunker *s = data;
+  if (!s->bus || !s->methods) return;
+  if (gtk_drop_down_get_selected(GTK_DROP_DOWN(s->identities)) == GTK_INVALID_LIST_POSITION) {
+    gtk_label_set_text(GTK_LABEL(s->status), "Choose an identity before enabling relay contact."); return;
+  }
+  g_auto(GStrv) split = g_strsplit_set(gtk_editable_get_text(GTK_EDITABLE(s->entry_relay)), " \t\n", -1);
+  g_autoptr(GPtrArray) urls = g_ptr_array_new();
+  for (guint i = 0; split[i]; i++) if (*split[i]) g_ptr_array_add(urls, split[i]);
+  gboolean enabled = gtk_check_button_get_active(GTK_CHECK_BUTTON(s->enabled));
+  if ((enabled || urls->len) && !grotto_relays_validate((const gchar *const *)urls->pdata, urls->len, NULL)) {
+    gtk_label_set_text(GTK_LABEL(s->status), "Use explicit wss:// relays; ws:// is allowed only on loopback. Tor is not supported."); return;
+  }
+  GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&b, "{sv}", "enabled", g_variant_new_boolean(enabled));
+  g_variant_builder_add(&b, "{sv}", "relays", g_variant_new_strv((const gchar *const *)urls->pdata, urls->len));
+  g_variant_builder_add(&b, "{sv}", "allowed-methods", g_variant_new_strv((const gchar *const *)s->methods, -1));
+  gtk_widget_set_sensitive(s->btn_apply, FALSE);
+  g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ConfigureBunker",
+      g_variant_new("(a{sv})", &b), G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, configured, g_object_ref(s));
+}
+static void created(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetCreateBunker *s = data; g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (reply) {
+    g_autoptr(GVariant) offer = g_variant_get_child_value(reply, 0); const gchar *id = NULL, *uri = NULL; guint64 expires = 0;
+    g_variant_lookup(offer, "pairing_id", "&s", &id); g_variant_lookup(offer, "uri", "&s", &uri); g_variant_lookup(offer, "expires_at", "t", &expires);
+    if (s->closed || !id || !uri) {
+      if (id) g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "CancelPairing", g_variant_new("(s)", id), NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL, NULL);
+    } else {
+      GtkRoot *parent = gtk_widget_get_root(GTK_WIDGET(s));
+      SheetQrDisplay *qr = sheet_qr_display_new(); sheet_qr_display_set_bunker_uri(qr, uri);
+      sheet_qr_display_set_pairing(qr, s->bus, id, expires);
+      adw_dialog_close(ADW_DIALOG(s)); adw_dialog_present(ADW_DIALOG(qr), GTK_WIDGET(parent));
+    }
+  } else if (!s->closed) { gtk_label_set_text(GTK_LABEL(s->status), "The daemon could not issue a link. Check listening state, key availability, and the four-offer limit."); update_create(s); }
+  g_object_unref(s);
+}
+static void create(GtkButton *button, gpointer data) {
+  (void)button; SheetCreateBunker *s = data;
+  GtkStringObject *identity = GTK_STRING_OBJECT(gtk_drop_down_get_selected_item(GTK_DROP_DOWN(s->identities)));
+  if (!s->bus || !s->listening || !identity) return;
+  gtk_widget_set_sensitive(s->btn_create, FALSE);
+  g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "CreatePairing",
+      g_variant_new("(ss)", gtk_string_object_get_string(identity), gtk_editable_get_text(GTK_EDITABLE(s->entry_name))),
+      G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, created, g_object_ref(s));
+}
+static void reset_chosen(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetCreateBunker *s = data;
+  const gchar *choice = adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+  if (!s->closed && s->bus && !g_strcmp0(choice, "reset")) {
+    gtk_widget_set_sensitive(s->btn_reset, FALSE);
+    g_dbus_connection_call(s->bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "ResetBunkerEndpoint",
+        NULL, G_VARIANT_TYPE("()"), G_DBUS_CALL_FLAGS_NONE, 30000, NULL, configured, g_object_ref(s));
+  }
+  g_object_unref(s);
+}
+static void reset_clicked(GtkButton *button, gpointer data) {
+  (void)button; SheetCreateBunker *s = data;
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new("Reset remote signing endpoint?",
+      "This explicitly creates a new transport credential in the daemon's key store. All existing remote clients and their permissions are revoked and must be paired again. Identity keys do not change."));
+  adw_alert_dialog_add_responses(dialog, "cancel", "Cancel", "reset", "Reset and revoke clients", NULL);
+  adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
+  adw_alert_dialog_set_response_appearance(dialog, "reset", ADW_RESPONSE_DESTRUCTIVE);
+  adw_alert_dialog_choose(dialog, GTK_WIDGET(s), s->cancel, reset_chosen, g_object_ref(s));
+}
+static void close_clicked(GtkButton *button, gpointer data) { (void)button; adw_dialog_close(ADW_DIALOG(data)); }
+static void selected(GObject *object, GParamSpec *pspec, gpointer data) { (void)object; (void)pspec; update_create(data); }
+static void closed(AdwDialog *dialog, gpointer data) {
+  (void)data; SheetCreateBunker *s = SHEET_CREATE_BUNKER(dialog); if (s->closed) return;
+  s->closed = TRUE; if (s->cancel) g_cancellable_cancel(s->cancel);
+  if (s->subscription) { g_dbus_connection_signal_unsubscribe(s->bus, s->subscription); s->subscription = 0; }
+}
+static void dispose(GObject *object) {
+  SheetCreateBunker *s = SHEET_CREATE_BUNKER(object); closed(ADW_DIALOG(s), NULL);
+  g_clear_object(&s->cancel); g_clear_object(&s->bus); g_clear_pointer(&s->methods, g_strfreev);
+  G_OBJECT_CLASS(sheet_create_bunker_parent_class)->dispose(object);
+}
+static void sheet_create_bunker_class_init(SheetCreateBunkerClass *klass) {
+  GtkWidgetClass *wc = GTK_WIDGET_CLASS(klass); G_OBJECT_CLASS(klass)->dispose = dispose;
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-create-bunker.ui");
-  gtk_widget_class_bind_template_child(wc, SheetCreateBunker, btn_cancel);
-  gtk_widget_class_bind_template_child(wc, SheetCreateBunker, btn_create);
-  gtk_widget_class_bind_template_child(wc, SheetCreateBunker, entry_name);
-  gtk_widget_class_bind_template_child(wc, SheetCreateBunker, entry_relay);
+#define CHILD(name) gtk_widget_class_bind_template_child(wc, SheetCreateBunker, name)
+  CHILD(btn_cancel); CHILD(btn_create); CHILD(btn_apply); CHILD(btn_reset); CHILD(entry_name); CHILD(entry_relay); CHILD(identities); CHILD(enabled); CHILD(status);
+#undef CHILD
 }
-
-static void show_error(SheetCreateBunker *self, const char *msg){
-  GtkAlertDialog *dlg = gtk_alert_dialog_new("%s", msg);
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  gtk_alert_dialog_show(dlg, GTK_IS_WINDOW(root) ? GTK_WINDOW(root) : NULL);
-  g_object_unref(dlg);
+static void sheet_create_bunker_init(SheetCreateBunker *s) {
+  gtk_widget_init_template(GTK_WIDGET(s)); s->cancel = g_cancellable_new();
+  g_signal_connect(s->btn_cancel, "clicked", G_CALLBACK(close_clicked), s);
+  g_signal_connect(s->btn_reset, "clicked", G_CALLBACK(reset_clicked), s);
+  g_signal_connect(s->btn_create, "clicked", G_CALLBACK(create), s); g_signal_connect(s->btn_apply, "clicked", G_CALLBACK(apply), s);
+  g_signal_connect(s->identities, "notify::selected", G_CALLBACK(selected), s); g_signal_connect(s, "closed", G_CALLBACK(closed), NULL);
+  GApplication *app = g_application_get_default(); GDBusConnection *bus = app ? g_application_get_dbus_connection(app) : NULL;
+  if (bus) {
+    s->bus = g_object_ref(bus);
+    s->subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Grotto.Control1", "StatusChanged", "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, status_changed, s, NULL);
+    refresh(s);
+    g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer", "ListIdentities", NULL,
+        G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, 10000, s->cancel, identities_ready, g_object_ref(s));
+  } else gtk_label_set_text(GTK_LABEL(s->status), "The signer session bus is unavailable.");
 }
-
-/* Normalises one relay URL the same way the signer's GetRelays does.
- * NULL if it is not a ws:// or wss:// URL. */
-static gchar *normalize_relay(const char *url){
-  const char *one[] = { url };
-  char *js = NULL;
-  if (nostr_nip55l_relays_from_list(one, 1, &js) != 0 || !js) return NULL;
-  /* A single-entry result is exactly ["<url>"] with no escapes. */
-  size_t n = strlen(js);
-  gchar *out = (n > 4) ? g_strndup(js + 2, n - 4) : NULL;
-  free(js);
-  return out;
-}
-
-static gchar *npub_to_hex(const char *npub){
-  uint8_t pk[32];
-  if (!npub || nostr_nip19_decode_npub(npub, pk) != 0) return NULL;
-  GString *hex = g_string_sized_new(64);
-  for (int i = 0; i < 32; i++) g_string_append_printf(hex, "%02x", pk[i]);
-  return g_string_free(hex, FALSE);
-}
-
-/* Pairing: record the relay in the bunker settings the daemon's --bunker
- * mode serves from, then show the bunker:// URI a client scans.
- *
- * No secret= parameter: the NIP-46 bunker does not validate connect secrets
- * yet, so one here would imply a check that does not happen. Clients are
- * admitted by bunker-allowed-pubkeys instead. */
-static void on_create(GtkButton *b, gpointer user_data){
-  (void)b;
-  SheetCreateBunker *self = user_data;
-  if (!self) return;
-
-  const char *relay_in = self->entry_relay ? gtk_editable_get_text(GTK_EDITABLE(self->entry_relay)) : NULL;
-  g_autofree gchar *relay_trim = g_strstrip(g_strdup(relay_in ? relay_in : ""));
-  g_autofree gchar *relay = normalize_relay(relay_trim);
-  if (!relay) {
-    show_error(self, "Enter a relay URL starting with wss:// (or ws:// for a local relay).");
-    return;
-  }
-
-  g_autofree gchar *npub = NULL;
-  if (!accounts_store_get_active(accounts_store_get_default(), &npub, NULL) || !npub || !*npub) {
-    show_error(self, "Select or create an identity before creating a bunker.");
-    return;
-  }
-  g_autofree gchar *pk_hex = npub_to_hex(npub);
-  if (!pk_hex) {
-    show_error(self, "The active identity is not a valid npub.");
-    return;
-  }
-
-  SettingsManager *sm = settings_manager_get_default();
-  g_auto(GStrv) relays = settings_manager_get_bunker_relays(sm);
-  GPtrArray *merged = g_ptr_array_new_with_free_func(g_free);
-  if (relays) for (guint i = 0; relays[i]; i++) g_ptr_array_add(merged, g_strdup(relays[i]));
-  if (!relays || !g_strv_contains((const gchar *const *)relays, relay)) g_ptr_array_add(merged, g_strdup(relay));
-  g_ptr_array_add(merged, NULL);
-  settings_manager_set_bunker_relays(sm, (const gchar *const *)merged->pdata);
-  settings_manager_set_bunker_enabled(sm, TRUE);
-
-  GString *uri = g_string_new("bunker://");
-  g_string_append(uri, pk_hex);
-  for (guint i = 0; i + 1 < merged->len; i++) {
-    g_autofree gchar *esc = g_uri_escape_string(g_ptr_array_index(merged, i), NULL, FALSE);
-    g_string_append_printf(uri, "%srelay=%s", i == 0 ? "?" : "&", esc);
-  }
-  g_ptr_array_unref(merged);
-
-  SheetQrDisplay *qr = sheet_qr_display_new();
-  sheet_qr_display_set_bunker_uri(qr, uri->str);
-  g_string_free(uri, TRUE);
-
-  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
-  adw_dialog_close(ADW_DIALOG(self));
-  adw_dialog_present(ADW_DIALOG(qr), GTK_IS_WIDGET(root) ? GTK_WIDGET(root) : NULL);
-}
-
-static void on_cancel(GtkButton *b, gpointer user_data){ (void)b; SheetCreateBunker *self = user_data; if (self) adw_dialog_close(ADW_DIALOG(self)); }
-static void on_entry_activate(GtkEntry *e, gpointer user_data){ (void)e; SheetCreateBunker *self = user_data; if (self && self->btn_create) gtk_widget_activate(GTK_WIDGET(self->btn_create)); }
-static void sheet_create_bunker_init(SheetCreateBunker *self){
-  gtk_widget_init_template(GTK_WIDGET(self));
-  if (self->btn_cancel) g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
-  if (self->btn_create) g_signal_connect(self->btn_create, "clicked", G_CALLBACK(on_create), self);
-  if (self->entry_name) {
-    g_signal_connect(self->entry_name, "activate", G_CALLBACK(on_entry_activate), self);
-    gtk_widget_grab_focus(GTK_WIDGET(self->entry_name));
-  }
-  if (self->entry_relay) g_signal_connect(self->entry_relay, "activate", G_CALLBACK(on_entry_activate), self);
-}
-
-SheetCreateBunker *sheet_create_bunker_new(void){ return g_object_new(TYPE_SHEET_CREATE_BUNKER, NULL); }
+SheetCreateBunker *sheet_create_bunker_new(void) { return g_object_new(TYPE_SHEET_CREATE_BUNKER, NULL); }

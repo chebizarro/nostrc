@@ -292,6 +292,30 @@ static void legacy_no_session(Fixture *f, gconstpointer data) {
   g_assert_true(f->remember);
   g_assert_cmpstr(f->identity, ==, "npub-pinned-by-daemon");
 }
+static void pairing_preview(Fixture *f, gconstpointer data) {
+  (void)data;
+  for (guint complete = 0; complete < 2; complete++) {
+    GVariantBuilder info, summary; g_variant_builder_init(&info, G_VARIANT_TYPE_VARDICT); g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&info, "{sv}", "operation", g_variant_new_string("connect"));
+    g_variant_builder_add(&info, "{sv}", "principal", g_variant_new_string("nip46:79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
+    g_variant_builder_add(&info, "{sv}", "identity", g_variant_new_string("npub-pinned-by-daemon"));
+    g_variant_builder_add(&info, "{sv}", "claimed_app_id", g_variant_new_string("Unverified client"));
+    const gchar *urls[] = {"wss://relay.example.test/", NULL};
+    const gchar *hints[] = {"sign_event:1", NULL};
+    if (complete) g_variant_builder_add(&summary, "{sv}", "relays", g_variant_new_strv(urls, -1));
+    g_variant_builder_add(&summary, "{sv}", "requested_permissions_hint", g_variant_new_strv(hints, -1));
+    g_variant_builder_add(&summary, "{sv}", "secret", g_variant_new_string("must-not-render"));
+    g_variant_builder_add(&info, "{sv}", "event_summary", g_variant_builder_end(&summary));
+    g_autoptr(GVariant) row = g_variant_ref_sink(g_variant_builder_end(&info));
+    g_assert_cmpint(gnostr_approval_info_can_approve(row), ==, complete);
+    gnostr_approval_dialog_set_info(f->dialog, row, "Remote application");
+    const gchar *preview = gtk_label_get_text(GTK_LABEL(child(f, "content_preview")));
+    g_assert_nonnull(strstr(preview, "Unverified client"));
+    g_assert_nonnull(strstr(preview, "sign_event:1"));
+    g_assert_null(strstr(preview, "must-not-render"));
+    if (complete) g_assert_nonnull(strstr(preview, urls[0]));
+  }
+}
 int main(int argc, char **argv) {
   if (g_getenv("GNOSTR_SKIP_UI_TESTS")) {
     g_print("1..0 # SKIP UI disabled\n");
@@ -322,6 +346,7 @@ int main(int argc, char **argv) {
   ADD("stepper-focus", stepper_focus);
   ADD("batch-selection", batch_selection);
   ADD("legacy-no-session", legacy_no_session);
+  ADD("pairing-preview", pairing_preview);
 #undef ADD
   return g_test_run();
 }

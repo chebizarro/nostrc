@@ -929,9 +929,12 @@ static void tier_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GError) error = NULL;
   g_autoptr(GVariant) reply =
       g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-  if (fetch_current(f))
-    message(f->self, reply ? "Trust level changed. Remembered permissions are unchanged."
+  if (fetch_current(f)) {
+    gboolean pairing = f->request && !strcmp(text_field(f->request->info, "operation"), "connect");
+    message(f->self, reply ? (pairing ? "Trust choice saved. A new client still needs pairing approval. Remembered permissions are unchanged."
+                                      : "Trust level changed. Remembered permissions are unchanged.")
                            : "Trust level could not be changed. No request was approved.");
+  }
   fetch_free(f);
 }
 static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer data) {
@@ -940,7 +943,7 @@ static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer
   GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
   if (!r || !s->compatible || r->state != GROTTO_APPROVAL_READY)
     return;
-  Fetch *f = fetch_new(s, NULL);
+  Fetch *f = fetch_new(s, r);
   f->held = TRUE;
   hold(s);
   g_dbus_connection_call(s->bus, s->owner, CONTROL_PATH, CONTROL, "SetClientTrust",

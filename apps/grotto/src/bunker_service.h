@@ -62,6 +62,19 @@ void bunker_service_set_no_approval_ui(BunkerService *, gboolean);
 const gchar *bunker_service_get_error(BunkerService *);
 const gchar *bunker_service_get_transport_pubkey(BunkerService *);
 
+/* Called only after explicit CONNECT consent, before any acknowledgement. */
+typedef gboolean (*BunkerPairingCommitCb)(const gchar *client_hex, const gchar *identity,
+    const gchar *label, const gchar *const *relays, gint tier, gpointer data);
+void bunker_service_set_pairing_commit(BunkerService *, BunkerPairingCommitCb, gpointer);
+GVariant *bunker_service_create_pairing(BunkerService *, const gchar *identity, const gchar *label, GError **);
+gchar *bunker_service_accept_connect_uri(BunkerService *, const gchar *uri, const gchar *identity, GError **);
+gboolean bunker_service_cancel_pairing(BunkerService *, const gchar *id);
+void bunker_service_invalidate_pairings(BunkerService *);
+/* Stage a new client's explicit tier choice, without creating admission. */
+gboolean bunker_service_pairing_tier(BunkerService *, const gchar *client_hex, gint tier);
+gboolean bunker_service_reconfigure(BunkerService *, const gchar *const *relays, const gchar *identity);
+GVariant *bunker_service_relay_status(BunkerService *);
+
 typedef gboolean (*BunkerAuthorizeCb)(const BunkerSignRequest *req, gpointer user_data);
 
 /* Create a new bunker service */
@@ -82,6 +95,7 @@ gboolean bunker_service_start(BunkerService *bs,
 void bunker_service_stop(BunkerService *bs);
 gboolean bunker_service_restart(BunkerService *bs);
 void bunker_service_fail_transport(BunkerService *bs);
+void bunker_service_fail_configuration(BunkerService *bs);
 gboolean bunker_service_replay_healthy(BunkerService *bs);
 /* ONLY after authenticated endpoint rotation and revocation of all pairings;
  * requires a stopped listener. Never clear replay guards on an ordinary restart. */
@@ -104,6 +118,8 @@ gboolean bunker_service_disconnect_client(BunkerService *bs, const gchar *client
 
 /* Set allowed methods */
 void bunker_service_set_allowed_methods(BunkerService *bs, const gchar *const *methods);
+/* Signer-wide advertised relays, distinct from the effective client relay union. */
+void bunker_service_set_configured_relays(BunkerService *, const gchar *const *relays);
 
 /* Admission-only legacy inventory: empty admits no unpaired clients. */
 void bunker_service_set_allowed_pubkeys(BunkerService *bs, const gchar *const *pubkeys);

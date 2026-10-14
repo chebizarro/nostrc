@@ -74,6 +74,15 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
  * transport key must already be installed. Admission remains the handler's job.
  * Returns 0 on success, -1 on error. */
 int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s, const char *nostrconnect_uri);
+/* Relay URL of the authenticated delivery, NULL for direct-cipher callers. */
+const char *nostr_nip46_bunker_request_relay(const NostrNip46BunkerRequest *request);
+/* Queue the signer-initiated connect RESPONSE (result = client secret).
+ * The worker checks cancellation before encryption and transport handoff. */
+typedef struct NostrNip46CancelHandle NostrNip46CancelHandle;
+int nostr_nip46_bunker_connect_response(NostrNip46Session *s, const char *client_hex, const char *secret, NostrNip46CancelHandle *cancel);
+/* Owner-thread, request-handler mode only. Preserve unchanged relay subscriptions
+ * and in-flight requests. URLs must already have passed the embedding policy. */
+int nostr_nip46_bunker_reconfigure_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 
 #ifdef __cplusplus
 }

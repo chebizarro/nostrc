@@ -166,18 +166,29 @@ gchar *grotto_clients_paired_identity(GrottoClients *c, const gchar *principal) 
   if (identity && *identity) return identity;
   g_free(identity); return NULL;
 }
-gboolean grotto_clients_set_pairing(GrottoClients *c, const gchar *p, gboolean paired,
-    const gchar *const *relays, GError **error) {
+static gboolean pairing_update(GrottoClients *c, const gchar *p, gboolean paired,
+    const gchar *const *relays, gint tier, const gchar *label, GError **error) {
   g_autofree gchar *id = NULL;
   if (!existing(c, p, &id, error)) return FALSE;
   if (!g_str_has_prefix(p, "nip46:") || !g_key_file_get_uint64(c->records, id, "first-consented-at", NULL))
     return invalid(error, "pairing requires explicit remote consent");
+  if (tier < -1 || tier > SIGNER_TRUST_FULL || (label && !text_ok(label, 160, TRUE))) return invalid(error, "invalid pairing metadata");
   gsize n = relays ? g_strv_length((GStrv)relays) : 0;
   if (n > 64) return invalid(error, "too many client relays");
   for (gsize i = 0; i < n; i++) if (!text_ok(relays[i], 2048, FALSE)) return invalid(error, "invalid client relay");
   g_autoptr(GKeyFile) next = copy_records(c);
   g_key_file_set_boolean(next, id, "paired", paired); g_key_file_set_string_list(next, id, "relays", relays, n);
+  if (tier >= SIGNER_TRUST_LOW) g_key_file_set_integer(next, id, "tier", tier);
+  if (label && *label) g_key_file_set_string(next, id, "label", label);
   return commit(c, next, error);
+}
+gboolean grotto_clients_set_pairing(GrottoClients *c, const gchar *p, gboolean paired,
+    const gchar *const *relays, GError **error) {
+  return pairing_update(c, p, paired, relays, -1, NULL, error);
+}
+gboolean grotto_clients_finish_pairing(GrottoClients *c, const gchar *p,
+    const gchar *const *relays, gint tier, const gchar *label, GError **error) {
+  return pairing_update(c, p, TRUE, relays, tier, label, error);
 }
 gboolean grotto_clients_remove(GrottoClients *c, const gchar *p, GError **error) {
   if (!grotto_clients_principal_valid(p)) return invalid(error, "invalid principal");

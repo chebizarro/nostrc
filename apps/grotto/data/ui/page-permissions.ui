@@ -97,6 +97,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </accessibility>
         <child>
           <object class="AdwActionRow" id="row_orbot">
+            <property name="visible">false</property>
             <property name="title" translatable="yes">Connect through your Orbot setup</property>
             <accessibility>
               <property name="description">Enable to route connections through the Tor network for enhanced privacy</property>

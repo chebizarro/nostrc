@@ -53,8 +53,8 @@ static void test_contract(ControlFixture *f, gconstpointer data) {
 static void test_conflict(ControlFixture *f, gconstpointer data) {
   (void)data; const gchar *p = "https://one.example"; guint64 revision = get_revision(f);
   g_autoptr(GVariant) rows = permission_rows(p, "*");
-  g_autoptr(GVariant) ok = control_call(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", g_variant_ref(rows), revision));
-  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", g_variant_ref(rows), revision), GROTTO_CONTROL_ERROR "Conflict");
+  g_autoptr(GVariant) ok = control_call(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", rows, revision));
+  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", rows, revision), GROTTO_CONTROL_ERROR "Conflict");
   g_autoptr(GVariant) listed = get_rows(f, "ListPermissions", g_variant_new("(s)", p));
   g_assert_cmpuint(g_variant_n_children(listed), ==, 1);
   g_autoptr(GVariant) other = get_rows(f, "ListPermissions", g_variant_new("(s)", "https://two.example"));
@@ -62,12 +62,12 @@ static void test_conflict(ControlFixture *f, gconstpointer data) {
   guint64 current = get_revision(f);
   /* Legacy ApproveRequest/remember mutations also invalidate Control1 revisions. */
   g_assert_true(signer_permissions_remember(signer_approval_service_permissions(f->approval), p, "*", "ping", -1, FALSE, 600, NULL));
-  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", g_variant_ref(rows), current), GROTTO_CONTROL_ERROR "Conflict");
+  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", rows, current), GROTTO_CONTROL_ERROR "Conflict");
   guint64 old = get_revision(f);
   grotto_control_free(f->control);
   f->control = grotto_control_new(f->server, f->approval, NULL, NULL); g_assert_nonnull(f->control);
   g_assert_cmpuint(get_revision(f), !=, old);
-  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", g_variant_ref(rows), old), GROTTO_CONTROL_ERROR "Conflict");
+  expect_control_error(f, "SetPermissions", g_variant_new("(ss@aa{sv}t)", p, "*", rows, old), GROTTO_CONTROL_ERROR "Conflict");
   g_autoptr(GVariant) revoked = control_call(f, "RevokeClient", g_variant_new("(s)", p));
   g_autoptr(GVariant) cleared = get_rows(f, "ListPermissions", g_variant_new("(s)", p)); g_assert_cmpuint(g_variant_n_children(cleared), ==, 0);
 }
@@ -126,7 +126,7 @@ static void test_permission_created_client(ControlFixture *f, gconstpointer data
   g_assert_cmpint(nostr_nip55l_get_public_key(&npub), ==, 0);
   g_autoptr(GVariant) rows = operation_rows(p, npub, "get_public_key");
   g_autoptr(GVariant) set = control_call(f, "SetPermissions",
-      g_variant_new("(ss@aa{sv}t)", p, npub, g_variant_ref(rows), get_revision(f)));
+      g_variant_new("(ss@aa{sv}t)", p, npub, rows, get_revision(f)));
   g_autoptr(GVariant) created = client_row(f, p); const gchar *identity, *transport, *tier; guint64 first, used;
   g_assert_true(g_variant_lookup(created, "identity", "&s", &identity)); g_assert_cmpstr(identity, ==, "");
   g_assert_true(g_variant_lookup(created, "last-used-at", "t", &used)); g_assert_cmpuint(used, ==, 0);
