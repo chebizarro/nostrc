@@ -200,9 +200,9 @@ Use a disposable user/profile and throwaway Secret Service, not developer keys.
 | Disable extension; repeat enable/disable and lock/unlock | Name released on disable; notifier may return; no orphan actors, callbacks, names, or Shell journal errors; re-enable has exactly one icon |
 | Inspect menu and accessibility text at large text/light/dark themes | Four symbolic states and numeric badge legible; Open remains usable when unavailable |
 
-Version impact: initial G13 extension **0.4.0 → 0.5.0 (MINOR)**, then review
-remediation **0.5.0 → 0.6.0 (MINOR)**: take the highest bump for the newly
-exposed panel Quit action alongside PATCH-class status corrections.
+Version impact: G13 extension **0.4.0 → 0.5.0 (MINOR)**. Review fixes and
+completion of the planned Quit menu are **folded into unreleased 0.5.0;
+no further bump**, retaining one bump for the G13 wave per owner correction.
 Grotto's optional package recommendation remains folded into unreleased
 **0.1.0**; remediation reuses its existing quit action without any GUI/daemon
 or signing/management ABI change. Review docs/tests need no separate bump.

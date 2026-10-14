@@ -12,5 +12,5 @@
   "url": "https://github.com/chebizarro/nostrc/tree/master/gnome/nostr-shell-extension",
   "settings-schema": "org.gnome.shell.extensions.nostr",
   "gettext-domain": "nostr-shell-extension",
-  "version-name": "0.6.0"
+  "version-name": "0.5.0"
 }
