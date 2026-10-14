@@ -65,7 +65,8 @@ Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
          dbus-user-session
-Recommends: gnome-keyring | org.freedesktop.secrets
+Recommends: gnome-keyring | org.freedesktop.secrets,
+            gnome-shell-extension-nostr
 Provides: grotto-daemon
 Description: Keeps your Nostr keys and signs for your apps (preview)
  Grotto holds your Nostr identities in the system keyring and signs,

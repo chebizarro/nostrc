@@ -23,6 +23,7 @@ import {Extension, gettext as _, ngettext} from 'resource:///org/gnome/shell/ext
 import {RelayMonitor} from './lib/relay.js';
 import {DmMonitor} from './lib/dm.js';
 import {WalletMonitor} from './lib/wallet.js';
+import {SignerIndicator} from './lib/signer-panel.js';
 import {dmView, relayView, setTranslator, walletView} from './lib/state.js';
 
 const NostrRelayToggle = GObject.registerClass(
@@ -176,9 +177,14 @@ export default class NostrExtension extends Extension {
         this._settings = this.getSettings();
         this._indicator = new NostrIndicator(this, this._settings);
         Main.panel.statusArea.quickSettings.addExternalIndicator(this._indicator);
+        this._signer = new SignerIndicator(this);
+        Main.panel.addToStatusArea('nostr-signer', this._signer);
+        this._signer.start();
     }
 
     disable() {
+        this._signer?.destroy();
+        this._signer = null;
         this._indicator?.destroy();
         this._indicator = null;
         this._settings = null;

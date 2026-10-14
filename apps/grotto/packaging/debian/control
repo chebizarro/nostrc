@@ -40,7 +40,8 @@ Depends: ${shlibs:Depends},
          gstreamer1.0-plugins-base,
          gstreamer1.0-plugins-good,
          gnome-keyring | kwalletd5
-Recommends: libsecp256k1-1,
+Recommends: gnome-shell-extension-nostr,
+            libsecp256k1-1,
             libsodium23,
             libwebsockets16 | libwebsockets17 | libwebsockets19
 Description: Secure Nostr identity management and signing service

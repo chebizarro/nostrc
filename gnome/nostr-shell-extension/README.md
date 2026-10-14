@@ -1,8 +1,9 @@
 # Nostr — GNOME Shell extension (`nostr@nostr.org`)
 
 A **Nostr Relay** Quick Settings toggle (next to Wi-Fi, Bluetooth, VPN) for
-the per-user session relay, plus a small status menu. GNOME Shell 46, 47
-and 48. Bead `nostrc-33f1`.
+the per-user session relay, plus a small status menu and a **Grotto signer**
+panel indicator. Declared GNOME Shell versions: 46–50. Beads `nostrc-33f1`
+and `nostrc-u6v55.13`; live 46/50 signer acceptance remains with G12.
 
 | Where | Shows | Source |
 |---|---|---|
@@ -94,6 +95,98 @@ monitors. That cancels in-flight calls, unsubscribes every D-Bus signal,
 unwatches the relay name, disconnects the wallet and notifier proxies,
 removes every timeout, and disconnects every
 GSettings, toggle and menu signal.
+
+## Grotto signer panel
+
+`lib/signer.js` is the headless D-Bus monitor; `lib/signer-panel.js` is the
+Shell-only `PanelMenu.Button`. The indicator is independent of the relay toggle.
+It reads only the identity-free `GetStatus` on `org.nostr.Signer`, object
+`/org/nostr/signer/grotto`, interface `org.nostr.Grotto.Control1`. It refreshes
+on owner changes, `RequestsChanged`, `StatusChanged`, and menu open — **no
+signer polling**. Reads are pinned to the observed unique owner, superseded
+snapshots are discarded, and neither the proxy nor reads auto-start the daemon.
+
+| State | Panel / menu |
+| --- | --- |
+| Name absent | Signer not running; Open Grotto remains available |
+| Compatible status, no pending work | Ready |
+| Pending requests | Numeric badge; N requests waiting; Review requests (N) |
+| Paused | Signing paused; Resume signing |
+| Enabled bunker not listening | Bunker degraded/offline (also shown as a separate row when waiting/paused) |
+| Control1 missing, unsupported, or read failed | Signer status unavailable; no stale badge or pause action |
+
+**Review requests** activates `org.freedesktop.Application.ActivateAction` on
+`org.nostr.Grotto` at `/org/nostr/Grotto`, with action `review-request` and
+**one string target `""`** (the inbox). Open Grotto calls `Activate`.
+Pause signing sends only `SetPaused(true)`, which reduces capability and is
+open to same-session callers. Resume signing activates `resume-signing`, so
+the trusted Grotto GUI asks for confirmation and performs the authenticated
+resume. The extension never calls `ApproveRequest`, lists requests/identities,
+or reads signing payloads. No telemetry, Gtk, or Adw in the Shell process.
+
+While enabled it owns `org.nostr.Shell.Signer1`, the G08 contract that hides
+Grotto's opportunistic StatusNotifier to avoid a duplicate Ubuntu AppIndicator.
+Disable destroys both panel indicators, cancels signer calls, disconnects its
+menu/proxy signals, and releases that name. The default session mode means
+Shell also disables it on the lock screen. The panel is informational, not a
+security boundary; signing and approval still work with the extension absent.
+The Grotto Debian package recommends, but does not require, this extension.
+
+The four `icons/nostr-signer-*-symbolic.svg` variants share Grotto's existing
+cave glyph (`apps/grotto/data/icons/hicolor/scalable/apps/org.nostr.Grotto-symbolic.svg`):
+lightning = Ready, exclamation + numeric badge = Waiting, pause bars = Paused,
+minus = Unavailable (including bunker problems). They use shape and text,
+not color alone. The ready glyph is byte-identical to the G08 notifier icon;
+the notifier's existing coarse status titles describe its four states.
+
+### Signer verification and G12 live matrix
+
+Headless local gates (no running Shell needed):
+
+```sh
+node tests/run-tests.js
+gjs -m tests/run-tests.js
+sh tests/run-monitors.sh gjs
+sh tests/run-signer.sh gjs
+glib-compile-schemas --strict --dry-run schemas
+```
+
+`test-signer.js` runs the production monitor against the canonical Control1 XML
+on a private bus with isolated activation services. It covers badge updates,
+status/bunker transitions, pause failure/success, the exact review target,
+GUI-only resume, owner loss/replacement, superseded replies, version skew,
+no automatic activation, name release, and disable during an in-flight call.
+`nostr-shell-extension-signer` also registers in CTest when gjs and
+`dbus-run-session` are available. Syntax can be checked without loading unavailable Shell resources:
+
+```sh
+gjs -c 'const GLib = imports.gi.GLib; for (const path of ARGV) {
+  const [, bytes] = GLib.file_get_contents(path);
+  Reflect.parse(new TextDecoder().decode(bytes), {target: "module"});
+}' extension.js prefs.js lib/*.js tests/*.js
+```
+
+**Not performed by G13:** a real GNOME Shell is unavailable on this macOS host.
+G12 must run every row below on **GNOME 46 / Ubuntu 24.04** and **GNOME 50 /
+Ubuntu 26.04**, recording installed versions and results in `nostrc-u6v55.14`.
+Use a disposable user/profile and throwaway Secret Service, not developer keys.
+
+| Step (repeat on both platforms) | Expected evidence |
+| --- | --- |
+| Install package/zip; enable with daemon stopped | No Shell error; one signer icon says Signer not running; status observation does not launch signer |
+| Click Open Grotto, then start a disposable consumer request | GUI opens; daemon presence becomes Ready, then badge changes to N without a timer |
+| Click Review requests (N) | Empty-string action target opens inbox/compact review; panel shows no identity/request content |
+| Deny/complete disposable requests, including several pending | Badge matches remaining count and clears at zero |
+| Click Pause signing, then Resume signing | Pause round-trip reports paused; resume opens GUI confirmation; cancel stays paused, explicit confirmation resumes |
+| Enable bunker and disrupt its test relay, then recover | Degraded/offline only for enabled bunker; waiting badge remains usable; recovery updates from StatusChanged |
+| Stop/restart daemon while requests/status read are pending | No stale badge or Ready state; replacement owner refreshes correctly |
+| Enable Ubuntu AppIndicator with Grotto running | Shell signer name owned; Grotto StatusNotifier hidden (no duplicate icon) |
+| Disable extension; repeat enable/disable and lock/unlock | Name released on disable; notifier may return; no orphan actors, callbacks, names, or Shell journal errors; re-enable has exactly one icon |
+| Inspect menu and accessibility text at large text/light/dark themes | Four symbolic states and numeric badge legible; Open remains usable when unavailable |
+
+Version impact: extension **0.4.0 → 0.5.0 (MINOR)** for additive functionality.
+Grotto's optional package recommendation is PATCH-class folded into unreleased
+**0.1.0**; no signing/management ABI changes. See `VERSION_MANIFEST.md`.
 
 ## Settings
 
