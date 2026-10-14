@@ -15,9 +15,11 @@
 #include "ui/signer-window.h"
 #include "ui/onboarding-assistant.h"
 #include "approval-controller.h"
+#include "background.h"
 
 #define SIGNER_NAME  "org.nostr.Signer"
 #define SIGNER_PATH  "/org/nostr/signer"
+#define CONTROL_PATH "/org/nostr/signer/grotto"
 #define REQUEST_KIND_EVENT "event" /* ApprovalRequested kind for SignEvent */
 
 // Forward declarations for UI pages
@@ -36,6 +38,14 @@ static gchar *queued_deny;
 static GCancellable *startup_cancel;
 static gboolean shutting_down, setup_held;
 static guint setup_timeout;
+static GSettings *background_settings;
+static GrottoBackground *background;
+static guint shell_watch, control_watch, control_signal, control_revision;
+static gchar *control_owner;
+static gboolean shell_indicator, signer_available, signing_paused, review_activation, desktop_locked;
+static void refresh_indicator(void);
+static void fetch_status(void);
+static void maybe_disclose_background(GtkWindow *win);
 
 static GtkWindow *management_window(GtkApplication *app) {
   for (GList *l = gtk_application_get_windows(app); l; l = l->next)
@@ -56,7 +66,8 @@ static void attach_pending_group(GtkWindow *win);
 static void on_app_preferences(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
-  GtkWindow *win = gtk_application_get_active_window(app);
+  g_application_activate(G_APPLICATION(app));
+  GtkWindow *win = management_window(app);
   if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_page((SignerWindow*)win, "settings");
 }
@@ -84,7 +95,8 @@ static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_d
 static void on_app_new_profile(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
-  GtkWindow *win = gtk_application_get_active_window(app);
+  g_application_activate(G_APPLICATION(app));
+  GtkWindow *win = management_window(app);
   if (!win || !SIGNER_IS_WINDOW(win)) return;
   signer_window_show_new_profile((SignerWindow*)win);
 }
@@ -252,9 +264,57 @@ static void on_onboarding_finished(gboolean completed, gpointer user_data) {
 
   attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
+  maybe_disclose_background(GTK_WINDOW(win));
 }
 
+static void background_description(GrottoBackground *self, AdwPreferencesGroup *group) {
+  adw_preferences_group_set_description(group, grotto_background_get_description(self));
+}
+static void background_permission(GtkButton *button, gpointer data) {
+  (void)data;
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(button));
+  if (GTK_IS_WINDOW(root)) maybe_disclose_background(GTK_WINDOW(root));
+}
+static void background_choice(AdwSwitchRow *row, GParamSpec *pspec, gpointer data) {
+  (void)pspec; (void)data;
+  if (adw_switch_row_get_active(row))
+    g_settings_set_boolean(background_settings, "background-disclosure-accepted", TRUE);
+}
 static void attach_pending_group(GtkWindow *win) {
+  if (SIGNER_IS_WINDOW(win) && background &&
+      !g_object_get_data(G_OBJECT(win), "grotto-background-group")) {
+    AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
+    adw_preferences_group_set_title(group, "Background and signing");
+    AdwActionRow *permission = ADW_ACTION_ROW(adw_action_row_new());
+    adw_preferences_row_set_title(ADW_PREFERENCES_ROW(permission), "Allow background operation");
+    adw_action_row_set_subtitle(permission, "Review the setup disclosure before requesting desktop permission");
+    GtkWidget *button = gtk_button_new_with_label("Review");
+    gtk_widget_set_valign(button, GTK_ALIGN_CENTER);
+    adw_action_row_add_suffix(permission, button);
+    g_signal_connect(button, "clicked", G_CALLBACK(background_permission), NULL);
+    g_settings_bind(background_settings, "background-disclosure-accepted", permission, "visible",
+                    G_SETTINGS_BIND_GET | G_SETTINGS_BIND_INVERT_BOOLEAN);
+    adw_preferences_group_add(group, GTK_WIDGET(permission));
+    const char *keys[] = { "run-in-background", "launch-on-login", "pause-on-screen-lock" };
+    const char *titles[] = { "Review requests in the background", "Launch on login", "Pause signing on screen lock" };
+    const char *subtitles[] = {
+      "Keep Grotto available after closing its window; your desktop may ask permission",
+      "Start without opening a window; requires background mode",
+      "Unlocking does not resume signing. Resume explicitly in Grotto." };
+    for (guint i = 0; i < G_N_ELEMENTS(keys); i++) {
+      AdwSwitchRow *row = ADW_SWITCH_ROW(adw_switch_row_new());
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), titles[i]);
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), subtitles[i]);
+      g_settings_bind(background_settings, keys[i], row, "active", G_SETTINGS_BIND_DEFAULT);
+      if (i == 0) g_signal_connect(row, "notify::active", G_CALLBACK(background_choice), NULL);
+      if (i == 1) g_settings_bind(background_settings, "run-in-background", row, "sensitive", G_SETTINGS_BIND_GET);
+      adw_preferences_group_add(group, GTK_WIDGET(row));
+    }
+    background_description(background, group);
+    g_signal_connect_object(background, "state-changed", G_CALLBACK(background_description), group, 0);
+    signer_window_add_background_group(SIGNER_WINDOW(win), group);
+    g_object_set_data(G_OBJECT(win), "grotto-background-group", group);
+  }
   if (!SIGNER_IS_WINDOW(win) || !approval_controller ||
       g_object_get_data(G_OBJECT(win), "grotto-pending-group")) return;
   GtkWidget *group = grotto_approval_pending_group_new(approval_controller);
@@ -284,7 +344,9 @@ static void on_approval_message(GrottoApprovalController *controller, const char
   GtkWindow *win = gtk_application_get_active_window(app);
   if (g_strcmp0(message, "That request is no longer waiting.") == 0 ||
       g_strcmp0(message, "No requests are waiting.") == 0) {
+    review_activation = TRUE;
     win = present_pending(app);
+    review_activation = FALSE;
   }
   if (win) {
     /* The existing default page hosts pending review until G10 supplies Home. */
@@ -295,7 +357,9 @@ static void on_approval_message(GrottoApprovalController *controller, const char
 }
 static void on_review_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)data; const char *id = g_variant_get_string(parameter, NULL);
+  review_activation = TRUE;
   present_pending(global_app);
+  review_activation = FALSE;
   if (!*id) {
     g_clear_pointer(&queued_review, g_free);
     if (approval_controller) grotto_approval_controller_review(approval_controller, "");
@@ -320,7 +384,9 @@ static void on_reconciled(GrottoApprovalController *controller, gboolean success
 }
 static void on_deny_request(GSimpleAction *action, GVariant *parameter, gpointer data) {
   (void)action; (void)data;
+  review_activation = TRUE;
   present_pending(global_app);
+  review_activation = FALSE;
   g_free(queued_deny); queued_deny = g_strdup(g_variant_get_string(parameter, NULL));
   if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
 }
@@ -331,12 +397,19 @@ static void on_shutdown(GApplication *app, gpointer data) {
   if (startup_cancel) g_cancellable_cancel(startup_cancel);
   g_clear_object(&startup_cancel);
   if (setup_held) { setup_held = FALSE; g_application_release(app); }
+  if (background) grotto_background_stop(background);
+  if (shell_watch) { g_bus_unwatch_name(shell_watch); shell_watch = 0; }
+  if (control_watch) { g_bus_unwatch_name(control_watch); control_watch = 0; }
+  if (control_signal) { g_dbus_connection_signal_unsubscribe(deferred_dbus_conn, control_signal); control_signal = 0; }
+  control_revision++;
+  g_clear_pointer(&control_owner, g_free);
   if (approval_controller) grotto_approval_controller_stop(approval_controller);
   g_clear_pointer(&queued_review, g_free); g_clear_pointer(&queued_deny, g_free);
   g_clear_object(&deferred_dbus_conn);
 }
 
 /* Callback when async D-Bus connection completes */
+static void start_desktop_observation(void);
 static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_data) {
   (void)source;
   g_autoptr(GApplication) app = user_data;
@@ -363,6 +436,12 @@ static void on_dbus_connected(GObject *source, GAsyncResult *res, gpointer user_
     g_clear_pointer(&queued_review, g_free);
   }
 
+  background = grotto_background_new(G_APPLICATION(global_app), deferred_dbus_conn,
+      background_settings, !g_file_test("/.flatpak-info", G_FILE_TEST_EXISTS) && !g_getenv("SNAP"));
+  g_object_set_data_full(G_OBJECT(global_app), "grotto-background", background, g_object_unref);
+  for (GList *w = gtk_application_get_windows(global_app); w; w = w->next)
+    attach_pending_group(w->data);
+  start_desktop_observation();
   STARTUP_TIME_END(STARTUP_PHASE_DBUS);
 }
 
@@ -407,15 +486,140 @@ static void indicator_quit(GnStatusNotifier *indicator, GApplication *app) {
   g_application_quit(app);
 }
 
+static void pause_done(GObject *source, GAsyncResult *result, gpointer data) {
+  g_autoptr(GApplication) app = data;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+  if (!reply && !shutting_down && !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
+    g_warning("Could not change signing pause: %s", error->message);
+    GtkWindow *win = management_window(GTK_APPLICATION(app));
+    if (win) on_approval_message(approval_controller, "Signing pause could not be changed.", app);
+  }
+}
+static void set_signing_paused(gboolean paused) {
+  if (!control_owner || shutting_down) return;
+  g_dbus_connection_call(deferred_dbus_conn, control_owner, CONTROL_PATH,
+      "org.nostr.Grotto.Control1", "SetPaused", g_variant_new("(b)", paused), G_VARIANT_TYPE_UNIT,
+      G_DBUS_CALL_FLAGS_NO_AUTO_START, 5000, startup_cancel, pause_done, g_object_ref(global_app));
+}
+static void on_pause_signing(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)parameter; (void)data;
+  if (signer_available) set_signing_paused(!signing_paused);
+}
+static void screen_lock_changed(GrottoApprovalController *controller, gboolean locked, gpointer data) {
+  (void)controller; (void)data;
+  desktop_locked = locked;
+  if (locked && g_settings_get_boolean(background_settings, "pause-on-screen-lock"))
+    set_signing_paused(TRUE); /* Never auto-resume on unlock. */
+}
+static void pause_lock_policy_changed(GSettings *settings, const char *key, gpointer data) {
+  (void)key; (void)data;
+  if (desktop_locked && g_settings_get_boolean(settings, "pause-on-screen-lock"))
+    set_signing_paused(TRUE);
+}
+static void indicator_item(GnStatusNotifier *indicator, gint id, gpointer data) {
+  (void)indicator; (void)data;
+  if (id == 3) g_action_group_activate_action(G_ACTION_GROUP(global_app), "review-request", g_variant_new_string(""));
+  else if (id == 4) g_action_group_activate_action(G_ACTION_GROUP(global_app), "pause-signing", NULL);
+}
+static void refresh_indicator(void) {
+  if (shutting_down) return;
+  guint pending = approval_controller ? g_list_model_get_n_items(grotto_approval_controller_get_pending(approval_controller)) : 0;
+  GnStatusNotifier *indicator = g_object_get_data(G_OBJECT(global_app), "grotto-indicator");
+  if (indicator) {
+    g_autofree gchar *title = !signer_available ? g_strdup("Grotto · Signer unavailable") :
+        signing_paused ? g_strdup("Grotto · Signing paused") : pending ?
+        g_strdup_printf("Grotto · Waiting (%u)", pending) : g_strdup("Grotto · Ready");
+    gn_status_notifier_set_presentation(indicator, !shell_indicator, title, "org.nostr.Grotto-symbolic");
+    GnStatusNotifierItem menu[] = {
+      { 5, title, FALSE, TRUE, FALSE, -1 },
+      { 1, "Open Grotto", TRUE, TRUE, FALSE, -1 },
+      { 3, "Review requests", TRUE, TRUE, FALSE, -1 },
+      { 4, signing_paused ? "Resume signing" : "Pause signing", signer_available, TRUE, FALSE, -1 },
+      { 2, "Quit approval UI (authorised signing continues)", TRUE, TRUE, FALSE, -1 }
+    };
+    gn_status_notifier_set_menu_items(indicator, menu, G_N_ELEMENTS(menu));
+  }
+  GAction *pause = g_action_map_lookup_action(G_ACTION_MAP(global_app), "pause-signing");
+  if (pause) {
+    g_simple_action_set_enabled(G_SIMPLE_ACTION(pause), signer_available);
+    g_simple_action_set_state(G_SIMPLE_ACTION(pause), g_variant_new_boolean(signing_paused));
+  }
+  if (background) grotto_background_set_status(background, pending != 0, signing_paused);
+}
+static void pending_changed(GListModel *model, guint position, guint removed, guint added, gpointer data) {
+  (void)model; (void)position; (void)removed; (void)added; (void)data; refresh_indicator();
+}
+static void status_done(GObject *source, GAsyncResult *result, gpointer data) {
+  guint revision = GPOINTER_TO_UINT(data);
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (shutting_down || revision != control_revision) return;
+  signer_available = reply != NULL;
+  signing_paused = FALSE;
+  if (reply) {
+    g_autoptr(GVariant) values = NULL; g_variant_get(reply, "(@a{sv})", &values);
+    g_variant_lookup(values, "paused", "b", &signing_paused);
+  }
+  refresh_indicator();
+}
+static void fetch_status(void) {
+  if (!control_owner || shutting_down) return;
+  control_revision++;
+  g_dbus_connection_call(deferred_dbus_conn, control_owner, CONTROL_PATH,
+      "org.nostr.Grotto.Control1", "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"),
+      G_DBUS_CALL_FLAGS_NO_AUTO_START, 2000, startup_cancel, status_done, GUINT_TO_POINTER(control_revision));
+}
+static void control_changed(GDBusConnection *bus, const char *sender, const char *path,
+    const char *interface, const char *signal, GVariant *args, gpointer data) {
+  (void)bus; (void)path; (void)interface; (void)signal; (void)args; (void)data;
+  if (!g_strcmp0(sender, control_owner)) fetch_status();
+}
+static void control_appeared(GDBusConnection *bus, const char *name, const char *owner, gpointer data) {
+  (void)bus; (void)name; (void)data;
+  g_free(control_owner); control_owner = g_strdup(owner);
+  if (desktop_locked && g_settings_get_boolean(background_settings, "pause-on-screen-lock"))
+    set_signing_paused(TRUE);
+  fetch_status();
+}
+static void control_vanished(GDBusConnection *bus, const char *name, gpointer data) {
+  (void)bus; (void)name; (void)data;
+  control_revision++; g_clear_pointer(&control_owner, g_free);
+  signer_available = FALSE; signing_paused = FALSE; refresh_indicator();
+}
+static void shell_appeared(GDBusConnection *bus, const char *name, const char *owner, gpointer data) {
+  (void)bus; (void)name; (void)owner; (void)data; shell_indicator = TRUE; refresh_indicator();
+}
+static void shell_vanished(GDBusConnection *bus, const char *name, gpointer data) {
+  (void)bus; (void)name; (void)data; shell_indicator = FALSE; refresh_indicator();
+}
+static void start_desktop_observation(void) {
+  GnStatusNotifier *indicator = g_object_get_data(G_OBJECT(global_app), "grotto-indicator");
+  g_signal_connect(indicator, "item-activated", G_CALLBACK(indicator_item), NULL);
+  g_signal_connect(approval_controller, "screen-lock-changed", G_CALLBACK(screen_lock_changed), NULL);
+  g_signal_connect(background_settings, "changed::pause-on-screen-lock", G_CALLBACK(pause_lock_policy_changed), NULL);
+  g_signal_connect(grotto_approval_controller_get_pending(approval_controller), "items-changed", G_CALLBACK(pending_changed), NULL);
+  control_signal = g_dbus_connection_signal_subscribe(deferred_dbus_conn, SIGNER_NAME,
+      "org.nostr.Grotto.Control1", "StatusChanged", CONTROL_PATH, NULL, G_DBUS_SIGNAL_FLAGS_NONE, control_changed, NULL, NULL);
+  control_watch = g_bus_watch_name_on_connection(deferred_dbus_conn, SIGNER_NAME,
+      G_BUS_NAME_WATCHER_FLAGS_NONE, control_appeared, control_vanished, NULL, NULL);
+  shell_watch = g_bus_watch_name_on_connection(deferred_dbus_conn, "org.nostr.Shell.Signer1",
+      G_BUS_NAME_WATCHER_FLAGS_NONE, shell_appeared, shell_vanished, NULL, NULL);
+}
+
 static void on_startup(GtkApplication *app, gpointer user_data) {
   (void)user_data;
+  background_settings = g_settings_new("org.nostr.Grotto");
+  grotto_background_migrate_settings(background_settings);
+  g_object_set_data_full(G_OBJECT(app), "grotto-background-settings", background_settings, g_object_unref);
   startup_cancel = g_cancellable_new();
   g_application_hold(G_APPLICATION(app)); setup_held = TRUE;
   g_idle_add(deferred_init_cb, NULL);
-  GnStatusNotifier *indicator = gn_status_notifier_new(G_APPLICATION(app), "org.nostr.Grotto", "Grotto");
+  GnStatusNotifier *indicator = gn_status_notifier_new(G_APPLICATION(app), "org.nostr.Grotto-symbolic", "Grotto");
   g_signal_connect(indicator, "activate", G_CALLBACK(indicator_activate), app);
   g_signal_connect(indicator, "quit", G_CALLBACK(indicator_quit), app);
   g_object_set_data_full(G_OBJECT(app), "grotto-indicator", indicator, g_object_unref);
+  /* Keep the opportunistic notifier passive until Shell ownership is known. */
+  gn_status_notifier_set_presentation(indicator, FALSE, "Grotto · Signer unavailable", "org.nostr.Grotto-symbolic");
 }
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
@@ -517,6 +721,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
   attach_pending_group(GTK_WINDOW(win));
   gtk_window_present(GTK_WINDOW(win));
+  if (!review_activation) maybe_disclose_background(GTK_WINDOW(win));
   if (approval_controller) grotto_approval_controller_reconcile(approval_controller);
   STARTUP_TIME_END(STARTUP_PHASE_WINDOW);
 
@@ -526,6 +731,80 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
   g_idle_add(deferred_init_cb, NULL);
 }
 
+static void on_close_window(GSimpleAction *action, GVariant *param, gpointer data) {
+  (void)action; (void)param;
+  GtkWindow *win = gtk_application_get_active_window(GTK_APPLICATION(data));
+  if (win) {
+    g_object_ref(win);
+    gtk_window_close(win);
+    /* AdwWindow can consume close to dismiss its modal dialog. Ctrl+W is
+     * explicitly window-close, not hide-or-retain; disposal saves geometry. */
+    gtk_window_destroy(win);
+    g_object_unref(win);
+  }
+}
+static void disclosure_response(AdwAlertDialog *dialog, const char *response, gpointer data) {
+  (void)dialog; (void)data;
+  if (shutting_down) return;
+  g_settings_set_boolean(background_settings, "run-in-background", !strcmp(response, "enable"));
+  g_settings_set_boolean(background_settings, "background-disclosure-accepted", TRUE);
+}
+static void maybe_disclose_background(GtkWindow *win) {
+  if (!background_settings || review_activation ||
+      g_settings_get_boolean(background_settings, "background-disclosure-accepted")) return;
+  AdwDialog *dialog = adw_alert_dialog_new("Review requests in the background?",
+      "Closing a window destroys it. Grotto can keep reviewing requests without a window, "
+      "subject to desktop permission. Launch on login stays off. Quitting the approval UI "
+      "does not pause already-authorised signing; a later request can start Grotto again.");
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(dialog), "disable", "Only when requested",
+                                "enable", "Run in background", NULL);
+  adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(dialog), "enable");
+  adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(dialog), "disable");
+  g_signal_connect(dialog, "response", G_CALLBACK(disclosure_response), NULL);
+  adw_dialog_present(dialog, GTK_WIDGET(win));
+}
+/* G06 integration seam: never parse a token or contact a relay here.
+ * TODO(nostrc-u6v55.7/G06): hand this URI to the identity-first pairing entry point. */
+static void open_pairing_uri(GtkApplication *app, const char *uri) {
+  (void)uri;
+  review_activation = TRUE;
+  present_pending(app);
+  review_activation = FALSE;
+  on_approval_message(approval_controller,
+      "Pairing from a link is not available yet. Review requests here; no relay has been contacted.", app);
+}
+static void on_open(GApplication *app, GFile **files, gint count, const char *hint, gpointer data) {
+  (void)hint; (void)data;
+  for (gint i = 0; i < count; i++) {
+    g_autofree gchar *uri = g_file_get_uri(files[i]);
+    g_autofree gchar *scheme = g_uri_parse_scheme(uri);
+    if (scheme && (!g_ascii_strcasecmp(scheme, "bunker") || !g_ascii_strcasecmp(scheme, "nostrconnect")))
+      open_pairing_uri(GTK_APPLICATION(app), uri);
+    else if (scheme && !g_ascii_strcasecmp(scheme, "grotto"))
+      g_application_activate(app);
+    else
+      g_warning("Grotto does not handle this URI scheme"); /* Never log pairing secrets. */
+  }
+}
+static gint on_command_line(GApplication *app, GApplicationCommandLine *command, gpointer data) {
+  (void)data;
+  GVariantDict *options = g_application_command_line_get_options_dict(command);
+  if (g_variant_dict_contains(options, "new-identity"))
+    g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
+  else if (g_variant_dict_contains(options, "settings"))
+    g_action_group_activate_action(G_ACTION_GROUP(app), "settings", NULL);
+  else {
+    gint argc;
+    g_auto(GStrv) argv = g_application_command_line_get_arguments(command, &argc);
+    if (argc > 1) {
+      g_autoptr(GPtrArray) files = g_ptr_array_new_with_free_func(g_object_unref);
+      for (gint i = 1; i < argc; i++)
+        g_ptr_array_add(files, g_application_command_line_create_file_for_arg(command, argv[i]));
+      g_application_open(app, (GFile **)files->pdata, files->len, "");
+    } else g_application_activate(app);
+  }
+  return 0;
+}
 static void on_app_quit(GSimpleAction *action, GVariant *param, gpointer user_data) {
   (void)action; (void)param;
   GtkApplication *app = GTK_APPLICATION(user_data);
@@ -674,7 +953,11 @@ int main(int argc, char **argv) {
 #endif
 
 AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
-  AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags);
+  AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags | G_APPLICATION_HANDLES_OPEN | G_APPLICATION_HANDLES_COMMAND_LINE);
+  g_application_add_main_option(G_APPLICATION(app), "new-identity", 0, G_OPTION_FLAG_NONE,
+      G_OPTION_ARG_NONE, "Create or import an identity", NULL);
+  g_application_add_main_option(G_APPLICATION(app), "settings", 0, G_OPTION_FLAG_NONE,
+      G_OPTION_ARG_NONE, "Open settings", NULL);
 
   /* Store global app reference for theme change callbacks */
   global_app = GTK_APPLICATION(app);
@@ -684,6 +967,10 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
   /* Install app actions */
   static const GActionEntry app_entries[] = {
     { "quit", on_app_quit, NULL, NULL, NULL },
+    { "close-window", on_close_window, NULL, NULL, NULL },
+    { "new-identity", on_app_new_profile, NULL, NULL, NULL },
+    { "settings", on_app_preferences, NULL, NULL, NULL },
+    { "pause-signing", on_pause_signing, NULL, "false", NULL },
     { "review-request", on_review_request, "s", NULL, NULL },
     { "deny-request", on_deny_request, "s", NULL, NULL },
     { "preferences", on_app_preferences, NULL, NULL, NULL },
@@ -696,6 +983,9 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
     { "show-shortcuts", on_app_show_shortcuts, NULL, NULL, NULL },
   };
   g_action_map_add_action_entries(G_ACTION_MAP(app), app_entries, G_N_ELEMENTS(app_entries), app);
+
+  const char *close_accels[] = { "<Primary>w", NULL };
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.close-window", close_accels);
 
   /* Register keyboard accelerators */
   const char *quit_accels[] = { "<Primary>q", NULL };
@@ -722,6 +1012,8 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
   const char *shortcuts_accels[] = { "<Primary>question", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.show-shortcuts", shortcuts_accels);
 
+  g_signal_connect(app, "command-line", G_CALLBACK(on_command_line), NULL);
+  g_signal_connect(app, "open", G_CALLBACK(on_open), NULL);
   g_signal_connect(app, "shutdown", G_CALLBACK(on_shutdown), NULL);
   g_signal_connect(app, "startup", G_CALLBACK(on_startup), NULL);
   g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);

@@ -32,6 +32,37 @@ wait for the signer. The signer relays learn connection timing, IP address
 unless Tor is used, and the transport-key link. Before downgrading to an alpha
 without remote-signer support, select a Grotto-backed account or read-only mode.
 
+## Background and desktop activation
+
+Background review defaults on **after setup disclosure or an explicit Settings
+choice**. Launch on login defaults off. Closing a window (Ctrl+W) saves its
+geometry and destroys it; background/request holds do not retain hidden windows.
+Ctrl+Q quits only the approval UI for this session: already-authorised signing
+continues in the daemon. Pending requests keep their daemon deadlines, notifications
+are withdrawn, and a later request needing consent can start the UI again.
+Use **Pause signing** instead to stop signing. Optional **Pause signing on screen
+lock** sends the daemon pause action on a positively observed desktop lock;
+unlocking never resumes signing automatically.
+
+Settings reports desktop background permission: unavailable portals are nonfatal
+for native installations; denial removes continuous residence but does not disable
+request-scoped D-Bus activation. Portal v2 status contains only generic readiness,
+waiting or paused text. Native login installs only Grotto's own entry in
+`$XDG_CONFIG_HOME/autostart/org.nostr.Grotto.desktop`, invoking
+`grotto --gapplication-service` without a window. Portal-only installations request
+portal autostart instead, never both. Turning background off turns login launch off;
+turning login launch off does not turn background off. Migration v1 reads the old
+`autostart`/`start-minimized` preferences once; explicit launches and reviews are
+always visible, never minimized by those old settings.
+
+Desktop actions `grotto --new-identity` and `grotto --settings` reuse the existing
+management/onboarding window. The desktop entry handles `bunker:`, `nostrconnect:`
+and local `grotto:` activation, never `nostr:`. Until G06's identity-first pairing
+entry point lands, pairing links open the review path with an explicit unavailable
+message: they do not contact a relay or silently connect. The opportunistic
+StatusNotifier uses `org.nostr.Grotto-symbolic`; it is Passive while the Shell signer
+module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
+
 ## Features
 
 - **Secure Identity Management**: Securely store and manage Nostr identities

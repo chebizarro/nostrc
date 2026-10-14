@@ -491,6 +491,13 @@ if(NOT WIN32)
     daemon/packaging/systemd/user/grotto-daemon.service.d/headless-bunker.conf.example
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/grotto/examples)
 endif()
+set(GROTTO_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
+configure_file(data/org.nostr.Grotto-autostart.desktop.in org.nostr.Grotto-autostart.desktop @ONLY)
+# This is a template, not a system-wide enabled login entry.
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto-autostart.desktop
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/grotto)
+target_compile_definitions(grotto PRIVATE GROTTO_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto")
+
 # Desktop file (canonical; AppImage uses packaging/appimage/grotto.desktop separately)
 install(FILES data/org.nostr.Grotto.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 # AppStream metainfo
@@ -498,10 +505,12 @@ install(FILES data/org.nostr.Grotto.metainfo.xml DESTINATION ${CMAKE_INSTALL_DAT
 
 # Icons (hicolor theme): data/icons/hicolor/<size>/apps/org.nostr.Grotto.png,
 # rendered from assets/grotto.xcf (squared on a transparent canvas, Lanczos).
-# No scalable icon: the artwork is a painting.
+# The painted application icon is retained; the panel uses a separate symbolic cave/bolt.
 set(ICON_BASENAME "${APP_SIGNER_FLATPAK_ID}")
 set(ICON_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor)
 set(ICON_INSTALL_ROOT ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor)
+install(FILES ${ICON_ROOT}/scalable/apps/org.nostr.Grotto-symbolic.svg
+        DESTINATION ${ICON_INSTALL_ROOT}/scalable/apps)
 foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
   install(FILES ${ICON_ROOT}/${sz}x${sz}/apps/${ICON_BASENAME}.png
           DESTINATION ${ICON_INSTALL_ROOT}/${sz}x${sz}/apps

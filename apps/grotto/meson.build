@@ -113,6 +113,7 @@ nips_inc = include_directories(
 app_sources = files(
   'src/main_app.c',
   'src/approval-controller.c',
+  'src/background.c',
   '../../gnome/common/gn-session-bus-probe.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
@@ -256,6 +257,7 @@ executable(app_bin,
     '-DAPP_RESOURCE_PATH="/org/gnostr/signer"',
     '-DGETTEXT_PACKAGE="@0@"'.format(gettext_package),
     '-DLOCALEDIR="@0@"'.format(localedir),
+    '-DGROTTO_EXECUTABLE="@0@/grotto"'.format(get_option('prefix') / get_option('bindir')),
     libsecret_dep.found() ? '-DGNOSTR_HAVE_LIBSECRET=1' : [],
   ].flatten(),
   install: true,
@@ -282,8 +284,29 @@ configure_file(
   install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 
+configure_file(
+  input: 'data/org.nostr.Grotto.service.in',
+  output: 'org.nostr.Grotto.service',
+  configuration: dbus_service_conf,
+  format: 'cmake@',
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
+)
+autostart_conf = configuration_data()
+autostart_conf.set('GROTTO_BINDIR', get_option('prefix') / get_option('bindir'))
+configure_file(input: 'data/org.nostr.Grotto-autostart.desktop.in',
+  output: 'org.nostr.Grotto-autostart.desktop', configuration: autostart_conf,
+  install_dir: get_option('datadir') / 'grotto')
+install_data('data/org.nostr.Grotto.metainfo.xml',
+  install_dir: get_option('datadir') / 'metainfo')
+install_data('data/icons/hicolor/scalable/apps/org.nostr.Grotto-symbolic.svg',
+  install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
+foreach size : ['16', '24', '32', '48', '64', '128', '256', '512']
+  install_data('data/icons/hicolor/' + size + 'x' + size + '/apps/org.nostr.Grotto.png',
+    install_dir: get_option('datadir') / 'icons/hicolor' / (size + 'x' + size) / 'apps')
+endforeach
+
 # Install desktop file
-install_data('packaging/appimage/grotto.desktop',
+install_data('data/org.nostr.Grotto.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 

@@ -25,7 +25,7 @@ struct _GnStatusNotifier {
   gchar *icon_name, *title;
   GDBusConnection *bus;
   guint item_reg, menu_reg, watch_id;
-  gboolean registered;
+  gboolean registered, hidden;
   guint menu_revision;
   GPtrArray *items; /* immutable between set_menu_items calls */
 };
@@ -279,7 +279,7 @@ static GVariant *item_property(GDBusConnection *bus, const gchar *sender, const 
   if (g_str_equal(name, "Category")) return g_variant_new_string("Communications");
   if (g_str_equal(name, "Id")) return g_variant_new_string(g_application_get_application_id(self->app));
   if (g_str_equal(name, "Title")) return g_variant_new_string(self->title);
-  if (g_str_equal(name, "Status")) return g_variant_new_string("Active");
+  if (g_str_equal(name, "Status")) return g_variant_new_string(self->hidden ? "Passive" : "Active");
   if (g_str_equal(name, "IconName")) return g_variant_new_string(self->icon_name);
   if (g_str_equal(name, "IconThemePath")) return g_variant_new_string("");
   if (g_str_equal(name, "ItemIsMenu")) return g_variant_new_boolean(FALSE);
@@ -361,6 +361,23 @@ void gn_status_notifier_set_menu_items(GnStatusNotifier *self,
     g_dbus_connection_emit_signal(self->bus, NULL, MENU_PATH, "com.canonical.dbusmenu",
                                   "LayoutUpdated", g_variant_new("(ui)", self->menu_revision,
                                                                   MENU_ROOT), NULL);
+}
+
+void gn_status_notifier_set_presentation(GnStatusNotifier *self, gboolean visible,
+                                         const gchar *title, const gchar *icon_name)
+{
+  gboolean status_changed = self->hidden == visible;
+  self->hidden = !visible;
+  g_free(self->title); self->title = g_strdup(title);
+  g_free(self->icon_name); self->icon_name = g_strdup(icon_name);
+  if (!self->bus || !self->item_reg) return;
+  g_dbus_connection_emit_signal(self->bus, NULL, ITEM_PATH, "org.kde.StatusNotifierItem",
+                                "NewTitle", NULL, NULL);
+  g_dbus_connection_emit_signal(self->bus, NULL, ITEM_PATH, "org.kde.StatusNotifierItem",
+                                "NewIcon", NULL, NULL);
+  if (status_changed)
+    g_dbus_connection_emit_signal(self->bus, NULL, ITEM_PATH, "org.kde.StatusNotifierItem",
+        "NewStatus", g_variant_new("(s)", visible ? "Active" : "Passive"), NULL);
 }
 
 static void gn_status_notifier_dispose(GObject *object)

@@ -539,7 +539,8 @@ static void signer_window_init(SignerWindow *self) {
     g_menu_append(app_section, "Preferences\tCtrl+,", "win.preferences");
     g_menu_append(app_section, "Keyboard Shortcuts\tCtrl+?", "win.show-shortcuts");
     g_menu_append(app_section, "About Grotto\tF1", "win.about");
-    g_menu_append(app_section, "Quit\tCtrl+Q", "win.quit");
+    g_menu_append(app_section, "Pause signing", "app.pause-signing");
+    g_menu_append(app_section, "Quit approval UI (authorised signing continues)\tCtrl+Q", "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
 
@@ -561,6 +562,10 @@ static void signer_window_init(SignerWindow *self) {
   /* Setup enhanced keyboard navigation for sidebar */
   static const char *page_names[] = { "permissions", "applications", "sessions", "history", "settings", NULL };
   gn_keyboard_nav_setup_sidebar(self->sidebar, self->stack, page_names);
+}
+
+void signer_window_add_background_group(SignerWindow *self, AdwPreferencesGroup *group) {
+  adw_preferences_page_add(ADW_PREFERENCES_PAGE(self->page_settings), group);
 }
 
 void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group) {

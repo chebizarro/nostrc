@@ -532,6 +532,40 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
   add_dependencies(signer-tests test-approval-integration)
 endif()
 
+# G08: real background state machine, fake portal only on the private bus.
+if(UNIX)
+  add_library(grotto_background_test_core STATIC ../src/background.c)
+  target_include_directories(grotto_background_test_core PUBLIC ${SIGNER_INCLUDE_DIRS})
+  target_link_libraries(grotto_background_test_core PUBLIC PkgConfig::GLIB)
+  target_compile_definitions(grotto_background_test_core PRIVATE
+    g_application_hold=g08_test_hold g_application_release=g08_test_release)
+  target_compile_options(grotto_background_test_core PRIVATE -Wall -Wextra -Werror)
+  add_executable(test-background test-background.c)
+  target_link_libraries(test-background PRIVATE grotto_background_test_core nostrc-test-bus)
+  target_compile_options(test-background PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-background grotto-schemas)
+  add_dependencies(signer-tests test-background)
+  add_test(NAME signer/background COMMAND test-background)
+  set_tests_properties(signer/background PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77
+    LABELS "signer;unit;background"
+    ENVIRONMENT "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto")
+endif()
+set(_g08_desktop_worker)
+if(TARGET grotto_app_test_core)
+  add_executable(test-desktop-activation test-desktop-activation.c ${APP_GRESOURCE_C})
+  target_include_directories(test-desktop-activation PRIVATE ${SIGNER_INCLUDE_DIRS})
+  target_link_libraries(test-desktop-activation PRIVATE grotto_app_test_core nostrc-test-bus)
+  target_compile_options(test-desktop-activation PRIVATE -Wall -Wextra -Werror)
+  add_dependencies(test-desktop-activation grotto-schemas)
+  add_dependencies(signer-tests test-desktop-activation)
+  set(_g08_desktop_worker $<TARGET_FILE:test-desktop-activation>)
+endif()
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+add_test(NAME signer/desktop-contract COMMAND ${Python3_EXECUTABLE}
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-desktop-contract.py ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${_g08_desktop_worker})
+set_tests_properties(signer/desktop-contract PROPERTIES TIMEOUT 90 LABELS "signer;desktop;unit"
+  ENVIRONMENT "${_UI_TEST_ENV}")
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

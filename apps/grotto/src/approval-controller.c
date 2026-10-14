@@ -618,6 +618,7 @@ static void lock_changed(GDBusConnection *bus, const char *sender, const char *p
   GrottoApprovalController *s = data;
   s->lock_revision++;
   g_variant_get(args, "(b)", &s->locked);
+  g_signal_emit_by_name(s, "screen-lock-changed", s->locked);
   update_notifications(s);
 }
 static void lock_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -626,6 +627,7 @@ static void lock_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
   if (r && !s->stopped && f->revision == s->lock_revision) {
     g_variant_get(r, "(b)", &s->locked);
+    g_signal_emit_by_name(s, "screen-lock-changed", s->locked);
     update_notifications(s);
   }
   fetch_free(f);
@@ -1131,6 +1133,9 @@ static void grotto_approval_controller_finalize(GObject *object) {
   G_OBJECT_CLASS(grotto_approval_controller_parent_class)->finalize(object);
 }
 static void grotto_approval_controller_class_init(GrottoApprovalControllerClass *klass) {
+  /* Only positively observed lock state is exported, not fail-closed notification fallback. */
+  g_signal_new("screen-lock-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
   GObjectClass *o = G_OBJECT_CLASS(klass);
   o->dispose = grotto_approval_controller_dispose;
   o->finalize = grotto_approval_controller_finalize;
