@@ -1,6 +1,7 @@
 /* sheet-select-account.c - Account selection and management dialog implementation */
 #include "sheet-select-account.h"
 #include "../onboarding-assistant.h"
+#include "../page-identity-detail.h"
 #include "sheet-import-key.h"
 #include "../app-resources.h"
 #include "../../accounts_store.h"
@@ -27,6 +28,7 @@ struct _SheetSelectAccount {
   SheetSelectAccountCb on_select;
   gpointer on_select_ud;
   gchar *selected_npub;
+  guint accounts_changed;
 };
 
 G_DEFINE_TYPE(SheetSelectAccount, sheet_select_account, ADW_TYPE_DIALOG)
@@ -53,27 +55,16 @@ static void on_cancel(GtkButton *btn, gpointer user_data) {
 }
 
 static void on_row_remove(GtkButton *btn, gpointer user_data) {
+  (void)btn;
   GtkListBoxRow *row = GTK_LIST_BOX_ROW(user_data);
   SheetSelectAccount *self = g_object_get_data(G_OBJECT(row), "sheet-self");
 
   AccountRowData *data = g_object_get_data(G_OBJECT(row), "account-data");
   if (!data || !self) return;
 
-  /* Remove from stores */
-  accounts_store_remove(self->accounts, data->npub, NULL);
-  accounts_store_save(self->accounts, NULL);
-
-  /* Also remove from secret store */
-  secret_store_remove(data->npub);
-
-  /* Remove row from list */
-  GtkListBox *list = GTK_LIST_BOX(gtk_widget_get_parent(GTK_WIDGET(row)));
-  gtk_list_box_remove(list, GTK_WIDGET(row));
-
-  /* Show empty label if no accounts */
-  if (accounts_store_count(self->accounts) == 0) {
-    gtk_widget_set_visible(GTK_WIDGET(self->lbl_empty), TRUE);
-  }
+  /* No mutation here: the identity-pinned detail owns typed confirmation and
+   * waits for an authoritative daemon result before removing metadata. */
+  page_identity_detail_present_identity(GTK_WIDGET(self), data->npub);
 }
 
 static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_data) {
@@ -167,10 +158,10 @@ static GtkWidget *create_account_row(SheetSelectAccount *self, const gchar *npub
   adw_action_row_add_suffix(row, GTK_WIDGET(key_icon));
 
   /* Remove button */
-  GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("user-trash-symbolic"));
+  GtkButton *btn_remove = GTK_BUTTON(gtk_button_new_from_icon_name("emblem-system-symbolic"));
   gtk_widget_set_valign(GTK_WIDGET(btn_remove), GTK_ALIGN_CENTER);
   gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "flat");
-  gtk_widget_add_css_class(GTK_WIDGET(btn_remove), "destructive-action");
+  gtk_widget_set_tooltip_text(GTK_WIDGET(btn_remove), "Manage identity and backup");
   adw_action_row_add_suffix(row, GTK_WIDGET(btn_remove));
 
   /* Make row activatable */
@@ -220,6 +211,11 @@ static void populate_list(SheetSelectAccount *self) {
     GtkWidget *row = create_account_row(self, entry->id, entry->label,
                                         entry->has_secret, entry->watch_only,
                                         is_active);
+    if (entry->has_secret && g_strcmp0(entry->setup_state, "ready")) {
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), !g_strcmp0(entry->setup_state, "backup-pending") ?
+          "Backup incomplete — manage this identity to finish setup" : "Identity not verified — manage this identity to retry");
+      gtk_widget_add_css_class(row, "warning");
+    }
     gtk_list_box_append(self->list_accounts, row);
   }
 
@@ -431,6 +427,14 @@ static void on_import_pubkey_submit(GtkButton *btn, gpointer user_data) {
   g_free(npub);
 }
 
+static void accounts_changed(AccountsStore *as, AccountsChangeType change, const gchar *id, gpointer data) {
+  (void)as; (void)change; (void)id; populate_list(data);
+}
+static void sheet_select_account_dispose(GObject *obj) {
+  SheetSelectAccount *self = SHEET_SELECT_ACCOUNT(obj);
+  if (self->accounts_changed) { accounts_store_disconnect_changed(self->accounts, self->accounts_changed); self->accounts_changed = 0; }
+  G_OBJECT_CLASS(sheet_select_account_parent_class)->dispose(obj);
+}
 static void sheet_select_account_finalize(GObject *obj) {
   SheetSelectAccount *self = SHEET_SELECT_ACCOUNT(obj);
   g_free(self->selected_npub);
@@ -442,6 +446,7 @@ static void sheet_select_account_class_init(SheetSelectAccountClass *klass) {
   GObjectClass *oc = G_OBJECT_CLASS(klass);
 
   oc->finalize = sheet_select_account_finalize;
+  oc->dispose = sheet_select_account_dispose;
 
   gtk_widget_class_set_template_from_resource(wc, APP_RESOURCE_PATH "/ui/sheets/sheet-select-account.ui");
   gtk_widget_class_bind_template_child(wc, SheetSelectAccount, btn_cancel);
@@ -456,6 +461,7 @@ static void sheet_select_account_init(SheetSelectAccount *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
   self->accounts = accounts_store_get_default();
+  self->accounts_changed = accounts_store_connect_changed(self->accounts, accounts_changed, self);
 
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   g_signal_connect(self->btn_add_new, "clicked", G_CALLBACK(on_add_new), self);

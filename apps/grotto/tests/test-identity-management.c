@@ -5,6 +5,7 @@
 #include <nostr/crypto/bip39.h>
 #include <nostr-event.h>
 #include <nostr-json.h>
+#include <nostr-utils.h>
 #include <secure_buf.h>
 #include <keys.h>
 extern char *nostr_nip06_private_key_from_seed(const unsigned char *seed);
@@ -52,6 +53,32 @@ static void cancel_only_self_test(ControlFixture *f, gconstpointer data) {
   g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.Cancelled");
   g_assert_cmpuint(signer_approval_service_pending_count(f->approval), ==, 0);
   g_assert_cmpint(nostr_nip55l_identity_self_test(identity), ==, 0); /* key is preserved */
+  g_error_free(result.error); free(identity);
+}
+static void removal_requires_confirmation_and_idle(ControlFixture *f, gconstpointer data) {
+  (void)data; char *identity = NULL; g_assert_cmpint(nostr_nip55l_get_public_key(&identity), ==, 0);
+  expect_control_error(f, "RemoveIdentity", g_variant_new("(ss)", identity, ""), GROTTO_CONTROL_ERROR "ConfirmationRequired");
+  expect_control_error(f, "RemoveIdentity", g_variant_new("(ss)", identity, "another identity"), GROTTO_CONTROL_ERROR "ConfirmationRequired");
+  BusReply result = {0}; begin_test(f, identity, &result); const gchar *id = pending_id(f, 0);
+  g_assert_true(signer_approval_service_identity_busy(f->approval, identity));
+  char *other_hex = nostr_key_get_public("0000000000000000000000000000000000000000000000000000000000000002");
+  unsigned char pk[32]; g_assert_true(nostr_hex2bin(pk, other_hex, sizeof(pk))); free(other_hex);
+  char *other = NULL; g_assert_cmpint(nostr_nip19_encode_npub(pk, &other), ==, 0);
+  g_assert_false(signer_approval_service_identity_busy(f->approval, other)); free(other);
+  expect_control_error(f, "RemoveIdentity", g_variant_new("(ss)", identity, identity), GROTTO_CONTROL_ERROR "IdentityBusy");
+  g_assert_cmpint(nostr_nip55l_identity_self_test(identity), ==, 0);
+  decision(f, id, FALSE, FALSE); wait_count(&result.done, 1);
+  g_assert_false(signer_approval_service_identity_busy(f->approval, identity));
+  g_clear_error(&result.error); free(identity);
+}
+static void expired_no_grants(ControlFixture *f, gconstpointer data) {
+  (void)data; char *identity = NULL; nostr_nip55l_get_public_key(&identity);
+  BusReply result = {0}; begin_test(f, identity, &result); pending_id(f, 0); wait_count(&result.done, 1);
+  g_autofree gchar *name = g_dbus_error_get_remote_error(result.error);
+  g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.ApprovalTimedOut");
+  const gchar *principal; g_variant_lookup(f->pending->pdata[0], "principal", "&s", &principal);
+  g_autoptr(GVariant) permissions = get_rows(f, "ListPermissions", g_variant_new("(s)", principal));
+  g_assert_cmpuint(g_variant_n_children(permissions), ==, 0);
   g_error_free(result.error); free(identity);
 }
 static void invalid_creation(ControlFixture *f, gconstpointer data) {
@@ -131,7 +158,11 @@ static void two_real_consumers(ControlFixture *f, const gchar *old, const gchar 
 static void live_custody(ControlFixture *f, gconstpointer data) {
   (void)data;
   g_autofree gchar *program = g_find_program_in_path("gnome-keyring-daemon");
+#ifdef __APPLE__
   if (!program) { g_test_skip("requires a disposable Secret Service, never the developer keychain"); return; }
+#else
+  g_assert_nonnull(program); /* Linux custody acceptance must not silently skip. */
+#endif
   guint ready = 0;
   guint watch = g_dbus_connection_signal_subscribe(f->client, "org.freedesktop.DBus", "org.freedesktop.DBus",
       "NameOwnerChanged", "/org/freedesktop/DBus", "org.freedesktop.secrets", G_DBUS_SIGNAL_FLAGS_NONE, service_seen, &ready, NULL);
@@ -198,13 +229,43 @@ static void live_custody(ControlFixture *f, gconstpointer data) {
   secure_wipe(key, strlen(key)); free(key); free(imported); free(roundtrip);
   two_real_consumers(f, old, successor);
   /* Only explicit removal drops the old recovery role; successor stays usable. */
-  g_assert_cmpint(nostr_nip55l_clear_key(old), ==, 0);
+  expect_control_error(f, "RemoveIdentity", g_variant_new("(ss)", old, "remove"), GROTTO_CONTROL_ERROR "ConfirmationRequired");
+  g_autoptr(GVariant) removed = control_call(f, "RemoveIdentity", g_variant_new("(ss)", old, old));
+  gboolean was_removed; g_variant_get(removed, "(b)", &was_removed); g_assert_true(was_removed);
   g_assert_cmpint(nostr_nip55l_identity_self_test(successor), ==, 0);
 #ifdef G09_HAVE_LIBSECRET
-  secret_service_disconnect();
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &error); g_assert_no_error(error);
+  SecretCollection *collection = secret_collection_for_alias_sync(service, SECRET_COLLECTION_DEFAULT, 0, NULL, &error);
+  g_assert_no_error(error); g_assert_nonnull(collection);
+  GList target = {collection, NULL, NULL}; GList *locked = NULL;
+  g_assert_cmpint(secret_service_lock_sync(service, &target, NULL, &locked, &error), >, 0); g_assert_no_error(error);
+  g_list_free_full(locked, g_object_unref);
+  /* This is a real locked collection, not an injected GUI error. The cached
+   * successor key cannot bypass the independently locked mnemonic role. */
+  expect_control_error(f, "ExportIdentity", g_variant_new("(sss)", successor, "mnemonic", ""), GROTTO_CONTROL_ERROR "BackendUnavailable");
+  g_object_unref(collection); g_object_unref(service); secret_service_disconnect();
 #endif
   free(old); free(successor);
   g_subprocess_force_exit(keyring); g_subprocess_wait(keyring, NULL, NULL); g_object_unref(keyring);
+}
+static void tampered_self_test(gconstpointer data) {
+  if (!g_test_subprocess()) {
+    g_test_trap_subprocess(NULL, 10 * G_USEC_PER_SEC, G_TEST_SUBPROCESS_DEFAULT);
+    g_test_trap_assert_passed(); return;
+  }
+  /* This is the fresh filtered child, before any fixture threads exist. */
+  g_setenv("NOSTR_SIGNER_TEST_SELF_TEST_FAULT", data, TRUE);
+  ControlFixture fixture = {0}; fixture_setup(&fixture, NULL);
+  char *identity = NULL; g_assert_cmpint(nostr_nip55l_get_public_key(&identity), ==, 0);
+  BusReply result = {0}; begin_test(&fixture, identity, &result);
+  const gchar *id = pending_id(&fixture, 0); decision(&fixture, id, TRUE, TRUE); wait_count(&result.done, 1);
+  g_assert_nonnull(result.error);
+  g_autofree gchar *name = g_dbus_error_get_remote_error(result.error);
+  g_assert_cmpstr(name, ==, "org.nostr.Signer.Error.VerificationFailed");
+  const gchar *principal; g_variant_lookup(fixture.pending->pdata[0], "principal", "&s", &principal);
+  g_autoptr(GVariant) permissions = get_rows(&fixture, "ListPermissions", g_variant_new("(s)", principal));
+  g_assert_cmpuint(g_variant_n_children(permissions), ==, 0);
+  g_error_free(result.error); free(identity); fixture_teardown(&fixture, NULL);
 }
 static void rejected_seed_input_not_logged(void) {
   if (g_test_subprocess()) {
@@ -218,11 +279,20 @@ static void rejected_seed_input_not_logged(void) {
   g_test_trap_assert_stdout_unmatched(secret); g_test_trap_assert_stderr_unmatched(secret);
 }
 int main(int argc, char **argv) {
-  g_test_init(&argc, &argv, NULL); test_environment(argv[0]);
+  g_unsetenv("NOSTR_SIGNER_TEST_SELF_TEST_FAULT");
+  g_test_init(&argc, &argv, NULL);
+  g_setenv("NOSTR_SIGNER_TEST_PENDING_TTL_S", "3", TRUE); /* before fixture threads */
+  test_environment(argv[0]);
 #define ADD(name, fn) g_test_add("/identity/" name, ControlFixture, NULL, fixture_setup, fn, fixture_teardown)
   ADD("one-review-no-grants", one_review_no_grants); ADD("denied-no-grants", denied_no_grants);
+  ADD("typed-removal-pending-fence", removal_requires_confirmation_and_idle);
+  ADD("expired-no-grants", expired_no_grants);
   ADD("cancel-preserves-key", cancel_only_self_test); ADD("invalid-creation", invalid_creation); ADD("live-custody", live_custody);
 #undef ADD
+  g_test_add_data_func("/identity/tamper-id", "id", tampered_self_test);
+  g_test_add_data_func("/identity/tamper-signature", "signature", tampered_self_test);
+  g_test_add_data_func("/identity/tamper-binding", "binding", tampered_self_test);
+  g_test_add_data_func("/identity/tamper-challenge", "challenge", tampered_self_test);
   g_test_add_func("/identity/rejected-seed-input-not-logged", rejected_seed_input_not_logged);
   return g_test_run();
 }

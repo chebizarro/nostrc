@@ -492,26 +492,11 @@ static gboolean handle_clear_key(NostrSigner *object, GDBusMethodInvocation *inv
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
   if (!signer_mutations_allowed(invocation)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "key mutations are for the signer's own UI (or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1)"); return TRUE; }
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return TRUE; }
-  char *removed_npub = NULL;
-  (void)nostr_nip55l_resolve_npub(identity, &removed_npub);
-  int rc = nostr_nip55l_clear_key(identity);
-  if (rc == 0) {
-    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
-    GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.nostr.Grotto", TRUE) : NULL;
-    if (schema) {
-      if (g_settings_schema_has_key(schema, "default-identity")) {
-        GSettings *settings = g_settings_new("org.nostr.Grotto");
-        gchar *default_id = g_settings_get_string(settings, "default-identity");
-        if (!g_strcmp0(default_id, identity) || (removed_npub && !g_strcmp0(default_id, removed_npub)))
-          g_settings_set_string(settings, "default-identity", "");
-        g_free(default_id); g_object_unref(settings);
-      }
-      g_settings_schema_unref(schema);
-    }
-  }
-  free(removed_npub);
-  if (rc == 0) signer_notify_identities_changed();
-  nostr_signer_complete_clear_key(object, invocation, rc==0);
+  (void)identity;
+  /* The legacy signature cannot carry deliberate typed confirmation. Keep
+   * wire introspection compatible, but never allow it to bypass Control1. */
+  g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Signer.Error.ConfirmationRequired",
+      "Use Control1.RemoveIdentity with an explicit typed identity confirmation");
   return TRUE;
 }
 
@@ -552,7 +537,7 @@ static void start_keyring_migration(void) {
 }
 
 /* ---------------------------------------------------------------------------
- * CreateProfile (nostrc-jvbl): generate a new random keypair, store it, return npub.
+ * Retired CreateProfile: typed NotSupported; no generation or storage.
  * Approval UI only, or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1.
  * Signature: (ssssb) -> (bs)
  *   in:  display_name, passphrase, recovery_hint, label, use_hardware_key
@@ -576,55 +561,11 @@ static gboolean handle_create_profile(NostrSigner *object, GDBusMethodInvocation
     return TRUE;
   }
 
-  /* Generate a new random keypair */
-  char *sk_hex = nostr_key_generate_private();
-  if (!sk_hex) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
-      "failed to generate key");
-    return TRUE;
-  }
-
-  /* Store the key; use display_name as the identity selector if provided */
-  const char *sel = (display_name && *display_name) ? display_name : "";
-  int rc = nostr_nip55l_store_key(sk_hex, sel);
-  if (rc != 0) {
-    secure_wipe(sk_hex, strlen(sk_hex));
-    free(sk_hex);
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
-      "failed to store generated key");
-    return TRUE;
-  }
-
-  /* Derive npub for the response */
-  char *pk_hex = nostr_key_get_public(sk_hex);
-  secure_wipe(sk_hex, strlen(sk_hex));
-  free(sk_hex);
-  if (!pk_hex) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
-      "failed to derive public key");
-    return TRUE;
-  }
-
-  uint8_t pk[32];
-  if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) {
-    free(pk_hex);
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
-      "failed to encode public key");
-    return TRUE;
-  }
-  free(pk_hex);
-
-  char *npub = NULL;
-  if (nostr_nip19_encode_npub(pk, &npub) != 0 || !npub) {
-    g_dbus_method_invocation_return_dbus_error(invocation, ORG_NOSTR_SIGNER_ERR_INTERNAL,
-      "failed to encode npub");
-    return TRUE;
-  }
-
-  signer_notify_identities_changed();
-  g_message("CreateProfile: ok=true npub=%s", npub);
-  nostr_signer_complete_create_profile(object, invocation, TRUE, npub);
-  free(npub);
+  (void)object; (void)display_name;
+  /* No live caller: remove generation/storage, including ignored password
+   * and hardware options. Preserve introspection solely for typed refusal. */
+  g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Signer.Error.NotSupported",
+      "CreateProfile is retired; use Control1.StoreKeyWithMnemonic or ImportIdentity");
   return TRUE;
 }
 

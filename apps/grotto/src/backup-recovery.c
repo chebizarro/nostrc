@@ -19,6 +19,11 @@
 #include <gio/gio.h>
 
 G_DEFINE_QUARK(gn-backup-error-quark, gn_backup_error)
+typedef struct { gchar *text; gsize size; } WipingText;
+static void wiping_text_clear(WipingText *text) {
+  gnostr_secure_clear(text->text, text->size); g_free(text->text);
+}
+G_DEFINE_AUTO_CLEANUP_CLEAR_FUNC(WipingText, wiping_text_clear)
 
 /* Helper: Check if string is 64-character hex */
 static gboolean is_hex_64(const gchar *s) {
@@ -233,7 +238,8 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
   }
 
   /* Normalize the mnemonic: lowercase, single spaces */
-  g_autofree gchar *normalized = g_strdup(mnemonic);
+  g_auto(WipingText) normalized_storage = {g_strdup(mnemonic), strlen(mnemonic) + 1};
+  gchar *normalized = normalized_storage.text;
   g_strstrip(normalized);
 
   /* Convert to lowercase */
@@ -246,19 +252,6 @@ gboolean gn_backup_import_mnemonic(const gchar *mnemonic,
     g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_INVALID_MNEMONIC,
                 "Invalid mnemonic: check word count (12/15/18/21/24) and checksum");
     return FALSE;
-  }
-
-  /* For account index 0, use GNostrKeys directly (NIP-06 derivation) */
-  if (account == 0) {
-    GError *key_error = NULL;
-    g_autoptr(GNostrKeys) keys = gnostr_keys_new_from_mnemonic(normalized, passphrase, &key_error);
-    if (!keys) {
-      g_set_error(error, GN_BACKUP_ERROR, GN_BACKUP_ERROR_DERIVATION_FAILED,
-                  "Failed to derive key from mnemonic: %s",
-                  key_error ? key_error->message : "unknown error");
-      g_clear_error(&key_error);
-      return FALSE;
-    }
   }
 
   /* Use GNostrBip39 for seed derivation (supports non-zero account indices) */
@@ -450,7 +443,8 @@ gboolean gn_backup_validate_mnemonic(const gchar *mnemonic) {
   if (!mnemonic || !*mnemonic) return FALSE;
 
   /* Normalize: trim and lowercase */
-  g_autofree gchar *normalized = g_strdup(mnemonic);
+  g_auto(WipingText) normalized_storage = {g_strdup(mnemonic), strlen(mnemonic) + 1};
+  gchar *normalized = normalized_storage.text;
   g_strstrip(normalized);
   for (gchar *p = normalized; *p; p++) {
     *p = g_ascii_tolower(*p);

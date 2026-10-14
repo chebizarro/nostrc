@@ -158,14 +158,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="GtkScrolledWindow">
-                                <property name="min-content-height">100</property>
-                                <child>
-                                  <object class="GtkTextView" id="text_import_data">
-                                    <property name="wrap-mode">3</property>
-                                    <property name="accepts-tab">false</property>
-                                  </object>
-                                </child>
+                              <object class="GtkEntry" id="text_import_data">
+                                <property name="visibility">false</property>
+                                <property name="enable-undo">false</property>
+                                <property name="placeholder-text" translatable="yes">Private key or recovery phrase</property>
                               </object>
                             </child>
                             <child>
@@ -252,9 +248,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               </object>
                             </child>
                             <child>
-                              <object class="GtkLabel" id="seed_words">
-                                <property name="wrap">true</property>
-                                <property name="selectable">false</property>
+                              <object class="GtkBox" id="seed_words">
+                                <property name="orientation">1</property>
                                 <style>
                                   <class name="monospace"/>
                                 </style>
@@ -263,6 +258,16 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <child>
                               <object class="GtkButton" id="btn_copy_seed">
                                 <property name="label" translatable="yes">Copy seed words (clipboard managers may retain them)</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="btn_backup_retry">
+                                <property name="label" translatable="yes">Retry seed-word export</property>
+                              </object>
+                            </child>
+                            <child>
+                              <object class="GtkButton" id="btn_backup_export">
+                                <property name="label" translatable="yes">Use encrypted backup instead…</property>
                               </object>
                             </child>
                             <child>

@@ -54,10 +54,7 @@ template $OnboardingAssistant: Adw.Window {
               Label { label: _("Enter nsec, a 64-character private hex key, an encrypted NIP-49 key, or seed words. Input is validated before storage."); wrap: true; xalign: 0; }
               Entry entry_import_label { placeholder-text: _("Local label (optional)"); }
               CheckButton radio_import_seed { label: _("This is a BIP-39 recovery phrase"); }
-              ScrolledWindow {
-                min-content-height: 100;
-                TextView text_import_data { wrap-mode: word_char; accepts-tab: false; }
-              }
+              Entry text_import_data { visibility: false; enable-undo: false; placeholder-text: _("Private key or recovery phrase"); }
               Label import_passphrase_label { label: _("NIP-49 decryption passphrase (encrypted imports only)"); wrap: true; xalign: 0; }
               Box box_import_passphrase_container { orientation: vertical; }
             };
@@ -85,8 +82,10 @@ template $OnboardingAssistant: Adw.Window {
               orientation: vertical; spacing: 18;
               Label { label: _("Back up your identity"); styles ["title-1"] wrap: true; }
               Label { label: _("Anyone with these seed words has full control. Write them down privately; never paste them into software you do not trust. Grotto developers will never ask for them."); wrap: true; xalign: 0; }
-              Label seed_words { wrap: true; selectable: false; styles ["monospace"] }
+              Box seed_words { orientation: vertical; styles ["monospace"] }
               Button btn_copy_seed { label: _("Copy seed words (clipboard managers may retain them)"); }
+              Button btn_backup_retry { label: _("Retry seed-word export"); }
+              Button btn_backup_export { label: _("Use encrypted backup instead…"); }
               CheckButton seed_written_down { label: _("I have safely backed up my identity"); }
             };
           }

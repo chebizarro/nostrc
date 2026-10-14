@@ -334,16 +334,18 @@ void gn_secure_free(void *ptr, size_t size) {
   }
 #endif
 
-  /* Zero the entire allocation before freeing */
-  gn_secure_zero(header, header->actual_size);
+  /* Preserve release metadata before erasing the allocation header. */
+  size_t actual_size = header->actual_size;
+  gboolean locked = header->locked;
+  gn_secure_zero(header, actual_size);
 
   /* Unlock memory */
-  if (header->locked) {
+  if (locked) {
 #if HAVE_SODIUM
     if (!secure_state.stats.sodium_available)
 #endif
     {
-      try_munlock(header, header->actual_size);
+      try_munlock(header, actual_size);
     }
   }
 
@@ -352,7 +354,7 @@ void gn_secure_free(void *ptr, size_t size) {
   g_hash_table_remove(secure_state.allocations, header);
   secure_state.stats.total_allocated -= size;
   secure_state.stats.allocation_count--;
-  if (header->locked) {
+  if (locked) {
     secure_state.stats.total_locked -= size;
   }
   g_mutex_unlock(&secure_state.lock);

@@ -7,6 +7,103 @@
 #include "gn-secure-entry.h"
 #include "../app-resources.h"
 #include "../../secure-memory.h"
+#include <string.h>
+
+typedef struct { GtkEntryBuffer parent; gchar *text; gsize bytes, capacity; } GnSecretBuffer;
+typedef GtkEntryBufferClass GnSecretBufferClass;
+G_DEFINE_TYPE(GnSecretBuffer, gn_secret_buffer, GTK_TYPE_ENTRY_BUFFER)
+static const gchar *secret_buffer_text(GtkEntryBuffer *buffer, gsize *bytes) {
+  GnSecretBuffer *self = (GnSecretBuffer *)buffer;
+  if (bytes) *bytes = self->bytes;
+  return self->text;
+}
+static guint secret_buffer_length(GtkEntryBuffer *buffer) {
+  return g_utf8_strlen(((GnSecretBuffer *)buffer)->text, -1);
+}
+static guint secret_buffer_insert(GtkEntryBuffer *buffer, guint position, const gchar *text, guint count) {
+  GnSecretBuffer *self = (GnSecretBuffer *)buffer;
+  gsize offset = g_utf8_offset_to_pointer(self->text, position) - self->text;
+  gsize added = g_utf8_offset_to_pointer(text, count) - text;
+  gsize required = self->bytes + added + 1;
+  if (required > self->capacity) {
+    gsize capacity = MAX(required, self->capacity * 2);
+    gchar *next = gn_secure_alloc(capacity);
+    if (!next) return 0;
+    memcpy(next, self->text, self->bytes + 1);
+    gn_secure_free(self->text, self->capacity); self->text = next; self->capacity = capacity;
+  }
+  memmove(self->text + offset + added, self->text + offset, self->bytes - offset + 1);
+  memcpy(self->text + offset, text, added); self->bytes += added;
+  gtk_entry_buffer_emit_inserted_text(buffer, position, text, count);
+  return count;
+}
+static guint secret_buffer_delete(GtkEntryBuffer *buffer, guint position, guint count) {
+  if (count) gtk_entry_buffer_emit_deleted_text(buffer, position, count);
+  return count;
+}
+/* GtkEntryBuffer deletes in the RUN_LAST signal class closure. Its inherited
+ * closure only knows GTK's normal buffer, never our secure allocation. */
+static void secret_buffer_deleted(GtkEntryBuffer *buffer, guint position, guint count) {
+  GnSecretBuffer *self = (GnSecretBuffer *)buffer;
+  gsize begin = g_utf8_offset_to_pointer(self->text, position) - self->text;
+  gsize end = g_utf8_offset_to_pointer(self->text + begin, count) - self->text;
+  gsize old = self->bytes;
+  memmove(self->text + begin, self->text + end, old - end + 1); self->bytes -= end - begin;
+  gn_secure_zero(self->text + self->bytes, old - self->bytes + 1);
+  g_object_notify(G_OBJECT(buffer), "text"); g_object_notify(G_OBJECT(buffer), "length");
+}
+static void secret_buffer_finalize(GObject *object) {
+  GnSecretBuffer *self = (GnSecretBuffer *)object;
+  gn_secure_free(self->text, self->capacity);
+  G_OBJECT_CLASS(gn_secret_buffer_parent_class)->finalize(object);
+}
+static void gn_secret_buffer_class_init(GnSecretBufferClass *klass) {
+  klass->get_text = secret_buffer_text; klass->get_length = secret_buffer_length;
+  klass->insert_text = secret_buffer_insert; klass->delete_text = secret_buffer_delete;
+  klass->deleted_text = secret_buffer_deleted;
+  G_OBJECT_CLASS(klass)->finalize = secret_buffer_finalize;
+}
+static void gn_secret_buffer_init(GnSecretBuffer *self) {
+  self->capacity = 128; self->text = gn_secure_alloc(self->capacity);
+}
+GtkEntryBuffer *gn_secure_entry_buffer_new(void) { return g_object_new(gn_secret_buffer_get_type(), NULL); }
+gboolean gn_secure_phrase_set_text(GtkBox *box, const gchar *phrase) {
+  GtkWidget *old = gtk_widget_get_first_child(GTK_WIDGET(box));
+  if (old) {
+    for (GtkWidget *row = gtk_widget_get_first_child(old); row; row = gtk_widget_get_next_sibling(row)) {
+      GtkWidget *entry = gtk_flow_box_child_get_child(GTK_FLOW_BOX_CHILD(row));
+      gtk_editable_set_text(GTK_EDITABLE(entry), "");
+    }
+    gtk_box_remove(box, old);
+  }
+  if (!phrase || !*phrase || strlen(phrase) > 512) return FALSE;
+  GtkWidget *flow = gtk_flow_box_new();
+  gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(flow), GTK_SELECTION_NONE);
+  gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(flow), 2);
+  gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(flow), 3);
+  gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(flow), 4); gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(flow), 4);
+  guint index = 0;
+  for (const gchar *p = phrase; *p;) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+    const gchar *end = strchr(p, ' '); if (!end) end = p + strlen(p);
+    gchar shown[544] = {0};
+    gint prefix = g_snprintf(shown, sizeof(shown), "%u. ", ++index);
+    memcpy(shown + prefix, p, end - p);
+    GtkWidget *entry = gtk_entry_new(); g_autoptr(GtkEntryBuffer) buffer = gn_secure_entry_buffer_new();
+    gtk_entry_set_buffer(GTK_ENTRY(entry), buffer); gtk_entry_set_has_frame(GTK_ENTRY(entry), FALSE);
+    gtk_editable_set_enable_undo(GTK_EDITABLE(entry), FALSE); gtk_editable_set_editable(GTK_EDITABLE(entry), FALSE);
+    gtk_editable_set_width_chars(GTK_EDITABLE(entry), 12); gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 12);
+    /* A reveal is not an editable selection or an X11 primary clipboard owner.
+     * The assistant's deliberate Copy action uses the expiring owned provider. */
+    gtk_widget_set_can_focus(entry, FALSE); gtk_widget_set_can_target(entry, FALSE);
+    gtk_entry_buffer_set_text(buffer, shown, -1); gn_secure_zero(shown, sizeof(shown));
+    gtk_flow_box_insert(GTK_FLOW_BOX(flow), entry, -1); p = end;
+  }
+  gtk_box_append(box, flow);
+  return index > 0;
+}
+
 
 #include <string.h>
 #include <gdk/gdk.h>
@@ -766,6 +863,9 @@ gn_secure_entry_init(GnSecureEntry *self)
 
   /* Initialize template */
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_autoptr(GtkEntryBuffer) secret_buffer = gn_secure_entry_buffer_new();
+  gtk_entry_set_buffer(self->entry_password, secret_buffer);
+  gtk_editable_set_enable_undo(GTK_EDITABLE(self->entry_password), FALSE);
 
   /* Set up the entry widget */
   if (self->entry_password) {

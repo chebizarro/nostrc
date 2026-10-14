@@ -1198,6 +1198,20 @@ gboolean signer_approval_service_revoke_grant(SignerApprovalService *s,
   }
   return ok;
 }
+gboolean signer_approval_service_identity_busy(SignerApprovalService *s, const gchar *npub) {
+  g_return_val_if_fail(owner_ok(s), TRUE);
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, s->requests);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Request *r = value;
+    if (r->state != SIGNER_REQUEST_PENDING && r->state != SIGNER_REQUEST_EXECUTING) continue;
+    if (!op_info[r->op].has_identity) continue;
+    /* Until resolution completes a request can still select this identity.
+     * Refuse deletion rather than racing its selector/default resolution. */
+    if (!r->npub || !*r->npub || !g_strcmp0(r->npub, npub) || !g_strcmp0(r->selector, npub)) return TRUE;
+  }
+  return FALSE;
+}
 guint signer_approval_service_pending_count(SignerApprovalService *s) {
   g_return_val_if_fail(owner_ok(s), 0);
   return g_hash_table_size(s->requests);

@@ -12,6 +12,7 @@
 #include "nostr_keys.h"
 #include <glib.h>
 #include <string.h>
+#include <secure_buf.h>
 
 /* Core BIP-39 API */
 #include "nostr/crypto/bip39.h"
@@ -67,7 +68,7 @@ gnostr_bip39_finalize(GObject *object)
 
     /* Securely wipe mnemonic before freeing - it's sensitive material */
     if (self->mnemonic != NULL) {
-        memset(self->mnemonic, 0, strlen(self->mnemonic));
+        secure_wipe(self->mnemonic, strlen(self->mnemonic) + 1);
         g_free(self->mnemonic);
         self->mnemonic = NULL;
     }
@@ -143,7 +144,7 @@ update_mnemonic_state(GNostrBip39 *self, const gchar *mnemonic)
 {
     /* Wipe old mnemonic */
     if (self->mnemonic != NULL) {
-        memset(self->mnemonic, 0, strlen(self->mnemonic));
+        secure_wipe(self->mnemonic, strlen(self->mnemonic) + 1);
         g_free(self->mnemonic);
     }
 
@@ -192,6 +193,7 @@ gnostr_bip39_generate(GNostrBip39 *self,
     }
 
     update_mnemonic_state(self, generated);
+    secure_wipe(generated, strlen(generated) + 1);
     free(generated);
 
     return self->mnemonic;
@@ -248,6 +250,7 @@ gnostr_bip39_to_seed(GNostrBip39 *self,
     const char *pass = (passphrase != NULL) ? passphrase : "";
 
     if (!nostr_bip39_seed(self->mnemonic, pass, *out_seed)) {
+        secure_wipe(*out_seed, 64);
         g_free(*out_seed);
         *out_seed = NULL;
         g_set_error(error,

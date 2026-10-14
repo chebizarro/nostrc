@@ -218,6 +218,7 @@ if (GIO_FOUND AND ENABLE_NIP55L)
   option(NIP55L_TEST_TRUST_ENV "Honour NOSTR_SIGNER_TEST_* trust overrides (test builds)" ${NIP55L_TEST_TRUST_ENV})
   if (NIP55L_TEST_TRUST_ENV)
     target_compile_definitions(nostr_nip55l_glib PRIVATE NIP55L_TEST_TRUST_ENV=1)
+    target_compile_definitions(nostr_nip55l_core PRIVATE NIP55L_TEST_TRUST_ENV=1)
   endif()
   # Ensure NIP-04 secure functions are available to executables linking the GLib target
   target_link_libraries(nostr_nip55l_glib PUBLIC nip04)

@@ -13,6 +13,7 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
         Box {
           orientation: vertical; spacing: 18;
           DropDown identities { accessibility { label: _("Identity to manage"); } }
+          Label setup_warning { wrap: true; xalign: 0; styles ["warning"] }
           Label public_key { wrap: true; selectable: true; xalign: 0; styles ["monospace"] }
           Entry label_entry { placeholder-text: _("Local identity label"); }
           Button btn_label { label: _("Save local label"); }
@@ -26,7 +27,9 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
               [suffix] Button btn_seed { label: _("Show"); valign: center; styles ["suggested-action"] }
             }
           }
-          Label seed_words { wrap: true; xalign: 0; styles ["monospace"] }
+          Box seed_words { orientation: vertical; styles ["monospace"] }
+          CheckButton backup_written_down { label: _("I have safely backed up this identity"); }
+          Button btn_backup_done { label: _("Confirm backup"); }
           Label { label: _("Encrypted export passphrase (NIP-49 only)"); wrap: true; xalign: 0; }
           Box export_passphrase_box { orientation: vertical; }
           Button btn_export { label: _("Export encrypted key (NIP-49)"); }

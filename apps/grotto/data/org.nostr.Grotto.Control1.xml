@@ -32,6 +32,11 @@
     <method name="SelfTestIdentity"><arg name="identity" type="s" direction="in"/><arg name="result" type="s" direction="out"/></method>
     <method name="CancelIdentitySelfTest"><arg name="identity" type="s" direction="in"/></method>
     <method name="GetIdentityMigration"><arg name="identity" type="s" direction="in"/><arg name="event" type="s" direction="out"/></method>
+    <method name="RemoveIdentity">
+      <arg name="identity" type="s" direction="in"/>
+      <arg name="typed_confirmation" type="s" direction="in"/>
+      <arg name="removed" type="b" direction="out"/>
+    </method>
     <method name="RotateIdentity"><arg name="identity" type="s" direction="in"/><arg name="new_identity" type="s" direction="out"/></method>
     <method name="ConfigureBunker"><arg name="config" type="a{sv}" direction="in"/><arg name="state" type="a{sv}" direction="out"/></method>
     <method name="CreatePairing"><arg name="identity" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="pairing" type="a{sv}" direction="out"/></method>

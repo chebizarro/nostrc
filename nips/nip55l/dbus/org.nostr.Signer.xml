@@ -229,6 +229,9 @@
       <arg type="b" direction="out" name="ok" />
       <arg type="s" direction="out" name="npub" />
     </method>
+    <!-- Retired unconfirmed deletion: always ConfirmationRequired after
+         authority checks. Control1.RemoveIdentity requires typed confirmation
+         and refuses while an identity request is unresolved/pending/executing. -->
     <method name="ClearKey">
       <arg type="s" direction="in" name="identity" />
       <arg type="b" direction="out" name="ok" />
@@ -304,14 +307,11 @@
       <arg type="s" name="request_id" />
       <arg type="b" name="decision" />
     </signal>
-    <!-- CreateProfile (nip55l 0.6.0, additive, approval UI only): generates a
-         new random Nostr keypair, stores the secret key in the backend
-         (libsecret or Keychain), and returns the npub. Trusted approval UI
-         only, as StoreKey/ClearKey above; NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1
-         is the explicit tests/scripts override, not a prerequisite for UI.
-         display_name is stored as the key's label; passphrase, recovery_hint
-         and label are reserved for future use (pass "" for each).
-         use_hardware_key is reserved (pass FALSE). -->
+    <!-- Retired CreateProfile: no live production caller. Generation and
+         storage are removed; this legacy signature is kept only for typed
+         NotSupported after authority checks. Reserved password/hardware
+         arguments remain inert and are not advertised by the setup UI.
+         Use Control1.StoreKeyWithMnemonic or ImportIdentity instead. -->
     <method name="CreateProfile">
       <arg type="s" direction="in" name="display_name" />
       <arg type="s" direction="in" name="passphrase" />

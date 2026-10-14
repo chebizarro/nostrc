@@ -264,5 +264,10 @@ void gn_secure_entry_reset_timeout(GnSecureEntry *self);
  */
 gboolean gn_secure_entry_grab_focus_entry(GnSecureEntry *self);
 
+/* GtkEntryBuffer backed by existing secure-memory allocation/zeroing helpers.
+ * Use for secret input/reveals instead of GtkTextBuffer or GtkLabel. */
+GtkEntryBuffer *gn_secure_entry_buffer_new(void);
+/* Numbered, fully visible recovery words; no built-in clipboard/undo routes. */
+gboolean gn_secure_phrase_set_text(GtkBox *box, const gchar *phrase);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_WIDGETS_GN_SECURE_ENTRY_H */

@@ -619,6 +619,14 @@ AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
   return NULL;
 }
 
+static void reconcile_default(AccountsStore *as) {
+  /* A successful complete daemon snapshot, not metadata removal or owner
+   * disappearance, is evidence that a legacy default no longer exists. */
+  GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
+  g_autofree gchar *identity = g_settings_get_string(settings, "default-identity");
+  if (*identity && !g_hash_table_contains(as->signable, identity))
+    g_settings_set_string(settings, "default-identity", "");
+}
 void accounts_store_sync_with_secrets(AccountsStore *as) {
   if (!as) return;
   as->inventory_generation++;
@@ -640,6 +648,7 @@ void accounts_store_sync_with_secrets(AccountsStore *as) {
     }
   }
 
+  reconcile_default(as);
   g_ptr_array_unref(secrets);
 }
 
@@ -914,6 +923,7 @@ static void sync_secrets_list_cb(GPtrArray *entries, gpointer user_data) {
           g_warning("Could not persist daemon identity metadata");
       }
     }
+    reconcile_default(as);
     g_ptr_array_unref(entries);
     emit_change(as, ACCOUNTS_CHANGE_ADDED, NULL);
   } else if (entries) g_ptr_array_unref(entries);

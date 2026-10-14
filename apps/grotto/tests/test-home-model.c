@@ -7,6 +7,7 @@
 #include <string.h>
 static gchar *identity_a, *identity_b, *path;
 static const gchar *inventory;
+static gboolean inventory_unavailable;
 static GDBusConnection *server;
 static gboolean bound(gpointer data) { (void)data; g_error("Identity model did not complete"); return G_SOURCE_REMOVE; }
 static void wait_count(guint *count, guint target) {
@@ -17,6 +18,7 @@ static void wait_count(guint *count, guint target) {
 static void inventory_call(GDBusConnection *bus, const gchar *sender, const gchar *object, const gchar *interface,
     const gchar *method, GVariant *args, GDBusMethodInvocation *invocation, gpointer data) {
   (void)bus; (void)sender; (void)object; (void)interface; (void)method; (void)args; (void)data;
+  if (inventory_unavailable) { g_dbus_method_invocation_return_dbus_error(invocation, "org.nostr.Signer.Error.Internal", "key store unavailable"); return; }
   const gchar *ids[] = {inventory, NULL};
   g_dbus_method_invocation_return_value(invocation, g_variant_new("(^as)", ids));
 }
@@ -94,6 +96,23 @@ static void authoritative_inventory(void) {
   AccountEntry *signable = accounts_store_find(as, identity_b); g_assert_true(signable->has_secret); g_assert_false(signable->watch_only); accounts_store_entry_free(signable);
   accounts_store_free(as);
 }
+static void authoritative_default_reconciliation(void) {
+  g_unlink(path); AccountsStore *as = accounts_store_new();
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Grotto");
+  inventory = identity_a; sync_inventory(as);
+  g_settings_set_string(settings, "default-identity", identity_a);
+  g_autofree gchar *replacement = g_strdup_printf("[accounts]\n%s=Watch\n", identity_b);
+  g_assert_true(g_file_set_contents(path, replacement, -1, NULL)); g_assert_true(accounts_store_load(as, NULL));
+  g_autofree gchar *default_id = g_settings_get_string(settings, "default-identity");
+  g_assert_cmpstr(default_id, ==, identity_a); /* metadata deletion is not key deletion */
+  sync_inventory(as); g_free(default_id); default_id = g_settings_get_string(settings, "default-identity");
+  g_assert_cmpstr(default_id, ==, identity_a);
+  inventory_unavailable = TRUE; sync_inventory(as); inventory_unavailable = FALSE;
+  g_free(default_id); default_id = g_settings_get_string(settings, "default-identity"); g_assert_cmpstr(default_id, ==, identity_a);
+  inventory = NULL; sync_inventory(as); g_free(default_id); default_id = g_settings_get_string(settings, "default-identity");
+  g_assert_cmpstr(default_id, ==, ""); /* only a successful authoritative absence clears it */
+  accounts_store_free(as);
+}
 static void stored_key_survives_metadata_failure(void) {
   g_unlink(path); AccountsStore *as = accounts_store_new(); inventory = identity_a;
   g_assert_cmpint(g_mkdir(path, 0700), ==, 0);
@@ -148,6 +167,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/home/identities/transactional-reload", transactional_reload);
   g_test_add_func("/home/identities/selection-not-default", selection_not_default);
   g_test_add_func("/home/identities/authoritative-inventory", authoritative_inventory);
+  g_test_add_func("/home/identities/default-authoritative-reconciliation", authoritative_default_reconciliation);
   g_test_add_func("/home/identities/stored-key-metadata-failure", stored_key_survives_metadata_failure);
   g_test_add_func("/home/identities/monitored-replace", monitored_replace);
   g_test_add_func("/home/identities/daemon-change-signal", inventory_signal_refresh);

@@ -70,6 +70,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <secure_buf.h>
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -2360,61 +2361,14 @@ static void test_create_profile_denied_without_flag(Ctx *ctx) {
   g_clear_error(&err);
 }
 
-/* CreateProfile + ListIdentities round-trip. Returns TRUE if successful,
- * FALSE if the backend is unavailable (macOS login keychain or no libsecret). */
+/* Retired generation path is refused even with mutation authority and
+ * reserved arguments supplied. This never touches a developer keychain. */
 static gboolean try_create_profile_and_list(Ctx *ctx) {
-#ifdef __APPLE__
-  (void)ctx;
-  g_printerr("SKIP: CreateProfile round-trip: macOS Keychain is the login keychain\n");
-  return FALSE;
-#endif
   GError *err = NULL;
   GVariant *ret = call(ctx->bus, "CreateProfile",
-                       g_variant_new("(ssssb)", "test-profile", "", "", "", FALSE),
-                       "(bs)", &err);
-  if (!ret) {
-    gchar *remote = err ? g_dbus_error_get_remote_error(err) : NULL;
-    g_printerr("SKIP: CreateProfile backend unavailable: %s\n",
-               remote ? remote : (err ? err->message : "?"));
-    g_free(remote); g_clear_error(&err);
-    return FALSE;
-  }
-  gboolean ok = FALSE; const char *npub = NULL;
-  g_variant_get(ret, "(bs)", &ok, &npub);
-  CHECK(ok);
-  CHECK(npub != NULL && g_str_has_prefix(npub, "npub1"));
-  char *created_npub = g_strdup(npub);
-  g_variant_unref(ret);
-
-  /* ListIdentities must include the just-created npub. */
-  ret = call(ctx->bus, "ListIdentities", NULL, "(as)", &err);
-  CHECK(ret != NULL);
-  GVariantIter *iter = NULL;
-  g_variant_get(ret, "(as)", &iter);
-  gboolean found = FALSE;
-  const char *entry = NULL;
-  while (g_variant_iter_next(iter, "&s", &entry)) {
-    if (g_strcmp0(entry, created_npub) == 0) { found = TRUE; break; }
-  }
-  g_variant_iter_free(iter);
-  g_variant_unref(ret);
-  CHECK(found);
-
-  /* Clean up: ClearKey the created identity. */
-  ret = call(ctx->bus, "ClearKey",
-             g_variant_new("(s)", created_npub),
-             "(b)", &err);
-  if (ret) {
-    gboolean cleared = FALSE;
-    g_variant_get(ret, "(b)", &cleared);
-    CHECK(cleared);
-    g_variant_unref(ret);
-  } else {
-    g_printerr("WARN: ClearKey after CreateProfile failed: %s\n",
-               err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  g_free(created_npub);
+      g_variant_new("(ssssb)", "test-profile", "ignored-password", "hint", "label", TRUE), "(bs)", &err);
+  CHECK(ret == NULL && err != NULL);
+  expect_remote_error(err, "org.nostr.Signer.Error.NotSupported"); g_clear_error(&err);
   return TRUE;
 }
 
@@ -2483,20 +2437,20 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
     g_variant_unref(gpk_ret);
   }
 
-  /* Clean up the stored item so the run leaves no residue in libsecret
-   * (after the 500 ms per-sender mutation interval). */
   g_usleep(600 * 1000);
-  ret = call(ctx->bus, "ClearKey", g_variant_new("(s)", fresh_npub),
-             "(b)", &err);
-  if (ret) {
-    g_variant_get(ret, "(b)", &ok);
-    g_variant_unref(ret);
-  } else {
-    /* ClearKey returned an error; log it. Cleanup best-effort. */
-    g_printerr("WARN: ClearKey failed: %s\n", err ? err->message : "?");
-    g_clear_error(&err);
-  }
-  free(fresh_sk); free(fresh_pk); free(fresh_npub);
+  ret = call(ctx->bus, "ClearKey", g_variant_new("(s)", fresh_npub), "(b)", &err);
+  CHECK(ret == NULL && err != NULL);
+  expect_remote_error(err, "org.nostr.Signer.Error.ConfirmationRequired"); g_clear_error(&err);
+#ifdef NIP55L_TEST_HAVE_LIBSECRET
+  /* Test-only cleanup addresses the disposable Secret Service directly;
+   * production deletion is covered through authenticated Control1. */
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &err);
+  CHECK(service != NULL && err == NULL);
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal); g_hash_table_insert(attrs, "npub", fresh_npub);
+  secret_service_clear_sync(service, &gnostr_secret_schema, attrs, NULL, &err);
+  CHECK(err == NULL); g_hash_table_unref(attrs); g_object_unref(service);
+#endif
+  secure_wipe(fresh_sk, strlen(fresh_sk)); free(fresh_sk); free(fresh_pk); free(fresh_npub);
   return TRUE;
 }
 
@@ -3817,7 +3771,7 @@ int main(int argc, char **argv) {
     g_usleep(600 * 1000); /* phase 1's StoreKey probe used this sender's mutation slot */
     gboolean created = try_create_profile_and_list(&ctx);
     if (created)
-      g_print("PASS CreateProfile + ListIdentities round-trip (nostrc-jvbl)\n");
+      g_print("PASS retired CreateProfile typed refusal (G09 F7)\n");
     g_usleep(600 * 1000); /* wait for rate limiter after CreateProfile */
     gboolean stored = try_store_and_clear_key(&ctx);
     if (!stored) {

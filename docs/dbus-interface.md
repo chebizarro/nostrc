@@ -93,6 +93,7 @@ are rejected by GDBus using the canonical XML before dispatch.
 | `SelfTestIdentity` | `(identity:s) → s` | One approver-only, non-rememberable MANAGEMENT request: sign and verify an unpublished event, then independent-peer NIP-44 challenge round-trip; `passed` only after verification; no relay I/O, client record or grant |
 | `CancelIdentitySelfTest` | `(identity:s) → ()` | Cancel only this approver principal's self-test for this exact identity; never remove a stored key |
 | `RotateIdentity` | `(identity:s) → s` | Create and store a mnemonic-backed successor, save an old-key-signed migration announcement, return the successor npub. No publication, redirection, permission copy or old-key removal; pause-generation fenced |
+| `RemoveIdentity` | `(identity:s, typed_confirmation:s) → b` | Full canonical npub must exactly match the typed confirmation; mismatches → `ConfirmationRequired`, unresolved/pending/executing requests or active key-management work → `IdentityBusy`; custody and default change only after successful deletion |
 | `GetIdentityMigration` | `(identity:s) → s` | Read the saved public signed migration event for an exact old npub; user/application chooses whether to publish it |
 | `ConfigureBunker` | `(config:a{sv}) → a{sv}` | Authenticated typed unavailable response; G06 implements durable desired config + live apply |
 | `CreatePairing` | `(identity:s, label:s) → a{sv}` | Authenticated typed unavailable response; G05/G06 implement account-bound, single-use pairing |
@@ -122,16 +123,38 @@ passphrases/key buffers/results, re-attest the approver before secret delivery,
 and suppress delivery during shutdown. They create no signing grant or secret
 history entry. Private material necessarily transiently exists in the trusted
 UI and D-Bus message buffers; this is not a same-user malware boundary.
+All Grotto-owned secret tuples use wipe-on-release serialized storage. Input and
+seed reveals use secure-backed GtkEntryBuffers with undo disabled, not text
+buffers or seed labels; deletion/reallocation/disposal wipes their full owned
+allocation. Generated/normalized phrases, import tails and worker temporaries
+are also wiped on every exit. GLib's immutable transport buffers, GTK/Pango's
+rendering copies and Security.framework-owned immutable results are outside
+Grotto's allocation ownership: they cannot safely be overwritten through a
+borrowed const pointer. Clearing a widget does not promise erasure of such
+third-party transport/rendering copies or clipboard-manager retention.
 `IdentitySelfTestTesting(identity:s)` is unicast to the invoking approver after
 one-time consent, before backend execution. Denial, expiry, cancellation, missing
 key/backend and verification failure never mean “ready”. Closing the assistant
 cancels its self-test/local continuation but preserves a completed daemon key
 store. Local `accounts.ini` setup metadata records `verification-pending`,
-`backup-pending` or `ready`; management selection is in-memory only. Rotation
+`backup-pending` or `ready`; management selection is in-memory only.
+A failed/declined backup cannot be acknowledged into `ready`. Successful seed
+presentation or completed encrypted-file export precedes acknowledgement;
+failed or cancelled file writes remain backup pending. Dismissed setup opens
+exact-identity management with a persistent warning and Retry; the picker also
+shows that persisted state. A locked mnemonic collection returns
+`BackendUnavailable`, without an implicit unlock prompt or fabricated `NotFound`. Rotation
 announcements are private-mode, atomic public JSON under
 `$XDG_CONFIG_HOME/grotto/migrations/<old-npub>` and contain no secrets. A persistence
 failure after a successor store is reported explicitly; re-read identities before
-retrying. The old identity remains until explicit confirmed removal.
+retrying. The old identity remains until explicit typed confirmation and successful
+removal. The legacy `ClearKey(s)` signature cannot carry typed confirmation, so
+it now returns `org.nostr.Signer.Error.ConfirmationRequired` even with the test
+mutation override. Legacy `CreateProfile` has no live production caller; its
+key-generation/storage implementation is removed. Its reserved-argument wire
+signature is retained only for `org.nostr.Signer.Error.NotSupported`, not as an
+alternative creation/password/hardware path. Use Control1 instead. These
+intentional pre-release incompatibilities are recorded in VERSION_MANIFEST.md.
 On UID-only buses (the macOS compatibility path, see the known limitation
 below) any unattested same-UID process passes the approver check, so it can call
 `ExportRawIdentity`/`ExportIdentity` and receive the key; delivery re-attestation
@@ -675,7 +698,7 @@ explicit daemon tests/scripts override `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1`.
 
 #### ClearKey
 
-Removes a private key from the secure backend.
+Retired unconfirmed deletion route. Returns `org.nostr.Signer.Error.ConfirmationRequired`; use authenticated Control1 `RemoveIdentity` with typed confirmation instead.
 
 ```xml
 <method name="ClearKey">
@@ -1380,7 +1403,7 @@ answers `org.freedesktop.DBus.Introspectable.Introspect`.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `NOSTR_SIGNER_ENDPOINT` | Opt-in NIP-5F endpoint (`unix:/path`, `tcp:host:port`), gated like D-Bus | Unset: D-Bus only |
-| `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS` | Let any caller use `StoreKey`/`ClearKey`/`CreateProfile` (`1`); without it, only the trusted approval UI may | Unset |
+| `NOSTR_SIGNER_ALLOW_KEY_MUTATIONS` | Test/script override for legacy `StoreKey` (`1`); never bypasses the typed refusals of `ClearKey`/`CreateProfile` | Unset |
 | `NOSTR_SIGNER_MAX_CONNECTIONS` | Max concurrent TCP connections | 100 |
 | `NOSTR_DEBUG` | Enable debug logging | Disabled |
 | `NOSTR_SIGNER_SECKEY_HEX` | Fallback private key (64-char hex) | None |

@@ -20,6 +20,9 @@
 #include <keys.h>
 
 #include <secure_buf.h>
+static void wipe_key_text(char *text) {
+  if (text) { secure_wipe(text, strlen(text) + 1); free(text); }
+}
 #include <nostrc-profile-guard.h>
 
 #include <secp256k1.h>
@@ -525,17 +528,17 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
   char *sk_hex = NULL;
   int rc = resolve_seckey_hex(current_user, &sk_hex);
   if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
-  if (!is_hex_64(sk_hex)) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  if (!is_hex_64(sk_hex)) { wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
   nostr_secure_buf sb = secure_alloc(32);
-  if (!sb.ptr) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!sb.ptr) { wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   if (!nostr_hex2bin((uint8_t*)sb.ptr, sk_hex, 32)) {
     secure_free(&sb);
     secure_wipe(sk_hex, strlen(sk_hex));
-    free(sk_hex);
+    wipe_key_text(sk_hex);
     return NOSTR_SIGNER_ERROR_INVALID_KEY;
   }
   secure_wipe(sk_hex, strlen(sk_hex));
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   *out_sk = sb;
   return 0;
 }
@@ -740,7 +743,7 @@ int nostr_nip55l_resolve_npub(const char *current_user, char **out_npub){
   if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
   rc = is_hex_64(sk_hex) ? sk_hex_to_npub(sk_hex, out_npub) : NOSTR_SIGNER_ERROR_INVALID_KEY;
   secure_wipe(sk_hex, strlen(sk_hex));
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   return rc;
 }
 
@@ -836,11 +839,22 @@ static int mnemonic_credential(int op, const char *npub, const char *phrase, cha
     secret_service_clear_sync(service, &mnemonic_schema, attrs, NULL, &error);
     rc = error ? NOSTR_SIGNER_ERROR_BACKEND : 0;
   } else {
-    SecretValue *value = secret_service_lookup_sync(service, &mnemonic_schema, attrs, NULL, &error);
-    const gchar *text = value ? secret_value_get_text(value) : NULL;
-    rc = error ? NOSTR_SIGNER_ERROR_BACKEND : text ? 0 : value ? NOSTR_SIGNER_ERROR_CRYPTO_FAILED : NOSTR_SIGNER_ERROR_NOT_FOUND;
-    if (!rc && out) *out = strdup(text);
-    if (value) secret_value_unref(value);
+    /* Reading a locked recovery role must not become a fabricated NotFound
+     * or an unbounded implicit unlock prompt. Let management explicitly retry
+     * after the user unlocks the system keyring. */
+    GList *items = secret_service_search_sync(service, &mnemonic_schema, attrs,
+        SECRET_SEARCH_ALL | SECRET_SEARCH_LOAD_SECRETS, NULL, &error);
+    rc = error ? NOSTR_SIGNER_ERROR_BACKEND : items ? NOSTR_SIGNER_ERROR_BACKEND : NOSTR_SIGNER_ERROR_NOT_FOUND;
+    for (GList *it = items; it && !error; it = it->next) {
+      if (secret_item_get_locked(it->data)) continue;
+      SecretValue *value = secret_item_get_secret(it->data);
+      const gchar *text = value ? secret_value_get_text(value) : NULL;
+      rc = text ? 0 : NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+      if (!rc && out) *out = strdup(text);
+      if (value) secret_value_unref(value);
+      break;
+    }
+    g_list_free_full(items, g_object_unref);
   }
   g_hash_table_unref(attrs); g_object_unref(service); g_clear_error(&error);
   return rc;
@@ -970,8 +984,16 @@ int nostr_nip55l_identity_self_test(const char *identity) {
   if (!account_pk || nostr_nip55l_sign_event_json("{\"kind\":20000,\"created_at\":1,\"tags\":[],\"content\":\"Grotto identity self-test (not published)\"}",
       identity, "", &signed_json)) goto done;
   ev = nostr_event_new();
-  if (!ev || nostr_event_deserialize(ev, signed_json) || !nostr_event_check_signature(ev) ||
-      strcmp(ev->pubkey, account_pk)) goto done;
+  if (!ev || nostr_event_deserialize(ev, signed_json)) goto done;
+#if defined(NIP55L_TEST_TRUST_ENV) && NIP55L_TEST_TRUST_ENV
+  /* Only the existing test-trust build can inject faults into the real local
+   * cryptographic outputs; production builds have no fault-injection branch. */
+  const char *fault = getenv("NOSTR_SIGNER_TEST_SELF_TEST_FAULT");
+  if (fault && !strcmp(fault, "id")) ev->id[0] = ev->id[0] == '0' ? '1' : '0';
+  if (fault && !strcmp(fault, "signature")) ev->sig[0] = ev->sig[0] == '0' ? '1' : '0';
+  if (fault && !strcmp(fault, "binding")) account_pk[0] = account_pk[0] == '0' ? '1' : '0';
+#endif
+  if (!nostr_event_check_signature(ev) || strcmp(ev->pubkey, account_pk)) goto done;
   peer_sk = nostr_key_generate_private();
   peer_pk = peer_sk ? nostr_key_get_public(peer_sk) : NULL;
   if (!peer_pk || RAND_bytes(random, sizeof(random)) != 1) goto done;
@@ -989,6 +1011,9 @@ int nostr_nip55l_identity_self_test(const char *identity) {
   free(cipher); cipher = NULL;
   rc = nostr_nip44_encrypt_v2(peer_raw, account_raw, (const uint8_t *)challenge, strlen(challenge), &cipher);
   secure_wipe(peer_raw, sizeof(peer_raw));
+#if defined(NIP55L_TEST_TRUST_ENV) && NIP55L_TEST_TRUST_ENV
+  if (fault && !strcmp(fault, "challenge")) challenge[0] = challenge[0] == '0' ? '1' : '0';
+#endif
   if (rc || nostr_nip55l_nip44_decrypt(cipher, peer_pk, identity, &plain) || !plain || strcmp(challenge, plain))
     rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
   else rc = 0;
@@ -1300,8 +1325,8 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
   /* Strategy: parse event; find first 'p' tag as peer; attempt NIP-44 v2 decrypt of content,
    * then fallback to NIP-04. If decrypt ok, replace content and return serialized event. */
   int rc; char *sk_hex=NULL; rc = resolve_seckey_hex(current_user, &sk_hex); if (rc!=0) return rc;
-  NostrEvent *ev = nostr_event_new(); if(!ev){ free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
+  NostrEvent *ev = nostr_event_new(); if(!ev){ wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (nostr_event_deserialize(ev, event_json)!=0) { nostr_event_free(ev); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_JSON; }
   const char *peer_pub_hex = NULL;
   NostrTags *tags = (NostrTags*)nostr_event_get_tags(ev);
   if (tags){
@@ -1313,9 +1338,9 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
       if (key && strcmp(key, "p")==0) { peer_pub_hex = nostr_tag_get(t, 1); break; }
     }
   }
-  if (!peer_pub_hex) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
+  if (!peer_pub_hex) { nostr_event_free(ev); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
   const char *content = nostr_event_get_content(ev);
-  if (!content) { nostr_event_free(ev); free(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
+  if (!content) { nostr_event_free(ev); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
   /* Try NIP-44 first */
   int dec_ok = 0; char *pt = NULL;
   do {
@@ -1339,7 +1364,7 @@ int nostr_nip55l_decrypt_zap_event(const char *event_json,
     }
     if (err) free(err);
   }
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   if (!dec_ok || !pt) { nostr_event_free(ev); return NOSTR_SIGNER_ERROR_CRYPTO_FAILED; }
   /* Replace content and serialize */
   nostr_event_set_content(ev, pt);
@@ -1658,9 +1683,9 @@ static int store_key_full(const char *key, const char *identity, const char *lab
   }
   if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   char *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) { if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!pk_hex) { if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   free(pk_hex);
   /* Choose key_id: prefer provided identity, else derived npub */
   const char *key_id_attr = sel_in ? sel_in : npub;
@@ -1688,7 +1713,7 @@ static int store_key_full(const char *key, const char *identity, const char *lab
     if (activate) signer_cache_set(sk_hex, npub); else signer_cache_store_identity(sk_hex, npub);
   }
   if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); }
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   free(npub);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #elif defined(NIP55L_HAVE_KEYCHAIN)
@@ -1705,25 +1730,26 @@ static int store_key_full(const char *key, const char *identity, const char *lab
   }
   if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   char *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) { free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!pk_hex) { wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); wipe_key_text(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   free(pk_hex);
   const char *key_id_attr = sel_in ? sel_in : npub;
 
   /* Prepare secret bytes */
   uint8_t skb[32];
-  if (!nostr_hex2bin(skb, sk_hex, sizeof skb)) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  if (!nostr_hex2bin(skb, sk_hex, sizeof skb)) { wipe_key_text(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
 
   /* Keychain write using SecItem APIs */
   CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  if (!query) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!query) { secure_wipe(skb, sizeof(skb)); wipe_key_text(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_BACKEND; }
   CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
   CFStringRef account = CFStringCreateWithCString(NULL, key_id_attr, kCFStringEncodingUTF8);
   CFStringRef label = CFStringCreateWithCString(NULL, label_text && *label_text ? label_text : "Gnostr Identity", kCFStringEncodingUTF8);
   CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
-  CFDataRef secretData = CFDataCreate(NULL, skb, (CFIndex)sizeof(skb));
+  CFMutableDataRef secretData = CFDataCreateMutable(NULL, sizeof(skb));
+  CFDataAppendBytes(secretData, skb, sizeof(skb));
   secure_wipe(skb, sizeof skb);
   CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
   CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
@@ -1742,9 +1768,9 @@ static int store_key_full(const char *key, const char *identity, const char *lab
   if (comment) CFRelease(comment);
   /* Wipe key material from the CF buffer before release. */
   if (secretData) {
-    const UInt8 *sd_bytes = CFDataGetBytePtr(secretData);
+    UInt8 *sd_bytes = CFDataGetMutableBytePtr(secretData);
     CFIndex sd_len = CFDataGetLength(secretData);
-    if (sd_bytes && sd_len > 0) memset((void *)sd_bytes, 0, (size_t)sd_len);
+    if (sd_bytes && sd_len > 0) secure_wipe(sd_bytes, (size_t)sd_len);
     CFRelease(secretData);
   }
   if (query) CFRelease(query);
@@ -1752,7 +1778,7 @@ static int store_key_full(const char *key, const char *identity, const char *lab
   if (st == errSecSuccess) {
     if (activate) signer_cache_set(sk_hex, npub); else signer_cache_store_identity(sk_hex, npub);
   }
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   free(npub);
   return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #else
@@ -1839,7 +1865,7 @@ static char *env_identity_npub(void){
   char *npub = NULL;
   if (sk_hex_to_npub(sk_hex, &npub) != 0) npub = NULL;
   secure_wipe(sk_hex, strlen(sk_hex));
-  free(sk_hex);
+  wipe_key_text(sk_hex);
   return npub;
 }
 
@@ -2241,7 +2267,7 @@ static mig_result migrate_one(SecretService *service, SecretItem *item,
   res = MIG_OK;
 
 out:
-  if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); }
+  if (sk_hex) { wipe_key_text(sk_hex); }
   free(npub);
   if (sv) secret_value_unref(sv);
   if (legacy) g_hash_table_unref(legacy);
@@ -2468,7 +2494,7 @@ static kc_mig_result kc_migrate_one(const char *account){
   }
   r = KC_MIG_OK;
 out:
-  if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); }
+  if (sk_hex) { wipe_key_text(sk_hex); }
   free(npub);
   return r;
 }

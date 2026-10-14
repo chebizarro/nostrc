@@ -1,4 +1,5 @@
 #include "grotto_control.h"
+#include "../src/secret-variant.h"
 #include "grotto_clients.h"
 #include "grotto_control_xml.h"
 #include "signer_caller.h"
@@ -86,7 +87,7 @@ static GVariant *status(GrottoControl *c) {
   refresh(c);
   GVariantBuilder row, caps; g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
-  const gchar *enabled[] = {"clients", "activity", "scoped-permissions", "trust-tiers", "pause", "identity-self-test"};
+  const gchar *enabled[] = {"clients", "activity", "scoped-permissions", "trust-tiers", "pause", "identity-self-test", "typed-identity-removal"};
   for (guint i = 0; i < G_N_ELEMENTS(enabled); i++) g_variant_builder_add(&caps, "{sb}", enabled[i], TRUE);
   const gchar *custody[] = {"rotate-identity", "mnemonic-export", "store-mnemonic", "identity-import"};
   for (guint i = 0; i < G_N_ELEMENTS(custody); i++)
@@ -192,7 +193,7 @@ static void cancel_rotation_if_paused(GrottoControl *c) {
   if (job && (c->closing || signer_approval_service_is_paused(c->approval) ||
       job->generation != signer_approval_service_generation(c->approval))) g_atomic_int_set(&job->cancelled, TRUE);
 }
-static void wipe_text(gchar *s) { if (s) { secure_wipe(s, strlen(s)); g_free(s); } }
+static void wipe_text(gchar *s) { if (s) { secure_wipe(s, strlen(s) + 1); g_free(s); } }
 static void export_job_free(gpointer data) {
   ExportJob *job = data;
   g_object_unref(job->invocation); g_free(job->identity); g_free(job->format);
@@ -236,6 +237,7 @@ static void export_worker(GTask *task, gpointer source, gpointer data, GCancella
      * Migration is saved for explicit publication by a consuming application. */
   } else job->result = nostr_nip55l_export_identity(job->identity, job->format, job->passphrase, &job->backup);
   wipe_text(job->passphrase); job->passphrase = NULL;
+  wipe_text(job->key); job->key = NULL; wipe_text(job->mnemonic); job->mnemonic = NULL;
   g_task_return_boolean(task, TRUE);
 }
 static void export_finished(GObject *source, GAsyncResult *result, gpointer data) {
@@ -274,7 +276,8 @@ static void export_finished(GObject *source, GAsyncResult *result, gpointer data
     }
   }
   if (!strcmp(job->format, "__store") || !strcmp(job->format, "__import") || !strcmp(job->format, "__rotate")) status_changed(c);
-  g_dbus_method_invocation_return_value(job->invocation, g_variant_new("(s)", job->backup));
+  const gchar *values[] = {job->backup};
+  g_dbus_method_invocation_return_value(job->invocation, grotto_secret_tuple(values, G_N_ELEMENTS(values)));
   wipe_text(job->backup); job->backup = NULL;
 }
 static void start_export(GrottoControl *c, GDBusMethodInvocation *inv, const gchar *identity,
@@ -469,6 +472,25 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
         "default-identity", npub ? npub : "");
     free(selector); free(npub);
     if (!saved) { error_reply(inv, NULL); return; } status_changed(c);
+  } else if (!strcmp(method, "RemoveIdentity")) {
+    const gchar *identity, *confirmation;
+    g_variant_get(args, "(&s&s)", &identity, &confirmation);
+    unsigned char pk[32];
+    if (nostr_nip19_decode_npub(identity, pk) || strcmp(identity, confirmation)) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "ConfirmationRequired", "Type the full npub of the identity to remove"); return;
+    }
+    /* Same owner context as request submission: no approval can be admitted
+     * between this fence and the synchronous custody deletion. */
+    if (c->export_busy || signer_approval_service_identity_busy(c->approval, identity)) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "IdentityBusy", "Finish or cancel requests for this identity before removing it"); return;
+    }
+    int rc = nostr_nip55l_clear_key(identity);
+    if (rc) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "BackendUnavailable", "Identity was not removed; check keyring availability"); return; }
+    GSettings *settings = settings_manager_get_gsettings(settings_manager_get_default());
+    g_autofree gchar *default_id = g_settings_get_string(settings, "default-identity");
+    if (!strcmp(default_id, identity)) g_settings_set_string(settings, "default-identity", "");
+    signer_notify_identities_changed(); status_changed(c);
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(b)", TRUE)); return;
   } else if (!strcmp(method, "ConfigureBunker")) {
     /* TODO G06: validate/persist bunker.ini v1 and apply desired config live. */
     bunker_unavailable(c, inv); return;

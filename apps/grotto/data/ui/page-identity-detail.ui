@@ -36,6 +36,15 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
+                      <object class="GtkLabel" id="setup_warning">
+                        <property name="wrap">true</property>
+                        <property name="xalign">0</property>
+                        <style>
+                          <class name="warning"/>
+                        </style>
+                      </object>
+                    </child>
+                    <child>
                       <object class="GtkLabel" id="public_key">
                         <property name="wrap">true</property>
                         <property name="selectable">true</property>
@@ -78,12 +87,21 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       </object>
                     </child>
                     <child>
-                      <object class="GtkLabel" id="seed_words">
-                        <property name="wrap">true</property>
-                        <property name="xalign">0</property>
+                      <object class="GtkBox" id="seed_words">
+                        <property name="orientation">1</property>
                         <style>
                           <class name="monospace"/>
                         </style>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkCheckButton" id="backup_written_down">
+                        <property name="label" translatable="yes">I have safely backed up this identity</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkButton" id="btn_backup_done">
+                        <property name="label" translatable="yes">Confirm backup</property>
                       </object>
                     </child>
                     <child>

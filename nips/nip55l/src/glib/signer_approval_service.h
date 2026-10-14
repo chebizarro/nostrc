@@ -42,6 +42,8 @@ GVariant *signer_approval_service_list_grants(SignerApprovalService *service);
 gboolean signer_approval_service_revoke_grant(SignerApprovalService *service,
     const gchar *kind, const gchar *principal, const gchar *identity, gboolean *removed);
 guint signer_approval_service_pending_count(SignerApprovalService *service);
+/* Owner-context deletion fence. Includes unresolved, queued and executing calls. */
+gboolean signer_approval_service_identity_busy(SignerApprovalService *service, const gchar *npub);
 void signer_approval_service_prune_connections(SignerApprovalService *service,
     gboolean (*alive)(const gchar *connection, gpointer data), gpointer data);
 void signer_approval_service_connection_closed(SignerApprovalService *service, const gchar *key);

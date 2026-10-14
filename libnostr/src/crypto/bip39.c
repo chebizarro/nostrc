@@ -49,7 +49,7 @@ char *nostr_bip39_generate(int word_count) {
   const int CS_bits = ENT_bits / 32;
   const int ENT_bytes = ENT_bits / 8;
   unsigned char entropy[32] = {0};
-  if (RAND_bytes(entropy, ENT_bytes) != 1) return NULL;
+  if (RAND_bytes(entropy, ENT_bytes) != 1) { OPENSSL_cleanse(entropy, sizeof(entropy)); return NULL; }
 
   /* Compute checksum */
   unsigned char hash[SHA256_DIGEST_LENGTH];
@@ -90,7 +90,10 @@ char *nostr_bip39_generate(int word_count) {
   }
   total_len += (size_t)(word_count - 1) + 1; /* spaces + NUL */
   char *out = (char*)malloc(total_len);
-  if (!out) return NULL;
+  if (!out) {
+    OPENSSL_cleanse(entropy, sizeof(entropy)); OPENSSL_cleanse(hash, sizeof(hash));
+    OPENSSL_cleanse(bits, sizeof(bits)); OPENSSL_cleanse(idx, sizeof(idx)); return NULL;
+  }
   size_t p = 0;
   for (int i = 0; i < word_count; ++i) {
     const char *w = g_words[idx[i]];
@@ -100,6 +103,8 @@ char *nostr_bip39_generate(int word_count) {
     if (i + 1 < word_count) out[p++] = ' ';
   }
   out[p] = '\0';
+  OPENSSL_cleanse(entropy, sizeof(entropy)); OPENSSL_cleanse(hash, sizeof(hash));
+  OPENSSL_cleanse(bits, sizeof(bits)); OPENSSL_cleanse(idx, sizeof(idx));
   return out;
 }
 
@@ -142,7 +147,7 @@ static char *nfkd_dup(const char *s) {
   char *norm = g_utf8_normalize(s, -1, G_NORMALIZE_NFKD);
   return norm ? norm : g_strdup(s);
 }
-static inline void nfkd_free(char *p) { if (p) g_free(p); }
+static inline void nfkd_free(char *p) { if (p) { OPENSSL_cleanse(p, strlen(p) + 1); g_free(p); } }
 #else
 /* Fallback: ASCII-only duplication (no normalization). */
 static char *nfkd_dup(const char *s) {
@@ -152,7 +157,7 @@ static char *nfkd_dup(const char *s) {
   memcpy(dup, s, n + 1);
   return dup;
 }
-static inline void nfkd_free(char *p) { if (p) free(p); }
+static inline void nfkd_free(char *p) { if (p) { OPENSSL_cleanse(p, strlen(p) + 1); free(p); } }
 #endif
 
 bool nostr_bip39_validate(const char *mnemonic) {
@@ -161,27 +166,25 @@ bool nostr_bip39_validate(const char *mnemonic) {
 
   /* Tokenize into up to 24 words */
   const char *s = mnemonic;
-  int idx[24];
+  int idx[24] = {0};
   int wc = 0;
   while (*s) {
     while (*s == ' ') s++;
     if (!*s) break;
     const char *start = s;
     while (*s && *s != ' ') {
-      if (!(*s >= 'a' && *s <= 'z')) return false; /* enforce a-z */
+      if (!(*s >= 'a' && *s <= 'z')) goto invalid; /* enforce a-z */
       s++;
     }
     size_t wl = (size_t)(s - start);
-    if (wl == 0 || wl > 8) return false; /* max len ~8 for english list */
-    if (wc >= 24) return false;
+    if (wl == 0 || wl > 8) goto invalid; /* max len ~8 for english list */
+    if (wc >= 24) goto invalid;
     int wi = word_index(start, wl);
-    if (wi < 0) {
-      return false;
-    }
+    if (wi < 0) goto invalid;
     idx[wc++] = wi;
     while (*s == ' ') s++;
   }
-  if (!allowed_word_count(wc)) return false;
+  if (!allowed_word_count(wc)) goto invalid;
 
   /* Rebuild bitstream from indices (11 bits each) */
   const int ENT_bits = (wc == 12 ? 128 : wc == 15 ? 160 : wc == 18 ? 192 : wc == 21 ? 224 : 256);
@@ -213,7 +216,12 @@ bool nostr_bip39_validate(const char *mnemonic) {
     if (want != have) { ok = 0; break; }
   }
   if (!ok) fprintf(stderr, "bip39: checksum mismatch (wc=%d)\n", wc);
+  OPENSSL_cleanse(entropy, sizeof(entropy)); OPENSSL_cleanse(hash, sizeof(hash));
+  OPENSSL_cleanse(bits, sizeof(bits)); OPENSSL_cleanse(idx, sizeof(idx));
   return ok ? true : false;
+invalid:
+  OPENSSL_cleanse(idx, sizeof(idx));
+  return false;
 }
 
 /* Seed = PBKDF2-HMAC-SHA512(mnemonic, "mnemonic" + passphrase, 2048, 64) */

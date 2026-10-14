@@ -6,4 +6,5 @@ G_DECLARE_FINAL_TYPE(GrottoIdentityDetail, grotto_identity_detail, GROTTO, IDENT
 /* NULL identity offers the daemon's signable inventory; npub pins a detail page. */
 GtkWidget *page_identity_detail_new(const gchar *npub);
 void page_identity_detail_present(GtkWidget *parent);
+void page_identity_detail_present_identity(GtkWidget *parent, const gchar *npub);
 G_END_DECLS

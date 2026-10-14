@@ -30,7 +30,7 @@ add_library(grotto_identity_ui_test_core STATIC
     ../src/gn-signer-error.c ../src/backup-recovery.c
     ../src/secret-clipboard.c ../src/ui/onboarding-assistant.c
     ../src/ui/widgets/gn-secure-entry.c ../src/ui/page-identity-detail.c
-    ../src/ui/sheets/sheet-qr-display.c ../src/qr-code.c)
+    ../src/ui/sheets/sheet-qr-display.c ../src/ui/sheets/sheet-select-account.c ../src/qr-code.c)
 apply_test_sanitizers(grotto_identity_ui_test_core)
 target_include_directories(grotto_identity_ui_test_core PUBLIC ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/tests/common)
