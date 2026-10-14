@@ -14,6 +14,11 @@ static gboolean text_ok(const gchar *s, gsize max, gboolean empty) {
     if (g_unichar_iscntrl(g_utf8_get_char(p))) return FALSE;
   return TRUE;
 }
+static gboolean attempt_ok(const gchar *attempt) {
+  if (!attempt || strlen(attempt) != 64) return FALSE;
+  for (guint i = 0; i < 64; i++) if (!g_ascii_isxdigit(attempt[i])) return FALSE;
+  return TRUE;
+}
 gboolean grotto_clients_principal_valid(const gchar *s) {
   if (!text_ok(s, 4096, FALSE)) return FALSE;
   if (g_str_has_prefix(s, "nip46:")) {
@@ -88,6 +93,13 @@ GrottoClients *grotto_clients_new(const gchar *config_home, GError **error) {
     if (local || (tier != SIGNER_TRUST_LOW && !first) ||
         (paired && (!first || strcmp(t, "NIP46") || !g_str_has_prefix(p, "nip46:")))) {
       invalid(error, "invalid client admission"); return NULL;
+    }
+    if (g_key_file_has_key(c->records, id, "pairing-pending-ack", NULL)) {
+      gboolean pending = g_key_file_get_boolean(c->records, id, "pairing-pending-ack", &local);
+      g_autofree gchar *attempt = g_key_file_get_string(c->records, id, "pairing-pending-id", NULL);
+      if (local || (pending && (paired || !first || strcmp(t, "NIP46") || !attempt_ok(attempt)))) {
+        invalid(error, "invalid pending pairing"); return NULL;
+      }
     }
     g_auto(GStrv) relays = g_key_file_get_string_list(c->records, id, "relays", NULL, &local);
     if (local) { invalid(error, "invalid client relays"); return NULL; }
@@ -166,17 +178,46 @@ gchar *grotto_clients_paired_identity(GrottoClients *c, const gchar *principal) 
   if (identity && *identity) return identity;
   g_free(identity); return NULL;
 }
-gboolean grotto_clients_set_pairing(GrottoClients *c, const gchar *p, gboolean paired,
-    const gchar *const *relays, GError **error) {
+static gboolean pairing_update(GrottoClients *c, const gchar *p, gboolean paired,
+    const gchar *const *relays, gint tier, const gchar *label, gboolean pending, const gchar *attempt, GError **error) {
   g_autofree gchar *id = NULL;
   if (!existing(c, p, &id, error)) return FALSE;
   if (!g_str_has_prefix(p, "nip46:") || !g_key_file_get_uint64(c->records, id, "first-consented-at", NULL))
     return invalid(error, "pairing requires explicit remote consent");
+  if ((pending && !attempt_ok(attempt)) || tier < -1 || tier > SIGNER_TRUST_FULL || (label && !text_ok(label, 160, TRUE))) return invalid(error, "invalid pairing metadata");
   gsize n = relays ? g_strv_length((GStrv)relays) : 0;
   if (n > 64) return invalid(error, "too many client relays");
   for (gsize i = 0; i < n; i++) if (!text_ok(relays[i], 2048, FALSE)) return invalid(error, "invalid client relay");
   g_autoptr(GKeyFile) next = copy_records(c);
-  g_key_file_set_boolean(next, id, "paired", paired); g_key_file_set_string_list(next, id, "relays", relays, n);
+  g_key_file_set_boolean(next, id, "paired", paired);
+  g_key_file_set_boolean(next, id, "pairing-pending-ack", pending);
+  if (pending) g_key_file_set_string(next, id, "pairing-pending-id", attempt);
+  else g_key_file_remove_key(next, id, "pairing-pending-id", NULL);
+  g_key_file_set_string_list(next, id, "relays", relays, n);
+  if (tier >= SIGNER_TRUST_LOW) g_key_file_set_integer(next, id, "tier", tier);
+  if (label && *label) g_key_file_set_string(next, id, "label", label);
+  return commit(c, next, error);
+}
+gboolean grotto_clients_set_pairing(GrottoClients *c, const gchar *p, gboolean paired,
+    const gchar *const *relays, GError **error) {
+  return pairing_update(c, p, paired, relays, -1, NULL, FALSE, NULL, error);
+}
+gboolean grotto_clients_begin_pairing(GrottoClients *c, const gchar *p,
+    const gchar *const *relays, gint tier, const gchar *label, const gchar *attempt, GError **error) {
+  return pairing_update(c, p, FALSE, relays, tier, label, TRUE, attempt, error);
+}
+gboolean grotto_clients_ack_pairing(GrottoClients *c, const gchar *p, const gchar *identity, const gchar *attempt, GError **error) {
+  g_autofree gchar *id = NULL;
+  if (!existing(c, p, &id, error)) return FALSE;
+  g_autofree gchar *stored = g_key_file_get_string(c->records, id, "identity", NULL);
+  g_autofree gchar *pending_id = g_key_file_get_string(c->records, id, "pairing-pending-id", NULL);
+  if (g_strcmp0(stored, identity) || g_strcmp0(pending_id, attempt) || !attempt_ok(attempt) ||
+      !g_key_file_get_boolean(c->records, id, "pairing-pending-ack", NULL))
+    return invalid(error, "no matching pending pairing");
+  g_autoptr(GKeyFile) next = copy_records(c);
+  g_key_file_set_boolean(next, id, "paired", TRUE);
+  g_key_file_set_boolean(next, id, "pairing-pending-ack", FALSE);
+  g_key_file_remove_key(next, id, "pairing-pending-id", NULL);
   return commit(c, next, error);
 }
 gboolean grotto_clients_remove(GrottoClients *c, const gchar *p, GError **error) {
@@ -199,6 +240,7 @@ GVariant *grotto_clients_list(GrottoClients *c) {
     const gchar *tiers[] = {"low", "medium", "full"};
     g_variant_builder_add(&row, "{sv}", "trust-tier", g_variant_new_string(tiers[tier]));
     g_variant_builder_add(&row, "{sv}", "paired", g_variant_new_boolean(g_key_file_get_boolean(c->records, id, "paired", NULL)));
+    g_variant_builder_add(&row, "{sv}", "pairing-pending-ack", g_variant_new_boolean(g_key_file_get_boolean(c->records, id, "pairing-pending-ack", NULL)));
     const gchar *numbers[] = {"first-consented-at", "last-used-at"};
     for (guint j = 0; j < G_N_ELEMENTS(numbers); j++)
       g_variant_builder_add(&row, "{sv}", numbers[j], g_variant_new_uint64(g_key_file_get_uint64(c->records, id, numbers[j], NULL)));

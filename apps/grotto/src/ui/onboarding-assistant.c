@@ -410,8 +410,18 @@ void onboarding_assistant_verify_identity(GtkWindow *parent, const gchar *npub) 
   gtk_window_set_application(GTK_WINDOW(self), gtk_window_get_application(parent));
   gtk_window_present(GTK_WINDOW(self)); /* capability reply starts the exact-identity test */
 }
+static void presented_gone(gpointer data, GObject *object) {
+  GtkWindow *parent = data;
+  if (g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant") == object)
+    g_object_set_data(G_OBJECT(parent), "grotto-onboarding-assistant", NULL);
+  g_object_unref(parent);
+}
 void onboarding_assistant_present(GtkWindow *parent) {
-  OnboardingAssistant *self = onboarding_assistant_new();
+  OnboardingAssistant *self = g_object_get_data(G_OBJECT(parent), "grotto-onboarding-assistant");
+  if (self && !self->closed) { gtk_window_present(GTK_WINDOW(self)); return; }
+  self = onboarding_assistant_new();
+  g_object_set_data(G_OBJECT(parent), "grotto-onboarding-assistant", self);
+  g_object_weak_ref(G_OBJECT(self), presented_gone, g_object_ref(parent));
   gtk_window_set_transient_for(GTK_WINDOW(self), parent);
   gtk_window_set_application(GTK_WINDOW(self), gtk_window_get_application(parent));
   gtk_window_present(GTK_WINDOW(self));

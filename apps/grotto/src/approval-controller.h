@@ -23,7 +23,8 @@ G_DECLARE_FINAL_TYPE(GrottoApprovalController, grotto_approval_controller, GROTT
 /* Create on the GUI main context. Subscribes before the first snapshot.
  * Application owns the controller and must stop it on shutdown. Signals:
  * message(string), availability-changed(), notifications-changed(),
- * reconciled(boolean success), including terminal unavailable/error results. */
+ * reconciled(boolean success), including terminal unavailable/error results;
+ * screen-lock-changed(boolean), only positively observed desktop lock state. */
 GrottoApprovalController *grotto_approval_controller_new(GApplication *app, GDBusConnection *bus);
 GListModel *grotto_approval_controller_get_pending(GrottoApprovalController *self); /* borrowed */
 void grotto_approval_controller_reconcile(GrottoApprovalController *self);

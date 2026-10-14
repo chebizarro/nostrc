@@ -187,7 +187,36 @@
       <description>Whether the new user onboarding wizard has been completed. Set to false to re-show on next launch.</description>
     </key>
 
-    <!-- Startup Settings -->
+    <!-- Background policy. The old startup keys below are migration-only. -->
+    <key name="run-in-background" type="b">
+      <default>true</default>
+      <summary>Review requests in the background</summary>
+    </key>
+    <key name="launch-on-login" type="b">
+      <default>false</default>
+      <summary>Launch the approval UI on login without a window</summary>
+    </key>
+    <key name="pause-on-screen-lock" type="b">
+      <default>false</default>
+      <summary>Pause signing when the desktop locks</summary>
+      <description>The daemon watches the user's logind session even when the approval UI is closed. If monitoring is unavailable while enabled, signing remains paused. Unlocking never resumes signing; confirm Resume in Grotto.</description>
+    </key>
+    <key name="portal-autostart-created" type="b">
+      <default>false</default>
+      <summary>A portal login entry may need removal</summary>
+      <description>Internal durable marker, cleared only after the portal confirms autostart removal.</description>
+    </key>
+    <key name="settings-migration-version" type="u">
+      <default>0</default>
+      <summary>Completed settings migration version</summary>
+    </key>
+    <key name="background-disclosure-accepted" type="b">
+      <default>false</default>
+      <summary>Background operation has been disclosed</summary>
+      <description>Never request portal permission before setup disclosure or an explicit Settings choice.</description>
+    </key>
+
+    <!-- Startup Settings (deprecated, read only for migration v1) -->
     <key name="autostart" type="b">
       <default>false</default>
       <summary>Auto-start on login</summary>

@@ -618,6 +618,7 @@ static void lock_changed(GDBusConnection *bus, const char *sender, const char *p
   GrottoApprovalController *s = data;
   s->lock_revision++;
   g_variant_get(args, "(b)", &s->locked);
+  g_signal_emit_by_name(s, "screen-lock-changed", s->locked);
   update_notifications(s);
 }
 static void lock_done(GObject *source, GAsyncResult *result, gpointer data) {
@@ -626,6 +627,7 @@ static void lock_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GVariant) r = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
   if (r && !s->stopped && f->revision == s->lock_revision) {
     g_variant_get(r, "(b)", &s->locked);
+    g_signal_emit_by_name(s, "screen-lock-changed", s->locked);
     update_notifications(s);
   }
   fetch_free(f);
@@ -929,9 +931,12 @@ static void tier_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autoptr(GError) error = NULL;
   g_autoptr(GVariant) reply =
       g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
-  if (fetch_current(f))
-    message(f->self, reply ? "Trust level changed. Remembered permissions are unchanged."
+  if (fetch_current(f)) {
+    gboolean pairing = f->request && !strcmp(text_field(f->request->info, "operation"), "connect");
+    message(f->self, reply ? (pairing ? "Trust choice saved. A new client still needs pairing approval. Remembered permissions are unchanged."
+                                      : "Trust level changed. Remembered permissions are unchanged.")
                            : "Trust level could not be changed. No request was approved.");
+  }
   fetch_free(f);
 }
 static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer data) {
@@ -940,7 +945,7 @@ static void change_tier(GnostrApprovalDialog *dialog, const char *tier, gpointer
   GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
   if (!r || !s->compatible || r->state != GROTTO_APPROVAL_READY)
     return;
-  Fetch *f = fetch_new(s, NULL);
+  Fetch *f = fetch_new(s, r);
   f->held = TRUE;
   hold(s);
   g_dbus_connection_call(s->bus, s->owner, CONTROL_PATH, CONTROL, "SetClientTrust",
@@ -1131,6 +1136,9 @@ static void grotto_approval_controller_finalize(GObject *object) {
   G_OBJECT_CLASS(grotto_approval_controller_parent_class)->finalize(object);
 }
 static void grotto_approval_controller_class_init(GrottoApprovalControllerClass *klass) {
+  /* Only positively observed lock state is exported, not fail-closed notification fallback. */
+  g_signal_new("screen-lock-changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0,
+               NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_BOOLEAN);
   GObjectClass *o = G_OBJECT_CLASS(klass);
   o->dispose = grotto_approval_controller_dispose;
   o->finalize = grotto_approval_controller_finalize;

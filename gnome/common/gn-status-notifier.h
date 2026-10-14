@@ -21,6 +21,9 @@ typedef struct {
 GnStatusNotifier *gn_status_notifier_new(GApplication *app, const gchar *icon_name,
                                          const gchar *title);
 gboolean gn_status_notifier_is_registered(GnStatusNotifier *self);
+/* Passive items are hidden by the host; defaults remain unchanged. */
+void gn_status_notifier_set_presentation(GnStatusNotifier *self, gboolean visible,
+                                         const gchar *title, const gchar *icon_name);
 
 /* Replace the flat menu atomically. The notifier copies all items and emits
  * LayoutUpdated after the new snapshot is in place. "item-activated" carries

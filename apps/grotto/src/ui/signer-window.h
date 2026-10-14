@@ -12,6 +12,7 @@ G_DECLARE_FINAL_TYPE(SignerWindow, signer_window, SIGNER, WINDOW, AdwApplication
 SignerWindow *signer_window_new(AdwApplication *app);
 void signer_window_show_page(SignerWindow *self, const char *name);
 void signer_window_set_pending_group(SignerWindow *self, GtkWidget *group);
+void signer_window_add_background_group(SignerWindow *self, AdwPreferencesGroup *group);
 
 /**
  * signer_window_show_new_profile:

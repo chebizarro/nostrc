@@ -32,6 +32,13 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.56')
 gio_dep = dependency('gio-2.0', version: '>= 2.56')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 json_glib_dep = dependency('json-glib-1.0')
+native_camera_required = host_machine.system() == 'linux'
+qrencode_dep = dependency('libqrencode', required: native_camera_required)
+zbar_dep = dependency('zbar', required: native_camera_required)
+gst_dep = dependency('gstreamer-1.0', required: native_camera_required)
+gst_video_dep = dependency('gstreamer-video-1.0', required: native_camera_required)
+gst_app_dep = dependency('gstreamer-app-1.0', required: native_camera_required)
+have_camera = gst_dep.found() and gst_video_dep.found() and gst_app_dep.found()
 
 # Optional: libsecret for secure key storage on Linux
 libsecret_dep = dependency('libsecret-1', required: false)
@@ -113,6 +120,7 @@ nips_inc = include_directories(
 app_sources = files(
   'src/main_app.c',
   'src/approval-controller.c',
+  'src/background.c',
   '../../gnome/common/gn-session-bus-probe.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
@@ -143,6 +151,7 @@ app_sources = files(
   'src/multisig_wallet.c',
   'src/signer_grants.c',
   'src/profile_store.c',
+  'src/pairing_uri.c',
   'src/qr-code.c',
   'src/qr-scanner.c',
   'src/rate-limiter.c',
@@ -180,6 +189,7 @@ app_ui_sources = files(
   'src/ui/profile-dashboard.c',
   'src/ui/settings_page.c',
   'src/ui/signer-window.c',
+  'src/ui/pairing-flow.c',
   'src/ui/welcome-page.c',
   # Sheets
   'src/ui/sheets/sheet-account-backup.c',
@@ -232,6 +242,14 @@ app_deps = [
   json_glib_dep,
   nostr_gobject_dep,
 ]
+foreach qr_dep : [qrencode_dep, zbar_dep]
+  if qr_dep.found()
+    app_deps += qr_dep
+  endif
+endforeach
+if have_camera
+  app_deps += [gst_dep, gst_video_dep, gst_app_dep]
+endif
 
 if libsecret_dep.found()
   app_deps += libsecret_dep
@@ -259,7 +277,12 @@ executable(app_bin,
     '-DAPP_RESOURCE_PATH="/org/gnostr/signer"',
     '-DGETTEXT_PACKAGE="@0@"'.format(gettext_package),
     '-DLOCALEDIR="@0@"'.format(localedir),
+    '-DGROTTO_EXECUTABLE="@0@/grotto"'.format(get_option('prefix') / get_option('bindir')),
+    '-DGROTTO_AUTOSTART_TEMPLATE="@0@/org.nostr.Grotto-autostart.desktop"'.format(get_option('prefix') / get_option('datadir') / 'grotto'),
     libsecret_dep.found() ? '-DGNOSTR_HAVE_LIBSECRET=1' : [],
+    qrencode_dep.found() ? '-DHAVE_QRENCODE=1' : [],
+    zbar_dep.found() ? '-DHAVE_ZBAR=1' : [],
+    have_camera ? '-DHAVE_GSTREAMER=1' : [],
   ].flatten(),
   install: true,
 )
@@ -285,8 +308,29 @@ configure_file(
   install_dir: get_option('datadir') / 'dbus-1' / 'services',
 )
 
+configure_file(
+  input: 'data/org.nostr.Grotto.service.in',
+  output: 'org.nostr.Grotto.service',
+  configuration: dbus_service_conf,
+  format: 'cmake@',
+  install_dir: get_option('datadir') / 'dbus-1' / 'services',
+)
+autostart_conf = configuration_data()
+autostart_conf.set('GROTTO_BINDIR', get_option('prefix') / get_option('bindir'))
+configure_file(input: 'data/org.nostr.Grotto-autostart.desktop.in',
+  output: 'org.nostr.Grotto-autostart.desktop', configuration: autostart_conf,
+  install_dir: get_option('datadir') / 'grotto')
+install_data('data/org.nostr.Grotto.metainfo.xml',
+  install_dir: get_option('datadir') / 'metainfo')
+install_data('data/icons/hicolor/scalable/apps/org.nostr.Grotto-symbolic.svg',
+  install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps')
+foreach size : ['16', '24', '32', '48', '64', '128', '256', '512']
+  install_data('data/icons/hicolor/' + size + 'x' + size + '/apps/org.nostr.Grotto.png',
+    install_dir: get_option('datadir') / 'icons/hicolor' / (size + 'x' + size) / 'apps')
+endforeach
+
 # Install desktop file
-install_data('packaging/appimage/grotto.desktop',
+install_data('data/org.nostr.Grotto.desktop',
   install_dir: get_option('datadir') / 'applications',
 )
 

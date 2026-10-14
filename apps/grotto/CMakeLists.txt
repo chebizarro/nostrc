@@ -75,8 +75,12 @@ if (GROTTO_WITH_HW_WALLET)
   endif()
 endif()
 
-# Optional libqrencode for QR code generation
-pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+# Pairing link QR generation is required on the supported native Linux GUI.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  pkg_check_modules(QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
+else()
+  pkg_check_modules(QRENCODE QUIET IMPORTED_TARGET libqrencode)
+endif()
 if (QRENCODE_FOUND)
   message(STATUS "libqrencode found - QR code generation enabled")
 else()
@@ -84,8 +88,14 @@ else()
   message(STATUS "  Install libqrencode: brew install qrencode (macOS), apt install libqrencode-dev (Linux)")
 endif()
 
-# Optional zbar for QR code scanning
-pkg_check_modules(ZBAR QUIET IMPORTED_TARGET zbar)
+# Camera pairing is required for the supported native Linux GUI (OC-8).
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  pkg_check_modules(ZBAR REQUIRED IMPORTED_TARGET zbar)
+  pkg_check_modules(GST REQUIRED IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0)
+else()
+  pkg_check_modules(ZBAR QUIET IMPORTED_TARGET zbar)
+  pkg_check_modules(GST QUIET IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0 gstreamer-app-1.0)
+endif()
 if (ZBAR_FOUND)
   message(STATUS "zbar found - QR code scanning enabled")
 else()
@@ -94,7 +104,6 @@ else()
 endif()
 
 # Optional GStreamer for camera-based QR scanning
-pkg_check_modules(GST QUIET IMPORTED_TARGET gstreamer-1.0 gstreamer-video-1.0)
 if (GST_FOUND)
   message(STATUS "GStreamer found - Camera QR scanning enabled")
 else()
@@ -120,10 +129,12 @@ if(BLUEPRINT_COMPILER AND BLUEPRINT_SOURCES)
     # Get relative path and convert .blp to .ui
     file(RELATIVE_PATH BLP_REL ${CMAKE_CURRENT_SOURCE_DIR}/data ${BLP_FILE})
     string(REGEX REPLACE "\\.blp$" ".ui" UI_REL ${BLP_REL})
-    set(UI_FILE ${CMAKE_CURRENT_SOURCE_DIR}/data/${UI_REL})
+    set(UI_FILE ${CMAKE_CURRENT_BINARY_DIR}/data/${UI_REL})
+    get_filename_component(UI_DIRECTORY ${UI_FILE} DIRECTORY)
     
     add_custom_command(
       OUTPUT ${UI_FILE}
+      COMMAND ${CMAKE_COMMAND} -E make_directory ${UI_DIRECTORY}
       COMMAND ${BLUEPRINT_COMPILER} compile --output ${UI_FILE} ${BLP_FILE}
       DEPENDS ${BLP_FILE}
       COMMENT "Compiling Blueprint: ${BLP_REL}"
@@ -147,12 +158,18 @@ set(APP_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
 file(GLOB_RECURSE APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui)
 add_custom_command(
   OUTPUT ${APP_GRESOURCE_C}
-  COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${APP_GRESOURCE_XML}
-  DEPENDS ${APP_GRESOURCE_XML} ${APP_UI_FILES}
+  COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source
+      --sourcedir=${CMAKE_CURRENT_BINARY_DIR}/data --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/data ${APP_GRESOURCE_XML}
+  DEPENDS ${APP_GRESOURCE_XML} ${APP_UI_FILES} ${SIGNER_COMPILED_UI_FILES}
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/data
   VERBATIM)
 
+add_custom_target(grotto_resources DEPENDS ${APP_GRESOURCE_C})
+if(TARGET grotto_blueprints)
+  add_dependencies(grotto_resources grotto_blueprints)
+endif()
 add_executable(${APP_SIGNER_BIN} ${APP_SRC} ${APP_GRESOURCE_C})
+add_dependencies(${APP_SIGNER_BIN} grotto_resources)
 # nostrc-py0hg: the session-bus probe shared with Groundhog.
 target_sources(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common/gn-session-bus-probe.c)
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common)
@@ -305,7 +322,8 @@ string(REPLACE "\"" "\\\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 string(REPLACE "\n" "\\n\"\n\"" GROTTO_CONTROL_XML_C "${GROTTO_CONTROL_XML_C}")
 configure_file(daemon/grotto_control_xml.h.in grotto_control_xml.h @ONLY)
 install(FILES "${GROTTO_CONTROL_XML}" DESTINATION ${CMAKE_INSTALL_DATADIR}/dbus-1/interfaces)
-add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c src/key-migration-event.c)
+add_library(grotto_control_core STATIC daemon/grotto_control.c daemon/grotto_clients.c
+    src/key-migration-event.c daemon/session-lock.c)
 target_include_directories(grotto_control_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/daemon
   PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib ${CMAKE_SOURCE_DIR})
 target_link_libraries(grotto_control_core PUBLIC nostr_nip55l_glib grotto_bunker_core)
@@ -330,7 +348,7 @@ target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core n
 # into a static library for the headless daemon; the GUI keeps compiling its
 # own copy through APP_SRC.
 add_library(grotto_bunker_core STATIC
-  src/bunker_service.c src/accounts_store.c src/client_session.c
+  src/bunker_service.c src/pairing_uri.c src/accounts_store.c src/client_session.c
   src/event_history.c src/gn-signer-error.c src/key_provider.c
   src/key_provider_secp256k1.c src/rate-limiter.c src/secret_store.c
   src/secure-delete.c src/secure-mem.c src/secure-memory.c
@@ -491,6 +509,14 @@ if(NOT WIN32)
     daemon/packaging/systemd/user/grotto-daemon.service.d/headless-bunker.conf.example
     DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/doc/grotto/examples)
 endif()
+set(GROTTO_BINDIR "${CMAKE_INSTALL_FULL_BINDIR}")
+configure_file(data/org.nostr.Grotto-autostart.desktop.in org.nostr.Grotto-autostart.desktop @ONLY)
+# This is a template, not a system-wide enabled login entry.
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Grotto-autostart.desktop
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/grotto)
+target_compile_definitions(grotto PRIVATE GROTTO_EXECUTABLE="${CMAKE_INSTALL_FULL_BINDIR}/grotto"
+  GROTTO_AUTOSTART_TEMPLATE="${CMAKE_INSTALL_FULL_DATAROOTDIR}/grotto/org.nostr.Grotto-autostart.desktop")
+
 # Desktop file (canonical; AppImage uses packaging/appimage/grotto.desktop separately)
 install(FILES data/org.nostr.Grotto.desktop DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
 # AppStream metainfo
@@ -498,10 +524,12 @@ install(FILES data/org.nostr.Grotto.metainfo.xml DESTINATION ${CMAKE_INSTALL_DAT
 
 # Icons (hicolor theme): data/icons/hicolor/<size>/apps/org.nostr.Grotto.png,
 # rendered from assets/grotto.xcf (squared on a transparent canvas, Lanczos).
-# No scalable icon: the artwork is a painting.
+# The painted application icon is retained; the panel uses a separate symbolic cave/bolt.
 set(ICON_BASENAME "${APP_SIGNER_FLATPAK_ID}")
 set(ICON_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor)
 set(ICON_INSTALL_ROOT ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor)
+install(FILES ${ICON_ROOT}/scalable/apps/org.nostr.Grotto-symbolic.svg
+        DESTINATION ${ICON_INSTALL_ROOT}/scalable/apps)
 foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
   install(FILES ${ICON_ROOT}/${sz}x${sz}/apps/${ICON_BASENAME}.png
           DESTINATION ${ICON_INSTALL_ROOT}/${sz}x${sz}/apps

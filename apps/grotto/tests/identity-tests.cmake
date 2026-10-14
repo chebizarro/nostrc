@@ -50,6 +50,6 @@ foreach(suite onboarding home-model)
   add_test(NAME signer/${suite} COMMAND test-${suite})
   set_tests_properties(signer/${suite} PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;identity;unit"
       ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory")
-  add_dependencies(test-${suite} grotto-schemas)
+  add_dependencies(test-${suite} grotto-schemas grotto_resources)
   add_dependencies(signer-tests test-${suite})
 endforeach()

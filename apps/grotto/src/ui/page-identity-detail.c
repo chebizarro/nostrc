@@ -104,7 +104,11 @@ static void reply(GObject *source, GAsyncResult *result, gpointer data) {
   self->busy = FALSE;
   if (error) {
     g_autofree gchar *name = g_dbus_error_get_remote_error(error);
-    update(self, ctx->operation == SEED && name && g_str_has_suffix(name, "NotFound") ?
+    update(self, ctx->operation == REMOVE && name && g_str_has_suffix(name, "IdentityBusy") ?
+        "Identity not removed. Finish or cancel requests for this identity, then retry removal." :
+        ctx->operation == REMOVE && name && g_str_has_suffix(name, "ConfirmationRequired") ?
+        "Identity not removed. Type its full npub to confirm removal." :
+        ctx->operation == SEED && name && g_str_has_suffix(name, "NotFound") ?
         "No seed words for this identity. Use the encrypted export instead." :
         "Operation could not be completed. Check keyring availability and update Grotto if management capabilities are missing.");
   } else if (ctx->operation == CAPABILITIES) {
@@ -271,17 +275,20 @@ static void raw_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "R
 static void rotate_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Create a successor identity?", "Both identities remain stored. Applications will NOT be redirected and permissions will NOT be copied. A signed migration announcement is saved, not published.", ROTATE); }
 static void remove_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Remove this identity?", "Confirm you have a usable backup and no application still needs this key. This cannot be undone by Grotto.", REMOVE); }
 static void bus_ready(GObject *source, GAsyncResult *result, gpointer data) {
-  (void)source; GrottoIdentityDetail *self = data; g_autoptr(GError) error = NULL;
+  (void)source; DetailCtx *ctx = data; GrottoIdentityDetail *self = ctx->self; g_autoptr(GError) error = NULL;
   GDBusConnection *bus = g_bus_get_finish(result, &error);
-  if (!self->disposed && bus) { g_set_object(&self->bus, bus); call(self, CAPABILITIES, "GetStatus", NULL); }
-  else if (!self->disposed) update(self, "Signer unavailable. Identity management is read-only.");
-  g_clear_object(&bus); g_object_unref(self);
+  if (current(ctx) && bus) { g_set_object(&self->bus, bus); call(self, CAPABILITIES, "GetStatus", NULL); }
+  else if (current(ctx)) update(self, "Signer unavailable. Identity management is read-only.");
+  g_clear_object(&bus); context_free(ctx);
 }
 static void unmap(GtkWidget *widget) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(widget);
   if (!self->disposed) {
     self->generation++; if (self->cancel) g_cancellable_cancel(self->cancel);
-    self->busy = FALSE; gn_secure_phrase_set_text(self->seed_words, ""); gn_secure_entry_clear(self->passphrase);
+    self->busy = FALSE; self->ready = FALSE;
+    g_clear_object(&self->bus);
+    if (self->accounts_changed) { accounts_store_disconnect_changed(accounts_store_get_default(), self->accounts_changed); self->accounts_changed = 0; }
+    gn_secure_phrase_set_text(self->seed_words, ""); gn_secure_entry_clear(self->passphrase);
   }
   GTK_WIDGET_CLASS(grotto_identity_detail_parent_class)->unmap(widget);
 }
@@ -289,7 +296,8 @@ static void map(GtkWidget *widget) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(widget);
   GTK_WIDGET_CLASS(grotto_identity_detail_parent_class)->map(widget);
   if (g_cancellable_is_cancelled(self->cancel)) { g_clear_object(&self->cancel); self->cancel = g_cancellable_new(); }
-  if (self->bus) call(self, CAPABILITIES, "GetStatus", NULL);
+  if (!self->accounts_changed) self->accounts_changed = accounts_store_connect_changed(accounts_store_get_default(), metadata_changed, self);
+  g_bus_get(G_BUS_TYPE_SESSION, self->cancel, bus_ready, context(self, CAPABILITIES));
 }
 static void dispose(GObject *object) {
   GrottoIdentityDetail *self = GROTTO_IDENTITY_DETAIL(object);
@@ -323,19 +331,25 @@ static void grotto_identity_detail_init(GrottoIdentityDetail *self) {
 #undef CLICK
   g_signal_connect(self->identities, "notify::selected", G_CALLBACK(selected), self);
   g_signal_connect(self->backup_written_down, "toggled", G_CALLBACK(backup_checked), self);
-  self->accounts_changed = accounts_store_connect_changed(accounts_store_get_default(), metadata_changed, self);
   update(self, "Checking daemon capabilities…");
-  g_bus_get(G_BUS_TYPE_SESSION, self->cancel, bus_ready, g_object_ref(self));
 }
 GtkWidget *page_identity_detail_new(const gchar *npub) {
   GrottoIdentityDetail *self = g_object_new(GROTTO_TYPE_IDENTITY_DETAIL, NULL);
   self->identity = g_strdup(npub); self->pinned = npub != NULL; return GTK_WIDGET(self);
+}
+static void detail_closed(AdwDialog *dialog, gpointer data) {
+  (void)data;
+  /* One-use sheet: release its navigation tree even if an adaptive sheet's
+   * animation or an external widget reference outlives presentation. */
+  adw_dialog_set_child(dialog, NULL);
 }
 void page_identity_detail_present_identity(GtkWidget *parent, const gchar *npub) {
   AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, "Identity and backup");
   adw_dialog_set_content_width(dialog, 560); adw_dialog_set_content_height(dialog, 640);
   GtkWidget *navigation = adw_navigation_view_new();
   adw_navigation_view_add(ADW_NAVIGATION_VIEW(navigation), ADW_NAVIGATION_PAGE(page_identity_detail_new(npub)));
-  adw_dialog_set_child(dialog, navigation); adw_dialog_present(dialog, parent);
+  adw_dialog_set_child(dialog, navigation);
+  g_signal_connect(dialog, "closed", G_CALLBACK(detail_closed), NULL);
+  adw_dialog_present(dialog, parent);
 }
 void page_identity_detail_present(GtkWidget *parent) { page_identity_detail_present_identity(parent, NULL); }

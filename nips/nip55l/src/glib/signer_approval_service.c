@@ -80,6 +80,7 @@ struct _Request {
  gchar *id, *join_key, *a, *b, *selector, *npub, *claimed;
  gchar *reason, *purpose, *flow_id, *preview, *error_code;
  void (*management_testing)(gpointer); gpointer management_data;
+ gchar **pairing_relays;
  SignerCaller *who;
  SignerOp op;
  SignerTransport transport;
@@ -114,6 +115,9 @@ static GVariant *snapshot(Request *r);
 static Request *request_ref(Request *r) { g_atomic_int_inc(&r->refs); return r; }
 static void wipe_free(gchar *text) { if (text) { secure_wipe(text, strlen(text)); g_free(text); } }
 
+gchar *signer_gate_handle_request_id(SignerGateHandle *h) {
+  return h && h->request ? g_strdup(h->request->id) : NULL;
+}
 SignerGateHandle *signer_gate_handle_ref(SignerGateHandle *h) {
   if (h) g_atomic_int_inc(&h->refs);
   return h;
@@ -133,6 +137,7 @@ static void request_unref(gpointer data) {
   g_assert(r->calls->len == 0);
   if (r->timeout) { g_source_destroy(r->timeout); g_source_unref(r->timeout); }
   g_ptr_array_unref(r->calls);
+  g_strfreev(r->pairing_relays);
   g_free(r->id); g_free(r->join_key); wipe_free(r->a); g_free(r->b);
   wipe_free(r->selector); g_free(r->npub); g_free(r->claimed);
   wipe_free(r->reason); wipe_free(r->purpose); g_free(r->flow_id); wipe_free(r->preview);
@@ -357,6 +362,7 @@ static GVariant *snapshot(Request *r) {
     g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(r->a));
   if (r->op == SIGNER_GATE_CONNECT) {
     g_variant_builder_add(&summary, "{sv}", "requested_permissions_hint", connect_hints(r->a));
+    if (r->pairing_relays) g_variant_builder_add(&summary, "{sv}", "relays", g_variant_new_strv((const gchar *const *)r->pairing_relays, -1));
     g_variant_builder_add(&summary, "{sv}", "requested_permissions_source", g_variant_new_string("client-hints"));
   }
   if (r->op == OP_SIGN_EVENT) summary_event(&summary, r);
@@ -1066,6 +1072,8 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
     r->management_testing = context->management_testing; r->management_data = context->management_data;
   }
   r->claimed = g_strdup(context ? context->claimed_name : "");
+  if (context && context->pairing_relays && op == SIGNER_GATE_CONNECT && context->transport == SIGNER_TRANSPORT_NIP46)
+    r->pairing_relays = g_strdupv((gchar **)context->pairing_relays);
   r->reason = g_strdup(context ? context->reason : ""); r->purpose = g_strdup(context ? context->purpose : "");
   r->flow_id = g_strdup(context ? context->flow_id : ""); r->generation = s->generation;
   r->calls = g_ptr_array_new(); r->state = SIGNER_REQUEST_PENDING;

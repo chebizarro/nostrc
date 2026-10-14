@@ -433,25 +433,6 @@ void settings_manager_set_log_retention_days(SettingsManager *sm, gint days) {
   g_settings_set_int(sm->settings, "log-retention-days", days);
 }
 
-/* Startup Settings */
-gboolean settings_manager_get_autostart(SettingsManager *sm) {
-  return sm ? g_settings_get_boolean(sm->settings, "autostart") : FALSE;
-}
-
-void settings_manager_set_autostart(SettingsManager *sm, gboolean autostart) {
-  if (!sm) return;
-  g_settings_set_boolean(sm->settings, "autostart", autostart);
-}
-
-gboolean settings_manager_get_start_minimized(SettingsManager *sm) {
-  return sm ? g_settings_get_boolean(sm->settings, "start-minimized") : FALSE;
-}
-
-void settings_manager_set_start_minimized(SettingsManager *sm, gboolean minimized) {
-  if (!sm) return;
-  g_settings_set_boolean(sm->settings, "start-minimized", minimized);
-}
-
 /* Account Settings */
 gchar **settings_manager_get_account_order(SettingsManager *sm) {
   return sm ? g_settings_get_strv(sm->settings, "account-order") : NULL;

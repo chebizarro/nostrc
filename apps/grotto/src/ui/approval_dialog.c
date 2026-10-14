@@ -439,6 +439,15 @@ void gnostr_approval_dialog_set_position(GnostrApprovalDialog *self, guint posit
 }
 gboolean gnostr_approval_info_can_approve(GVariant *info) {
   const char *op = field(info, "operation");
+  if (!strcmp(op, "connect")) {
+    const gchar *principal = field(info, "principal");
+    if (!*field(info, "identity") || !g_str_has_prefix(principal, "nip46:") || strlen(principal) != 70) return FALSE;
+    for (guint i = 6; i < 70; i++) if (!g_ascii_isxdigit(principal[i])) return FALSE;
+    g_autoptr(GVariant) summary = g_variant_lookup_value(info, "event_summary", G_VARIANT_TYPE_VARDICT);
+    g_auto(GStrv) relays = NULL;
+    if (!summary || !g_variant_lookup(summary, "relays", "^as", &relays) || !relays[0] || g_strv_length(relays) > 64) return FALSE;
+    for (guint i = 0; relays[i]; i++) if (!*relays[i] || !g_utf8_validate(relays[i], -1, NULL)) return FALSE;
+  }
   if (!strcmp(op, "sign_event")) {
     guint32 kind, count;
     if (!g_variant_lookup(info, "event_kind", "u", &kind) || kind > G_MAXUINT16 ||
@@ -603,10 +612,17 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
                        "3. NIP-44 decrypt the peer's reply and compare the challenge.");
     impact = "One-time management self-test. Nothing is published and no client permissions are saved.";
   } else if (!strcmp(op, "connect")) {
+    g_auto(GStrv) urls = NULL, hints = NULL;
+    if (summary) {
+      g_variant_lookup(summary, "relays", "^as", &urls);
+      g_variant_lookup(summary, "requested_permissions_hint", "^as", &hints);
+    }
+    g_autofree gchar *relays = urls ? g_strjoinv("\n", urls) : g_strdup("");
+    g_autofree gchar *permissions = hints ? g_strjoinv(", ", hints) : g_strdup("");
     preview = g_strdup_printf("Client transport-key fingerprint: %s\nClaimed name (unverified): "
                               "%s\nRequested permissions (hints only): %s\nRelays: %s",
                               field(info, "principal"), field(info, "claimed_app_id"),
-                              field(summary, "permissions"), field(summary, "relays"));
+                              permissions, relays);
     impact = "Pairing is not a signing permission. Low trust asks for every request.";
   }
   if (preview)

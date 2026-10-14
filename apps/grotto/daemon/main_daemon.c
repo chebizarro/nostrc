@@ -106,56 +106,6 @@ static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpoi
   }
 }
 
-#define SIGNER_SETTINGS_SCHEMA "org.nostr.Grotto"
-
-/* Start NIP-46 bunker mode from the grotto settings. Fails fast, with
- * a journal line naming the missing setting, rather than running a bunker
- * that is misconfigured or open to any client. */
-static gboolean bunker_mode_start(void) {
-  GSettingsSchemaSource *src = g_settings_schema_source_get_default();
-  GSettingsSchema *schema = src ? g_settings_schema_source_lookup(src, SIGNER_SETTINGS_SCHEMA, TRUE) : NULL;
-  if (!schema) {
-    g_critical("BUNKER_NO_SETTINGS: --bunker needs the %s GSettings schema (install grotto)",
-               SIGNER_SETTINGS_SCHEMA);
-    return FALSE;
-  }
-  g_settings_schema_unref(schema);
-
-  SettingsManager *sm = settings_manager_get_default();
-  if (!settings_manager_get_bunker_enabled(sm)) {
-    g_critical("BUNKER_DISABLED: --bunker given but %s bunker-enabled is false", SIGNER_SETTINGS_SCHEMA);
-    return FALSE;
-  }
-  g_auto(GStrv) relays = settings_manager_get_bunker_relays(sm);
-  if (!relays || !relays[0]) {
-    g_critical("BUNKER_NO_RELAYS: --bunker given but %s bunker-relays is empty", SIGNER_SETTINGS_SCHEMA);
-    return FALSE;
-  }
-  g_auto(GStrv) allowed = settings_manager_get_bunker_allowed_pubkeys(sm);
-  g_autofree gchar *identity = g_strdup(settings_manager_get_default_identity(sm));
-  if (!identity || !*identity) {
-    g_clear_pointer(&identity, g_free);
-    accounts_store_get_active(accounts_store_get_default(), &identity, NULL);
-  }
-  if (!identity || !*identity) {
-    g_critical("BUNKER_NO_IDENTITY: --bunker given but no default or active identity is configured");
-    return FALSE;
-  }
-
-  g_auto(GStrv) methods = settings_manager_get_bunker_allowed_methods(sm);
-
-  bunker_service_set_allowed_pubkeys(g_bunker, (const gchar *const *)allowed);
-  bunker_service_set_allowed_methods(g_bunker, (const gchar *const *)methods);
-  if (!bunker_service_start(g_bunker, (const gchar *const *)relays, identity)) {
-    g_critical("BUNKER_START_FAILED: state=ERROR; bunker service did not start; "
-               "local signer remains available");
-    return FALSE;
-  }
-  g_message("grotto: NIP-46 bunker state=STARTING on %u relay(s); LISTENING requires EOSE",
-            g_strv_length(relays));
-  return TRUE;
-}
-
 static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpointer user_data) {
   (void)connection; (void)user_data; (void)name;
   g_message("grotto: name acquired %s", ORG_NOSTR_SIGNER_BUS);
@@ -163,10 +113,9 @@ static void on_name_acquired(GDBusConnection *connection, const gchar *name, gpo
    * daemons never answer the same NIP-46 relays. */
   /* Remote startup failure must not stop the local signer. Keep a failed
    * service in ERROR until shutdown, rather than resetting it to STOPPED. */
-  if (g_bunker_requested && !g_bunker_started) {
+  if (!g_bunker_started) {
     g_bunker_started = TRUE;
-    bunker_mode_start();
-    grotto_control_set_bunker(g_control, g_bunker, TRUE);
+    grotto_control_start_bunker(g_control);
   }
 }
 
@@ -267,9 +216,9 @@ static void print_usage(const char *prog_name) {
   g_print("  -v, --version           Show version information\n");
   g_print("  --system                Use system bus instead of session bus (requires\n");
   g_print("                          NOSTR_SIGNER_ALLOW_SYSTEM_BUS=1; see source notes)\n");
-  g_print("  --bunker                Also serve NIP-46 remote signing (bunker mode) using the\n");
-  g_print("                          grotto settings bunker-relays, bunker-allowed-pubkeys,\n");
-  g_print("                          bunker-allowed-methods and persistent transport custody\n");
+  g_print("  --bunker                Enable legacy-configured NIP-46 if bunker.ini is absent.\n");
+  g_print("                          Persisted grotto/bunker.ini desired state is authoritative;\n");
+  g_print("                          explicit relays and transport custody are required.\n");
   g_print("  --no-approval-ui        Existing scoped grants only; review-required requests\n");
   g_print("                          fail closed without summoning the approval UI\n");
   g_print("\n");

@@ -214,12 +214,21 @@ static void readonly_older_daemon(Fixture *f, gconstpointer data) {
   g_assert_false(onboarding_assistant_identity_stored(f->assistant)); g_assert_null(f->store);
   click(f, "btn_skip"); g_assert_cmpuint(f->finished, ==, 1); g_assert_false(f->verified);
 }
+static void await_gone(guint *gone) {
+  guint timeout = g_timeout_add_seconds(10, bound, NULL);
+  while (!*gone) g_main_context_iteration(NULL, TRUE);
+  g_source_remove(timeout);
+}
+static void destroy_detail_window(GtkWindow *window, GtkWidget *page) {
+  guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
+  gtk_window_destroy(window); g_object_unref(window); await_gone(&gone);
+}
 static void pinned_backup_cleanup(Fixture *f, gconstpointer data) {
   (void)data;
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000001", &f->npub, NULL));
   g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &inventory_first, NULL));
   stored_identity = g_strdup(f->npub);
-  GtkWidget *page = page_identity_detail_new(f->npub); g_object_ref_sink(page);
+  GtkWidget *page = page_identity_detail_new(f->npub);
   GtkWindow *window = GTK_WINDOW(gtk_window_new()); g_object_ref(window);
   gtk_window_set_child(window, page); gtk_window_present(window);
   GtkWidget *seed = GTK_WIDGET(gtk_widget_get_template_child(page, GROTTO_TYPE_IDENTITY_DETAIL, "btn_seed"));
@@ -236,7 +245,7 @@ static void pinned_backup_cleanup(Fixture *f, gconstpointer data) {
   g_source_remove(timeout);
   gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
   g_assert_null(gtk_widget_get_first_child(words));
-  gtk_window_destroy(window); g_object_unref(window); g_object_unref(page);
+  destroy_detail_window(window, page);
   g_clear_pointer(&inventory_first, g_free);
 }
 static GtkWidget *detail_child(GtkWidget *page, const gchar *name) {
@@ -285,7 +294,8 @@ static void management_warning_handoff(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "public_key"))), ==, f->npub);
   g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "setup_warning"))), backup ? "Backup incomplete" : "Identity not verified"));
   g_assert_true(gtk_widget_get_sensitive(detail_child(page, "btn_export"))); /* maintenance still available */
-  adw_dialog_force_close(dialog); g_object_unref(dialog); gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  guint gone = 0; g_object_weak_ref(G_OBJECT(page), weak_gone, &gone);
+  adw_dialog_force_close(dialog); g_object_unref(dialog); gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); await_gone(&gone);
 }
 static GtkWidget *button_named(GtkWidget *widget, const gchar *label) {
   if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), label)) return widget;
@@ -316,8 +326,9 @@ static void typed_deletion_cancel_failure(Fixture *f, gconstpointer data) {
   g_assert_true(adw_alert_dialog_get_response_enabled(dialog, "proceed")); f->remove_failure = TRUE;
   alert_response(dialog, "proceed"); g_object_unref(dialog); wait_sensitive(remove, TRUE);
   g_assert_cmpuint(f->remove_calls, ==, 1); g_assert_true(accounts_store_exists(accounts_store_get_default(), f->npub));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "status_label"))), "Finish or cancel requests"));
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "public_key"))), ==, f->npub);
-  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  destroy_detail_window(GTK_WINDOW(window), page);
 }
 static GtkWidget *manage_button(GtkWidget *widget) {
   if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_widget_get_tooltip_text(widget), "Manage identity and backup")) return widget;
@@ -341,8 +352,10 @@ static void picker_cannot_delete(Fixture *f, gconstpointer data) {
   AdwDialog *detail = adw_window_get_visible_dialog(window); g_assert_true(detail != ADW_DIALOG(picker)); g_object_ref(detail);
   GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(detail))));
   wait_sensitive(detail_child(page, "btn_test"), TRUE);
+  guint page_gone = 0, picker_gone = 0;
+  g_object_weak_ref(G_OBJECT(page), weak_gone, &page_gone); g_object_weak_ref(G_OBJECT(picker), weak_gone, &picker_gone);
   adw_dialog_force_close(detail); g_object_unref(detail); adw_dialog_force_close(ADW_DIALOG(picker)); g_object_unref(picker);
-  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); await_gone(&page_gone); await_gone(&picker_gone);
 }
 static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
   const gchar *format = data; f->expected_format = format; f->expected_pass = "distinct recovery passphrase";
@@ -426,8 +439,23 @@ static void encrypted_file_cancel_failure(Fixture *f, gconstpointer data) {
   gtk_check_button_set_active(GTK_CHECK_BUTTON(detail_child(page, "backup_written_down")), TRUE);
   g_signal_emit_by_name(detail_child(page, "btn_backup_done"), "clicked");
   AccountEntry *entry = accounts_store_find(as, f->npub); g_assert_cmpstr(entry->setup_state, ==, success ? "ready" : "backup-pending"); accounts_store_entry_free(entry);
-  g_assert_null(f->encrypted); gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window);
+  g_assert_null(f->encrypted); destroy_detail_window(GTK_WINDOW(window), page);
   if (destination) { if (success) g_unlink(destination); else g_rmdir(destination); }
+}
+static void repeated_creation_activation(Fixture *f, gconstpointer data) {
+  (void)f; (void)data;
+  GtkWindow *parent = GTK_WINDOW(adw_window_new()); g_object_ref(parent); gtk_window_present(parent);
+  onboarding_assistant_present(parent); onboarding_assistant_present(parent);
+  GListModel *windows = gtk_window_get_toplevels(); GtkWindow *setup = NULL; guint count = 0;
+  for (guint i = 0; i < g_list_model_get_n_items(windows); i++) {
+    GtkWindow *window = g_list_model_get_item(windows, i);
+    if (ONBOARDING_IS_ASSISTANT(window) && gtk_window_get_transient_for(window) == parent) { count++; setup = window; }
+    else g_object_unref(window);
+  }
+  g_assert_cmpuint(count, ==, 1); guint gone = 0; g_object_weak_ref(G_OBJECT(setup), weak_gone, &gone);
+  gtk_window_close(setup); gtk_window_destroy(setup); g_object_unref(setup);
+  guint timeout = g_timeout_add_seconds(10, bound, NULL); while (!gone) g_main_context_iteration(NULL, TRUE); g_source_remove(timeout);
+  gtk_window_destroy(parent); g_object_unref(parent);
 }
 static void secure_widget_buffer(void) {
   GnSecureStats before = gn_secure_get_stats();
@@ -510,6 +538,7 @@ int main(int argc, char **argv) {
   ADD("encrypted-file-cancel", "cancel", encrypted_file_cancel_failure);
   ADD("encrypted-file-write-failure", NULL, encrypted_file_cancel_failure);
   ADD("encrypted-file-backup-success", "success", encrypted_file_cancel_failure);
+  ADD("repeated-new-identity-activation", NULL, repeated_creation_activation);
 #undef ADD
   g_test_add_func("/onboarding/secure-widget-and-variant", secure_widget_buffer);
   g_test_add_func("/onboarding/clipboard-ownership", clipboard_ownership);

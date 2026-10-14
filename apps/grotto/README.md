@@ -32,6 +32,55 @@ wait for the signer. The signer relays learn connection timing, IP address
 unless Tor is used, and the transport-key link. Before downgrading to an alpha
 without remote-signer support, select a Grotto-backed account or read-only mode.
 
+## Background and desktop activation
+
+Background review defaults on **after setup disclosure or an explicit Settings
+choice**. Launch on login defaults off. Closing a window (Ctrl+W) saves its
+geometry and destroys it; background/request holds do not retain hidden windows.
+Ctrl+Q quits only the approval UI for this session: already-authorised signing
+continues in the daemon. Pending requests keep their daemon deadlines, notifications
+are withdrawn, and a later request needing consent can start the UI again.
+Use **Pause signing** instead to stop signing; this exported action can only pause.
+**Resume signing** opens a GUI confirmation, never a silent toggle. The daemon
+rejects resume while its observed session is locked, even if the optional lock
+policy is off; confirmation also rechecks the GUI's lock state and daemon owner.
+
+Optional **Pause signing on screen lock** is enforced by the daemon, independently
+of the UI and background permission. It observes the user's logind session's
+`Lock`/`Unlock` signals and `LockedHint` on the system bus (including non-GNOME
+desktops); a systemd user service outside a session selects the user's primary
+graphical `Display` session, validating its UID. When the policy is enabled but
+observation is unavailable, signing stays paused. Unlock requests are not proof
+of an unlocked desktop, and unlocking never resumes signing automatically.
+The GUI's GNOME ScreenSaver observer is only a redundant pause trigger.
+
+Settings reports desktop background permission: unavailable portals are nonfatal
+for native installations; denial removes continuous residence but does not disable
+request-scoped D-Bus activation. Portal v2 status contains only generic readiness,
+waiting or paused text, updated only when that generic state changes. Only an
+explicit successful response with `background=false` means denial; cancellation,
+portal errors and missing results mean unavailable, not denied. Native login is
+consent-gated and copies the installed login template into
+`$XDG_CONFIG_HOME/autostart/org.nostr.Grotto-login.desktop`, invoking
+`grotto --gapplication-service` without a window. Portal-only installations request
+portal autostart instead with `dbus-activatable=false`, never both. A durable
+`portal-autostart-created` marker is set before requesting login and cleared only
+on confirmed removal, so disabled login is reconciled even after a restart.
+Native login remains disabled while an old portal entry awaits removal.
+Experimental AppImage login is unsupported and visibly disabled in Settings.
+Turning background off turns login launch off;
+turning login launch off does not turn background off. Migration v1 reads the old
+`autostart`/`start-minimized` preferences once; explicit launches and reviews are
+always visible, never minimized by those old settings.
+
+Desktop actions `grotto --new-identity` and `grotto --settings` reuse the existing
+management/onboarding window. The desktop entry handles `bunker:`, `nostrconnect:`
+and local `grotto:` activation, never `nostr:`. Until G06's identity-first pairing
+entry point lands, pairing links open the review path with an explicit unavailable
+message: they do not contact a relay or silently connect. The opportunistic
+StatusNotifier uses `org.nostr.Grotto-symbolic`; it is Passive while the Shell signer
+module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
+
 ## Features
 
 - **Secure Identity Management**: Securely store and manage Nostr identities
@@ -110,6 +159,10 @@ make macos-dmg-notarized
 ```
 
 See [packaging/macos/README.md](packaging/macos/README.md) for detailed macOS packaging documentation.
+
+## Remote application pairing
+
+The window menu's **Connect an application…** opens paste, native camera/image scan, explicit identity selection, shared pairing review, and daemon-issued single-use QR offers. Relay settings apply without a daemon restart. See [pairing, headless configuration, and the systemd operator check](docs/pairing.md). Linux GUI builds require libqrencode, zbar, and GStreamer (core/video/appsink plus the native capture/base/good runtime plugins).
 
 ## Usage
 

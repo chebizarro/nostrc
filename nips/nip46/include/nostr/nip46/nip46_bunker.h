@@ -38,6 +38,12 @@ const char *nostr_nip46_bunker_request_client(const NostrNip46BunkerRequest *);
 const char *nostr_nip46_bunker_request_event_id(const NostrNip46BunkerRequest *);
 int64_t nostr_nip46_bunker_request_created_at(const NostrNip46BunkerRequest *);
 int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *, const char *result_json, const char *error);
+/* Called once on the publication worker or stopping thread; marshal any
+ * thread-affine work. Enqueue success transfers data to notify; failure does not. */
+typedef void (*NostrNip46PublishNotify)(int accepted, void *data);
+typedef struct NostrNip46CancelHandle NostrNip46CancelHandle;
+int nostr_nip46_bunker_request_complete_full(NostrNip46BunkerRequest *, const char *result_json,
+    const char *error, NostrNip46CancelHandle *, NostrNip46PublishNotify, void *data);
 
 NostrNip46Session *nostr_nip46_bunker_new(const NostrNip46BunkerCallbacks *cbs);
 int nostr_nip46_bunker_listen(NostrNip46Session *s, const char *const *relays, size_t n_relays);
@@ -74,6 +80,16 @@ int nostr_nip46_bunker_handle_cipher(NostrNip46Session *s,
  * transport key must already be installed. Admission remains the handler's job.
  * Returns 0 on success, -1 on error. */
 int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s, const char *nostrconnect_uri);
+/* Relay URL of the authenticated delivery, NULL for direct-cipher callers. */
+const char *nostr_nip46_bunker_request_relay(const NostrNip46BunkerRequest *request);
+/* Queue the signer-initiated connect RESPONSE (result = client secret).
+ * The worker checks cancellation before encryption and transport handoff. */
+int nostr_nip46_bunker_connect_response(NostrNip46Session *s, const char *client_hex, const char *secret,
+    const char *const *approved_relays, size_t n_relays, NostrNip46CancelHandle *cancel,
+    NostrNip46PublishNotify notify, void *data);
+/* Owner-thread, request-handler mode only. Preserve unchanged relay subscriptions
+ * and in-flight requests. URLs must already have passed the embedding policy. */
+int nostr_nip46_bunker_reconfigure_relays(NostrNip46Session *s, const char *const *relays, size_t n_relays);
 
 #ifdef __cplusplus
 }

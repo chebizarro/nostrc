@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Grotto
+Comment=Review signing requests in the background
+Exec="@GROTTO_BINDIR@/grotto" --gapplication-service
+Icon=org.nostr.Grotto
+Terminal=false
+NoDisplay=true

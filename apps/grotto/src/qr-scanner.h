@@ -43,6 +43,12 @@ gboolean gn_qr_scanner_start(GnQrScanner *self,
  * @self: The scanner widget
  */
 void gn_qr_scanner_stop(GnQrScanner *self);
+#ifdef GROTTO_QR_TESTING
+/* Fixture sources use the same appsink/decoder/owner-context path as v4l2. */
+gboolean gn_qr_scanner_start_test_pipeline(GnQrScanner *, const gchar *, GError **);
+void gn_qr_scanner_test_post_error(GnQrScanner *, GError *);
+gboolean gn_qr_scanner_test_has_pipeline(GnQrScanner *);
+#endif
 
 /* Check if the scanner is currently active.
  *
