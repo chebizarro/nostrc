@@ -386,32 +386,35 @@ static void test_management_self_test_has_no_scope(void) {
 }
 static SignerPermissionResult flow_eval(SignerPermissions *p, const gchar *id) {
   return signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "event", NOSTR_KIND_SEAL,
-      "room-flow", 2, id, FALSE, NULL);
+      "room-flow", 2, 0, id, FALSE, NULL);
 }
 static void test_flow_scope_budget_and_restart(void) {
   g_autoptr(SignerPermissions) p = start();
   remember(p, IDENTITY, "event", NOSTR_KIND_SEAL, TRUE, 600);
+  g_assert_cmpint(flow_eval(p, "first-seen"), ==, SIGNER_PERMISSION_ASK);
   g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "room-flow", 2, FALSE, TRUE, 600, NULL));
   g_assert_cmpint(evaluate(p, "event", NOSTR_KIND_SEAL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "event", NOSTR_KIND_SEAL,
-      "other-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "other-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, "other-client", IDENTITY, 0, "event", NOSTR_KIND_SEAL,
-      "room-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, "other-identity", 0, "event", NOSTR_KIND_SEAL,
-      "room-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 2, "event", NOSTR_KIND_SEAL,
-      "room-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "event", NOSTR_KIND_GIFT_WRAP,
-      "room-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "nip44_encrypt", -1,
-      "room-flow", 2, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 2, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(signer_permissions_evaluate_flow(p, PRINCIPAL, IDENTITY, 0, "event", NOSTR_KIND_SEAL,
-      "room-flow", 3, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+      "room-flow", 3, 0, "1", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ALLOW);
   g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ALLOW); /* recheck is not a new slot */
   g_assert_cmpint(flow_eval(p, "2"), ==, SIGNER_PERMISSION_ALLOW);
   g_assert_cmpint(flow_eval(p, "3"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL)); /* completed ID is a tombstone */
   g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "room-flow", 99, FALSE, TRUE, 600, NULL)); /* cannot silently reset/enlarge */
   g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
@@ -434,6 +437,7 @@ static void test_flow_scope_budget_and_restart(void) {
 static void test_room_consent_atomic_failure_and_nonrequired(void) {
   g_autoptr(SignerPermissions) p = start();
   g_assert_true(signer_permissions_reload(p, NULL));
+  g_assert_cmpint(flow_eval(p, "first-seen"), ==, SIGNER_PERMISSION_ASK);
   g_autofree gchar *path = store_path("signer-permissions-v2.ini");
   g_unlink(path); g_assert_cmpint(g_mkdir(path, 0700), ==, 0);
   g_autoptr(GError) error = NULL;
@@ -460,6 +464,7 @@ static void test_flow_expiry(void) {
   g_autoptr(SignerPermissions) p = start();
   gint64 now = G_USEC_PER_SEC;
   signer_permissions_set_flow_clock_for_test(p, fixture_flow_clock, &now);
+  g_assert_cmpint(flow_eval(p, "first-seen"), ==, SIGNER_PERMISSION_ASK);
   g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
       "room-flow", 2, FALSE, TRUE, 1, NULL));
   g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ALLOW);
@@ -469,6 +474,31 @@ static void test_flow_expiry(void) {
   g_assert_false(signer_permissions_revision_is_current(p, revision));
   g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ASK);
   g_assert_cmpint(flow_eval(p, "2"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL)); /* expired ID cannot be re-minted */
+}
+static void test_flow_first_seen_and_tombstone(void) {
+  g_autoptr(SignerPermissions) p = start();
+  gint64 now = G_USEC_PER_SEC;
+  signer_permissions_set_flow_clock_for_test(p, fixture_flow_clock, &now);
+  g_assert_cmpint(flow_eval(p, "first"), ==, SIGNER_PERMISSION_ASK);
+  now += 9 * 60 * G_USEC_PER_SEC;
+  g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL));
+  g_assert_cmpint(flow_eval(p, "1"), ==, SIGNER_PERMISSION_ALLOW);
+  now += 60 * G_USEC_PER_SEC; /* ten minutes from arrival, not consent */
+  g_assert_cmpint(flow_eval(p, "2"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL));
+  now += 599 * G_USEC_PER_SEC;
+  g_assert_cmpint(flow_eval(p, "later"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_false(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL));
+  now += G_USEC_PER_SEC; /* bounded tombstone retires; new explicit consent still required */
+  g_assert_cmpint(flow_eval(p, "fresh"), ==, SIGNER_PERMISSION_ASK);
+  g_assert_true(signer_permissions_consent_room(p, PRINCIPAL, IDENTITY, 0,
+      "room-flow", 2, FALSE, TRUE, 600, NULL));
+  g_assert_cmpint(flow_eval(p, "fresh"), ==, SIGNER_PERMISSION_ALLOW);
 }
 #endif
 int main(int argc, char **argv) {
@@ -480,6 +510,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/permissions/flow-scope-budget-restart", test_flow_scope_budget_and_restart);
 #ifdef NIP55L_TEST_TRUST_ENV
   g_test_add_func("/permissions/flow-expiry", test_flow_expiry);
+  g_test_add_func("/permissions/flow-first-seen-tombstone", test_flow_first_seen_and_tombstone);
 #endif
   g_test_add_func("/permissions/room-consent-atomic-nonrequired", test_room_consent_atomic_failure_and_nonrequired);
   g_test_add_func("/permissions/management-self-test-no-scope", test_management_self_test_has_no_scope);

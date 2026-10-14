@@ -221,7 +221,9 @@ client metadata are separate atomic files: if permissions persist but the
 subsequent client metadata save fails, the method reports `PersistenceFailed`,
 revision/health reflect the partial result, and the UI **must re-read**, not
 assume permissions were rolled back. Revoke likewise cancels work immediately
-and may remove admission before reporting a later permission-storage failure.
+  and invalidates ephemeral flow consent before either durable step, even when
+  client removal or permission storage fails. It may remove admission before
+  reporting a later permission-storage failure.
 For an emergency capability reduction independent of persistence, use Pause.
 
 ### D-Bus Service Activation
@@ -268,7 +270,13 @@ remain the `claimed:<app_id>` principal, and unattested same-UID callers pass
 the approver check. Another same-UID process can therefore claim a remembered
 principal or answer approvals; the verified caller-isolation guarantee holds
 only on PID-attested Linux, not this inherited compatibility path.
-`CallWithContext` preserves the same limitation; its context is not a credential.
+`CallWithContext` and `ApproveFlowRequest` preserve the same limitation; context
+and a flow ID are not credentials. On this compatibility path a same-UID process
+can claim a live flow's principal, read its approval metadata, mint flow consent
+via the inherited approver fallback, or spend its unused slots without a human
+review. Flow count/lifetime limits do not provide caller isolation there. The
+verified-principal / trusted-approver guarantee for flow consent applies only to
+PID-attested callers; this change does not disable the supported UID-only path.
 
 A scoped caller is keyed on scope *and* executable: every program started
 from a terminal emulator shares the terminal's app scope, and every GJS or
@@ -843,8 +851,27 @@ the announced number of distinct requests for that scope; policy rechecks reuse
 a request's reservation. Size changes, another flow/caller/identity/transport,
 expiry or daemon restart require review again. Explicit denies still win, and
 ordinary remembered grants still cannot bypass required-confirmation kinds.
-An exhausted live flow cannot be reset or enlarged by this method: review excess
-requests with **Approve once**. Client revocation clears its in-memory flow consent.
+The window starts at the first flow-bearing room request's daemon arrival time,
+not the approval time; granting consent never restarts or extends that window.
+Only the explicitly selected operation/exact kind is covered, with `flow_size`
+counted separately for that scope. A different kind or purpose, changed size, or
+exhausted count prompts again. Completed, expired, paused or revoked flows cannot
+be reset or enlarged by this method: review such requests with **Approve once**.
+A memory-only tombstone rejects re-minting the same principal/identity/transport
+and flow ID until ten minutes after its original window ends (or invalidation,
+whichever is later). Live windows plus tombstones are bounded at 1024; capacity
+exhaustion refuses new flow consent, never evicts existing fences. After the
+short tombstone retires, ID reuse still requires a new explicit review/consent.
+Pause invalidates every flow; client/permission revocation invalidates matching
+flows **before** durable work, including failed or partially failed revocations.
+No invalidated reservation revives after resume or store repair.
+
+This is a bounded same-principal operation budget, not authenticated proof of a
+rumor, message body, recipient set or caller process instance. Calls from that
+same principal can interleave and consume unused slots during the window; the
+signer cannot tell which logical send produced them. Groundhog uses a new UUID
+for each honest room send. See the **UID-only buses** limitation above before
+assuming verified caller isolation.
 Groundhog introspects for this method before sending `flow_size`; older context
 services receive only the original context keys, and signers without context
 support receive direct calls. No retry follows a crypto/approval/input error;
@@ -883,8 +910,9 @@ first-party services and tier-derived permissions are not listed. Scoped event
 rows and Needs review markers are not listed; new management uses ListPermissions
 (G04). `RevokeGrant("event", principal, identity)` removes **all** event scopes
 for the pair, including operation-wide denies and Needs review. Other operations
-remove their operation-wide row. Successful removal cancels that principal's
-pending/queued work. Removing an explicit row does not remove a live tier's
+remove their operation-wide row. Ephemeral consent is invalidated independently
+of persistence success, and affected work is cancelled even if durable removal
+fails after that invalidation. Removing an explicit row does not remove a live tier's
 permission; otherwise the next matching call prompts again. Empty
 arguments: `Error.InvalidInput`.
 

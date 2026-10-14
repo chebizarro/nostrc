@@ -181,7 +181,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkCheckButton" id="chk_flow_seals">
-                        <property name="label" translatable="yes">Allow encrypted-message seals only for this send (up to 10 minutes)</property>
+                        <property name="label" translatable="yes">Allow encrypted-message seals within this flow's limit (up to 10 minutes)</property>
                       </object>
                     </child>
                   </object>

@@ -534,10 +534,10 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_check_button_set_active(self->chk_flow_encrypt, FALSE);
   gtk_check_button_set_active(self->chk_flow_seals, FALSE);
   gtk_check_button_set_label(self->chk_flow_seals, required
-      ? "Allow encrypted-message seals only for this send (up to 10 minutes)"
+      ? "Allow encrypted-message seals within this flow's limit (up to 10 minutes)"
       : "Allow encrypted-message seals for this client and identity for 10 minutes");
   g_autofree gchar *flow_label = g_strdup_printf(
-      "Sign %u encrypted messages for this room (including your copy). Size supplied by the application; the signer enforces this limit. Encryption and signing are separate permissions. Nothing below is selected by default.", size);
+      "Sign %u encrypted messages for this room (including your copy). Size supplied by the application; the signer enforces this limit, not message content or recipients. This client can use the remaining slots within the flow window. Encryption and signing are separate permissions. Nothing below is selected by default.", size);
   gtk_label_set_text(self->label_flow, flow_label);
   const char *reason = field(info, "reason");
   g_autofree gchar *reason_text = bounded(reason, 160);

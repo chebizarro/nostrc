@@ -80,6 +80,7 @@ struct _Request {
  gchar *id, *join_key, *a, *b, *selector, *npub, *claimed;
   gchar *reason, *purpose, *flow_id, *preview, *error_code;
   guint flow_size;
+  gint64 received_at;
  void (*management_testing)(gpointer); gpointer management_data;
  gchar **pairing_relays;
  SignerCaller *who;
@@ -790,7 +791,8 @@ static SignerPermissionResult request_policy(Request *r) {
   if (r->op == SIGNER_GATE_SELF_TEST) return SIGNER_PERMISSION_ASK;
   SignerPermissionResult policy = signer_permissions_evaluate_flow(r->service->permissions, r->who->principal,
       r->npub, r->transport, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
-      r->flow_id, r->flow_size, r->id, grants_lookup_default(op_info[r->op].kind, r->who), NULL);
+      r->flow_id, !g_strcmp0(r->purpose, "nip17-room-send") ? r->flow_size : 0,
+      r->received_at, r->id, grants_lookup_default(op_info[r->op].kind, r->who), NULL);
   /* Reconnecting an explicitly paired client is not new pairing consent.
    * Explicit deny / persistence errors still win; no signing scope is granted. */
   if (policy == SIGNER_PERMISSION_ASK && r->op == SIGNER_GATE_CONNECT && r->existing_pairing)
@@ -1082,6 +1084,7 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   if (context && context->pairing_relays && op == SIGNER_GATE_CONNECT && context->transport == SIGNER_TRANSPORT_NIP46)
     r->pairing_relays = g_strdupv((gchar **)context->pairing_relays);
   r->reason = g_strdup(context ? context->reason : ""); r->purpose = g_strdup(context ? context->purpose : "");
+  r->received_at = g_get_monotonic_time();
   r->flow_size = context ? context->flow_size : 0;
   r->flow_id = g_strdup(context ? context->flow_id : ""); r->generation = s->generation;
   r->calls = g_ptr_array_new(); r->state = SIGNER_REQUEST_PENDING;
@@ -1219,7 +1222,7 @@ gboolean signer_approval_service_revoke_grant(SignerApprovalService *s,
     const gchar *kind, const gchar *principal, const gchar *identity, gboolean *removed) {
   g_return_val_if_fail(owner_ok(s), FALSE);
   gboolean ok = signer_permissions_clear(s->permissions, principal, identity, kind, removed, NULL);
-  if (ok && *removed) {
+  if (*removed) {
     g_autoptr(GPtrArray) affected = requests_copy(s);
     for (guint i = affected->len; i > 0; i--) {
       Request *r = affected->pdata[i - 1];
@@ -1292,6 +1295,7 @@ void signer_approval_service_connection_closed(SignerApprovalService *s, const g
 }
 void signer_approval_service_cancel_principal(SignerApprovalService *s, const gchar *principal) {
   g_return_if_fail(owner_ok(s));
+  signer_permissions_invalidate_flows(s->permissions, principal, NULL, NULL);
   g_autoptr(GPtrArray) requests = requests_copy(s);
   for (guint i = 0; i < requests->len; i++) {
     Request *r = requests->pdata[i];
@@ -1312,6 +1316,7 @@ void signer_approval_service_set_paused(SignerApprovalService *s, gboolean pause
   table_changed(s);
   if (!paused) return;
   s->generation++;
+  signer_permissions_invalidate_flows(s->permissions, NULL, NULL, NULL);
   g_autoptr(GPtrArray) requests = requests_copy(s);
   for (guint i = 0; i < requests->len; i++)
     finish(requests->pdata[i], SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_PAUSED, "signing is paused");

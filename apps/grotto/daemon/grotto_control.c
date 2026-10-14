@@ -679,8 +679,8 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     if (!ok) { error_reply(inv, error); return; } refresh(c);
   } else if (!strcmp(method, "RevokeClient")) {
     const gchar *p; gboolean removed; g_variant_get(args, "(&s)", &p);
-    /* Cancel first, even when persistence fails. Removing the client invalidates
-     * live tier admission before permissions are removed. Retrying is idempotent. */
+    /* Cancel and invalidate ephemeral flow consent before either durable step.
+     * A failed client/permission write must never restore that consent. */
     signer_approval_service_cancel_principal(c->approval, p);
     if (c->bunker && g_str_has_prefix(p, "nip46:")) bunker_service_disconnect_client(c->bunker, p + 6);
     if (!grotto_clients_remove(c->clients, p, &error)) { error_reply(inv, error); return; }

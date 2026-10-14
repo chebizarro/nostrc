@@ -80,6 +80,95 @@ static void signer_done(GObject *source, GAsyncResult *result, gpointer data) {
   g_autofree gchar *value = gh_signer_sign_finish(result, &d->error);
   d->ok = value != NULL; d->done = TRUE;
 }
+static void control_call(GDBusConnection *bus, const gchar *method, GVariant *args, gboolean success) {
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GVariant) value = g_dbus_connection_call_sync(bus, "org.nostr.Signer",
+      "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", method,
+      args, G_VARIANT_TYPE_UNIT, 0, 5000, NULL, &error);
+  if (success) { g_assert_no_error(error); g_assert_nonnull(value); }
+  else { g_assert_nonnull(error); g_assert_null(value); }
+}
+static void deny_pending(GrottoApprovalController *controller, Decision *result) {
+  g_autoptr(GrottoApprovalRequest) request =
+      g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
+  Decision denial = {0};
+  grotto_approval_controller_decide_async(controller, grotto_approval_request_get_id(request),
+      FALSE, FALSE, 0, NULL, decided, &denial);
+  WAIT(result->done && denial.done);
+  g_assert_no_error(denial.error); g_assert_true(denial.ok);
+  g_assert_error(result->error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
+  g_clear_error(&result->error);
+  WAIT(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)) == 0);
+}
+static void lifecycle_regressions(GDBusConnection *bus, GrottoApprovalController *controller,
+    GhSigner *signer, const gchar *seal, const gchar *sender) {
+  for (guint mode = 0; mode < 4; mode++) {
+    g_autofree gchar *id = g_strdup_printf("lifecycle-%u", mode);
+    GhSignerContext context = {"Review bounded encrypted signing", "nip17-room-send", id, 3};
+    guint before = prompts;
+    Decision first = {0}, consent = {0};
+    gh_signer_sign_with_context_async(signer, seal, &context, NULL, signer_done, &first);
+    WAIT(ready(controller) || first.done); g_assert_false(first.done);
+    g_assert_cmpuint(prompts, ==, before + 1);
+    g_autoptr(GrottoApprovalRequest) request =
+        g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
+    GVariant *info = grotto_approval_request_get_info(request);
+    const gchar *scope = NULL;
+    g_assert_true(g_variant_lookup(info, "principal", "&s", &scope));
+    g_autofree gchar *principal = g_strdup(scope);
+    grotto_approval_controller_decide_flow_async(controller, grotto_approval_request_get_id(request),
+        FALSE, TRUE, NULL, decided, &consent);
+    WAIT(first.done && consent.done);
+    g_assert_no_error(first.error); g_assert_true(first.ok);
+    g_assert_no_error(consent.error); g_assert_true(consent.ok);
+    WAIT(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)) == 0);
+    if (mode == 0) {
+      /* Another required kind cannot borrow a live seal grant, before exhaustion. */
+      g_autofree gchar *wrap = g_strdup_printf("{\"kind\":%u,\"pubkey\":\"%s\",\"created_at\":1,\"tags\":[],\"content\":\"encrypted\"}",
+          NOSTR_KIND_GIFT_WRAP, sender);
+      Decision different = {0};
+      gh_signer_sign_with_context_async(signer, wrap, &context, NULL, signer_done, &different);
+      WAIT(ready(controller) || different.done); g_assert_false(different.done);
+      g_assert_cmpuint(prompts, ==, before + 2); deny_pending(controller, &different);
+      control_call(bus, "SetPaused", g_variant_new("(b)", TRUE), TRUE);
+      control_call(bus, "SetPaused", g_variant_new("(b)", FALSE), TRUE);
+    } else if (mode == 1) {
+      control_call(bus, "RevokeClient", g_variant_new("(s)", principal), TRUE);
+    } else if (mode == 2) {
+      /* Simulate the first durable RevokeClient step failing. Restore this
+       * disposable store before the next request: consent must stay gone. */
+      g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "grotto", "clients.ini", NULL);
+      g_autofree gchar *original = NULL;
+      g_assert_true(g_file_get_contents(path, &original, NULL, NULL));
+      g_assert_cmpint(g_unlink(path), ==, 0); g_assert_cmpint(g_mkdir(path, 0700), ==, 0);
+      control_call(bus, "RevokeClient", g_variant_new("(s)", principal), FALSE);
+      g_assert_cmpint(g_rmdir(path), ==, 0);
+      g_assert_true(g_file_set_contents(path, original, -1, NULL));
+    } else {
+      /* Client removal succeeds, then permission reload fails: partial revoke. */
+      g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-permissions-v2.ini", NULL);
+      g_autofree gchar *original = NULL;
+      g_assert_true(g_file_get_contents(path, &original, NULL, NULL));
+      g_assert_true(g_file_set_contents(path, "[permissions]\nversion=999\n", -1, NULL));
+      control_call(bus, "RevokeClient", g_variant_new("(s)", principal), FALSE);
+      g_assert_true(g_file_set_contents(path, original, -1, NULL));
+    }
+    guint after = prompts;
+    Decision fresh = {0};
+    gh_signer_sign_with_context_async(signer, seal, &context, NULL, signer_done, &fresh);
+    WAIT(ready(controller) || fresh.done); g_assert_false(fresh.done);
+    g_assert_cmpuint(prompts, ==, after + 1);
+    g_autoptr(GrottoApprovalRequest) invalidated =
+        g_list_model_get_item(grotto_approval_controller_get_pending(controller), 0);
+    g_autoptr(GError) reset_error = NULL;
+    g_autoptr(GVariant) reset = g_dbus_connection_call_sync(bus, "org.nostr.Signer",
+        "/org/nostr/signer", "org.nostr.Signer", "ApproveFlowRequest",
+        g_variant_new("(sbbt)", grotto_approval_request_get_id(invalidated), FALSE, TRUE, (guint64)600),
+        G_VARIANT_TYPE("(b)"), 0, 5000, NULL, &reset_error);
+    g_assert_null(reset); g_assert_nonnull(reset_error);
+    deny_pending(controller, &fresh);
+  }
+}
 static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   guint subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Signer",
       "ApprovalRequested", "/org/nostr/signer", NULL, 0, prompt, NULL, NULL);
@@ -175,6 +264,8 @@ static void run_room_flow(GDBusConnection *bus, gboolean gui) {
   g_assert_no_error(denial.error); g_assert_true(denial.ok);
   g_assert_error(extra.error, GH_SIGNER_ERROR, GH_SIGNER_ERROR_DENIED);
   g_clear_error(&extra.error);
+  WAIT(g_list_model_get_n_items(grotto_approval_controller_get_pending(controller)) == 0);
+  lifecycle_regressions(bus, controller, signer, seal, sender);
   gh_signer_free(signer);
   grotto_approval_controller_stop(controller);
   g_clear_object(&controller); g_clear_object(&accounts);
