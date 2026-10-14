@@ -1,5 +1,6 @@
 #include "qr-scanner.h"
 #include <string.h>
+#include <errno.h>
 #ifdef HAVE_GSTREAMER
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
@@ -107,17 +108,27 @@ static GstFlowReturn sample_received(GstAppSink *sink, gpointer data) {
   GSource *idle = g_idle_source_new(); g_source_set_callback(idle, frame_deliver, f, frame_free);
   g_source_attach(idle, s->context); g_source_unref(idle); return GST_FLOW_OK;
 }
-static const gchar *camera_error_message(GError *error) {
-  if (error && error->message && strstr(error->message, "Permission denied")) return "Camera access was denied. Paste a link instead.";
-  if (error && error->message && (strstr(error->message, "busy") || strstr(error->message, "Busy"))) return "The camera is busy in another application. Paste a link instead.";
-  if (error && error->domain == GST_RESOURCE_ERROR && error->code == GST_RESOURCE_ERROR_NOT_FOUND) return "No camera was found. Paste a link instead.";
+static const gchar *camera_error_message(GError *error, const GstStructure *details) {
+  gint system_errno = 0;
+  if (details) gst_structure_get_int(details, "errno", &system_errno);
+  if (error && error->domain == GST_RESOURCE_ERROR) {
+    if (error->code == GST_RESOURCE_ERROR_NOT_AUTHORIZED || system_errno == EACCES || system_errno == EPERM)
+      return "Camera access was denied. Paste a link instead.";
+    if (error->code == GST_RESOURCE_ERROR_BUSY || system_errno == EBUSY)
+      return "The camera is busy in another application. Paste a link instead.";
+    if (error->code == GST_RESOURCE_ERROR_NOT_FOUND || system_errno == ENOENT)
+      return "No camera was found. Paste a link instead.";
+    if (error->code == GST_RESOURCE_ERROR_OPEN_READ || error->code == GST_RESOURCE_ERROR_OPEN_READ_WRITE)
+      return "Camera access is unavailable. Check camera permissions, or Paste a link instead.";
+  }
   return "The camera could not be opened. Check access and other camera applications, or paste a link.";
 }
 static gboolean bus_message(GstBus *bus, GstMessage *message, gpointer data) {
   (void)bus; GnQrScanner *s = data;
   if (GST_MESSAGE_TYPE(message) == GST_MESSAGE_ERROR) {
-    GError *raw = NULL; gst_message_parse_error(message, &raw, NULL);
-    g_autoptr(GError) error = g_error_new_literal(GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, camera_error_message(raw));
+    GError *raw = NULL; const GstStructure *details = NULL;
+    gst_message_parse_error(message, &raw, NULL); gst_message_parse_error_details(message, &details);
+    g_autoptr(GError) error = g_error_new_literal(GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, camera_error_message(raw, details));
     g_clear_error(&raw); s->watch = 0;
     gn_qr_scanner_stop(s); unavailable(s, error->message);
     g_signal_emit(s, signals[SCAN_ERROR], 0, error); return G_SOURCE_REMOVE;
@@ -142,9 +153,15 @@ static gboolean start_pipeline(GnQrScanner *s, const gchar *description, GError 
   GstBus *bus = gst_element_get_bus(s->pipeline); s->watch = gst_bus_add_watch(bus, bus_message, s); gst_object_unref(bus);
   s->active = TRUE;
   if (gst_element_set_state(s->pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-    /* Deliver the real v4l2 error from the bus, rather than replacing denied /
-     * busy / missing-device evidence with a fabricated camera-ready state. */
-    return TRUE;
+    GstBus *failed_bus = gst_element_get_bus(s->pipeline);
+    GstMessage *failure = gst_bus_pop_filtered(failed_bus, GST_MESSAGE_ERROR);
+    GError *raw = NULL; const GstStructure *details = NULL;
+    if (failure) { gst_message_parse_error(failure, &raw, NULL); gst_message_parse_error_details(failure, &details); }
+    const gchar *text = camera_error_message(raw, details);
+    gn_qr_scanner_stop(s); unavailable(s, text);
+    g_set_error_literal(error, GN_QR_ERROR, GN_QR_ERROR_CAMERA_UNAVAILABLE, text);
+    g_clear_error(&raw); if (failure) gst_message_unref(failure); gst_object_unref(failed_bus);
+    return FALSE;
   }
   gtk_stack_set_visible_child_name(GTK_STACK(s->stack), "preview"); return TRUE;
 }
@@ -152,6 +169,7 @@ static gboolean start_pipeline(GnQrScanner *s, const gchar *description, GError 
 gboolean gn_qr_scanner_start_test_pipeline(GnQrScanner *s, const gchar *description, GError **error) {
   return start_pipeline(s, description, error);
 }
+gboolean gn_qr_scanner_test_has_pipeline(GnQrScanner *s) { return s->pipeline != NULL; }
 void gn_qr_scanner_test_post_error(GnQrScanner *s, GError *error) {
   g_return_if_fail(s->pipeline != NULL);
   gst_element_post_message(s->pipeline, gst_message_new_error(GST_OBJECT(s->pipeline), error, NULL));

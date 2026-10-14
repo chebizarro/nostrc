@@ -117,6 +117,28 @@ static void test_transports(ControlFixture *f, gconstpointer data) {
       g_autoptr(GVariant) urls = g_variant_lookup_value(row, "relays", G_VARIANT_TYPE_STRING_ARRAY); g_assert_cmpuint(g_variant_n_children(urls), ==, 1); found = TRUE; }
   }
   g_assert_true(found);
+  g_autofree gchar *pinned = grotto_clients_paired_identity(store, principals[4]); g_assert_nonnull(pinned);
+  g_autofree gchar *attempt = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "pending exchange", -1);
+  g_autofree gchar *old_attempt = g_compute_checksum_for_string(G_CHECKSUM_SHA256, "older exchange", -1);
+  g_assert_true(grotto_clients_begin_pairing(store, principals[4], relays, SIGNER_TRUST_MEDIUM, "Pending ack", attempt, NULL));
+  g_assert_null(grotto_clients_paired_identity(store, principals[4]));
+  g_clear_pointer(&store, grotto_clients_free); store = grotto_clients_new(NULL, NULL); g_assert_nonnull(store);
+  g_assert_null(grotto_clients_paired_identity(store, principals[4])); /* restart is not relay OK */
+  g_autoptr(GVariant) pending_ack = grotto_clients_list(store); found = FALSE;
+  for (gsize i = 0; i < g_variant_n_children(pending_ack); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(pending_ack, i); const gchar *p = NULL;
+    g_variant_lookup(row, "principal", "&s", &p);
+    if (!g_strcmp0(p, principals[4])) {
+      gboolean paired = TRUE, pending = FALSE;
+      g_assert_true(g_variant_lookup(row, "paired", "b", &paired)); g_assert_false(paired);
+      g_assert_true(g_variant_lookup(row, "pairing-pending-ack", "b", &pending)); g_assert_true(pending); found = TRUE;
+    }
+  }
+  g_assert_true(found);
+  g_assert_false(grotto_clients_ack_pairing(store, principals[4], "wrong-identity", attempt, NULL));
+  g_assert_false(grotto_clients_ack_pairing(store, principals[4], pinned, old_attempt, NULL));
+  g_assert_true(grotto_clients_ack_pairing(store, principals[4], pinned, attempt, NULL));
+  g_autofree gchar *acknowledged = grotto_clients_paired_identity(store, principals[4]); g_assert_cmpstr(acknowledged, ==, pinned);
 }
 /* Review F2: a client created by a management permission is a known record
  * without Low admission. Its automatic (permission-allowed) successes are not

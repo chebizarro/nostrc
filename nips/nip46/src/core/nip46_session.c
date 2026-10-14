@@ -148,6 +148,11 @@ static pthread_mutex_t s_session_registry_mutex = PTHREAD_MUTEX_INITIALIZER;
 static SessionRegistryEntry *s_session_registry = NULL;
 
 typedef struct BunkerReply {
+    char **relays;
+    size_t n_relays;
+    NostrNip46PublishNotify notify;
+    void *notify_data;
+    int accepted;
     NostrNip46CancelHandle *cancel;
     char *client, *json;
     struct BunkerReply *next;
@@ -3073,7 +3078,7 @@ int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote
     if (secret && *secret) {
         char *encs = percent_encode(secret); if(!encs){ free(buf); return -1; }
         len += snprintf(buf+len, cap-len, "%ssecret=%s", first?"?":"&", encs);
-        free(encs);
+        secure_wipe(encs, strlen(encs)); free(encs);
     }
     *out_uri = buf; return 0;
 }
@@ -3083,7 +3088,9 @@ int nostr_nip46_bunker_issue_bunker_uri(NostrNip46Session *s, const char *remote
  * plaintext_json: the response JSON to encrypt
  * Returns 0 on success, -1 on failure
  */
-static int nip46_publish_response(NostrNip46Session *s, const char *client_pubkey_hex, const char *plaintext_json, NostrNip46CancelHandle *cancel) {
+static int nip46_publish_response(NostrNip46Session *s, const char *client_pubkey_hex, const char *plaintext_json, NostrNip46CancelHandle *cancel,
+                                 const char *const *destinations, size_t n_destinations) {
+    if (s && s->request_handler && !n_destinations) return -1;
     if (!s || !client_pubkey_hex || !plaintext_json || nostr_nip46_cancel_handle_is_cancelled(cancel)) return -1;
     if (!s->pool || !s->bunker_secret_hex || !s->bunker_pubkey_hex) {
         if (getenv("NOSTR_DEBUG")) {
@@ -3142,7 +3149,8 @@ static int nip46_publish_response(NostrNip46Session *s, const char *client_pubke
     }
     secure_free(&sb_sign);
 
-    /* Publish to all connected relays in the pool */
+    /* Legacy sessions retain their transport contract. Request-aware replies
+     * are restricted to their authenticated delivery or approved client relays. */
     int published = 0;
     pthread_mutex_t *pool_mutex = &s->pool->pool_mutex;
     pthread_mutex_lock(pool_mutex);
@@ -3156,7 +3164,10 @@ static int nip46_publish_response(NostrNip46Session *s, const char *client_pubke
     for (size_t i = 0; i < relay_count; ++i) {
         if ((s->request_handler && !s->listening) || nostr_nip46_cancel_handle_is_cancelled(cancel)) break;
         NostrRelay *relay = relays[i];
-        if (relay && nostr_relay_is_connected(relay)) {
+        int selected = !s->request_handler;
+        for (size_t j = 0; relay && j < n_destinations; j++)
+            if (!strcmp(nostr_relay_get_url_const(relay), destinations[j])) selected = 1;
+        if (selected && relay && nostr_relay_is_connected(relay)) {
             if (s->request_handler) {
                 /* Only the dedicated response worker waits for OK; never the
                  * relay dispatcher or signer's main context. */
@@ -3183,6 +3194,9 @@ static int nip46_publish_response(NostrNip46Session *s, const char *client_pubke
 }
 
 static void bunker_reply_free(BunkerReply *reply) {
+    if (reply->notify) reply->notify(reply->accepted, reply->notify_data);
+    for (size_t i = 0; i < reply->n_relays; i++) free(reply->relays[i]);
+    free(reply->relays);
     nostr_nip46_cancel_handle_unref(reply->cancel);
     free(reply->client); secure_wipe(reply->json, strlen(reply->json)); free(reply->json); free(reply);
 }
@@ -3196,15 +3210,27 @@ static void *bunker_reply_worker(void *data) {
         if (!s->bunker_reply_head) s->bunker_reply_tail = NULL;
         s->bunker_reply_count--;
         pthread_mutex_unlock(&s->bunker_mutex);
-        nip46_publish_response(s, reply->client, reply->json, reply->cancel);
+        reply->accepted = !nip46_publish_response(s, reply->client, reply->json, reply->cancel,
+            (const char *const *)reply->relays, reply->n_relays);
         bunker_reply_free(reply);
         pthread_mutex_lock(&s->bunker_mutex);
     }
     pthread_mutex_unlock(&s->bunker_mutex); return NULL;
 }
 
-int nostr_nip46_bunker_connect_response(NostrNip46Session *s, const char *client, const char *secret, NostrNip46CancelHandle *cancel) {
-    if (!s || !s->request_handler || !is_valid_pubkey_hex_relaxed(client) || !secret || !*secret || strlen(secret) > 1024) return -1;
+static int reply_destinations(BunkerReply *reply, const char *const *relays, size_t count) {
+    if (!count) return 0;
+    if (!relays || count > 64 || !(reply->relays = calloc(count, sizeof(char *)))) return -1;
+    for (size_t i = 0; i < count; i++) {
+        if (!relays[i] || !(reply->relays[i] = strdup(relays[i]))) return -1;
+        reply->n_relays++;
+    }
+    return 0;
+}
+int nostr_nip46_bunker_connect_response(NostrNip46Session *s, const char *client, const char *secret,
+    const char *const *relays, size_t count, NostrNip46CancelHandle *cancel,
+    NostrNip46PublishNotify notify, void *data) {
+    if (!s || !s->request_handler || !count || !is_valid_pubkey_hex_relaxed(client) || !secret || !*secret || strlen(secret) > 1024) return -1;
     char *id = nostr_nip46_request_id_generate();
     json_t *value = json_string(secret);
     char *encoded = value ? json_dumps(value, JSON_ENCODE_ANY | JSON_COMPACT) : NULL;
@@ -3216,11 +3242,13 @@ int nostr_nip46_bunker_connect_response(NostrNip46Session *s, const char *client
     if (!reply) { secure_wipe(json, strlen(json)); free(json); return -1; }
     reply->client = strdup(client); reply->json = json;
     reply->cancel = nostr_nip46_cancel_handle_ref(cancel);
+    if (reply_destinations(reply, relays, count)) { bunker_reply_free(reply); return -1; }
     pthread_mutex_lock(&s->bunker_mutex);
     int rc = -1;
     if (reply->client && s->listening && s->bunker_reply_count < 1024) {
         if (s->bunker_reply_tail) s->bunker_reply_tail->next = reply; else s->bunker_reply_head = reply;
         s->bunker_reply_tail = reply; s->bunker_reply_count++; rc = 0;
+        reply->notify = notify; reply->notify_data = data;
         pthread_cond_signal(&s->bunker_reply_cond);
     }
     pthread_mutex_unlock(&s->bunker_mutex);
@@ -3302,6 +3330,10 @@ const char *nostr_nip46_bunker_request_event_id(const NostrNip46BunkerRequest *r
 const char *nostr_nip46_bunker_request_relay(const NostrNip46BunkerRequest *r) { return r ? r->relay : NULL; }
 int64_t nostr_nip46_bunker_request_created_at(const NostrNip46BunkerRequest *r) { return r ? r->created_at : 0; }
 int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *r, const char *result, const char *error) {
+    return nostr_nip46_bunker_request_complete_full(r, result, error, NULL, NULL, NULL);
+}
+int nostr_nip46_bunker_request_complete_full(NostrNip46BunkerRequest *r, const char *result, const char *error,
+    NostrNip46CancelHandle *cancel, NostrNip46PublishNotify notify, void *data) {
     if (!r || (!result && !error)) return -1;
     if (__atomic_exchange_n(&r->completed, 1, __ATOMIC_ACQ_REL)) return -1;
     char *json = error ? nostr_nip46_response_build_err(r->rpc.id, error) : nostr_nip46_response_build_ok(r->rpc.id, result);
@@ -3313,11 +3345,13 @@ int nostr_nip46_bunker_request_complete(NostrNip46BunkerRequest *r, const char *
         BunkerReply *reply = calloc(1, sizeof(*reply));
         if (reply) {
             reply->client = strdup(r->client); reply->json = json;
-            if (reply->client) {
+            if (reply->client && !reply_destinations(reply, (const char *const *)&r->relay, r->relay ? 1 : 0)) {
+                reply->cancel = nostr_nip46_cancel_handle_ref(cancel);
+                reply->notify = notify; reply->notify_data = data;
                 if (s->bunker_reply_tail) s->bunker_reply_tail->next = reply; else s->bunker_reply_head = reply;
                 s->bunker_reply_tail = reply; s->bunker_reply_count++; json = NULL; rc = 0;
                 pthread_cond_signal(&s->bunker_reply_cond);
-            } else free(reply);
+            } else { reply->json = NULL; free(reply->client); for (size_t i = 0; i < reply->n_relays; i++) free(reply->relays[i]); free(reply->relays); free(reply); }
         }
     }
     pthread_mutex_unlock(&s->bunker_mutex);
@@ -3376,7 +3410,7 @@ int nostr_nip46_bunker_reply(NostrNip46Session *s, const NostrNip46Request *req,
     const char *recipient = s->current_request_client_pubkey ? s->current_request_client_pubkey :
                            (s->client_pubkey_hex ? s->client_pubkey_hex : s->remote_pubkey_hex);
     if (s->pool && s->listening && recipient) {
-        rc = nip46_publish_response(s, recipient, json, NULL);
+        rc = nip46_publish_response(s, recipient, json, NULL, NULL, 0);
         if (rc != 0 && getenv("NOSTR_DEBUG")) {
             fprintf(stderr, "[nip46] bunker_reply: failed to publish response\n");
         }
@@ -4192,7 +4226,7 @@ int nostr_nip46_bunker_connect_to_client(NostrNip46Session *s,
     free(req_id);
     if (!req_json) { nostr_nip46_uri_connect_free(&u); return -1; }
 
-    int rc = nip46_publish_response(s, u.client_pubkey_hex, req_json, NULL);
+    int rc = nip46_publish_response(s, u.client_pubkey_hex, req_json, NULL, (const char *const *)u.relays, u.n_relays);
     /* nip46_publish_response encrypts + signs + publishes; the "response"
      * naming is historical — the transport is the same for signer-initiated
      * connect requests. */

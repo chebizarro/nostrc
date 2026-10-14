@@ -62,9 +62,10 @@ void bunker_service_set_no_approval_ui(BunkerService *, gboolean);
 const gchar *bunker_service_get_error(BunkerService *);
 const gchar *bunker_service_get_transport_pubkey(BunkerService *);
 
-/* Called only after explicit CONNECT consent, before any acknowledgement. */
+/* Owner-thread persistence: pending metadata before the ack, paired only
+ * after a scoped relay accepts the acknowledgement. */
 typedef gboolean (*BunkerPairingCommitCb)(const gchar *client_hex, const gchar *identity,
-    const gchar *label, const gchar *const *relays, gint tier, gpointer data);
+    const gchar *label, const gchar *const *relays, gint tier, gboolean acknowledged, const gchar *attempt, gpointer data);
 void bunker_service_set_pairing_commit(BunkerService *, BunkerPairingCommitCb, gpointer);
 GVariant *bunker_service_create_pairing(BunkerService *, const gchar *identity, const gchar *label, GError **);
 gchar *bunker_service_accept_connect_uri(BunkerService *, const gchar *uri, const gchar *identity, GError **);
@@ -74,6 +75,8 @@ void bunker_service_invalidate_pairings(BunkerService *);
 gboolean bunker_service_pairing_tier(BunkerService *, const gchar *client_hex, gint tier);
 gboolean bunker_service_reconfigure(BunkerService *, const gchar *const *relays, const gchar *identity);
 GVariant *bunker_service_relay_status(BunkerService *);
+guint bunker_service_pending_acks(BunkerService *);
+guint bunker_service_pending_pairing_requests(BunkerService *);
 
 typedef gboolean (*BunkerAuthorizeCb)(const BunkerSignRequest *req, gpointer user_data);
 

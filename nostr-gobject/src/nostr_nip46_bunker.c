@@ -14,6 +14,7 @@
 /* Core NIP-46 headers first */
 #include "nostr/nip46/nip46_bunker.h"
 #include "nostr/nip46/nip46_types.h"
+#include <secure_buf.h>
 
 /* GObject wrapper header */
 #include "nostr_nip46_bunker.h"
@@ -423,7 +424,7 @@ gnostr_nip46_bunker_issue_uri(GNostrNip46Bunker *self,
     }
 
     *out_uri = g_strdup(uri);
-    free(uri);
+    secure_wipe(uri, strlen(uri)); free(uri);
     return TRUE;
 }
 

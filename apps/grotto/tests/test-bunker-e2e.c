@@ -32,7 +32,7 @@ typedef struct {
     gchar *account_sk, *account_pk, *client_sk, *client_pk, *peer_sk, *peer_pk, *transport_sk, *transport_pk;
     GDBusConnection *approver;
     guint approver_name, approval_subscription, approvals;
-    GMutex capture_mutex; GCond capture_cond; GHashTable *captured;
+    GMutex capture_mutex; GCond capture_cond; GHashTable *captured, *capture_relays;
     NostrNip46Session *second;
     gchar *second_sk, *second_pk;
     gint defer_sign, cancel_mode, defer_connect;
@@ -45,7 +45,7 @@ typedef struct {
     GFileMonitor *restart_monitor;
     gboolean restarted, restart_ok, reconnected;
     gint64 reconnect_since;
-    GPtrArray *deferred_ids;
+    GPtrArray *deferred_ids, *sensitive;
     gboolean ready, passed, timed_out;
 } Fixture;
 
@@ -53,12 +53,12 @@ typedef struct {
     if (!(condition)) { g_printerr("ASSERTION FAILED: %s\n", message); return FALSE; } \
 } while (0)
 
-typedef struct { Fixture *fixture; gchar *event; } Injection;
+typedef struct { Fixture *fixture; gchar *event; BunkerTestRelay *relay; } Injection;
 static gboolean inject_on_main(gpointer data) {
-    Injection *job = data; bunker_test_relay_inject(job->fixture->relay, job->event);
+    Injection *job = data; bunker_test_relay_inject(job->relay ? job->relay : job->fixture->relay, job->event);
     g_free(job->event); g_free(job); return G_SOURCE_REMOVE;
 }
-static void capture_response(const gchar *event_json, gpointer data) {
+static void capture_response_on(const gchar *event_json, gpointer data, guint relay) {
     Fixture *f = data; NostrEvent *event = nostr_event_new();
     if (nostr_event_deserialize(event, event_json) || g_strcmp0(nostr_event_get_pubkey(event), f->transport_pk)) {
         nostr_event_free(event); return;
@@ -70,33 +70,42 @@ static void capture_response(const gchar *event_json, gpointer data) {
         nostr_nip46_client_nip44_decrypt(peer, f->transport_pk, nostr_event_get_content(event), &plain);
         nostr_nip46_session_free(peer);
     }
+    if (!plain && f->second) nostr_nip46_client_nip44_decrypt(f->second, f->transport_pk, nostr_event_get_content(event), &plain);
     nostr_event_free(event);
     NostrNip46Response reply = {0};
     if (plain && !nostr_nip46_response_parse(plain, &reply) && reply.id) {
         g_mutex_lock(&f->capture_mutex);
         g_hash_table_replace(f->captured, g_strdup(reply.id), g_strdup(plain));
+        guint seen = GPOINTER_TO_UINT(g_hash_table_lookup(f->capture_relays, reply.id));
+        g_hash_table_replace(f->capture_relays, g_strdup(reply.id), GUINT_TO_POINTER(seen | relay));
         g_cond_broadcast(&f->capture_cond); g_mutex_unlock(&f->capture_mutex);
     }
     nostr_nip46_response_free(&reply); free(plain);
 }
+static void capture_response_a(const gchar *event, gpointer data) { capture_response_on(event, data, 1); }
+static void capture_response_b(const gchar *event, gpointer data) { capture_response_on(event, data, 2); }
+static guint captured_lane(Fixture *f, const gchar *id) {
+    g_mutex_lock(&f->capture_mutex); guint lane = GPOINTER_TO_UINT(g_hash_table_lookup(f->capture_relays, id));
+    g_mutex_unlock(&f->capture_mutex); return lane;
+}
 static gchar *request_event(Fixture *f, const gchar *id, const gchar *method,
-    const gchar *const *params, gsize count, gint64 created, gboolean wrong_client) {
+    const gchar *const *params, gsize count, gint64 created, guint lane) {
     NostrNip46Session *sender = nostr_nip46_client_new();
-    const gchar *sk = wrong_client ? f->peer_sk : f->client_sk;
+    const gchar *sk = lane == 2 ? f->second_sk : lane ? f->peer_sk : f->client_sk;
     nostr_nip46_client_set_secret(sender, sk);
     g_autofree gchar *plain = nostr_nip46_request_build(id, method, params, count);
     gchar *cipher = NULL; g_assert_cmpint(nostr_nip46_client_nip44_encrypt(sender, f->transport_pk, plain, &cipher), ==, 0);
     nostr_nip46_session_free(sender);
     NostrEvent *event = nostr_event_new(); nostr_event_set_kind(event, NOSTR_EVENT_KIND_NIP46);
-    nostr_event_set_pubkey(event, wrong_client ? f->peer_pk : f->client_pk);
+    nostr_event_set_pubkey(event, lane == 2 ? f->second_pk : lane ? f->peer_pk : f->client_pk);
     nostr_event_set_created_at(event, created); nostr_event_set_content(event, cipher); free(cipher);
     nostr_event_set_tags(event, nostr_tags_new(1, nostr_tag_new("p", f->transport_pk, NULL)));
     g_assert_cmpint(nostr_event_sign(event, sk), ==, 0);
     gchar *serialized = nostr_event_serialize(event); nostr_event_free(event); return serialized;
 }
-static gchar *send_raw(Fixture *f, const gchar *id, const gchar *event) {
-    g_mutex_lock(&f->capture_mutex); g_hash_table_remove(f->captured, id);
-    Injection *job = g_new0(Injection, 1); job->fixture = f; job->event = g_strdup(event);
+static gchar *send_raw_on(Fixture *f, BunkerTestRelay *relay, const gchar *id, const gchar *event) {
+    g_mutex_lock(&f->capture_mutex); g_hash_table_remove(f->captured, id); g_hash_table_remove(f->capture_relays, id);
+    Injection *job = g_new0(Injection, 1); job->fixture = f; job->event = g_strdup(event); job->relay = relay;
     g_idle_add(inject_on_main, job);
     gint64 bound = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
     while (!g_hash_table_contains(f->captured, id)) {
@@ -106,6 +115,7 @@ static gchar *send_raw(Fixture *f, const gchar *id, const gchar *event) {
     }
     gchar *reply = g_strdup(g_hash_table_lookup(f->captured, id)); g_mutex_unlock(&f->capture_mutex); return reply;
 }
+static gchar *send_raw(Fixture *f, const gchar *id, const gchar *event) { return send_raw_on(f, f->relay, id, event); }
 static gboolean raw_expect(Fixture *f, const gchar *id, const gchar *event, const gchar *error) {
     g_autofree gchar *text = send_raw(f, id, event); NostrNip46Response response = {0};
     REQUIRE(text && !nostr_nip46_response_parse(text, &response), "raw request receives a parseable response");
@@ -318,8 +328,43 @@ static GVariant *create_offer(Fixture *f, const gchar *identity) {
         "org.nostr.Grotto.Control1", "CreatePairing", g_variant_new("(ss)", identity, "Fixture client"),
         G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
     if (!reply) return NULL;
-    GVariant *offer = g_variant_get_child_value(reply, 0); g_variant_unref(reply); return offer;
+    GVariant *offer = g_variant_get_child_value(reply, 0); g_variant_unref(reply);
+    const gchar *text = NULL; g_assert_true(g_variant_lookup(offer, "uri", "&s", &text));
+    g_ptr_array_add(f->sensitive, g_strdup(text));
+    NostrNip46BunkerURI parsed = {0}; g_assert_cmpint(nostr_nip46_uri_parse_bunker(text, &parsed), ==, 0);
+    g_ptr_array_add(f->sensitive, g_strdup(parsed.secret)); secure_wipe(parsed.secret, strlen(parsed.secret)); nostr_nip46_uri_bunker_free(&parsed);
+    return offer;
 }
+typedef struct { Fixture *f; BunkerTestRelay *relay; gboolean hold, done; } AckControl;
+static gboolean ack_control_on_owner(gpointer data) {
+    AckControl *c = data; bunker_test_relay_hold_acks(c->relay, c->hold);
+    g_mutex_lock(&c->f->capture_mutex); c->done = TRUE; g_cond_broadcast(&c->f->capture_cond); g_mutex_unlock(&c->f->capture_mutex); return G_SOURCE_REMOVE;
+}
+static void hold_acks(Fixture *f, BunkerTestRelay *relay, gboolean hold) {
+    AckControl c = {f, relay, hold, FALSE}; g_mutex_lock(&f->capture_mutex); g_idle_add(ack_control_on_owner, &c);
+    while (!c.done) g_cond_wait(&f->capture_cond, &f->capture_mutex);
+    g_mutex_unlock(&f->capture_mutex);
+}
+static gboolean client_pairing_state(Fixture *f, const gchar *client, gboolean paired, gboolean pending, gboolean wait) {
+    g_autofree gchar *principal = g_strdup_printf("nip46:%s", client);
+    gint64 bound = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+    for (;;) {
+        g_mutex_lock(&f->capture_mutex); guint revision = f->status_events; g_mutex_unlock(&f->capture_mutex);
+        g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+            "ListClients", NULL, G_VARIANT_TYPE("(aa{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+        REQUIRE(reply, "read pairing publication state"); g_autoptr(GVariant) rows = g_variant_get_child_value(reply, 0);
+        for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+            g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); const gchar *p = NULL; gboolean actual = FALSE, awaiting = FALSE;
+            g_variant_lookup(row, "principal", "&s", &p); g_variant_lookup(row, "paired", "b", &actual); g_variant_lookup(row, "pairing-pending-ack", "b", &awaiting);
+            if (!g_strcmp0(p, principal) && actual == paired && awaiting == pending) return TRUE;
+        }
+        if (!wait) return FALSE;
+        g_mutex_lock(&f->capture_mutex); gboolean timely = TRUE;
+        while (f->status_events == revision && timely) timely = g_cond_wait_until(&f->capture_cond, &f->capture_mutex, bound);
+        g_mutex_unlock(&f->capture_mutex); if (!timely) return FALSE;
+    }
+}
+static gboolean configure_relays(Fixture *, gboolean, const gchar *const *, gsize);
 static gboolean token_pairing(Fixture *f) {
     REQUIRE(!nostr_nip46_client_set_secret(f->client, f->client_sk), "capture lane has its client transport key before token tests");
     guint8 pk[32]; gchar *npub = NULL;
@@ -330,7 +375,7 @@ static gboolean token_pairing(Fixture *f) {
     g_autoptr(GVariant) fifth = create_offer(f, identity); REQUIRE(!fifth, "fifth outstanding offer fails closed");
     const gchar *uri_text = NULL, *offer_id = NULL; guint64 expires = 0;
     g_variant_lookup(offers[0], "uri", "&s", &uri_text); g_variant_lookup(offers[0], "pairing_id", "&s", &offer_id);
-    REQUIRE(g_variant_lookup(offers[0], "expires_at", "t", &expires) && expires >= (guint64)time(NULL) + 298 && expires <= (guint64)time(NULL) + 300, "offer has five-minute expiry");
+    REQUIRE(g_variant_lookup(offers[0], "expires_at", "t", &expires) && expires >= (guint64)time(NULL) + 8 && expires <= (guint64)time(NULL) + 10, "isolated test clock shortens the production five-minute offer");
     NostrNip46BunkerURI uri = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(uri_text, &uri), "issued URI uses existing parser");
     REQUIRE(uri.secret && strlen(uri.secret) == 43 && !strpbrk(uri.secret, "+/="), "32 random bytes are URL-safe encoded");
     REQUIRE(!strcmp(uri.remote_signer_pubkey_hex, f->transport_pk) && strcmp(uri.remote_signer_pubkey_hex, f->account_pk), "offer names transport, not account key");
@@ -351,10 +396,20 @@ static gboolean token_pairing(Fixture *f) {
     g_assert_cmpuint(g_variant_n_children(staged_rows), ==, 0); /* tier choice is not admission */
     g_autofree gchar *other = request_event(f, "token-other", "connect", params, 3, time(NULL), FALSE);
     g_assert_true(raw_expect(f, "token-other", other, "pairing_reserved"));
+    hold_acks(f, f->relay, TRUE);
     g_autoptr(GVariant) approved = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
         "ApproveRequest", g_variant_new("(sbbt)", review, TRUE, FALSE, (guint64)0), NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
     g_assert_nonnull(approved); g_thread_join(thread); g_atomic_int_set(&f->defer_connect, FALSE);
     REQUIRE(job.ok, "explicit review consumes reserved offer and acknowledges its authenticated peer");
+    REQUIRE(client_pairing_state(f, f->peer_pk, FALSE, TRUE, FALSE), "sent acknowledgement without relay OK remains pending, never paired");
+    hold_acks(f, f->relay, FALSE);
+    REQUIRE(client_pairing_state(f, f->peer_pk, TRUE, FALSE, TRUE), "relay OK completes durable pairing");
+    GVariant *released[4] = {0};
+    for (guint i = 0; i < 4; i++) { released[i] = create_offer(f, identity); REQUIRE(released[i], "consumed offer immediately releases all four capacity slots"); }
+    for (guint i = 0; i < 4; i++) {
+        const gchar *released_id = NULL; g_variant_lookup(released[i], "pairing_id", "&s", &released_id);
+        REQUIRE(control(f, "CancelPairing", g_variant_new("(s)", released_id)), "cancel capacity probe"); g_variant_unref(released[i]);
+    }
     g_autoptr(GVariant) admitted = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
         "ListClients", NULL, G_VARIANT_TYPE("(aa{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
     REQUIRE(admitted, "read atomic pairing and tier persistence");
@@ -380,6 +435,47 @@ static gboolean token_pairing(Fixture *f) {
     g_thread_join(thread); g_atomic_int_set(&f->defer_connect, FALSE);
     secure_wipe(cancel.secret, strlen(cancel.secret)); nostr_nip46_uri_bunker_free(&cancel);
     REQUIRE(cancelled_job.ok, "pairing teardown cancels the pending shared-gate continuation");
+    g_autoptr(GVariant) expiring = create_offer(f, identity); REQUIRE(expiring, "create expiring offer");
+    const gchar *expiring_uri = NULL; guint64 expiry = 0;
+    g_variant_lookup(expiring, "uri", "&s", &expiring_uri); g_variant_lookup(expiring, "expires_at", "t", &expiry);
+    NostrNip46BunkerURI expired = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(expiring_uri, &expired), "expiry URI parses");
+    await_expiry(f, expiry);
+    const gchar *expired_params[] = {f->transport_pk, expired.secret};
+    g_autofree gchar *expired_event = request_event(f, "token-expired", "connect", expired_params, 2, time(NULL), TRUE);
+    REQUIRE(raw_expect(f, "token-expired", expired_event, "invalid_pairing_token"), "actual elapsed token lifetime rejects a fresh authenticated request");
+    secure_wipe(expired.secret, strlen(expired.secret)); nostr_nip46_uri_bunker_free(&expired);
+    g_autoptr(GVariant) denial = create_offer(f, identity); REQUIRE(denial, "create deny fixture");
+    const gchar *denial_uri = NULL; g_variant_lookup(denial, "uri", "&s", &denial_uri);
+    NostrNip46BunkerURI denied_token = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(denial_uri, &denied_token), "denial offer parses");
+    const gchar *denial_params[] = {f->transport_pk, denied_token.secret};
+    g_autofree gchar *denial_event = request_event(f, "token-denied", "connect", denial_params, 2, time(NULL), TRUE);
+    g_atomic_int_set(&f->defer_connect, TRUE); RawJob denied_job = {f, "token-denied", denial_event, ORG_NOSTR_SIGNER_ERR_APPROVAL, FALSE};
+    thread = g_thread_new("denied-connect", raw_worker, &denied_job);
+    g_autofree gchar *denial_id = await_connect_review(f); REQUIRE(denial_id, "receive token review before denial");
+    g_autoptr(GVariant) denied_reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
+        "ApproveRequest", g_variant_new("(sbbt)", denial_id, FALSE, FALSE, (guint64)0), NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    REQUIRE(denied_reply, "deny pairing explicitly"); g_thread_join(thread); g_atomic_int_set(&f->defer_connect, FALSE);
+    REQUIRE(denied_job.ok, "denial returns terminal error");
+    g_autofree gchar *retry_denial = request_event(f, "token-denied-retry", "connect", denial_params, 2, time(NULL), TRUE);
+    REQUIRE(raw_expect(f, "token-denied-retry", retry_denial, "invalid_pairing_token"), "denial invalidates the reserved token, not just its RPC");
+    secure_wipe(denied_token.secret, strlen(denied_token.secret)); nostr_nip46_uri_bunker_free(&denied_token);
+    for (guint mode = 0; mode < 2; mode++) {
+        g_autoptr(GVariant) invalidated = create_offer(f, identity); REQUIRE(invalidated, "create invalidation fixture");
+        const gchar *text = NULL; g_variant_lookup(invalidated, "uri", "&s", &text);
+        NostrNip46BunkerURI old = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(text, &old), "invalidation URI parses");
+        if (!mode) {
+            const gchar *urls[] = {bunker_test_relay_url(f->relay)};
+            REQUIRE(configure_relays(f, TRUE, urls, 1), "changed method ceiling invalidates pending offers");
+        } else {
+            REQUIRE(control(f, "SetPaused", g_variant_new("(b)", TRUE)), "pause invalidates offers");
+            REQUIRE(control(f, "SetPaused", g_variant_new("(b)", FALSE)), "resume does not restore offers");
+        }
+        const gchar *params_old[] = {f->transport_pk, old.secret};
+        const gchar *id = mode ? "token-paused" : "token-reconfigured";
+        g_autofree gchar *event = request_event(f, id, "connect", params_old, 2, time(NULL), TRUE);
+        REQUIRE(raw_expect(f, id, event, "invalid_pairing_token"), "config/pause generations invalidate old tokens");
+        secure_wipe(old.secret, strlen(old.secret)); nostr_nip46_uri_bunker_free(&old);
+    }
     return TRUE;
 }
 static void runtime_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
@@ -401,18 +497,31 @@ static gboolean await_bunker_state(Fixture *f, const gchar *wanted) {
         g_mutex_unlock(&f->capture_mutex); if (!timely) return FALSE;
     }
 }
-typedef struct { Fixture *f; BunkerTestRelay *relay; guint connections, requests; gboolean done; } RelayStats;
+typedef struct { Fixture *f; BunkerTestRelay *relay; guint connections, requests, addressed; gboolean done; const gchar *recipient; } RelayStats;
 static gboolean snapshot_relay(gpointer data) {
     RelayStats *snapshot = data; guint published;
     g_mutex_lock(&snapshot->f->capture_mutex);
-    bunker_test_relay_stats(snapshot->relay, &snapshot->connections, &snapshot->requests, &published); snapshot->done = TRUE;
+    bunker_test_relay_stats(snapshot->relay, &snapshot->connections, &snapshot->requests, &published);
+    JsonArray *events = bunker_test_relay_events(snapshot->relay);
+    for (guint i = 0; snapshot->recipient && i < json_array_get_length(events); i++) {
+        JsonObject *event = json_array_get_object_element(events, i);
+        if (g_strcmp0(json_object_get_string_member(event, "pubkey"), snapshot->f->transport_pk)) continue;
+        JsonArray *tags = json_object_get_array_member(event, "tags");
+        for (guint j = 0; j < json_array_get_length(tags); j++) {
+            JsonArray *tag = json_array_get_array_element(tags, j);
+            if (json_array_get_length(tag) >= 2 && !g_strcmp0(json_array_get_string_element(tag, 0), "p") &&
+                !g_strcmp0(json_array_get_string_element(tag, 1), snapshot->recipient)) snapshot->addressed++;
+        }
+    }
+    snapshot->done = TRUE;
     g_cond_broadcast(&snapshot->f->capture_cond); g_mutex_unlock(&snapshot->f->capture_mutex); return G_SOURCE_REMOVE;
 }
-static RelayStats relay_stats(Fixture *f, BunkerTestRelay *relay) {
-    RelayStats snapshot = {.f = f, .relay = relay}; g_mutex_lock(&f->capture_mutex); g_idle_add(snapshot_relay, &snapshot);
+static RelayStats relay_client_stats(Fixture *f, BunkerTestRelay *relay, const gchar *recipient) {
+    RelayStats snapshot = {.f = f, .relay = relay, .recipient = recipient}; g_mutex_lock(&f->capture_mutex); g_idle_add(snapshot_relay, &snapshot);
     while (!snapshot.done) g_cond_wait(&f->capture_cond, &f->capture_mutex);
     g_mutex_unlock(&f->capture_mutex); return snapshot;
 }
+static RelayStats relay_stats(Fixture *f, BunkerTestRelay *relay) { return relay_client_stats(f, relay, NULL); }
 static gboolean configure_relays(Fixture *f, gboolean enabled, const gchar *const *relays, gsize count) {
     const gchar *methods[] = {"get_public_key", "sign_event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "ping", "get_relays", NULL};
     GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
@@ -427,6 +536,50 @@ static gchar *canonical_relay(BunkerTestRelay *relay) {
     g_autoptr(JsonParser) parser = json_parser_new(); g_assert_true(json_parser_load_from_data(parser, json, -1, NULL));
     gchar *url = g_strdup(json_array_get_string_element(json_node_get_array(json_parser_get_root(parser)), 0)); free(json); return url;
 }
+static gboolean await_pairing_counter(Fixture *f, const gchar *field, guint wanted) {
+    gint64 bound = g_get_monotonic_time() + 10 * G_USEC_PER_SEC;
+    for (;;) {
+        g_mutex_lock(&f->capture_mutex); guint revision = f->status_events; g_mutex_unlock(&f->capture_mutex);
+        g_autoptr(GVariant) reply = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+            "GetStatus", NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+        REQUIRE(reply, "read pending pairing counters"); g_autoptr(GVariant) row = g_variant_get_child_value(reply, 0); guint value = 0;
+        REQUIRE(g_variant_lookup(row, field, "u", &value), "pending pairing counter is present");
+        if (value == wanted) return TRUE;
+        g_mutex_lock(&f->capture_mutex); gboolean timely = TRUE;
+        while (f->status_events == revision && timely) timely = g_cond_wait_until(&f->capture_cond, &f->capture_mutex, bound);
+        g_mutex_unlock(&f->capture_mutex); if (!timely) return FALSE;
+    }
+}
+static gboolean cancelled_published_ack(Fixture *f) {
+    g_autofree gchar *principal = g_strdup_printf("nip46:%s", f->second_pk);
+    REQUIRE(control(f, "RevokeClient", g_variant_new("(s)", principal)), "remove second client's old pairing before publication-cancellation test");
+    g_autoptr(GVariant) offer = create_offer(f, f->account_pk); REQUIRE(offer, "create config-fenced pairing");
+    const gchar *text = NULL; g_variant_lookup(offer, "uri", "&s", &text);
+    NostrNip46BunkerURI uri = {0}; REQUIRE(!nostr_nip46_uri_parse_bunker(text, &uri), "config-fenced offer parses");
+    const gchar *params[] = {f->transport_pk, uri.secret};
+    g_autofree gchar *event = request_event(f, "ack-cancel-config", "connect", params, 2, time(NULL), 2);
+    g_atomic_int_set(&f->defer_connect, TRUE); RawJob job = {f, "ack-cancel-config", event, NULL, FALSE};
+    GThread *thread = g_thread_new("config-fenced-connect", raw_worker, &job);
+    g_autofree gchar *review = await_connect_review(f); REQUIRE(review, "receive config-fenced review");
+    hold_acks(f, f->relay, TRUE);
+    g_autoptr(GVariant) decision = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
+        "ApproveRequest", g_variant_new("(sbbt)", review, TRUE, FALSE, (guint64)0), NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    REQUIRE(decision, "approve config-fenced pairing"); g_thread_join(thread); g_atomic_int_set(&f->defer_connect, FALSE);
+    REQUIRE(job.ok && client_pairing_state(f, f->second_pk, FALSE, TRUE, FALSE), "wire delivery alone leaves the client pending");
+    g_autofree gchar *waiting = request_event(f, "waiting-for-pairing-ack", "get_public_key", NULL, 0, time(NULL), 2);
+    RawJob waiter = {f, "waiting-for-pairing-ack", waiting, "pairing_unconfirmed", FALSE};
+    thread = g_thread_new("pending-pairing-operation", raw_worker, &waiter);
+    REQUIRE(await_pairing_counter(f, "bunker_pending_pairing_requests", 1), "account operation waits for actual pairing acceptance");
+    const gchar *changed[] = {bunker_test_relay_url(f->relay), bunker_test_relay_url(f->relay2)};
+    REQUIRE(configure_relays(f, TRUE, changed, 2), "config invalidates pending ack without disabling transport or changing its effective relay union");
+    hold_acks(f, f->relay, FALSE);
+    REQUIRE(await_pairing_counter(f, "bunker_pending_pairing_acks", 0), "process the now-successful but cancelled publication callback");
+    g_thread_join(thread);
+    REQUIRE(waiter.ok && client_pairing_state(f, f->second_pk, FALSE, TRUE, FALSE), "positive relay OK cannot resurrect a cancelled pairing or release account operations");
+    const gchar *restored[] = {bunker_test_relay_url(f->relay)};
+    REQUIRE(configure_relays(f, TRUE, restored, 1), "restore signer-wide configuration");
+    secure_wipe(uri.secret, strlen(uri.secret)); nostr_nip46_uri_bunker_free(&uri); return TRUE;
+}
 static gboolean uri_pairing_and_reconfigure(Fixture *f) {
     if (!f->status_subscription) f->status_subscription = g_dbus_connection_signal_subscribe(f->approver, "org.nostr.Signer", "org.nostr.Grotto.Control1", "StatusChanged",
         "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, runtime_changed, f, NULL);
@@ -434,11 +587,37 @@ static gboolean uri_pairing_and_reconfigure(Fixture *f) {
     g_assert_cmpint(nostr_nip19_encode_npub(pk, &npub), ==, 0); g_autofree gchar *identity = npub;
     g_autofree gchar *relay = g_uri_escape_string(bunker_test_relay_url(f->relay2), NULL, FALSE);
     g_autofree gchar *uri = g_strdup_printf("nostrconnect://%s?relay=%s&secret=g06-client-secret&name=Unverified%%20fixture&perms=sign_event%%3A1", f->peer_pk, relay);
+    g_ptr_array_add(f->sensitive, g_strdup(uri)); g_ptr_array_add(f->sensitive, g_strdup("g06-client-secret"));
     REQUIRE(configure_relays(f, FALSE, NULL, 0), "disable and clear signer-wide relays before a client-initiated pairing");
     REQUIRE(await_bunker_state(f, "DISABLED"), "disable closes subscriptions without restarting the daemon");
+    g_autoptr(GError) disabled_error = NULL;
+    g_autoptr(GVariant) disabled = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+        "AcceptConnectURI", g_variant_new("(ss)", uri, identity), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, &disabled_error);
+    g_autofree gchar *disabled_name = g_dbus_error_get_remote_error(disabled_error);
+    REQUIRE(!disabled && !g_strcmp0(disabled_name, "org.nostr.Grotto.Control1.Error.NotReady") && strstr(disabled_error->message, "Enable remote signing"), "disabled pairing returns a typed enable-first error");
+    REQUIRE(await_bunker_state(f, "DISABLED"), "rejected URI never re-enables the global kill switch");
+    const gchar *signer_relays[] = {bunker_test_relay_url(f->relay)};
+    REQUIRE(configure_relays(f, TRUE, signer_relays, 1) && await_bunker_state(f, "LISTENING"), "only explicit ConfigureBunker enables remote signing");
+    g_autoptr(GError) identity_error = NULL;
+    g_autoptr(GVariant) unknown = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+        "AcceptConnectURI", g_variant_new("(ss)", uri, f->peer_pk), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, &identity_error);
+    REQUIRE(!unknown && identity_error, "syntactically valid but unstored identity is refused");
     g_atomic_int_set(&f->defer_connect, TRUE);
+    g_autofree gchar *denied_uri = g_strdup_printf("nostrconnect://%s?relay=%s&secret=g06-denied-secret&name=Denied", f->second_pk, relay);
+    g_ptr_array_add(f->sensitive, g_strdup(denied_uri)); g_ptr_array_add(f->sensitive, g_strdup("g06-denied-secret"));
+    g_autoptr(GVariant) denied = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
+        "AcceptConnectURI", g_variant_new("(ss)", denied_uri, identity), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    REQUIRE(denied, "valid stored identity reaches explicit review");
+    g_autofree gchar *denied_id = await_connect_review(f); REQUIRE(denied_id, "receive denial review");
+    g_autoptr(GVariant) refusal = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
+        "ApproveRequest", g_variant_new("(sbbt)", denied_id, FALSE, FALSE, (guint64)0), NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+    REQUIRE(refusal, "deny URI pairing");
+    RelayStats uncontacted = relay_stats(f, f->relay2);
+    REQUIRE(!uncontacted.connections && !uncontacted.requests, "disabled, invalid-identity and denied URI pairings never contact the supplied relay");
+    g_autoptr(GError) accept_error = NULL;
     g_autoptr(GVariant) accepted = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1",
-        "AcceptConnectURI", g_variant_new("(ss)", uri, identity), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
+        "AcceptConnectURI", g_variant_new("(ss)", uri, identity), G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 10000, NULL, &accept_error);
+    if (accept_error) g_printerr("AcceptConnectURI: %s\n", accept_error->message);
     REQUIRE(accepted, "client URI creates review, not a network connection");
     g_autofree gchar *review = await_connect_review(f); const gchar *returned_id = NULL; g_variant_get(accepted, "(&s)", &returned_id);
     REQUIRE(review && !strcmp(review, returned_id), "AcceptConnectURI returns the actual shared review ID");
@@ -451,6 +630,7 @@ static gboolean uri_pairing_and_reconfigure(Fixture *f) {
     g_autofree gchar *rendered = g_variant_print(info_row, FALSE);
     g_autofree gchar *expected_relay = canonical_relay(f->relay2);
     REQUIRE(!strstr(rendered, "g06-client-secret") && strstr(rendered, expected_relay), "preview includes exact relays but never the client's secret");
+    hold_acks(f, f->relay2, TRUE);
     g_autoptr(GVariant) approved = g_dbus_connection_call_sync(f->approver, "org.nostr.Signer", "/org/nostr/signer", "org.nostr.Signer",
         "ApproveRequest", g_variant_new("(sbbt)", review, TRUE, FALSE, (guint64)0), NULL, G_DBUS_CALL_FLAGS_NONE, 10000, NULL, NULL);
     REQUIRE(approved, "explicitly approve client URI"); g_atomic_int_set(&f->defer_connect, FALSE);
@@ -469,10 +649,21 @@ static gboolean uri_pairing_and_reconfigure(Fixture *f) {
     }
     gboolean acked = f->uri_ack_id != NULL; g_mutex_unlock(&f->capture_mutex);
     REQUIRE(acked, "encrypted signer-initiated connect is a RESPONSE with result=client secret, not a connect request");
+    REQUIRE(client_pairing_state(f, f->peer_pk, FALSE, TRUE, FALSE), "URI pairing remains pending until its own relay accepts the ack");
+    hold_acks(f, f->relay2, FALSE);
+    REQUIRE(client_pairing_state(f, f->peer_pk, TRUE, FALSE, TRUE), "URI relay OK, not successful websocket send, commits paired");
+    REQUIRE(captured_lane(f, f->uri_ack_id) == 2, "client B pairing ack is observed only on client B's relay");
+    gchar *scoped_key = NULL;
+    REQUIRE(!nostr_nip46_client_get_public_key_rpc(f->client, &scoped_key), "client A request on relay A completes"); free(scoped_key);
+    RelayStats isolated = relay_client_stats(f, f->relay2, f->client_pk);
+    REQUIRE(isolated.addressed == 0, "relay B has never received client A's replies");
+    g_autofree gchar *b_request = request_event(f, "isolated-client-b", "get_public_key", NULL, 0, time(NULL), TRUE);
+    g_autofree gchar *b_reply = send_raw_on(f, f->relay2, "isolated-client-b", b_request);
+    REQUIRE(b_reply, "client B receives its scoped response on relay B");
+    REQUIRE(captured_lane(f, "isolated-client-b") == 2, "client B RPC response never reaches relay A");
     REQUIRE(await_bunker_state(f, "LISTENING"), "new client relay reached EOSE");
     RelayStats preserved = relay_stats(f, f->relay2);
-    const gchar *signer_relays[] = {bunker_test_relay_url(f->relay)};
-    REQUIRE(configure_relays(f, TRUE, signer_relays, 1), "add a signer relay beside the URI client's relay");
+    REQUIRE(configure_relays(f, TRUE, signer_relays, 1), "retain the signer relay beside the URI client's relay");
     REQUIRE(await_bunker_state(f, "LISTENING"), "added signer relay reaches EOSE");
     gchar *barrier_key = NULL;
     gboolean barrier_ok = !nostr_nip46_client_get_public_key_rpc(f->client, &barrier_key) && !g_strcmp0(barrier_key, f->account_pk);
@@ -488,6 +679,7 @@ static gboolean uri_pairing_and_reconfigure(Fixture *f) {
     gchar *account = NULL;
     gboolean barrier = !nostr_nip46_client_get_public_key_rpc(f->client, &account) && !g_strcmp0(account, f->account_pk);
     free(account); REQUIRE(barrier, "fresh paired RPC completes after the relay's history delivery and before restart");
+    REQUIRE(cancelled_published_ack(f), "configuration invalidation fences accepted publication callbacks");
     return TRUE;
 }
 static gboolean client_relay_restored(Fixture *f) {
@@ -531,6 +723,7 @@ static gboolean run_rpc_flow(Fixture *f)
     REQUIRE(rc == 0 && g_strcmp0(ack, "ack") == 0,
         "real grotto-daemon --bunker must answer encrypted connect; no listener/reply is NOT RUNNING");
 
+    REQUIRE(client_pairing_state(f, f->client_pk, TRUE, FALSE, TRUE), "wait for relay-accepted durable pairing before editing scoped permissions");
     /* Use the real management contract for explicit account/operation scopes.
      * Rapid synthetic UI decisions must not race the production prompt throttle;
      * no sleep, throttle disable or client-requested grant is involved. Kind 3
@@ -585,6 +778,7 @@ static gboolean run_rpc_flow(Fixture *f)
     nostr_nip46_client_set_timeout(f->second, 10000);
     g_clear_pointer(&ack, g_free);
     REQUIRE(nostr_nip46_client_connect_rpc(f->second, NULL, "sign_event", &ack) == 0, "second client connect consent");
+    REQUIRE(client_pairing_state(f, f->second_pk, TRUE, FALSE, TRUE), "second client ack is accepted before issuing another connect");
     g_clear_pointer(&ack, g_free);
     REQUIRE(nostr_nip46_client_connect_rpc(f->second, NULL, "sign_event", &ack) == 0 && !g_strcmp0(ack, "ack"),
         "paired reconnect is idempotent, without another review or signing grant");
@@ -640,7 +834,21 @@ static gboolean run_rpc_flow(Fixture *f)
     REQUIRE(control(f, "SetPaused", g_variant_new("(b)", FALSE)), "resume management");
     REQUIRE(raw_expect(f, "raw-sign", replay, "replay_policy_changed"), "pause generation invalidates old successful cache");
     if (!f->headless) REQUIRE(uri_pairing_and_reconfigure(f), "client URI preview/review, secret response and live relay diffs");
+    NostrNip46BunkerURI lost = {0};
+    if (!f->headless) {
+        g_autofree gchar *second_principal = g_strdup_printf("nip46:%s", f->second_pk);
+        REQUIRE(control(f, "RevokeClient", g_variant_new("(s)", second_principal)), "use an unpaired authenticated client for the restart token check");
+        g_autoptr(GVariant) before_restart = create_offer(f, f->account_pk); REQUIRE(before_restart, "issue an offer immediately before restart");
+        const gchar *text = NULL; g_variant_lookup(before_restart, "uri", "&s", &text);
+        REQUIRE(!nostr_nip46_uri_parse_bunker(text, &lost), "pre-restart offer parses");
+    }
     REQUIRE(restart_daemon(f), "same profile restarts with persistent endpoint and pairings");
+    if (!f->headless) {
+        const gchar *lost_params[] = {f->transport_pk, lost.secret};
+        g_autofree gchar *lost_event = request_event(f, "token-before-restart", "connect", lost_params, 2, time(NULL), 2);
+        REQUIRE(raw_expect(f, "token-before-restart", lost_event, "invalid_pairing_token"), "pre-restart offers are gone, even for a legacy-allowlisted client");
+        secure_wipe(lost.secret, strlen(lost.secret)); nostr_nip46_uri_bunker_free(&lost);
+    }
     if (!f->headless) REQUIRE(client_relay_restored(f), "per-client relay subscription survives restart");
     g_clear_pointer(&pubkey, g_free);
     REQUIRE(nostr_nip46_client_get_public_key_rpc(f->client, &pubkey) == 0 && !g_strcmp0(pubkey, f->account_pk),
@@ -969,6 +1177,19 @@ static void provision_headless(Fixture *f) {
     }
     free(identity);
 }
+static gboolean logs_secret_free(Fixture *f) {
+    const gchar *names[] = {"grotto-daemon.log", "grotto-restart.log"};
+    for (guint i = 0; i < (f->restarted ? 2u : 1u); i++) {
+        g_autofree gchar *path = g_build_filename(nostrc_test_bus_get_dir(f->bus), names[i], NULL);
+        gchar *log = NULL; gsize length = 0;
+        REQUIRE(g_file_get_contents(path, &log, &length, NULL), "daemon log is available for secret audit");
+        gboolean clean = TRUE;
+        for (guint j = 0; j < f->sensitive->len; j++) if (strstr(log, f->sensitive->pdata[j])) clean = FALSE;
+        secure_wipe(log, length); g_free(log);
+        REQUIRE(clean, "daemon log contains neither pairing token nor full URI");
+    }
+    return TRUE;
+}
 int main(int argc, char **argv)
 {
     if ((argc != 4 && argc != 5) || g_strcmp0(g_getenv("NOSTRC_TEST_ISOLATION"), "1") != 0) {
@@ -982,6 +1203,8 @@ int main(int argc, char **argv)
     f.client_sk = nostr_key_generate_private(); f.client_pk = nostr_key_get_public(f.client_sk);
     f.second_sk = nostr_key_generate_private(); f.second_pk = nostr_key_get_public(f.second_sk);
     f.second = nostr_nip46_client_new(); f.deferred_ids = g_ptr_array_new_with_free_func(g_free);
+    f.sensitive = g_ptr_array_new_with_free_func(g_free);
+    g_setenv("GROTTO_TEST_PAIRING_TTL_MS", "10000", TRUE);
     f.peer_sk = nostr_key_generate_private(); f.peer_pk = nostr_key_get_public(f.peer_sk);
     f.transport_sk = nostr_key_generate_private(); f.transport_pk = nostr_key_get_public(f.transport_sk);
     g_setenv("NOSTR_SIGNER_TEST_TRANSPORT_BACKEND", "file", TRUE);
@@ -996,13 +1219,16 @@ int main(int argc, char **argv)
     nostrc_test_bus_up(f.bus);
     f.approver = nostrc_test_bus_connect(f.bus);
     f.approver_name = g_bus_own_name_on_connection(f.approver, "org.nostr.Grotto", G_BUS_NAME_OWNER_FLAGS_NONE, NULL, NULL, NULL, NULL);
+    f.status_subscription = g_dbus_connection_signal_subscribe(f.approver, "org.nostr.Signer", "org.nostr.Grotto.Control1", "StatusChanged",
+        "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, runtime_changed, &f, NULL);
     f.approval_subscription = g_dbus_connection_signal_subscribe(f.approver, NULL, "org.nostr.Signer",
         "ApprovalRequested", "/org/nostr/signer", NULL, G_DBUS_SIGNAL_FLAGS_NONE, approval_requested, &f, NULL);
     g_mutex_init(&f.capture_mutex); g_cond_init(&f.capture_cond);
     f.captured = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+    f.capture_relays = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     f.relay = bunker_test_relay_new(); f.relay2 = bunker_test_relay_new();
-    bunker_test_relay_set_event_callback(f.relay2, capture_response, &f);
-    bunker_test_relay_set_event_callback(f.relay, capture_response, &f);
+    bunker_test_relay_set_event_callback(f.relay2, capture_response_b, &f);
+    bunker_test_relay_set_event_callback(f.relay, capture_response_a, &f);
     f.loop = g_main_loop_new(NULL, FALSE);
     f.log_path = g_build_filename(nostrc_test_bus_get_dir(f.bus), "grotto-daemon.log", NULL);
     gboolean configured = configure_schema(&f, argv[2], argv[3]);
@@ -1020,7 +1246,7 @@ int main(int argc, char **argv)
         const gchar *command[] = {argv[1], "--bunker", f.headless ? "--no-approval-ui" : NULL, NULL};
         const gchar *wrapped[] = {wrapper, argv[1], "--bunker", f.headless ? "--no-approval-ui" : NULL, NULL};
         f.daemon = nostrc_test_bus_spawn_supervised(f.bus, "grotto-daemon.log", NULL, wrapper ? wrapped : command);
-        timeout_id = g_timeout_add_seconds(40, deadline, &f);
+        timeout_id = g_timeout_add_seconds(60, deadline, &f);
         check_daemon_log(&f);
         g_main_loop_run(f.loop);
     }
@@ -1036,18 +1262,18 @@ int main(int argc, char **argv)
     bunker_test_relay_stats(f.relay, &connections, &requests, &published);
     g_print("relay evidence: connections=%u REQ=%u published=%u\n",
         connections, requests, published);
-    gboolean audited = audit_frames(&f);
+    gboolean audited = audit_frames(&f) && logs_secret_free(&f);
     nostrc_test_bus_dump_log(f.bus, "grotto-daemon.log");
     if (f.restarted) nostrc_test_bus_dump_log(f.bus, "grotto-restart.log");
     nostr_nip46_session_free(f.client); nostr_nip46_session_free(f.second);
-    g_ptr_array_unref(f.deferred_ids);
+    g_ptr_array_unref(f.deferred_ids); g_ptr_array_unref(f.sensitive);
     bunker_test_relay_free(f.relay); bunker_test_relay_free(f.relay2);
     g_dbus_connection_signal_unsubscribe(f.approver, f.approval_subscription);
     if (f.status_subscription) g_dbus_connection_signal_unsubscribe(f.approver, f.status_subscription);
     g_bus_unown_name(f.approver_name);
     nostrc_test_bus_down(f.bus);
     g_main_loop_unref(f.loop);
-    g_hash_table_unref(f.captured); g_mutex_clear(&f.capture_mutex); g_cond_clear(&f.capture_cond);
+    g_hash_table_unref(f.captured); g_hash_table_unref(f.capture_relays); g_mutex_clear(&f.capture_mutex); g_cond_clear(&f.capture_cond);
     g_free(f.log_path);
     secure_wipe(f.account_sk, strlen(f.account_sk)); free(f.account_sk); free(f.account_pk);
     secure_wipe(f.client_sk, strlen(f.client_sk)); free(f.client_sk); free(f.client_pk);
@@ -1055,7 +1281,7 @@ int main(int argc, char **argv)
     secure_wipe(f.peer_sk, strlen(f.peer_sk)); free(f.peer_sk); free(f.peer_pk);
     secure_wipe(f.transport_sk, strlen(f.transport_sk)); free(f.transport_sk); free(f.transport_pk);
     g_unsetenv("NOSTR_SIGNER_TEST_TRANSPORT_BACKEND");
-    g_unsetenv("NOSTR_SIGNER_TEST_APPROVERS");
+    g_unsetenv("NOSTR_SIGNER_TEST_APPROVERS"); g_unsetenv("GROTTO_TEST_PAIRING_TTL_MS");
     g_unsetenv("NOSTR_SIGNER_SECKEY_HEX");
     g_free(f.connect_review); g_free(f.uri_ack_id);
     nostr_json_cleanup();

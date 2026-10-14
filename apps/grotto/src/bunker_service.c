@@ -32,8 +32,10 @@ typedef struct {
   gchar *key, *client, *digest, *method, *identity, *offer_id;
   GPtrArray *requests;
   SignerGateHandle *handle;
+  NostrNip46CancelHandle *delivery_cancel;
   GSource *connect_delivery;
-  gboolean completed;
+  gboolean completed, awaiting_ack, ack_accepted;
+  guint ack_pending;
   gint pairing_tier;
   gint64 expires;
   guint64 generation, revision;
@@ -65,6 +67,9 @@ static void offer_free(gpointer data) {
 static void deliver_offers(BunkerService *s);
 struct _BunkerService {
   gint refs;
+  GMainContext *context;
+  GMutex ack_mutex;
+  GPtrArray *ack_sources, *pairing_waiters;
   guint generation;
   gboolean closing, starting, no_ui;
   BunkerState state;
@@ -92,6 +97,7 @@ void bunker_sign_request_free(BunkerSignRequest *r) {
 static void rpc_free(gpointer data) {
   Rpc *r = data;
   if (r->connect_delivery) { g_source_destroy(r->connect_delivery); g_source_unref(r->connect_delivery); }
+  nostr_nip46_cancel_handle_cancel(r->delivery_cancel); nostr_nip46_cancel_handle_unref(r->delivery_cancel);
   signer_gate_handle_unref(r->handle); g_ptr_array_unref(r->requests);
   g_free(r->key); g_free(r->client); g_free(r->digest); g_free(r->method); g_free(r->identity);
   g_free(r->offer_id); wipe(r->result); g_free(r->error); g_free(r);
@@ -108,7 +114,8 @@ static void service_unref(BunkerService *s) {
   g_free(s->error_message); g_free(s->identity_npub); g_free(s->transport_pubkey); g_free(s->seen_path);
   g_strfreev(s->relays); g_strfreev(s->configured_relays); g_strfreev(s->allowed_methods); g_strfreev(s->allowed_pubkeys);
   g_hash_table_unref(s->connections); g_hash_table_unref(s->rpcs); g_hash_table_unref(s->relay_states);
-  g_hash_table_unref(s->offers); g_key_file_unref(s->seen); g_free(s);
+  g_hash_table_unref(s->offers); g_key_file_unref(s->seen); g_main_context_unref(s->context);
+  g_ptr_array_unref(s->ack_sources); g_ptr_array_unref(s->pairing_waiters); g_mutex_clear(&s->ack_mutex); g_free(s);
 }
 static gboolean contains(gchar **values, const gchar *value) {
   return values && g_strv_contains((const gchar *const *)values, value);
@@ -147,18 +154,121 @@ static gboolean paired(BunkerService *s, const gchar *client, gchar **identity) 
   if (identity) *identity = NULL;
   return s->lookup && s->lookup(client, identity, s->lookup_ud);
 }
+static void request_received(GNostrNip46Bunker *, NostrNip46BunkerRequest *, gpointer);
+typedef struct { NostrNip46BunkerRequest *request; gchar *identity; } PairingWaiter;
+static void pairing_waiter_free(gpointer data) {
+  PairingWaiter *w = data; nostr_nip46_bunker_request_unref(w->request); g_free(w->identity); g_free(w);
+}
+static void finish_pairing_waiters(BunkerService *s, const gchar *client, const gchar *identity, gboolean confirmed) {
+  GPtrArray *ready = g_ptr_array_new_with_free_func(pairing_waiter_free);
+  for (guint i = s->pairing_waiters->len; i > 0; i--) {
+    PairingWaiter *w = s->pairing_waiters->pdata[i - 1];
+    if ((!client || !g_strcmp0(nostr_nip46_bunker_request_client(w->request), client)) &&
+        (!identity || !g_strcmp0(w->identity, identity)))
+      g_ptr_array_add(ready, g_ptr_array_steal_index(s->pairing_waiters, i - 1));
+  }
+  for (guint i = 0; i < ready->len; i++) {
+    PairingWaiter *w = ready->pdata[i];
+    if (confirmed && s->bunker && !s->closing) request_received(s->bunker, w->request, s);
+    else nostr_nip46_bunker_request_complete(w->request, NULL, "pairing_unconfirmed");
+  }
+  g_ptr_array_unref(ready);
+}
+static const gchar *pending_ack_identity(BunkerService *s, const gchar *client) {
+  GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->rpcs);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Rpc *r = value; if (r->awaiting_ack && !g_strcmp0(r->client, client)) return r->identity;
+  }
+  g_hash_table_iter_init(&it, s->offers);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    PairOffer *o = value;
+    if (o->outbound && o->approved && !o->terminal && !g_strcmp0(o->client, client)) return o->identity;
+  }
+  return NULL;
+}
+typedef struct {
+  BunkerService *service;
+  gchar *key, *client, *identity, *attempt;
+  NostrNip46CancelHandle *cancel;
+  guint generation;
+  guint64 security_generation;
+  gboolean outbound, accepted;
+  GSource *source;
+} AckDelivery;
+static void ack_delivery_free(gpointer data) {
+  AckDelivery *d = data; nostr_nip46_cancel_handle_unref(d->cancel); service_unref(d->service);
+  g_free(d->key); g_free(d->client); g_free(d->identity); g_free(d->attempt); g_free(d);
+}
+static void pairing_status_changed(BunkerService *s) {
+  if (s->state_cb && !s->closing) s->state_cb(s->state, s->error_message, s->state_cb_ud);
+}
+static gboolean ack_on_owner(gpointer data) {
+  AckDelivery *d = data; BunkerService *s = d->service;
+  g_mutex_lock(&s->ack_mutex); g_ptr_array_remove(s->ack_sources, d->source); g_mutex_unlock(&s->ack_mutex);
+  Rpc *r = d->outbound ? NULL : g_hash_table_lookup(s->rpcs, d->key);
+  SignerApprovalService *approval = signer_get_approval_service();
+  gboolean live = !s->closing && s->generation == d->generation && approval &&
+      !signer_approval_service_is_paused(approval) && !nostr_nip46_cancel_handle_is_cancelled(d->cancel) &&
+      d->security_generation == signer_approval_service_generation(approval) &&
+      (d->outbound ? g_hash_table_contains(s->offers, d->key) : r != NULL);
+  g_autofree gchar *pinned = NULL;
+  gboolean already_paired = paired(s, d->client, &pinned);
+  gboolean active = d->outbound || (r && r->awaiting_ack) || already_paired;
+  gboolean confirmed = live && active && d->accepted && ((already_paired && !g_strcmp0(pinned, d->identity)) ||
+      (!already_paired && s->commit && s->commit(d->client, d->identity, NULL, NULL, -1, TRUE, d->attempt, s->commit_ud)));
+  if (d->outbound) {
+    finish_pairing_waiters(s, d->client, d->identity, confirmed);
+    g_hash_table_remove(s->offers, d->key);
+  } else if (r) {
+    if (r->ack_pending) r->ack_pending--;
+    if (confirmed) {
+      r->ack_accepted = TRUE; r->awaiting_ack = FALSE;
+      finish_pairing_waiters(s, d->client, d->identity, TRUE);
+    } else if (!r->ack_pending && r->awaiting_ack && !r->ack_accepted) {
+      r->awaiting_ack = FALSE; finish_pairing_waiters(s, d->client, d->identity, FALSE);
+    }
+  }
+  pairing_status_changed(s); return G_SOURCE_REMOVE;
+}
+static void ack_published(int accepted, void *data) {
+  AckDelivery *d = data; BunkerService *s = d->service; d->accepted = accepted;
+  g_mutex_lock(&s->ack_mutex);
+  if (s->closing) { g_mutex_unlock(&s->ack_mutex); ack_delivery_free(d); return; }
+  d->source = g_idle_source_new();
+  g_source_set_callback(d->source, ack_on_owner, d, ack_delivery_free);
+  g_ptr_array_add(s->ack_sources, d->source);
+  g_source_attach(d->source, s->context); g_mutex_unlock(&s->ack_mutex);
+}
+static AckDelivery *ack_delivery(BunkerService *s, const gchar *key, const gchar *client, const gchar *identity, gboolean outbound, NostrNip46CancelHandle *cancel) {
+  AckDelivery *d = g_new0(AckDelivery, 1); d->service = s; g_atomic_int_inc(&s->refs);
+  d->cancel = nostr_nip46_cancel_handle_ref(cancel);
+  d->attempt = g_compute_checksum_for_string(G_CHECKSUM_SHA256, key, -1);
+  d->key = g_strdup(key); d->client = g_strdup(client); d->identity = g_strdup(identity); d->outbound = outbound;
+  d->generation = s->generation;
+  d->security_generation = signer_approval_service_generation(signer_get_approval_service());
+  return d;
+}
 static void complete(Rpc *r, const gchar *result, const gchar *error) {
   r->completed = TRUE; r->expires = time(NULL) + FRESHNESS;
   r->result = g_strdup(result); r->error = g_strdup(error);
-  for (guint i = 0; i < r->requests->len; i++)
-    nostr_nip46_bunker_request_complete(r->requests->pdata[i], result, error);
+  gboolean ack_queued = FALSE;
+  for (guint i = 0; i < r->requests->len; i++) {
+    AckDelivery *delivery = !error && !strcmp(r->method, "connect") ? ack_delivery(r->service, r->key, r->client, r->identity, FALSE, r->delivery_cancel) : NULL;
+    gint rc = nostr_nip46_bunker_request_complete_full(r->requests->pdata[i], result, error, r->delivery_cancel,
+        delivery ? ack_published : NULL, delivery);
+    if (!rc && delivery) { ack_queued = TRUE; r->ack_pending++; }
+    if (rc && delivery) ack_delivery_free(delivery);
+  }
   g_ptr_array_set_size(r->requests, 0);
+  if (r->awaiting_ack && !ack_queued) { r->awaiting_ack = FALSE; finish_pairing_waiters(r->service, r->client, r->identity, FALSE); }
+  if (ack_queued) pairing_status_changed(r->service);
 }
 static gboolean connect_delivered(gpointer data) {
   Rpc *r = data; BunkerService *s = r->service;
   g_clear_pointer(&r->connect_delivery, g_source_unref);
   if (r->completed) return G_SOURCE_REMOVE;
   g_autofree gchar *identity = NULL;
+  g_autofree gchar *attempt = g_compute_checksum_for_string(G_CHECKSUM_SHA256, r->key, -1);
   SignerApprovalService *current = signer_get_approval_service();
   if (!current || signer_approval_service_is_paused(current) ||
       r->generation != signer_approval_service_generation(current)) complete(r, NULL, "paused");
@@ -166,13 +276,15 @@ static gboolean connect_delivered(gpointer data) {
   else if (!paired(s, r->client, &identity) &&
       (!s->commit || !s->commit(r->client, r->identity,
           r->offer_id ? ((PairOffer *)g_hash_table_lookup(s->offers, r->offer_id))->label : NULL, NULL,
-          r->offer_id ? ((PairOffer *)g_hash_table_lookup(s->offers, r->offer_id))->tier : r->pairing_tier, s->commit_ud)))
+          r->offer_id ? ((PairOffer *)g_hash_table_lookup(s->offers, r->offer_id))->tier : r->pairing_tier, FALSE, attempt, s->commit_ud)))
     complete(r, NULL, "pairing_persistence_failed");
   else {
+    r->awaiting_ack = !identity;
     if (identity) { g_free(r->identity); r->identity = g_strdup(identity); }
     PairOffer *offer = r->offer_id ? g_hash_table_lookup(s->offers, r->offer_id) : NULL;
-    if (offer) offer->consumed = TRUE;
+    if (offer) { offer->consumed = TRUE; secure_free(&offer->secret); }
     complete(r, "\"ack\"", NULL);
+    if (r->offer_id) g_hash_table_remove(s->offers, r->offer_id);
     SignerApprovalService *approval = signer_get_approval_service();
     if (approval) {
       r->generation = signer_approval_service_generation(approval);
@@ -185,7 +297,11 @@ static void gate_reply(gpointer data, const gchar *error, const gchar *message, 
   (void)message;
   Rpc *r = data; BunkerService *s = r->service;
   if (r->completed) return;
-  if (error) { complete(r, NULL, error); return; }
+  if (error) {
+    complete(r, NULL, error);
+    if (r->offer_id) bunker_service_cancel_pairing(s, r->offer_id);
+    return;
+  }
   if (!strcmp(r->method, "connect")) {
     PairOffer *offer = r->offer_id ? g_hash_table_lookup(s->offers, r->offer_id) : NULL;
     if (r->offer_id && (!offer || offer->terminal || offer->generation != s->generation || offer->deadline <= g_get_monotonic_time())) {
@@ -295,7 +411,22 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
     if (!rpc->params || g_strcmp0(rpc->params[0], s->transport_pubkey)) REJECT("invalid_transport");
     /* Token admission is checked below after deduplication; possession never
      * marks a client paired and a reserved offer cannot move to another peer. */
-  } else if (!is_paired) REJECT("not_paired");
+  } else if (!is_paired) {
+    const gchar *pending_identity = pending_ack_identity(s, client);
+    if (pending_identity) {
+      if (s->pairing_waiters->len >= 256) REJECT("rate_limited");
+      guint caller_waiters = 0;
+      for (guint i = 0; i < s->pairing_waiters->len; i++) {
+        PairingWaiter *queued = s->pairing_waiters->pdata[i];
+        if (!g_strcmp0(nostr_nip46_bunker_request_client(queued->request), client)) caller_waiters++;
+      }
+      if (caller_waiters >= 32) REJECT("rate_limited");
+      PairingWaiter *w = g_new0(PairingWaiter, 1);
+      w->request = nostr_nip46_bunker_request_ref(request); w->identity = g_strdup(pending_identity);
+      g_ptr_array_add(s->pairing_waiters, w); pairing_status_changed(s); return;
+    }
+    REJECT("not_paired");
+  }
   if (!identity || !*identity) { g_free(identity); identity = g_strdup(s->identity_npub); }
   PairOffer *offer = NULL;
   if (!strcmp(rpc->method, "connect") && !is_paired) {
@@ -385,6 +516,7 @@ static void request_received(GNostrNip46Bunker *bunker, NostrNip46BunkerRequest 
   r = g_new0(Rpc, 1); r->pairing_tier = -1; r->service = s; r->key = g_strdup(key); r->client = g_strdup(client);
   r->digest = g_strdup(digest); r->method = g_strdup(rpc->method); r->identity = g_strdup(pinned_identity);
   r->generation = generation; r->revision = revision;
+  r->delivery_cancel = nostr_nip46_cancel_handle_new();
   if (offer) {
     if (!offer->client) offer->client = g_strdup(client);
     r->offer_id = g_strdup(offer->id);
@@ -418,10 +550,21 @@ static void relay_state(GNostrNip46Bunker *bunker, const gchar *relay, const gch
   while (g_hash_table_iter_next(&it, NULL, &value)) if (!strcmp(value, "EOSE")) ready++;
   if (ready) set_state(s, ready == g_strv_length(s->relays) ? BUNKER_STATE_RUNNING : BUNKER_STATE_DEGRADED, NULL);
   else set_state(s, BUNKER_STATE_OFFLINE, "No usable relay subscription");
+  if (s->state != BUNKER_STATE_RUNNING) {
+    GList *keys = g_hash_table_get_keys(s->offers);
+    for (GList *it = keys; it; it = it->next) {
+      PairOffer *o = g_hash_table_lookup(s->offers, it->data);
+      if (o && !o->outbound) bunker_service_cancel_pairing(s, it->data);
+    }
+    g_list_free(keys);
+  }
   deliver_offers(s);
 }
 BunkerService *bunker_service_new(void) {
   BunkerService *s = g_new0(BunkerService, 1); s->refs = 1;
+  s->context = g_main_context_ref_thread_default(); g_mutex_init(&s->ack_mutex);
+  s->ack_sources = g_ptr_array_new_with_free_func((GDestroyNotify)g_source_unref);
+  s->pairing_waiters = g_ptr_array_new_with_free_func(pairing_waiter_free);
   s->offers = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, offer_free);
   s->connections = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)bunker_connection_free);
   s->rpcs = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, rpc_free);
@@ -447,7 +590,12 @@ BunkerService *bunker_service_new(void) {
   } else g_key_file_set_integer(s->seen, "meta", "version", 1);
   return s;
 }
-void bunker_service_free(BunkerService *s) { if (s) { s->closing = TRUE; bunker_service_stop(s); service_unref(s); } }
+void bunker_service_free(BunkerService *s) {
+  if (s) {
+    g_mutex_lock(&s->ack_mutex); s->closing = TRUE; g_mutex_unlock(&s->ack_mutex);
+    bunker_service_stop(s); service_unref(s);
+  }
+}
 typedef struct { BunkerService *service; guint generation; nostr_secure_buf key; gint result; } Start;
 static void start_free(gpointer data) {
   Start *job = data; secure_free(&job->key); service_unref(job->service); g_free(job);
@@ -516,7 +664,14 @@ gboolean bunker_service_start(BunkerService *s, const gchar *const *relays, cons
   JsonArray *urls = json_node_get_array(json_parser_get_root(parsed));
   g_auto(GStrv) candidate_relays = g_new0(gchar *, json_array_get_length(urls) + 1);
   for (guint i = 0; i < json_array_get_length(urls); i++) candidate_relays[i] = g_strdup(json_array_get_string_element(urls, i));
-  g_autofree gchar *candidate_identity = g_strdup(identity ? identity : "");
+  g_autofree gchar *candidate_identity = NULL;
+  if (hex64(identity)) {
+    guint8 public_key[32]; char *npub = NULL;
+    if (!nostr_hex2bin(public_key, identity, sizeof(public_key)) || nostr_nip19_encode_npub(public_key, &npub)) {
+      set_state(s, BUNKER_STATE_ERROR, "Invalid identity"); return FALSE;
+    }
+    candidate_identity = npub;
+  } else candidate_identity = g_strdup(identity ? identity : "");
   g_strfreev(s->relays); s->relays = g_steal_pointer(&candidate_relays);
   g_free(s->identity_npub); s->identity_npub = g_steal_pointer(&candidate_identity);
   Start *job = g_new0(Start, 1); job->service = s; job->generation = s->generation;
@@ -533,6 +688,7 @@ void bunker_service_stop(BunkerService *s) {
   if (!s) return;
   if (s->bunker) set_state(s, BUNKER_STATE_STOPPING, NULL);
   s->generation++;
+  finish_pairing_waiters(s, NULL, NULL, FALSE);
   GHashTableIter offers; gpointer value_offer; g_hash_table_iter_init(&offers, s->offers);
   while (g_hash_table_iter_next(&offers, NULL, &value_offer)) signer_gate_cancel(((PairOffer *)value_offer)->handle);
   g_hash_table_remove_all(s->offers);
@@ -546,6 +702,9 @@ void bunker_service_stop(BunkerService *s) {
     gnostr_nip46_bunker_stop(s->bunker);
     g_clear_object(&s->bunker);
   }
+  g_mutex_lock(&s->ack_mutex);
+  for (guint i = 0; i < s->ack_sources->len; i++) g_source_destroy(s->ack_sources->pdata[i]);
+  g_ptr_array_set_size(s->ack_sources, 0); g_mutex_unlock(&s->ack_mutex);
   s->starting = FALSE;
   g_hash_table_remove_all(s->connections); g_hash_table_remove_all(s->rpcs); g_hash_table_remove_all(s->relay_states);
   set_state(s, BUNKER_STATE_STOPPED, NULL);
@@ -564,7 +723,7 @@ gboolean bunker_service_restart(BunkerService *s) {
   return bunker_service_start(s, (const gchar *const *)relays, identity);
 }
 void bunker_service_fail_configuration(BunkerService *s) {
-  if (s) { bunker_service_stop(s); set_state(s, BUNKER_STATE_ERROR, "Invalid desired bunker configuration"); }
+  if (s) { bunker_service_stop(s); set_state(s, BUNKER_STATE_ERROR, "Could not safely apply desired bunker configuration"); }
 }
 void bunker_service_fail_transport(BunkerService *s) {
   if (s) set_state(s, BUNKER_STATE_ERROR, "Transport key reset failed");
@@ -584,6 +743,7 @@ gboolean bunker_service_disconnect_client(BunkerService *s, const gchar *client)
   if (!s || !hex64(client)) return FALSE;
   g_autofree gchar *principal = g_strdup_printf("nip46:%s", client);
   signer_gate_connection_closed(principal);
+  finish_pairing_waiters(s, client, NULL, FALSE);
   GList *offers = g_hash_table_get_keys(s->offers);
   for (GList *it = offers; it; it = it->next) {
     PairOffer *o = g_hash_table_lookup(s->offers, it->data);
@@ -662,8 +822,9 @@ gboolean bunker_service_cancel_pairing(BunkerService *s, const gchar *id) {
       if (!g_strcmp0(candidate->request_id, id)) { o = candidate; break; }
     }
   }
-  if (!o) return FALSE;
-  id = o->id;
+  if (!o || o->terminal) return FALSE;
+  g_autofree gchar *owned_id = g_strdup(o->id); id = owned_id;
+  if (o->outbound && o->client) finish_pairing_waiters(s, o->client, o->identity, FALSE);
   o->terminal = TRUE; signer_gate_cancel(o->handle);
   GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->rpcs);
   while (g_hash_table_iter_next(&it, NULL, &value)) {
@@ -691,10 +852,28 @@ gboolean bunker_service_pairing_tier(BunkerService *s, const gchar *client, gint
 }
 void bunker_service_invalidate_pairings(BunkerService *s) {
   if (!s) return;
+  GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->rpcs);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Rpc *r = value;
+    if (r->awaiting_ack) { r->awaiting_ack = FALSE; nostr_nip46_cancel_handle_cancel(r->delivery_cancel); }
+  }
+  finish_pairing_waiters(s, NULL, NULL, FALSE);
   GList *keys = g_hash_table_get_keys(s->offers);
   for (GList *it = keys; it; it = it->next) bunker_service_cancel_pairing(s, it->data);
   g_list_free(keys);
 }
+static gboolean retire_offer(gpointer data) {
+  PairOffer *o = data; g_clear_pointer(&o->delivery, g_source_unref);
+  g_hash_table_remove(o->service->offers, o->id); return G_SOURCE_REMOVE;
+}
+static void finish_offer(PairOffer *o) {
+  o->terminal = TRUE; secure_free(&o->secret);
+  if (!o->delivery) {
+    o->delivery = g_idle_source_new(); g_source_set_callback(o->delivery, retire_offer, o, NULL);
+    g_source_attach(o->delivery, o->service->context);
+  }
+}
+static void wipe_variant_string(gpointer data) { wipe(data); }
 static gboolean offer_expired(gpointer data) {
   PairOffer *o = data; bunker_service_cancel_pairing(o->service, o->id); return G_SOURCE_REMOVE;
 }
@@ -703,6 +882,9 @@ static PairOffer *offer_new(BunkerService *s, const gchar *identity, const gchar
   if (!s || s->closing || s->no_ui || !s->seen_healthy || !approval || signer_approval_service_is_paused(approval)) {
     pairing_error(error, G_IO_ERROR_NOT_CONNECTED); return NULL;
   }
+  GHashTableIter retired; gpointer old; g_hash_table_iter_init(&retired, s->offers);
+  while (g_hash_table_iter_next(&retired, NULL, &old))
+    if (((PairOffer *)old)->terminal) g_hash_table_iter_remove(&retired);
   if (g_hash_table_size(s->offers) >= 4) { pairing_error(error, G_IO_ERROR_BUSY); return NULL; }
   guint8 pubkey[32]; char *npub = NULL;
   gboolean valid = identity && (hex64(identity) ? nostr_hex2bin(pubkey, identity, sizeof(pubkey)) : !nostr_nip19_decode_npub(identity, pubkey));
@@ -716,8 +898,14 @@ static PairOffer *offer_new(BunkerService *s, const gchar *identity, const gchar
   o->security_generation = signer_approval_service_generation(approval);
   o->delivery_cancel = nostr_nip46_cancel_handle_new();
   if (!o->delivery_cancel) { offer_free(o); pairing_error(error, G_IO_ERROR_FAILED); return NULL; }
-  o->deadline = g_get_monotonic_time() + 300 * G_USEC_PER_SEC;
-  o->expiry = g_timeout_source_new_seconds(300);
+  guint ttl_ms = 300000;
+  if (nostrc_profile_guard_under_test()) {
+    const gchar *value = g_getenv("GROTTO_TEST_PAIRING_TTL_MS");
+    guint64 test_ttl = value ? g_ascii_strtoull(value, NULL, 10) : 0;
+    if (test_ttl >= 100 && test_ttl <= 300000) ttl_ms = test_ttl;
+  }
+  o->deadline = g_get_monotonic_time() + (gint64)ttl_ms * 1000;
+  o->expiry = g_timeout_source_new(ttl_ms);
   g_source_set_callback(o->expiry, offer_expired, o, NULL);
   g_source_attach(o->expiry, g_main_context_get_thread_default());
   g_hash_table_insert(s->offers, g_strdup(o->id), o); return o;
@@ -736,26 +924,29 @@ GVariant *bunker_service_create_pairing(BunkerService *s, const gchar *identity,
   if (!uri) { bunker_service_cancel_pairing(s, o->id); pairing_error(error, G_IO_ERROR_FAILED); return NULL; }
   GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&b, "{sv}", "pairing_id", g_variant_new_string(o->id));
-  g_variant_builder_add(&b, "{sv}", "uri", g_variant_new_string(uri)); wipe(uri);
-  g_variant_builder_add(&b, "{sv}", "expires_at", g_variant_new_uint64(time(NULL) + 300));
+  g_variant_builder_add(&b, "{sv}", "uri", g_variant_new_from_data(G_VARIANT_TYPE_STRING,
+      uri, strlen(uri) + 1, TRUE, wipe_variant_string, uri));
+  g_variant_builder_add(&b, "{sv}", "expires_at", g_variant_new_uint64(time(NULL) + (o->deadline - g_get_monotonic_time() + G_USEC_PER_SEC - 1) / G_USEC_PER_SEC));
   return g_variant_ref_sink(g_variant_builder_end(&b));
 }
 static void deliver_offers(BunkerService *s) {
   GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->offers);
   while (g_hash_table_iter_next(&it, NULL, &value)) {
     PairOffer *o = value;
-    if (!o->outbound || !o->approved || o->terminal || o->deadline <= g_get_monotonic_time()) continue;
+    if (!o->outbound || !o->approved || o->consumed || o->terminal || o->deadline <= g_get_monotonic_time()) continue;
     SignerApprovalService *approval = signer_get_approval_service();
-    if (!approval || signer_approval_service_is_paused(approval) || o->security_generation != signer_approval_service_generation(approval) || !paired(s, o->client, NULL)) {
-      o->terminal = TRUE; secure_free(&o->secret); continue;
+    if (!approval || signer_approval_service_is_paused(approval) || o->security_generation != signer_approval_service_generation(approval)) {
+      finish_offer(o); continue;
     }
     gboolean ready = FALSE;
     for (guint i = 0; o->relays && o->relays[i]; i++)
       if (!g_strcmp0(g_hash_table_lookup(s->relay_states, o->relays[i]), "EOSE")) ready = TRUE;
     if (!ready) continue;
-    if (!nostr_nip46_bunker_connect_response(gnostr_nip46_bunker_get_session(s->bunker), o->client, o->secret.ptr, o->delivery_cancel)) {
-      o->consumed = o->terminal = TRUE; secure_free(&o->secret);
-    }
+    AckDelivery *delivery = ack_delivery(s, o->id, o->client, o->identity, TRUE, o->delivery_cancel);
+    if (!nostr_nip46_bunker_connect_response(gnostr_nip46_bunker_get_session(s->bunker), o->client, o->secret.ptr,
+        (const gchar *const *)o->relays, g_strv_length(o->relays), o->delivery_cancel, ack_published, delivery)) {
+      o->consumed = TRUE; secure_free(&o->secret);
+    } else { ack_delivery_free(delivery); finish_offer(o); }
   }
 }
 static gboolean outbound_delivered(gpointer data) {
@@ -764,17 +955,22 @@ static gboolean outbound_delivered(gpointer data) {
   SignerApprovalService *approval = signer_get_approval_service();
   if (o->terminal || o->generation != s->generation || o->deadline <= g_get_monotonic_time() ||
       !approval || signer_approval_service_is_paused(approval) || o->security_generation != signer_approval_service_generation(approval)) {
-    o->terminal = TRUE; secure_free(&o->secret); return G_SOURCE_REMOVE;
+    finish_offer(o); return G_SOURCE_REMOVE;
   }
   o->approved = TRUE;
-  if (!s->commit || !s->commit(o->client, o->identity, o->label, (const gchar *const *)o->relays, o->tier, s->commit_ud)) {
-    o->terminal = TRUE; secure_free(&o->secret); return G_SOURCE_REMOVE;
-  }
+  g_autofree gchar *id = g_strdup(o->id);
+  g_autofree gchar *attempt = g_compute_checksum_for_string(G_CHECKSUM_SHA256, o->id, -1);
+  gboolean committed = s->commit && s->commit(o->client, o->identity, o->label,
+      (const gchar *const *)o->relays, o->tier, FALSE, attempt, s->commit_ud);
+  /* A failed live diff stops the service and may have destroyed this offer. */
+  o = g_hash_table_lookup(s->offers, id);
+  if (!o) return G_SOURCE_REMOVE;
+  if (!committed) { finish_offer(o); return G_SOURCE_REMOVE; }
   deliver_offers(s); return G_SOURCE_REMOVE;
 }
 static void outbound_reply(gpointer data, const gchar *error, const gchar *message, const gchar *result) {
   (void)message; (void)result; PairOffer *o = data;
-  if (error || o->terminal) { o->terminal = TRUE; secure_free(&o->secret); return; }
+  if (error || o->terminal) { finish_offer(o); return; }
   o->delivery = g_idle_source_new();
   g_source_set_callback(o->delivery, outbound_delivered, o, NULL);
   g_source_attach(o->delivery, g_main_context_get_thread_default());
@@ -819,6 +1015,14 @@ gboolean bunker_service_reconfigure(BunkerService *s, const gchar *const *relays
     return bunker_service_start(s, relays, identity);
   }
   if (nostr_nip46_bunker_reconfigure_relays(gnostr_nip46_bunker_get_session(s->bunker), relays, g_strv_length((gchar **)relays))) return FALSE;
+  for (guint i = s->pairing_waiters->len; i > 0; i--) {
+    PairingWaiter *w = s->pairing_waiters->pdata[i - 1];
+    const gchar *source = nostr_nip46_bunker_request_relay(w->request);
+    if (source && !g_strv_contains(relays, source)) {
+      nostr_nip46_bunker_request_complete(w->request, NULL, "relay_removed");
+      g_ptr_array_remove_index(s->pairing_waiters, i - 1);
+    }
+  }
   GHashTableIter requests; gpointer value; g_hash_table_iter_init(&requests, s->rpcs);
   while (g_hash_table_iter_next(&requests, NULL, &value)) {
     Rpc *r = value; if (r->completed) continue;
@@ -840,6 +1044,17 @@ gboolean bunker_service_reconfigure(BunkerService *s, const gchar *const *relays
   set_state(s, ready ? (ready == g_strv_length(s->relays) ? BUNKER_STATE_RUNNING : BUNKER_STATE_DEGRADED) : BUNKER_STATE_STARTING, NULL);
   return TRUE;
 }
+guint bunker_service_pending_acks(BunkerService *s) {
+  if (!s) return 0;
+  guint count = 0; GHashTableIter it; gpointer value; g_hash_table_iter_init(&it, s->rpcs);
+  while (g_hash_table_iter_next(&it, NULL, &value)) count += ((Rpc *)value)->ack_pending;
+  g_hash_table_iter_init(&it, s->offers);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    PairOffer *o = value; if (o->outbound && o->consumed && !o->terminal) count++;
+  }
+  return count;
+}
+guint bunker_service_pending_pairing_requests(BunkerService *s) { return s ? s->pairing_waiters->len : 0; }
 GVariant *bunker_service_relay_status(BunkerService *s) {
   GVariantBuilder rows; g_variant_builder_init(&rows, G_VARIANT_TYPE("a{ss}"));
   for (guint i = 0; s && s->relays && s->relays[i]; i++) {
