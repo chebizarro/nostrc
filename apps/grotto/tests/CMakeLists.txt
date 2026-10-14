@@ -338,6 +338,17 @@ set_tests_properties(signer/secure-mem PROPERTIES
 )
 
 # ==============================================================================
+# Test: native camera frame path (OC-8), without camera hardware or a relay.
+if(GST_FOUND AND ZBAR_FOUND AND QRENCODE_FOUND)
+  add_executable(test-qr-scanner test-qr-scanner.c ../src/qr-scanner.c ../src/qr-code.c ../src/pairing_uri.c)
+  target_include_directories(test-qr-scanner PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}/tests/common)
+  target_compile_definitions(test-qr-scanner PRIVATE HAVE_GSTREAMER=1 HAVE_ZBAR=1 HAVE_QRENCODE=1 GROTTO_QR_TESTING=1)
+  target_link_libraries(test-qr-scanner PRIVATE ${SIGNER_TEST_LIBS} PkgConfig::GTK4 PkgConfig::GST PkgConfig::ZBAR PkgConfig::QRENCODE nostr_nip46_core)
+  apply_test_sanitizers(test-qr-scanner)
+  add_test(NAME signer/qr-scanner COMMAND test-qr-scanner)
+  set_tests_properties(signer/qr-scanner PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 LABELS "signer;ui;camera" ENVIRONMENT "${_UI_TEST_ENV}")
+endif()
+
 # Test: Social Recovery (Shamir's Secret Sharing)
 # Issue: nostrc-e9a
 # ==============================================================================
@@ -395,6 +406,11 @@ add_custom_target(signer-tests
 )
 
 # ==============================================================================
+# Camera fixture is part of the same convenience build on supported GUI builds.
+if(TARGET test-qr-scanner)
+  add_dependencies(signer-tests test-qr-scanner)
+endif()
+
 # Fuzz Testing Targets (optional, requires Clang and -DBUILD_FUZZ_TARGETS=ON)
 # Issue: nostrc-p7f6
 # ==============================================================================
@@ -487,7 +503,7 @@ if (TARGET grotto_control_core AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_def
     add_test(NAME signer/${suite} COMMAND test-${suite})
     set_tests_properties(signer/${suite} PROPERTIES
       TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;control;integration"
-      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/../data;GSETTINGS_BACKEND=memory")
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto;GSETTINGS_BACKEND=memory")
   endforeach()
   add_dependencies(signer-tests test-clients test-activity)
 endif()

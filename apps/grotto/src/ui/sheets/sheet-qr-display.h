@@ -57,5 +57,7 @@ void sheet_qr_display_set_ncryptsec(SheetQrDisplay *self,
 void sheet_qr_display_set_bunker_uri(SheetQrDisplay *self,
                                       const gchar *bunker_uri);
 
+/* Binds a daemon-issued single-use offer to this sheet's close/expiry. */
+void sheet_qr_display_set_pairing(SheetQrDisplay *, GDBusConnection *, const gchar *pairing_id, guint64 expires_at);
 G_END_DECLS
 #endif /* APPS_GNOSTR_SIGNER_UI_SHEETS_SHEET_QR_DISPLAY_H */

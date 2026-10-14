@@ -1,4 +1,5 @@
 #include "signer-window.h"
+#include "pairing-flow.h"
 #include "app-resources.h"
 #include "page-permissions.h"
 #include "page-applications.h"
@@ -274,10 +275,15 @@ static void on_win_show_shortcuts(GSimpleAction *action, GVariant *param, gpoint
   g_object_unref(builder);
 }
 
+static void on_pair_application(GSimpleAction *action, GVariant *parameter, gpointer data) {
+  (void)action; (void)parameter; grotto_pairing_present(GTK_WIDGET(data), NULL);
+}
+
 /* Setup window-level actions and keyboard shortcuts using GtkShortcutController */
 static void setup_window_shortcuts(SignerWindow *self) {
   /* Add window-level actions */
   static const GActionEntry win_entries[] = {
+    { "pair-application", on_pair_application, NULL, NULL, NULL },
     { "new-profile", on_win_new_profile, NULL, NULL, NULL },
     { "import-profile", on_win_import_profile, NULL, NULL, NULL },
     { "export", on_win_export, NULL, NULL, NULL },
@@ -525,6 +531,7 @@ static void signer_window_init(SignerWindow *self) {
     g_menu_append(profile_section, "New Profile\tCtrl+N", "win.new-profile");
     g_menu_append(profile_section, "Import Profile\tCtrl+I", "win.import-profile");
     g_menu_append(profile_section, "Export/Backup\tCtrl+E", "win.export");
+    g_menu_append(profile_section, "Connect an application…", "win.pair-application");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
     g_object_unref(profile_section);
 

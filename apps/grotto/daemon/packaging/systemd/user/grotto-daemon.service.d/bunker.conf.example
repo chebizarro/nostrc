@@ -1,6 +1,7 @@
 # Install as ~/.config/systemd/user/grotto-daemon.service.d/bunker.conf,
 # then systemctl --user daemon-reload && systemctl --user restart grotto-daemon.
-# Requires enabled GSettings, explicit relays/default identity and a persistent
+# Requires bunker.ini enabled=true (or legacy enabled GSettings), explicit
+# signer/client relays, an explicitly selected pairing identity, and a persistent
 # transport credential created by authenticated ResetBunkerEndpoint.
 # Legacy allowed pubkeys are admission-only: a new connect still needs review.
 # Global auto-approve kinds and GUI client sessions never grant signing access.
@@ -12,3 +13,9 @@ ExecStart=
 ExecStart=/usr/bin/grotto-daemon --bunker
 # The base unit only permits loopback; enabling remote signing is explicit.
 IPAddressDeny=
+# Clears the deny-all restriction for BOTH signer-wide and per-client relays.
+# Connections are direct: no Tor/Orbot or automatic public relay fallback.
+# Headless alternative (replace the ExecStart above, not an extra process):
+# ExecStart=/usr/bin/grotto-daemon --bunker --no-approval-ui
+# Provision clients.ini pairings and scoped permissions first. New pairings
+# and anything requiring review fail closed without an approval UI.

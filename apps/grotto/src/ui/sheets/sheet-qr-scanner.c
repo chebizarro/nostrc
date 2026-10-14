@@ -9,6 +9,8 @@
 #include "../app-resources.h"
 #include "../../qr-code.h"
 #include "../../qr-scanner.h"
+#include "../../pairing_uri.h"
+#include <secure_buf.h>
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -38,6 +40,7 @@ struct _SheetQrScanner {
   /* Scanning state */
   gchar *scanned_data;
   GnQrContentType scanned_type;
+  gboolean closed;
 
   /* Cancels the file chooser when the dialog is closed (nostrc-xfic) */
   GCancellable *file_cancellable;
@@ -90,7 +93,7 @@ static void handle_scan_result(SheetQrScanner *self, GnQrScanResult *result) {
 
   /* The template children are cleared when the dialog is disposed; an
    * async completion that arrives after close must not touch them. */
-  if (!self->status_label) return;
+  if (self->closed || !self->status_label) return;
 
   /* Check if type is accepted */
   if (!is_type_accepted(self, result->type)) {
@@ -312,12 +315,24 @@ static void on_back_clicked(GtkButton *btn, gpointer user_data) {
 
 /* Show result page */
 static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType type) {
+  g_autofree gchar *pairing_preview = NULL;
+  if (type == GN_QR_TYPE_BUNKER_URI) {
+    NostrNip46ConnectURI uri;
+    if (!grotto_connect_parse(data, &uri, NULL)) {
+      gtk_label_set_text(GTK_LABEL(self->status_label), "Use an application's nostrconnect:// link with an explicit client key, secret and supported relays."); return;
+    }
+    g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
+    pairing_preview = g_strdup_printf("Client: %s\nName (unverified): %s\nRelays:\n%s\nPermissions are hints only. No relay has been contacted for this link.", uri.client_pubkey_hex, uri.name ? uri.name : "Not supplied", relays);
+    grotto_connect_clear(&uri);
+    gtk_button_set_label(GTK_BUTTON(self->btn_import), "Choose identity");
+  }
   /* Stop camera if running */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {
     gn_qr_scanner_stop(GN_QR_SCANNER(self->scanner_widget));
   }
 
   /* Store result */
+  if (self->scanned_data) secure_wipe(self->scanned_data, strlen(self->scanned_data));
   g_free(self->scanned_data);
   self->scanned_data = g_strdup(data);
   self->scanned_type = type;
@@ -328,7 +343,8 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
                        gn_qr_content_type_name(type));
   }
 
-  if (self->result_data_label) {
+  if (self->result_data_label && pairing_preview) gtk_label_set_text(GTK_LABEL(self->result_data_label), pairing_preview);
+  else if (self->result_data_label) {
     gsize len = strlen(data);
     if (len > 50) {
       g_autofree gchar *truncated = g_strdup_printf("%.25s...%.15s", data, data + len - 15);
@@ -363,6 +379,7 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
 
 /* Show scanner page */
 static void show_scanner(SheetQrScanner *self) {
+  if (self->scanned_data) secure_wipe(self->scanned_data, strlen(self->scanned_data));
   g_free(self->scanned_data);
   self->scanned_data = NULL;
   self->scanned_type = GN_QR_TYPE_UNKNOWN;
@@ -371,9 +388,21 @@ static void show_scanner(SheetQrScanner *self) {
   gtk_stack_set_visible_child_name(GTK_STACK(self->stack), "scanner");
 }
 
+static void scanner_closed(AdwDialog *dialog, gpointer unused) {
+  (void)unused; SheetQrScanner *self = SHEET_QR_SCANNER(dialog);
+  if (self->closed) return;
+  self->closed = TRUE;
+  if (self->file_cancellable) g_cancellable_cancel(self->file_cancellable);
+  if (self->scanner_widget) gn_qr_scanner_stop(GN_QR_SCANNER(self->scanner_widget));
+  if (self->scanned_data) secure_wipe(self->scanned_data, strlen(self->scanned_data));
+  g_clear_pointer(&self->scanned_data, g_free);
+  if (self->result_data_label) gtk_label_set_text(GTK_LABEL(self->result_data_label), "");
+  self->on_success = NULL;
+}
 static void sheet_qr_scanner_dispose(GObject *object) {
   SheetQrScanner *self = SHEET_QR_SCANNER(object);
 
+  scanner_closed(ADW_DIALOG(self), NULL);
   /* Cancel any in-flight file chooser; its callback holds a ref on this
    * dialog and runs anyway, but with the template children cleared. */
   if (self->file_cancellable) {
@@ -418,6 +447,7 @@ static void sheet_qr_scanner_class_init(SheetQrScannerClass *klass) {
 
 static void sheet_qr_scanner_init(SheetQrScanner *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self, "closed", G_CALLBACK(scanner_closed), NULL);
 
   self->scanned_data = NULL;
   self->scanned_type = GN_QR_TYPE_UNKNOWN;

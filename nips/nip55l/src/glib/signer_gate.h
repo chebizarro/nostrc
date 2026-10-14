@@ -31,6 +31,7 @@ typedef enum {
 typedef struct {
   SignerTransport transport;
   gboolean no_identity; /* only CONNECT/PING; selector must be empty */
+  const gchar *const *pairing_relays; /* CONNECT/NIP46 preview only; no authority */
   const gchar *claimed_name; /* untrusted display label, never a credential */
   const gchar *reason;
   const gchar *purpose;
@@ -49,6 +50,8 @@ typedef void (*SignerGateReplyFn)(gpointer user_data, const gchar *error_name,
 SignerGateHandle *signer_gate_handle_ref(SignerGateHandle *handle);
 void signer_gate_handle_unref(SignerGateHandle *handle);
 void signer_gate_cancel(SignerGateHandle *handle);
+/* Owner-context snapshot; NULL once completed. Caller frees. */
+gchar *signer_gate_handle_request_id(SignerGateHandle *handle);
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(SignerGateHandle, signer_gate_handle_unref)
 
 /* Existing arguments preserved; the new return value is an owned cancel

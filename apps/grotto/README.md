@@ -160,6 +160,10 @@ make macos-dmg-notarized
 
 See [packaging/macos/README.md](packaging/macos/README.md) for detailed macOS packaging documentation.
 
+## Remote application pairing
+
+The window menu's **Connect an application…** opens paste, native camera/image scan, explicit identity selection, shared pairing review, and daemon-issued single-use QR offers. Relay settings apply without a daemon restart. See [pairing, headless configuration, and the systemd operator check](docs/pairing.md). Linux GUI builds require libqrencode, zbar, and GStreamer (core/video/appsink plus the native capture/base/good runtime plugins).
+
 ## Usage
 
 ### Running the Application

@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
     libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
-    libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev \
+    libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev libzbar-dev \
     gettext locales desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
     blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
     # W27 voice messages (groundhog-ci.yml sanitizer job)

@@ -16,7 +16,11 @@ Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                libwebsockets-dev,
                libnsync-dev,
-               libp11-kit-dev
+               libp11-kit-dev,
+               libqrencode-dev,
+               libzbar-dev,
+               libgstreamer1.0-dev,
+               libgstreamer-plugins-base1.0-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/gnostr-org/grotto
 Vcs-Browser: https://github.com/gnostr-org/grotto
@@ -32,11 +36,13 @@ Depends: ${shlibs:Depends},
          libglib2.0-0,
          libjson-glib-1.0-0,
          libsecret-1-0,
+         libzbar0,
+         gstreamer1.0-plugins-base,
+         gstreamer1.0-plugins-good,
          gnome-keyring | kwalletd5
 Recommends: libsecp256k1-1,
             libsodium23,
             libwebsockets16 | libwebsockets17 | libwebsockets19
-Suggests: tor
 Description: Secure Nostr identity management and signing service
  Grotto is a GTK4/libadwaita application for managing Nostr identities
  and signing events. It keeps your private keys safe while allowing Nostr

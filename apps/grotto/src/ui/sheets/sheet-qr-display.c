@@ -5,6 +5,7 @@
 #include "sheet-qr-display.h"
 #include "../app-resources.h"
 #include "../../qr-code.h"
+#include <secure_buf.h>
 
 #include <gtk/gtk.h>
 #include <adwaita.h>
@@ -32,6 +33,11 @@ struct _SheetQrDisplay {
   gchar *current_data;
   GnQrContentType current_type;
   GdkTexture *qr_texture;
+  GDBusConnection *pairing_bus;
+  gchar *pairing_id;
+  guint expiry, copy_feedback, status_subscription, owner_watch;
+  gboolean status_pending, status_dirty;
+  GdkContentProvider *clipboard_content;
 };
 
 G_DEFINE_TYPE(SheetQrDisplay, sheet_qr_display, ADW_TYPE_DIALOG)
@@ -44,7 +50,8 @@ static void hide_warning(SheetQrDisplay *self);
 /* Reset copy button callback */
 static gboolean reset_copy_button_cb(gpointer data) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(data);
-  if (GTK_IS_BUTTON(self->btn_copy)) {
+  self->copy_feedback = 0;
+  if (self->current_data && GTK_IS_BUTTON(self->btn_copy)) {
     gtk_button_set_label(GTK_BUTTON(self->btn_copy), "Copy to Clipboard");
     gtk_widget_remove_css_class(self->btn_copy, "success");
   }
@@ -59,7 +66,11 @@ static void copy_to_clipboard(SheetQrDisplay *self) {
   GdkDisplay *dpy = gtk_widget_get_display(w);
   if (dpy) {
     GdkClipboard *cb = gdk_display_get_clipboard(dpy);
-    if (cb) gdk_clipboard_set_text(cb, self->current_data);
+    if (cb) {
+      g_clear_object(&self->clipboard_content);
+      self->clipboard_content = gdk_content_provider_new_typed(G_TYPE_STRING, self->current_data);
+      gdk_clipboard_set_content(cb, self->clipboard_content);
+    }
   }
 
   /* Show brief feedback */
@@ -67,7 +78,8 @@ static void copy_to_clipboard(SheetQrDisplay *self) {
   gtk_widget_add_css_class(self->btn_copy, "success");
 
   /* Reset after delay */
-  g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 2, reset_copy_button_cb,
+  if (self->copy_feedback) g_source_remove(self->copy_feedback);
+  self->copy_feedback = g_timeout_add_seconds_full(G_PRIORITY_DEFAULT, 2, reset_copy_button_cb,
                              g_object_ref(self), g_object_unref);
 }
 
@@ -84,11 +96,74 @@ static void on_close_clicked(GtkButton *btn, gpointer user_data) {
   adw_dialog_close(ADW_DIALOG(self));
 }
 
+static void pairing_closed(AdwDialog *dialog, gpointer unused) {
+  (void)unused; SheetQrDisplay *self = SHEET_QR_DISPLAY(dialog);
+  if (!self->current_data && !self->pairing_id && !self->expiry && !self->clipboard_content && !self->copy_feedback && !self->status_subscription && !self->owner_watch) return;
+  if (self->copy_feedback) { guint id = self->copy_feedback; self->copy_feedback = 0; g_source_remove(id); }
+  if (self->expiry) { g_source_remove(self->expiry); self->expiry = 0; }
+  if (self->pairing_id && self->pairing_bus) g_dbus_connection_call(self->pairing_bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "CancelPairing", g_variant_new("(s)", self->pairing_id), NULL, G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL, NULL);
+  if (self->status_subscription && self->pairing_bus) g_dbus_connection_signal_unsubscribe(self->pairing_bus, self->status_subscription);
+  self->status_subscription = 0;
+  if (self->owner_watch) { g_bus_unwatch_name(self->owner_watch); self->owner_watch = 0; }
+  g_clear_pointer(&self->pairing_id, g_free); g_clear_object(&self->pairing_bus);
+  if (self->clipboard_content) {
+    GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(self));
+    if (gdk_clipboard_get_content(clipboard) == self->clipboard_content) gdk_clipboard_set_content(clipboard, NULL);
+    g_clear_object(&self->clipboard_content);
+  }
+  if (self->current_data) secure_wipe(self->current_data, strlen(self->current_data));
+  g_clear_pointer(&self->current_data, g_free);
+  gtk_label_set_text(GTK_LABEL(self->data_label), "");
+  gtk_picture_set_paintable(GTK_PICTURE(self->qr_picture), NULL); g_clear_object(&self->qr_texture);
+}
+static gboolean pairing_expired(gpointer data) {
+  SheetQrDisplay *self = data; self->expiry = 0; adw_dialog_close(ADW_DIALOG(self)); return G_SOURCE_REMOVE;
+}
+static void pairing_status_changed(GDBusConnection *, const gchar *, const gchar *, const gchar *, const gchar *, GVariant *, gpointer);
+static void pairing_owner_vanished(GDBusConnection *bus, const gchar *name, gpointer data) {
+  (void)bus; (void)name; SheetQrDisplay *self = data;
+  pairing_closed(ADW_DIALOG(self), NULL); adw_dialog_close(ADW_DIALOG(self));
+}
+static void pairing_status_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  SheetQrDisplay *self = data; self->status_pending = FALSE;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  if (self->pairing_id) {
+    const gchar *state = NULL; g_autoptr(GVariant) row = reply ? g_variant_get_child_value(reply, 0) : NULL;
+    if (!row || !g_variant_lookup(row, "bunker_state", "&s", &state) || g_strcmp0(state, "LISTENING")) {
+      pairing_closed(ADW_DIALOG(self), NULL); adw_dialog_close(ADW_DIALOG(self));
+    }
+  }
+  if (self->pairing_id && self->status_dirty) {
+    self->status_dirty = FALSE;
+    pairing_status_changed(G_DBUS_CONNECTION(source), NULL, NULL, NULL, NULL, NULL, self);
+  }
+  g_object_unref(self);
+}
+static void pairing_status_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
+    const gchar *interface, const gchar *signal, GVariant *parameters, gpointer data) {
+  (void)sender; (void)path; (void)interface; (void)signal; (void)parameters;
+  SheetQrDisplay *self = data;
+  if (!self->pairing_id) return;
+  if (self->status_pending) { self->status_dirty = TRUE; return; }
+  self->status_pending = TRUE;
+  g_dbus_connection_call(bus, "org.nostr.Signer", "/org/nostr/signer/grotto", "org.nostr.Grotto.Control1", "GetStatus",
+      NULL, G_VARIANT_TYPE("(a{sv})"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, pairing_status_ready, g_object_ref(self));
+}
+void sheet_qr_display_set_pairing(SheetQrDisplay *self, GDBusConnection *bus, const gchar *id, guint64 expires_at) {
+  g_set_object(&self->pairing_bus, bus); self->pairing_id = g_strdup(id);
+  self->status_subscription = g_dbus_connection_signal_subscribe(bus, "org.nostr.Signer", "org.nostr.Grotto.Control1",
+      "StatusChanged", "/org/nostr/signer/grotto", NULL, G_DBUS_SIGNAL_FLAGS_NONE, pairing_status_changed, self, NULL);
+  self->owner_watch = g_bus_watch_name_on_connection(bus, "org.nostr.Signer", G_BUS_NAME_WATCHER_FLAGS_NONE,
+      NULL, pairing_owner_vanished, self, NULL);
+  pairing_status_changed(bus, NULL, NULL, NULL, NULL, NULL, self);
+  guint64 now = g_get_real_time() / G_USEC_PER_SEC;
+  self->expiry = g_timeout_add_seconds(MAX(1, MIN(300, expires_at > now ? expires_at - now : 1)), pairing_expired, self);
+  show_warning(self, "Single-use link. Expires in five minutes or when this sheet closes. Sharing it only requests a pairing review; it never grants signing permissions.");
+}
 static void sheet_qr_display_dispose(GObject *object) {
   SheetQrDisplay *self = SHEET_QR_DISPLAY(object);
 
-  g_clear_pointer(&self->current_data, g_free);
-  g_clear_object(&self->qr_texture);
+  pairing_closed(ADW_DIALOG(self), NULL);
 
   G_OBJECT_CLASS(sheet_qr_display_parent_class)->dispose(object);
 }
@@ -117,6 +192,7 @@ static void sheet_qr_display_class_init(SheetQrDisplayClass *klass) {
 
 static void sheet_qr_display_init(SheetQrDisplay *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
+  g_signal_connect(self, "closed", G_CALLBACK(pairing_closed), NULL);
 
   self->current_data = NULL;
   self->current_type = GN_QR_TYPE_UNKNOWN;
@@ -201,6 +277,7 @@ void sheet_qr_display_set_data(SheetQrDisplay *self,
                                 const gchar *title) {
   g_return_if_fail(SHEET_IS_QR_DISPLAY(self));
 
+  if (self->current_data) secure_wipe(self->current_data, strlen(self->current_data));
   g_free(self->current_data);
   self->current_data = g_strdup(data);
   self->current_type = type;

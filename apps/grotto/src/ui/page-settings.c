@@ -1,5 +1,6 @@
 /* Settings page controller: wires buttons to open sheets */
 #include "page-settings.h"
+#include "sheets/sheet-create-bunker.h"
 #include "app-resources.h"
 #include "sheets/sheet-select-account.h"
 #include "sheets/sheet-import-key.h"
@@ -463,21 +464,7 @@ static void on_orbot_setup(GtkButton *b, gpointer user_data){
 static void on_relays(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
 
-  /* Get the currently active npub for per-identity relay config */
-  gchar *npub = NULL;
-  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
-
-  SheetRelayConfig *dlg;
-  if (rc == SECRET_STORE_OK && npub && *npub) {
-    /* Open relay config for this identity */
-    dlg = sheet_relay_config_new_for_identity(npub);
-    g_free(npub);
-  } else {
-    /* No active identity, open global relay config */
-    dlg = sheet_relay_config_new();
-  }
-
-  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+  adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 /* Create a log entry row widget */
 static GtkWidget *create_log_entry_row(GnEventHistoryEntry *entry) {

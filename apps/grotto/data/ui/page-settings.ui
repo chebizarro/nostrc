@@ -327,6 +327,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </accessibility>
         <child>
           <object class="AdwActionRow">
+            <property name="visible">false</property>
             <property name="title" translatable="yes">Tor/Orbot setup</property>
             <accessibility>
               <property name="description">Configure Tor proxy settings for enhanced privacy</property>
@@ -349,9 +350,9 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwActionRow">
-            <property name="title" translatable="yes">Relays</property>
+            <property name="title" translatable="yes">Remote signing and pairing</property>
             <accessibility>
-              <property name="description">Manage Nostr relay connections for reading and writing events</property>
+              <property name="description">Configure daemon-owned remote signing relays, runtime state, and pairing links</property>
             </accessibility>
             <child type="suffix">
               <object class="GtkButton" id="btn_relays">
@@ -371,6 +372,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwActionRow">
+            <property name="visible">false</property>
             <property name="title" translatable="yes">Listen for new connections</property>
             <accessibility>
               <property name="description">Enable or disable listening for incoming connection requests from applications</property>

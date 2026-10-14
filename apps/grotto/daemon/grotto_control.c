@@ -5,6 +5,10 @@
 #include "signer_caller.h"
 #include "event_history.h"
 #include "settings_manager.h"
+#include "pairing_uri.h"
+#include "accounts_store.h"
+#include <nostrc-profile-guard.h>
+#include <glib/gstdio.h>
 #include <nostr/nip55l/signer_ops.h>
 #include <string.h>
 #include <stdlib.h>
@@ -26,8 +30,12 @@ struct _GrottoControl {
   gulong history_handler;
   guint64 requests_revision, clients_revision, status_revision, epoch_base, seen_permissions, seen_clients;
   gchar *epoch;
-  gboolean desired_bunker, client_healthy;
+  gboolean desired_bunker, client_healthy, config_healthy;
+  gchar *bunker_path;
+  gchar **bunker_relays, **bunker_methods;
+  GHashTable *accept_reviews;
 };
+static gboolean apply_bunker(GrottoControl *c);
 static SignerPermissions *permissions(GrottoControl *c) { return signer_approval_service_permissions(c->approval); }
 static void emit(GrottoControl *c, const gchar *signal, guint64 revision) {
   g_dbus_connection_emit_signal(c->connection, NULL, GROTTO_CONTROL_PATH,
@@ -48,8 +56,22 @@ static void refresh(GrottoControl *c) {
     emit(c, "ClientsChanged", ++c->clients_revision); status_changed(c);
   }
 }
+static void finish_accept_reviews(GrottoControl *c) {
+  if (!c->accept_reviews) return;
+  GHashTableIter it; gpointer key, value; g_hash_table_iter_init(&it, c->accept_reviews);
+  while (g_hash_table_iter_next(&it, &key, &value)) {
+    g_autoptr(GVariant) info = signer_approval_service_info(c->approval, key);
+    if (!info) continue;
+    /* Return only once GetApprovalInfo can render the review. Returning the
+     * preparing request ID lets the GUI tombstone it as missing before the
+     * backend's identity resolution has completed. */
+    g_dbus_method_invocation_return_value(value, g_variant_new("(s)", (const gchar *)key));
+    g_hash_table_iter_remove(&it);
+  }
+}
 static void approval_table_changed(gpointer data) {
   GrottoControl *c = data;
+  finish_accept_reviews(c);
   emit(c, "RequestsChanged", ++c->requests_revision); refresh(c); status_changed(c);
 }
 static guint64 permission_revision(GrottoControl *c) {
@@ -92,7 +114,9 @@ static GVariant *status(GrottoControl *c) {
   g_variant_builder_add(&caps, "{sb}", "export-identity", FALSE);
 #endif
   g_variant_builder_add(&caps, "{sb}", "reset-bunker-endpoint", c->bunker != NULL);
-  const gchar *disabled[] = {"bunker-configuration", "pairing", "rotate-identity", "mnemonic-export", "key-lock"};
+  g_variant_builder_add(&caps, "{sb}", "bunker-configuration", c->bunker != NULL);
+  g_variant_builder_add(&caps, "{sb}", "pairing", c->bunker != NULL);
+  const gchar *disabled[] = { "rotate-identity", "mnemonic-export", "key-lock"};
   for (guint i = 0; i < G_N_ELEMENTS(disabled); i++) g_variant_builder_add(&caps, "{sb}", disabled[i], FALSE);
   g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
   g_variant_builder_add(&row, "{sv}", "control_epoch", g_variant_new_string(c->epoch));
@@ -104,9 +128,16 @@ static GVariant *status(GrottoControl *c) {
   g_autoptr(GVariant) pending = requests(c);
   g_variant_builder_add(&row, "{sv}", "pending_count", g_variant_new_uint32(g_variant_n_children(pending)));
   g_variant_builder_add(&row, "{sv}", "bunker_enabled", g_variant_new_boolean(c->desired_bunker));
+  g_variant_builder_add(&row, "{sv}", "bunker_pending_pairing_acks", g_variant_new_uint32(bunker_service_pending_acks(c->bunker)));
+  g_variant_builder_add(&row, "{sv}", "bunker_pending_pairing_requests", g_variant_new_uint32(bunker_service_pending_pairing_requests(c->bunker)));
   g_variant_builder_add(&row, "{sv}", "bunker_state", g_variant_new_string(bunker_state(c)));
   const gchar *bunker_error = c->bunker ? bunker_service_get_error(c->bunker) : NULL;
   g_variant_builder_add(&row, "{sv}", "bunker_error", g_variant_new_string(bunker_error ? bunker_error : ""));
+  g_variant_builder_add(&row, "{sv}", "bunker_config_healthy", g_variant_new_boolean(c->config_healthy));
+  g_variant_builder_add(&row, "{sv}", "bunker_relays", g_variant_new_strv((const gchar *const *)c->bunker_relays, -1));
+  g_variant_builder_add(&row, "{sv}", "bunker_allowed_methods", g_variant_new_strv((const gchar *const *)c->bunker_methods, -1));
+  g_autoptr(GVariant) relay_states = bunker_service_relay_status(c->bunker);
+  g_variant_builder_add(&row, "{sv}", "bunker_relay_states", relay_states);
   g_variant_builder_add(&row, "{sv}", "bunker_replay_store_healthy", g_variant_new_boolean(c->bunker && bunker_service_replay_healthy(c->bunker)));
   g_variant_builder_add(&row, "{sv}", "key_state", g_variant_new_string("unknown"));
   g_variant_builder_add(&row, "{sv}", "key_lock_enforced", g_variant_new_boolean(FALSE));
@@ -124,6 +155,12 @@ static void approval_changed(gpointer data, GVariant *snapshot) {
   GrottoControl *c = data; const gchar *state = NULL;
   g_variant_lookup(snapshot, "state", "&s", &state);
   if (g_strcmp0(state, "PENDING")) {
+    const gchar *id = NULL; g_variant_lookup(snapshot, "request_id", "&s", &id);
+    GDBusMethodInvocation *waiting = id ? g_hash_table_lookup(c->accept_reviews, id) : NULL;
+    if (waiting) {
+      g_dbus_method_invocation_return_dbus_error(waiting, GROTTO_CONTROL_ERROR "NotReady", "The pairing request could not reach review");
+      g_hash_table_remove(c->accept_reviews, id);
+    }
     gboolean consented = FALSE, remember = FALSE;
     const gchar *principal = "", *transport = "", *claimed = "", *identity = "";
     g_variant_lookup(snapshot, "principal", "&s", &principal); g_variant_lookup(snapshot, "transport", "&s", &transport);
@@ -140,10 +177,6 @@ static void approval_changed(gpointer data, GVariant *snapshot) {
     if (*principal && (admission || (success && known) || (!g_strcmp0(state, "DENIED") && remember))) {
       c->client_healthy = grotto_clients_record(c->clients, principal, transport, claimed,
           *identity ? identity : NULL, admission, success, NULL);
-      const gchar *operation = NULL;
-      g_variant_lookup(snapshot, "operation", "&s", &operation);
-      if (success && admission && !g_strcmp0(operation, "connect") && g_str_has_prefix(principal, "nip46:"))
-        c->client_healthy = grotto_clients_set_pairing(c->clients, principal, TRUE, NULL, NULL);
       if (admission && c->client_healthy) signer_permissions_policy_changed(permissions(c));
     }
     gn_event_history_record_activity(c->history, snapshot);
@@ -157,6 +190,7 @@ static void error_reply(GDBusMethodInvocation *inv, GError *error) {
       case G_IO_ERROR_BUSY: name = GROTTO_CONTROL_ERROR "Conflict"; break;
       case G_IO_ERROR_INVALID_ARGUMENT: case G_IO_ERROR_INVALID_DATA: name = GROTTO_CONTROL_ERROR "InvalidInput"; break;
       case G_IO_ERROR_NOT_FOUND: name = GROTTO_CONTROL_ERROR "NotFound"; break;
+      case G_IO_ERROR_NOT_CONNECTED: name = GROTTO_CONTROL_ERROR "NotReady"; break;
       default: break;
     }
   }
@@ -164,16 +198,39 @@ static void error_reply(GDBusMethodInvocation *inv, GError *error) {
   g_dbus_method_invocation_return_dbus_error(inv, name, "Management operation failed; re-read the snapshot before retrying");
 }
 static void reply_rows(GDBusMethodInvocation *inv, GVariant *rows) {
-  g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", rows));
+  g_autoptr(GVariant) owned = g_variant_take_ref(rows);
+  g_dbus_method_invocation_return_value(inv, g_variant_new("(@aa{sv})", owned));
+}
+static void reply_dict(GDBusMethodInvocation *inv, GVariant *row) {
+  g_autoptr(GVariant) owned = g_variant_take_ref(row);
+  g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", owned));
+}
+static void pairing_reply_free(gpointer data) {
+  nostr_secure_buf *buffer = data; secure_free(buffer); g_free(buffer);
+}
+static void reply_pairing(GDBusMethodInvocation *inv, GVariant *offer) {
+  g_autoptr(GVariant) owned = g_variant_take_ref(offer);
+  g_autoptr(GVariant) tuple = g_variant_ref_sink(g_variant_new("(@a{sv})", owned));
+  nostr_secure_buf *buffer = g_new0(nostr_secure_buf, 1);
+  *buffer = secure_alloc(g_variant_get_size(tuple));
+  if (!buffer->ptr) {
+    g_free(buffer);
+    g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotReady", "Secure pairing reply allocation failed"); return;
+  }
+  g_variant_store(tuple, buffer->ptr);
+  g_dbus_method_invocation_return_value(inv, g_variant_new_from_data(g_variant_get_type(tuple),
+      buffer->ptr, buffer->len, TRUE, pairing_reply_free, buffer));
 }
 static void bunker_unavailable(GrottoControl *c, GDBusMethodInvocation *inv) {
   gboolean ready = c->bunker && bunker_service_get_state(c->bunker) == BUNKER_STATE_RUNNING;
   g_dbus_method_invocation_return_dbus_error(inv, ready ? GROTTO_CONTROL_ERROR "NotSupported" : GROTTO_CONTROL_ERROR "NotReady",
-      "Bunker management requires the G05/G06 request-aware transport and pairing implementation");
+        "Bunker management is unavailable or the endpoint reset is in progress");
 }
 static void control_unref(GrottoControl *c) {
   if (!g_atomic_int_dec_and_test(&c->refs)) return;
   grotto_clients_free(c->clients); g_clear_object(&c->history);
+    g_clear_pointer(&c->accept_reviews, g_hash_table_unref);
+  g_free(c->bunker_path); g_strfreev(c->bunker_relays); g_strfreev(c->bunker_methods);
   signer_approval_service_unref(c->approval); g_object_unref(c->connection); g_free(c->epoch); g_free(c);
 }
 typedef struct {
@@ -245,7 +302,7 @@ static void reset_finished(GObject *source, GAsyncResult *result, gpointer data)
     bunker_service_fail_transport(c->bunker);
     g_dbus_method_invocation_return_dbus_error(job->invocation, GROTTO_CONTROL_ERROR "PersistenceFailed", "New endpoint stored but replay protection could not be reset; remote signing remains disabled");
   } else {
-    if (c->desired_bunker) bunker_service_restart(c->bunker);
+    if (c->desired_bunker) apply_bunker(c);
     g_dbus_method_invocation_return_value(job->invocation, NULL);
   }
   status_changed(c);
@@ -289,6 +346,172 @@ static void reset_endpoint(GrottoControl *c, GDBusMethodInvocation *inv) {
   g_autoptr(GTask) task = g_task_new(NULL, NULL, reset_finished, NULL);
   g_task_set_task_data(task, job, reset_free); g_task_run_in_thread(task, reset_worker);
 }
+static gchar **effective_relays(GrottoControl *c, gchar **configured, const gchar *replacing, const gchar *const *replacement) {
+  GPtrArray *urls = g_ptr_array_new_with_free_func(g_free);
+  for (guint i = 0; configured && configured[i]; i++) if (!g_ptr_array_find_with_equal_func(urls, configured[i], (GEqualFunc)g_str_equal, NULL)) g_ptr_array_add(urls, g_strdup(configured[i]));
+  g_autoptr(GVariant) rows = grotto_clients_list(c->clients);
+  for (gsize i = 0; i < g_variant_n_children(rows); i++) {
+    g_autoptr(GVariant) row = g_variant_get_child_value(rows, i); gboolean paired = FALSE;
+    const gchar *principal = NULL; g_variant_lookup(row, "principal", "&s", &principal);
+    gboolean pending = FALSE; g_variant_lookup(row, "pairing-pending-ack", "b", &pending);
+    g_variant_lookup(row, "paired", "b", &paired); if ((!paired && !pending) || (replacing && !g_strcmp0(replacing, principal))) continue;
+    g_auto(GStrv) relays = NULL; g_variant_lookup(row, "relays", "^as", &relays);
+    for (guint j = 0; relays && relays[j]; j++) if (!g_ptr_array_find_with_equal_func(urls, relays[j], (GEqualFunc)g_str_equal, NULL)) g_ptr_array_add(urls, g_strdup(relays[j]));
+  }
+  for (guint i = 0; replacement && replacement[i]; i++) if (!g_ptr_array_find_with_equal_func(urls, replacement[i], (GEqualFunc)g_str_equal, NULL)) g_ptr_array_add(urls, g_strdup(replacement[i]));
+  g_ptr_array_add(urls, NULL); return (gchar **)g_ptr_array_free(urls, FALSE);
+}
+static gboolean methods_valid(gchar **methods) {
+  const gchar *supported[] = {"get_public_key", "sign_event", "nip04_encrypt", "nip04_decrypt", "nip44_encrypt", "nip44_decrypt", "ping", "get_relays", "connect", NULL};
+  if (!methods || g_strv_length(methods) > 9) return FALSE;
+  for (guint i = 0; methods[i]; i++) if (!g_strv_contains(supported, methods[i])) return FALSE;
+  return TRUE;
+}
+static gboolean apply_bunker(GrottoControl *c) {
+  if (!c->bunker) return FALSE;
+  if (!c->config_healthy) { bunker_service_fail_configuration(c->bunker); return FALSE; }
+  if (!c->desired_bunker) { bunker_service_stop(c->bunker); status_changed(c); return TRUE; }
+  g_auto(GStrv) relays = effective_relays(c, c->bunker_relays, NULL, NULL);
+  SettingsManager *sm = settings_manager_get_default();
+  g_autofree gchar *identity = g_strdup(settings_manager_get_default_identity(sm));
+  if (!identity || !*identity) { g_clear_pointer(&identity, g_free); accounts_store_get_active(accounts_store_get_default(), &identity, NULL); }
+  g_auto(GStrv) legacy = settings_manager_get_bunker_allowed_pubkeys(sm);
+  bunker_service_set_allowed_pubkeys(c->bunker, (const gchar *const *)legacy);
+  bunker_service_set_allowed_methods(c->bunker, (const gchar *const *)c->bunker_methods);
+  bunker_service_set_configured_relays(c->bunker, (const gchar *const *)c->bunker_relays);
+  gboolean ok = bunker_service_reconfigure(c->bunker, (const gchar *const *)relays, identity);
+  if (!ok && bunker_service_get_state(c->bunker) == BUNKER_STATE_STOPPED)
+    bunker_service_start(c->bunker, (const gchar *const *)relays, identity);
+  if (!ok) bunker_service_fail_configuration(c->bunker);
+  status_changed(c); return ok;
+}
+static gboolean save_bunker_config(GrottoControl *c, gboolean enabled, gchar **relays, gchar **methods, GError **error) {
+  g_autoptr(GKeyFile) file = g_key_file_new();
+  g_key_file_set_integer(file, "meta", "version", 1); g_key_file_set_boolean(file, "bunker", "enabled", enabled);
+  g_key_file_set_string_list(file, "bunker", "relays", (const gchar *const *)relays, g_strv_length(relays));
+  g_key_file_set_string_list(file, "bunker", "allowed-methods", (const gchar *const *)methods, g_strv_length(methods));
+  gsize length; g_autofree gchar *text = g_key_file_to_data(file, &length, NULL);
+  g_autofree gchar *dir = g_path_get_dirname(c->bunker_path);
+  return !nostrc_profile_guard_refuses_path(c->bunker_path) && !g_mkdir_with_parents(dir, 0700) &&
+      g_file_set_contents_full(c->bunker_path, text, length, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, error);
+}
+static gboolean pairing_commit(const gchar *client, const gchar *identity, const gchar *label,
+    const gchar *const *relays, gint tier, gboolean acknowledged, const gchar *attempt, gpointer data) {
+  GrottoControl *c = data;
+  if (c->closing || !c->desired_bunker || !c->config_healthy) return FALSE;
+  g_autofree gchar *p = g_strdup_printf("nip46:%s", client);
+  /* The gate terminal observer has persisted explicit consent and its pinned
+   * identity before the adapter's idle continuation reaches this callback. */
+  gboolean consented = FALSE;
+  grotto_clients_trust(p, &consented, c->clients);
+  if (!consented) return FALSE;
+  if (acknowledged) {
+    g_autoptr(GError) error = NULL;
+    gboolean ok = grotto_clients_ack_pairing(c->clients, p, identity, attempt, &error);
+    if (ok) { c->client_healthy = TRUE; signer_permissions_policy_changed(permissions(c)); refresh(c); }
+    else if (!g_error_matches(error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA) &&
+        !g_error_matches(error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)) { c->client_healthy = FALSE; status_changed(c); }
+    return ok;
+  }
+  if (relays) {
+    g_auto(GStrv) candidate = effective_relays(c, c->bunker_relays, p, relays);
+    if (!grotto_relays_validate((const gchar *const *)candidate, g_strv_length(candidate), NULL)) return FALSE;
+  }
+  c->client_healthy = grotto_clients_begin_pairing(c->clients, p, relays, tier, label, attempt, NULL);
+  if (!c->client_healthy) return FALSE;
+  signer_permissions_policy_changed(permissions(c)); refresh(c);
+  return !relays || apply_bunker(c);
+}
+static void load_bunker_config(GrottoControl *c, const gchar *config_home) {
+  c->bunker_path = g_build_filename(config_home ? config_home : g_get_user_config_dir(), "grotto", "bunker.ini", NULL);
+  SettingsManager *sm = settings_manager_get_default();
+  c->bunker_relays = settings_manager_get_bunker_relays(sm);
+  c->bunker_methods = settings_manager_get_bunker_allowed_methods(sm);
+  c->desired_bunker = settings_manager_get_bunker_enabled(sm); c->config_healthy = TRUE;
+  if (!g_file_test(c->bunker_path, G_FILE_TEST_EXISTS)) return;
+  g_autoptr(GKeyFile) file = g_key_file_new(); g_autoptr(GError) error = NULL;
+  c->config_healthy = !nostrc_profile_guard_refuses_path(c->bunker_path) &&
+      g_key_file_load_from_file(file, c->bunker_path, G_KEY_FILE_NONE, NULL) && g_key_file_get_integer(file, "meta", "version", NULL) == 1;
+  if (!c->config_healthy) return;
+  gboolean enabled = g_key_file_get_boolean(file, "bunker", "enabled", &error);
+  g_auto(GStrv) relays = g_key_file_get_string_list(file, "bunker", "relays", NULL, NULL);
+  g_auto(GStrv) methods = g_key_file_get_string_list(file, "bunker", "allowed-methods", NULL, NULL);
+  c->config_healthy = !error && relays && methods_valid(methods) &&
+      (!relays[0] || grotto_relays_validate((const gchar *const *)relays, g_strv_length(relays), NULL));
+  if (!c->config_healthy) return;
+  c->desired_bunker = enabled;
+  g_strfreev(c->bunker_relays); c->bunker_relays = g_steal_pointer(&relays);
+  g_strfreev(c->bunker_methods); c->bunker_methods = g_steal_pointer(&methods);
+}
+static gboolean configure_bunker(GrottoControl *c, GVariant *config, GError **error) {
+  GVariantIter it; const gchar *key; GVariant *value;
+  g_variant_iter_init(&it, config);
+  while (g_variant_iter_next(&it, "{&sv}", &key, &value)) {
+    gboolean valid = (!strcmp(key, "enabled") && g_variant_is_of_type(value, G_VARIANT_TYPE_BOOLEAN)) ||
+        ((!strcmp(key, "relays") || !strcmp(key, "allowed-methods")) && g_variant_is_of_type(value, G_VARIANT_TYPE_STRING_ARRAY));
+    g_variant_unref(value);
+    if (!valid) { g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Unknown configuration field or wrong type"); return FALSE; }
+  }
+  gboolean enabled; g_auto(GStrv) relays = NULL, methods = NULL;
+  if (!g_variant_lookup(config, "enabled", "b", &enabled) || !g_variant_lookup(config, "relays", "^as", &relays) ||
+      !g_variant_lookup(config, "allowed-methods", "^as", &methods) || !methods_valid(methods) ||
+      (relays[0] && !grotto_relays_validate((const gchar *const *)relays, g_strv_length(relays), NULL))) {
+    g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_INVALID_ARGUMENT, "Full valid bunker configuration required"); return FALSE;
+  }
+  g_auto(GStrv) effective = effective_relays(c, relays, NULL, NULL);
+  if (enabled && !grotto_relays_validate((const gchar *const *)effective, g_strv_length(effective), error)) return FALSE;
+  if (!save_bunker_config(c, enabled, relays, methods, error)) return FALSE;
+  if (c->desired_bunker != enabled || !g_strv_equal((const gchar *const *)c->bunker_relays, (const gchar *const *)relays) ||
+      !g_strv_equal((const gchar *const *)c->bunker_methods, (const gchar *const *)methods)) {
+    bunker_service_invalidate_pairings(c->bunker); signer_permissions_policy_changed(permissions(c));
+  }
+  c->desired_bunker = enabled; c->config_healthy = TRUE;
+  g_strfreev(c->bunker_relays); c->bunker_relays = g_steal_pointer(&relays);
+  g_strfreev(c->bunker_methods); c->bunker_methods = g_steal_pointer(&methods);
+  /* Desired state is durable even if the runtime fails. GetStatus reports the
+   * divergence; never roll back a user's explicit disable after an I/O error. */
+  apply_bunker(c); return TRUE;
+}
+typedef struct { GrottoControl *control; GDBusMethodInvocation *inv; gchar *identity, *label, *npub, *uri; gint rc; } PairingIdentity;
+static void pairing_identity_free(gpointer data) {
+  PairingIdentity *job = data; control_unref(job->control); g_object_unref(job->inv);
+  g_free(job->identity); g_free(job->label); free(job->npub);
+  if (job->uri) { secure_wipe(job->uri, strlen(job->uri)); g_free(job->uri); } g_free(job);
+}
+static void pairing_identity_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
+  (void)source; (void)cancel; PairingIdentity *job = data; char *selector = NULL;
+  job->rc = nostr_nip55l_normalize_selector(job->identity, &selector, &job->npub);
+  free(selector); g_task_return_boolean(task, TRUE);
+}
+static void pairing_identity_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source; (void)data; PairingIdentity *job = g_task_get_task_data(G_TASK(result));
+  GrottoControl *c = job->control; g_autoptr(GError) error = NULL;
+  if (c->closing || c->reset_busy || job->rc || !job->npub ||
+      accounts_store_is_watch_only(accounts_store_get_default(), job->npub)) {
+    g_dbus_method_invocation_return_dbus_error(job->inv, GROTTO_CONTROL_ERROR "NotReady", "The selected stored identity is unavailable"); return;
+  }
+  if (job->uri) {
+    if (!c->desired_bunker) {
+      g_dbus_method_invocation_return_dbus_error(job->inv, GROTTO_CONTROL_ERROR "NotReady", "Enable remote signing before pairing an application"); return;
+    }
+    g_autofree gchar *id = bunker_service_accept_connect_uri(c->bunker, job->uri, job->npub, &error);
+    if (!id) { error_reply(job->inv, error); return; }
+    g_hash_table_insert(c->accept_reviews, g_strdup(id), g_object_ref(job->inv));
+    finish_accept_reviews(c); return;
+  }
+  GVariant *offer = bunker_service_create_pairing(c->bunker, job->npub, job->label, &error);
+  if (!offer) { error_reply(job->inv, error); return; }
+  reply_pairing(job->inv, offer);
+}
+static void create_pairing(GrottoControl *c, GDBusMethodInvocation *inv, const gchar *identity, const gchar *label, const gchar *uri) {
+  if (!*identity || strlen(identity) > 4096 || strlen(label) > 160 || !g_utf8_validate(label, -1, NULL)) {
+    g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Pairing requires an explicit stored identity and a bounded client label"); return;
+  }
+  PairingIdentity *job = g_new0(PairingIdentity, 1); job->control = c; g_atomic_int_inc(&c->refs);
+  job->inv = g_object_ref(inv); job->identity = g_strdup(identity); job->label = g_strdup(label); job->uri = g_strdup(uri);
+  g_autoptr(GTask) task = g_task_new(NULL, NULL, pairing_identity_ready, NULL);
+  g_task_set_task_data(task, job, pairing_identity_free); g_task_run_in_thread(task, pairing_identity_worker);
+}
 static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *path,
     const gchar *interface, const gchar *method, GVariant *args, GDBusMethodInvocation *inv, gpointer data) {
   (void)path; (void)interface; GrottoControl *c = data;
@@ -303,7 +526,7 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
   }
   g_autoptr(GError) error = NULL;
   if (!strcmp(method, "GetStatus")) {
-    g_dbus_method_invocation_return_value(inv, g_variant_new("(@a{sv})", status(c))); return;
+    reply_dict(inv, status(c)); return;
   }
   if (!strcmp(method, "ListRequests")) { reply_rows(inv, requests(c)); return; }
   if (!strcmp(method, "ListClients")) {
@@ -352,8 +575,10 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     if (!strcmp(method, "SetClientLabel")) ok = grotto_clients_set_label(c->clients, p, value, &error);
     else {
       SignerTrustTier tier = !strcmp(value, "low") ? SIGNER_TRUST_LOW : !strcmp(value, "medium") ? SIGNER_TRUST_MEDIUM : !strcmp(value, "full") ? SIGNER_TRUST_FULL : -1;
-      ok = grotto_clients_set_tier(c->clients, p, tier, &error);
-      if (ok) signer_permissions_policy_changed(permissions(c));
+      gboolean consented = FALSE; grotto_clients_trust(p, &consented, c->clients);
+      gboolean staged = !consented && g_str_has_prefix(p, "nip46:") && bunker_service_pairing_tier(c->bunker, p + 6, tier);
+      ok = staged || grotto_clients_set_tier(c->clients, p, tier, &error);
+      if (ok && !staged) signer_permissions_policy_changed(permissions(c));
     }
     if (!ok) { error_reply(inv, error); return; } refresh(c);
   } else if (!strcmp(method, "RevokeClient")) {
@@ -361,10 +586,11 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     /* Cancel first, even when persistence fails. Removing the client invalidates
      * live tier admission before permissions are removed. Retrying is idempotent. */
     signer_approval_service_cancel_principal(c->approval, p);
+    if (c->bunker && g_str_has_prefix(p, "nip46:")) bunker_service_disconnect_client(c->bunker, p + 6);
     if (!grotto_clients_remove(c->clients, p, &error)) { error_reply(inv, error); return; }
     signer_permissions_policy_changed(permissions(c));
     if (!signer_permissions_clear(permissions(c), p, NULL, NULL, &removed, &error)) { refresh(c); error_reply(inv, error); return; }
-    if (c->bunker && g_str_has_prefix(p, "nip46:")) bunker_service_disconnect_client(c->bunker, p + 6);
+    if (c->desired_bunker) apply_bunker(c);
     refresh(c);
   } else if (!strcmp(method, "SetPaused")) {
     if (!pause && !grotto_session_lock_can_resume(c->session_lock)) {
@@ -372,7 +598,9 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
           "Unlock the session before confirming resume; lock monitoring must be available when enabled"); return;
     }
     gboolean changed = signer_approval_service_is_paused(c->approval) != pause;
-    signer_approval_service_set_paused(c->approval, pause); if (changed) status_changed(c);
+    signer_approval_service_set_paused(c->approval, pause);
+    if (pause) bunker_service_invalidate_pairings(c->bunker);
+    if (changed) status_changed(c);
   } else if (!strcmp(method, "ListActivity")) {
     guint64 before; guint limit; g_variant_get(args, "(tu)", &before, &limit);
     if (limit > 100) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Activity limit must be at most 100"); return; }
@@ -389,17 +617,28 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     free(selector); free(npub);
     if (!saved) { error_reply(inv, NULL); return; } status_changed(c);
   } else if (!strcmp(method, "ConfigureBunker")) {
-    /* TODO G06: validate/persist bunker.ini v1 and apply desired config live. */
-    bunker_unavailable(c, inv); return;
+    if (!c->bunker || c->reset_busy) { bunker_unavailable(c, inv); return; }
+    g_autoptr(GVariant) config = NULL; g_variant_get(args, "(@a{sv})", &config);
+    if (!configure_bunker(c, config, &error)) { error_reply(inv, error); return; }
+    reply_dict(inv, status(c)); return;
   } else if (!strcmp(method, "CreatePairing")) {
-    /* TODO G05/G06: single-use secret, account/transport binding and consent. */
-    bunker_unavailable(c, inv); return;
+    if (!c->bunker || c->reset_busy) { bunker_unavailable(c, inv); return; }
+    const gchar *identity, *label; g_variant_get(args, "(&s&s)", &identity, &label);
+    create_pairing(c, inv, identity, label, NULL); return;
   } else if (!strcmp(method, "AcceptConnectURI")) {
-    /* TODO G06: validated URI, chosen identity, shared review, encrypted ack. */
-    bunker_unavailable(c, inv); return;
+    if (!c->bunker || c->reset_busy || !c->config_healthy) { bunker_unavailable(c, inv); return; }
+    const gchar *uri, *identity; g_variant_get(args, "(&s&s)", &uri, &identity);
+    if (!c->desired_bunker) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotReady", "Enable remote signing before pairing an application"); return;
+    }
+    NostrNip46ConnectURI parsed;
+    if (!grotto_connect_parse(uri, &parsed, &error)) { error_reply(inv, error); return; }
+    grotto_connect_clear(&parsed);
+    create_pairing(c, inv, identity, "", uri); return;
   } else if (!strcmp(method, "CancelPairing")) {
-    /* TODO G06: invalidate token and cancel the shared pairing request. */
-    bunker_unavailable(c, inv); return;
+    if (!c->bunker || c->reset_busy) { bunker_unavailable(c, inv); return; }
+    const gchar *id; g_variant_get(args, "(&s)", &id);
+    bunker_service_cancel_pairing(c->bunker, id);
   } else if (!strcmp(method, "ResetBunkerEndpoint")) {
     reset_endpoint(c, inv); return;
   } else if (!strcmp(method, "ExportIdentity") || !strcmp(method, "ExportRawIdentity")) {
@@ -432,6 +671,7 @@ static const GDBusInterfaceVTable vtable = {method_call, NULL, NULL, {0}};
 GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalService *approval,
     const gchar *config_home, GError **error) {
   GrottoControl *c = g_new0(GrottoControl, 1); c->refs = 1;
+  c->accept_reviews = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_object_unref);
   c->connection = g_object_ref(connection); c->approval = signer_approval_service_ref(approval);
   c->epoch = g_uuid_string_random();
   /* Random process epoch prevents a stale pre-restart expected_revision from
@@ -440,6 +680,7 @@ GrottoControl *grotto_control_new(GDBusConnection *connection, SignerApprovalSer
   g_autofree gchar *digest = g_compute_checksum_for_string(G_CHECKSUM_SHA256, c->epoch, -1);
   digest[15] = '\0'; c->epoch_base = g_ascii_strtoull(digest, NULL, 16) << 3;
   c->requests_revision = c->clients_revision = c->status_revision = c->epoch_base;
+  load_bunker_config(c, config_home);
   c->clients = grotto_clients_new(config_home, error);
   if (!c->clients) { grotto_control_free(c); return NULL; }
   c->client_healthy = TRUE; c->history = gn_event_history_new_activity(config_home);
@@ -469,18 +710,24 @@ static gboolean bunker_lookup(const gchar *client, gchar **identity, gpointer da
   if (identity) *identity = selected; else g_free(selected);
   return found;
 }
+gboolean grotto_control_start_bunker(GrottoControl *c) {
+  return c && apply_bunker(c);
+}
 static void bunker_changed(BunkerState state, const gchar *error, gpointer data) {
   (void)state; (void)error; status_changed(data);
 }
 void grotto_control_set_bunker(GrottoControl *c, BunkerService *bunker, gboolean desired) {
   if (!c) return;
   if (c->bunker) {
+    bunker_service_set_pairing_commit(c->bunker, NULL, NULL);
     bunker_service_set_client_lookup(c->bunker, NULL, NULL);
     bunker_service_set_state_callback(c->bunker, NULL, NULL);
   }
-  c->bunker = bunker; c->desired_bunker = desired;
+  c->bunker = bunker;
+  if (desired && !g_file_test(c->bunker_path, G_FILE_TEST_EXISTS)) c->desired_bunker = TRUE;
   if (bunker) {
     bunker_service_set_client_lookup(bunker, bunker_lookup, c);
+    bunker_service_set_pairing_commit(bunker, pairing_commit, c);
     bunker_service_set_state_callback(bunker, bunker_changed, c);
   }
   status_changed(c);
@@ -492,7 +739,12 @@ void grotto_control_free(GrottoControl *c) {
     g_signal_handlers_disconnect_by_data(c->session_lock, c);
     grotto_session_lock_stop(c->session_lock); g_clear_object(&c->session_lock);
   }
+  GHashTableIter waiting; gpointer invocation; g_hash_table_iter_init(&waiting, c->accept_reviews);
+  while (g_hash_table_iter_next(&waiting, NULL, &invocation))
+    g_dbus_method_invocation_return_dbus_error(invocation, GROTTO_CONTROL_ERROR "NotReady", "The signer is shutting down");
+  g_hash_table_remove_all(c->accept_reviews);
   if (c->bunker) {
+    bunker_service_set_pairing_commit(c->bunker, NULL, NULL);
     bunker_service_set_client_lookup(c->bunker, NULL, NULL);
     bunker_service_set_state_callback(c->bunker, NULL, NULL);
   }

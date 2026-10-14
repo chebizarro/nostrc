@@ -7,110 +7,79 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetCreateBunker" parent="AdwDialog">
-    <accessibility>
-      <property name="label">Create nsecbunker dialog</property>
-      <property name="description">Create a new nsecbunker connection with a name and relay URL</property>
-    </accessibility>
+    <property name="title" translatable="yes">Connect with which identity?</property>
+    <property name="content-width">520</property>
     <child>
       <object class="GtkBox">
         <property name="orientation">1</property>
         <property name="spacing">12</property>
-        <property name="margin-start">12</property>
-        <property name="margin-end">12</property>
-        <property name="margin-top">12</property>
-        <property name="margin-bottom">12</property>
+        <property name="margin-start">18</property>
+        <property name="margin-end">18</property>
+        <property name="margin-top">18</property>
+        <property name="margin-bottom">18</property>
         <child>
           <object class="GtkLabel">
-            <property name="label" translatable="yes">Create nsecbunker</property>
-            <accessibility>
-              <property name="label">Create nsecbunker heading</property>
-            </accessibility>
-            <style>
-              <class name="heading"/>
-            </style>
+            <property name="label" translatable="yes">Choose the identity this application may request.</property>
+            <property name="wrap">true</property>
           </object>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">0</property>
-            <property name="spacing">6</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">_Name</property>
-                <property name="use-underline">true</property>
-                <property name="xalign">0</property>
-                <property name="mnemonic-widget">entry_name</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkEntry" id="entry_name">
-                <property name="placeholder-text" translatable="yes">Bunker name</property>
-                <property name="tooltip-text" translatable="yes">Enter a display name</property>
-                <property name="valign">3</property>
-                <property name="vexpand">false</property>
-                <property name="hexpand">true</property>
-                <accessibility>
-                  <property name="label">Bunker name</property>
-                  <property name="description">Enter a friendly name for this bunker connection</property>
-                </accessibility>
-              </object>
-            </child>
+          <object class="GtkDropDown" id="identities">
+            <property name="tooltip-text" translatable="yes">Connect with which identity?</property>
           </object>
         </child>
         <child>
-          <object class="GtkBox">
-            <property name="orientation">0</property>
-            <property name="spacing">6</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="label" translatable="yes">Relay _URL</property>
-                <property name="use-underline">true</property>
-                <property name="xalign">0</property>
-                <property name="mnemonic-widget">entry_relay</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkEntry" id="entry_relay">
-                <property name="placeholder-text" translatable="yes">Relay URL (wss://...)</property>
-                <property name="tooltip-text" translatable="yes">Enter the bunker relay URL</property>
-                <property name="valign">3</property>
-                <property name="vexpand">false</property>
-                <property name="hexpand">true</property>
-                <accessibility>
-                  <property name="label">Relay URL</property>
-                  <property name="description">Enter the WebSocket relay URL for this bunker, starting with wss://</property>
-                </accessibility>
-              </object>
-            </child>
+          <object class="GtkEntry" id="entry_name">
+            <property name="placeholder-text" translatable="yes">Client label (optional)</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Remote signing relays</property>
+            <property name="xalign">0</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkEntry" id="entry_relay">
+            <property name="placeholder-text" translatable="yes">Explicit relay URLs, separated by spaces</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel">
+            <property name="label" translatable="yes">Relays see your network address and connection timing. No default relays or Tor proxy are used.</property>
+            <property name="wrap">true</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkCheckButton" id="enabled">
+            <property name="label" translatable="yes">Enable remote signing</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_apply">
+            <property name="label" translatable="yes">Apply relay settings (no restart)</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="status">
+            <property name="label" translatable="yes">Reading daemon status…</property>
+            <property name="wrap">true</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="btn_create">
-            <property name="label" translatable="yes">_Create</property>
-            <property name="use-underline">true</property>
-            <property name="tooltip-text" translatable="yes">Create the bunker</property>
-            <property name="valign">3</property>
-            <property name="vexpand">false</property>
-            <accessibility>
-              <property name="label">Create bunker</property>
-              <property name="description">Create the nsecbunker connection with the specified settings. Keyboard shortcut: Alt+C.</property>
-            </accessibility>
-            <style>
-              <class name="suggested-action"/>
-            </style>
+            <property name="label" translatable="yes">Create single-use pairing link</property>
+            <property name="sensitive">false</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkButton" id="btn_reset">
+            <property name="label" translatable="yes">Set up / Reset remote signing endpoint…</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="btn_cancel">
-            <property name="label" translatable="yes">_Cancel</property>
-            <property name="use-underline">true</property>
-            <property name="tooltip-text" translatable="yes">Close without changes</property>
-            <property name="valign">3</property>
-            <property name="vexpand">false</property>
-            <accessibility>
-              <property name="label">Cancel</property>
-              <property name="description">Close this dialog without creating a bunker. Keyboard shortcut: Alt+C or Escape.</property>
-            </accessibility>
+            <property name="label" translatable="yes">Close</property>
           </object>
         </child>
       </object>

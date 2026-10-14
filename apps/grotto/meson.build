@@ -32,6 +32,13 @@ gobject_dep = dependency('gobject-2.0', version: '>= 2.56')
 gio_dep = dependency('gio-2.0', version: '>= 2.56')
 adwaita_dep = dependency('libadwaita-1', version: '>= 1.0')
 json_glib_dep = dependency('json-glib-1.0')
+native_camera_required = host_machine.system() == 'linux'
+qrencode_dep = dependency('libqrencode', required: native_camera_required)
+zbar_dep = dependency('zbar', required: native_camera_required)
+gst_dep = dependency('gstreamer-1.0', required: native_camera_required)
+gst_video_dep = dependency('gstreamer-video-1.0', required: native_camera_required)
+gst_app_dep = dependency('gstreamer-app-1.0', required: native_camera_required)
+have_camera = gst_dep.found() and gst_video_dep.found() and gst_app_dep.found()
 
 # Optional: libsecret for secure key storage on Linux
 libsecret_dep = dependency('libsecret-1', required: false)
@@ -143,6 +150,7 @@ app_sources = files(
   'src/multisig_wallet.c',
   'src/signer_grants.c',
   'src/profile_store.c',
+  'src/pairing_uri.c',
   'src/qr-code.c',
   'src/qr-scanner.c',
   'src/rate-limiter.c',
@@ -178,6 +186,7 @@ app_ui_sources = files(
   'src/ui/profile-dashboard.c',
   'src/ui/settings_page.c',
   'src/ui/signer-window.c',
+  'src/ui/pairing-flow.c',
   'src/ui/welcome-page.c',
   # Sheets
   'src/ui/sheets/sheet-account-backup.c',
@@ -230,6 +239,14 @@ app_deps = [
   json_glib_dep,
   nostr_gobject_dep,
 ]
+foreach qr_dep : [qrencode_dep, zbar_dep]
+  if qr_dep.found()
+    app_deps += qr_dep
+  endif
+endforeach
+if have_camera
+  app_deps += [gst_dep, gst_video_dep, gst_app_dep]
+endif
 
 if libsecret_dep.found()
   app_deps += libsecret_dep
@@ -260,6 +277,9 @@ executable(app_bin,
     '-DGROTTO_EXECUTABLE="@0@/grotto"'.format(get_option('prefix') / get_option('bindir')),
     '-DGROTTO_AUTOSTART_TEMPLATE="@0@/org.nostr.Grotto-autostart.desktop"'.format(get_option('prefix') / get_option('datadir') / 'grotto'),
     libsecret_dep.found() ? '-DGNOSTR_HAVE_LIBSECRET=1' : [],
+    qrencode_dep.found() ? '-DHAVE_QRENCODE=1' : [],
+    zbar_dep.found() ? '-DHAVE_ZBAR=1' : [],
+    have_camera ? '-DHAVE_GSTREAMER=1' : [],
   ].flatten(),
   install: true,
 )

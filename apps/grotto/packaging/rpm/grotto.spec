@@ -51,6 +51,11 @@ BuildRequires:  pkgconfig(glib-2.0) >= 2.74
 BuildRequires:  pkgconfig(gobject-2.0)
 BuildRequires:  pkgconfig(gio-2.0)
 BuildRequires:  pkgconfig(json-glib-1.0)
+BuildRequires:  pkgconfig(libqrencode)
+BuildRequires:  pkgconfig(zbar)
+BuildRequires:  pkgconfig(gstreamer-1.0)
+BuildRequires:  pkgconfig(gstreamer-video-1.0)
+BuildRequires:  pkgconfig(gstreamer-app-1.0)
 
 # Cryptography and security
 BuildRequires:  pkgconfig(libsecret-1)
@@ -86,6 +91,9 @@ Requires:       libsodium
 Requires:       libsecp256k1
 Requires:       openssl-libs >= 3.0
 Requires:       jansson
+Requires:       zbar
+Requires:       gstreamer1-plugins-base
+Requires:       gstreamer1-plugins-good
 Requires:       libwebsockets
 Requires:       nsync
 Requires:       dbus
