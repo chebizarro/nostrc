@@ -12,8 +12,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="vexpand">true</property>
     <property name="hexpand">true</property>
     <accessibility>
-      <property name="label">Lock screen</property>
-      <property name="description">Management is locked. Already-authorised signing continues unless signing is paused.</property>
+      <property name="label" translatable="yes">Lock screen</property>
+      <property name="description" translatable="yes">Management is locked. Already-authorised signing continues unless signing is paused.</property>
     </accessibility>
     <child>
       <object class="GtkScrolledWindow">
@@ -44,8 +44,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="icon-name">system-lock-screen-symbolic</property>
                         <property name="pixel-size">64</property>
                         <accessibility>
-                          <property name="label">Lock icon</property>
-                          <property name="description">Indicates management is locked</property>
+                          <property name="label" translatable="yes">Lock icon</property>
+                          <property name="description" translatable="yes">Indicates management is locked</property>
                         </accessibility>
                         <style>
                           <class name="dim-label"/>
@@ -56,7 +56,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="GtkLabel" id="lbl_title">
                         <property name="label" translatable="yes">Management locked</property>
                         <accessibility>
-                          <property name="description">Title indicating the current lock state</property>
+                          <property name="description" translatable="yes">Title indicating the current lock state</property>
                         </accessibility>
                         <style>
                           <class name="title-1"/>
@@ -68,7 +68,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="label" translatable="yes">Enter your password to unlock</property>
                         <property name="wrap">true</property>
                         <accessibility>
-                          <property name="description">Instructions for unlocking the session</property>
+                          <property name="description" translatable="yes">Instructions for unlocking the session</property>
                         </accessibility>
                         <style>
                           <class name="dim-label"/>
@@ -92,8 +92,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           <object class="AdwPasswordEntryRow" id="entry_password">
                             <property name="title" translatable="yes">Password</property>
                             <accessibility>
-                              <property name="label">Password entry</property>
-                              <property name="description">Enter your unlock password here</property>
+                              <property name="label" translatable="yes">Password entry</property>
+                              <property name="description" translatable="yes">Enter your unlock password here</property>
                             </accessibility>
                           </object>
                         </child>
@@ -105,8 +105,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="wrap">true</property>
                         <property name="max-width-chars">40</property>
                         <accessibility>
-                          <property name="label">Error message</property>
-                          <property name="description">Displays error messages when unlock fails</property>
+                          <property name="label" translatable="yes">Error message</property>
+                          <property name="description" translatable="yes">Displays error messages when unlock fails</property>
                         </accessibility>
                         <style>
                           <class name="error"/>
@@ -123,8 +123,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="width-request">200</property>
                     <property name="focusable">true</property>
                     <accessibility>
-                      <property name="label">Unlock management</property>
-                      <property name="description">Click to unlock management with the entered password. Press Enter or Alt+U.</property>
+                      <property name="label" translatable="yes">Unlock management</property>
+                      <property name="description" translatable="yes">Click to unlock management with the entered password. Press Enter or Alt+U.</property>
                     </accessibility>
                     <style>
                       <class name="suggested-action"/>
@@ -139,8 +139,8 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     <property name="halign">3</property>
                     <property name="visible">false</property>
                     <accessibility>
-                      <property name="label">Session information</property>
-                      <property name="description">Additional information about the locked session</property>
+                      <property name="label" translatable="yes">Session information</property>
+                      <property name="description" translatable="yes">Additional information about the locked session</property>
                     </accessibility>
                     <child>
                       <object class="GtkLabel" id="lbl_lock_reason">

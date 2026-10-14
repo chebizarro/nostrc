@@ -1,3 +1,4 @@
+#include "../i18n.h"
 /* lock-screen.c - Lock screen widget implementation
  *
  * SPDX-License-Identifier: MIT
@@ -134,10 +135,10 @@ gn_lock_screen_init(GnLockScreen *self)
   GnSessionManager *sm = gn_session_manager_get_default();
   if (!gn_session_manager_has_password(sm)) {
     /* No password required - show different UI */
-    gtk_label_set_text(self->lbl_subtitle, "Click to unlock");
+    gtk_label_set_text(self->lbl_subtitle, _("Click to unlock"));
     /* The row's list, or an empty boxed list would show (nostrc-wic1). */
     gtk_widget_set_visible(gtk_widget_get_parent(GTK_WIDGET(self->entry_password)), FALSE);
-    gtk_button_set_label(self->btn_unlock, "Unlock");
+    gtk_button_set_label(self->btn_unlock, _("Unlock"));
   }
 
   /* Create rate limit UI box (nostrc-1g1) */
@@ -153,8 +154,8 @@ gn_lock_screen_init(GnLockScreen *self)
 
   /* Set accessibility for rate limit message (nostrc-qfdg) */
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_message),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Rate limit warning",
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Shows warning when too many failed authentication attempts have occurred",
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, _("Rate limit warning"),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Shows warning when too many failed authentication attempts have occurred"),
                                  -1);
 
   self->lbl_rate_limit_countdown = GTK_LABEL(gtk_label_new(NULL));
@@ -163,8 +164,8 @@ gn_lock_screen_init(GnLockScreen *self)
 
   /* Set accessibility for countdown (nostrc-qfdg) */
   gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
-                                 GTK_ACCESSIBLE_PROPERTY_LABEL, "Lockout countdown timer",
-                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, "Time remaining until you can try again",
+                                 GTK_ACCESSIBLE_PROPERTY_LABEL, _("Lockout countdown timer"),
+                                 GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, _("Time remaining until you can try again"),
                                  -1);
 
   /* The rate-limit box goes right after the password list, in the list's
@@ -201,14 +202,14 @@ static gchar *
 format_countdown_time(guint seconds)
 {
   if (seconds < 60) {
-    return g_strdup_printf("%u second%s", seconds, seconds == 1 ? "" : "s");
+    return g_strdup_printf(ngettext("%u second", "%u seconds", seconds), seconds);
   } else if (seconds < 3600) {
     guint mins = seconds / 60;
     guint secs = seconds % 60;
     if (secs > 0) {
       return g_strdup_printf("%u:%02u", mins, secs);
     } else {
-      return g_strdup_printf("%u minute%s", mins, mins == 1 ? "" : "s");
+      return g_strdup_printf(ngettext("%u minute", "%u minutes", mins), mins);
     }
   } else {
     guint hours = seconds / 3600;
@@ -232,7 +233,7 @@ on_lockout_timer_tick(gpointer user_data)
 
     /* Announce unlock to screen readers (nostrc-qfdg) */
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
-                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Lockout expired. You may now try again.",
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, _("Lockout expired. You may now try again."),
                                    -1);
     return G_SOURCE_REMOVE;
   }
@@ -244,7 +245,7 @@ on_lockout_timer_tick(gpointer user_data)
   /* Update accessibility value for screen readers (nostrc-qfdg)
    * Only announce at key intervals to avoid spam */
   if (remaining == 60 || remaining == 30 || remaining == 10 || remaining <= 5) {
-    g_autofree gchar *accessible_value = g_strdup_printf("%s remaining", time_str);
+    g_autofree gchar *accessible_value = g_strdup_printf(_("%s remaining"), time_str);
     gtk_accessible_update_property(GTK_ACCESSIBLE(self->lbl_rate_limit_countdown),
                                    GTK_ACCESSIBLE_PROPERTY_VALUE_TEXT, accessible_value,
                                    -1);
@@ -263,7 +264,7 @@ update_rate_limit_ui(GnLockScreen *self)
 
     /* Show lockout UI */
     gtk_label_set_text(self->lbl_rate_limit_message,
-                       "Too many failed authentication attempts.\nPlease wait before trying again:");
+                       _("Too many failed authentication attempts.\nPlease wait before trying again:"));
 
     g_autofree gchar *time_str = format_countdown_time(remaining);
     gtk_label_set_text(self->lbl_rate_limit_countdown, time_str);
@@ -296,8 +297,7 @@ update_rate_limit_ui(GnLockScreen *self)
     guint attempts_remaining = gn_rate_limiter_get_attempts_remaining(limiter);
     guint max_attempts = GN_RATE_LIMITER_DEFAULT_MAX_ATTEMPTS;
     if (attempts_remaining < max_attempts && attempts_remaining > 0) {
-      g_autofree gchar *msg = g_strdup_printf("%u attempt%s remaining",
-                                   attempts_remaining, attempts_remaining == 1 ? "" : "s");
+      g_autofree gchar *msg = g_strdup_printf(ngettext("%u attempt remaining", "%u attempts remaining", attempts_remaining), attempts_remaining);
       gtk_label_set_text(self->lbl_rate_limit_message, msg);
       gtk_label_set_text(self->lbl_rate_limit_countdown, "");
       gtk_widget_set_visible(GTK_WIDGET(self->box_rate_limit), TRUE);
@@ -353,7 +353,7 @@ attempt_unlock(GnLockScreen *self)
     const gchar *password = gtk_editable_get_text(GTK_EDITABLE(self->entry_password));
 
     if (!password || !*password) {
-      gn_lock_screen_show_error(self, "Please enter your password");
+      gn_lock_screen_show_error(self, _("Please enter your password"));
       gn_lock_screen_set_busy(self, FALSE);
       return;
     }
@@ -367,7 +367,7 @@ attempt_unlock(GnLockScreen *self)
   gn_lock_screen_set_busy(self, FALSE);
 
   if (!success) {
-    gn_lock_screen_show_error(self, error ? error->message : "Authentication failed");
+    gn_lock_screen_show_error(self, error ? _(error->message) : _("Authentication failed"));
     gn_lock_screen_clear_password(self);
 
     /* Update rate limit UI to show countdown if locked out (nostrc-1g1) */
@@ -421,19 +421,19 @@ gn_lock_screen_set_lock_reason(GnLockScreen *self, GnLockReason reason)
   const gchar *reason_text;
   switch (reason) {
     case GN_LOCK_REASON_MANUAL:
-      reason_text = "Manually locked";
+      reason_text = _("Manually locked");
       break;
     case GN_LOCK_REASON_TIMEOUT:
-      reason_text = "Locked due to inactivity";
+      reason_text = _("Locked due to inactivity");
       break;
     case GN_LOCK_REASON_STARTUP:
-      reason_text = "Session started locked";
+      reason_text = _("Session started locked");
       break;
     case GN_LOCK_REASON_SYSTEM_IDLE:
-      reason_text = "Locked due to system idle";
+      reason_text = _("Locked due to system idle");
       break;
     default:
-      reason_text = "Session locked";
+      reason_text = _("Session locked");
       break;
   }
 
@@ -448,12 +448,9 @@ gn_lock_screen_set_locked_at(GnLockScreen *self, gint64 timestamp)
 
   self->locked_at = timestamp;
 
-  time_t t = (time_t)timestamp;
-  struct tm *tm_info = localtime(&t);
-  char buffer[32];
-  strftime(buffer, sizeof(buffer), "Locked at %H:%M", tm_info);
-
-  gtk_label_set_text(self->lbl_locked_at, buffer);
+  g_autoptr(GDateTime) date = g_date_time_new_from_unix_local(timestamp);
+  g_autofree gchar *when = date ? g_date_time_format(date, _("Locked at %H:%M")) : NULL;
+  gtk_label_set_text(self->lbl_locked_at, when ? when : "");
   gtk_widget_set_visible(GTK_WIDGET(self->box_session_info), TRUE);
 }
 
@@ -515,7 +512,7 @@ gn_lock_screen_set_busy(GnLockScreen *self, gboolean busy)
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_unlock), !busy);
 
   if (busy) {
-    gtk_button_set_label(self->btn_unlock, "Unlocking...");
+    gtk_button_set_label(self->btn_unlock, _("Unlocking..."));
   } else {
     gtk_button_set_label(self->btn_unlock, "_Unlock");
   }

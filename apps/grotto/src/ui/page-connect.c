@@ -1,4 +1,6 @@
+#include "../i18n.h"
 #include "page-connect.h"
+#include "page-history.h"
 #include "app-resources.h"
 #include "pairing-flow.h"
 #include "sheets/sheet-qr-scanner.h"
@@ -43,7 +45,7 @@ static void link_read(GObject *source, GAsyncResult *result, gpointer data) {
   if (page && gtk_widget_get_mapped(page) && !g_cancellable_is_cancelled(file->cancel)) {
     if (ok && size && size <= 65536 && !memchr(file->buffer, '\0', size) && g_utf8_validate(file->buffer, size, NULL)) {
       file->buffer[size] = '\0'; grotto_pairing_present(page, g_strstrip(file->buffer));
-    } else adw_action_row_set_subtitle(GROTTO_PAGE_CONNECT(page)->runtime, "Could not read a valid link file (maximum 64 KiB). Paste or scan the link instead.");
+    } else adw_action_row_set_subtitle(GROTTO_PAGE_CONNECT(page)->runtime, _("Could not read a valid link file (maximum 64 KiB). Paste or scan the link instead."));
   }
   link_file_free(file);
 }
@@ -53,7 +55,7 @@ static void link_stream(GObject *source, GAsyncResult *result, gpointer data) {
   if (!file->stream) {
     g_autoptr(GtkWidget) page = g_weak_ref_get(&file->page);
     if (page && gtk_widget_get_mapped(page) && !g_cancellable_is_cancelled(file->cancel))
-      adw_action_row_set_subtitle(GROTTO_PAGE_CONNECT(page)->runtime, "The selected link file could not be read. Paste or scan the link instead.");
+      adw_action_row_set_subtitle(GROTTO_PAGE_CONNECT(page)->runtime, _("The selected link file could not be read. Paste or scan the link instead."));
     link_file_free(file); return;
   }
   g_input_stream_read_all_async(G_INPUT_STREAM(file->stream), file->buffer, 65537, G_PRIORITY_DEFAULT, file->cancel, link_read, file);
@@ -71,20 +73,20 @@ static void open_link(AdwActionRow *row, gpointer data) {
   if (self->file_cancel) g_cancellable_cancel(self->file_cancel);
   g_clear_object(&self->file_cancel); self->file_cancel = g_cancellable_new();
   LinkFile *file = g_new0(LinkFile, 1); g_weak_ref_init(&file->page, data); file->cancel = g_object_ref(self->file_cancel);
-  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, "Open a Nostr Connect link file");
+  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open a Nostr Connect link file"));
   gtk_file_dialog_open(dialog, GTK_WINDOW(root), file->cancel, link_selected, file);
 }
 static void create_link(AdwActionRow *row, gpointer data) {
   (void)row; adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), data);
 }
 static void model_changed(GrottoHomeModel *model, gpointer data) {
-  GrottoPageConnect *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = "Unavailable";
+  GrottoPageConnect *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = NULL;
   guint pending = 0, acknowledgements = 0;
   if (status) {
     g_variant_lookup(status, "bunker_state", "&s", &state); g_variant_lookup(status, "bunker_pending_pairing_requests", "u", &pending);
     g_variant_lookup(status, "bunker_pending_pairing_acks", "u", &acknowledgements);
   }
-  g_autofree gchar *text = g_strdup_printf("%s · %u awaiting review · %u awaiting relay acknowledgement", state, pending, acknowledgements);
+  g_autofree gchar *text = g_strdup_printf(_("%s · %u awaiting review · %u awaiting relay acknowledgement"), gn_page_history_remote_state_label(state), pending, acknowledgements);
   adw_action_row_set_subtitle(self->runtime, text);
 }
 void grotto_page_connect_set_model(GrottoPageConnect *self, GrottoHomeModel *model) {

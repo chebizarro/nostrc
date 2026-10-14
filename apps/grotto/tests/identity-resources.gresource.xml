@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<gresources>
-  <!-- Retained only for the G09 picker regression, not production UI. -->
-  <gresource prefix="/org/gnostr/signer">
-    <file preprocess="xml-stripblanks">ui/sheets/sheet-select-account.ui</file>
-  </gresource>
-</gresources>

@@ -1,3 +1,4 @@
+#include "../i18n.h"
 #include "signer-window.h"
 #include "page-identity-detail.h"
 #include "onboarding-assistant.h"
@@ -53,16 +54,40 @@ struct _SignerWindow {
   gulong session_timeout_warning_handler;
   gint64 locked_at_time;
   guint breakpoint_region;
+  GWeakRef transition_focus;
+  guint focus_restore_tick;
 };
 
 G_DEFINE_TYPE(SignerWindow, signer_window, ADW_TYPE_APPLICATION_WINDOW)
 
-/* nostrc-9n2n9: GTK a6e1c8a57 fixes deferred-focus overwrite in 4.23.1.
- * Clear focus before our hide/reparent transitions; do not alter fixed GTK. */
+static gboolean restore_transition_focus(GtkWidget *widget, GdkFrameClock *clock, gpointer data) {
+  (void)clock; (void)data; SignerWindow *self = SIGNER_WINDOW(widget);
+  GtkWidget *destination = !g_strcmp0(gtk_stack_get_visible_child_name(self->main_stack), "locked") ?
+      GTK_WIDGET(self->lock_screen) :
+      adw_navigation_split_view_get_collapsed(self->split_view) && !adw_navigation_split_view_get_show_content(self->split_view) ?
+      GTK_WIDGET(adw_navigation_split_view_get_sidebar(self->split_view)) : GTK_WIDGET(adw_navigation_view_get_visible_page(self->detail_navigation));
+  /* AdwBreakpointBin remaps its content on the next frame after reparenting. */
+  if (!gtk_widget_get_mapped(destination)) return G_SOURCE_CONTINUE;
+  if (!gtk_root_get_focus(GTK_ROOT(self))) {
+    g_autoptr(GtkWidget) old = g_weak_ref_get(&self->transition_focus);
+    if (!old || gtk_widget_get_root(old) != GTK_ROOT(self) || !gtk_widget_get_mapped(old) ||
+        !gtk_widget_is_sensitive(old) || !gtk_widget_grab_focus(old))
+      if (!gtk_widget_child_focus(destination, GTK_DIR_TAB_FORWARD)) gtk_widget_grab_focus(GTK_WIDGET(self->menu_btn));
+  }
+  g_weak_ref_set(&self->transition_focus, NULL); self->focus_restore_tick = 0;
+  return G_SOURCE_REMOVE;
+}
+/* nostrc-9n2n9: upstream a6e1c8a57 fixes the deferred-focus overwrite in
+ * GTK 4.23.1. On older GTK, clear before hiding/reparenting, then restore
+ * the surviving control (or the destination's first control) after remap. */
 static void clear_transition_focus(SignerWindow *self) {
-  if (gtk_get_major_version() == 4 && (gtk_get_minor_version() < 23 ||
-      (gtk_get_minor_version() == 23 && gtk_get_micro_version() < 1)))
-    gtk_window_set_focus(GTK_WINDOW(self), NULL);
+  if (gtk_get_major_version() != 4 || gtk_get_minor_version() > 23 ||
+      (gtk_get_minor_version() == 23 && gtk_get_micro_version() >= 1)) return;
+  GtkWidget *focus = gtk_root_get_focus(GTK_ROOT(self));
+  if (focus) g_weak_ref_set(&self->transition_focus, focus);
+  gtk_window_set_focus(GTK_WINDOW(self), NULL);
+  if (!self->focus_restore_tick)
+    self->focus_restore_tick = gtk_widget_add_tick_callback(GTK_WIDGET(self), restore_transition_focus, NULL, NULL);
 }
 static void signer_window_size_allocate(GtkWidget *widget, int width, int height, int baseline) {
   SignerWindow *self = SIGNER_WINDOW(widget);
@@ -78,7 +103,7 @@ static GSettings *signer_window_get_settings(void) {
   if (!source) return NULL;
   GSettingsSchema *schema = g_settings_schema_source_lookup(source, SIGNER_GSETTINGS_ID, TRUE);
   if (!schema) {
-    g_debug("GSettings schema %s not found", SIGNER_GSETTINGS_ID);
+    g_debug(_("GSettings schema %s not found"), SIGNER_GSETTINGS_ID);
     return NULL;
   }
   g_settings_schema_unref(schema);
@@ -101,7 +126,7 @@ static void signer_window_save_state(SignerWindow *self) {
       g_settings_set_int(self->settings, "window-height", height);
     }
   }
-  g_debug("Window state saved: maximized=%d", maximized);
+  g_debug(_("Window state saved: maximized=%d"), maximized);
 }
 
 /* Restore window state from GSettings */
@@ -118,7 +143,7 @@ static void signer_window_restore_state(SignerWindow *self) {
   if (maximized) {
     gtk_window_maximize(GTK_WINDOW(self));
   }
-  g_debug("Window state restored: width=%d height=%d maximized=%d", width, height, maximized);
+  g_debug(_("Window state restored: width=%d height=%d maximized=%d"), width, height, maximized);
 }
 
 /* Handle close-request to save state before closing */
@@ -159,6 +184,8 @@ static void on_sidebar_toggle_clicked(GtkToggleButton *button, gpointer user_dat
 static void signer_window_dispose(GObject *object) {
   SignerWindow *self = SIGNER_WINDOW(object);
 
+  if (self->focus_restore_tick) gtk_widget_remove_tick_callback(GTK_WIDGET(self), self->focus_restore_tick);
+  self->focus_restore_tick = 0; g_weak_ref_set(&self->transition_focus, NULL);
   /* Disconnect session manager signals if they were connected */
   if (self->session_signals_connected) {
     GnSessionManager *sm = gn_session_manager_get_default();
@@ -186,11 +213,16 @@ static void signer_window_dispose(GObject *object) {
   G_OBJECT_CLASS(signer_window_parent_class)->dispose(object);
 }
 
+static void signer_window_finalize(GObject *object) {
+  g_weak_ref_clear(&SIGNER_WINDOW(object)->transition_focus);
+  G_OBJECT_CLASS(signer_window_parent_class)->finalize(object);
+}
 static void signer_window_class_init(SignerWindowClass *klass) {
   GtkWidgetClass *widget_class = GTK_WIDGET_CLASS(klass);
   GObjectClass *object_class = G_OBJECT_CLASS(klass);
 
   object_class->dispose = signer_window_dispose;
+  object_class->finalize = signer_window_finalize;
   widget_class->size_allocate = signer_window_size_allocate;
 
   STARTUP_TIME_MARK("signer-window-class-init");
@@ -419,7 +451,7 @@ static void on_session_locked(GnSessionManager *sm, GnLockReason reason, gpointe
   gtk_stack_set_visible_child_name(self->main_stack, "locked");
   gn_lock_screen_focus_password(self->lock_screen);
 
-  g_debug("Window: session locked (reason=%d)", reason);
+  g_debug(_("Window: session locked (reason=%d)"), reason);
 }
 
 static void on_session_unlocked(GnSessionManager *sm, gpointer user_data) {
@@ -433,7 +465,7 @@ static void on_session_unlocked(GnSessionManager *sm, gpointer user_data) {
   /* Switch to main content */
   gtk_stack_set_visible_child_name(self->main_stack, "unlocked");
 
-  g_debug("Window: session unlocked");
+  g_debug(_("Window: session unlocked"));
 }
 
 static void on_session_timeout_warning(GnSessionManager *sm, guint seconds_remaining, gpointer user_data) {
@@ -441,7 +473,7 @@ static void on_session_timeout_warning(GnSessionManager *sm, guint seconds_remai
   SignerWindow *self = SIGNER_WINDOW(user_data);
 
   /* Show a toast warning about impending timeout */
-  AdwToast *toast = adw_toast_new_format("Management will lock in %u seconds", seconds_remaining);
+  AdwToast *toast = adw_toast_new_format(_("Management will lock in %u seconds"), seconds_remaining);
   adw_toast_set_timeout(toast, 3);
 
   adw_toast_overlay_add_toast(self->toast_overlay, toast);
@@ -454,7 +486,7 @@ static void on_lock_screen_unlock_requested(GnLockScreen *lock_screen, gpointer 
   /* The lock screen already called authenticate() - if we get here, it succeeded */
   /* Switch to main content (the session manager will emit unlocked signal) */
   (void)self;
-  g_debug("Window: unlock requested from lock screen");
+  g_debug(_("Window: unlock requested from lock screen"));
 }
 
 /* Connect session manager signals (deferred to after window display) */
@@ -509,6 +541,7 @@ static gboolean signer_window_deferred_page_init(gpointer user_data) {
 }
 
 static void signer_window_init(SignerWindow *self) {
+  g_weak_ref_init(&self->transition_focus, NULL);
   gint64 init_start = startup_timing_measure_start();
 
   gtk_widget_init_template(GTK_WIDGET(self));
@@ -573,27 +606,27 @@ static void signer_window_init(SignerWindow *self) {
 
     /* Profile section - use window actions for shortcuts */
     GMenu *profile_section = g_menu_new();
-    g_menu_append(profile_section, "New identity\tCtrl+N", "win.new-profile");
-    g_menu_append(profile_section, "Import identity\tCtrl+I", "win.import-profile");
-    g_menu_append(profile_section, "Export/Backup\tCtrl+E", "win.export");
-    g_menu_append(profile_section, "Connect an application…", "win.pair-application");
+    g_menu_append(profile_section, _("New identity\tCtrl+N"), "win.new-profile");
+    g_menu_append(profile_section, _("Import identity\tCtrl+I"), "win.import-profile");
+    g_menu_append(profile_section, _("Export/Backup\tCtrl+E"), "win.export");
+    g_menu_append(profile_section, _("Connect an application…"), "win.pair-application");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
     g_object_unref(profile_section);
 
     /* Security section */
     GMenu *security_section = g_menu_new();
-    g_menu_append(security_section, "Lock management\tCtrl+L", "win.lock");
+    g_menu_append(security_section, _("Lock management\tCtrl+L"), "win.lock");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
     g_object_unref(security_section);
 
     /* App section */
     GMenu *app_section = g_menu_new();
-    g_menu_append(app_section, "Preferences\tCtrl+,", "win.preferences");
-    g_menu_append(app_section, "Keyboard Shortcuts\tCtrl+?", "win.show-shortcuts");
-    g_menu_append(app_section, "About Grotto\tF1", "win.about");
-    g_menu_append(app_section, "Pause signing", "app.pause-signing");
-    g_menu_append(app_section, "Resume signing…", "app.resume-signing");
-    g_menu_append(app_section, "Quit approval UI (authorised signing continues)\tCtrl+Q", "win.quit");
+    g_menu_append(app_section, _("Preferences\tCtrl+,"), "win.preferences");
+    g_menu_append(app_section, _("Keyboard Shortcuts\tCtrl+?"), "win.show-shortcuts");
+    g_menu_append(app_section, _("About Grotto\tF1"), "win.about");
+    g_menu_append(app_section, _("Pause signing"), "app.pause-signing");
+    g_menu_append(app_section, _("Resume signing…"), "app.resume-signing");
+    g_menu_append(app_section, _("Quit approval UI (authorised signing continues)\tCtrl+Q"), "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
 
@@ -634,7 +667,9 @@ void signer_window_show_page(SignerWindow *self, const char *name) {
   const gchar *names[] = {"home", "activity", "connect", "settings"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     if (strcmp(name, names[i])) continue;
-    clear_transition_focus(self);
+    if (g_strcmp0(adw_view_stack_get_visible_child_name(self->stack), name) ||
+        adw_navigation_view_get_visible_page(self->detail_navigation) != adw_navigation_view_find_page(self->detail_navigation, "root") ||
+        !adw_navigation_split_view_get_show_content(self->split_view)) clear_transition_focus(self);
     adw_navigation_view_pop(self->detail_navigation);
     adw_view_stack_set_visible_child_name(self->stack, name);
     gtk_list_box_select_row(self->sidebar, gtk_list_box_get_row_at_index(self->sidebar, i));
@@ -732,7 +767,7 @@ void signer_window_lock_session(SignerWindow *self) {
   GnSessionManager *sm = gn_session_manager_get_default();
   gn_session_manager_lock(sm, GN_LOCK_REASON_MANUAL);
 
-  g_message("Session locked via Ctrl+L");
+  g_message(_("Session locked via Ctrl+L"));
 }
 
 /**

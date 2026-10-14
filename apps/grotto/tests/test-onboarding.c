@@ -1,6 +1,5 @@
 #include "ui/onboarding-assistant.h"
 #include "ui/page-identity-detail.h"
-#include "ui/sheets/sheet-select-account.h"
 #include "ui/widgets/gn-secure-entry.h"
 #include "secret-variant.h"
 #include "backup-recovery.h"
@@ -330,33 +329,6 @@ static void typed_deletion_cancel_failure(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(gtk_label_get_text(GTK_LABEL(detail_child(page, "public_key"))), ==, f->npub);
   destroy_detail_window(GTK_WINDOW(window), page);
 }
-static GtkWidget *manage_button(GtkWidget *widget) {
-  if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_widget_get_tooltip_text(widget), "Manage identity and backup")) return widget;
-  for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
-    GtkWidget *found = manage_button(child); if (found) return found;
-  }
-  return NULL;
-}
-static void picker_cannot_delete(Fixture *f, gconstpointer data) {
-  (void)data; g_assert_true(gn_backup_get_npub("0000000000000000000000000000000000000000000000000000000000000002", &f->npub, NULL));
-  stored_identity = g_strdup(f->npub); accounts_store_add(accounts_store_get_default(), f->npub, "Picker identity", NULL);
-  accounts_store_set_label(accounts_store_get_default(), f->npub, "Picker identity", NULL);
-  AdwWindow *window = ADW_WINDOW(adw_window_new()); g_object_ref(window); gtk_window_set_default_size(GTK_WINDOW(window), 560, 640); gtk_window_present(GTK_WINDOW(window));
-  SheetSelectAccount *picker = sheet_select_account_new(); g_object_ref_sink(picker); adw_dialog_present(ADW_DIALOG(picker), GTK_WIDGET(window));
-  GtkWidget *list = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(picker), TYPE_SHEET_SELECT_ACCOUNT, "list_accounts"));
-  GtkWidget *button = NULL;
-  for (GtkWidget *row = gtk_widget_get_first_child(list); row; row = gtk_widget_get_next_sibling(row))
-    if (!g_strcmp0(adw_preferences_row_get_title(ADW_PREFERENCES_ROW(row)), "Picker identity")) { button = manage_button(row); break; }
-  g_assert_nonnull(button); g_signal_emit_by_name(button, "clicked");
-  g_assert_cmpuint(f->remove_calls, ==, 0); g_assert_true(accounts_store_exists(accounts_store_get_default(), f->npub));
-  AdwDialog *detail = adw_window_get_visible_dialog(window); g_assert_true(detail != ADW_DIALOG(picker)); g_object_ref(detail);
-  GtkWidget *page = GTK_WIDGET(adw_navigation_view_get_visible_page(ADW_NAVIGATION_VIEW(adw_dialog_get_child(detail))));
-  wait_sensitive(detail_child(page, "btn_test"), TRUE);
-  guint page_gone = 0, picker_gone = 0;
-  g_object_weak_ref(G_OBJECT(page), weak_gone, &page_gone); g_object_weak_ref(G_OBJECT(picker), weak_gone, &picker_gone);
-  adw_dialog_force_close(detail); g_object_unref(detail); adw_dialog_force_close(ADW_DIALOG(picker)); g_object_unref(picker);
-  gtk_window_destroy(GTK_WINDOW(window)); g_object_unref(window); await_gone(&page_gone); await_gone(&picker_gone);
-}
 static void distinct_import_passphrase(Fixture *f, gconstpointer data) {
   const gchar *format = data; f->expected_format = format; f->expected_pass = "distinct recovery passphrase";
   click(f, "btn_next"); gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "radio_import")), TRUE); click(f, "btn_next");
@@ -530,7 +502,6 @@ int main(int argc, char **argv) {
   ADD("verification-warning-handoff", NULL, management_warning_handoff);
   ADD("backup-warning-handoff", "backup", management_warning_handoff);
   ADD("typed-deletion-cancel-failure", NULL, typed_deletion_cancel_failure);
-  ADD("picker-cannot-delete", NULL, picker_cannot_delete);
   ADD("mnemonic-passphrase", "mnemonic", distinct_import_passphrase);
   ADD("nip49-passphrase", "ncryptsec", distinct_import_passphrase);
   ADD("delayed-import-failure", NULL, delayed_import_failure);

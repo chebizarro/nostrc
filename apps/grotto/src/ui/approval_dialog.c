@@ -1,3 +1,4 @@
+#include "../i18n.h"
 #include "approval_dialog.h"
 #include "nostr-kinds.h"
 #include <string.h>
@@ -32,42 +33,42 @@ static guint signals[N_SIGNALS];
 const char *gnostr_approval_kind_name(guint32 kind) {
   switch (kind) {
   case NOSTR_KIND_PROFILE_METADATA:
-    return "Profile metadata";
+    return _("Profile metadata");
   case NOSTR_KIND_TEXT_NOTE:
-    return "Text note";
+    return _("Text note");
   case NOSTR_KIND_FOLLOW_LIST:
-    return "Contact list";
+    return _("Contact list");
   case NOSTR_KIND_ENCRYPTED_DIRECT_MESSAGE:
-    return "Encrypted message";
+    return _("Encrypted message");
   case NOSTR_KIND_DELETION:
-    return "Delete events";
+    return _("Delete events");
   case NOSTR_KIND_REPOST:
   case NOSTR_KIND_GENERIC_REPOST:
-    return "Repost";
+    return _("Repost");
   case NOSTR_KIND_REACTION:
-    return "Reaction";
+    return _("Reaction");
   case NOSTR_KIND_ARTICLE:
-    return "Article";
+    return _("Article");
   case NOSTR_KIND_COMMENT:
-    return "Comment";
+    return _("Comment");
   case NOSTR_KIND_SEAL:
   case NOSTR_KIND_GIFT_WRAP:
-    return "Encrypted message";
+    return _("Encrypted message");
   case NOSTR_KIND_DIRECT_MESSAGE:
   case NOSTR_KIND_FILE_MESSAGE:
-    return "Private message";
+    return _("Private message");
   case NOSTR_KIND_RELAY_LIST_METADATA:
-    return "Relay list";
+    return _("Relay list");
   case NOSTR_KIND_CLIENT_AUTHENTICATION:
-    return "Relay authentication";
+    return _("Relay authentication");
   case NOSTR_KIND_ZAP_REQUEST:
-    return "Zap request";
+    return _("Zap request");
   case NOSTR_KIND_ZAP:
-    return "Zap receipt";
+    return _("Zap receipt");
   case NOSTR_KIND_NOSTR_CONNECT:
-    return "Remote signer message";
+    return _("Remote signer message");
   default:
-    return "Custom event";
+    return _("Custom event");
   }
 }
 static const char *field(GVariant *info, const char *key) {

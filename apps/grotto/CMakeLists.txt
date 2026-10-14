@@ -125,9 +125,15 @@ else()
   message(WARNING "blueprint-compiler not found - using pre-compiled .ui files")
 endif()
 
-# Blueprint source files (.blp) - these are the source of truth for UI definitions
-# Note: Some files that failed decompilation are kept as .ui only
-file(GLOB_RECURSE BLUEPRINT_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/data/ui/*.blp)
+# Exact production inventory, mirrored by Meson and resources.gresource.xml.
+set(BLUEPRINT_SOURCES
+  data/ui/signer-window.blp data/ui/page-home.blp data/ui/page-connect.blp
+  data/ui/page-client-detail.blp data/ui/page-history.blp data/ui/page-settings.blp
+  data/ui/page-identity-detail.blp data/ui/approval-dialog.blp data/ui/lock-screen.blp
+  data/ui/onboarding-assistant.blp data/ui/shortcuts-window.blp
+  data/ui/sheets/sheet-create-bunker.blp data/ui/sheets/sheet-qr-display.blp
+  data/ui/sheets/sheet-qr-scanner.blp data/ui/widgets/gn-secure-entry.blp)
+list(TRANSFORM BLUEPRINT_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
 
 # Compile Blueprint files to UI files if blueprint-compiler is available
 set(SIGNER_COMPILED_UI_FILES)
@@ -169,8 +175,10 @@ list(APPEND APP_SRC ${APP_UI_SRC})
 set(APP_GRESOURCE_XML ${CMAKE_CURRENT_SOURCE_DIR}/data/resources.gresource.xml)
 set(APP_GRESOURCE_C ${CMAKE_CURRENT_BINARY_DIR}/resources.c)
 # Rebuild resources.c whenever any referenced UI changes
-file(GLOB_RECURSE APP_UI_FILES CONFIGURE_DEPENDS
-  ${CMAKE_CURRENT_SOURCE_DIR}/data/*.ui ${CMAKE_CURRENT_SOURCE_DIR}/data/css/*.css)
+set(APP_UI_FILES ${BLUEPRINT_SOURCES})
+list(TRANSFORM APP_UI_FILES REPLACE "\\.blp$" ".ui")
+list(APPEND APP_UI_FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/css/app.css
+  ${CMAKE_CURRENT_SOURCE_DIR}/data/css/high-contrast.css)
 add_custom_command(
   OUTPUT ${APP_GRESOURCE_C}
   COMMAND glib-compile-resources --target=${APP_GRESOURCE_C} --generate-source

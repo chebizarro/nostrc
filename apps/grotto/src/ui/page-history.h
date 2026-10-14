@@ -9,4 +9,6 @@ void gn_page_history_refresh(GnPageHistory *self);
 void gn_page_history_clear_filters(GnPageHistory *self);
 void gn_page_history_set_model(GnPageHistory *, GrottoHomeModel *);
 const gchar *gn_page_history_operation_label(const gchar *operation);
+const gchar *gn_page_history_outcome_label(const gchar *outcome);
+const gchar *gn_page_history_remote_state_label(const gchar *state);
 G_END_DECLS

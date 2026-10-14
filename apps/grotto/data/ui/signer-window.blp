@@ -61,6 +61,7 @@ template $SignerWindow: Adw.ApplicationWindow {
               title: _("Grotto");
               child: Adw.NavigationView detail_navigation {
                 Adw.NavigationPage {
+                  tag: "root";
                   title: _("Home");
                   child: Adw.ViewStack stack {
                     Adw.ViewStackPage { name: "home"; title: _("Home"); icon-name: "go-home-symbolic"; child: $GrottoPageHome page_home {}; }

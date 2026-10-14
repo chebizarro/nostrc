@@ -585,11 +585,24 @@ target_include_directories(test-ui-layout PRIVATE ${SIGNER_INCLUDE_DIRS} ${CMAKE
 target_link_libraries(test-ui-layout PRIVATE grotto_app_test_core nostrc-test-bus)
 target_compile_definitions(test-ui-layout PRIVATE
   G10_CONTROL_XML="${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.Control1.xml"
-  G10_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots")
+  G10_SCREENSHOT_DIR="${CMAKE_BINARY_DIR}/screenshots"
+  G10_TEST_LOCALE_DIR="${CMAKE_CURRENT_BINARY_DIR}/test-locales")
+find_program(G10_MSGFMT msgfmt REQUIRED)
+set(_g10_spanish_mo "${CMAKE_CURRENT_BINARY_DIR}/test-locales/es/LC_MESSAGES/grotto.mo")
+add_custom_command(OUTPUT ${_g10_spanish_mo}
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/test-locales/es/LC_MESSAGES"
+  COMMAND ${G10_MSGFMT} --check --output-file=${_g10_spanish_mo} ${CMAKE_CURRENT_SOURCE_DIR}/../po/es.po
+  DEPENDS ../po/es.po VERBATIM)
+add_custom_target(grotto_test_locales DEPENDS ${_g10_spanish_mo})
+add_dependencies(test-ui-layout grotto_test_locales)
 add_dependencies(test-ui-layout grotto-schemas grotto_resources)
 add_test(NAME signer/ui-layout COMMAND test-ui-layout)
 set_tests_properties(signer/ui-layout PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;home"
   ENVIRONMENT "${_UI_TEST_ENV};GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
+# GTK's test-only AT context supports property assertions without an AT-SPI bus.
+add_test(NAME signer/ui-accessibility COMMAND test-ui-layout)
+set_tests_properties(signer/ui-accessibility PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77 LABELS "signer;ui;i18n;a11y"
+  ENVIRONMENT "${_UI_TEST_ENV};GTK_A11Y=test;G10_TEST_LANGUAGE=es;GSETTINGS_SCHEMA_DIR=${CMAKE_CURRENT_BINARY_DIR}/..;GSETTINGS_BACKEND=memory;ADW_DISABLE_PORTAL=1")
 add_dependencies(signer-tests test-home-dashboard test-ui-layout)
 # G08: real background state machine, fake portal only on the private bus.
 if(UNIX)

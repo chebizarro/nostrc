@@ -30,6 +30,7 @@ src/ui/approval_dialog.c
 src/ui/page-home.c
 src/ui/page-connect.c
 src/ui/page-client-detail.c
+src/ui/kind-catalog.inc
 src/ui/page-history.c
 src/ui/page-settings.c
 src/ui/page-identity-detail.c

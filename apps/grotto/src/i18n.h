@@ -7,10 +7,11 @@
 #ifndef APPS_GNOSTR_SIGNER_I18N_H
 #define APPS_GNOSTR_SIGNER_I18N_H
 
-#include <glib/gi18n.h>
-
-/* Text domain for translations */
+/* Bind presentation strings to Grotto even in embedded/test consumers. */
+#ifndef GETTEXT_PACKAGE
 #define GETTEXT_PACKAGE "grotto"
+#endif
+#include <glib/gi18n-lib.h>
 
 /**
  * gn_i18n_init:

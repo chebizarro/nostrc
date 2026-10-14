@@ -1,4 +1,5 @@
 #include "home-model.h"
+#include "i18n.h"
 
 struct _GrottoHomeModel {
   GObject parent_instance;
@@ -30,7 +31,7 @@ static void read_done(GObject *source, GAsyncResult *result, gpointer data) {
   if (self && self->started && self->generation == r->generation) {
     if (!reply) {
       clear_snapshots(self); g_free(self->error);
-      self->error = g_strdup("Signer management is unavailable. Reopen Home to retry.");
+      self->error = g_strdup(_("Signer management is unavailable. Reopen Home to retry."));
       self->loading = FALSE; self->dirty = FALSE; changed(self);
     } else {
       GVariant **slots[] = {&self->status, &self->clients, &self->requests, &self->activity};
@@ -66,7 +67,7 @@ static void owner_changed(GObject *source, GParamSpec *pspec, gpointer data) {
   (void)source; (void)pspec; GrottoHomeModel *self = data;
   self->generation++; g_cancellable_cancel(self->cancel); g_clear_object(&self->cancel);
   self->cancel = g_cancellable_new(); self->loading = FALSE; self->dirty = FALSE;
-  clear_snapshots(self); g_free(self->error); self->error = g_strdup("Signer not running");
+  clear_snapshots(self); g_free(self->error); self->error = g_strdup(_("Signer not running"));
   changed(self); grotto_home_model_refresh(self);
 }
 static void signal_received(GDBusProxy *proxy, gchar *sender, gchar *name, GVariant *args, gpointer data) {
@@ -87,7 +88,7 @@ static void proxy_ready(GObject *source, GAsyncResult *result, gpointer data) {
   } else {
     g_clear_object(&proxy);
     if (self && self->started && self->generation == r->generation) {
-      g_free(self->error); self->error = g_strdup("The signer session bus is unavailable."); changed(self);
+      g_free(self->error); self->error = g_strdup(_("The signer session bus is unavailable.")); changed(self);
     }
   }
   read_free(r);
@@ -115,7 +116,7 @@ static void grotto_home_model_class_init(GrottoHomeModelClass *klass) {
   GObjectClass *oc = G_OBJECT_CLASS(klass); oc->dispose = dispose; oc->finalize = finalize;
   g_signal_new("changed", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
 }
-static void grotto_home_model_init(GrottoHomeModel *self) { self->error = g_strdup("Connecting to signer…"); }
+static void grotto_home_model_init(GrottoHomeModel *self) { self->error = g_strdup(_("Connecting to signer…")); }
 GrottoHomeModel *grotto_home_model_new(void) { return g_object_new(GROTTO_TYPE_HOME_MODEL, NULL); }
 GVariant *grotto_home_model_status(GrottoHomeModel *s) { return s->status; }
 GVariant *grotto_home_model_clients(GrottoHomeModel *s) { return s->clients; }

@@ -5,8 +5,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
-"Report-Msgid-Bugs-To: https://github.com/gnostr/grotto/issues\n"
-"POT-Creation-Date: 2024-01-23 00:00+0000\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-14 14:36-0700\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Portuguese (Brazil)\n"
@@ -16,502 +16,2469 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n > 1);\n"
 
-msgid "Grotto"
-msgstr "Grotto"
-
-msgid "A secure Nostr key manager and remote signer"
-msgstr "Um gerenciador de chaves Nostr seguro e assinador remoto"
-
-msgid "Welcome to Grotto"
-msgstr "Bem-vindo ao Grotto"
-
-msgid "Securely manage your Nostr identities"
-msgstr "Gerencie suas identidades Nostr com segurança"
-
-msgid "Create New Profile"
-msgstr "Criar novo perfil"
-
-msgid "Import Existing Profile"
-msgstr "Importar perfil existente"
-
-msgid "Connect Hardware Wallet"
-msgstr "Conectar carteira de hardware"
-
-msgid "Session Locked"
-msgstr "Sessão bloqueada"
-
-msgid "Enter your password to unlock"
-msgstr "Digite sua senha para desbloquear"
-
-msgid "Password"
-msgstr "Senha"
-
-msgid "Unlock"
-msgstr "Desbloquear"
-
-msgid "Forgot Password?"
-msgstr "Esqueceu a senha?"
-
-msgid "Signature Request"
-msgstr "Solicitação de assinatura"
-
-msgid "An application is requesting to sign an event"
-msgstr "Um aplicativo está solicitando assinar um evento"
-
-msgid "Application"
-msgstr "Aplicativo"
-
-msgid "Event Type"
-msgstr "Tipo de evento"
-
-msgid "Content Preview"
-msgstr "Visualização do conteúdo"
-
-msgid "Deny"
-msgstr "Negar"
-
-msgid "Approve"
-msgstr "Aprovar"
-
-msgid "Remember this decision"
-msgstr "Lembrar esta decisão"
-
-msgid "Home"
-msgstr "Início"
-
-msgid "Identities"
-msgstr "Identidades"
-
-msgid "Permissions"
-msgstr "Permissões"
-
-msgid "Sessions"
-msgstr "Sessões"
-
-msgid "History"
-msgstr "Histórico"
-
-msgid "Settings"
-msgstr "Configurações"
-
-msgid "Appearance"
-msgstr "Aparência"
-
-msgid "Theme"
-msgstr "Tema"
-
-msgid "System"
-msgstr "Sistema"
-
-msgid "Light"
-msgstr "Claro"
-
-msgid "Dark"
-msgstr "Escuro"
-
-msgid "High Contrast"
-msgstr "Alto contraste"
-
-msgid "Language"
-msgstr "Idioma"
-
-msgid "Security"
-msgstr "Segurança"
-
-msgid "Auto-lock Timeout"
-msgstr "Tempo limite de bloqueio automático"
-
-msgid "minutes"
-msgstr "minutos"
-
-msgid "Require Password"
-msgstr "Exigir senha"
-
-msgid "Change Password"
-msgstr "Alterar senha"
-
-msgid "Network"
-msgstr "Rede"
-
-msgid "Use Tor"
-msgstr "Usar Tor"
-
-msgid "Bootstrap Relays"
-msgstr "Relays de inicialização"
-
-msgid "Advanced"
-msgstr "Avançado"
-
-msgid "Hardware Keystore"
-msgstr "Armazenamento de chaves de hardware"
-
-msgid "Enable hardware-backed key storage"
-msgstr "Habilitar armazenamento de chaves com suporte de hardware"
-
-msgid "Profile"
-msgstr "Perfil"
-
-msgid "Public Key"
-msgstr "Chave pública"
-
-msgid "Copy"
-msgstr "Copiar"
-
-msgid "View Events"
-msgstr "Ver eventos"
-
-msgid "Manage Relays"
-msgstr "Gerenciar relays"
-
-msgid "Backup Keys"
-msgstr "Backup de chaves"
-
-msgid "Delegations"
-msgstr "Delegações"
-
-msgid "Sign Message"
-msgstr "Assinar mensagem"
-
-msgid "Create Profile"
-msgstr "Criar perfil"
-
-msgid "Display Name"
-msgstr "Nome de exibição"
-
-msgid "Enter a name for this identity"
-msgstr "Digite um nome para esta identidade"
-
-msgid "Passphrase"
-msgstr "Frase secreta"
-
-msgid "Create a strong passphrase"
-msgstr "Crie uma frase secreta forte"
-
-msgid "Confirm Passphrase"
-msgstr "Confirmar frase secreta"
-
-msgid "Recovery Hint"
-msgstr "Dica de recuperação"
-
-msgid "Optional hint to help remember your passphrase"
-msgstr "Dica opcional para ajudar a lembrar sua frase secreta"
-
-msgid "Use Hardware Key"
-msgstr "Usar chave de hardware"
-
-msgid "Create"
-msgstr "Criar"
-
-msgid "Cancel"
-msgstr "Cancelar"
-
-msgid "Import Profile"
-msgstr "Importar perfil"
-
-msgid "Import Method"
-msgstr "Método de importação"
-
-msgid "NIP-49 Encrypted Backup"
-msgstr "Backup criptografado NIP-49"
-
-msgid "Paste your encrypted backup key (ncryptsec...)"
-msgstr "Cole sua chave de backup criptografada (ncryptsec...)"
-
-msgid "Mnemonic Seed Phrase"
-msgstr "Frase semente mnemônica"
-
-msgid "Enter your 12 or 24 word seed phrase"
-msgstr "Digite sua frase semente de 12 ou 24 palavras"
-
-msgid "Hardware Device"
-msgstr "Dispositivo de hardware"
-
-msgid "Connect your Ledger or Trezor device"
-msgstr "Conecte seu dispositivo Ledger ou Trezor"
-
-msgid "Import"
-msgstr "Importar"
-
-msgid "Export Encrypted Backup"
-msgstr "Exportar backup criptografado"
-
-msgid "Show Recovery Phrase"
-msgstr "Mostrar frase de recuperação"
-
-msgid "Warning: Never share your recovery phrase or backup key with anyone"
-msgstr "Aviso: Nunca compartilhe sua frase de recuperação ou chave de backup com ninguém"
-
-msgid "Event History"
-msgstr "Histórico de eventos"
-
-msgid "No events yet"
-msgstr "Nenhum evento ainda"
-
-msgid "Signed events will appear here"
-msgstr "Eventos assinados aparecerão aqui"
-
-msgid "Clear History"
-msgstr "Limpar histórico"
-
-msgid "Export"
-msgstr "Exportar"
-
-msgid "Keyboard Shortcuts"
-msgstr "Atalhos de teclado"
-
-msgid "General"
-msgstr "Geral"
-
-msgid "Lock Session"
-msgstr "Bloquear sessão"
-
-msgid "Quit"
-msgstr "Sair"
-
-msgid "Show Shortcuts"
-msgstr "Mostrar atalhos"
-
-msgid "Navigation"
-msgstr "Navegação"
-
-msgid "Next Tab"
-msgstr "Próxima aba"
-
-msgid "Previous Tab"
-msgstr "Aba anterior"
-
-msgid "Social Recovery"
-msgstr "Recuperação social"
-
-msgid "Set up trusted guardians to help recover your keys"
-msgstr "Configure guardiões de confiança para ajudar a recuperar suas chaves"
-
-msgid "Add Guardian"
-msgstr "Adicionar guardião"
-
-msgid "Threshold"
-msgstr "Limite"
-
-msgid "Number of guardians required to recover"
-msgstr "Número de guardiões necessários para recuperar"
-
-msgid "Grant signing permissions to other keys"
-msgstr "Conceder permissões de assinatura a outras chaves"
-
-msgid "Create Delegation"
-msgstr "Criar delegação"
-
-msgid "Delegatee Public Key"
-msgstr "Chave pública do delegado"
-
-msgid "Allowed Event Kinds"
-msgstr "Tipos de eventos permitidos"
-
-msgid "Valid From"
-msgstr "Válido de"
-
-msgid "Valid Until"
-msgstr "Válido até"
-
-msgid "Revoke"
-msgstr "Revogar"
-
-msgid "Hardware Wallet"
-msgstr "Carteira de hardware"
-
-msgid "Connect your hardware wallet"
-msgstr "Conecte sua carteira de hardware"
-
-msgid "Scanning for devices..."
-msgstr "Procurando dispositivos..."
-
-msgid "No devices found"
-msgstr "Nenhum dispositivo encontrado"
-
-msgid "Connect"
-msgstr "Conectar"
-
-msgid "QR Code"
-msgstr "Código QR"
-
-msgid "Scan this code to import"
-msgstr "Escaneie este código para importar"
-
-msgid "Copy to Clipboard"
-msgstr "Copiar para a área de transferência"
-
-msgid "English"
-msgstr "Inglês"
-
-msgid "System Default"
-msgstr "Padrão do sistema"
-
-msgid "Japanese"
-msgstr "Japonês"
-
-msgid "Spanish"
-msgstr "Espanhol"
-
-msgid "Portuguese (Brazil)"
-msgstr "Português (Brasil)"
-
-msgid "Indonesian"
-msgstr "Indonésio"
-
-msgid "Persian"
-msgstr "Persa"
-
-msgid "About"
-msgstr "Sobre"
-
-msgid "Version"
-msgstr "Versão"
-
-msgid "A secure NIP-46 remote signer for Nostr"
-msgstr "Um assinador remoto NIP-46 seguro para Nostr"
-
-msgid "Website"
-msgstr "Site"
-
-msgid "Report an Issue"
-msgstr "Reportar um problema"
-
-msgid "License"
-msgstr "Licença"
-
-msgid "Session locked due to inactivity"
-msgstr "Sessão bloqueada por inatividade"
-
-msgid "Session locked by user"
-msgstr "Sessão bloqueada pelo usuário"
-
-msgid "Incorrect password"
-msgstr "Senha incorreta"
-
-msgid "Too many failed attempts. Please wait."
-msgstr "Muitas tentativas falhas. Por favor, aguarde."
-
-msgid "Connection established"
-msgstr "Conexão estabelecida"
-
-msgid "Connection failed"
-msgstr "Falha na conexão"
-
-msgid "Request approved"
-msgstr "Solicitação aprovada"
-
-msgid "Request denied"
-msgstr "Solicitação negada"
-
-msgid "Welcome"
-msgstr "Bem-vindo"
-
-msgid "Let's set up your secure key management"
-msgstr "Vamos configurar seu gerenciamento seguro de chaves"
-
-msgid "Create Your First Identity"
-msgstr "Crie sua primeira identidade"
-
-msgid "Or import an existing one"
-msgstr "Ou importe uma existente"
-
-msgid "Setup Complete"
-msgstr "Configuração concluída"
-
-msgid "You're all set to start using Grotto"
-msgstr "Você está pronto para começar a usar o Grotto"
-
-msgid "Get Started"
-msgstr "Começar"
-
+#: data/ui/approval-dialog.ui:10 data/ui/approval-dialog.ui:40
+msgid "Review request"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:117
+msgid "Previous"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:122
+msgid "1 of 1"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:127 data/ui/onboarding-assistant.ui:330
 msgid "Next"
 msgstr "Próximo"
 
+#: data/ui/approval-dialog.ui:134
+msgid "Requests in this flow"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:148
+msgid "Approve selected once"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:179
+msgid "Allow NIP-44 encryption for this client and identity for 10 minutes"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:184
+msgid ""
+"Allow encrypted-message seals within this flow's limit (up to 10 minutes)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:191
+msgid "Remember this decision for this scope"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:205 src/ui/page-client-detail.c:38
+#: src/ui/page-client-detail.c:343
+msgid "Deny"
+msgstr "Negar"
+
+#: data/ui/approval-dialog.ui:206
+msgid "Deny once (Ctrl+D, Escape)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:211
+msgid "Approve"
+msgstr "Aprovar"
+
+#: data/ui/approval-dialog.ui:213
+msgid "Approve (Ctrl+A)"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:221
+msgid "Not now"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:222
+msgid "Keep this request waiting"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:229
+msgid "Details"
+msgstr ""
+
+#: data/ui/approval-dialog.ui:250
+msgid ""
+"Changing trust is separate from remembering this decision. Lowering trust "
+"keeps explicit permissions."
+msgstr ""
+
+#: data/ui/approval-dialog.ui:260
+msgid "Change trust level"
+msgstr ""
+
+#: data/ui/lock-screen.ui:15
+msgid "Lock screen"
+msgstr ""
+
+#: data/ui/lock-screen.ui:16
+msgid ""
+"Management is locked. Already-authorised signing continues unless signing is "
+"paused."
+msgstr ""
+
+#: data/ui/lock-screen.ui:47
+msgid "Lock icon"
+msgstr ""
+
+#: data/ui/lock-screen.ui:48
+msgid "Indicates management is locked"
+msgstr ""
+
+#: data/ui/lock-screen.ui:57
+msgid "Management locked"
+msgstr ""
+
+#: data/ui/lock-screen.ui:59
+msgid "Title indicating the current lock state"
+msgstr ""
+
+#: data/ui/lock-screen.ui:68
+msgid "Enter your password to unlock"
+msgstr "Digite sua senha para desbloquear"
+
+#: data/ui/lock-screen.ui:71
+msgid "Instructions for unlocking the session"
+msgstr ""
+
+#: data/ui/lock-screen.ui:93 data/ui/widgets/gn-secure-entry.ui:28
+msgid "Password"
+msgstr "Senha"
+
+#: data/ui/lock-screen.ui:95
+msgid "Password entry"
+msgstr ""
+
+#: data/ui/lock-screen.ui:96
+msgid "Enter your unlock password here"
+msgstr ""
+
+#: data/ui/lock-screen.ui:108
+msgid "Error message"
+msgstr ""
+
+#: data/ui/lock-screen.ui:109
+msgid "Displays error messages when unlock fails"
+msgstr ""
+
+#: data/ui/lock-screen.ui:120
+msgid "_Unlock"
+msgstr ""
+
+#: data/ui/lock-screen.ui:126
+msgid "Unlock management"
+msgstr ""
+
+#: data/ui/lock-screen.ui:127
+msgid ""
+"Click to unlock management with the entered password. Press Enter or Alt+U."
+msgstr ""
+
+#: data/ui/lock-screen.ui:142
+msgid "Session information"
+msgstr ""
+
+#: data/ui/lock-screen.ui:143
+msgid "Additional information about the locked session"
+msgstr ""
+
+#: data/ui/lock-screen.ui:147 src/ui/lock-screen.c:427
+msgid "Locked due to inactivity"
+msgstr ""
+
+#: data/ui/lock-screen.ui:156
+msgid "Locked at 12:00"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:10
+msgid "Set up Grotto"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:21
+msgid "Identity setup"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:26
+msgid "Skip setup"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:51
+msgid "Your identity, your control"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:52
+msgid ""
+"Keys live in your system keyring. Applications never receive your secret "
+"key, and each application asks for permission before signing. Grotto's "
+"explicit key-management screens may handle your recovery material briefly."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:66
+msgid "How would you like to start?"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:75 data/ui/onboarding-assistant.ui:104
+msgid "Create an identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:81 data/ui/onboarding-assistant.ui:136
+msgid "Import an identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:87 data/ui/onboarding-assistant.ui:189
+#: data/ui/page-connect.ui:13
+msgid "Connect an application"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:113
+msgid ""
+"Grotto generates a BIP-39 recovery phrase and stores it with your key in the "
+"system keyring. No extra creation password is used."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:120 data/ui/onboarding-assistant.ui:152
+msgid "Local label (optional)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:145
+msgid ""
+"Enter nsec, a 64-character private hex key, an encrypted NIP-49 key, or seed "
+"words. Input is validated before storage."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:157
+msgid "This is a BIP-39 recovery phrase"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:164
+msgid "Private key or recovery phrase"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:169
+msgid "NIP-49 decryption passphrase (encrypted imports only)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:190
+msgid ""
+"Local GNOME applications need no manual registration: their first call asks "
+"for consent. Remote applications pair from Connect after you have a signable "
+"identity. If you do not have one yet, go Back and create or import it first."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:204
+msgid "Verify your stored identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:213
+msgid ""
+"One review covers signing an unpublished event and verifying it, then NIP-44 "
+"encryption and decryption with an ephemeral peer. Nothing goes to relays, "
+"and no client permissions are created."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:220
+msgid "Retry self-test"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:236
+msgid "Back up your identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:245
+msgid ""
+"Anyone with these seed words has full control. Write them down privately; "
+"never paste them into software you do not trust. Grotto developers will "
+"never ask for them."
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:260
+msgid "Copy seed words (clipboard managers may retain them)"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:265
+msgid "Retry seed-word export"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:270
+msgid "Use encrypted backup instead…"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:275
+msgid "I have safely backed up my identity"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:288
+msgid "Ready to review signing requests"
+msgstr ""
+
+#: data/ui/onboarding-assistant.ui:325 data/ui/sheets/sheet-qr-scanner.ui:207
 msgid "Back"
 msgstr "Voltar"
 
-msgid "Skip"
-msgstr "Pular"
+#: data/ui/page-home.ui:10 data/ui/signer-window.ui:100
+#: data/ui/signer-window.ui:116 data/ui/signer-window.ui:215
+#: data/ui/signer-window.ui:221
+msgid "Home"
+msgstr "Início"
 
-msgid "Save"
-msgstr "Salvar"
+#: data/ui/page-home.ui:22
+msgid "Your identities"
+msgstr ""
 
-msgid "Delete"
-msgstr "Excluir"
+#: data/ui/page-home.ui:48
+msgid "Create or import an identity"
+msgstr ""
 
-msgid "Edit"
-msgstr "Editar"
+#: data/ui/page-home.ui:49
+msgid "Your management selection does not change an app’s identity."
+msgstr ""
 
+#: data/ui/page-home.ui:55 data/ui/page-home.ui:57
+msgid "Copy public key"
+msgstr ""
+
+#: data/ui/page-home.ui:65 data/ui/page-home.ui:67
+msgid "Show public-key QR code"
+msgstr ""
+
+#: data/ui/page-home.ui:99 src/ui/page-home.c:100
+msgid "Signed today"
+msgstr ""
+
+#: data/ui/page-home.ui:119 src/ui/page-home.c:100
+msgid "Clients"
+msgstr ""
+
+#: data/ui/page-home.ui:138 src/ui/page-home.c:101
+msgid "Pending"
+msgstr ""
+
+#: data/ui/page-home.ui:155
+msgid "Connected clients"
+msgstr ""
+
+#: data/ui/page-home.ui:166
+msgid "No connected apps"
+msgstr ""
+
+#: data/ui/page-home.ui:167
+msgid "Tap Connect to pair your first app"
+msgstr ""
+
+#: data/ui/page-home.ui:171 data/ui/page-connect.ui:10
+#: data/ui/signer-window.ui:152 data/ui/signer-window.ui:168
+#: data/ui/signer-window.ui:241
+msgid "Connect"
+msgstr "Conectar"
+
+#: data/ui/page-connect.ui:14
+msgid ""
+"Choose an identity and review the connection before any supplied relay is "
+"contacted. New apps start at Low trust."
+msgstr ""
+
+#: data/ui/page-connect.ui:17
+msgid "Paste a Nostr Connect link"
+msgstr ""
+
+#: data/ui/page-connect.ui:18
+msgid "Preview a link from your clipboard"
+msgstr ""
+
+#: data/ui/page-connect.ui:34
+msgid "Scan a QR code"
+msgstr ""
+
+#: data/ui/page-connect.ui:35
+msgid "Use your camera or a QR image"
+msgstr ""
+
+#: data/ui/page-connect.ui:51
+msgid "Open a link"
+msgstr ""
+
+#: data/ui/page-connect.ui:52
+msgid "Choose a bunker:// or nostrconnect:// link file"
+msgstr ""
+
+#: data/ui/page-connect.ui:68
+msgid "Create a pairing link for an app"
+msgstr ""
+
+#: data/ui/page-connect.ui:69
+msgid "A single-use link and QR code, with an explicit identity"
+msgstr ""
+
+#: data/ui/page-connect.ui:89 data/ui/page-settings.ui:123
+msgid "Remote signing"
+msgstr ""
+
+#: data/ui/page-connect.ui:90 data/ui/page-settings.ui:127 src/home-model.c:119
+msgid "Connecting to signer…"
+msgstr ""
+
+#: data/ui/page-connect.ui:96
+msgid ""
+"Local GNOME applications need no pairing. They ask the first time they call "
+"Grotto, and you choose what they may do. Remote apps need remote signing "
+"enabled in Settings; approving a connection does not grant signing "
+"permissions."
+msgstr ""
+
+#: data/ui/page-client-detail.ui:10 data/ui/page-client-detail.ui:15
+#: src/ui/page-client-detail.c:488
+msgid "Client"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:30
+msgid "Client label"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:36
+msgid "Verified identity / fingerprint"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:42
+msgid "Connected since"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:55
+msgid "Trust level"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:56
+msgid ""
+"Required-confirmation events and key exports still need review. Explicit "
+"denials always win."
+msgstr ""
+
+#: data/ui/page-client-detail.ui:59 src/ui/page-home.c:132
+#: src/ui/page-home.c:138
+msgid "Full"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:60
+msgid "Auto-sign all requests"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:65
+msgid "Full: Auto-sign all requests"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:73 src/ui/page-home.c:132
+#: src/ui/page-home.c:138
+msgid "Medium"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:74
+msgid "Ask for sensitive operations"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:80
+msgid "Medium: Ask for sensitive operations"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:88 src/ui/page-home.c:132
+#: src/ui/page-home.c:138
+msgid "Low"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:89
+msgid "Ask for every request"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:96
+msgid "Low: Ask for every request"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:104 src/ui/page-client-detail.c:148
+msgid "Permissions"
+msgstr "Permissões"
+
+#: data/ui/page-client-detail.ui:115
+msgid "Clear remembered permissions"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:123
+msgid "Recent activity"
+msgstr ""
+
+#: data/ui/page-client-detail.ui:138 src/ui/page-client-detail.c:123
+msgid "Revoke client"
+msgstr ""
+
+#: data/ui/page-history.ui:10 data/ui/page-settings.ui:153
+#: data/ui/signer-window.ui:126 data/ui/signer-window.ui:142
+#: data/ui/signer-window.ui:231
+msgid "Activity"
+msgstr ""
+
+#: data/ui/page-history.ui:13
+msgid "Signer activity"
+msgstr ""
+
+#: data/ui/page-history.ui:14
+msgid ""
+"Daemon-recorded outcomes, not publication receipts. No content is stored."
+msgstr ""
+
+#: data/ui/page-history.ui:17
+msgid "Filter by client"
+msgstr ""
+
+#: data/ui/page-history.ui:19
+msgid "Filter activity by client"
+msgstr ""
+
+#: data/ui/page-history.ui:25
+msgid "Event type number (empty for all)"
+msgstr ""
+
+#: data/ui/page-history.ui:30
+msgid "Outcome"
+msgstr ""
+
+#: data/ui/page-history.ui:34
+msgid "All outcomes"
+msgstr ""
+
+#: data/ui/page-history.ui:65
+msgid "Load older activity"
+msgstr ""
+
+#: data/ui/page-history.ui:71
+msgid "Clear activity…"
+msgstr ""
+
+#: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:44
+#: data/ui/signer-window.ui:178 data/ui/signer-window.ui:194
+#: data/ui/signer-window.ui:251 data/org.nostr.Grotto.desktop:30
+msgid "Settings"
+msgstr "Configurações"
+
+#: data/ui/page-settings.ui:13
+msgid "Appearance and accessibility"
+msgstr ""
+
+#: data/ui/page-settings.ui:16
+msgid "Appearance"
+msgstr "Aparência"
+
+#: data/ui/page-settings.ui:20 data/ui/page-settings.ui:54
+msgid "System"
+msgstr "Sistema"
+
+#: data/ui/page-settings.ui:21
+msgid "Light"
+msgstr "Claro"
+
+#: data/ui/page-settings.ui:22
+msgid "Dark"
+msgstr "Escuro"
+
+#: data/ui/page-settings.ui:23
+msgid "High contrast"
+msgstr ""
+
+#: data/ui/page-settings.ui:31
+msgid "Force high contrast"
+msgstr ""
+
+#: data/ui/page-settings.ui:36
+msgid "High-contrast colours"
+msgstr ""
+
+#: data/ui/page-settings.ui:40
+msgid "Black on white"
+msgstr ""
+
+#: data/ui/page-settings.ui:41
+msgid "White on black"
+msgstr ""
+
+#: data/ui/page-settings.ui:42
+msgid "Yellow on black"
+msgstr ""
+
+#: data/ui/page-settings.ui:50
+msgid "Language (restart required)"
+msgstr ""
+
+#: data/ui/page-settings.ui:70
+msgid "Security"
+msgstr "Segurança"
+
+#: data/ui/page-settings.ui:71
+msgid ""
+"UI lock protects management, not the key backend. Pause signing stops "
+"authorised requests too."
+msgstr ""
+
+#: data/ui/page-settings.ui:74
+msgid "Lock management after"
+msgstr ""
+
+#: data/ui/page-settings.ui:78
+msgid "Never"
+msgstr ""
+
+#: data/ui/page-settings.ui:79
+msgid "1 minute"
+msgstr ""
+
+#: data/ui/page-settings.ui:80
+msgid "5 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:81
+msgid "15 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:82
+msgid "30 minutes"
+msgstr ""
+
+#: data/ui/page-settings.ui:83 src/ui/page-client-detail.c:368
+msgid "1 hour"
+msgstr ""
+
+#: data/ui/page-settings.ui:91
+msgid "Lock management on system idle"
+msgstr ""
+
+#: data/ui/page-settings.ui:96
+msgid "Pause signing on screen lock"
+msgstr ""
+
+#: data/ui/page-settings.ui:97
+msgid "Resume requires an unlocked, observed session"
+msgstr ""
+
+#: data/ui/page-settings.ui:102
+msgid "Always confirm these event types"
+msgstr ""
+
+#: data/ui/page-settings.ui:103 src/ui/page-settings.c:49
+msgid "Overrides remembered allows and trust levels"
+msgstr ""
+
+#: data/ui/page-settings.ui:114 src/ui/signer-window.c:627
+msgid "Pause signing"
+msgstr ""
+
+#: data/ui/page-settings.ui:126
+msgid "Runtime status"
+msgstr ""
+
+#: data/ui/page-settings.ui:133
+msgid "Relays and method allowlist"
+msgstr ""
+
+#: data/ui/page-settings.ui:134
+msgid "Changes apply without restarting the signer"
+msgstr ""
+
+#: data/ui/page-settings.ui:145
+msgid "Reset remote endpoint…"
+msgstr ""
+
+#: data/ui/page-settings.ui:154
+msgid "Metadata only — no messages, secrets or event content."
+msgstr ""
+
+#: data/ui/page-settings.ui:157
+msgid "Keep activity (days)"
+msgstr ""
+
+#: data/ui/page-settings.ui:170
+msgid "View activity"
+msgstr ""
+
+#: data/ui/page-settings.ui:181
+msgid "About Grotto (Preview)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:10
+msgid "Identity and backup"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:34
+msgid "Identity to manage"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:59
+msgid "Local identity label"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:64
+msgid "Save local label"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:69
+msgid "Key backup and safety tips"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:70
+msgid ""
+"Your secret key gives full control. Never paste it into software you do not "
+"trust. Grotto developers never ask for it. Keep a private backup. Clipboard "
+"managers can retain anything you copy."
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:73
+msgid "Show seed words"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:74
+msgid "Primary backup for identities created in Grotto"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:78
+msgid "Show"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:99
+msgid "I have safely backed up this identity"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:104
+msgid "Confirm backup"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:109
+msgid "Encrypted export passphrase (NIP-49 only)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:121
+msgid "Export encrypted key (NIP-49)"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:126
+msgid "Show encrypted key QR code"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:131
+msgid "Copy secret key…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:139
+msgid "Identity management"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:140
+msgid ""
+"Managing this identity never switches identities for another application."
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:143
+msgid "Default for older apps"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:144
+msgid "Only applications that do not specify an identity use this default"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:147
+msgid "Set default"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:157
+msgid "Retry identity self-test"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:162
+msgid "Create successor identity…"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:167
+msgid "Export saved migration announcement"
+msgstr ""
+
+#: data/ui/page-identity-detail.ui:172
+msgid "Remove this identity…"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:14
+msgid "Management"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:209
+#: data/org.nostr.Grotto.desktop:3 packaging/appimage/grotto.desktop:3
+msgid "Grotto"
+msgstr "Grotto"
+
+#: data/ui/shortcuts-window.ui:20
+msgid "New identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:26
+msgid "Import identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:32
+msgid "Backup identity"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:38
+msgid "Lock management"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:50
+msgid "Close window"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:56
+msgid "Quit approval UI (authorised signing continues)"
+msgstr ""
+
+#: data/ui/shortcuts-window.ui:62
+msgid "Keyboard shortcuts"
+msgstr ""
+
+#: data/ui/signer-window.ui:15
+msgid "Grotto main window"
+msgstr ""
+
+#: data/ui/signer-window.ui:55 data/ui/signer-window.ui:57
+msgid "Toggle sidebar"
+msgstr ""
+
+#: data/ui/signer-window.ui:64
+msgid "Preview"
+msgstr ""
+
+#: data/ui/signer-window.ui:71
+msgid "Application menu"
+msgstr ""
+
+#: data/ui/signer-window.ui:83
+msgid "Sections"
+msgstr ""
+
+#: data/ui/signer-window.ui:95
+msgid "Navigation sections"
+msgstr ""
+
+#: data/ui/signer-window.ui:273
+msgid "Bottom navigation"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:10
+#: data/ui/sheets/sheet-create-bunker.ui:28
+msgid "Connect with which identity?"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:22
+msgid "Choose the identity this application may request."
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:33
+msgid "Client label (optional)"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:38
+msgid "Remote signing relays"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:44
+msgid "Explicit relay URLs, separated by spaces"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:49
+msgid ""
+"Relays see your network address and connection timing. No default relays or "
+"Tor proxy are used."
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:55
+msgid "Enable remote signing"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:60
+msgid "Apply relay settings (no restart)"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:65
+msgid "Reading daemon status…"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:71
+msgid "Create single-use pairing link"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:77
+msgid "Set up / Reset remote signing endpoint…"
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:82
 msgid "Close"
 msgstr "Fechar"
 
-msgid "OK"
-msgstr "OK"
+#: data/ui/sheets/sheet-qr-display.ui:10 data/ui/sheets/sheet-qr-display.ui:52
+msgid "QR Code"
+msgstr "Código QR"
 
-msgid "Yes"
-msgstr "Sim"
+#: data/ui/sheets/sheet-qr-display.ui:26
+msgid "Done"
+msgstr ""
 
-msgid "No"
-msgstr "Não"
+#: data/ui/sheets/sheet-qr-display.ui:87 data/ui/sheets/sheet-qr-scanner.ui:161
+msgid "Type"
+msgstr ""
 
-msgid "Confirm"
-msgstr "Confirmar"
+#: data/ui/sheets/sheet-qr-display.ui:100
+#: data/ui/sheets/sheet-qr-scanner.ui:179
+msgid "Data"
+msgstr ""
 
-msgid "Error"
-msgstr "Erro"
+#: data/ui/sheets/sheet-qr-display.ui:140
+msgid "Warning message"
+msgstr ""
 
-msgid "Warning"
-msgstr "Aviso"
+#: data/ui/sheets/sheet-qr-display.ui:155
+msgid "Copy to Clipboard"
+msgstr "Copiar para a área de transferência"
 
-msgid "Success"
-msgstr "Sucesso"
+#: data/ui/sheets/sheet-qr-scanner.ui:10
+msgid "Scan QR Code"
+msgstr ""
 
-msgid "Loading..."
-msgstr "Carregando..."
+#: data/ui/sheets/sheet-qr-scanner.ui:26 src/ui/page-client-detail.c:123
+#: src/ui/page-client-detail.c:138 src/ui/page-client-detail.c:299
+#: src/ui/page-history.c:105 src/ui/page-settings.c:68
+msgid "Cancel"
+msgstr "Cancelar"
 
-msgid "Please wait..."
-msgstr "Por favor, aguarde..."
+#: data/ui/sheets/sheet-qr-scanner.ui:51
+msgid "Ready to scan"
+msgstr ""
 
-msgid "second"
-msgid_plural "seconds"
-msgstr[0] "segundo"
-msgstr[1] "segundos"
+#: data/ui/sheets/sheet-qr-scanner.ui:68
+msgid "Start Camera"
+msgstr ""
 
-msgid "minute"
-msgid_plural "minutes"
-msgstr[0] "minuto"
-msgstr[1] "minutos"
+#: data/ui/sheets/sheet-qr-scanner.ui:86
+msgid "Paste from Clipboard"
+msgstr ""
 
-msgid "hour"
-msgid_plural "hours"
-msgstr[0] "hora"
-msgstr[1] "horas"
+#: data/ui/sheets/sheet-qr-scanner.ui:95
+msgid "Open File"
+msgstr ""
 
-msgid "day"
-msgid_plural "days"
-msgstr[0] "dia"
-msgstr[1] "dias"
+#: data/ui/sheets/sheet-qr-scanner.ui:108
+msgid "Scan an nsec, ncryptsec, or hex key QR code"
+msgstr ""
 
-msgid "Note"
-msgstr "Nota"
+#: data/ui/sheets/sheet-qr-scanner.ui:152
+msgid "QR Code Scanned"
+msgstr ""
 
-msgid "Direct Message"
-msgstr "Mensagem direta"
+#: data/ui/sheets/sheet-qr-scanner.ui:216
+msgid "Import Key"
+msgstr ""
 
-msgid "Reaction"
-msgstr "Reação"
+#: data/ui/widgets/gn-secure-entry.ui:29
+msgid "Enter your password. Characters are hidden for security."
+msgstr ""
 
+#: data/ui/widgets/gn-secure-entry.ui:38
+msgid "Show password"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:41
+msgid "Toggle password visibility"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:42
+msgid "Press to show or hide the password text"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:75
+msgid "Password strength meter"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:76
+msgid "Indicates the strength of your password from weak to very strong"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:82
+msgid "Weak"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:118
+msgid "Caps Lock is on"
+msgstr ""
+
+#: data/ui/widgets/gn-secure-entry.ui:121
+msgid "Warning: Caps Lock is enabled"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
+msgid "Nostr Signer"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:5
+msgid ""
+"Keeps your Nostr keys and signs for all your Nostr apps (NIP-55L, NIP-46)"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:11
+msgid "nostr;signer;keys;identity;crypto;signing;"
+msgstr ""
+
+#: data/org.nostr.Grotto.desktop:26
+msgid "New Identity"
+msgstr ""
+
+#: packaging/appimage/grotto.desktop:5
+msgid "Authorize Nostr app requests securely"
+msgstr ""
+
+#: src/home-model.c:34
+msgid "Signer management is unavailable. Reopen Home to retry."
+msgstr ""
+
+#: src/home-model.c:70
+msgid "Signer not running"
+msgstr ""
+
+#: src/home-model.c:91
+msgid "The signer session bus is unavailable."
+msgstr ""
+
+#: src/ui/signer-window.c:106
+#, c-format
+msgid "GSettings schema %s not found"
+msgstr ""
+
+#: src/ui/signer-window.c:129
+#, c-format
+msgid "Window state saved: maximized=%d"
+msgstr ""
+
+#: src/ui/signer-window.c:146
+#, c-format
+msgid "Window state restored: width=%d height=%d maximized=%d"
+msgstr ""
+
+#: src/ui/signer-window.c:454
+#, c-format
+msgid "Window: session locked (reason=%d)"
+msgstr ""
+
+#: src/ui/signer-window.c:468
+msgid "Window: session unlocked"
+msgstr ""
+
+#. Show a toast warning about impending timeout
+#: src/ui/signer-window.c:476
+#, c-format
+msgid "Management will lock in %u seconds"
+msgstr ""
+
+#: src/ui/signer-window.c:489
+msgid "Window: unlock requested from lock screen"
+msgstr ""
+
+#: src/ui/signer-window.c:609
+msgid "New identity\tCtrl+N"
+msgstr ""
+
+#: src/ui/signer-window.c:610
+msgid "Import identity\tCtrl+I"
+msgstr ""
+
+#: src/ui/signer-window.c:611
+msgid "Export/Backup\tCtrl+E"
+msgstr ""
+
+#: src/ui/signer-window.c:612
+msgid "Connect an application…"
+msgstr ""
+
+#: src/ui/signer-window.c:618
+msgid "Lock management\tCtrl+L"
+msgstr ""
+
+#: src/ui/signer-window.c:624
+msgid "Preferences\tCtrl+,"
+msgstr ""
+
+#: src/ui/signer-window.c:625
+msgid "Keyboard Shortcuts\tCtrl+?"
+msgstr ""
+
+#: src/ui/signer-window.c:626
+msgid "About Grotto\tF1"
+msgstr ""
+
+#: src/ui/signer-window.c:628
+msgid "Resume signing…"
+msgstr ""
+
+#: src/ui/signer-window.c:629
+msgid "Quit approval UI (authorised signing continues)\tCtrl+Q"
+msgstr ""
+
+#: src/ui/signer-window.c:770
+msgid "Session locked via Ctrl+L"
+msgstr ""
+
+#. No password required - show different UI
+#: src/ui/lock-screen.c:138
+msgid "Click to unlock"
+msgstr ""
+
+#: src/ui/lock-screen.c:141
+msgid "Unlock"
+msgstr ""
+
+#: src/ui/lock-screen.c:157
+msgid "Rate limit warning"
+msgstr ""
+
+#: src/ui/lock-screen.c:158
+msgid ""
+"Shows warning when too many failed authentication attempts have occurred"
+msgstr ""
+
+#: src/ui/lock-screen.c:167
+msgid "Lockout countdown timer"
+msgstr ""
+
+#: src/ui/lock-screen.c:168
+msgid "Time remaining until you can try again"
+msgstr ""
+
+#: src/ui/lock-screen.c:205
+#, c-format
+msgid "%u second"
+msgid_plural "%u seconds"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/lock-screen.c:212
+#, c-format
+msgid "%u minute"
+msgid_plural "%u minutes"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/lock-screen.c:236
+msgid "Lockout expired. You may now try again."
+msgstr ""
+
+#: src/ui/lock-screen.c:248
+#, c-format
+msgid "%s remaining"
+msgstr ""
+
+#: src/ui/lock-screen.c:267
+msgid ""
+"Too many failed authentication attempts.\n"
+"Please wait before trying again:"
+msgstr ""
+
+#: src/ui/lock-screen.c:300
+#, c-format
+msgid "%u attempt remaining"
+msgid_plural "%u attempts remaining"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/lock-screen.c:356
+msgid "Please enter your password"
+msgstr ""
+
+#: src/ui/lock-screen.c:370
+msgid "Authentication failed"
+msgstr ""
+
+#: src/ui/lock-screen.c:424
+msgid "Manually locked"
+msgstr ""
+
+#: src/ui/lock-screen.c:430
+msgid "Session started locked"
+msgstr ""
+
+#: src/ui/lock-screen.c:433
+msgid "Locked due to system idle"
+msgstr ""
+
+#: src/ui/lock-screen.c:436
+msgid "Session locked"
+msgstr ""
+
+#: src/ui/lock-screen.c:452
+msgid "Locked at %H:%M"
+msgstr ""
+
+#: src/ui/lock-screen.c:515
+msgid "Unlocking..."
+msgstr ""
+
+#. Generated by scripts/generate-grotto-kind-catalog.py; do not edit.
+#: src/ui/approval_dialog.c:36 src/ui/kind-catalog.inc:2
+msgid "Profile metadata"
+msgstr ""
+
+#: src/ui/approval_dialog.c:38 src/ui/kind-catalog.inc:3
+msgid "Text note"
+msgstr ""
+
+#: src/ui/approval_dialog.c:40
+msgid "Contact list"
+msgstr ""
+
+#: src/ui/approval_dialog.c:42 src/ui/approval_dialog.c:56
+msgid "Encrypted message"
+msgstr ""
+
+#: src/ui/approval_dialog.c:44
+msgid "Delete events"
+msgstr ""
+
+#: src/ui/approval_dialog.c:47 src/ui/kind-catalog.inc:8
 msgid "Repost"
 msgstr "Repost"
 
-msgid "Zap Request"
-msgstr "Solicitação de Zap"
+#: src/ui/approval_dialog.c:49 src/ui/kind-catalog.inc:9
+msgid "Reaction"
+msgstr "Reação"
 
-msgid "Profile Update"
-msgstr "Atualização de perfil"
+#: src/ui/approval_dialog.c:51 src/ui/kind-catalog.inc:116
+msgid "Article"
+msgstr ""
 
-msgid "Contact List"
-msgstr "Lista de contatos"
+#: src/ui/approval_dialog.c:53 src/ui/kind-catalog.inc:37
+msgid "Comment"
+msgstr ""
 
-msgid "Relay List"
-msgstr "Lista de relays"
+#: src/ui/approval_dialog.c:59
+msgid "Private message"
+msgstr ""
+
+#: src/ui/approval_dialog.c:61
+msgid "Relay list"
+msgstr ""
+
+#: src/ui/approval_dialog.c:63
+msgid "Relay authentication"
+msgstr ""
+
+#: src/ui/approval_dialog.c:65 src/ui/kind-catalog.inc:73
+msgid "Zap request"
+msgstr ""
+
+#: src/ui/approval_dialog.c:67
+msgid "Zap receipt"
+msgstr ""
+
+#: src/ui/approval_dialog.c:69
+msgid "Remote signer message"
+msgstr ""
+
+#: src/ui/approval_dialog.c:71
+msgid "Custom event"
+msgstr ""
+
+#: src/ui/page-home.c:50 src/ui/page-client-detail.c:330
+msgid "Identity"
+msgstr ""
+
+#: src/ui/page-home.c:54 src/ui/page-home.c:58
+msgid "Watch only"
+msgstr ""
+
+#: src/ui/page-home.c:57
+#, c-format
+msgid "%s · %s · %s"
+msgstr ""
+
+#: src/ui/page-home.c:58
+msgid "Signing identity"
+msgstr ""
+
+#: src/ui/page-home.c:58
+msgid "Selected"
+msgstr ""
+
+#: src/ui/page-home.c:58
+msgid "Not selected"
+msgstr ""
+
+#: src/ui/page-home.c:67
+msgid " · Watch only"
+msgstr ""
+
+#: src/ui/page-home.c:71
+msgid "+ Add"
+msgstr ""
+
+#: src/ui/page-home.c:74 src/ui/page-client-detail.c:325
+msgid "Choose an identity"
+msgstr ""
+
+#: src/ui/page-home.c:75
+msgid "Management selection only — apps keep their own identity."
+msgstr ""
+
+#: src/ui/page-home.c:95
+#, c-format
+msgid "%s: %s"
+msgstr ""
+
+#: src/ui/page-home.c:103
+msgid "Read-only: this signer version is not supported."
+msgstr ""
+
+#: src/ui/page-home.c:122
+msgid "%b %e, %H:%M"
+msgstr ""
+
+#: src/ui/page-home.c:122
+msgid "Not yet used"
+msgstr ""
+
+#: src/ui/page-home.c:123
+msgid "Remote"
+msgstr ""
+
+#: src/ui/page-home.c:124
+msgid "Browser bridge"
+msgstr ""
+
+#: src/ui/page-home.c:125
+msgid "Local app"
+msgstr ""
+
+#: src/ui/page-home.c:125
+msgid "Transport not yet observed"
+msgstr ""
+
+#: src/ui/page-home.c:126
+#, c-format
+msgid "Last seen: %s · %u pending%s%s"
+msgstr ""
+
+#: src/ui/page-home.c:127
+msgid " · Waiting for relay acknowledgement"
+msgstr ""
+
+#: src/ui/page-home.c:127
+msgid " · Permissions need review"
+msgstr ""
+
+#: src/ui/page-home.c:137
+#, c-format
+msgid "%s · %s · %s trust · %s"
+msgstr ""
+
+#: src/ui/page-connect.c:48
+msgid ""
+"Could not read a valid link file (maximum 64 KiB). Paste or scan the link "
+"instead."
+msgstr ""
+
+#: src/ui/page-connect.c:58
+msgid ""
+"The selected link file could not be read. Paste or scan the link instead."
+msgstr ""
+
+#: src/ui/page-connect.c:76
+msgid "Open a Nostr Connect link file"
+msgstr ""
+
+#: src/ui/page-connect.c:89
+#, c-format
+msgid "%s · %u awaiting review · %u awaiting relay acknowledgement"
+msgstr ""
+
+#: src/ui/page-client-detail.c:38 src/ui/page-client-detail.c:343
+msgid "Allow"
+msgstr ""
+
+#: src/ui/page-client-detail.c:38
+msgid "Needs review"
+msgstr ""
+
+#: src/ui/page-client-detail.c:55
+msgid ""
+"Saved. Explicit remembered permissions are retained when trust is lowered."
+msgstr ""
+
+#: src/ui/page-client-detail.c:56
+msgid ""
+"Not saved. The signer may have changed or refused this update. Review the "
+"refreshed permissions before trying again."
+msgstr ""
+
+#: src/ui/page-client-detail.c:122
+msgid "Revoke this client?"
+msgstr ""
+
+#: src/ui/page-client-detail.c:122
+msgid ""
+"Pending requests will be cancelled and all remembered permissions removed. "
+"The app must ask again."
+msgstr ""
+
+#: src/ui/page-client-detail.c:136
+#, c-format
+msgid ""
+"Remove every explicit allow and deny for this client and identity %s? The "
+"trust tier remains unchanged."
+msgstr ""
+
+#: src/ui/page-client-detail.c:137
+msgid "Clear remembered permissions?"
+msgstr ""
+
+#: src/ui/page-client-detail.c:138
+msgid "Clear"
+msgstr ""
+
+#: src/ui/page-client-detail.c:154
+msgid "Refresh permissions"
+msgstr ""
+
+#: src/ui/page-client-detail.c:158
+msgid "Effective from trust level"
+msgstr ""
+
+#: src/ui/page-client-detail.c:159
+msgid ""
+"Read-only policy. Explicit denials win; required-confirmation events and key "
+"exports still need review."
+msgstr ""
+
+#: src/ui/page-client-detail.c:162
+msgid "Remembered permissions"
+msgstr ""
+
+#: src/ui/page-client-detail.c:163
+msgid ""
+"Exact client + identity + operation + event type. Expiry is absolute, not "
+"extended by activity. Needs-review entries cannot authorize signing."
+msgstr ""
+
+#: src/ui/page-client-detail.c:199 src/ui/page-client-detail.c:200
+msgid ""
+"Scoped permission saved. Refreshing before removing the legacy review entry."
+msgstr ""
+
+#: src/ui/page-client-detail.c:202
+msgid "Permission saved."
+msgstr ""
+
+#: src/ui/page-client-detail.c:205
+msgid ""
+"Scoped permission saved, but the legacy review entry was not removed. Review "
+"the refreshed entries and retry removal."
+msgstr ""
+
+#: src/ui/page-client-detail.c:206
+msgid ""
+"Permission not saved: another request changed the permissions. Refreshing "
+"now; review your edit and retry."
+msgstr ""
+
+#: src/ui/page-client-detail.c:207
+msgid ""
+"Permission not saved. The signer refused the update or became unavailable. "
+"Refresh and retry."
+msgstr ""
+
+#: src/ui/page-client-detail.c:222
+msgid ""
+"The original entry or signer changed. Your edit was not retried. Close this "
+"editor and review the new entries."
+msgstr ""
+
+#: src/ui/page-client-detail.c:223
+msgid "Review updated permissions"
+msgstr ""
+
+#: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:231
+msgid "Retry removing legacy entry"
+msgstr ""
+
+#: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:231
+#: src/ui/page-client-detail.c:380
+msgid "Retry permission"
+msgstr ""
+
+#: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:372
+msgid "Save permission"
+msgstr ""
+
+#: src/ui/page-client-detail.c:262
+msgid "Choose an explicit identity before allowing this permission."
+msgstr ""
+
+#: src/ui/page-client-detail.c:269
+msgid "Choose a specific event type before allowing this permission."
+msgstr ""
+
+#: src/ui/page-client-detail.c:281
+msgid "This exact scope already has a permission. Edit that entry instead."
+msgstr ""
+
+#: src/ui/page-client-detail.c:295
+msgid " · all event types"
+msgstr ""
+
+#: src/ui/page-client-detail.c:295
+#, c-format
+msgid " · %s (%d)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:296
+#, c-format
+msgid "Remember %s for %s, identity %s, operation %s%s forever?"
+msgstr ""
+
+#: src/ui/page-client-detail.c:298
+msgid "Remember forever?"
+msgstr ""
+
+#: src/ui/page-client-detail.c:299
+msgid "Remember"
+msgstr ""
+
+#: src/ui/page-client-detail.c:317
+msgid "Edit remembered permission"
+msgstr ""
+
+#: src/ui/page-client-detail.c:321
+#, c-format
+msgid ""
+"Client: %s\n"
+"Identity: %s\n"
+"Operation: %s"
+msgstr ""
+
+#: src/ui/page-client-detail.c:330 src/ui/page-client-detail.c:420
+#: src/ui/page-client-detail.c:508
+#, c-format
+msgid "%s · %s"
+msgstr ""
+
+#: src/ui/page-client-detail.c:333
+msgid ""
+"Choose the identity for this exact permission. The legacy review entry is "
+"removed only after the scoped permission is saved."
+msgstr ""
+
+#: src/ui/page-client-detail.c:340
+msgid "Permission identity"
+msgstr ""
+
+#: src/ui/page-client-detail.c:345
+msgid "Decision"
+msgstr ""
+
+#: src/ui/page-client-detail.c:348
+msgid "Event type (custom numbers supported)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:349
+msgid "All event types (deny only)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:353
+msgid "Event type"
+msgstr ""
+
+#: src/ui/page-client-detail.c:355
+msgid "Choose an event type"
+msgstr ""
+
+#: src/ui/page-client-detail.c:357
+#, c-format
+msgid "%s (%u)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:365
+msgid "Search event types"
+msgstr ""
+
+#: src/ui/page-client-detail.c:368
+msgid "Keep current expiry"
+msgstr ""
+
+#: src/ui/page-client-detail.c:368
+msgid "10 minutes"
+msgstr ""
+
+#: src/ui/page-client-detail.c:368
+msgid "24 hours"
+msgstr ""
+
+#: src/ui/page-client-detail.c:368 src/ui/page-client-detail.c:423
+msgid "Forever"
+msgstr ""
+
+#: src/ui/page-client-detail.c:370
+msgid "Permission expiry"
+msgstr ""
+
+#: src/ui/page-client-detail.c:373
+msgid "Remove permission"
+msgstr ""
+
+#: src/ui/page-client-detail.c:390
+msgid "Share public key (after first consent)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:390 src/ui/page-history.c:16
+msgid "Read relay list"
+msgstr ""
+
+#: src/ui/page-client-detail.c:390 src/ui/page-history.c:16
+msgid "Check connection"
+msgstr ""
+
+#: src/ui/page-client-detail.c:393
+msgid "From Full trust"
+msgstr ""
+
+#: src/ui/page-client-detail.c:393
+msgid "From Medium trust"
+msgstr ""
+
+#: src/ui/page-client-detail.c:393
+msgid "From Low trust"
+msgstr ""
+
+#: src/ui/page-client-detail.c:400
+msgid "From Medium trust · required-confirmation settings still apply"
+msgstr ""
+
+#: src/ui/page-client-detail.c:404
+msgid "All permitted operations and event types"
+msgstr ""
+
+#: src/ui/page-client-detail.c:405
+msgid ""
+"From Full trust · method allowlist applies · key exports and required-"
+"confirmation events excluded"
+msgstr ""
+
+#: src/ui/page-client-detail.c:415
+msgid "Clear this identity’s permissions…"
+msgstr ""
+
+#: src/ui/page-client-detail.c:420 src/ui/page-history.c:58
+#, c-format
+msgid "%s · %s (%d)"
+msgstr ""
+
+#: src/ui/page-client-detail.c:423 src/ui/page-client-detail.c:493
+#: src/ui/page-history.c:61
+msgid "%F %R"
+msgstr ""
+
+#: src/ui/page-client-detail.c:424
+msgid "Needs review · Not executable · "
+msgstr ""
+
+#: src/ui/page-client-detail.c:424
+msgid "Expires: "
+msgstr ""
+
+#: src/ui/page-client-detail.c:429
+msgid "No remembered permissions"
+msgstr ""
+
+#: src/ui/page-client-detail.c:440
+msgid ""
+"Permissions could not be loaded. No edit was saved. Refresh to try again."
+msgstr ""
+
+#: src/ui/page-client-detail.c:441
+msgid "Permissions could not be loaded. Refresh permissions before retrying."
+msgstr ""
+
+#: src/ui/page-client-detail.c:462
+msgid "Permissions refreshed. Review the entries before retrying."
+msgstr ""
+
+#: src/ui/page-client-detail.c:465
+msgid ""
+"Permissions changed while loading. Refresh permissions before retrying; no "
+"edit was saved."
+msgstr ""
+
+#: src/ui/page-client-detail.c:486
+#, c-format
+msgid "%u explicit remembered permission"
+msgid_plural "%u explicit remembered permissions"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/ui/page-client-detail.c:493
+msgid "Waiting for consent"
+msgstr ""
+
+#: src/ui/page-client-detail.c:495
+msgid "Approved — waiting for relay acknowledgement"
+msgstr ""
+
+#: src/ui/page-client-detail.c:499
+msgid "Client unavailable or revoked."
+msgstr ""
+
+#: src/ui/page-client-detail.c:508 src/ui/page-history.c:23
+msgid "Operation"
+msgstr ""
+
+#: src/ui/page-client-detail.c:512
+msgid "No recent activity in the latest records"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:4
+msgid "Recommend server"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:5
+msgid "Follow list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:6
+msgid "Encrypted direct message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:7
+msgid "Deletion"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:10
+msgid "Badge award"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:11
+msgid "Simple group chat message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:12
+msgid "Simple group threaded reply"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:13
+msgid "Simple group thread"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:14
+msgid "Simple group reply"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:15
+msgid "Seal"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:16
+msgid "Direct message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:17
+msgid "File message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:18
+msgid "Generic repost"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:19
+msgid "Reaction to website"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:20
+msgid "Photo"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:21
+msgid "Normal video"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:22
+msgid "Short video"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:23
+msgid "Channel creation"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:24
+msgid "Channel metadata"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:25
+msgid "Channel message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:26
+msgid "Channel hide message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:27
+msgid "Channel mute user"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:28
+msgid "Chess"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:29
+msgid "Merge requests"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:30
+msgid "Poll response"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:31
+msgid "Bid"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:32
+msgid "Bid confirmation"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:33
+msgid "Open timestamps"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:34
+msgid "Gift wrap"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:35
+msgid "File metadata"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:36
+msgid "Poll"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:38
+msgid "Voice"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:39
+msgid "Voice comment"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:40
+msgid "Live chat message"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:41
+msgid "Patch"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:42
+msgid "Issue"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:43
+msgid "Reply"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:44
+msgid "Status open"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:45
+msgid "Status applied"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:46
+msgid "Status closed"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:47
+msgid "Status draft"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:48
+msgid "Problem tracker"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:49
+msgid "Reporting"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:50
+msgid "Label"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:51
+msgid "Relay reviews"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:52
+msgid "Ai embeddings"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:53
+msgid "Torrent"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:54
+msgid "Torrent comment"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:55
+msgid "Coinjoin pool"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:56
+msgid "Community post approval"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:57
+msgid "Simple group add user"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:58
+msgid "Simple group remove user"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:59
+msgid "Simple group edit metadata"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:60
+msgid "Simple group add permission"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:61
+msgid "Simple group remove permission"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:62
+msgid "Simple group delete event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:63
+msgid "Simple group edit group status"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:64
+msgid "Simple group create group"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:65
+msgid "Simple group delete group"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:66
+msgid "Simple group create invite"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:67
+msgid "Simple group update pin list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:68
+msgid "Simple group join request"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:69
+msgid "Simple group leave request"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:70
+msgid "Zap goal"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:71
+msgid "Nutzap"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:72
+msgid "Tidal login"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:74
+msgid "Zap"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:75
+msgid "Highlights"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:76
+msgid "Mute list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:77
+msgid "Pin list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:78
+msgid "Relay list metadata"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:79
+msgid "Bookmark list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:80
+msgid "Community list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:81
+msgid "Public chat list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:82
+msgid "Blocked relay list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:83
+msgid "Search relay list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:84
+msgid "Simple group list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:85
+msgid "Favorite relays"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:86
+msgid "Interest list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:87
+msgid "Nutzap info"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:88
+msgid "Emoji list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:89
+msgid "Dm relay list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:90
+msgid "User server list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:91
+msgid "File storage server list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:92
+msgid "Good wiki author list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:93
+msgid "Good wiki relay list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:94
+msgid "Nwc wallet info"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:95
+msgid "Lightning pub rpc"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:96
+msgid "Client authentication"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:97
+msgid "Nwc wallet request"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:98
+msgid "Nwc wallet response"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:99
+msgid "Nostr connect"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:100
+msgid "Blobs"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:101
+msgid "Http auth"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:102
+msgid "Categorized people list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:103
+msgid "Categorized bookmarks list"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:104
+msgid "Relay sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:105
+msgid "Bookmark sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:106
+msgid "Curated sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:107
+msgid "Curated video sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:108
+msgid "Mute sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:109
+msgid "Profile badges"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:110
+msgid "Badge definition"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:111
+msgid "Interest sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:112
+msgid "Stall definition"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:113
+msgid "Product definition"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:114
+msgid "Marketplace ui"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:115
+msgid "Product sold as auction"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:117
+msgid "Draft article"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:118
+msgid "Emoji sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:119
+msgid "Modular article header"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:120
+msgid "Modular article content"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:121
+msgid "Release artifact sets"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:122
+msgid "Application specific data"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:123
+msgid "Live event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:124
+msgid "User statuses"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:125
+msgid "Classified listing"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:126
+msgid "Draft classified listing"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:127
+msgid "Repository announcement"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:128
+msgid "Repository state"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:129
+msgid "Wiki article"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:130
+msgid "Redirects"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:131
+msgid "Feed"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:132
+msgid "Date calendar event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:133
+msgid "Time calendar event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:134
+msgid "Calendar"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:135
+msgid "Calendar event rsvp"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:136
+msgid "Relay review"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:137
+msgid "Handler recommendation"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:138
+msgid "Handler information"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:139
+msgid "Video event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:140
+msgid "Short video event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:141
+msgid "Video view event"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:142
+msgid "Community definition"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:143
+msgid "Simple group metadata"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:144
+msgid "Simple group admins"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:145
+msgid "Simple group members"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:146
+msgid "Simple group roles"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:147
+msgid "Simple group livekit participants"
+msgstr ""
+
+#: src/ui/kind-catalog.inc:148
+msgid "Simple group pinned events"
+msgstr ""
+
+#: src/ui/page-history.c:15
+msgid "Sign event"
+msgstr ""
+
+#: src/ui/page-history.c:15
+msgid "Share public key"
+msgstr ""
+
+#: src/ui/page-history.c:16
+msgid "Connect app"
+msgstr ""
+
+#: src/ui/page-history.c:17
+msgid "Encrypt message (legacy)"
+msgstr ""
+
+#: src/ui/page-history.c:17
+msgid "Decrypt message (legacy)"
+msgstr ""
+
+#: src/ui/page-history.c:18
+msgid "Encrypt message"
+msgstr ""
+
+#: src/ui/page-history.c:18
+msgid "Decrypt message"
+msgstr ""
+
+#: src/ui/page-history.c:19
+msgid "Export conversation key"
+msgstr ""
+
+#: src/ui/page-history.c:19
+msgid "Decrypt payment"
+msgstr ""
+
+#: src/ui/page-history.c:20
+msgid "Verify identity"
+msgstr ""
+
+#: src/ui/page-history.c:23
+msgid "Unknown operation"
+msgstr ""
+
+#: src/ui/page-history.c:26
+msgid "Succeeded"
+msgstr ""
+
+#: src/ui/page-history.c:27
+msgid "Denied"
+msgstr ""
+
+#: src/ui/page-history.c:28
+msgid "Expired"
+msgstr ""
+
+#: src/ui/page-history.c:29
+msgid "Caller disconnected"
+msgstr ""
+
+#: src/ui/page-history.c:30
+msgid "Cancelled"
+msgstr ""
+
+#: src/ui/page-history.c:31
+msgid "Failed"
+msgstr ""
+
+#: src/ui/page-history.c:32
+msgid "Unknown outcome"
+msgstr ""
+
+#: src/ui/page-history.c:35
+msgid "Disabled"
+msgstr ""
+
+#: src/ui/page-history.c:36
+msgid "Starting"
+msgstr ""
+
+#: src/ui/page-history.c:37
+msgid "Ready"
+msgstr ""
+
+#: src/ui/page-history.c:38
+msgid "Degraded"
+msgstr ""
+
+#: src/ui/page-history.c:39
+msgid "Offline"
+msgstr ""
+
+#: src/ui/page-history.c:40
+msgid "Stopping"
+msgstr ""
+
+#: src/ui/page-history.c:41
+msgid "Error"
+msgstr "Erro"
+
+#: src/ui/page-history.c:42
+msgid "Unavailable"
+msgstr ""
+
+#: src/ui/page-history.c:48
+msgid "Enter a whole event-type number from 0 to 65535."
+msgstr ""
+
+#: src/ui/page-history.c:62
+#, c-format
+msgid ""
+"%s · %s\n"
+"%s"
+msgstr ""
+
+#: src/ui/page-history.c:65
+msgid "No matching activity"
+msgstr ""
+
+#: src/ui/page-history.c:83
+msgid "End of retained activity"
+msgstr ""
+
+#: src/ui/page-history.c:84
+msgid "Older activity could not be loaded."
+msgstr ""
+
+#: src/ui/page-history.c:94
+msgid "Activity could not be cleared."
+msgstr ""
+
+#: src/ui/page-history.c:104
+msgid "Clear activity?"
+msgstr ""
+
+#: src/ui/page-history.c:104
+msgid ""
+"Delete the signer's retained operation metadata? Permissions are not changed."
+msgstr ""
+
+#: src/ui/page-history.c:105
+msgid "Clear activity"
+msgstr ""
+
+#: src/ui/page-settings.c:46
+msgid "Remote signing needs attention. Check the relay configuration."
+msgstr ""
+
+#: src/ui/page-settings.c:49
+msgid ""
+"Invalid saved policy: all event types require review. Open to repair or "
+"restore defaults."
+msgstr ""
+
+#: src/ui/page-settings.c:56
+msgid "Endpoint reset failed. Your identities were not removed."
+msgstr ""
+
+#: src/ui/page-settings.c:67
+msgid "Reset remote endpoint?"
+msgstr ""
+
+#: src/ui/page-settings.c:67
+msgid ""
+"Remote clients and pairing links will be invalidated. Account identities and "
+"local-app permissions are kept."
+msgstr ""
+
+#: src/ui/page-settings.c:68
+msgid "Reset endpoint"
+msgstr ""
+
+#: src/ui/page-settings.c:85
+msgid "Use whole event-type numbers from 0 to 65535, separated by commas."
+msgstr ""
+
+#: src/ui/page-settings.c:91
+msgid "The confirmation policy could not be saved."
+msgstr ""
+
+#: src/ui/page-settings.c:100
+msgid "Always confirm event types"
+msgstr ""
+
+#: src/ui/page-settings.c:119
+msgid "Additional custom event types (comma-separated)"
+msgstr ""
+
+#: src/ui/page-settings.c:121
+msgid "Additional custom event types"
+msgstr ""
+
+#: src/ui/page-settings.c:123
+msgid "Save confirmation policy"
+msgstr ""
+
+#: src/ui/page-settings.c:124
+msgid "Restore defaults"
+msgstr ""

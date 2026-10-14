@@ -1,4 +1,5 @@
 #include "page-settings.h"
+#include "page-history.h"
 #include "app-resources.h"
 #include "approval_dialog.h"
 #include "sheets/sheet-create-bunker.h"
@@ -40,19 +41,19 @@ static void retention_changed(AdwSpinRow *row, GParamSpec *pspec, gpointer data)
 }
 static void relays(AdwActionRow *row, gpointer data) { (void)row; adw_dialog_present(ADW_DIALOG(sheet_create_bunker_new()), data); }
 static void model_changed(GrottoHomeModel *model, gpointer data) {
-  PageSettings *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = "Unavailable", *error = "";
+  PageSettings *self = data; GVariant *status = grotto_home_model_status(model); const gchar *state = NULL, *error = "";
   if (status) { g_variant_lookup(status, "bunker_state", "&s", &state); g_variant_lookup(status, "bunker_error", "&s", &error); }
-  g_autofree gchar *summary = g_strdup_printf("%s%s%s", state, *error ? " · " : "", error);
+  g_autofree gchar *summary = g_strdup_printf("%s%s%s", gn_page_history_remote_state_label(state), *error ? " · " : "", *error ? _("Remote signing needs attention. Check the relay configuration.") : "");
   adw_action_row_set_subtitle(self->runtime, summary);
   gboolean valid = TRUE; if (status) g_variant_lookup(status, "confirmation_policy_valid", "b", &valid);
-  adw_action_row_set_subtitle(self->confirmation, valid ? "Overrides remembered allows and trust levels" : "Invalid saved policy: all event types require review. Open to repair or restore defaults.");
+  adw_action_row_set_subtitle(self->confirmation, valid ? _("Overrides remembered allows and trust levels") : _("Invalid saved policy: all event types require review. Open to repair or restore defaults."));
   gtk_widget_set_sensitive(GTK_WIDGET(self->relays), grotto_home_model_writable(model));
   gtk_widget_set_sensitive(GTK_WIDGET(self->reset), grotto_home_model_writable(model));
 }
 static void reset_done(GObject *source, GAsyncResult *result, gpointer data) {
   PageSettings *self = data; g_autoptr(GError) error = NULL;
   g_autoptr(GVariant) reply = g_dbus_proxy_call_finish(G_DBUS_PROXY(source), result, &error);
-  if (!reply) adw_action_row_set_subtitle(self->runtime, "Endpoint reset failed. Your identities were not removed.");
+  if (!reply) adw_action_row_set_subtitle(self->runtime, _("Endpoint reset failed. Your identities were not removed."));
   grotto_home_model_refresh(self->model); g_object_unref(self);
 }
 static void reset_confirmed(GObject *source, GAsyncResult *result, gpointer data) {
@@ -63,8 +64,8 @@ static void reset_confirmed(GObject *source, GAsyncResult *result, gpointer data
 }
 static void reset_clicked(GtkButton *button, gpointer data) {
   (void)button; PageSettings *self = data;
-  AdwDialog *d = adw_alert_dialog_new("Reset remote endpoint?", "Remote clients and pairing links will be invalidated. Account identities and local-app permissions are kept.");
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", "Cancel", "reset", "Reset endpoint", NULL);
+  AdwDialog *d = adw_alert_dialog_new(_("Reset remote endpoint?"), _("Remote clients and pairing links will be invalidated. Account identities and local-app permissions are kept."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "reset", _("Reset endpoint"), NULL);
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel"); adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(d), "reset", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), GTK_WIDGET(self), NULL, reset_confirmed, g_object_ref(self));
 }
@@ -81,13 +82,13 @@ static void policy_save(GtkButton *button, gpointer data) {
     if (!*custom[i]) continue;
     gchar *end = NULL; guint64 kind = g_ascii_strtoull(custom[i], &end, 10);
     if (end == custom[i] || *end || kind > G_MAXUINT16 || *custom[i] == '-') {
-      gtk_label_set_text(p->error, "Use whole event-type numbers from 0 to 65535, separated by commas."); return;
+      gtk_label_set_text(p->error, _("Use whole event-type numbers from 0 to 65535, separated by commas.")); return;
     }
     g_ptr_array_add(values, g_strdup_printf("%u", (guint)kind));
   }
   g_ptr_array_add(values, NULL);
   if (!g_settings_set_strv(p->settings, "require-confirmation-kinds", (const gchar *const *)values->pdata)) {
-    gtk_label_set_text(p->error, "The confirmation policy could not be saved."); return;
+    gtk_label_set_text(p->error, _("The confirmation policy could not be saved.")); return;
   }
   adw_dialog_close(p->dialog);
 }
@@ -96,7 +97,7 @@ static void policy_default(GtkButton *button, gpointer data) {
 }
 static void confirmation(AdwActionRow *row, gpointer data) {
   (void)row; PageSettings *self = data; Policy *p = g_new0(Policy, 1); p->settings = g_object_ref(self->settings); p->checks = g_ptr_array_new();
-  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, "Always confirm event types"); adw_dialog_set_content_width(p->dialog, 400);
+  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Always confirm event types")); adw_dialog_set_content_width(p->dialog, 400);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   GtkWidget *scroll = gtk_scrolled_window_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -115,12 +116,12 @@ static void confirmation(AdwActionRow *row, gpointer data) {
     for (guint j = 0; j < p->checks->len; j++) if (!strcmp(values[i], g_object_get_data(G_OBJECT(p->checks->pdata[j]), "kind"))) known = TRUE;
     if (!known) { if (others->len) g_string_append(others, ", "); g_string_append(others, values[i]); }
   }
-  gtk_box_append(GTK_BOX(box), gtk_label_new("Additional custom event types (comma-separated)")); p->custom = GTK_ENTRY(gtk_entry_new());
+  gtk_box_append(GTK_BOX(box), gtk_label_new(_("Additional custom event types (comma-separated)"))); p->custom = GTK_ENTRY(gtk_entry_new());
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
-  gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, "Additional custom event types", -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
+  gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
   p->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(p->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->error));
-  GtkWidget *save = gtk_button_new_with_label("Save confirmation policy"); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
-  GtkWidget *defaults = gtk_button_new_with_label("Restore defaults"); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
+  GtkWidget *save = gtk_button_new_with_label(_("Save confirmation policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
+  GtkWidget *defaults = gtk_button_new_with_label(_("Restore defaults")); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box); adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
   g_object_set_data_full(G_OBJECT(p->dialog), "policy", p, policy_free); adw_dialog_set_child(p->dialog, toolbar); adw_dialog_present(p->dialog, GTK_WIDGET(self));
 }

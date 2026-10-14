@@ -30,7 +30,7 @@ add_library(grotto_identity_ui_test_core STATIC
     ../src/gn-signer-error.c ../src/backup-recovery.c
     ../src/secret-clipboard.c ../src/ui/onboarding-assistant.c
     ../src/ui/widgets/gn-secure-entry.c ../src/ui/page-identity-detail.c
-    ../src/ui/sheets/sheet-qr-display.c ../src/ui/sheets/sheet-select-account.c ../src/qr-code.c)
+    ../src/ui/sheets/sheet-qr-display.c ../src/qr-code.c)
 apply_test_sanitizers(grotto_identity_ui_test_core)
 target_include_directories(grotto_identity_ui_test_core PUBLIC ${SIGNER_INCLUDE_DIRS} ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/tests/common)
@@ -43,14 +43,8 @@ if(QRENCODE_FOUND)
   target_link_libraries(grotto_identity_ui_test_core PRIVATE PkgConfig::QRENCODE)
   target_compile_definitions(grotto_identity_ui_test_core PRIVATE HAVE_QRENCODE=1)
 endif()
-set(_identity_test_resource "${CMAKE_CURRENT_BINARY_DIR}/identity-resources.c")
-add_custom_command(OUTPUT ${_identity_test_resource}
-  COMMAND glib-compile-resources --generate-source --c-name=grotto_identity_tests
-    --target=${_identity_test_resource} --sourcedir=${CMAKE_CURRENT_SOURCE_DIR}/../data
-    ${CMAKE_CURRENT_SOURCE_DIR}/identity-resources.gresource.xml
-  DEPENDS identity-resources.gresource.xml ../data/ui/sheets/sheet-select-account.ui)
 foreach(suite onboarding home-model)
-  add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C} ${_identity_test_resource})
+  add_executable(test-${suite} test-${suite}.c ${APP_GRESOURCE_C})
   target_link_libraries(test-${suite} PRIVATE grotto_identity_ui_test_core nostrc-test-bus)
   apply_test_sanitizers(test-${suite})
   set(_identity_suite ${suite})

@@ -211,6 +211,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                               <object class="AdwNavigationView" id="detail_navigation">
                                 <child>
                                   <object class="AdwNavigationPage">
+                                    <property name="tag">root</property>
                                     <property name="title" translatable="yes">Home</property>
                                     <property name="child">
                                       <object class="AdwViewStack" id="stack">
