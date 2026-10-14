@@ -205,10 +205,15 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
   GVariantIter it; const gchar *key; GVariant *value;
   g_variant_iter_init(&it, context);
   while (g_variant_iter_next(&it, "{&sv}", &key, &value)) {
-    gboolean valid = g_variant_is_of_type(value, G_VARIANT_TYPE_STRING) && !g_hash_table_contains(seen, key);
-    const gchar *text = valid ? g_variant_get_string(value, NULL) : "";
-    if (!strcmp(key, "reason")) valid = valid && strlen(text) <= 512 && g_utf8_strlen(text, -1) <= 160;
-    else if (!strcmp(key, "purpose") || !strcmp(key, "flow_id")) valid = valid && strlen(text) <= 64;
+    gboolean valid = !g_hash_table_contains(seen, key);
+    gboolean string = g_variant_is_of_type(value, G_VARIANT_TYPE_STRING);
+    const gchar *text = string ? g_variant_get_string(value, NULL) : "";
+    if (!strcmp(key, "flow_size")) {
+      valid = valid && g_variant_is_of_type(value, G_VARIANT_TYPE_UINT32);
+      if (valid) { ctx.flow_size = g_variant_get_uint32(value); valid = ctx.flow_size > 0 && ctx.flow_size <= 1024; }
+    }
+    else if (!strcmp(key, "reason")) valid = valid && string && strlen(text) <= 512 && g_utf8_strlen(text, -1) <= 160;
+    else if (!strcmp(key, "purpose") || !strcmp(key, "flow_id")) valid = valid && string && strlen(text) <= 64;
     else valid = FALSE;
     g_hash_table_add(seen, (gpointer)key);
     g_variant_unref(value);
@@ -217,6 +222,7 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
   g_variant_lookup(context, "reason", "&s", &ctx.reason);
   g_variant_lookup(context, "purpose", "&s", &ctx.purpose);
   g_variant_lookup(context, "flow_id", "&s", &ctx.flow_id);
+  if (ctx.flow_size && (!ctx.flow_id || !*ctx.flow_id)) goto invalid;
   tuple = g_variant_get_variant(arguments);
   for (guint i = 0; i < G_N_ELEMENTS(methods); i++) {
     if (strcmp(method, methods[i].name)) continue;
@@ -230,7 +236,7 @@ static gboolean handle_call_with_context(NostrSigner *o, GDBusMethodInvocation *
   }
 invalid:
   g_dbus_method_invocation_return_dbus_error(inv, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT,
-    "CallWithContext requires a plain gated client method, its exact input tuple, and bounded reason/purpose/flow_id strings");
+    "CallWithContext requires a plain gated client method, its exact input tuple, and bounded reason/purpose/flow_id strings and optional flow_size:u (1..1024)");
   return TRUE;
 }
 
@@ -276,6 +282,14 @@ static gboolean connection_alive(const gchar *key, gpointer data) {
       "org.freedesktop.DBus", "NameHasOwner", g_variant_new("(s)", key), G_VARIANT_TYPE("(b)"),
       G_DBUS_CALL_FLAGS_NONE, 5000, NULL, NULL);
   gboolean alive = FALSE; if (reply) g_variant_get(reply, "(b)", &alive); return alive;
+}
+static gboolean handle_approve_flow_request(NostrSigner *o, GDBusMethodInvocation *inv,
+    const gchar *id, gboolean encrypt, gboolean seals, guint64 ttl) {
+  (void)o;
+  if (!require_approver(inv)) return TRUE;
+  signer_approval_service_decide_flow(approval_service, id, encrypt, seals, ttl,
+                                     approval_decided, g_object_ref(inv));
+  return TRUE;
 }
 static gboolean handle_approve_request(NostrSigner *o, GDBusMethodInvocation *inv,
     const gchar *id, gboolean decision, gboolean remember, guint64 ttl) {
@@ -617,6 +631,7 @@ guint signer_export(GDBusConnection *conn, const char *object_path) {
     { "handle-get-public-key",                G_CALLBACK(handle_get_public_key) },
     { "handle-get-public-key-for-app",        G_CALLBACK(handle_get_public_key_for_app) },
     { "handle-sign-event",                    G_CALLBACK(handle_sign_event) },
+    { "handle-approve-flow-request",          G_CALLBACK(handle_approve_flow_request) },
     { "handle-approve-request",               G_CALLBACK(handle_approve_request) },
     { "handle-get-approval-info",             G_CALLBACK(handle_get_approval_info) },
     { "handle-list-pending-requests",         G_CALLBACK(handle_list_pending_requests) },

@@ -39,6 +39,8 @@ void grotto_approval_controller_decide_async(GrottoApprovalController *self, con
                                              gboolean allow, gboolean remember, guint64 ttl,
                                              GCancellable *cancel, GAsyncReadyCallback callback,
                                              gpointer data);
+void grotto_approval_controller_decide_flow_async(GrottoApprovalController *self, const char *id,
+    gboolean encrypt, gboolean seals, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data);
 gboolean grotto_approval_controller_decide_finish(GrottoApprovalController *self,
                                                   GAsyncResult *result, GError **error);
 /* Reusable Home group; only visible while requests are pending. */

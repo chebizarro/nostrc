@@ -268,7 +268,7 @@ static gboolean expired(gpointer data) {
 }
 static gboolean same_scope(GVariant *a, GVariant *b) {
   const char *keys[] = {"identity",      "principal", "transport", "operation",    "event_kind",
-                        "event_summary", "flow_id",   "reason",    "reason_source"};
+                        "event_summary", "flow_id", "flow_size", "purpose", "flow_seals_required", "reason", "reason_source"};
   for (guint i = 0; i < G_N_ELEMENTS(keys); i++) {
     g_autoptr(GVariant) left = g_variant_lookup_value(a, keys[i], NULL);
     g_autoptr(GVariant) right = g_variant_lookup_value(b, keys[i], NULL);
@@ -677,7 +677,7 @@ static void notification_vanished(GDBusConnection *bus, const char *name, gpoint
  * stage without resurrecting the request or retrying cryptography. */
 typedef struct {
   Fetch *fetch;
-  gboolean allow, remember;
+  gboolean allow, remember, flow, encrypt, seals;
   guint64 ttl;
 } Decision;
 static void decision_free(Decision *d) {
@@ -764,13 +764,16 @@ static void decision_checked(GObject *source, GAsyncResult *result, gpointer dat
   }
   /* Keep cleanup anchored to the original deadline even while a decision
    * or its recovery snapshot is uncertain. The daemon arbitrates execution. */
-  g_dbus_connection_call(f->self->bus, f->self->owner, SIGNER_PATH, SIGNER, "ApproveRequest",
-                         g_variant_new("(sbbt)", f->request->id, d->allow, d->remember, d->ttl),
+  g_dbus_connection_call(f->self->bus, f->self->owner, SIGNER_PATH, SIGNER, d->flow ? "ApproveFlowRequest" : "ApproveRequest",
+                         g_variant_new("(sbbt)", f->request->id,
+                             d->flow ? d->encrypt : d->allow,
+                             d->flow ? d->seals : d->remember, d->ttl),
                          G_VARIANT_TYPE("(b)"), G_DBUS_CALL_FLAGS_NONE, 30000, f->self->cancel,
                          decision_done, task);
 }
-void grotto_approval_controller_decide_async(GrottoApprovalController *s, const char *id,
+static void decide_async(GrottoApprovalController *s, const char *id,
                                              gboolean allow, gboolean remember, guint64 ttl,
+                                             gboolean flow, gboolean encrypt, gboolean seals,
                                              GCancellable *cancel, GAsyncReadyCallback callback,
                                              gpointer data) {
   GTask *task = g_task_new(s, cancel, callback, data);
@@ -787,11 +790,20 @@ void grotto_approval_controller_decide_async(GrottoApprovalController *s, const 
   d->fetch = fetch_new(s, r);
   d->allow = allow;
   d->remember = remember;
-  d->ttl = ttl;
+  d->ttl = ttl; d->flow = flow; d->encrypt = encrypt; d->seals = seals;
   g_task_set_task_data(task, d, (GDestroyNotify)decision_free);
   g_dbus_connection_call(s->bus, s->owner, SIGNER_PATH, SIGNER, "GetApprovalInfo",
                          g_variant_new("(s)", id), G_VARIANT_TYPE("(a{sv})"),
                          G_DBUS_CALL_FLAGS_NONE, 5000, r->cancel, decision_checked, task);
+}
+void grotto_approval_controller_decide_async(GrottoApprovalController *s, const char *id,
+    gboolean allow, gboolean remember, guint64 ttl, GCancellable *cancel,
+    GAsyncReadyCallback callback, gpointer data) {
+  decide_async(s, id, allow, remember, ttl, FALSE, FALSE, FALSE, cancel, callback, data);
+}
+void grotto_approval_controller_decide_flow_async(GrottoApprovalController *s, const char *id,
+    gboolean encrypt, gboolean seals, GCancellable *cancel, GAsyncReadyCallback callback, gpointer data) {
+  decide_async(s, id, TRUE, FALSE, 600, TRUE, encrypt, seals, cancel, callback, data);
 }
 gboolean grotto_approval_controller_decide_finish(GrottoApprovalController *s, GAsyncResult *result,
                                                   GError **error) {
@@ -844,6 +856,14 @@ static void review_decision(gboolean allow, gboolean remember, const char *ident
   /* Never destroy the dialog from inside its decision callback. */
   grotto_approval_controller_decide_async(s, id, allow, remember, ttl, NULL, review_decided, info);
 }
+static void review_flow(GnostrApprovalDialog *dialog, gboolean encrypt, gboolean seals, gpointer data) {
+  (void)dialog;
+  GrottoApprovalController *s = data;
+  GrottoApprovalRequest *r = s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
+  if (!r) return;
+  grotto_approval_controller_decide_flow_async(s, r->id, encrypt, seals, NULL,
+                                               review_decided, g_variant_ref(r->info));
+}
 static void review_closed(AdwDialog *dialog, gpointer data) {
   GrottoApprovalController *s = data;
   if (s->dialog != GNOSTR_APPROVAL_DIALOG(dialog))
@@ -860,7 +880,6 @@ static void batch_decided(GObject *source, GAsyncResult *result, gpointer data) 
     message(s, "A selected request could not be completed. Unselected requests remain pending.");
 }
 static void review_selected(GnostrApprovalDialog *dialog, gchar **ids, gpointer data) {
-  (void)dialog;
   GrottoApprovalController *s = data;
   GrottoApprovalRequest *anchor =
       s->review_id ? g_hash_table_lookup(s->requests, s->review_id) : NULL;
@@ -869,7 +888,8 @@ static void review_selected(GnostrApprovalDialog *dialog, gchar **ids, gpointer 
   g_autoptr(GVariant) info = g_variant_ref(anchor->info);
   for (guint i = 0; ids[i]; i++) {
     GrottoApprovalRequest *r = g_hash_table_lookup(s->requests, ids[i]);
-    if (r && r->state == GROTTO_APPROVAL_READY && same_group(info, r->info))
+    if (gnostr_approval_dialog_has_batch_request(dialog, ids[i]) &&
+        r && r->state == GROTTO_APPROVAL_READY && same_group(info, r->info))
       grotto_approval_controller_decide_async(s, r->id, TRUE, FALSE, 0, NULL, batch_decided, NULL);
   }
 }
@@ -1017,6 +1037,7 @@ void grotto_approval_controller_review(GrottoApprovalController *s, const char *
   gnostr_approval_dialog_set_position(s->dialog, position, MAX(1u, count));
   gnostr_approval_dialog_set_callback(s->dialog, review_decision, s);
   g_signal_connect(s->dialog, "closed", G_CALLBACK(review_closed), s);
+  g_signal_connect(s->dialog, "approve-flow", G_CALLBACK(review_flow), s);
   g_signal_connect(s->dialog, "approve-selected", G_CALLBACK(review_selected), s);
   g_signal_connect(s->dialog, "deferred", G_CALLBACK(review_deferred), s);
   g_signal_connect(s->dialog, "step", G_CALLBACK(review_step), s);

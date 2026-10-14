@@ -11,7 +11,9 @@ struct _GnostrApprovalDialog {
   GtkLabel *content_preview, *label_position;
   GtkFrame *content_frame;
   GtkExpander *details_expander, *batch_expander;
-  GtkBox *batch_box;
+  GtkBox *batch_box, *flow_box;
+  GtkLabel *label_flow;
+  GtkCheckButton *chk_flow_encrypt, *chk_flow_seals;
   GtkButton *btn_approve_selected;
   GtkBox *stepper;
   GtkCheckButton *chk_remember;
@@ -24,7 +26,7 @@ struct _GnostrApprovalDialog {
   guint position, count;
 };
 G_DEFINE_FINAL_TYPE(GnostrApprovalDialog, gnostr_approval_dialog, ADW_TYPE_DIALOG)
-enum { DEFERRED, STEP, CHANGE_TRUST, APPROVE_SELECTED, N_SIGNALS };
+enum { DEFERRED, STEP, CHANGE_TRUST, APPROVE_SELECTED, APPROVE_FLOW, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 const char *gnostr_approval_kind_name(guint32 kind) {
@@ -110,6 +112,16 @@ static void do_finish(GnostrApprovalDialog *self, gboolean allow) {
   if (self->finished || self->confirming || (allow && !self->ready) ||
       !gtk_widget_get_sensitive(GTK_WIDGET(allow ? self->btn_approve : self->btn_deny)))
     return;
+  if (allow && gtk_widget_get_visible(GTK_WIDGET(self->flow_box))) {
+    gboolean encrypt = gtk_check_button_get_active(self->chk_flow_encrypt);
+    gboolean seals = gtk_check_button_get_active(self->chk_flow_seals);
+    if (encrypt || seals) {
+      self->finished = TRUE; self->callback = NULL;
+      g_signal_emit(self, signals[APPROVE_FLOW], 0, encrypt, seals);
+      adw_dialog_close(ADW_DIALOG(self));
+      return;
+    }
+  }
   gboolean remember = gtk_check_button_get_active(self->chk_remember) &&
                       gtk_widget_get_sensitive(GTK_WIDGET(self->chk_remember));
   static const guint64 durations[] = {600, 3600, 86400, 0};
@@ -268,6 +280,7 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   BIND(label_timestamp); BIND(label_trust_explanation);
   BIND(batch_expander);
   BIND(batch_box);
+  BIND(flow_box); BIND(label_flow); BIND(chk_flow_encrypt); BIND(chk_flow_seals);
   BIND(btn_approve_selected);
   BIND(content_preview);
   BIND(label_position);
@@ -284,6 +297,8 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   BIND(btn_next);
   BIND(btn_change_trust);
 #undef BIND
+  signals[APPROVE_FLOW] = g_signal_new("approve-flow", G_TYPE_FROM_CLASS(klass),
+      G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 2, G_TYPE_BOOLEAN, G_TYPE_BOOLEAN);
   signals[APPROVE_SELECTED] =
       g_signal_new("approve-selected", G_TYPE_FROM_CLASS(klass), G_SIGNAL_RUN_LAST, 0, NULL, NULL,
                    NULL, G_TYPE_NONE, 1, G_TYPE_STRV);
@@ -419,6 +434,12 @@ void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows
   }
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve_selected), FALSE);
 }
+gboolean gnostr_approval_dialog_has_batch_request(GnostrApprovalDialog *self, const gchar *id) {
+  for (GtkWidget *child = gtk_widget_get_first_child(GTK_WIDGET(self->batch_box)); child;
+       child = gtk_widget_get_next_sibling(child))
+    if (!g_strcmp0(id, g_object_get_data(G_OBJECT(child), "request-id"))) return TRUE;
+  return FALSE;
+}
 void gnostr_approval_dialog_set_trust_level(GnostrApprovalDialog *self, const char *tier) {
   guint index = g_strcmp0(tier, "full") == 0 ? 2 : g_strcmp0(tier, "medium") == 0 ? 1 : 0;
   gtk_drop_down_set_selected(self->trust_dropdown, index);
@@ -500,6 +521,24 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_widget_set_visible(GTK_WIDGET(self->trust_dropdown), strcmp(op, "self_test") != 0);
   gtk_widget_set_visible(GTK_WIDGET(self->label_trust_explanation), strcmp(op, "self_test") != 0);
   gtk_check_button_set_active(self->chk_remember, FALSE);
+  guint size = 0;
+  gboolean required = TRUE;
+  g_variant_lookup(info, "flow_size", "u", &size);
+  g_variant_lookup(info, "flow_seals_required", "b", &required);
+  guint flow_kind = 0;
+  g_variant_lookup(info, "event_kind", "u", &flow_kind);
+  gboolean flow = rememberable && self->ready && size > 0 && size <= 1024 &&
+      *field(info, "flow_id") && !strcmp(field(info, "purpose"), "nip17-room-send") &&
+      (!strcmp(op, "nip44_encrypt") || (!strcmp(op, "sign_event") && flow_kind == NOSTR_KIND_SEAL));
+  gtk_widget_set_visible(GTK_WIDGET(self->flow_box), flow);
+  gtk_check_button_set_active(self->chk_flow_encrypt, FALSE);
+  gtk_check_button_set_active(self->chk_flow_seals, FALSE);
+  gtk_check_button_set_label(self->chk_flow_seals, required
+      ? "Allow encrypted-message seals only for this send (up to 10 minutes)"
+      : "Allow encrypted-message seals for this client and identity for 10 minutes");
+  g_autofree gchar *flow_label = g_strdup_printf(
+      "Sign %u encrypted messages for this room (including your copy). Size supplied by the application; the signer enforces this limit. Encryption and signing are separate permissions. Nothing below is selected by default.", size);
+  gtk_label_set_text(self->label_flow, flow_label);
   const char *reason = field(info, "reason");
   g_autofree gchar *reason_text = bounded(reason, 160);
   g_autofree gchar *reason_label = g_strdup_printf("%s: %s",

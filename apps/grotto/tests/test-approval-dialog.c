@@ -6,7 +6,8 @@
 typedef struct {
   GtkWidget *window;
   GnostrApprovalDialog *dialog;
-  guint calls, deferred, selected;
+  guint calls, deferred, selected, flow_calls;
+  gboolean flow_encrypt, flow_seals;
   gchar **selected_ids;
   gboolean decision, remember, closed;
   guint64 ttl;
@@ -28,6 +29,10 @@ static void selected(GnostrApprovalDialog *dialog, gchar **ids, gpointer data) {
   f->selected++;
   g_strfreev(f->selected_ids);
   f->selected_ids = g_strdupv(ids);
+}
+static void flow_selected(GnostrApprovalDialog *dialog, gboolean encrypt, gboolean seals, gpointer data) {
+  (void)dialog; Fixture *f = data;
+  f->flow_calls++; f->flow_encrypt = encrypt; f->flow_seals = seals;
 }
 static void closed(AdwDialog *dialog, gpointer data) {
   (void)dialog;
@@ -56,6 +61,7 @@ static void setup(Fixture *f, gconstpointer data) {
   g_signal_connect(f->dialog, "closed", G_CALLBACK(closed), f);
   g_signal_connect(f->dialog, "deferred", G_CALLBACK(deferred), f);
   g_signal_connect(f->dialog, "approve-selected", G_CALLBACK(selected), f);
+  g_signal_connect(f->dialog, "approve-flow", G_CALLBACK(flow_selected), f);
   f->window = adw_window_new();
   gtk_window_set_default_size(GTK_WINDOW(f->window), 800, 700);
   gtk_window_present(GTK_WINDOW(f->window));
@@ -269,6 +275,10 @@ static void batch_selection(Fixture *f, gconstpointer data) {
   }
   g_autoptr(GVariant) list = g_variant_ref_sink(g_variant_builder_end(&rows));
   gnostr_approval_dialog_set_batch(f->dialog, list);
+  g_assert_true(gtk_widget_get_visible(child(f, "batch_expander")));
+  g_assert_true(gnostr_approval_dialog_has_batch_request(f->dialog, "first"));
+  g_assert_true(gnostr_approval_dialog_has_batch_request(f->dialog, "second"));
+  g_assert_false(gnostr_approval_dialog_has_batch_request(f->dialog, "future-unseen"));
   g_assert_false(gtk_widget_get_sensitive(child(f, "btn_approve_selected")));
   GtkWidget *first = gtk_widget_get_first_child(child(f, "batch_box"));
   g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(first)));
@@ -279,6 +289,55 @@ static void batch_selection(Fixture *f, gconstpointer data) {
   g_assert_cmpstr(f->selected_ids[0], ==, "first");
   g_assert_null(f->selected_ids[1]);
   g_assert_cmpuint(f->calls, ==, 0);
+}
+static void set_room_flow(Fixture *f) {
+  GVariantBuilder b, summary;
+  g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_init(&summary, G_VARIANT_TYPE_VARDICT);
+  g_variant_builder_add(&summary, "{sv}", "peer", g_variant_new_string(
+      "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"));
+  g_variant_builder_add(&b, "{sv}", "operation", g_variant_new_string("nip44_encrypt"));
+  g_variant_builder_add(&b, "{sv}", "identity", g_variant_new_string("npub-pinned"));
+  g_variant_builder_add(&b, "{sv}", "purpose", g_variant_new_string("nip17-room-send"));
+  g_variant_builder_add(&b, "{sv}", "flow_id", g_variant_new_string("room-send"));
+  g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(4));
+  g_variant_builder_add(&b, "{sv}", "state", g_variant_new_string("PENDING"));
+  g_variant_builder_add(&b, "{sv}", "remaining_seconds", g_variant_new_uint32(120));
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(TRUE));
+  g_variant_builder_add(&b, "{sv}", "event_summary", g_variant_builder_end(&summary));
+  g_autoptr(GVariant) info = g_variant_ref_sink(g_variant_builder_end(&b));
+  gnostr_approval_dialog_set_info(f->dialog, info, "Room client");
+  g_assert_true(gtk_widget_get_visible(child(f, "flow_box")));
+  g_assert_nonnull(strstr(gtk_label_get_text(GTK_LABEL(child(f, "label_flow"))), "4 encrypted messages"));
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt"))));
+  g_assert_false(gtk_check_button_get_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals"))));
+}
+static void flow_unchecked(Fixture *f, gconstpointer data) {
+  (void)data; set_room_flow(f); click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpuint(f->flow_calls, ==, 0); g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_false(f->remember);
+}
+static void flow_encrypt_only(Fixture *f, gconstpointer data) {
+  (void)data; set_room_flow(f);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt")), TRUE);
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpuint(f->flow_calls, ==, 1); g_assert_cmpuint(f->calls, ==, 0);
+  g_assert_true(f->flow_encrypt); g_assert_false(f->flow_seals);
+}
+static void flow_seals_only(Fixture *f, gconstpointer data) {
+  (void)data; set_room_flow(f);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals")), TRUE);
+  click(f, "btn_approve"); wait_closed(f);
+  g_assert_cmpuint(f->flow_calls, ==, 1); g_assert_cmpuint(f->calls, ==, 0);
+  g_assert_false(f->flow_encrypt); g_assert_true(f->flow_seals);
+}
+static void flow_deny(Fixture *f, gconstpointer data) {
+  (void)data; set_room_flow(f);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_flow_encrypt")), TRUE);
+  gtk_check_button_set_active(GTK_CHECK_BUTTON(child(f, "chk_flow_seals")), TRUE);
+  click(f, "btn_deny"); wait_closed(f);
+  g_assert_cmpuint(f->flow_calls, ==, 0); g_assert_cmpuint(f->calls, ==, 1);
+  g_assert_false(f->decision);
 }
 static void legacy_no_session(Fixture *f, gconstpointer data) {
   (void)data;
@@ -345,6 +404,10 @@ int main(int argc, char **argv) {
   ADD("previews", previews);
   ADD("stepper-focus", stepper_focus);
   ADD("batch-selection", batch_selection);
+  ADD("flow-unchecked", flow_unchecked);
+  ADD("flow-encrypt-only", flow_encrypt_only);
+  ADD("flow-seals-only", flow_seals_only);
+  ADD("flow-deny", flow_deny);
   ADD("legacy-no-session", legacy_no_session);
   ADD("pairing-preview", pairing_preview);
 #undef ADD

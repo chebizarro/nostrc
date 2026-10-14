@@ -772,8 +772,9 @@ principal), `claimed_app_id` (the caller's unverified `app_id` argument),
 `identity`, `preview` (all `s`); `attested`, `verified`, `rememberable`
 (`b`); `calls` (`u`, calls that joined the request).
 Added in 0.7.0 (all existing fields and signatures preserved): `transport`,
-`operation`, `reason`, `reason_source` (`caller` or `signer`), `flow_id`,
-`state` (`s`); `event_kind` (`u`, only when present; absence is not kind 0);
+`operation`, `reason`, `reason_source` (`caller` or `signer`), `flow_id`, `purpose`,
+`state` (`s`); `flow_size` (`u`, 0 without flow consent), `flow_seals_required` (`b`);
+`event_kind` (`u`, only when present; absence is not kind 0);
 `event_summary` (`a{sv}`, safe validated type/preview/tag count/peer metadata);
 `expires_at` (`t`, Unix seconds); `remaining_seconds` (`u`, authoritative
 monotonic snapshot). No private bodies, ciphertext, keys or pairing tokens
@@ -818,10 +819,36 @@ direct-only, as do management methods. Unknown names, recursion, wrong
 signatures and invalid context return `Error.InvalidInput`.
 
 Context keys: `reason:s` (≤160 Unicode characters and ≤512 UTF-8 bytes),
-`purpose:s`, `flow_id:s` (≤64 bytes each). Duplicate/unknown keys or wrong
+`purpose:s`, `flow_id:s` (≤64 bytes each), and optional `flow_size:u` (1..1024,
+requires a nonempty `flow_id`; total destination envelopes including the self-copy).
+Duplicate/unknown keys or wrong
 types are rejected. Context never grants authority or overrides a principal
 or identity. The calling connection's typed-error opt-in applies to wrapped
 calls. Consumers feature-detect and fall back to direct methods if absent.
+
+#### ApproveFlowRequest
+
+*Additive in unreleased 0.7.0.* `(request_id:s, encrypt:b, seals:b, ttl_seconds:t) → ok:b`
+is trusted-approver-only, like `ApproveRequest`. It approves that pending request and
+creates only the explicitly selected room-send permissions; neither boolean is
+implicitly enabled. The daemon pins scopes to the request's resolved identity,
+verified principal and transport, and requires `purpose="nip17-room-send"`, a
+nonempty flow ID, announced size, and a NIP-44 encrypt or kind-13 seal request.
+`ttl_seconds` is 1..600. Encryption creates an exact principal/identity
+`nip44_encrypt` permission (not decrypt or conversation-key access). Seal signing
+creates exact-kind in-memory flow consent when the kind requires confirmation;
+otherwise it creates the ordinary scoped expiring permission. Flow consent is
+never persisted or returned by `ListGrants`/`ListPermissions`. It covers at most
+the announced number of distinct requests for that scope; policy rechecks reuse
+a request's reservation. Size changes, another flow/caller/identity/transport,
+expiry or daemon restart require review again. Explicit denies still win, and
+ordinary remembered grants still cannot bypass required-confirmation kinds.
+An exhausted live flow cannot be reset or enlarged by this method: review excess
+requests with **Approve once**. Client revocation clears its in-memory flow consent.
+Groundhog introspects for this method before sending `flow_size`; older context
+services receive only the original context keys, and signers without context
+support receive direct calls. No retry follows a crypto/approval/input error;
+only `UnknownMethod` permits the final direct-method fallback.
 
 The GTK-free `SignerApprovalService` is shared by D-Bus and NIP-5F and
 provides NIP-46-ready `NIP04*`, `CONNECT`/`PING` (explicit no-identity mode),

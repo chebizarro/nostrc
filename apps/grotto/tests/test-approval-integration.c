@@ -374,6 +374,12 @@ static void live_navigation(GrottoApprovalController *controller, GApplication *
                   "1 of 2");
   g_assert_false(gtk_widget_get_sensitive(dialog_child(dialog, "btn_previous")));
   g_assert_true(gtk_widget_get_sensitive(dialog_child(dialog, "btn_next")));
+  /* Even an injected same-flow ID cannot bypass the frozen visible selection. */
+  g_autoptr(GrottoApprovalRequest) unseen = g_list_model_get_item(model, 1);
+  gchar *injected[] = {ids[2], NULL};
+  g_signal_emit_by_name(dialog, "approve-selected", injected);
+  g_assert_cmpint(grotto_approval_request_get_state(unseen), ==, GROTTO_APPROVAL_READY);
+  g_assert_cmpuint(results[2].done, ==, 0);
   /* The only selected ID was externally completed. Never approve the unseen arrival. */
   g_signal_emit_by_name(dialog_child(dialog, "btn_approve_selected"), "clicked");
   WAIT(review_dialog(app) == NULL);

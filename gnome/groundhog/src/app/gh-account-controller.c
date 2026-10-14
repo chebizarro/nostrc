@@ -1338,8 +1338,9 @@ new_signer_call(GhAccountController *self, gpointer tag, GCancellable *caller,
 }
 
 void
-gh_account_controller_sign_with_cancellable_async(GhAccountController *self,
-                                 const gchar *unsigned_event, GCancellable *cancellable,
+gh_account_controller_sign_with_context_async(GhAccountController *self,
+                                 const gchar *unsigned_event, const GhSignerContext *context,
+                                 GCancellable *cancellable,
                                  GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
@@ -1347,10 +1348,16 @@ gh_account_controller_sign_with_cancellable_async(GhAccountController *self,
                                     cancellable, callback, user_data);
   if (!call) return;
   call->sign = TRUE;
-  gh_signer_sign_async(self->signer, unsigned_event, call->cancel,
+  gh_signer_sign_with_context_async(self->signer, unsigned_event, context, call->cancel,
                        signer_call_done, call);
 }
 
+void
+gh_account_controller_sign_with_cancellable_async(GhAccountController *self,
+    const gchar *event, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
+{
+  gh_account_controller_sign_with_context_async(self, event, NULL, cancel, cb, data);
+}
 void
 gh_account_controller_sign_async(GhAccountController *self, const gchar *unsigned_event,
                                  GAsyncReadyCallback callback, gpointer user_data)
@@ -1369,19 +1376,25 @@ gh_account_controller_sign_finish(GAsyncResult *result, GError **error)
 }
 
 void
-gh_account_controller_nip44_encrypt_with_cancellable_async(GhAccountController *self,
+gh_account_controller_nip44_encrypt_with_context_async(GhAccountController *self,
                                           const gchar *plaintext, const gchar *peer,
-                                          GCancellable *cancellable,
+                                          const GhSignerContext *context, GCancellable *cancellable,
                                           GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(GH_IS_ACCOUNT_CONTROLLER(self));
   SignerCall *call = new_signer_call(self, gh_account_controller_nip44_encrypt_async,
                                     cancellable, callback, user_data);
   if (!call) return;
-  gh_signer_nip44_encrypt_async(self->signer, plaintext, peer, call->cancel,
+  gh_signer_nip44_encrypt_with_context_async(self->signer, plaintext, peer, context, call->cancel,
                                 signer_call_done, call);
 }
 
+void
+gh_account_controller_nip44_encrypt_with_cancellable_async(GhAccountController *self,
+    const gchar *text, const gchar *peer, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
+{
+  gh_account_controller_nip44_encrypt_with_context_async(self, text, peer, NULL, cancel, cb, data);
+}
 void
 gh_account_controller_nip44_encrypt_async(GhAccountController *self,
                                           const gchar *plaintext, const gchar *peer,

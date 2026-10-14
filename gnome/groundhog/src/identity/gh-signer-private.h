@@ -14,6 +14,11 @@ gboolean gh_signer_nip55l_select(GhNip55lSigner *signer, const gchar *npub,
                                   GError **error);
 void gh_signer_nip55l_sign_async(GhNip55lSigner *signer, const gchar *event,
                                  GCancellable *cancel, GAsyncReadyCallback cb, gpointer data);
+void gh_signer_nip55l_sign_with_context_async(GhNip55lSigner *signer, const gchar *event,
+    const GhSignerContext *context, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data);
+void gh_signer_nip55l_nip44_encrypt_with_context_async(GhNip55lSigner *signer, const gchar *text,
+    const gchar *peer, const GhSignerContext *context, GCancellable *cancel,
+    GAsyncReadyCallback cb, gpointer data);
 gchar *gh_signer_nip55l_sign_finish(GAsyncResult *result, GError **error);
 void gh_signer_nip55l_nip44_encrypt_async(GhNip55lSigner *signer, const gchar *text,
                                            const gchar *peer, GCancellable *cancel,

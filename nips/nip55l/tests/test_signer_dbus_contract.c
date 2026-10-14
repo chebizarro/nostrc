@@ -1314,7 +1314,7 @@ static void test_readable_summary_contract(Ctx *ctx) {
   }
 }
 static void test_call_with_context(Ctx *ctx) {
-  const gchar *reject[] = {"StoreKey", "ApproveRequest", "ListIdentities", "ListGrants", "CallWithContext", "Unknown",
+  const gchar *reject[] = {"StoreKey", "ApproveRequest", "ApproveFlowRequest", "ListIdentities", "ListGrants", "CallWithContext", "Unknown",
     "GetPublicKey", "GetRelays", "GetPublicKeyForApp", "NIP44EncryptB64", "DecryptZapEvent", "EnableTypedApprovalErrors"};
   for (guint i = 0; i < G_N_ELEMENTS(reject); i++)
     context_reject(ctx, reject[i], g_variant_new("(s)", "not allowed"), context_one(NULL, NULL));
@@ -1332,6 +1332,10 @@ static void test_call_with_context(Ctx *ctx) {
   context_reject(ctx, "SignEvent", context_arguments(), context_one("purpose", g_variant_new_string(long_text)));
   context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_id", g_variant_new_string(long_text)));
   g_free(long_text);
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_size", g_variant_new_string("2")));
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_size", g_variant_new_uint32(2))); /* missing flow_id */
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_size", g_variant_new_uint32(0)));
+  context_reject(ctx, "SignEvent", context_arguments(), context_one("flow_size", g_variant_new_uint32(1025)));
   GVariantBuilder context;
   g_variant_builder_init(&context, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_add(&context, "{sv}", "reason", g_variant_new_string("one"));
@@ -1343,6 +1347,7 @@ static void test_call_with_context(Ctx *ctx) {
   g_variant_builder_add(&context, "{sv}", "reason", g_variant_new_string("Publish this note"));
   g_variant_builder_add(&context, "{sv}", "purpose", g_variant_new_string("posting"));
   g_variant_builder_add(&context, "{sv}", "flow_id", g_variant_new_string("test-flow"));
+  g_variant_builder_add(&context, "{sv}", "flow_size", g_variant_new_uint32(2));
   w.a.pending_replies++;
   g_dbus_connection_call(ctx->bus, BUS_NAME, OBJ_PATH, IFACE, "CallWithContext",
     g_variant_new("(sv@a{sv})", "SignEvent", g_variant_new("(sss)",
@@ -1360,6 +1365,8 @@ static void test_call_with_context(Ctx *ctx) {
   CHECK(g_variant_lookup(info, "reason", "&s", &text) && !strcmp(text, "Publish this note"));
   CHECK(g_variant_lookup(info, "reason_source", "&s", &text) && !strcmp(text, "caller"));
   CHECK(g_variant_lookup(info, "flow_id", "&s", &text) && !strcmp(text, "test-flow"));
+  guint32 flow_size = 0;
+  CHECK(g_variant_lookup(info, "flow_size", "u", &flow_size) && flow_size == 2);
   CHECK(g_variant_lookup(info, "state", "&s", &text) && !strcmp(text, "PENDING"));
   CHECK(g_variant_lookup(info, "expires_at", "t", &expires) && expires > (guint64)time(NULL));
   CHECK(g_variant_lookup(info, "remaining_seconds", "u", &remaining) && remaining > 0 && remaining <= 300);
@@ -1853,6 +1860,8 @@ static void test_untrusted_approver(Ctx *ctx) {
   watch_wait_request(&w, 1);
   GError *err = NULL;
   GVariant *ok = approve_call(ctx, w.a.req_id, TRUE, TRUE, &err);
+  CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
+  ok = call(ctx->bus, "ApproveFlowRequest", g_variant_new("(sbbt)", w.a.req_id, TRUE, TRUE, (guint64)600), "(b)", &err);
   CHECK(ok == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);
   GVariant *info = call(ctx->bus, "GetApprovalInfo", g_variant_new("(s)", w.a.req_id), "(a{sv})", &err);
   CHECK(info == NULL); expect_remote_error(err, ERR_PERM); g_clear_error(&err);

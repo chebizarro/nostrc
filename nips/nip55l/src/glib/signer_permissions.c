@@ -11,23 +11,55 @@ struct _SignerPermissions {
   gchar *config_home;
   GMutex lock;
   guint64 revision, next_expiry;
+  gint64 next_flow_expiry;
   SignerTrustLookup trust;
   gpointer trust_data;
   SignerPermissionsChanged changed;
   gpointer changed_data;
   GArray *required;
+  GHashTable *flows;
+#ifdef NIP55L_TEST_TRUST_ENV
+  gint64 (*flow_clock)(gpointer);
+  gpointer flow_clock_data;
+#endif
 };
 typedef struct {
   gchar *principal, *identity, *operation, *decision, *legacy;
   gint kind;
   guint64 expires, created;
 } Row;
+typedef struct {
+  gchar *principal, *identity, *operation, *flow_id;
+  gint kind;
+  guint transport, size;
+  gint64 deadline;
+  GHashTable *requests;
+} Flow;
+static void flow_free(Flow *f) {
+  g_free(f->principal); g_free(f->identity); g_free(f->operation); g_free(f->flow_id);
+  g_hash_table_unref(f->requests); g_free(f);
+}
 static void row_free(Row *r) {
   g_free(r->principal); g_free(r->identity); g_free(r->operation);
   g_free(r->decision); g_free(r->legacy); g_free(r);
 }
 G_DEFINE_AUTOPTR_CLEANUP_FUNC(Row, row_free)
 static guint64 now_seconds(void) { return g_get_real_time() / G_USEC_PER_SEC; }
+static gint64 flow_now(SignerPermissions *p) {
+#ifdef NIP55L_TEST_TRUST_ENV
+  if (p->flow_clock) return p->flow_clock(p->flow_clock_data);
+#else
+  (void)p;
+#endif
+  return g_get_monotonic_time();
+}
+#ifdef NIP55L_TEST_TRUST_ENV
+void signer_permissions_set_flow_clock_for_test(SignerPermissions *p,
+    gint64 (*clock)(gpointer), gpointer data) {
+  g_return_if_fail(g_hash_table_size(p->flows) == 0);
+  p->flow_clock = clock; p->flow_clock_data = data;
+}
+#endif
 static gboolean fail(GError **error, GIOErrorEnum code, const gchar *message) {
   g_set_error_literal(error, G_IO_ERROR, code, message); return FALSE;
 }
@@ -160,12 +192,14 @@ SignerPermissions *signer_permissions_new(const gchar *config_home) {
   SignerPermissions *p = g_new0(SignerPermissions, 1);
   p->config_home = g_strdup(config_home ? config_home : g_get_user_config_dir());
   g_mutex_init(&p->lock); p->records = new_records(); p->revision = 1;
+  p->flows = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, (GDestroyNotify)flow_free);
   p->required = g_array_new(FALSE, FALSE, sizeof(guint32));
   g_array_append_vals(p->required, signer_default_required_confirmation_kinds,
                       G_N_ELEMENTS(signer_default_required_confirmation_kinds)); return p;
 }
 void signer_permissions_free(SignerPermissions *p) {
   if (!p) return;
+  g_hash_table_unref(p->flows);
   g_key_file_unref(p->records); g_array_unref(p->required); g_mutex_clear(&p->lock); g_free(p->config_home); g_free(p);
 }
 guint64 signer_permissions_revision(SignerPermissions *p) {
@@ -174,7 +208,8 @@ guint64 signer_permissions_revision(SignerPermissions *p) {
 }
 gboolean signer_permissions_revision_is_current(SignerPermissions *p, guint64 revision) {
   g_mutex_lock(&p->lock);
-  gboolean current = p->revision == revision && (!p->next_expiry || now_seconds() < p->next_expiry);
+  gboolean current = p->revision == revision && (!p->next_expiry || now_seconds() < p->next_expiry) &&
+      (!p->next_flow_expiry || flow_now(p) < p->next_flow_expiry);
   g_mutex_unlock(&p->lock); return current;
 }
 void signer_permissions_set_changed(SignerPermissions *p, SignerPermissionsChanged fn, gpointer data) {
@@ -331,6 +366,9 @@ static gboolean contains_kind(const guint32 *kinds, gsize count, gint kind) {
   for (gsize i = 0; i < count; i++) if (kind >= 0 && kinds[i] == (guint32)kind) return TRUE;
   return FALSE;
 }
+gboolean signer_permissions_kind_requires_confirmation(SignerPermissions *p, gint kind) {
+  return contains_kind((guint32 *)p->required->data, p->required->len, kind);
+}
 SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
     const gchar *principal, const gchar *identity, const gchar *op, gint kind,
     gboolean first_party_default, GError **error) {
@@ -370,6 +408,88 @@ SignerPermissionResult signer_permissions_evaluate(SignerPermissions *p,
         G_N_ELEMENTS(signer_public_publishing_kinds), kind)))) return SIGNER_PERMISSION_ALLOW;
   if (tier == SIGNER_TRUST_LOW && consented && !strcmp(op, "get_public_key")) return SIGNER_PERMISSION_ALLOW;
   return SIGNER_PERMISSION_ASK;
+}
+static gchar *flow_key(const gchar *principal, const gchar *identity, guint transport,
+    const gchar *op, gint kind, const gchar *flow_id) {
+  Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity, .operation=(gchar *)op, .kind=kind};
+  g_autofree gchar *scope = row_id(&row);
+  return g_strdup_printf("%s:%u:%s", scope, transport, flow_id);
+}
+static gboolean valid_flow(const gchar *principal, const gchar *identity, guint transport,
+    const gchar *op, gint kind, const gchar *flow_id, guint size) {
+  Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity, .operation=(gchar *)op,
+    .kind=kind, .decision="allow"};
+  return valid_row(&row) && identity && *identity && strcmp(identity, "*") &&
+      transport <= 3 && flow_id && *flow_id && strlen(flow_id) <= 64 &&
+      g_utf8_validate(flow_id, -1, NULL) && size > 0 && size <= 1024;
+}
+static void update_flow_expiry_fence(SignerPermissions *p) {
+  gint64 next = 0;
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, p->flows);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Flow *f = value;
+    if (!next || f->deadline < next) next = f->deadline;
+  }
+  g_mutex_lock(&p->lock); p->next_flow_expiry = next; g_mutex_unlock(&p->lock);
+}
+static void prune_flows(SignerPermissions *p) {
+  gboolean removed = FALSE;
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, p->flows);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    if (((Flow *)value)->deadline <= flow_now(p)) {
+      g_hash_table_iter_remove(&it); removed = TRUE;
+    }
+  }
+  update_flow_expiry_fence(p);
+  if (removed) changed(p);
+}
+static Flow *flow_new(SignerPermissions *p, const gchar *principal, const gchar *identity, guint transport,
+    const gchar *op, gint kind, const gchar *flow_id, guint size, guint64 ttl) {
+  Flow *f = g_new0(Flow, 1);
+  f->principal = g_strdup(principal); f->identity = g_strdup(identity);
+  f->operation = g_strdup(op); f->flow_id = g_strdup(flow_id); f->kind = kind;
+  f->transport = transport; f->size = size;
+  f->deadline = flow_now(p) + ttl * G_USEC_PER_SEC;
+  f->requests = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  return f;
+}
+SignerPermissionResult signer_permissions_evaluate_flow(SignerPermissions *p,
+    const gchar *principal, const gchar *identity, guint transport, const gchar *op,
+    gint kind, const gchar *flow_id, guint size, const gchar *request_id,
+    gboolean first_party_default, GError **error) {
+  prune_flows(p);
+  SignerPermissionResult policy = signer_permissions_evaluate(p, principal, identity, op, kind,
+                                                              first_party_default, error);
+  if (policy != SIGNER_PERMISSION_ASK || !request_id || !*request_id ||
+      !valid_flow(principal, identity, transport, op, kind, flow_id, size)) return policy;
+  g_autofree gchar *key = flow_key(principal, identity, transport, op, kind, flow_id);
+  Flow *f = g_hash_table_lookup(p->flows, key);
+  if (!f || f->size != size) return SIGNER_PERMISSION_ASK;
+  if (f->deadline <= flow_now(p)) {
+    g_hash_table_remove(p->flows, key); update_flow_expiry_fence(p); changed(p);
+    return SIGNER_PERMISSION_ASK;
+  }
+  if (g_hash_table_contains(f->requests, request_id)) return SIGNER_PERMISSION_ALLOW;
+  if (g_hash_table_size(f->requests) >= f->size) return SIGNER_PERMISSION_ASK;
+  g_hash_table_add(f->requests, g_strdup(request_id));
+  return SIGNER_PERMISSION_ALLOW;
+}
+static gboolean clear_flows(SignerPermissions *p, const gchar *principal,
+    const gchar *identity, const gchar *op) {
+  gboolean removed = FALSE;
+  GHashTableIter it; gpointer value;
+  g_hash_table_iter_init(&it, p->flows);
+  while (g_hash_table_iter_next(&it, NULL, &value)) {
+    Flow *f = value;
+    if (!strcmp(f->principal, principal) && (!identity || !strcmp(f->identity, identity)) &&
+        (!op || !strcmp(f->operation, op))) {
+      g_hash_table_iter_remove(&it); removed = TRUE;
+    }
+  }
+  update_flow_expiry_fence(p);
+  return removed;
 }
 static void variant_row(GVariantBuilder *rows, Row *r) {
   GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
@@ -429,6 +549,36 @@ static gboolean commit(SignerPermissions *p, GKeyFile *next, GError **error) {
   update_expiry_fence(p, next);
   changed(p); return TRUE;
 }
+gboolean signer_permissions_consent_room(SignerPermissions *p,
+    const gchar *principal, const gchar *identity, guint transport, const gchar *flow_id,
+    guint size, gboolean encrypt, gboolean seals, guint64 ttl, GError **error) {
+  if (!valid_flow(principal, identity, transport, "event", NOSTR_KIND_SEAL, flow_id, size) ||
+      !ttl || ttl > 600)
+    return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "invalid room consent scope, size or expiry");
+  if (!signer_permissions_reload(p, error)) return FALSE;
+  prune_flows(p);
+  gboolean flow_seals = seals && signer_permissions_kind_requires_confirmation(p, NOSTR_KIND_SEAL);
+  g_autofree gchar *key = flow_key(principal, identity, transport, "event", NOSTR_KIND_SEAL, flow_id);
+  if (flow_seals && (g_hash_table_contains(p->flows, key) || g_hash_table_size(p->flows) >= 1024))
+    return fail(error, G_IO_ERROR_EXISTS, "flow cannot be reset or enlarged; approve this request once");
+  if (encrypt || (seals && !flow_seals)) {
+    guint64 now = now_seconds();
+    if (ttl > G_MAXUINT64 - now) return fail(error, G_IO_ERROR_INVALID_ARGUMENT, "permission expiry overflow");
+    g_autoptr(GKeyFile) next = copy_records(p);
+    Row row = {.principal=(gchar *)principal, .identity=(gchar *)identity,
+      .operation="nip44_encrypt", .kind=-1, .decision="allow", .expires=now + ttl};
+    if (encrypt) write_row(next, &row);
+    if (seals && !flow_seals) { row.operation = "event"; row.kind = NOSTR_KIND_SEAL; write_row(next, &row); }
+    if (!commit(p, next, error)) return FALSE;
+  }
+  /* No fallible work or owner-context dispatch after the persistent commit. */
+  if (flow_seals) {
+    g_hash_table_insert(p->flows, g_steal_pointer(&key),
+        flow_new(p, principal, identity, transport, "event", NOSTR_KIND_SEAL, flow_id, size, ttl));
+    update_flow_expiry_fence(p);
+  }
+  return TRUE;
+}
 gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op, gboolean *removed, GError **error) {
   *removed = FALSE;
@@ -436,9 +586,11 @@ gboolean signer_permissions_clear(SignerPermissions *p, const gchar *principal,
   if (!signer_permissions_reload(p, error)) return FALSE;
   g_autoptr(GKeyFile) next = copy_records(p);
   gboolean found = FALSE; remove_rows(next, principal, identity, op, &found);
-  if (!found) return TRUE;
-  if (!commit(p, next, error)) return FALSE;
-  *removed = TRUE; return TRUE;
+  if (found && !commit(p, next, error)) return FALSE;
+  gboolean flow_removed = clear_flows(p, principal, identity, op);
+  *removed = flow_removed || found;
+  if (flow_removed) changed(p);
+  return TRUE;
 }
 gboolean signer_permissions_remember(SignerPermissions *p, const gchar *principal,
     const gchar *identity, const gchar *op, gint kind, gboolean allow, guint64 ttl, GError **error) {
