@@ -223,6 +223,7 @@ const char *gnostr_approval_kind_name(guint32 kind);
 gboolean gnostr_approval_info_can_approve(GVariant *info);
 /* Visible immutable flow members only. approve-selected emits a borrowed
  * string vector of opaque IDs; it never writes remembered permissions. */
+gboolean gnostr_approval_dialog_has_batch_request(GnostrApprovalDialog *self, const gchar *id);
 void gnostr_approval_dialog_set_batch(GnostrApprovalDialog *self, GVariant *rows);
 
 G_END_DECLS

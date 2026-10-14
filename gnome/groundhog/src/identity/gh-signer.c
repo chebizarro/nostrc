@@ -268,7 +268,7 @@ backend_done(GObject *source, GAsyncResult *result, gpointer data)
 
 static void
 start_call(GhSigner *self, Operation op, const gchar *input, const gchar *peer,
-           GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+           const GhSignerContext *context, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   GTask *task = g_task_new(NULL, NULL, callback, user_data);
   if (op == OP_SIGN)
@@ -329,9 +329,9 @@ start_call(GhSigner *self, Operation op, const gchar *input, const gchar *peer,
     gh_signer_nip46_call_async(self->backend.remote, method, input, peer,
                                p->cancel, backend_done, p);
   } else if (op == OP_SIGN) {
-    gh_signer_nip55l_sign_async(self->backend.local, input, p->cancel, backend_done, p);
+    gh_signer_nip55l_sign_with_context_async(self->backend.local, input, context, p->cancel, backend_done, p);
   } else if (op == OP_ENCRYPT) {
-    gh_signer_nip55l_nip44_encrypt_async(self->backend.local, input, peer,
+    gh_signer_nip55l_nip44_encrypt_with_context_async(self->backend.local, input, peer, context,
                                          p->cancel, backend_done, p);
   } else if (op == OP_DECRYPT) {
     gh_signer_nip55l_nip44_decrypt_async(self->backend.local, input, peer,
@@ -347,9 +347,23 @@ gh_signer_sign_async(GhSigner *self, const gchar *event, GCancellable *cancel,
                      GAsyncReadyCallback callback, gpointer data)
 {
   g_return_if_fail(self != NULL);
-  start_call(self, OP_SIGN, event, NULL, cancel, callback, data);
+  start_call(self, OP_SIGN, event, NULL, NULL, cancel, callback, data);
 }
 
+void
+gh_signer_sign_with_context_async(GhSigner *self, const gchar *event,
+    const GhSignerContext *context, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
+{
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_SIGN, event, NULL, context, cancel, cb, data);
+}
+void
+gh_signer_nip44_encrypt_with_context_async(GhSigner *self, const gchar *text, const gchar *peer,
+    const GhSignerContext *context, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
+{
+  g_return_if_fail(self != NULL);
+  start_call(self, OP_ENCRYPT, text, peer, context, cancel, cb, data);
+}
 gchar *
 gh_signer_sign_finish(GAsyncResult *result, GError **error)
 {
@@ -363,21 +377,21 @@ gh_signer_nip44_encrypt_async(GhSigner *self, const gchar *text, const gchar *pe
                                GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
   g_return_if_fail(self != NULL);
-  start_call(self, OP_ENCRYPT, text, peer, cancel, cb, data);
+  start_call(self, OP_ENCRYPT, text, peer, NULL, cancel, cb, data);
 }
 void
 gh_signer_nip44_decrypt_async(GhSigner *self, const gchar *text, const gchar *peer,
                                GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
   g_return_if_fail(self != NULL);
-  start_call(self, OP_DECRYPT, text, peer, cancel, cb, data);
+  start_call(self, OP_DECRYPT, text, peer, NULL, cancel, cb, data);
 }
 void
 gh_signer_nip04_decrypt_async(GhSigner *self, const gchar *text, const gchar *peer,
                                GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
 {
   g_return_if_fail(self != NULL);
-  start_call(self, OP_NIP04_DECRYPT, text, peer, cancel, cb, data);
+  start_call(self, OP_NIP04_DECRYPT, text, peer, NULL, cancel, cb, data);
 }
 
 gchar *

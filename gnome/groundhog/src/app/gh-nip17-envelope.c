@@ -24,6 +24,7 @@ typedef struct {
   GStrv recipients;       /* receivers besides the sender; empty for a note to self */
   guint n_recipients;
   gchar *rumor_json;
+  gchar *flow_id;
   gchar *ciphertext;
   GPtrArray *wraps;       /* gchar *: the finished destinations' signed wraps */
   GHashTable *outer_keys; /* the ephemeral pubkeys those wraps use */
@@ -46,6 +47,7 @@ build_free(gpointer data)
   g_free(build->sender_npub);
   g_strfreev(build->recipients);
   g_free(build->rumor_json);
+  g_free(build->flow_id);
   g_free(build->ciphertext);
   g_ptr_array_unref(build->wraps);
   g_hash_table_unref(build->outer_keys);
@@ -190,9 +192,12 @@ begin_encrypt(GTask *task)
     fail_local(task, "NIP-17 account changed");
     return;
   }
-  gh_account_controller_nip44_encrypt_with_cancellable_async(
-    accounts, build->rumor_json, destination(build), g_task_get_cancellable(task),
-    encrypt_done, task);
+  if (!build->flow_id) build->flow_id = g_uuid_string_random();
+  GhSignerContext context = {"Encrypt and sign encrypted messages for this room, including your own copy.",
+    "nip17-room-send", build->flow_id, build->n_recipients + 1};
+  gh_account_controller_nip44_encrypt_with_context_async(
+    accounts, build->rumor_json, destination(build), build->no_self_copy ? NULL : &context,
+    g_task_get_cancellable(task), encrypt_done, task);
 }
 
 /* A randomized seal created_at (NIP-59) that no earlier seal of this
@@ -245,8 +250,11 @@ encrypt_done(GObject *source, GAsyncResult *result, gpointer data)
     return;
   }
   GhAccountController *accounts = g_task_get_source_object(task);
-  gh_account_controller_sign_with_cancellable_async(
-    accounts, unsigned_json, g_task_get_cancellable(task), sign_done, task);
+  GhSignerContext context = {"Sign encrypted messages for this room, including your own copy.",
+    "nip17-room-send", build->flow_id, build->n_recipients + 1};
+  gh_account_controller_sign_with_context_async(
+    accounts, unsigned_json, build->no_self_copy ? NULL : &context,
+    g_task_get_cancellable(task), sign_done, task);
   free(unsigned_json);
 }
 

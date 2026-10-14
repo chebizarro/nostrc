@@ -45,6 +45,17 @@ void gh_signer_free(GhSigner *signer);
 /* Revokes all outstanding calls before changing the selected public identity. */
 gboolean gh_signer_select(GhSigner *signer, const gchar *npub, GError **error);
 
+typedef struct {
+  const gchar *reason, *purpose, *flow_id;
+  guint flow_size; /* total destination envelopes, including self-copy */
+} GhSignerContext;
+/* Context is copied at submission; remote/legacy signers retain existing behavior. */
+void gh_signer_sign_with_context_async(GhSigner *signer, const gchar *unsigned_event,
+    const GhSignerContext *context, GCancellable *cancellable,
+    GAsyncReadyCallback callback, gpointer user_data);
+void gh_signer_nip44_encrypt_with_context_async(GhSigner *signer, const gchar *plaintext,
+    const gchar *peer_pubkey_hex, const GhSignerContext *context,
+    GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 void gh_signer_sign_async(GhSigner *signer, const gchar *unsigned_event,
                           GCancellable *cancellable, GAsyncReadyCallback callback,
                           gpointer user_data);

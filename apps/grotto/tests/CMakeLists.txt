@@ -546,6 +546,30 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
   set_tests_properties(signer/approval-integration PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77 LABELS "signer;integration"
     ENVIRONMENT "${_UI_TEST_ENV}")
   add_dependencies(signer-tests test-approval-integration)
+  if(BUILD_GROUNDHOG)
+    set(_room_schemas "${CMAKE_CURRENT_BINARY_DIR}/room-schemas")
+    add_custom_command(OUTPUT "${_room_schemas}/gschemas.compiled"
+      COMMAND ${CMAKE_COMMAND} -E make_directory "${_room_schemas}"
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_SOURCE_DIR}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml" "${_room_schemas}"
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml" "${_room_schemas}"
+      COMMAND ${GLIB_COMPILE_SCHEMAS} --strict "${_room_schemas}"
+      DEPENDS "${CMAKE_SOURCE_DIR}/gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+              "${CMAKE_CURRENT_SOURCE_DIR}/../data/org.nostr.Grotto.gschema.xml" VERBATIM)
+    add_custom_target(room-flow-schemas DEPENDS "${_room_schemas}/gschemas.compiled")
+    add_executable(test-room-flow test-room-flow.c ${_APPROVAL_GRESOURCE_C}
+      "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-envelope.c"
+      "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-inbox.c"
+      "${CMAKE_SOURCE_DIR}/gnome/groundhog/src/app/gh-nip17-file.c")
+    target_link_libraries(test-room-flow PRIVATE grotto_approval_test_core groundhog-account
+      nostrc-test-bus nostr_nip17_core nostr_nip59_core ${SIGNER_TEST_LIBS})
+    target_link_directories(test-room-flow PRIVATE ${SIGNER_TEST_LINK_DIRS})
+    target_compile_options(test-room-flow PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(test-room-flow grotto-daemon room-flow-schemas)
+    add_test(NAME signer/room-flow COMMAND test-room-flow $<TARGET_FILE:grotto-daemon>)
+    set_tests_properties(signer/room-flow PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;integration"
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${_room_schemas};GSETTINGS_BACKEND=memory;NOSTRC_TEST_ISOLATION=1;G_DEBUG=fatal-warnings;GDK_BACKEND=x11;GTK_A11Y=none")
+    add_dependencies(signer-tests test-room-flow)
+  endif()
 endif()
 
 include(identity-tests.cmake)

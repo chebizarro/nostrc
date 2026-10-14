@@ -36,6 +36,8 @@ struct _Pending {
   NostrEvent *request;
   gchar *input;
   gchar *peer;
+  GVariant *context;
+  gboolean wrapped;
 };
 
 static GhNip55lSigner *
@@ -211,6 +213,7 @@ pending_free(Pending *p)
   if (p->request) nostr_event_free(p->request);
   g_free(p->input);
   g_free(p->peer);
+  g_clear_pointer(&p->context, g_variant_unref);
   g_object_unref(p->task);
   signer_unref(p->signer);
   g_free(p);
@@ -249,6 +252,7 @@ map_bus_error(GError *error)
                              "Signer service failed");
 }
 
+static void send_call(Pending *p, gboolean wrapped);
 static void
 call_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -257,6 +261,17 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
   g_autoptr(GError) bus_error = NULL;
   g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result,
                                                               &bus_error);
+  if (p->wrapped && g_error_matches(bus_error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) &&
+      !g_cancellable_is_cancelled(p->cancel) && p->generation == signer->generation &&
+      !g_dbus_connection_is_closed(p->bus)) {
+    send_call(p, FALSE);
+    return;
+  }
+  if (reply && p->wrapped && g_variant_is_of_type(reply, G_VARIANT_TYPE("(v)"))) {
+    g_autoptr(GVariant) boxed = g_variant_get_child_value(reply, 0);
+    GVariant *tuple = g_variant_get_variant(boxed);
+    g_variant_unref(reply); reply = tuple;
+  }
   g_ptr_array_remove(signer->pending, p);
   if (g_cancellable_is_cancelled(p->cancel) || p->generation != signer->generation ||
       g_dbus_connection_is_closed(p->bus)) {
@@ -285,6 +300,26 @@ call_done(GObject *source, GAsyncResult *result, gpointer data)
   pending_free(p);
 }
 
+static void
+introspection_done(GObject *source, GAsyncResult *result, gpointer data)
+{
+  Pending *p = data;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, NULL);
+  const gchar *xml = NULL;
+  if (reply) g_variant_get(reply, "(&s)", &xml);
+  g_autoptr(GDBusNodeInfo) node = xml ? g_dbus_node_info_new_for_xml(xml, NULL) : NULL;
+  GDBusInterfaceInfo *info = node ? g_dbus_node_info_lookup_interface(node, SIGNER_INTERFACE) : NULL;
+  gboolean context = info && g_dbus_interface_info_lookup_method(info, "CallWithContext");
+  gboolean flow = info && g_dbus_interface_info_lookup_method(info, "ApproveFlowRequest");
+  if (context && !flow) {
+    /* G02 services understand context but not the later bounded-flow extension. */
+    GVariantDict dict; g_variant_dict_init(&dict, p->context);
+    g_variant_dict_remove(&dict, "flow_size");
+    g_clear_pointer(&p->context, g_variant_unref);
+    p->context = g_variant_ref_sink(g_variant_dict_end(&dict));
+  }
+  send_call(p, context);
+}
 static void
 connection_done(GObject *source, GAsyncResult *result, gpointer data)
 {
@@ -336,14 +371,35 @@ connection_done(GObject *source, GAsyncResult *result, gpointer data)
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
                          "EnableTypedApprovalErrors", NULL, NULL, G_DBUS_CALL_FLAGS_NONE,
                          -1, NULL, NULL, NULL);
+  if (p->context)
+    g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, "org.freedesktop.DBus.Introspectable",
+        "Introspect", NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 5000,
+        p->cancel, introspection_done, p);
+  else send_call(p, FALSE);
+}
+
+static void
+send_call(Pending *p, gboolean wrapped)
+{
+  if (g_cancellable_is_cancelled(p->cancel) || p->generation != p->signer->generation ||
+      g_dbus_connection_is_closed(p->bus)) {
+    g_ptr_array_remove(p->signer->pending, p);
+    g_task_return_new_error(p->task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_CANCELLED,
+                            "Signer operation cancelled");
+    if (!g_dbus_connection_is_closed(p->bus)) g_dbus_connection_close(p->bus, NULL, NULL, NULL);
+    pending_free(p); return;
+  }
+  const gchar *method = p->op == OP_SIGN ? "SignEvent" :
+      p->op == OP_ENCRYPT ? "NIP44Encrypt" :
+      p->op == OP_NIP04_DECRYPT ? "NIP04Decrypt" : "NIP44Decrypt";
+  GVariant *tuple = p->op == OP_SIGN ? g_variant_new("(sss)", p->input, p->signer->npub, "") :
+      g_variant_new("(sss)", p->input, p->peer, p->signer->npub);
+  p->wrapped = wrapped;
   g_dbus_connection_call(p->bus, SIGNER_BUS, SIGNER_PATH, SIGNER_INTERFACE,
-                         p->op == OP_SIGN ? "SignEvent" :
-                         p->op == OP_ENCRYPT ? "NIP44Encrypt" :
-                         p->op == OP_NIP04_DECRYPT ? "NIP04Decrypt" : "NIP44Decrypt",
-                         p->op == OP_SIGN ? g_variant_new("(sss)", p->input, signer->npub, "") :
-                           g_variant_new("(sss)", p->input, p->peer, signer->npub),
-                         G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS,
-                         p->cancel, call_done, p);
+      wrapped ? "CallWithContext" : method,
+      wrapped ? g_variant_new("(sv@a{sv})", method, tuple, g_variant_ref(p->context)) : tuple,
+      wrapped ? G_VARIANT_TYPE("(v)") : G_VARIANT_TYPE("(s)"),
+      G_DBUS_CALL_FLAGS_NONE, SIGNER_CALL_TIMEOUT_MS, p->cancel, call_done, p);
 }
 
 static void
@@ -388,7 +444,7 @@ address_done(GObject *source, GAsyncResult *result, gpointer data)
 
 static void
 start_call(GhNip55lSigner *signer, Operation op, const gchar *input, const gchar *peer,
-           GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
+           const GhSignerContext *context, GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   GTask *task = g_task_new(NULL, NULL, callback, user_data);
   if (op == OP_SIGN)
@@ -405,6 +461,14 @@ start_call(GhNip55lSigner *signer, Operation op, const gchar *input, const gchar
                             "Invalid signer input");
     g_object_unref(task);
     return;
+  }
+  if (context && ((!context->reason || !g_utf8_validate(context->reason, -1, NULL) ||
+      strlen(context->reason) > 512 || g_utf8_strlen(context->reason, -1) > 160) ||
+      !context->purpose || !g_utf8_validate(context->purpose, -1, NULL) || strlen(context->purpose) > 64 ||
+      !context->flow_id || !g_utf8_validate(context->flow_id, -1, NULL) ||
+      !*context->flow_id || strlen(context->flow_id) > 64 || !context->flow_size || context->flow_size > 1024)) {
+    g_task_return_new_error(task, GH_SIGNER_ERROR, GH_SIGNER_ERROR_INVALID_INPUT, "Invalid signer context");
+    g_object_unref(task); return;
   }
   NostrEvent *request = NULL;
   if (op == OP_SIGN) {
@@ -441,6 +505,14 @@ start_call(GhNip55lSigner *signer, Operation op, const gchar *input, const gchar
   p->request = request;
   p->input = g_strdup(input);
   p->peer = g_strdup(peer);
+  if (context) {
+    GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE_VARDICT);
+    g_variant_builder_add(&b, "{sv}", "reason", g_variant_new_string(context->reason));
+    g_variant_builder_add(&b, "{sv}", "purpose", g_variant_new_string(context->purpose));
+    g_variant_builder_add(&b, "{sv}", "flow_id", g_variant_new_string(context->flow_id));
+    g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(context->flow_size));
+    p->context = g_variant_ref_sink(g_variant_builder_end(&b));
+  }
   g_ptr_array_add(signer->pending, p);
   if (p->caller)
     p->caller_handler = g_cancellable_connect(p->caller, G_CALLBACK(cancel_from_caller),
@@ -455,9 +527,24 @@ gh_signer_nip55l_sign_async(GhNip55lSigner *signer, const gchar *unsigned_event,
                      GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(signer != NULL);
-  start_call(signer, OP_SIGN, unsigned_event, NULL, cancellable, callback, user_data);
+  start_call(signer, OP_SIGN, unsigned_event, NULL, NULL, cancellable, callback, user_data);
 }
 
+void
+gh_signer_nip55l_sign_with_context_async(GhNip55lSigner *signer, const gchar *event,
+    const GhSignerContext *context, GCancellable *cancel, GAsyncReadyCallback cb, gpointer data)
+{
+  g_return_if_fail(signer != NULL);
+  start_call(signer, OP_SIGN, event, NULL, context, cancel, cb, data);
+}
+void
+gh_signer_nip55l_nip44_encrypt_with_context_async(GhNip55lSigner *signer, const gchar *text,
+    const gchar *peer, const GhSignerContext *context, GCancellable *cancel,
+    GAsyncReadyCallback cb, gpointer data)
+{
+  g_return_if_fail(signer != NULL);
+  start_call(signer, OP_ENCRYPT, text, peer, context, cancel, cb, data);
+}
 gchar *
 gh_signer_nip55l_sign_finish(GAsyncResult *result, GError **error)
 {
@@ -472,7 +559,7 @@ gh_signer_nip55l_nip44_encrypt_async(GhNip55lSigner *signer, const gchar *plaint
                               GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(signer != NULL);
-  start_call(signer, OP_ENCRYPT, plaintext, peer_pubkey_hex, cancellable, callback, user_data);
+  start_call(signer, OP_ENCRYPT, plaintext, peer_pubkey_hex, NULL, cancellable, callback, user_data);
 }
 
 void
@@ -481,7 +568,7 @@ gh_signer_nip55l_nip44_decrypt_async(GhNip55lSigner *signer, const gchar *cipher
                               GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(signer != NULL);
-  start_call(signer, OP_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback, user_data);
+  start_call(signer, OP_DECRYPT, ciphertext, peer_pubkey_hex, NULL, cancellable, callback, user_data);
 }
 
 void
@@ -490,7 +577,7 @@ gh_signer_nip55l_nip04_decrypt_async(GhNip55lSigner *signer, const gchar *cipher
                               GAsyncReadyCallback callback, gpointer user_data)
 {
   g_return_if_fail(signer != NULL);
-  start_call(signer, OP_NIP04_DECRYPT, ciphertext, peer_pubkey_hex, cancellable, callback,
+  start_call(signer, OP_NIP04_DECRYPT, ciphertext, peer_pubkey_hex, NULL, cancellable, callback,
              user_data);
 }
 

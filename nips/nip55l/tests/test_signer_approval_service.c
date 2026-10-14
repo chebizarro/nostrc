@@ -120,6 +120,55 @@ static void test_canonical_event_and_scope(void) {
   signer_gate_cancel(ha); signer_gate_cancel(hb); signer_gate_cancel(hc);
   g_assert_cmpuint(w.completed, ==, 2); reply_clear(&a); reply_clear(&b); reply_clear(&other); stop(s, &w);
 }
+static void test_flow_invalidation(void) {
+  /* Exercise the service boundaries with unused consent, not old requests that
+   * pause/cancel already removed. Durable errors must not resurrect authority. */
+  for (guint mode = 0; mode < 4; mode++) {
+    Watch w = {0}; SignerApprovalService *s = start(&w);
+    SignerPermissions *p = signer_approval_service_permissions(s);
+    const gchar *principal = "exe:/test/client", *identity = "disposable-flow-identity";
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
+        "lifecycle", 3, 0, "first", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+    g_assert_true(signer_permissions_consent_room(p, principal, identity, 0, "lifecycle", 3, TRUE, TRUE, 600, NULL));
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
+        "lifecycle", 3, 0, "used", FALSE, NULL), ==, SIGNER_PERMISSION_ALLOW);
+    g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "gnostr", "signer-permissions-v2.ini", NULL);
+    g_autofree gchar *original = NULL;
+    g_assert_true(g_file_get_contents(path, &original, NULL, NULL));
+    guint64 revision = signer_permissions_revision(p);
+    gboolean removed = FALSE;
+    if (mode == 0) {
+      guint64 generation = signer_approval_service_generation(s);
+      signer_approval_service_set_paused(s, TRUE);
+      signer_approval_service_set_paused(s, FALSE);
+      g_assert_cmpuint(signer_approval_service_generation(s), ==, generation + 1);
+    } else if (mode == 1) {
+      signer_approval_service_cancel_principal(s, principal); /* RevokeClient's first, infallible step */
+    } else if (mode == 2) {
+      g_assert_true(g_file_set_contents(path, "[permissions]\nversion=999\n", -1, NULL));
+      g_assert_false(signer_approval_service_revoke_grant(s, NULL, principal, identity, &removed));
+      g_assert_true(removed);
+      g_assert_true(g_file_set_contents(path, original, -1, NULL));
+    } else {
+      struct rlimit old, limited;
+      g_assert_cmpint(getrlimit(RLIMIT_FSIZE, &old), ==, 0); limited = old; limited.rlim_cur = 1;
+      void (*handler)(int) = signal(SIGXFSZ, SIG_IGN);
+      g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &limited), ==, 0);
+      gboolean ok = signer_approval_service_revoke_grant(s, NULL, principal, identity, &removed);
+      g_assert_cmpint(setrlimit(RLIMIT_FSIZE, &old), ==, 0); signal(SIGXFSZ, handler);
+      g_assert_false(ok); g_assert_true(removed);
+      g_autofree gchar *after = NULL; g_assert_true(g_file_get_contents(path, &after, NULL, NULL));
+      g_assert_cmpstr(original, ==, after); /* persistent encryption survives failed write, flow does not */
+    }
+    g_assert_false(signer_permissions_revision_is_current(p, revision));
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
+        "lifecycle", 3, 0, "fresh", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+    g_assert_cmpint(signer_permissions_evaluate_flow(p, principal, identity, 0, "event", NOSTR_KIND_SEAL,
+        "lifecycle", 3, 0, "used", FALSE, NULL), ==, SIGNER_PERMISSION_ASK);
+    g_assert_false(signer_permissions_consent_room(p, principal, identity, 0, "lifecycle", 3, FALSE, TRUE, 600, NULL));
+    stop(s, &w);
+  }
+}
 static void test_pause_generation_and_no_identity(void) {
   Watch w = {0}; SignerApprovalService *s = start(&w);
   g_autoptr(SignerCaller) who = signer_caller_for_nip46(PEER);
@@ -706,6 +755,7 @@ int main(int argc, char **argv) {
   g_test_add_func("/approval/deny-queued-execution", test_deny_queued_execution);
   g_test_add_func("/approval/two-queued-remembers", test_two_queued_remembers);
   g_test_add_func("/approval/revoke-queued-scope", test_revoke_queued_scope);
+  g_test_add_func("/approval/flow-invalidation", test_flow_invalidation);
   g_test_add_func("/approval/unrelated-revision-auto-work", test_unrelated_revision_rechecks_auto_work);
   g_test_add_func("/approval/tier-lowered-queued-revision", test_tier_lowered_queued_revision);
   g_test_add_func("/approval/expiry-queued-revision", test_expiry_queued_revision);

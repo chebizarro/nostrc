@@ -56,6 +56,14 @@ template $GnostrApprovalDialog: Adw.Dialog {
           }
         }
         Label label_scope { wrap: true; wrap-mode: word_char; xalign: 0; styles ["dim-label"] }
+        Box flow_box {
+          visible: false;
+          orientation: vertical;
+          spacing: 8;
+          Label label_flow { wrap: true; xalign: 0; }
+          CheckButton chk_flow_encrypt { label: _("Allow NIP-44 encryption for this client and identity for 10 minutes"); }
+          CheckButton chk_flow_seals { label: _("Allow encrypted-message seals within this flow's limit (up to 10 minutes)"); }
+        }
         CheckButton chk_remember { label: _("Remember this decision for this scope"); }
         DropDown ttl_dropdown { sensitive: false; }
         Box {

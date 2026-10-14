@@ -78,7 +78,9 @@ struct _Request {
  gint refs;
  SignerApprovalService *service;
  gchar *id, *join_key, *a, *b, *selector, *npub, *claimed;
- gchar *reason, *purpose, *flow_id, *preview, *error_code;
+  gchar *reason, *purpose, *flow_id, *preview, *error_code;
+  guint flow_size;
+  gint64 received_at;
  void (*management_testing)(gpointer); gpointer management_data;
  gchar **pairing_relays;
  SignerCaller *who;
@@ -334,6 +336,10 @@ static GVariant *snapshot(Request *r) {
   PUT("claimed_app_id", r->claimed); PUT("identity", r->npub); PUT("preview", r->preview);
   PUT("transport", transport_name(r->transport)); PUT("reason", r->reason);
   PUT("reason_source", r->op != SIGNER_GATE_SELF_TEST && r->reason && *r->reason ? "caller" : "signer");
+  PUT("purpose", r->purpose);
+  g_variant_builder_add(&b, "{sv}", "flow_size", g_variant_new_uint32(r->flow_size));
+  g_variant_builder_add(&b, "{sv}", "flow_seals_required", g_variant_new_boolean(
+      signer_permissions_kind_requires_confirmation(r->service->permissions, NOSTR_KIND_SEAL)));
   PUT("flow_id", r->flow_id); PUT("state", state_name(r->state)); PUT("error_code", r->error_code);
 #undef PUT
   g_variant_builder_add(&b, "{sv}", "attested", g_variant_new_boolean(r->who->attested));
@@ -783,9 +789,10 @@ static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
 static SignerPermissionResult request_policy(Request *r) {
   if (r->op == SIGNER_GATE_SELF_TEST) return SIGNER_PERMISSION_ASK;
-  SignerPermissionResult policy = signer_permissions_evaluate(r->service->permissions, r->who->principal,
-      r->npub, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
-      grants_lookup_default(op_info[r->op].kind, r->who), NULL);
+  SignerPermissionResult policy = signer_permissions_evaluate_flow(r->service->permissions, r->who->principal,
+      r->npub, r->transport, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
+      r->flow_id, !g_strcmp0(r->purpose, "nip17-room-send") ? r->flow_size : 0,
+      r->received_at, r->id, grants_lookup_default(op_info[r->op].kind, r->who), NULL);
   /* Reconnecting an explicitly paired client is not new pairing consent.
    * Explicit deny / persistence errors still win; no signing scope is granted. */
   if (policy == SIGNER_PERMISSION_ASK && r->op == SIGNER_GATE_CONNECT && r->existing_pairing)
@@ -873,7 +880,7 @@ static void resolved(Request *r) {
   g_hash_table_iter_init(&it, s->requests);
   while (g_hash_table_iter_next(&it, NULL, &value)) {
     Request *join = value;
-    if (join == r || !join->announced || join->state != SIGNER_REQUEST_PENDING ||
+    if (r->flow_size || join->flow_size || join == r || !join->announced || join->state != SIGNER_REQUEST_PENDING ||
         g_strcmp0(join->join_key, r->join_key)) continue;
     if (join->calls->len >= PENDING_CALLS_MAX) {
       finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_RATELIMIT, "too many calls awaiting approval"); return;
@@ -1045,7 +1052,9 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   else if (op < 0 || op >= OP_COUNT || !bounded_text(a, ARG_MAX_BYTES, -1) ||
       !bounded_text(b, 128, -1) || !bounded_text(selector, 4096, -1) ||
       (context && (!bounded_text(context->reason, 512, 160) || !bounded_text(context->purpose, 64, -1) ||
-                   !bounded_text(context->flow_id, 64, -1) || !bounded_text(context->claimed_name, 4096, -1) ||
+                   !bounded_text(context->flow_id, 64, -1) || context->flow_size > 1024 ||
+                   (context->flow_size && (!context->flow_id || !*context->flow_id)) ||
+                   !bounded_text(context->claimed_name, 4096, -1) ||
                    context->transport < SIGNER_TRANSPORT_DBUS || context->transport > SIGNER_TRANSPORT_MANAGEMENT))) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
   else if ((op_info[op].peer_arg && !is_hex64(b)) || (op == OP_CONVKEY && !is_hex64(a)) ||
       (context && context->existing_pairing && (op != SIGNER_GATE_CONNECT || context->transport != SIGNER_TRANSPORT_NIP46 || who->kind != SIGNER_CALLER_NIP46)) ||
@@ -1075,6 +1084,8 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   if (context && context->pairing_relays && op == SIGNER_GATE_CONNECT && context->transport == SIGNER_TRANSPORT_NIP46)
     r->pairing_relays = g_strdupv((gchar **)context->pairing_relays);
   r->reason = g_strdup(context ? context->reason : ""); r->purpose = g_strdup(context ? context->purpose : "");
+  r->received_at = g_get_monotonic_time();
+  r->flow_size = context ? context->flow_size : 0;
   r->flow_id = g_strdup(context ? context->flow_id : ""); r->generation = s->generation;
   r->calls = g_ptr_array_new(); r->state = SIGNER_REQUEST_PENDING;
   Continuation *c = g_new0(Continuation, 1);
@@ -1166,6 +1177,26 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
   }
   request_unref(r);
 }
+void signer_approval_service_decide_flow(SignerApprovalService *s, const gchar *id,
+    gboolean encrypt, gboolean seals, guint64 ttl, SignerApprovalDecisionFn fn, gpointer data) {
+  g_return_if_fail(owner_ok(s) && fn);
+  Request *r = g_hash_table_lookup(s->requests, id);
+  if (!r || !r->announced || r->state != SIGNER_REQUEST_PENDING ||
+      !r->who->principal || !r->flow_id || !*r->flow_id || !r->flow_size ||
+      g_strcmp0(r->purpose, "nip17-room-send") ||
+      (r->op != OP_NIP44_ENCRYPT && !(r->op == OP_SIGN_EVENT && r->event_kind == NOSTR_KIND_SEAL)) ||
+      !ttl || ttl > 600 || r->deadline <= g_get_monotonic_time() || s->paused) {
+    fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INVALID_INPUT, "request cannot create room-send flow consent"); return;
+  }
+  request_ref(r);
+  g_autoptr(GError) error = NULL;
+  gboolean ok = signer_permissions_consent_room(s->permissions, r->who->principal,
+      r->npub, r->transport, r->flow_id, r->flow_size, encrypt, seals, ttl, &error);
+  if (!ok || r->finished) {
+    fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot create selected flow permissions");
+  } else signer_approval_service_decide(s, id, TRUE, FALSE, 0, fn, data);
+  request_unref(r);
+}
 GVariant *signer_approval_service_info(SignerApprovalService *s, const gchar *id) {
   g_return_val_if_fail(owner_ok(s), NULL);
   Request *r = g_hash_table_lookup(s->requests, id);
@@ -1191,7 +1222,7 @@ gboolean signer_approval_service_revoke_grant(SignerApprovalService *s,
     const gchar *kind, const gchar *principal, const gchar *identity, gboolean *removed) {
   g_return_val_if_fail(owner_ok(s), FALSE);
   gboolean ok = signer_permissions_clear(s->permissions, principal, identity, kind, removed, NULL);
-  if (ok && *removed) {
+  if (*removed) {
     g_autoptr(GPtrArray) affected = requests_copy(s);
     for (guint i = affected->len; i > 0; i--) {
       Request *r = affected->pdata[i - 1];
@@ -1264,6 +1295,7 @@ void signer_approval_service_connection_closed(SignerApprovalService *s, const g
 }
 void signer_approval_service_cancel_principal(SignerApprovalService *s, const gchar *principal) {
   g_return_if_fail(owner_ok(s));
+  signer_permissions_invalidate_flows(s->permissions, principal, NULL, NULL);
   g_autoptr(GPtrArray) requests = requests_copy(s);
   for (guint i = 0; i < requests->len; i++) {
     Request *r = requests->pdata[i];
@@ -1284,6 +1316,7 @@ void signer_approval_service_set_paused(SignerApprovalService *s, gboolean pause
   table_changed(s);
   if (!paused) return;
   s->generation++;
+  signer_permissions_invalidate_flows(s->permissions, NULL, NULL, NULL);
   g_autoptr(GPtrArray) requests = requests_copy(s);
   for (guint i = 0; i < requests->len; i++)
     finish(requests->pdata[i], SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_PAUSED, "signing is paused");

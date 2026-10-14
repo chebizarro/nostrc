@@ -164,6 +164,29 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                   </object>
                 </child>
                 <child>
+                  <object class="GtkBox" id="flow_box">
+                    <property name="visible">false</property>
+                    <property name="orientation">1</property>
+                    <property name="spacing">8</property>
+                    <child>
+                      <object class="GtkLabel" id="label_flow">
+                        <property name="wrap">true</property>
+                        <property name="xalign">0</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkCheckButton" id="chk_flow_encrypt">
+                        <property name="label" translatable="yes">Allow NIP-44 encryption for this client and identity for 10 minutes</property>
+                      </object>
+                    </child>
+                    <child>
+                      <object class="GtkCheckButton" id="chk_flow_seals">
+                        <property name="label" translatable="yes">Allow encrypted-message seals within this flow's limit (up to 10 minutes)</property>
+                      </object>
+                    </child>
+                  </object>
+                </child>
+                <child>
                   <object class="GtkCheckButton" id="chk_remember">
                     <property name="label" translatable="yes">Remember this decision for this scope</property>
                   </object>

@@ -3,6 +3,7 @@
 
 #include <gio/gio.h>
 #include "gh-identity.h"
+#include "gh-signer.h"
 #include "gh-nip46-credentials.h"
 
 G_BEGIN_DECLS
@@ -159,6 +160,12 @@ void gh_account_controller_sign_with_cancellable_async(GhAccountController *self
                                       const gchar *unsigned_event,
                                       GCancellable *cancellable,
                                       GAsyncReadyCallback callback, gpointer user_data);
+void gh_account_controller_sign_with_context_async(GhAccountController *self,
+    const gchar *unsigned_event, const GhSignerContext *context,
+    GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
+void gh_account_controller_nip44_encrypt_with_context_async(GhAccountController *self,
+    const gchar *plaintext, const gchar *peer_pubkey_hex, const GhSignerContext *context,
+    GCancellable *cancellable, GAsyncReadyCallback callback, gpointer user_data);
 gchar *gh_account_controller_sign_finish(GAsyncResult *result, GError **error);
 void gh_account_controller_nip44_encrypt_async(GhAccountController *self,
                                                 const gchar *plaintext,

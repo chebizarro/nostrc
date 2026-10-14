@@ -1,7 +1,7 @@
 <node>
   <interface name="org.nostr.Signer">
     <!-- Access control (nip55l 0.4.0). Every method below except StoreKey,
-         ClearKey, ApproveRequest and GetApprovalInfo is approval-gated:
+         ClearKey, ApproveRequest, ApproveFlowRequest and GetApprovalInfo is approval-gated:
          GetPublicKey, GetRelays, SignEvent, NIP04*, NIP44* (incl. B64),
          NIP44DeriveConversationKey and DecryptZapEvent, plus their *ForApp
          variants. The caller is identified from its bus connection
@@ -57,7 +57,9 @@
          their empty input tuple inside v. ForApp, B64, DecryptZapEvent, EnableTypedApprovalErrors,
          management, recursion and unknown names are not supported here.
          Context: reason:s (160 characters AND 512 UTF-8 bytes), purpose:s
-         and flow_id:s (64 bytes each). Unknown/duplicate keys, wrong types,
+         and flow_id:s (64 bytes each), optional flow_size:u (1..1024, requires
+         a nonempty flow_id; total destination envelopes including self-copy).
+         Unknown/duplicate keys, wrong types,
          wrong tuples and oversized values return Error.InvalidInput.
          Context is untrusted display/grouping data, never authority.
          Per-connection typed-error opt-in applies to wrapped calls too. -->
@@ -243,6 +245,16 @@
          ttl_seconds or forever (0); it is ignored for an unidentified
          caller. A decision covers every queued call that joined the
          request. Unanswered requests expire after 300 s. -->
+    <!-- Approver-only explicit room-send choices, pinned to the pending request.
+         Encryption creates an expiring scoped permission; required seal signing
+         creates bounded in-memory flow consent. ttl_seconds is 1..600. -->
+    <method name="ApproveFlowRequest">
+      <arg type="s" direction="in" name="request_id" />
+      <arg type="b" direction="in" name="encrypt" />
+      <arg type="b" direction="in" name="seals" />
+      <arg type="t" direction="in" name="ttl_seconds" />
+      <arg type="b" direction="out" name="ok" />
+    </method>
     <method name="ApproveRequest">
       <arg type="s" direction="in" name="request_id" />
       <arg type="b" direction="in" name="decision" />
