@@ -328,6 +328,9 @@
          No approval gating. Error.Internal (0.7.0) when the key store cannot
          be read, or when there is no key store and no environment key; an
          empty array means the signer holds no identity. -->
+    <!-- Coarse inventory invalidation, monotonic within a daemon owner lifetime.
+         Contains no identity, label or secret. Subscribe before ListIdentities. -->
+    <signal name="IdentitiesChanged"><arg type="t" name="revision" /></signal>
     <method name="ListIdentities">
       <arg type="as" direction="out" name="npubs" />
     </method>

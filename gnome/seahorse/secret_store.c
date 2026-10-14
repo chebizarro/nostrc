@@ -248,9 +248,12 @@ gboolean gnostr_secret_store_save(const GnostrSecretIdentity *id,
     return FALSE;
   }
   gchar *label = gnostr_secret_store_build_label(id->label, id->npub);
-  gboolean ok = secret_password_storev_sync(&gnostr_secret_schema, attrs,
-                                            SECRET_COLLECTION_DEFAULT, label,
-                                            secret, NULL, error);
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, error);
+  SecretValue *value = service ? secret_value_new(secret, -1, "text/plain") : NULL;
+  gboolean ok = service && secret_service_store_sync(service, &gnostr_secret_schema, attrs,
+                                            SECRET_COLLECTION_DEFAULT, label, value, NULL, error);
+  if (value) secret_value_unref(value);
+  if (service) g_object_unref(service);
   if (ok) prune_stale_duplicates(attrs);
   g_free(label);
   g_hash_table_unref(attrs);

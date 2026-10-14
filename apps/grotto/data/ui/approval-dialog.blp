@@ -72,7 +72,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
             spacing: 8;
             Label label_details { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; }
             Label label_timestamp { wrap: true; xalign: 0; }
-            Label { label: _("Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions."); wrap: true; xalign: 0; }
+            Label label_trust_explanation { label: _("Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions."); wrap: true; xalign: 0; }
             DropDown trust_dropdown { }
             Button btn_change_trust { label: _("Change trust level"); sensitive: false; }
           }

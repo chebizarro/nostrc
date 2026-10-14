@@ -163,14 +163,25 @@ typedef struct {
 } nostr_nip55l_keyring_migration;
 int nostr_nip55l_migrate_legacy_keys(nostr_nip55l_keyring_migration *out);
 
-/* Explicit custody export for a management UI, never a gated client operation.
- * The daemon MUST authenticate the approver and require a separately deliberate
- * raw-key action. identity must be nonempty and name a stored identity (never
- * secret material). format is ncryptsec (NIP-49, log_n=16, nonempty UTF-8
- * passphrase <=1024 bytes), or nsec (passphrase ignored). ncryptsec requires
- * the NIP-49 GLib adapter at build time; otherwise NOT_SUPPORTED. No mnemonic
- * or rotation is synthesized. Output uses malloc; caller wipes then free().
- * This call may block on keyring unlock/KDF: never run on the daemon main loop. */
+/* Build capability, not keyring availability or an identity inventory. */
+int nostr_nip55l_mnemonic_custody_supported(void);
+/* Explicit management only: preserve a validated, empty-passphrase NIP-06
+ * mnemonic in a separate custody role, never in ListIdentities. */
+int nostr_nip55l_store_key_with_mnemonic(const char *key, const char *label,
+                                       const char *mnemonic, char **out_npub);
+/* Explicit management import. Formats: key (nsec/hex), ncryptsec, mnemonic.
+ * Encryption and mnemonic passphrases have different derivation semantics. */
+int nostr_nip55l_import_identity(const char *format, const char *input,
+                                const char *passphrase, const char *label, char **out_npub);
+/* Unpublished signature + independent-peer NIP-44 round-trip; no relay I/O. */
+int nostr_nip55l_identity_self_test(const char *identity);
+/* Explicit custody export for an authenticated management UI, never a client
+ * permission. Formats: ncryptsec (NIP-49, log_n=16, nonempty UTF-8 passphrase
+ * <=1024 bytes), nsec (separate deliberate raw-key action), or mnemonic (only
+ * a stored phrase whose empty-passphrase NIP-06 derivation matches this npub).
+ * No mnemonic is invented from a key. Missing phrase returns NOT_FOUND.
+ * ncryptsec needs the NIP-49 GLib adapter; otherwise NOT_SUPPORTED.
+ * Caller wipes/frees the malloc output. Run off the daemon main loop. */
 int nostr_nip55l_export_identity(const char *identity, const char *format,
                                 const char *passphrase, char **out_backup);
 

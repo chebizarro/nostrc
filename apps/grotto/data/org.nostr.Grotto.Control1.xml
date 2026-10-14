@@ -27,6 +27,11 @@
       <arg name="passphrase" type="s" direction="in"/><arg name="backup" type="s" direction="out"/>
     </method>
     <method name="ExportRawIdentity"><arg name="identity" type="s" direction="in"/><arg name="nsec" type="s" direction="out"/></method>
+    <method name="StoreKeyWithMnemonic"><arg name="key" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="mnemonic" type="s" direction="in"/><arg name="identity" type="s" direction="out"/></method>
+    <method name="ImportIdentity"><arg name="format" type="s" direction="in"/><arg name="input" type="s" direction="in"/><arg name="passphrase" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="identity" type="s" direction="out"/></method>
+    <method name="SelfTestIdentity"><arg name="identity" type="s" direction="in"/><arg name="result" type="s" direction="out"/></method>
+    <method name="CancelIdentitySelfTest"><arg name="identity" type="s" direction="in"/></method>
+    <method name="GetIdentityMigration"><arg name="identity" type="s" direction="in"/><arg name="event" type="s" direction="out"/></method>
     <method name="RotateIdentity"><arg name="identity" type="s" direction="in"/><arg name="new_identity" type="s" direction="out"/></method>
     <method name="ConfigureBunker"><arg name="config" type="a{sv}" direction="in"/><arg name="state" type="a{sv}" direction="out"/></method>
     <method name="CreatePairing"><arg name="identity" type="s" direction="in"/><arg name="label" type="s" direction="in"/><arg name="pairing" type="a{sv}" direction="out"/></method>
@@ -35,6 +40,8 @@
     <method name="ResetBunkerEndpoint"/>
     <method name="ListActivity"><arg name="before_sequence" type="t" direction="in"/><arg name="limit" type="u" direction="in"/><arg name="records" type="aa{sv}" direction="out"/></method>
     <method name="ClearActivity"/>
+    <!-- Unicast to the invoking approver; no key material. -->
+    <signal name="IdentitySelfTestTesting"><arg name="identity" type="s"/></signal>
     <signal name="RequestsChanged"><arg name="revision" type="t"/></signal>
     <signal name="ClientsChanged"><arg name="revision" type="t"/></signal>
     <signal name="StatusChanged"><arg name="revision" type="t"/></signal>

@@ -154,6 +154,10 @@ static void gated_call(NostrSigner *o, GDBusMethodInvocation *inv, SignerOp op,
   gated_call_full(o, inv, op, a, b, selector, claimed, NULL, FALSE);
 }
 SignerApprovalService *signer_get_approval_service(void) { return approval_service; }
+void signer_notify_identities_changed(void) {
+  static guint64 revision = 0;
+  if (signer_skel) nostr_signer_emit_identities_changed(signer_skel, ++revision);
+}
 SignerGateHandle *signer_gate_submit_full(const SignerCaller *who, const gchar *key, SignerGateOp op,
     const gchar *a, const gchar *b, const gchar *selector, const SignerGateContext *context,
     SignerGateReplyFn reply, gpointer data) {
@@ -456,6 +460,7 @@ static gboolean handle_store_key(NostrSigner *object, GDBusMethodInvocation *inv
       char *npub = NULL; int grc = nostr_nip55l_get_public_key(&npub);
       if (grc==0 && npub) { out_npub_c = to_free = npub; }
     }
+    signer_notify_identities_changed();
     g_message("StoreKey ok=true; returning npub='%s' (empty means unavailable)", out_npub_c);
     g_dbus_method_invocation_return_value(invocation, g_variant_new("(bs)", TRUE, out_npub_c));
     if (to_free) free(to_free);
@@ -487,7 +492,25 @@ static gboolean handle_clear_key(NostrSigner *object, GDBusMethodInvocation *inv
   const gchar *sender = g_dbus_method_invocation_get_sender(invocation);
   if (!signer_mutations_allowed(invocation)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED, "key mutations are for the signer's own UI (or NOSTR_SIGNER_ALLOW_KEY_MUTATIONS=1)"); return TRUE; }
   if (!rate_limit_ok(sender)) { g_dbus_method_invocation_return_error_literal(invocation, G_IO_ERROR, G_IO_ERROR_BUSY, "rate limited"); return TRUE; }
+  char *removed_npub = NULL;
+  (void)nostr_nip55l_resolve_npub(identity, &removed_npub);
   int rc = nostr_nip55l_clear_key(identity);
+  if (rc == 0) {
+    GSettingsSchemaSource *source = g_settings_schema_source_get_default();
+    GSettingsSchema *schema = source ? g_settings_schema_source_lookup(source, "org.nostr.Grotto", TRUE) : NULL;
+    if (schema) {
+      if (g_settings_schema_has_key(schema, "default-identity")) {
+        GSettings *settings = g_settings_new("org.nostr.Grotto");
+        gchar *default_id = g_settings_get_string(settings, "default-identity");
+        if (!g_strcmp0(default_id, identity) || (removed_npub && !g_strcmp0(default_id, removed_npub)))
+          g_settings_set_string(settings, "default-identity", "");
+        g_free(default_id); g_object_unref(settings);
+      }
+      g_settings_schema_unref(schema);
+    }
+  }
+  free(removed_npub);
+  if (rc == 0) signer_notify_identities_changed();
   nostr_signer_complete_clear_key(object, invocation, rc==0);
   return TRUE;
 }
@@ -598,6 +621,7 @@ static gboolean handle_create_profile(NostrSigner *object, GDBusMethodInvocation
     return TRUE;
   }
 
+  signer_notify_identities_changed();
   g_message("CreateProfile: ok=true npub=%s", npub);
   nostr_signer_complete_create_profile(object, invocation, TRUE, npub);
   free(npub);

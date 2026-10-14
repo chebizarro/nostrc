@@ -146,7 +146,7 @@ static void on_radio_toggled(GtkToggleButton *btn, gpointer user_data) {
   SettingsUI *ui = user_data;
   const gchar *id = g_object_get_data(G_OBJECT(btn), "id");
   if (!ui || !ui->as || !id) return;
-  accounts_store_set_active(ui->as, id, NULL);
+  accounts_store_set_selected(ui->as, id);
   accounts_store_save(ui->as, NULL);
   /* Update linked user section when active identity changes */
   extern void update_linked_user_ui(SettingsUI*);
@@ -159,7 +159,7 @@ void gnostr_settings_page_refresh(GtkWidget *page, AccountsStore *as) {
   ui->as = as;
   clear_list(ui->list);
   gchar *active = NULL;
-  accounts_store_get_active(as, &active, NULL);
+  active = g_strdup(accounts_store_get_selected(as));
   GPtrArray *items = accounts_store_list(as);
   ui->group_head = NULL;
   if (items) {
@@ -330,14 +330,12 @@ void gnostr_settings_apply_import_success(const char *npub, const char *label){
   if (!npub || !*npub) return;
   if (!g_settings_page_global) {
     /* No live Settings page; still persist to accounts.ini */
-    AccountsStore *as = accounts_store_new();
-    accounts_store_load(as, NULL);
+    AccountsStore *as = accounts_store_get_default();
     if (!accounts_store_add(as, npub, label, NULL)) {
       if (label && *label) { accounts_store_set_label(as, npub, label, NULL); }
     }
-    accounts_store_set_active(as, npub, NULL);
+    accounts_store_set_selected(as, npub);
     accounts_store_save(as, NULL);
-    accounts_store_free(as);
     return;
   }
   SettingsUI *ui = g_object_get_data(G_OBJECT(g_settings_page_global), "settings_ui");
@@ -346,7 +344,7 @@ void gnostr_settings_apply_import_success(const char *npub, const char *label){
     /* If already exists, update label when provided */
     if (label && *label) { accounts_store_set_label(ui->as, npub, label, NULL); }
   }
-  accounts_store_set_active(ui->as, npub, NULL);
+  accounts_store_set_selected(ui->as, npub);
   accounts_store_save(ui->as, NULL);
   gnostr_settings_page_refresh(g_settings_page_global, ui->as);
 }
@@ -354,7 +352,7 @@ void gnostr_settings_apply_import_success(const char *npub, const char *label){
 /* ---- Linked user helpers ---- */
 static gchar *get_active_identity(SettingsUI *ui){
   if (!ui || !ui->as) return NULL;
-  gchar *active=NULL; accounts_store_get_active(ui->as, &active, NULL); return active;
+  gchar *active=NULL; active = g_strdup(accounts_store_get_selected(ui->as)); return active;
 }
 
 void update_linked_user_ui(SettingsUI *ui){
@@ -446,11 +444,11 @@ static void import_call_done(GObject *src, GAsyncResult *res, gpointer user_data
       if (id && *id) {
         AccountsStore *as = ctx->ui->as;
         if (accounts_store_add(as, id, NULL, NULL)) {
-          accounts_store_set_active(as, id, NULL);
+          accounts_store_set_selected(as, id);
           accounts_store_save(as, NULL);
         }
         /* Even if it already existed, ensure active and refresh */
-        accounts_store_set_active(as, id, NULL);
+        accounts_store_set_selected(as, id);
         accounts_store_save(as, NULL);
         extern void gnostr_settings_page_refresh(GtkWidget*, AccountsStore*);
         if (ctx->ui->page) gnostr_settings_page_refresh(ctx->ui->page, as);
@@ -518,7 +516,7 @@ void on_import_clicked(GtkButton *btn, gpointer user_data){
   GtkWidget *acct_lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
-  gchar *active = NULL; accounts_store_get_active(ui->as, &active, NULL);
+  gchar *active = NULL; active = g_strdup(accounts_store_get_selected(ui->as));
   GPtrArray *items = accounts_store_list(ui->as);
   if (items){
     for (guint i=0;i<items->len;i++){
@@ -574,7 +572,7 @@ void gnostr_settings_open_import_dialog_with_callback(GtkWindow *parent, Account
   GtkWidget *acct_lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
-  gchar *active = NULL; accounts_store_get_active(as, &active, NULL);
+  gchar *active = NULL; active = g_strdup(accounts_store_get_selected(as));
   GPtrArray *items = accounts_store_list(as);
   if (items){
     for (guint i=0;i<items->len;i++){
@@ -677,7 +675,7 @@ void on_clear_clicked(GtkButton *btn, gpointer user_data){
   GtkWidget *lbl = gtk_label_new("Identity:");
   GtkStringList *sl = gtk_string_list_new(NULL);
   guint to_sel = GTK_INVALID_LIST_POSITION;
-  gchar *active = NULL; accounts_store_get_active(ui->as, &active, NULL);
+  gchar *active = NULL; active = g_strdup(accounts_store_get_selected(ui->as));
   GPtrArray *items = accounts_store_list(ui->as);
   if (items){
     for (guint i=0;i<items->len;i++){

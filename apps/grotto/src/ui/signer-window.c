@@ -1,4 +1,6 @@
 #include "signer-window.h"
+#include "page-identity-detail.h"
+#include "onboarding-assistant.h"
 #include "app-resources.h"
 #include "page-permissions.h"
 #include "page-applications.h"
@@ -615,8 +617,7 @@ GSettings *signer_get_app_settings(void) {
  */
 void signer_window_show_new_profile(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  SheetCreateProfile *dialog = sheet_create_profile_new();
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+  onboarding_assistant_present(GTK_WINDOW(self));
 }
 
 /**
@@ -627,8 +628,7 @@ void signer_window_show_new_profile(SignerWindow *self) {
  */
 void signer_window_show_import_profile(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  SheetImportProfile *dialog = sheet_import_profile_new();
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+  onboarding_assistant_present(GTK_WINDOW(self));
 }
 
 /**
@@ -639,8 +639,7 @@ void signer_window_show_import_profile(SignerWindow *self) {
  */
 void signer_window_show_create_account(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
-  SheetCreateAccount *dialog = sheet_create_account_new();
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+  onboarding_assistant_present(GTK_WINDOW(self));
 }
 
 /**
@@ -652,18 +651,7 @@ void signer_window_show_create_account(SignerWindow *self) {
 void signer_window_show_backup(SignerWindow *self) {
   g_return_if_fail(SIGNER_IS_WINDOW(self));
 
-  /* Get the currently active npub if available */
-  gchar *npub = NULL;
-  secret_store_get_public_key(NULL, &npub);
-
-  /* Create the comprehensive backup/recovery dialog */
-  SheetBackup *dialog = sheet_backup_new();
-  if (npub && *npub) {
-    sheet_backup_set_account(dialog, npub);
-    g_free(npub);
-  }
-
-  adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(self));
+  page_identity_detail_present(GTK_WIDGET(self));
 }
 
 /**

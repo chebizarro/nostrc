@@ -29,6 +29,7 @@ typedef struct {
   gboolean has_secret; /* whether secret key is available in secure storage */
   gboolean watch_only; /* TRUE if this is a watch-only account (public key only) */
   GnKeyType key_type;  /* cryptographic key type (nostrc-bq0) */
+  gchar *setup_state; /* verification-pending | backup-pending | ready; metadata only */
 } AccountEntry;
 
 /* Create a new accounts store */
@@ -93,6 +94,14 @@ void accounts_store_entry_free(AccountEntry *entry);
  */
 gboolean accounts_store_set_active(AccountsStore *as, const gchar *id,
                                    GError **error);
+
+gboolean accounts_store_set_setup_state(AccountsStore *as, const gchar *id,
+    const gchar *state, GError **error);
+
+/* GUI management selection only: never changes the daemon's legacy default
+ * or any consumer's identity. NULL clears the selection. */
+gboolean accounts_store_set_selected(AccountsStore *as, const gchar *id);
+const gchar *accounts_store_get_selected(AccountsStore *as);
 
 /* Get the active identity.
  * @as: The accounts store

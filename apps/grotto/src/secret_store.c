@@ -294,117 +294,22 @@ void secret_store_entry_free(SecretStoreEntry *entry) {
 }
 
 GPtrArray *secret_store_list(void) {
+  /* Public inventory only. The GUI never searches a keyring directly, and
+   * a backend failure is NULL, not an authoritative empty inventory. */
+  if (nostrc_profile_guard_refuses_session_keyring()) return NULL;
+  g_autoptr(GError) error = NULL;
+  g_autoptr(GDBusConnection) bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+  if (!bus) return NULL;
+  g_autoptr(GVariant) reply = g_dbus_connection_call_sync(bus, "org.nostr.Signer", "/org/nostr/signer",
+      "org.nostr.Signer", "ListIdentities", NULL, G_VARIANT_TYPE("(as)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, &error);
+  if (!reply) return NULL;
   GPtrArray *arr = g_ptr_array_new_with_free_func((GDestroyNotify)secret_store_entry_free);
-  if (store_refused("listing identities")) return arr;
-
-#ifdef GNOSTR_HAVE_LIBSECRET
-  GError *err = NULL;
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
-  if (err || !service) {
-    if (err) g_clear_error(&err);
-    return arr;
-  }
-
-  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
-  GList *items = secret_service_search_sync(service, &IDENTITY_SCHEMA, attrs,
-                                            SECRET_SEARCH_ALL | SECRET_SEARCH_UNLOCK,
-                                            NULL, &err);
-  g_hash_table_unref(attrs);
-
-  if (err) {
-    g_warning("secret_store_list: %s", err->message);
-    g_clear_error(&err);
-  }
-
-  for (GList *it = items; it; it = it->next) {
-    SecretItem *item = SECRET_ITEM(it->data);
-    GHashTable *item_attrs = secret_item_get_attributes(item);
-
+  gchar **npubs; g_variant_get(reply, "(^as)", &npubs);
+  for (guint i = 0; npubs[i]; i++) {
     SecretStoreEntry *entry = g_new0(SecretStoreEntry, 1);
-
-    const gchar *npub = g_hash_table_lookup(item_attrs, "npub");
-    const gchar *key_id = g_hash_table_lookup(item_attrs, "key_id");
-    const gchar *label = g_hash_table_lookup(item_attrs, "label");
-    const gchar *owner_uid = g_hash_table_lookup(item_attrs, "owner_uid");
-    const gchar *owner_username = g_hash_table_lookup(item_attrs, "owner_username");
-
-    entry->npub = npub ? g_strdup(npub) : NULL;
-    entry->key_id = key_id ? g_strdup(key_id) : NULL;
-    entry->label = label ? g_strdup(label) : NULL;
-
-    if (owner_uid && *owner_uid) {
-      entry->has_owner = TRUE;
-      entry->owner_uid = (uid_t)g_ascii_strtoull(owner_uid, NULL, 10);
-      entry->owner_username = owner_username ? g_strdup(owner_username) : NULL;
-    }
-
-    g_hash_table_unref(item_attrs);
-    g_ptr_array_add(arr, entry);
+    entry->npub = g_strdup(npubs[i]); entry->key_id = g_strdup(npubs[i]); g_ptr_array_add(arr, entry);
   }
-
-  g_list_free_full(items, g_object_unref);
-  g_object_unref(service);
-
-#elif defined(GNOSTR_HAVE_KEYCHAIN)
-  /* macOS: Query all items with our service name */
-  CFMutableDictionaryRef query = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-    &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-  CFStringRef service = CFStringCreateWithCString(NULL, GNOSTR_KC_SERVICE, kCFStringEncodingUTF8);
-
-  CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(query, kSecAttrSynchronizable, kCFBooleanFalse);
-  CFDictionarySetValue(query, kSecAttrService, service);
-  CFDictionarySetValue(query, kSecMatchLimit, kSecMatchLimitAll);
-  CFDictionarySetValue(query, kSecReturnAttributes, kCFBooleanTrue);
-
-  CFTypeRef result = NULL;
-  OSStatus st = SecItemCopyMatching(query, &result);
-
-  if (st == errSecSuccess && result) {
-    CFArrayRef items = (CFArrayRef)result;
-    CFIndex count = CFArrayGetCount(items);
-
-    for (CFIndex i = 0; i < count; i++) {
-      CFDictionaryRef item = CFArrayGetValueAtIndex(items, i);
-
-      SecretStoreEntry *entry = g_new0(SecretStoreEntry, 1);
-
-      CFStringRef account = CFDictionaryGetValue(item, kSecAttrAccount);
-      CFStringRef label = CFDictionaryGetValue(item, kSecAttrLabel);
-
-      if (account) {
-        CFIndex len = CFStringGetLength(account);
-        CFIndex maxSize = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
-        gchar *buf = g_malloc(maxSize);
-        if (CFStringGetCString(account, buf, maxSize, kCFStringEncodingUTF8)) {
-          entry->npub = buf;
-          entry->key_id = g_strdup(buf);
-        } else {
-          g_free(buf);
-        }
-      }
-
-      if (label) {
-        CFIndex len = CFStringGetLength(label);
-        CFIndex maxSize = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;
-        gchar *buf = g_malloc(maxSize);
-        if (CFStringGetCString(label, buf, maxSize, kCFStringEncodingUTF8)) {
-          entry->label = buf;
-        } else {
-          g_free(buf);
-        }
-      }
-
-      g_ptr_array_add(arr, entry);
-    }
-    CFRelease(result);
-  }
-
-  if (service) CFRelease(service);
-  CFRelease(query);
-#endif
-
-  return arr;
+  g_strfreev(npubs); return arr;
 }
 
 SecretStoreResult secret_store_get_public_key(const gchar *selector,

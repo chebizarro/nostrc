@@ -42,7 +42,8 @@ static const OpInfo op_info[OP_COUNT] = {
  [OP_NIP44_DECRYPT_B64] = {"nip44_decrypt", TRUE, TRUE},
  [OP_DECRYPT_ZAP] = {"zap_decrypt", TRUE, FALSE},
  [SIGNER_GATE_CONNECT] = {"connect", TRUE, FALSE},
- [SIGNER_GATE_PING] = {"ping", FALSE, FALSE}
+ [SIGNER_GATE_PING] = {"ping", FALSE, FALSE},
+ [SIGNER_GATE_SELF_TEST] = {"self_test", TRUE, FALSE}
 };
 
 typedef struct _Request Request;
@@ -78,6 +79,7 @@ struct _Request {
  SignerApprovalService *service;
  gchar *id, *join_key, *a, *b, *selector, *npub, *claimed;
  gchar *reason, *purpose, *flow_id, *preview, *error_code;
+ void (*management_testing)(gpointer); gpointer management_data;
  SignerCaller *who;
  SignerOp op;
  SignerTransport transport;
@@ -326,12 +328,12 @@ static GVariant *snapshot(Request *r) {
   PUT("app_id", r->who->app_id); PUT("exe", r->who->exe); PUT("via", r->who->via);
   PUT("claimed_app_id", r->claimed); PUT("identity", r->npub); PUT("preview", r->preview);
   PUT("transport", transport_name(r->transport)); PUT("reason", r->reason);
-  PUT("reason_source", r->reason && *r->reason ? "caller" : "signer");
+  PUT("reason_source", r->op != SIGNER_GATE_SELF_TEST && r->reason && *r->reason ? "caller" : "signer");
   PUT("flow_id", r->flow_id); PUT("state", state_name(r->state)); PUT("error_code", r->error_code);
 #undef PUT
   g_variant_builder_add(&b, "{sv}", "attested", g_variant_new_boolean(r->who->attested));
   g_variant_builder_add(&b, "{sv}", "verified", g_variant_new_boolean(!r->who->unattested && r->who->principal));
-  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(r->who->principal != NULL));
+  g_variant_builder_add(&b, "{sv}", "rememberable", g_variant_new_boolean(r->who->principal != NULL && r->op != SIGNER_GATE_SELF_TEST));
   g_variant_builder_add(&b, "{sv}", "calls", g_variant_new_uint32(r->calls->len));
   g_variant_builder_add(&b, "{sv}", "approval_requested", g_variant_new_boolean(r->announced));
   g_variant_builder_add(&b, "{sv}", "explicit_consent", g_variant_new_boolean(r->announced && r->decision));
@@ -549,6 +551,7 @@ static gchar *build_event_preview(const char *event_json){
 }
 
 static gchar *build_preview(SignerOp op, const char *a, const char *b){
+  if (op == SIGNER_GATE_SELF_TEST) return g_strdup("Identity self-test: sign an unpublished event and verify it; NIP-44 encrypt and decrypt a random challenge with an ephemeral peer. Nothing is published; no permissions are saved.");
   switch (op) {
     case OP_SIGN_EVENT:        return build_event_preview(a);
     case OP_CONVKEY:           return g_strdup_printf("derive NIP-44 conversation key with %s", a);
@@ -563,6 +566,7 @@ static gchar *build_preview(SignerOp op, const char *a, const char *b){
     case OP_DECRYPT_ZAP:       return g_strdup("decrypt a private zap");
     case SIGNER_GATE_CONNECT: return g_strdup("connect a remote client");
     case SIGNER_GATE_PING: return g_strdup("check signer availability");
+    case SIGNER_GATE_SELF_TEST: break; /* handled above */
     case OP_COUNT: break;
   }
   return g_strdup("");
@@ -659,6 +663,13 @@ static int perform(const Call *c, const char *claimed_app_id){
     case OP_NIP44_ENCRYPT_B64: rc = nostr_nip55l_nip44_encrypt_b64(c->a, c->b, c->selector, &out); emsg = "nip44 encrypt failed"; break;
     case OP_NIP44_DECRYPT_B64: rc = nostr_nip55l_nip44_decrypt_b64(c->a, c->b, c->selector, &out); emsg = "nip44 decrypt failed"; break;
     case OP_DECRYPT_ZAP:       rc = nostr_nip55l_decrypt_zap_event(c->a, c->selector, &out);       emsg = "zap decrypt failed"; break;
+    case SIGNER_GATE_SELF_TEST:
+      rc = nostr_nip55l_identity_self_test(c->selector);
+      if (rc) reply_error(inv, rc == NOSTR_SIGNER_ERROR_NOT_FOUND ? ORG_NOSTR_SIGNER_ERR_NO_KEY :
+          rc == NOSTR_SIGNER_ERROR_CRYPTO_FAILED ? "org.nostr.Signer.Error.VerificationFailed" : "org.nostr.Signer.Error.BackendUnavailable",
+          "Identity self-test failed (keyring unavailable or verification failed)");
+      else reply_value(inv, "passed");
+      return rc;
     case SIGNER_GATE_CONNECT: reply_value(inv, "ack"); return 0;
     case SIGNER_GATE_PING: reply_value(inv, "pong"); return 0;
     case OP_COUNT: rc = NOSTR_SIGNER_ERROR_INVALID_ARG; emsg = "unknown operation"; break;
@@ -765,6 +776,7 @@ static void job_free(gpointer data) {
 static void queue_job(Request *r, gboolean resolve);
 static GPtrArray *requests_copy(SignerApprovalService *s);
 static SignerPermissionResult request_policy(Request *r) {
+  if (r->op == SIGNER_GATE_SELF_TEST) return SIGNER_PERMISSION_ASK;
   SignerPermissionResult policy = signer_permissions_evaluate(r->service->permissions, r->who->principal,
       r->npub, op_info[r->op].kind, r->has_kind ? (gint)r->event_kind : -1,
       grants_lookup_default(op_info[r->op].kind, r->who), NULL);
@@ -825,6 +837,8 @@ static void execute(Request *r) {
     finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "permissions changed before execution"); return;
   }
   r->state = SIGNER_REQUEST_EXECUTING;
+  if (r->op == SIGNER_GATE_SELF_TEST && r->management_testing) r->management_testing(r->management_data);
+  if (r->finished) return;
   queue_job(r, FALSE);
   table_changed(r->service);
 }
@@ -1031,6 +1045,10 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
       (context && context->existing_pairing && (op != SIGNER_GATE_CONNECT || context->transport != SIGNER_TRANSPORT_NIP46 || who->kind != SIGNER_CALLER_NIP46)) ||
       (context && context->no_identity && ((op != SIGNER_GATE_CONNECT && op != SIGNER_GATE_PING) || (selector && *selector))) ||
       ((op_info[op].peer_arg || op == OP_DECRYPT_ZAP || op == OP_SIGN_EVENT) && !a)) error = ORG_NOSTR_SIGNER_ERR_INVALID_INPUT;
+  else if (op == SIGNER_GATE_SELF_TEST && (!context || context->transport != SIGNER_TRANSPORT_MANAGEMENT ||
+           !signer_caller_is_approver(who) || !selector || !*selector || (a && *a) || (b && *b))) {
+    error = ORG_NOSTR_SIGNER_ERR_APPROVAL; message = "self-test requires authenticated management";
+  }
   else if (s->paused) { error = ORG_NOSTR_SIGNER_ERR_PAUSED; message = "signing is paused"; }
   if (error) { reply(data, error, message, NULL); return handle; }
   Request *r = g_new0(Request, 1);
@@ -1044,6 +1062,9 @@ SignerGateHandle *signer_approval_service_submit(SignerApprovalService *s,
   r->no_identity = !op_info[op].has_identity || (context && context->no_identity);
   r->no_approval_ui = context && context->no_approval_ui;
   r->existing_pairing = context && context->existing_pairing;
+  if (op == SIGNER_GATE_SELF_TEST && context) {
+    r->management_testing = context->management_testing; r->management_data = context->management_data;
+  }
   r->claimed = g_strdup(context ? context->claimed_name : "");
   r->reason = g_strdup(context ? context->reason : ""); r->purpose = g_strdup(context ? context->purpose : "");
   r->flow_id = g_strdup(context ? context->flow_id : ""); r->generation = s->generation;
@@ -1106,6 +1127,16 @@ static void permissions_changed(gpointer data) {
   for (guint i = 0; i < affected->len; i++)
     finish(affected->pdata[i], SIGNER_REQUEST_DENIED, ORG_NOSTR_SIGNER_ERR_APPROVAL, "denied by policy");
 }
+void signer_approval_service_cancel_self_test(SignerApprovalService *s, const gchar *principal, const gchar *identity) {
+  g_return_if_fail(owner_ok(s));
+  g_autoptr(GPtrArray) all = requests_copy(s);
+  for (guint i = 0; i < all->len; i++) {
+    Request *r = all->pdata[i];
+    if (r->op == SIGNER_GATE_SELF_TEST && !g_strcmp0(r->who->principal, principal) &&
+        (!g_strcmp0(r->npub, identity) || !g_strcmp0(r->selector, identity)))
+      finish(r, SIGNER_REQUEST_CANCELLED, ORG_NOSTR_SIGNER_ERR_CANCELLED, "self-test cancelled");
+  }
+}
 void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
     gboolean allow, gboolean remember, guint64 ttl, SignerApprovalDecisionFn fn, gpointer data) {
   g_return_if_fail(owner_ok(s) && fn);
@@ -1114,11 +1145,11 @@ void signer_approval_service_decide(SignerApprovalService *s, const gchar *id,
     fn(data, FALSE, ORG_NOSTR_SIGNER_ERR_NOT_FOUND, "This request expired; ask the app to try again"); return;
   }
   request_ref(r);
-  r->decision = allow; r->remember = remember; r->ttl = ttl; r->decision_fn = fn; r->decision_data = data;
+  r->decision = allow; r->remember = remember && r->op != SIGNER_GATE_SELF_TEST; r->ttl = ttl; r->decision_fn = fn; r->decision_data = data;
   if (g_get_monotonic_time() >= r->deadline) finish(r, SIGNER_REQUEST_EXPIRED, ORG_NOSTR_SIGNER_ERR_APPROVAL_TIMEOUT, "approval timed out");
   else if (allow) execute(r);
   else {
-    gboolean saved = remember && r->who->principal;
+    gboolean saved = r->remember && r->who->principal;
     if (saved && !remember_permission(r, FALSE))
       finish(r, SIGNER_REQUEST_FAILED, ORG_NOSTR_SIGNER_ERR_INTERNAL, "cannot save remembered permission");
     else {

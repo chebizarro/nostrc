@@ -39,11 +39,18 @@ struct _AccountsStore {
   GHashTable *map;   /* id -> label */
   GHashTable *watch_only_set;  /* Set of watch-only account IDs */
   GHashTable *key_types;       /* id -> GnKeyType (nostrc-bq0) */
+  GHashTable *signable;        /* last successful daemon ListIdentities snapshot */
+  GHashTable *setup;           /* id -> non-secret setup state */
   gchar *active;
+  gchar *selected; /* GUI-only, never serialized or used as a signer default */
   gchar *path;
   SettingsManager *settings;  /* GSettings integration */
   GPtrArray *handlers;        /* Change notification handlers */
   guint next_handler_id;
+  guint refs, inventory_generation;
+  GFileMonitor *monitor;
+  GDBusConnection *inventory_bus;
+  guint inventory_signal, owner_watch;
 };
 
 /* Singleton instance */
@@ -85,17 +92,62 @@ AccountsStore *accounts_store_new(void) {
   as->map = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   as->watch_only_set = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
   as->key_types = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  as->signable = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
+  as->setup = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
   as->path = g_strdup(config_path());
   as->settings = settings_manager_get_default();
   as->handlers = g_ptr_array_new_with_free_func(change_handler_free);
   as->next_handler_id = 1;
+  as->refs = 1;
   return as;
 }
 
+static void accounts_file_changed(GFileMonitor *monitor, GFile *file, GFile *other,
+    GFileMonitorEvent event, gpointer data) {
+  (void)monitor; (void)event;
+  AccountsStore *as = data;
+  g_autofree gchar *path = g_file_get_path(file);
+  g_autofree gchar *other_path = other ? g_file_get_path(other) : NULL;
+  if (g_strcmp0(path, as->path) && g_strcmp0(other_path, as->path)) return;
+  if (accounts_store_load(as, NULL)) {
+    emit_change(as, ACCOUNTS_CHANGE_ADDED, NULL);
+    accounts_store_sync_with_secrets_async(as, NULL, NULL);
+  }
+}
+static void identities_changed(GDBusConnection *bus, const gchar *sender, const gchar *path,
+    const gchar *interface, const gchar *signal, GVariant *args, gpointer data) {
+  (void)bus; (void)sender; (void)path; (void)interface; (void)signal; (void)args;
+  accounts_store_sync_with_secrets_async(data, NULL, NULL);
+}
+static void signer_appeared(GDBusConnection *bus, const gchar *name, const gchar *owner, gpointer data) {
+  (void)bus; (void)name; (void)owner; accounts_store_sync_with_secrets_async(data, NULL, NULL);
+}
+static void signer_vanished(GDBusConnection *bus, const gchar *name, gpointer data) {
+  (void)bus; (void)name; AccountsStore *as = data;
+  as->inventory_generation++; g_hash_table_remove_all(as->signable);
+  emit_change(as, ACCOUNTS_CHANGE_ADDED, NULL);
+}
+static void inventory_bus_ready(GObject *source, GAsyncResult *result, gpointer data) {
+  (void)source; AccountsStore *as = data;
+  as->inventory_bus = g_bus_get_finish(result, NULL);
+  if (as->inventory_bus) {
+    as->inventory_signal = g_dbus_connection_signal_subscribe(as->inventory_bus, "org.nostr.Signer", "org.nostr.Signer",
+        "IdentitiesChanged", "/org/nostr/signer", NULL, G_DBUS_SIGNAL_FLAGS_NONE, identities_changed, as, NULL);
+    as->owner_watch = g_bus_watch_name_on_connection(as->inventory_bus, "org.nostr.Signer", G_BUS_NAME_WATCHER_FLAGS_AUTO_START,
+        signer_appeared, signer_vanished, as, NULL);
+    /* Subscribe before the initial snapshot: no lost store/remove gap. */
+    accounts_store_sync_with_secrets_async(as, NULL, NULL);
+  }
+  accounts_store_free(as);
+}
 AccountsStore *accounts_store_get_default(void) {
   if (!default_instance) {
     default_instance = accounts_store_new();
-    /* Note: Errors during load are logged but not fatal for singleton */
+    g_autofree gchar *dir = g_path_get_dirname(default_instance->path);
+    g_autoptr(GFile) directory = g_file_new_for_path(dir);
+    default_instance->monitor = g_file_monitor_directory(directory, G_FILE_MONITOR_NONE, NULL, NULL);
+    if (default_instance->monitor) g_signal_connect(default_instance->monitor, "changed", G_CALLBACK(accounts_file_changed), default_instance);
+    /* Observe the INI before the initial transactional read. */
     GError *error = NULL;
     if (!accounts_store_load(default_instance, &error)) {
       if (error) {
@@ -103,25 +155,50 @@ AccountsStore *accounts_store_get_default(void) {
         g_clear_error(&error);
       }
     }
-    accounts_store_sync_with_secrets(default_instance);
+    if (!nostrc_profile_guard_refuses_session_keyring()) {
+      default_instance->refs++;
+      g_bus_get(G_BUS_TYPE_SESSION, NULL, inventory_bus_ready, default_instance);
+    }
   }
   return default_instance;
 }
 
 void accounts_store_free(AccountsStore *as) {
-  if (!as) return;
+  if (!as || --as->refs) return;
+  if (as->monitor) { g_file_monitor_cancel(as->monitor); g_clear_object(&as->monitor); }
+  if (as->owner_watch) g_bus_unwatch_name(as->owner_watch);
+  if (as->inventory_signal) g_dbus_connection_signal_unsubscribe(as->inventory_bus, as->inventory_signal);
+  g_clear_object(&as->inventory_bus);
   if (as->map) g_hash_table_destroy(as->map);
   if (as->watch_only_set) g_hash_table_destroy(as->watch_only_set);
   if (as->key_types) g_hash_table_destroy(as->key_types);
+  if (as->signable) g_hash_table_destroy(as->signable);
+  if (as->setup) g_hash_table_destroy(as->setup);
   if (as->handlers) g_ptr_array_unref(as->handlers);
-  g_free(as->active);
+  g_free(as->active); g_free(as->selected);
   g_free(as->path);
   /* settings is singleton, don't free */
   if (as == default_instance) default_instance = NULL;
   g_free(as);
 }
 
+static gboolean accounts_store_load_into(AccountsStore *as, GError **error);
 gboolean accounts_store_load(AccountsStore *as, GError **error) {
+  if (!as) return FALSE;
+  AccountsStore *parsed = accounts_store_new();
+  gboolean ok = accounts_store_load_into(parsed, error);
+  if (ok) {
+    GHashTable *map = as->map, *watch = as->watch_only_set, *types = as->key_types;
+    as->map = parsed->map; as->watch_only_set = parsed->watch_only_set; as->key_types = parsed->key_types;
+    parsed->map = map; parsed->watch_only_set = watch; parsed->key_types = types;
+    GHashTable *setup = as->setup; as->setup = parsed->setup; parsed->setup = setup;
+    g_free(as->active); as->active = g_steal_pointer(&parsed->active);
+    if (as->active && !g_hash_table_contains(as->map, as->active)) g_clear_pointer(&as->active, g_free);
+    if (as->selected && !g_hash_table_contains(as->map, as->selected)) g_clear_pointer(&as->selected, g_free);
+  }
+  accounts_store_free(parsed); return ok;
+}
+static gboolean accounts_store_load_into(AccountsStore *as, GError **error) {
   if (!as) {
     g_set_error_literal(error, GN_SIGNER_ERROR, GN_SIGNER_ERROR_INVALID_INPUT,
                         "AccountsStore is NULL");
@@ -137,26 +214,8 @@ gboolean accounts_store_load(AccountsStore *as, GError **error) {
       g_clear_error(&local_error);
       g_key_file_unref(kf);
 
-      /* Try loading from GSettings if INI file doesn't exist */
-      if (as->settings) {
-        gchar **order = settings_manager_get_account_order(as->settings);
-        if (order) {
-          for (gsize i = 0; order[i]; i++) {
-            const gchar *npub = order[i];
-            if (npub && *npub && !g_hash_table_contains(as->map, npub)) {
-              gchar *label = settings_manager_get_identity_label(as->settings, npub);
-              g_hash_table_replace(as->map, g_strdup(npub), label ? label : g_strdup(""));
-            }
-          }
-          g_strfreev(order);
-        }
-
-        /* Load active from GSettings */
-        const gchar *default_id = settings_manager_get_default_identity(as->settings);
-        if (default_id && *default_id && !as->active) {
-          as->active = g_strdup(default_id);
-        }
-      }
+      /* A removed INI file means an empty metadata snapshot, not stale
+       * GSettings resurrection. Signable keys are rediscovered from daemon. */
       return TRUE;
     }
 
@@ -207,6 +266,16 @@ gboolean accounts_store_load(AccountsStore *as, GError **error) {
   }
   g_strfreev(keys);
 
+  nkeys = 0;
+  keys = g_key_file_get_keys(kf, "setup", &nkeys, NULL);
+  for (gsize i = 0; i < nkeys; i++) {
+    gchar *state = g_key_file_get_string(kf, "setup", keys[i], NULL);
+    if (state && (!strcmp(state, "ready") || !strcmp(state, "backup-pending") || !strcmp(state, "verification-pending")))
+      g_hash_table_insert(as->setup, g_strdup(keys[i]), state);
+    else g_free(state);
+  }
+  g_strfreev(keys);
+
   /* Load active state */
   gchar *active = g_key_file_get_string(kf, "state", "active", NULL);
   if (active) {
@@ -215,22 +284,6 @@ gboolean accounts_store_load(AccountsStore *as, GError **error) {
   }
 
   g_key_file_unref(kf);
-
-  /* Sync labels from GSettings (GSettings may have newer labels) */
-  if (as->settings) {
-    GHashTableIter it;
-    gpointer key;
-    g_hash_table_iter_init(&it, as->map);
-    while (g_hash_table_iter_next(&it, &key, NULL)) {
-      const gchar *npub = (const gchar*)key;
-      gchar *gs_label = settings_manager_get_identity_label(as->settings, npub);
-      if (gs_label && *gs_label) {
-        g_hash_table_replace(as->map, g_strdup(npub), gs_label);
-      } else {
-        g_free(gs_label);
-      }
-    }
-  }
 
   return TRUE;
 }
@@ -273,6 +326,10 @@ gboolean accounts_store_save(AccountsStore *as, GError **error) {
     }
   }
 
+  g_hash_table_iter_init(&it, as->setup);
+  while (g_hash_table_iter_next(&it, &key, &val))
+    if (g_hash_table_contains(as->map, key)) g_key_file_set_string(kf, "setup", key, val);
+
   /* Write state */
   if (as->active) {
     g_key_file_set_string(kf, "state", "active", as->active);
@@ -285,7 +342,8 @@ gboolean accounts_store_save(AccountsStore *as, GError **error) {
 
   if (data) {
     GError *local_error = NULL;
-    if (!g_file_set_contents(as->path, data, len, &local_error)) {
+    if (!g_file_set_contents_full(as->path, data, len,
+          G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, &local_error)) {
       g_propagate_error(error, local_error);
       g_prefix_error(error, "Failed to save accounts file: ");
       success = FALSE;
@@ -299,16 +357,11 @@ gboolean accounts_store_save(AccountsStore *as, GError **error) {
 
   g_key_file_unref(kf);
 
-  /* Sync to GSettings even if file save failed */
-  if (as->settings) {
+  /* Mirror metadata only after the authoritative INI commit succeeded. */
+  if (success && as->settings) {
     /* Update account order */
     g_ptr_array_add(order_arr, NULL);  /* NULL terminate */
     settings_manager_set_account_order(as->settings, (const gchar *const *)order_arr->pdata);
-
-    /* Update default identity */
-    if (as->active) {
-      settings_manager_set_default_identity(as->settings, as->active);
-    }
 
     /* Update identity labels */
     g_hash_table_iter_init(&it, as->map);
@@ -347,17 +400,8 @@ gboolean accounts_store_add(AccountsStore *as, const gchar *id,
 
   g_hash_table_insert(as->map, g_strdup(id), g_strdup(label ? label : ""));
 
-  /* Set as active if this is the first account */
-  gboolean was_first = !as->active;
-  if (was_first) {
-    as->active = g_strdup(id);
-  }
-
-  /* Emit change notification */
+  if (!accounts_store_save(as, error)) { g_hash_table_remove(as->map, id); return FALSE; }
   emit_change(as, ACCOUNTS_CHANGE_ADDED, id);
-  if (was_first) {
-    emit_change(as, ACCOUNTS_CHANGE_ACTIVE, id);
-  }
 
   return TRUE;
 }
@@ -381,9 +425,22 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id, GError **erro
     return FALSE;
   }
 
+  g_autofree gchar *old_label = g_strdup(g_hash_table_lookup(as->map, id));
+  g_autofree gchar *old_active = g_strdup(as->active);
+  gboolean was_watch = g_hash_table_contains(as->watch_only_set, id);
+  gpointer old_type = g_hash_table_lookup(as->key_types, id);
   g_hash_table_remove(as->map, id);
   g_hash_table_remove(as->watch_only_set, id);
   g_hash_table_remove(as->key_types, id);
+  if (!g_strcmp0(as->active, id)) g_clear_pointer(&as->active, g_free);
+  if (!accounts_store_save(as, error)) {
+    g_hash_table_insert(as->map, g_strdup(id), g_strdup(old_label));
+    if (was_watch) g_hash_table_add(as->watch_only_set, g_strdup(id));
+    if (old_type) g_hash_table_insert(as->key_types, g_strdup(id), old_type);
+    g_free(as->active); as->active = g_strdup(old_active); return FALSE;
+  }
+  if (as->settings && !g_strcmp0(settings_manager_get_default_identity(as->settings), id))
+    settings_manager_set_default_identity(as->settings, "");
 
   /* Securely delete any local files associated with this identity
    * Note: This does NOT delete from secure storage (Keychain/libsecret)
@@ -396,20 +453,11 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id, GError **erro
               id, gn_delete_result_to_string(del_result));
   }
 
+  g_hash_table_remove(as->setup, id);
+  if (!g_strcmp0(as->selected, id)) g_clear_pointer(&as->selected, g_free);
   emit_change(as, ACCOUNTS_CHANGE_REMOVED, id);
 
-  if (as->active && g_strcmp0(as->active, id) == 0) {
-    /* Pick a new active if any remain */
-    g_clear_pointer(&as->active, g_free);
-
-    GHashTableIter it;
-    gpointer key = NULL, val = NULL;
-    g_hash_table_iter_init(&it, as->map);
-    if (g_hash_table_iter_next(&it, &key, &val)) {
-      as->active = g_strdup((const gchar*)key);
-      emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
-    }
-  }
+  if (g_strcmp0(old_active, as->active)) emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->active);
 
   return TRUE;
 }
@@ -417,10 +465,21 @@ gboolean accounts_store_remove(AccountsStore *as, const gchar *id, GError **erro
 void accounts_store_entry_free(AccountEntry *entry) {
   if (!entry) return;
   g_free(entry->id);
-  g_free(entry->label);
+  g_free(entry->label); g_free(entry->setup_state);
   g_free(entry);
 }
 
+static AccountEntry *account_entry(AccountsStore *as, const gchar *id, const gchar *label) {
+  AccountEntry *entry = g_new0(AccountEntry, 1);
+  entry->id = g_strdup(id); entry->label = g_strdup(label ? label : "");
+  const gchar *setup = g_hash_table_lookup(as->setup, id);
+  entry->setup_state = g_strdup(setup ? setup : "verification-pending");
+  entry->watch_only = accounts_store_is_watch_only(as, id);
+  gpointer type = g_hash_table_lookup(as->key_types, id);
+  entry->key_type = type ? GPOINTER_TO_INT(type) : GN_KEY_TYPE_SECP256K1;
+  entry->has_secret = g_hash_table_contains(as->signable, id);
+  return entry;
+}
 GPtrArray *accounts_store_list(AccountsStore *as) {
   if (!as) return NULL;
 
@@ -430,24 +489,13 @@ GPtrArray *accounts_store_list(AccountsStore *as) {
   gpointer key, val;
   g_hash_table_iter_init(&it, as->map);
   while (g_hash_table_iter_next(&it, &key, &val)) {
-    AccountEntry *e = g_new0(AccountEntry, 1);
-    e->id = g_strdup((const gchar*)key);
-    e->label = g_strdup((const gchar*)val);
-
-    /* Check if this is a watch-only account */
-    e->watch_only = g_hash_table_contains(as->watch_only_set, e->id);
-
-    /* Get key type (default to secp256k1 for Nostr) */
-    gpointer key_type_ptr = g_hash_table_lookup(as->key_types, e->id);
-    e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
-
-    /* Existence only: never pull the secret into the GUI to list accounts
-     * (on macOS each read was a Keychain access prompt). */
-    e->has_secret = secret_store_has_secret(e->id);
-
-    g_ptr_array_add(arr, e);
+    g_ptr_array_add(arr, account_entry(as, key, val));
   }
 
+  /* A failed metadata save must not hide a durably stored daemon identity. */
+  g_hash_table_iter_init(&it, as->signable);
+  while (g_hash_table_iter_next(&it, &key, NULL))
+    if (!g_hash_table_contains(as->map, key)) g_ptr_array_add(arr, account_entry(as, key, ""));
   return arr;
 }
 
@@ -467,13 +515,11 @@ gboolean accounts_store_set_active(AccountsStore *as, const gchar *id, GError **
   /* Check if actually changing */
   gboolean changed = (g_strcmp0(as->active, id) != 0);
 
-  g_free(as->active);
-  as->active = id ? g_strdup(id) : NULL;
-
-  /* Also update GSettings immediately */
-  if (as->settings && id) {
-    settings_manager_set_default_identity(as->settings, id);
-  }
+  gchar *previous = as->active;
+  as->active = id && *id ? g_strdup(id) : NULL;
+  if (!accounts_store_save(as, error)) { g_free(as->active); as->active = previous; return FALSE; }
+  g_free(previous);
+  if (as->settings) settings_manager_set_default_identity(as->settings, as->active ? as->active : "");
 
   /* Emit change notification */
   if (changed) {
@@ -482,6 +528,26 @@ gboolean accounts_store_set_active(AccountsStore *as, const gchar *id, GError **
 
   return TRUE;
 }
+
+gboolean accounts_store_set_setup_state(AccountsStore *as, const gchar *id, const gchar *state, GError **error) {
+  if (!as || !accounts_store_exists(as, id) || !state ||
+      (strcmp(state, "ready") && strcmp(state, "backup-pending") && strcmp(state, "verification-pending"))) return FALSE;
+  g_autofree gchar *previous = g_strdup(g_hash_table_lookup(as->setup, id));
+  g_hash_table_replace(as->setup, g_strdup(id), g_strdup(state));
+  if (!accounts_store_save(as, error)) {
+    if (previous) g_hash_table_replace(as->setup, g_strdup(id), g_strdup(previous));
+    else g_hash_table_remove(as->setup, id);
+    return FALSE;
+  }
+  emit_change(as, ACCOUNTS_CHANGE_LABEL, id); return TRUE;
+}
+gboolean accounts_store_set_selected(AccountsStore *as, const gchar *id) {
+  if (!as || (id && *id && !accounts_store_exists(as, id) && !g_hash_table_contains(as->signable, id))) return FALSE;
+  if (!g_strcmp0(as->selected, id)) return TRUE;
+  g_free(as->selected); as->selected = id && *id ? g_strdup(id) : NULL;
+  emit_change(as, ACCOUNTS_CHANGE_ACTIVE, as->selected); return TRUE;
+}
+const gchar *accounts_store_get_selected(AccountsStore *as) { return as ? as->selected : NULL; }
 
 gboolean accounts_store_get_active(AccountsStore *as, gchar **out_id, GError **error) {
   if (!as) {
@@ -520,14 +586,10 @@ gboolean accounts_store_set_label(AccountsStore *as, const gchar *id,
     return FALSE;
   }
 
+  g_autofree gchar *previous = g_strdup(g_hash_table_lookup(as->map, id));
   g_hash_table_replace(as->map, g_strdup(id), g_strdup(label ? label : ""));
-
-  /* Also update in secret store */
-  secret_store_set_label(id, label);
-
-  /* Also update in GSettings */
-  if (as->settings) {
-    settings_manager_set_identity_label(as->settings, id, label);
+  if (!accounts_store_save(as, error)) {
+    g_hash_table_replace(as->map, g_strdup(id), g_strdup(previous)); return FALSE;
   }
 
   /* Emit change notification */
@@ -548,58 +610,33 @@ gboolean accounts_store_exists(AccountsStore *as, const gchar *id) {
 
 AccountEntry *accounts_store_find(AccountsStore *as, const gchar *query) {
   if (!as || !query || !*query) return NULL;
-
-  GHashTableIter it;
-  gpointer key, val;
-  g_hash_table_iter_init(&it, as->map);
-  while (g_hash_table_iter_next(&it, &key, &val)) {
-    const gchar *id = (const gchar*)key;
-    const gchar *label = (const gchar*)val;
-
-    /* Match by exact id or partial match */
-    if (g_strcmp0(id, query) == 0 ||
-        (label && g_str_has_prefix(label, query)) ||
-        g_str_has_prefix(id, query)) {
-      AccountEntry *e = g_new0(AccountEntry, 1);
-      e->id = g_strdup(id);
-      e->label = g_strdup(label);
-
-      /* Check if this is a watch-only account */
-      e->watch_only = g_hash_table_contains(as->watch_only_set, id);
-
-      /* Get key type (default to secp256k1 for Nostr) */
-      gpointer key_type_ptr = g_hash_table_lookup(as->key_types, id);
-      e->key_type = key_type_ptr ? GPOINTER_TO_INT(key_type_ptr) : GN_KEY_TYPE_SECP256K1;
-
-      e->has_secret = secret_store_has_secret(id);
-
-      return e;
-    }
+  g_autoptr(GPtrArray) entries = accounts_store_list(as);
+  for (guint i = 0; i < entries->len; i++) {
+    AccountEntry *entry = entries->pdata[i];
+    if (!g_strcmp0(entry->id, query) || g_str_has_prefix(entry->id, query) ||
+        (*entry->label && g_str_has_prefix(entry->label, query))) return g_ptr_array_steal_index(entries, i);
   }
-
   return NULL;
 }
 
 void accounts_store_sync_with_secrets(AccountsStore *as) {
   if (!as) return;
+  as->inventory_generation++;
 
   /* Get all identities from secret storage */
   GPtrArray *secrets = secret_store_list();
   if (!secrets) return;
 
+  g_hash_table_remove_all(as->signable);
   for (guint i = 0; i < secrets->len; i++) {
     SecretStoreEntry *se = g_ptr_array_index(secrets, i);
     if (!se || !se->npub) continue;
+    g_hash_table_add(as->signable, g_strdup(se->npub));
 
     /* Add if not already tracked */
     if (!g_hash_table_contains(as->map, se->npub)) {
-      g_hash_table_insert(as->map, g_strdup(se->npub),
-                          g_strdup(se->label ? se->label : ""));
-
-      /* Set as active if first */
-      if (!as->active) {
-        as->active = g_strdup(se->npub);
-      }
+      if (!accounts_store_add(as, se->npub, se->label, NULL))
+        g_warning("Could not persist daemon identity metadata");
     }
   }
 
@@ -805,17 +842,11 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
   g_hash_table_insert(as->map, g_strdup(npub), g_strdup(label ? label : ""));
   g_hash_table_add(as->watch_only_set, g_strdup(npub));
 
-  /* Set as active if this is the first account */
-  gboolean was_first = !as->active;
-  if (was_first) {
-    as->active = g_strdup(npub);
+  if (!accounts_store_save(as, error)) {
+    g_hash_table_remove(as->map, npub); g_hash_table_remove(as->watch_only_set, npub);
+    g_free(npub); return FALSE;
   }
-
-  /* Emit change notification */
   emit_change(as, ACCOUNTS_CHANGE_ADDED, npub);
-  if (was_first) {
-    emit_change(as, ACCOUNTS_CHANGE_ACTIVE, npub);
-  }
 
   if (out_npub) {
     *out_npub = npub;
@@ -828,7 +859,7 @@ gboolean accounts_store_import_pubkey(AccountsStore *as, const gchar *pubkey,
 
 gboolean accounts_store_is_watch_only(AccountsStore *as, const gchar *id) {
   if (!as || !id) return FALSE;
-  return g_hash_table_contains(as->watch_only_set, id);
+  return g_hash_table_contains(as->watch_only_set, id) && !g_hash_table_contains(as->signable, id);
 }
 
 guint accounts_store_connect_changed(AccountsStore *as, AccountsChangedCb cb,
@@ -862,7 +893,7 @@ typedef struct {
   AccountsStore *as;
   AccountsStoreSyncCallback callback;
   gpointer user_data;
-  GPtrArray *secrets;  /* Result from async secret store list */
+  guint generation;
 } SyncAsyncData;
 
 /* Called in main thread after secret list completes */
@@ -870,30 +901,29 @@ static void sync_secrets_list_cb(GPtrArray *entries, gpointer user_data) {
   SyncAsyncData *data = user_data;
   AccountsStore *as = data->as;
 
-  if (entries && as) {
+  if (entries && as && data->generation == as->inventory_generation) {
+    g_hash_table_remove_all(as->signable);
     for (guint i = 0; i < entries->len; i++) {
       SecretStoreEntry *se = g_ptr_array_index(entries, i);
       if (!se || !se->npub) continue;
+      g_hash_table_add(as->signable, g_strdup(se->npub));
 
       /* Add if not already tracked */
       if (!g_hash_table_contains(as->map, se->npub)) {
-        g_hash_table_insert(as->map, g_strdup(se->npub),
-                            g_strdup(se->label ? se->label : ""));
-
-        /* Set as active if first */
-        if (!as->active) {
-          as->active = g_strdup(se->npub);
-        }
+        if (!accounts_store_add(as, se->npub, se->label, NULL))
+          g_warning("Could not persist daemon identity metadata");
       }
     }
     g_ptr_array_unref(entries);
-  }
+    emit_change(as, ACCOUNTS_CHANGE_ADDED, NULL);
+  } else if (entries) g_ptr_array_unref(entries);
 
   /* Invoke callback */
   if (data->callback) {
     data->callback(as, data->user_data);
   }
 
+  accounts_store_free(as);
   g_free(data);
 }
 
@@ -906,7 +936,7 @@ void accounts_store_sync_with_secrets_async(AccountsStore *as,
   }
 
   SyncAsyncData *data = g_new0(SyncAsyncData, 1);
-  data->as = as;
+  data->as = as; as->refs++; data->generation = ++as->inventory_generation;
   data->callback = callback;
   data->user_data = user_data;
 
@@ -951,8 +981,14 @@ gboolean accounts_store_set_key_type(AccountsStore *as,
     return FALSE;
   }
 
+  gpointer previous = g_hash_table_lookup(as->key_types, id);
   g_hash_table_replace(as->key_types, g_strdup(id), GINT_TO_POINTER(key_type));
-  return TRUE;
+  if (!accounts_store_save(as, error)) {
+    if (previous) g_hash_table_replace(as->key_types, g_strdup(id), previous);
+    else g_hash_table_remove(as->key_types, id);
+    return FALSE;
+  }
+  emit_change(as, ACCOUNTS_CHANGE_LABEL, id); return TRUE;
 }
 
 gboolean accounts_store_generate_key_with_type(AccountsStore *as,

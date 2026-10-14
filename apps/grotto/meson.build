@@ -26,11 +26,11 @@ gettext_package = 'grotto'
 localedir = get_option('prefix') / get_option('localedir')
 
 # Required dependencies
-gtk4_dep = dependency('gtk4', version: '>= 4.0')
+gtk4_dep = dependency('gtk4', version: '>= 4.14')
 glib_dep = dependency('glib-2.0', version: '>= 2.56')
 gobject_dep = dependency('gobject-2.0', version: '>= 2.56')
 gio_dep = dependency('gio-2.0', version: '>= 2.56')
-adwaita_dep = dependency('libadwaita-1', version: '>= 1.0')
+adwaita_dep = dependency('libadwaita-1', version: '>= 1.5')
 json_glib_dep = dependency('json-glib-1.0')
 
 # Optional: libsecret for secure key storage on Linux
@@ -134,6 +134,7 @@ app_sources = files(
   'src/key_provider_ed25519.c',
   'src/key_provider_secp256k1.c',
   'src/key_rotation.c',
+  'src/key-migration-event.c',
   'src/keyboard-nav.c',
   'src/memory-profile.c',
   'src/multisig_coordinator.c',
@@ -169,6 +170,8 @@ app_ui_sources = files(
   'src/ui/lazy-loader.c',
   'src/ui/lock-screen.c',
   'src/ui/onboarding-assistant.c',
+  'src/ui/page-identity-detail.c',
+  'src/secret-clipboard.c',
   'src/ui/page-applications.c',
   'src/ui/page-history.c',
   'src/ui/page-permissions.c',

@@ -29,7 +29,14 @@ Canonical XML: [`apps/grotto/data/org.nostr.Grotto.Control1.xml`](../apps/grotto
 It is exported on the **existing daemon connection**, bus **`org.nostr.Signer`**,
 object **`/org/nostr/signer/grotto`**. The GUI's `org.nostr.Grotto` name is not the
 service destination and owning that name grants no authority. Legacy
-`org.nostr.Signer` signatures and activation remain unchanged.
+`org.nostr.Signer` method signatures and activation remain unchanged. Its additive
+`IdentitiesChanged(revision:t)` signal is a coarse inventory invalidation (no keys,
+npubs or labels); consumers re-read `ListIdentities`, including after owner change.
+The revision increases within one daemon lifetime, not across restarts. A completed
+store emits it even if the initiating GUI closes before receiving its receipt.
+Management selection and creating/importing/rotating a key never change the legacy
+default: empty-selector clients honor the explicitly configured default before
+cache or environment fallbacks.
 
 ### Authentication and compatibility
 
@@ -49,9 +56,12 @@ indicator inspect status and reduce capability, never resume or approve.
 `activity_log_healthy:b`, `client_store_healthy:b`, `permission_store_healthy:b`.
 It includes no identity, client, request contents, reason or activity records.
 `key_state="unknown"` and `key_lock_enforced=false` do **not** claim a locked keyring.
-Pairing/configuration/reset, mnemonic-export, rotation and key-lock capabilities
-are false until their real implementations land; raw-nsec-export is separate
-from NIP-49 export, which is advertised only when its backend is built.
+Mnemonic export, canonical mnemonic storage, identity self-test and rotation are
+available with the G09 implementation. Mnemonic availability is per identity:
+keys imported without Grotto-created seed words return `NotFound`. Raw-nsec-export
+is separate from NIP-49 export, which is advertised only when its backend is built.
+Pairing/configuration/key-lock capabilities remain owned by their implementation
+steps; always use the returned flags rather than inferring them from a version.
 
 A GUI must feature-detect Control1/version/capabilities: absence or an older
 version means a read-only **Update Grotto** state, not legacy mutation fallback.
@@ -60,7 +70,8 @@ G04 establishes the daemon side; GUI version-skew presentation belongs to G07/G1
 
 ### Methods
 
-All errors below use `org.nostr.Grotto.Control1.Error.<name>`. Invalid signatures
+Management errors use `org.nostr.Grotto.Control1.Error.<name>`; self-test terminal
+errors use the shared gate's `org.nostr.Signer.Error.*` names. Invalid signatures
 are rejected by GDBus using the canonical XML before dispatch.
 
 | Method | Input → output | Current behavior |
@@ -75,9 +86,14 @@ are rejected by GDBus using the canonical XML before dispatch.
 | `SetClientTrust` | `(principal:s, tier:s) → ()` | `low`, `medium`, `full`; requires prior explicit consent; persist before live G03 policy invalidation |
 | `SetPaused` | `(paused:b) → ()` | Session-only generation-fenced pause; asymmetric authority as above |
 | `SetDefaultIdentityForLegacy` | `(identity:s) → ()` | Resolve a stored signable identity; update daemon GSettings default, or clear with empty input; explicit consumers are unchanged |
-| `ExportIdentity` | `(identity:s, format:s, passphrase:s) → s` | NIP-49 `ncryptsec` (empty format defaults to it); explicit nonempty identity and nonempty UTF-8 passphrase ≤1024 bytes; `log_n=16`, NFKC normalization |
+| `ExportIdentity` | `(identity:s, format:s, passphrase:s) → s` | NIP-49 `ncryptsec` (empty format defaults to it; nonempty UTF-8 passphrase ≤1024 bytes, `log_n=16`, NFKC normalization) or custody-held `mnemonic` (no export passphrase); explicit nonempty identity required |
 | `ExportRawIdentity` | `(identity:s) → s` | Separate authenticated raw-nsec reveal, never accepted through `ExportIdentity` |
-| `RotateIdentity` | `(identity:s) → s` | Authenticated `NotSupported`; owner-confirmed G09 custody/policy follow-up |
+| `StoreKeyWithMnemonic` | `(key:s, label:s, mnemonic:s) → s` | Validate the BIP-39 phrase and empty-passphrase NIP-06 key binding, store both in daemon custody using the canonical npub, return that npub; a label never replaces another identity |
+| `ImportIdentity` | `(format:s, input:s, passphrase:s, label:s) → s` | Validate and import `key` (nsec/hex), `ncryptsec` (NIP-49 decryption password), or `mnemonic` (optional BIP-39 passphrase); return the exact canonical stored npub |
+| `SelfTestIdentity` | `(identity:s) → s` | One approver-only, non-rememberable MANAGEMENT request: sign and verify an unpublished event, then independent-peer NIP-44 challenge round-trip; `passed` only after verification; no relay I/O, client record or grant |
+| `CancelIdentitySelfTest` | `(identity:s) → ()` | Cancel only this approver principal's self-test for this exact identity; never remove a stored key |
+| `RotateIdentity` | `(identity:s) → s` | Create and store a mnemonic-backed successor, save an old-key-signed migration announcement, return the successor npub. No publication, redirection, permission copy or old-key removal; pause-generation fenced |
+| `GetIdentityMigration` | `(identity:s) → s` | Read the saved public signed migration event for an exact old npub; user/application chooses whether to publish it |
 | `ConfigureBunker` | `(config:a{sv}) → a{sv}` | Authenticated typed unavailable response; G06 implements durable desired config + live apply |
 | `CreatePairing` | `(identity:s, label:s) → a{sv}` | Authenticated typed unavailable response; G05/G06 implement account-bound, single-use pairing |
 | `AcceptConnectURI` | `(uri:s, identity:s) → s` | Authenticated typed unavailable response; G06 validates/reviews/acks, no relay contact now |
@@ -95,14 +111,27 @@ Each dispatcher branch names its G05/G06 owner. The prospective `bunker.ini` v1
 accept it through an unavailable ConfigureBunker method. Runtime state still
 comes from the existing service; it does not claim protocol-proven LISTENING.
 
-`ExportIdentity(format="mnemonic")` is `NotSupported` until G09 adds custody-held
-mnemonics. `format="nsec"` is deliberately rejected: the UI must use the separate
+`ExportIdentity(format="mnemonic")` reads only `org.nostr.Grotto.Mnemonic`, a
+separate Secret Service/Keychain custody role keyed by npub, and verifies its
+empty-passphrase derivation against the selected identity. It is never included
+in `ListIdentities`. nsec/hex/NIP-49 imports have no invented seed words: use the
+encrypted backup instead. `format="nsec"` is deliberately rejected: the UI must use the separate
 raw method after its warning. Exports use the nip55l custody resolver, not the
 GUI's secret store, run off the daemon main loop (one at a time), wipe owned
 passphrases/key buffers/results, re-attest the approver before secret delivery,
 and suppress delivery during shutdown. They create no signing grant or secret
 history entry. Private material necessarily transiently exists in the trusted
 UI and D-Bus message buffers; this is not a same-user malware boundary.
+`IdentitySelfTestTesting(identity:s)` is unicast to the invoking approver after
+one-time consent, before backend execution. Denial, expiry, cancellation, missing
+key/backend and verification failure never mean “ready”. Closing the assistant
+cancels its self-test/local continuation but preserves a completed daemon key
+store. Local `accounts.ini` setup metadata records `verification-pending`,
+`backup-pending` or `ready`; management selection is in-memory only. Rotation
+announcements are private-mode, atomic public JSON under
+`$XDG_CONFIG_HOME/grotto/migrations/<old-npub>` and contain no secrets. A persistence
+failure after a successor store is reported explicitly; re-read identities before
+retrying. The old identity remains until explicit confirmed removal.
 On UID-only buses (the macOS compatibility path, see the known limitation
 below) any unattested same-UID process passes the approver check, so it can call
 `ExportRawIdentity`/`ExportIdentity` and receive the key; delivery re-attestation

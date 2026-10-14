@@ -236,8 +236,9 @@ static void test_export(ControlFixture *f, gconstpointer data) {
   g_assert_cmpint(nostr_nip19_decode_nsec(nsec, key), ==, 0);
   for (guint i = 0; i < 31; i++) g_assert_cmpuint(key[i], ==, 0); g_assert_cmpuint(key[31], ==, 1); secure_wipe(key, sizeof key);
   expect_control_error(f, "ExportIdentity", g_variant_new("(sss)", identity, "nsec", "ignored"), GROTTO_CONTROL_ERROR "NotSupported");
-  expect_control_error(f, "ExportIdentity", g_variant_new("(sss)", identity, "mnemonic", ""), GROTTO_CONTROL_ERROR "NotSupported");
-  expect_control_error(f, "RotateIdentity", g_variant_new("(s)", identity), GROTTO_CONTROL_ERROR "NotSupported");
+  /* This fixture has an environment key and deliberately no Secret Service. */
+  expect_control_error(f, "ExportIdentity", g_variant_new("(sss)", identity, "mnemonic", ""), GROTTO_CONTROL_ERROR "BackendUnavailable");
+  expect_control_error(f, "RotateIdentity", g_variant_new("(s)", ""), GROTTO_CONTROL_ERROR "InvalidInput");
   expect_control_error(f, "ExportRawIdentity", g_variant_new("(s)", ""), GROTTO_CONTROL_ERROR "InvalidInput");
   expect_control_error(f, "ExportRawIdentity", g_variant_new("(s)", nsec), GROTTO_CONTROL_ERROR "InvalidInput");
 #ifdef GROTTO_HAVE_NIP49_EXPORT

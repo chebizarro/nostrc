@@ -104,10 +104,10 @@ test_secret_store(void)
 
   /* Direct reads of the user's key store (the Keychain on macOS; none in a
    * CMake Linux build, where keys live only behind the daemon): refused, so
-   * nothing is listed. */
+   * inventory is unavailable, not a successful empty snapshot. */
   g_assert_false(secret_store_is_available());
   g_autoptr(GPtrArray) listed = secret_store_list();
-  g_assert_cmpuint(listed->len, ==, 0);
+  g_assert_null(listed);
   g_assert_false(secret_store_has_secret(TEST_NPUB));
   if (g_strcmp0(secret_store_backend_name(), "none") != 0) {
     g_autofree gchar *nsec = NULL;

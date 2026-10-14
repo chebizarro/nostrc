@@ -11,6 +11,11 @@
 #include <keys.h>
 #include <nostr-utils.h>
 #include <nostr/nip55l/error.h>
+#include <nostr/crypto/bip39.h>
+#include <nostr/nip19/nip19.h>
+#include "key_rotation.h"
+#include <nostrc-profile-guard.h>
+extern char *nostr_nip06_private_key_from_seed(const unsigned char *seed);
 
 struct _GrottoControl {
   gint refs;
@@ -25,7 +30,9 @@ struct _GrottoControl {
   guint64 requests_revision, clients_revision, status_revision, epoch_base, seen_permissions, seen_clients;
   gchar *epoch;
   gboolean desired_bunker, client_healthy;
+  gpointer active_rotation; /* owner-thread pointer to the current worker job */
 };
+static void cancel_rotation_if_paused(GrottoControl *c);
 static SignerPermissions *permissions(GrottoControl *c) { return signer_approval_service_permissions(c->approval); }
 static void emit(GrottoControl *c, const gchar *signal, guint64 revision) {
   g_dbus_connection_emit_signal(c->connection, NULL, GROTTO_CONTROL_PATH,
@@ -45,6 +52,7 @@ static void refresh(GrottoControl *c) {
 }
 static void approval_table_changed(gpointer data) {
   GrottoControl *c = data;
+  cancel_rotation_if_paused(c);
   emit(c, "RequestsChanged", ++c->requests_revision); refresh(c); status_changed(c);
 }
 static guint64 permission_revision(GrottoControl *c) {
@@ -78,8 +86,11 @@ static GVariant *status(GrottoControl *c) {
   refresh(c);
   GVariantBuilder row, caps; g_variant_builder_init(&row, G_VARIANT_TYPE_VARDICT);
   g_variant_builder_init(&caps, G_VARIANT_TYPE("a{sb}"));
-  const gchar *enabled[] = {"clients", "activity", "scoped-permissions", "trust-tiers", "pause"};
+  const gchar *enabled[] = {"clients", "activity", "scoped-permissions", "trust-tiers", "pause", "identity-self-test"};
   for (guint i = 0; i < G_N_ELEMENTS(enabled); i++) g_variant_builder_add(&caps, "{sb}", enabled[i], TRUE);
+  const gchar *custody[] = {"rotate-identity", "mnemonic-export", "store-mnemonic", "identity-import"};
+  for (guint i = 0; i < G_N_ELEMENTS(custody); i++)
+    g_variant_builder_add(&caps, "{sb}", custody[i], nostr_nip55l_mnemonic_custody_supported() != 0);
   g_variant_builder_add(&caps, "{sb}", "raw-nsec-export", TRUE);
 #ifdef GROTTO_HAVE_NIP49_EXPORT
   g_variant_builder_add(&caps, "{sb}", "export-identity", TRUE);
@@ -87,7 +98,7 @@ static GVariant *status(GrottoControl *c) {
   g_variant_builder_add(&caps, "{sb}", "export-identity", FALSE);
 #endif
   g_variant_builder_add(&caps, "{sb}", "reset-bunker-endpoint", c->bunker != NULL);
-  const gchar *disabled[] = {"bunker-configuration", "pairing", "rotate-identity", "mnemonic-export", "key-lock"};
+  const gchar *disabled[] = {"bunker-configuration", "pairing", "key-lock"};
   for (guint i = 0; i < G_N_ELEMENTS(disabled); i++) g_variant_builder_add(&caps, "{sb}", disabled[i], FALSE);
   g_variant_builder_add(&row, "{sv}", "control_version", g_variant_new_uint32(1));
   g_variant_builder_add(&row, "{sv}", "control_epoch", g_variant_new_string(c->epoch));
@@ -129,7 +140,7 @@ static void approval_changed(gpointer data, GVariant *snapshot) {
      * last use, including permission-created clients (whose automatic allows
      * are not consent decisions); that never sets consent or changes tier. */
     gboolean admission = consented && (success || !g_strcmp0(state, "FAILED"));
-    if (*principal && (admission || (success && known) || (!g_strcmp0(state, "DENIED") && remember))) {
+    if (strcmp(transport, "MANAGEMENT") && *principal && (admission || (success && known) || (!g_strcmp0(state, "DENIED") && remember))) {
       c->client_healthy = grotto_clients_record(c->clients, principal, transport, claimed,
           *identity ? identity : NULL, admission, success, NULL);
       const gchar *operation = NULL;
@@ -172,23 +183,72 @@ typedef struct {
   GrottoControl *control;
   GDBusMethodInvocation *invocation;
   gchar *identity, *format, *passphrase, *backup;
-  gint result;
+  gchar *key, *mnemonic, *import_format, *migration, *old_npub;
+  guint64 generation;
+  gint cancelled, result;
 } ExportJob;
+static void cancel_rotation_if_paused(GrottoControl *c) {
+  ExportJob *job = c->active_rotation;
+  if (job && (c->closing || signer_approval_service_is_paused(c->approval) ||
+      job->generation != signer_approval_service_generation(c->approval))) g_atomic_int_set(&job->cancelled, TRUE);
+}
 static void wipe_text(gchar *s) { if (s) { secure_wipe(s, strlen(s)); g_free(s); } }
 static void export_job_free(gpointer data) {
   ExportJob *job = data;
   g_object_unref(job->invocation); g_free(job->identity); g_free(job->format);
+  wipe_text(job->key); wipe_text(job->mnemonic); g_free(job->import_format); g_free(job->migration); g_free(job->old_npub);
   wipe_text(job->passphrase); wipe_text(job->backup); control_unref(job->control); g_free(job);
 }
 static void export_worker(GTask *task, gpointer source, gpointer data, GCancellable *cancel) {
   (void)source; (void)cancel; ExportJob *job = data;
-  job->result = nostr_nip55l_export_identity(job->identity, job->format, job->passphrase, &job->backup);
+  if (!strcmp(job->format, "__store"))
+    job->result = nostr_nip55l_store_key_with_mnemonic(job->key, job->identity, job->mnemonic, &job->backup);
+  else if (!strcmp(job->format, "__import"))
+    job->result = nostr_nip55l_import_identity(job->import_format, job->key, job->passphrase, job->identity, &job->backup);
+  else if (!strcmp(job->format, "__rotate")) {
+    char *old_npub = NULL, *new_hex = NULL, *old_hex = NULL, *event = NULL, *signed_event = NULL;
+    unsigned char seed[64] = {0}, old_pk[32];
+    job->result = g_atomic_int_get(&job->cancelled) ? NOSTR_SIGNER_ERROR_PERMISSION_DENIED :
+        nostr_nip55l_resolve_npub(job->identity, &old_npub);
+    if (!job->result) {
+      job->mnemonic = nostr_bip39_generate(12);
+      if (!job->mnemonic || !nostr_bip39_seed(job->mnemonic, "", seed)) job->result = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+      else job->key = nostr_nip06_private_key_from_seed(seed);
+      secure_wipe(seed, sizeof(seed));
+      if (!job->key) job->result = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+    }
+    if (!job->result) {
+      new_hex = nostr_key_get_public(job->key);
+      if (!new_hex || nostr_nip19_decode_npub(old_npub, old_pk)) job->result = NOSTR_SIGNER_ERROR_INVALID_KEY;
+      else {
+        old_hex = g_malloc(65);
+        for (guint i = 0; i < 32; i++) g_snprintf(old_hex + 2*i, 3, "%02x", old_pk[i]);
+        event = key_rotation_build_migration_event(old_hex, new_hex, 0, NULL);
+        job->result = g_atomic_int_get(&job->cancelled) ? NOSTR_SIGNER_ERROR_PERMISSION_DENIED :
+            event ? nostr_nip55l_sign_event_json(event, old_npub, "", &signed_event) : NOSTR_SIGNER_ERROR_BACKEND;
+      }
+    }
+    if (!job->result) job->result = g_atomic_int_get(&job->cancelled) ? NOSTR_SIGNER_ERROR_PERMISSION_DENIED :
+        nostr_nip55l_store_key_with_mnemonic(job->key, "", job->mnemonic, &job->backup);
+    if (!job->result) { job->migration = g_strdup(signed_event); job->old_npub = g_strdup(old_npub); }
+    free(old_npub); free(new_hex); g_free(old_hex); g_free(event); free(signed_event);
+    /* No clients, defaults or permissions are rewritten; neither key removed.
+     * Migration is saved for explicit publication by a consuming application. */
+  } else job->result = nostr_nip55l_export_identity(job->identity, job->format, job->passphrase, &job->backup);
   wipe_text(job->passphrase); job->passphrase = NULL;
   g_task_return_boolean(task, TRUE);
 }
 static void export_finished(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; (void)data; ExportJob *job = g_task_get_task_data(G_TASK(result));
   GrottoControl *c = job->control; c->export_busy = FALSE;
+  if (job->backup && (!strcmp(job->format, "__store") || !strcmp(job->format, "__import") || !strcmp(job->format, "__rotate")))
+    signer_notify_identities_changed(); /* store is durable even if its UI closed */
+  if (c->active_rotation == job) c->active_rotation = NULL;
+  if (!strcmp(job->format, "__rotate") && (g_atomic_int_get(&job->cancelled) ||
+      job->generation != signer_approval_service_generation(c->approval))) {
+    g_dbus_method_invocation_return_dbus_error(job->invocation, GROTTO_CONTROL_ERROR "Paused",
+        "Rotation interrupted by signing pause; any completed key store is preserved and can be rediscovered"); return;
+  }
   if (c->closing) {
     g_dbus_method_invocation_return_dbus_error(job->invocation, GROTTO_CONTROL_ERROR "NotReady", "Signer management is shutting down"); return;
   }
@@ -200,10 +260,20 @@ static void export_finished(GObject *source, GAsyncResult *result, gpointer data
   }
   if (job->result) {
     const gchar *name = job->result == NOSTR_SIGNER_ERROR_NOT_SUPPORTED ? GROTTO_CONTROL_ERROR "NotSupported" :
-        job->result == NOSTR_SIGNER_ERROR_INVALID_ARG ? GROTTO_CONTROL_ERROR "InvalidInput" :
+        (job->result == NOSTR_SIGNER_ERROR_INVALID_ARG || job->result == NOSTR_SIGNER_ERROR_INVALID_KEY) ? GROTTO_CONTROL_ERROR "InvalidInput" :
         job->result == NOSTR_SIGNER_ERROR_NOT_FOUND ? GROTTO_CONTROL_ERROR "NotFound" : GROTTO_CONTROL_ERROR "BackendUnavailable";
     g_dbus_method_invocation_return_dbus_error(job->invocation, name, "Identity export could not be completed"); return;
   }
+  if (job->migration) {
+    g_autofree gchar *dir = g_build_filename(g_get_user_config_dir(), "grotto", "migrations", NULL);
+    g_autofree gchar *path = g_build_filename(dir, job->old_npub, NULL);
+    if (nostrc_profile_guard_refuses_path(path) || g_mkdir_with_parents(dir, 0700) ||
+        !g_file_set_contents_full(path, job->migration, -1, G_FILE_SET_CONTENTS_CONSISTENT | G_FILE_SET_CONTENTS_DURABLE, 0600, NULL)) {
+      g_dbus_method_invocation_return_dbus_error(job->invocation, GROTTO_CONTROL_ERROR "PersistenceFailed",
+          "Successor identity is stored, but the migration announcement could not be saved; re-read identities"); return;
+    }
+  }
+  if (!strcmp(job->format, "__store") || !strcmp(job->format, "__import") || !strcmp(job->format, "__rotate")) status_changed(c);
   g_dbus_method_invocation_return_value(job->invocation, g_variant_new("(s)", job->backup));
   wipe_text(job->backup); job->backup = NULL;
 }
@@ -212,8 +282,31 @@ static void start_export(GrottoControl *c, GDBusMethodInvocation *inv, const gch
   ExportJob *job = g_new0(ExportJob, 1); job->control = c; g_atomic_int_inc(&c->refs);
   job->invocation = g_object_ref(inv); job->identity = g_strdup(identity);
   job->format = g_strdup(format); job->passphrase = g_strdup(passphrase); c->export_busy = TRUE;
+  job->generation = signer_approval_service_generation(c->approval);
+  if (!strcmp(format, "__rotate")) c->active_rotation = job;
   g_autoptr(GTask) task = g_task_new(NULL, NULL, export_finished, NULL);
   g_task_set_task_data(task, job, export_job_free); g_task_run_in_thread(task, export_worker);
+}
+static void start_store(GrottoControl *c, GDBusMethodInvocation *inv, const gchar *key,
+    const gchar *label, const gchar *mnemonic, const gchar *format, const gchar *passphrase) {
+  ExportJob *job = g_new0(ExportJob, 1); job->control = c; g_atomic_int_inc(&c->refs);
+  job->invocation = g_object_ref(inv); job->identity = g_strdup(label); job->format = g_strdup(format ? "__import" : "__store");
+  job->import_format = g_strdup(format); job->passphrase = g_strdup(passphrase);
+  job->key = g_strdup(key); job->mnemonic = g_strdup(mnemonic); c->export_busy = TRUE;
+  g_autoptr(GTask) task = g_task_new(NULL, NULL, export_finished, NULL);
+  g_task_set_task_data(task, job, export_job_free); g_task_run_in_thread(task, export_worker);
+}
+static void self_test_testing(gpointer data) {
+  GDBusMethodInvocation *inv = data;
+  const gchar *identity; g_variant_get(g_dbus_method_invocation_get_parameters(inv), "(&s)", &identity);
+  g_dbus_connection_emit_signal(g_dbus_method_invocation_get_connection(inv), g_dbus_method_invocation_get_sender(inv),
+      GROTTO_CONTROL_PATH, GROTTO_CONTROL_INTERFACE, "IdentitySelfTestTesting", g_variant_new("(s)", identity), NULL);
+}
+static void self_test_reply(gpointer data, const gchar *error, const gchar *message, const gchar *result) {
+  GDBusMethodInvocation *inv = data;
+  if (error) g_dbus_method_invocation_return_dbus_error(inv, error, message);
+  else g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", result));
+  g_object_unref(inv);
 }
 typedef struct { GrottoControl *control; GDBusMethodInvocation *invocation; gint result; } ResetJob;
 static void reset_free(gpointer data) {
@@ -390,17 +483,53 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     bunker_unavailable(c, inv); return;
   } else if (!strcmp(method, "ResetBunkerEndpoint")) {
     reset_endpoint(c, inv); return;
+  } else if (!strcmp(method, "StoreKeyWithMnemonic")) {
+    const gchar *key, *label, *mnemonic;
+    g_variant_get(args, "(&s&s&s)", &key, &label, &mnemonic);
+    if (strlen(key) > 256 || strlen(label) > 160 || strlen(mnemonic) > 512) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Invalid creation input"); return;
+    }
+    if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Key management is busy"); return; }
+    start_store(c, inv, key, label, mnemonic, NULL, NULL); return;
+  } else if (!strcmp(method, "ImportIdentity")) {
+    const gchar *format, *input, *passphrase, *label;
+    g_variant_get(args, "(&s&s&s&s)", &format, &input, &passphrase, &label);
+    if (strlen(input) > 4096 || strlen(label) > 160 || strlen(passphrase) > 1024 ||
+        (strcmp(format, "key") && strcmp(format, "mnemonic") && strcmp(format, "ncryptsec"))) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Invalid import input"); return;
+    }
+    if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Key management is busy"); return; }
+    start_store(c, inv, input, label, NULL, format, passphrase); return;
+  } else if (!strcmp(method, "SelfTestIdentity")) {
+    const gchar *identity; g_variant_get(args, "(&s)", &identity);
+    SignerGateContext context = {.transport = SIGNER_TRANSPORT_MANAGEMENT,
+      .reason = "Verify this stored identity without publishing or saving permissions",
+      .management_testing = self_test_testing, .management_data = inv};
+    SignerGateHandle *handle = signer_approval_service_submit(c->approval, who, sender,
+        SIGNER_GATE_SELF_TEST, NULL, NULL, identity, &context, self_test_reply, g_object_ref(inv));
+    signer_gate_handle_unref(handle); return;
+  } else if (!strcmp(method, "CancelIdentitySelfTest")) {
+    const gchar *identity; g_variant_get(args, "(&s)", &identity);
+    signer_approval_service_cancel_self_test(c->approval, who->principal, identity);
+  } else if (!strcmp(method, "GetIdentityMigration")) {
+    const gchar *identity; g_variant_get(args, "(&s)", &identity);
+    unsigned char pk[32];
+    if (nostr_nip19_decode_npub(identity, pk)) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Expected an npub"); return; }
+    g_autofree gchar *path = g_build_filename(g_get_user_config_dir(), "grotto", "migrations", identity, NULL);
+    g_autofree gchar *event = NULL;
+    if (!g_file_get_contents(path, &event, NULL, NULL)) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotFound", "No migration event"); return; }
+    g_dbus_method_invocation_return_value(inv, g_variant_new("(s)", event)); return;
   } else if (!strcmp(method, "ExportIdentity") || !strcmp(method, "ExportRawIdentity")) {
     const gchar *identity, *format = "nsec", *passphrase = "";
     if (!strcmp(method, "ExportIdentity")) {
       g_variant_get(args, "(&s&s&s)", &identity, &format, &passphrase);
       if (!*format) format = "ncryptsec";
       /* A raw reveal can never be smuggled through the encrypted export API. */
-      if (strcmp(format, "ncryptsec")) {
-        g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotSupported", "Use the separate raw-export action; mnemonic custody is G09"); return;
+      if (strcmp(format, "ncryptsec") && strcmp(format, "mnemonic")) {
+        g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotSupported", "Use the separate raw-export action"); return;
       }
 #ifndef GROTTO_HAVE_NIP49_EXPORT
-      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotSupported", "NIP-49 export is not built"); return;
+      if (!strcmp(format, "ncryptsec")) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotSupported", "NIP-49 export is not built"); return; }
 #endif
     } else g_variant_get(args, "(&s)", &identity);
     if (!*identity || strlen(identity) > 4096 || (!strcmp(format, "ncryptsec") && (!*passphrase || strlen(passphrase) > 1024))) {
@@ -409,8 +538,13 @@ static void method_call(GDBusConnection *bus, const gchar *sender, const gchar *
     if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Another key export is in progress"); return; }
     start_export(c, inv, identity, format, passphrase); return;
   } else if (!strcmp(method, "RotateIdentity")) {
-    /* TODO G09 (owner-confirmed): no rotation backend/policy exists at G03. */
-    g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "NotSupported", "Identity rotation requires the G09 custody implementation"); return;
+    const gchar *identity; g_variant_get(args, "(&s)", &identity);
+    if (signer_approval_service_is_paused(c->approval)) {
+      g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Paused", "Resume signing before rotating an identity"); return;
+    }
+    if (!*identity || strlen(identity) > 4096) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "InvalidInput", "Choose an explicit identity"); return; }
+    if (c->export_busy) { g_dbus_method_invocation_return_dbus_error(inv, GROTTO_CONTROL_ERROR "Busy", "Key management is busy"); return; }
+    start_export(c, inv, identity, "__rotate", ""); return;
   } else {
     g_dbus_method_invocation_return_dbus_error(inv, "org.freedesktop.DBus.Error.UnknownMethod", "Unknown Control1 method"); return;
   }
@@ -470,6 +604,7 @@ void grotto_control_set_bunker(GrottoControl *c, BunkerService *bunker, gboolean
 void grotto_control_free(GrottoControl *c) {
   if (!c) return;
   c->closing = TRUE;
+  cancel_rotation_if_paused(c);
   if (c->bunker) {
     bunker_service_set_client_lookup(c->bunker, NULL, NULL);
     bunker_service_set_state_callback(c->bunker, NULL, NULL);

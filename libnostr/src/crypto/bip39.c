@@ -176,7 +176,6 @@ bool nostr_bip39_validate(const char *mnemonic) {
     if (wc >= 24) return false;
     int wi = word_index(start, wl);
     if (wi < 0) {
-      fprintf(stderr, "bip39: unknown word: %.*s\n", (int)wl, start);
       return false;
     }
     idx[wc++] = wi;

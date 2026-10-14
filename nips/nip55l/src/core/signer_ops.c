@@ -113,6 +113,9 @@ static int is_hex_64(const char *s) {
  * end-to-end unusable. */
 static char *g_cached_active_sk_hex = NULL;
 static char *g_cached_active_npub  = NULL;
+/* One just-stored management receipt, matched only by exact npub. It closes
+ * the backend's immediate read-after-write race without selecting a default. */
+static char *g_cached_stored_sk_hex = NULL, *g_cached_stored_npub = NULL;
 /* Protect the cache, not key-store I/O or cryptography. Readers take an
  * owned copy while locked; management can then evict without invalidating
  * that copy or waiting for a keyring unlock/signing job. */
@@ -150,11 +153,25 @@ static void signer_cache_set(const char *sk_hex, const char *npub){
   pthread_mutex_unlock(&signer_cache_lock);
 }
 
+static void signer_cache_stored_clear_locked(void) {
+  if (g_cached_stored_sk_hex) { secure_wipe(g_cached_stored_sk_hex, strlen(g_cached_stored_sk_hex)); free(g_cached_stored_sk_hex); }
+  free(g_cached_stored_npub); g_cached_stored_sk_hex = g_cached_stored_npub = NULL;
+}
+#if defined(NIP55L_HAVE_LIBSECRET) || defined(NIP55L_HAVE_KEYCHAIN)
+static void signer_cache_store_identity(const char *sk_hex, const char *npub) {
+  signer_cache_mutation_lock(); signer_cache_stored_clear_locked();
+  if (sk_hex && is_hex_64(sk_hex)) g_cached_stored_sk_hex = strdup(sk_hex);
+  if (npub && *npub) g_cached_stored_npub = strdup(npub);
+  pthread_mutex_unlock(&signer_cache_lock);
+}
+#endif
 static void signer_cache_evict(const char *identity){
   signer_cache_mutation_lock();
   if (!identity || !*identity ||
       (g_cached_active_npub && strcmp(identity, g_cached_active_npub) == 0))
     signer_cache_clear_locked();
+  if (!identity || !*identity || (g_cached_stored_npub && !strcmp(identity, g_cached_stored_npub)))
+    signer_cache_stored_clear_locked();
   pthread_mutex_unlock(&signer_cache_lock);
 }
 
@@ -171,6 +188,10 @@ static int signer_cache_copy(const char *selector, int public_only, char **out){
 #endif
     *out = strdup(public_only ? g_cached_active_npub : g_cached_active_sk_hex);
     found = 1;
+  }
+  if (!found && !public_only && selector && *selector && g_cached_stored_sk_hex &&
+      g_cached_stored_npub && !strcmp(selector, g_cached_stored_npub)) {
+    *out = strdup(g_cached_stored_sk_hex); found = 1;
   }
   pthread_mutex_unlock(&signer_cache_lock);
   return found;
@@ -201,13 +222,13 @@ static int env_seckey_hex(char **out_sk_hex){
 
 #ifdef NIP55L_HAVE_KEYCHAIN
 /* Inspect metadata before reading a secret: account is the key id, comment
- * covers legacy labels. A non-npub selector must identify one Keychain item. */
+ * covers legacy labels. NULL means the sole item, never the first of many. */
 static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_hex){
   CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
     &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
-  CFStringRef wanted = CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8);
-  if (!q || !service || !wanted) {
+  CFStringRef wanted = selector ? CFStringCreateWithCString(NULL, selector, kCFStringEncodingUTF8) : NULL;
+  if (!q || !service || (selector && !wanted)) {
     if (q) CFRelease(q);
     if (service) CFRelease(service);
     if (wanted) CFRelease(wanted);
@@ -225,12 +246,12 @@ static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_h
   CFRelease(service);
   if (st != errSecSuccess || !result) {
     if (result) CFRelease(result);
-    CFRelease(wanted);
+    if (wanted) CFRelease(wanted);
     return st == errSecItemNotFound ? NOSTR_SIGNER_ERROR_NOT_FOUND : NOSTR_SIGNER_ERROR_BACKEND;
   }
   if (CFGetTypeID(result) != CFArrayGetTypeID()) {
     CFRelease(result);
-    CFRelease(wanted);
+    if (wanted) CFRelease(wanted);
     return NOSTR_SIGNER_ERROR_BACKEND;
   }
   CFTypeRef persistent_ref = NULL;
@@ -242,16 +263,16 @@ static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_h
     CFDictionaryRef item = (CFDictionaryRef)value;
     CFTypeRef account = CFDictionaryGetValue(item, kSecAttrAccount);
     CFTypeRef comment = CFDictionaryGetValue(item, kSecAttrComment);
-    int account_match = account && CFGetTypeID(account) == CFStringGetTypeID() &&
+    int account_match = wanted && account && CFGetTypeID(account) == CFStringGetTypeID() &&
       CFStringCompare((CFStringRef)account, wanted, 0) == kCFCompareEqualTo;
-    int comment_match = comment && CFGetTypeID(comment) == CFStringGetTypeID() &&
+    int comment_match = wanted && comment && CFGetTypeID(comment) == CFStringGetTypeID() &&
       CFStringCompare((CFStringRef)comment, wanted, 0) == kCFCompareEqualTo;
-    if (account_match || comment_match) {
+    if (!wanted || account_match || comment_match) {
       persistent_ref = CFDictionaryGetValue(item, kSecValuePersistentRef);
       if (++matches > 1) break;
     }
   }
-  CFRelease(wanted);
+  if (wanted) CFRelease(wanted);
   if (matches != 1 || !persistent_ref || CFGetTypeID(persistent_ref) != CFDataGetTypeID()) {
     CFRelease(result);
     return matches > 1 || matches == 0 ? NOSTR_SIGNER_ERROR_NOT_FOUND : NOSTR_SIGNER_ERROR_BACKEND;
@@ -287,7 +308,7 @@ static int keychain_unique_selector_sk_hex(const char *selector, char **out_sk_h
 }
 #endif
 
-#ifdef NIP55L_HAVE_LIBSECRET
+#if defined(NIP55L_HAVE_LIBSECRET) || defined(NIP55L_HAVE_GSETTINGS)
 #include <gio/gio.h>
 /* Grotto's chosen identity (GSettings org.nostr.Grotto default-identity),
  * or NULL when unset or the schema is not installed. */
@@ -305,6 +326,10 @@ static gchar *grotto_default_identity(void){
   return npub;
 }
 
+#else
+static gchar *grotto_default_identity(void) { return NULL; }
+#endif
+#ifdef NIP55L_HAVE_LIBSECRET
 /* libsecret 0.21.8's synchronous session-open failure path g_clear_object()s
  * a non-GObject SecretSession. Use its async path on a private context, as
  * Groundhog does (nostrc-ep54q), before any synchronous secret load. */
@@ -500,16 +525,16 @@ static int resolve_seckey_secure(const char *current_user, nostr_secure_buf *out
   char *sk_hex = NULL;
   int rc = resolve_seckey_hex(current_user, &sk_hex);
   if (rc != 0 || !sk_hex) return rc ? rc : NOSTR_SIGNER_ERROR_NOT_FOUND;
-  if (!is_hex_64(sk_hex)) { memset(sk_hex, 0, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  if (!is_hex_64(sk_hex)) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
   nostr_secure_buf sb = secure_alloc(32);
-  if (!sb.ptr) { memset(sk_hex, 0, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!sb.ptr) { secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   if (!nostr_hex2bin((uint8_t*)sb.ptr, sk_hex, 32)) {
     secure_free(&sb);
-    memset(sk_hex, 0, strlen(sk_hex));
+    secure_wipe(sk_hex, strlen(sk_hex));
     free(sk_hex);
     return NOSTR_SIGNER_ERROR_INVALID_KEY;
   }
-  memset(sk_hex, 0, strlen(sk_hex));
+  secure_wipe(sk_hex, strlen(sk_hex));
   free(sk_hex);
   *out_sk = sb;
   return 0;
@@ -567,38 +592,8 @@ static int lookup_seckey_hex(const char *current_user, char **out_sk_hex){
       return rc_s;
     }
 #elif defined(NIP55L_HAVE_KEYCHAIN)
-    /* macOS Keychain: find any identity item in this user's keychain */
-    {
-      CFMutableDictionaryRef q = CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
-      if (!q) return NOSTR_SIGNER_ERROR_BACKEND;
-      CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-      CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
-      CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
-      if (service) { CFDictionarySetValue(q, kSecAttrService, service); }
-      CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
-      CFDictionarySetValue(q, kSecMatchLimit, kSecMatchLimitOne);
-      CFTypeRef result = NULL; OSStatus st = kc_copy_matching(q, &result);
-      if (service) CFRelease(service);
-      if (q) CFRelease(q);
-      if (st == errSecSuccess && result) {
-        CFDataRef d = (CFDataRef)result;
-        const UInt8 *bytes = CFDataGetBytePtr(d);
-        CFIndex blen = CFDataGetLength(d);
-        int rc_kc = NOSTR_SIGNER_ERROR_NOT_FOUND;
-        if (blen == 32 && bytes) {
-          char *hex = bin_to_hex((const uint8_t*)bytes, 32);
-          if (hex) { *out_sk_hex = hex; rc_kc = 0; }
-          else rc_kc = NOSTR_SIGNER_ERROR_BACKEND;
-        }
-        /* Wipe key material from the CF buffer before release. */
-        if (bytes && blen > 0) memset((void *)bytes, 0, (size_t)blen);
-        CFRelease(d);
-        return rc_kc;
-      }
-      if (result) CFRelease(result);
-      return st == errSecSuccess ? NOSTR_SIGNER_ERROR_BACKEND : keychain_lookup_status(st);
-    }
+    /* With no explicit legacy default, never guess between stored identities. */
+    return keychain_unique_selector_sk_hex(NULL, out_sk_hex);
 #endif
     return NOSTR_SIGNER_ERROR_NOT_FOUND;
   }
@@ -695,6 +690,8 @@ static int sk_hex_to_npub(const char *sk_hex, char **out_npub){
 static int resolve_seckey_hex(const char *current_user, char **out_sk_hex){
   if (!out_sk_hex) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   *out_sk_hex = NULL;
+  g_autofree gchar *configured = (!current_user || !*current_user) ? grotto_default_identity() : NULL;
+  if (configured) current_user = configured; /* explicit legacy default wins over cache/env/owner hints */
   if (current_user && strncmp(current_user, "nsec1", 5) == 0)
     return NOSTR_SIGNER_ERROR_INVALID_ARG;
   /* The NIP-19 decoder rejects uppercase HRPs, as D-Bus normalization does.
@@ -802,12 +799,235 @@ int nostr_nip55l_normalize_selector(const char *selector, char **out_selector, c
 #include <nostr/nip49/nip49_g.h>
 #include <nostr/nip49/nip49.h>
 #endif
+#include <nostr/crypto/bip39.h>
+extern char *nostr_nip06_private_key_from_seed(const unsigned char *seed);
+
+#ifdef NIP55L_HAVE_LIBSECRET
+static const SecretSchema mnemonic_schema = {
+  "org.nostr.Grotto.Mnemonic", SECRET_SCHEMA_NONE,
+  { {"npub", SECRET_SCHEMA_ATTRIBUTE_STRING}, {NULL, 0} }
+};
+#endif
+int nostr_nip55l_mnemonic_custody_supported(void) {
+#if defined(NIP55L_HAVE_LIBSECRET) || defined(NIP55L_HAVE_KEYCHAIN)
+  return 1;
+#else
+  return 0;
+#endif
+}
+/* op: 0 read, 1 store, 2 delete. This schema/service is deliberately distinct
+ * from both identity and bunker transport storage, including on Keychain. */
+static int mnemonic_credential(int op, const char *npub, const char *phrase, char **out) {
+  if (out) *out = NULL;
+  if (key_store_refused("Mnemonic")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+#ifdef NIP55L_HAVE_LIBSECRET
+  GError *error = NULL;
+  SecretService *service = ss_get(&error);
+  if (!service) { g_clear_error(&error); return NOSTR_SIGNER_ERROR_BACKEND; }
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)npub);
+  int rc;
+  if (op == 1) {
+    SecretValue *value = secret_value_new(phrase, -1, "text/plain");
+    gboolean ok = secret_service_store_sync(service, &mnemonic_schema, attrs, SECRET_COLLECTION_DEFAULT,
+        "Grotto recovery phrase", value, NULL, &error);
+    secret_value_unref(value); rc = ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+  } else if (op == 2) {
+    secret_service_clear_sync(service, &mnemonic_schema, attrs, NULL, &error);
+    rc = error ? NOSTR_SIGNER_ERROR_BACKEND : 0;
+  } else {
+    SecretValue *value = secret_service_lookup_sync(service, &mnemonic_schema, attrs, NULL, &error);
+    const gchar *text = value ? secret_value_get_text(value) : NULL;
+    rc = error ? NOSTR_SIGNER_ERROR_BACKEND : text ? 0 : value ? NOSTR_SIGNER_ERROR_CRYPTO_FAILED : NOSTR_SIGNER_ERROR_NOT_FOUND;
+    if (!rc && out) *out = strdup(text);
+    if (value) secret_value_unref(value);
+  }
+  g_hash_table_unref(attrs); g_object_unref(service); g_clear_error(&error);
+  return rc;
+#elif defined(NIP55L_HAVE_KEYCHAIN)
+  CFMutableDictionaryRef q = CFDictionaryCreateMutable(NULL, 0,
+      &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+  CFStringRef account = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
+  CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
+  CFDictionarySetValue(q, kSecAttrService, CFSTR("org.nostr.Grotto.Mnemonic"));
+  CFDictionarySetValue(q, kSecAttrAccount, account);
+  CFDictionarySetValue(q, kSecAttrSynchronizable, kCFBooleanFalse);
+  OSStatus st;
+  if (op == 1) {
+    CFMutableDataRef bytes = CFDataCreateMutable(NULL, strlen(phrase));
+    CFDataAppendBytes(bytes, (const UInt8 *)phrase, strlen(phrase));
+    CFMutableDictionaryRef attrs = CFDictionaryCreateMutable(NULL, 0,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFDictionarySetValue(attrs, kSecValueData, bytes);
+    st = SecItemUpdate(q, attrs);
+    if (st == errSecItemNotFound) { CFDictionarySetValue(q, kSecValueData, bytes); st = SecItemAdd(q, NULL); }
+    CFRelease(attrs); secure_wipe(CFDataGetMutableBytePtr(bytes), CFDataGetLength(bytes)); CFRelease(bytes);
+  } else if (op == 2) st = SecItemDelete(q);
+  else {
+    CFDictionarySetValue(q, kSecReturnData, kCFBooleanTrue);
+    CFTypeRef value = NULL;
+    st = kc_copy_matching(q, &value);
+    if (st == errSecSuccess && value && CFGetTypeID(value) == CFDataGetTypeID() && out) {
+      CFIndex len = CFDataGetLength(value);
+      *out = calloc((size_t)len + 1, 1);
+      if (*out) memcpy(*out, CFDataGetBytePtr(value), len);
+    }
+    if (value) CFRelease(value);
+  }
+  CFRelease(account); CFRelease(q);
+  if (op == 2 && st == errSecItemNotFound) return 0;
+  return keychain_lookup_status(st);
+#else
+  (void)op; (void)npub; (void)phrase;
+  return NOSTR_SIGNER_ERROR_NOT_SUPPORTED;
+#endif
+}
+
+static int store_key_full(const char *key, const char *identity, const char *label, gboolean activate);
+int nostr_nip55l_store_key_with_mnemonic(const char *key, const char *label,
+                                       const char *mnemonic, char **out_npub) {
+  if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npub = NULL;
+  if (!key || !mnemonic || strlen(mnemonic) > 512 || !nostr_bip39_validate(mnemonic) ||
+      (label && (strlen(label) > 160 || !g_utf8_validate(label, -1, NULL))))
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  unsigned char seed[64] = {0}, raw[32] = {0};
+  char *derived = NULL, *npub = NULL;
+  int rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+  if (nostr_bip39_seed(mnemonic, "", seed)) derived = nostr_nip06_private_key_from_seed(seed);
+  secure_wipe(seed, sizeof(seed));
+  if (!derived) goto done;
+  gboolean valid = is_hex_64(key) ? nostr_hex2bin(raw, key, 32) : nostr_nip19_decode_nsec(key, raw) == 0;
+  unsigned char expected[32] = {0};
+  if (!valid || !nostr_hex2bin(expected, derived, 32) || memcmp(raw, expected, 32)) {
+    secure_wipe(expected, sizeof(expected)); goto done;
+  }
+  secure_wipe(expected, sizeof(expected));
+  rc = sk_hex_to_npub(derived, &npub);
+  if (rc) goto done;
+  /* Store recovery first. A failed key write may leave an encrypted orphan
+   * phrase, never an enumerated/signable identity. Retry is idempotent. */
+  rc = mnemonic_credential(1, npub, mnemonic, NULL);
+  if (!rc) rc = store_key_full(key, npub, label, FALSE);
+  if (!rc) { *out_npub = npub; npub = NULL; }
+done:
+  secure_wipe(raw, sizeof(raw));
+  if (derived) { secure_wipe(derived, strlen(derived)); free(derived); }
+  free(npub); return rc;
+}
+
+int nostr_nip55l_import_identity(const char *format, const char *input,
+    const char *passphrase, const char *label, char **out_npub) {
+  if (!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  *out_npub = NULL;
+  if (!format || !input || strlen(input) > 4096 ||
+      (passphrase && (strlen(passphrase) > 1024 || !g_utf8_validate(passphrase, -1, NULL))) ||
+      (label && (strlen(label) > 160 || !g_utf8_validate(label, -1, NULL))))
+    return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  char *hex = NULL, *npub = NULL;
+  unsigned char raw[32] = {0}, seed[64] = {0};
+  int rc = NOSTR_SIGNER_ERROR_INVALID_KEY;
+  if (!strcmp(format, "key")) {
+    if (is_hex_64(input)) { if (!nostr_hex2bin(raw, input, 32)) goto done; }
+    else if (nostr_nip19_decode_nsec(input, raw)) goto done;
+    hex = bin_to_hex(raw, 32);
+  } else if (!strcmp(format, "mnemonic")) {
+    if (!nostr_bip39_validate(input) || !nostr_bip39_seed(input, passphrase ? passphrase : "", seed)) goto done;
+    hex = nostr_nip06_private_key_from_seed(seed);
+  } else if (!strcmp(format, "ncryptsec")) {
+#ifdef NIP55L_HAVE_NIP49_EXPORT
+    if (!passphrase || !*passphrase || !nostr_nip49_decrypt_g(input, passphrase, raw, NULL, NULL, NULL)) goto done;
+    hex = bin_to_hex(raw, 32);
+#else
+    rc = NOSTR_SIGNER_ERROR_NOT_SUPPORTED; goto done;
+#endif
+  } else { rc = NOSTR_SIGNER_ERROR_INVALID_ARG; goto done; }
+  if (!hex) { rc = NOSTR_SIGNER_ERROR_BACKEND; goto done; }
+  rc = sk_hex_to_npub(hex, &npub);
+  if (!rc) rc = store_key_full(hex, npub, label, FALSE);
+  if (!rc) { *out_npub = npub; npub = NULL; }
+done:
+  secure_wipe(raw, sizeof(raw)); secure_wipe(seed, sizeof(seed));
+  if (hex) { secure_wipe(hex, strlen(hex)); free(hex); }
+  free(npub); return rc;
+}
+
+int nostr_nip55l_identity_self_test(const char *identity) {
+  char *signed_json = NULL, *peer_sk = NULL, *peer_pk = NULL, *cipher = NULL, *plain = NULL;
+  char *account_pk = NULL;
+  unsigned char random[32] = {0}, peer_raw[32] = {0}, account_raw[32] = {0};
+  char *challenge = NULL;
+  NostrEvent *ev = NULL;
+  nostr_secure_buf key = {0};
+  int rc = resolve_seckey_secure(identity, &key);
+  if (rc) return rc;
+  char *key_hex = bin_to_hex(key.ptr, 32);
+  account_pk = key_hex ? nostr_key_get_public(key_hex) : NULL;
+  if (key_hex) { secure_wipe(key_hex, strlen(key_hex)); free(key_hex); }
+  secure_free(&key);
+  rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+  /* This event is never published and carries no application content. */
+  if (!account_pk || nostr_nip55l_sign_event_json("{\"kind\":20000,\"created_at\":1,\"tags\":[],\"content\":\"Grotto identity self-test (not published)\"}",
+      identity, "", &signed_json)) goto done;
+  ev = nostr_event_new();
+  if (!ev || nostr_event_deserialize(ev, signed_json) || !nostr_event_check_signature(ev) ||
+      strcmp(ev->pubkey, account_pk)) goto done;
+  peer_sk = nostr_key_generate_private();
+  peer_pk = peer_sk ? nostr_key_get_public(peer_sk) : NULL;
+  if (!peer_pk || RAND_bytes(random, sizeof(random)) != 1) goto done;
+  challenge = bin_to_hex(random, sizeof(random));
+  if (!challenge || nostr_nip55l_nip44_encrypt(challenge, peer_pk, identity, &cipher)) goto done;
+  /* Independent peer decrypts then encrypts back; do not mistake symmetric
+   * encrypt/decrypt with a substituted peer or identity for success. */
+  uint8_t *peer_plain = NULL; size_t peer_len = 0;
+  if (!nostr_hex2bin(peer_raw, peer_sk, sizeof(peer_raw)) ||
+      !nostr_hex2bin(account_raw, account_pk, sizeof(account_raw))) goto done;
+  rc = nostr_nip44_decrypt_v2(peer_raw, account_raw, cipher, &peer_plain, &peer_len);
+  gboolean matched = !rc && peer_plain && peer_len == strlen(challenge) && !memcmp(peer_plain, challenge, peer_len);
+  if (peer_plain) { secure_wipe(peer_plain, peer_len); free(peer_plain); }
+  if (!matched) { secure_wipe(peer_raw, sizeof(peer_raw)); rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED; goto done; }
+  free(cipher); cipher = NULL;
+  rc = nostr_nip44_encrypt_v2(peer_raw, account_raw, (const uint8_t *)challenge, strlen(challenge), &cipher);
+  secure_wipe(peer_raw, sizeof(peer_raw));
+  if (rc || nostr_nip55l_nip44_decrypt(cipher, peer_pk, identity, &plain) || !plain || strcmp(challenge, plain))
+    rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+  else rc = 0;
+done:
+  if (peer_sk) { secure_wipe(peer_sk, strlen(peer_sk)); free(peer_sk); }
+  if (plain) { secure_wipe(plain, strlen(plain)); free(plain); }
+  if (challenge) { secure_wipe(challenge, strlen(challenge)); free(challenge); }
+  secure_wipe(random, sizeof(random)); secure_wipe(peer_raw, sizeof(peer_raw));
+  if (ev) nostr_event_free(ev);
+  free(signed_json); free(peer_pk); free(account_pk); free(cipher);
+  return rc;
+}
+
 int nostr_nip55l_export_identity(const char *identity, const char *format,
                                 const char *passphrase, char **out_backup) {
   if (!out_backup) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   *out_backup = NULL;
   if (!identity || !*identity || !format || strlen(identity) > 4096)
     return NOSTR_SIGNER_ERROR_INVALID_ARG;
+  if (!strcmp(format, "mnemonic")) {
+    char *npub = NULL;
+    int rc = nostr_nip55l_resolve_npub(identity, &npub);
+    if (!rc) rc = mnemonic_credential(0, npub, NULL, out_backup);
+    if (!rc) {
+      unsigned char seed[64] = {0}; char *derived = NULL, *derived_npub = NULL;
+      if (!*out_backup || strlen(*out_backup) > 512 || !nostr_bip39_validate(*out_backup) ||
+          !nostr_bip39_seed(*out_backup, "", seed)) rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+      else {
+        derived = nostr_nip06_private_key_from_seed(seed);
+        if (!derived || sk_hex_to_npub(derived, &derived_npub) || !derived_npub || strcmp(npub, derived_npub))
+          rc = NOSTR_SIGNER_ERROR_CRYPTO_FAILED;
+      }
+      secure_wipe(seed, sizeof(seed));
+      if (derived) { secure_wipe(derived, strlen(derived)); free(derived); }
+      free(derived_npub);
+      if (rc && *out_backup) { secure_wipe(*out_backup, strlen(*out_backup)); free(*out_backup); *out_backup = NULL; }
+    }
+    free(npub); return rc;
+  }
   int raw = strcmp(format, "nsec") == 0;
   if (!raw && strcmp(format, "ncryptsec")) return NOSTR_SIGNER_ERROR_NOT_SUPPORTED;
   if (!raw) {
@@ -837,12 +1057,8 @@ int nostr_nip55l_export_identity(const char *identity, const char *format,
 int nostr_nip55l_get_public_key(char **out_npub){
   if(!out_npub) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   *out_npub=NULL;
-  /* Fast path: return the cached active npub if StoreKey populated it.
-   * Bypasses libsecret entirely and closes the smoke-test race that
-   * saw GetPublicKey report NoKeyConfigured after a successful
-   * StoreKey (nostrc-7g9d). */
-  if (signer_cache_copy(NULL, 1, out_npub))
-    return *out_npub ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
+  /* Resolve the explicit legacy default first. The private-key resolver
+   * still uses an owned cache copy when the pinned identity matches. */
   return nostr_nip55l_resolve_npub(NULL, out_npub);
 }
 
@@ -1422,7 +1638,10 @@ int nostr_nip55l_bunker_transport_store(const unsigned char key[32]) {
   int rc = transport_credential(TRUE, copy); secure_wipe(copy, sizeof(copy)); return rc;
 }
 
-int nostr_nip55l_store_key(const char *key, const char *identity){
+int nostr_nip55l_store_key(const char *key, const char *identity) {
+  return store_key_full(key, identity, NULL, TRUE);
+}
+static int store_key_full(const char *key, const char *identity, const char *label_text, gboolean activate) {
   if (!key) return NOSTR_SIGNER_ERROR_INVALID_ARG;
   if (key_store_refused("StoreKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
 #ifdef NIP55L_HAVE_LIBSECRET
@@ -1439,9 +1658,9 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   }
   if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   char *pk_hex = nostr_key_get_public(sk_hex);
-  if (!pk_hex) { if (sk_hex) { memset(sk_hex,0,strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
-  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); if (sk_hex) { memset(sk_hex,0,strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  if (!pk_hex) { if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); } free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   free(pk_hex);
   /* Choose key_id: prefer provided identity, else derived npub */
   const char *key_id_attr = sel_in ? sel_in : npub;
@@ -1451,13 +1670,13 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
     .key_id = key_id_attr,
     .npub = npub,
     /* A caller-chosen selector that is not the npub doubles as the label. */
-    .label = (sel_in && strcmp(sel_in, npub) != 0) ? sel_in : NULL,
-    .owner_uid = uid_buf,
+    .label = label_text && *label_text ? label_text : (sel_in && strcmp(sel_in, npub) != 0) ? sel_in : NULL,
+    .owner_uid = activate ? uid_buf : NULL,
     .origin = GNOSTR_SECRET_ORIGIN_SOFTWARE,
   };
   gboolean ok = gnostr_secret_store_save(&ident, sk_hex, &gerr);
   if (gerr) {
-    g_warning("nip55l: StoreKey: secret service store failed: %s", gerr->message);
+    g_warning("nip55l: StoreKey: secret service store failed");
     g_error_free(gerr);
   }
   /* Publish the just-stored key to the in-process cache so the next
@@ -1465,8 +1684,10 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
    * key half of nostrc-7g9d — without it, resolve_seckey_hex(NULL, ...)
    * would fall back to a libsecret search that intermittently returned
    * NOT_FOUND on the aarch64 lab. */
-  if (ok) signer_cache_set(sk_hex, npub);
-  if (sk_hex) { memset(sk_hex, 0, strlen(sk_hex)); }
+  if (ok) {
+    if (activate) signer_cache_set(sk_hex, npub); else signer_cache_store_identity(sk_hex, npub);
+  }
+  if (sk_hex) { secure_wipe(sk_hex, strlen(sk_hex)); }
   free(sk_hex);
   free(npub);
   return ok ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
@@ -1485,7 +1706,7 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (!sk_hex) return NOSTR_SIGNER_ERROR_BACKEND;
   char *pk_hex = nostr_key_get_public(sk_hex);
   if (!pk_hex) { free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
-  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
+  uint8_t pk[32]; if (!nostr_hex2bin(pk, pk_hex, sizeof pk)) { free(pk_hex); secure_wipe(sk_hex, strlen(sk_hex)); free(sk_hex); return NOSTR_SIGNER_ERROR_INVALID_KEY; }
   char *npub = NULL; if (nostr_nip19_encode_npub(pk, &npub)!=0 || !npub) { free(pk_hex); free(sk_hex); return NOSTR_SIGNER_ERROR_BACKEND; }
   free(pk_hex);
   const char *key_id_attr = sel_in ? sel_in : npub;
@@ -1500,7 +1721,7 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   if (!query) { free(sk_hex); free(npub); return NOSTR_SIGNER_ERROR_BACKEND; }
   CFStringRef service = CFStringCreateWithCString(NULL, KC_SIGNER_SERVICE, kCFStringEncodingUTF8);
   CFStringRef account = CFStringCreateWithCString(NULL, key_id_attr, kCFStringEncodingUTF8);
-  CFStringRef label = CFStringCreateWithCString(NULL, "Gnostr Identity", kCFStringEncodingUTF8);
+  CFStringRef label = CFStringCreateWithCString(NULL, label_text && *label_text ? label_text : "Gnostr Identity", kCFStringEncodingUTF8);
   CFStringRef comment = CFStringCreateWithCString(NULL, npub, kCFStringEncodingUTF8);
   CFDataRef secretData = CFDataCreate(NULL, skb, (CFIndex)sizeof(skb));
   secure_wipe(skb, sizeof skb);
@@ -1528,16 +1749,34 @@ int nostr_nip55l_store_key(const char *key, const char *identity){
   }
   if (query) CFRelease(query);
   /* Populate in-process cache; see the libsecret branch for rationale. */
-  if (st == errSecSuccess) signer_cache_set(sk_hex, npub);
+  if (st == errSecSuccess) {
+    if (activate) signer_cache_set(sk_hex, npub); else signer_cache_store_identity(sk_hex, npub);
+  }
   free(sk_hex);
   free(npub);
   return (st == errSecSuccess) ? 0 : NOSTR_SIGNER_ERROR_BACKEND;
 #else
-  (void)identity; return NOSTR_SIGNER_ERROR_NOT_FOUND;
+  (void)identity; (void)label_text; (void)activate; return NOSTR_SIGNER_ERROR_NOT_FOUND;
 #endif
 }
 
-int nostr_nip55l_clear_key(const char *identity){
+static int clear_identity_key(const char *identity);
+int nostr_nip55l_clear_key(const char *identity) {
+  if (key_store_refused("ClearKey")) return NOSTR_SIGNER_ERROR_PERMISSION_DENIED;
+#if defined(NIP55L_HAVE_LIBSECRET) || defined(NIP55L_HAVE_KEYCHAIN)
+  char *npub = NULL;
+  nostr_nip55l_resolve_npub(identity, &npub);
+  /* If recovery-role deletion fails, preserve the signing key. Never report
+   * complete removal while a full recovery credential remains in custody. */
+  if (npub) {
+    int phrase_rc = mnemonic_credential(2, npub, NULL, NULL);
+    if (phrase_rc && phrase_rc != NOSTR_SIGNER_ERROR_NOT_SUPPORTED) { free(npub); return phrase_rc; }
+  }
+  free(npub);
+#endif
+  return clear_identity_key(identity);
+}
+static int clear_identity_key(const char *identity){
   /* Best-effort: even if libsecret has nothing to remove, drop the
    * in-process cache so the daemon stops answering with the just-cleared
    * key. Cache eviction is coupled to the caller's intent (“no more of
@@ -1547,12 +1786,15 @@ int nostr_nip55l_clear_key(const char *identity){
 #ifdef NIP55L_HAVE_LIBSECRET
   const char *sel = (identity && *identity) ? identity : "";
   GError *gerr = NULL;
-  gboolean ok1 = secret_password_clear_sync(&gnostr_secret_schema, NULL, &gerr,
-                                            "key_id", sel, NULL);
-  if (gerr) { g_error_free(gerr); gerr = NULL; }
-  gboolean ok2 = secret_password_clear_sync(&gnostr_secret_schema, NULL, &gerr,
-                                            "npub", sel, NULL);
-  if (gerr) { g_error_free(gerr); }
+  SecretService *service = ss_get(&gerr);
+  if (!service) { g_clear_error(&gerr); return NOSTR_SIGNER_ERROR_NOT_FOUND; }
+  GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal);
+  g_hash_table_insert(attrs, (gpointer)"key_id", (gpointer)sel);
+  gboolean ok1 = secret_service_clear_sync(service, &gnostr_secret_schema, attrs, NULL, &gerr);
+  g_clear_error(&gerr);
+  g_hash_table_remove_all(attrs); g_hash_table_insert(attrs, (gpointer)"npub", (gpointer)sel);
+  gboolean ok2 = secret_service_clear_sync(service, &gnostr_secret_schema, attrs, NULL, &gerr);
+  g_clear_error(&gerr); g_hash_table_unref(attrs); g_object_unref(service);
   return (ok1 || ok2) ? 0 : NOSTR_SIGNER_ERROR_NOT_FOUND;
 #elif defined(NIP55L_HAVE_KEYCHAIN)
   /* Delete by selector if provided; otherwise delete all for service (best-effort single delete) */

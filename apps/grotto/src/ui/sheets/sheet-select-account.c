@@ -1,5 +1,6 @@
 /* sheet-select-account.c - Account selection and management dialog implementation */
 #include "sheet-select-account.h"
+#include "../onboarding-assistant.h"
 #include "sheet-import-key.h"
 #include "../app-resources.h"
 #include "../../accounts_store.h"
@@ -83,7 +84,7 @@ static void on_row_activated(GtkListBox *box, GtkListBoxRow *row, gpointer user_
   if (!data) return;
 
   /* Set as active */
-  accounts_store_set_active(self->accounts, data->npub, NULL);
+  accounts_store_set_selected(self->accounts, data->npub);
   accounts_store_save(self->accounts, NULL);
 
   /* Invoke callback */
@@ -199,7 +200,7 @@ static void populate_list(SheetSelectAccount *self) {
 
   /* Get active account */
   gchar *active_id = NULL;
-  accounts_store_get_active(self->accounts, &active_id, NULL);
+  active_id = g_strdup(accounts_store_get_selected(self->accounts));
 
   /* Load accounts */
   GPtrArray *accounts = accounts_store_list(self->accounts);
@@ -230,42 +231,9 @@ static void on_add_new(GtkButton *btn, gpointer user_data) {
   (void)btn;
   SheetSelectAccount *self = user_data;
 
-  /* Generate new key */
-  gchar *npub = NULL;
-  if (accounts_store_generate_key(self->accounts, NULL, &npub, NULL)) {
-    accounts_store_save(self->accounts, NULL);
-    populate_list(self);
-
-    /* Select the new account */
-    if (self->on_select) {
-      self->on_select(npub, self->on_select_ud);
-    }
-  }
-  g_free(npub);
-}
-
-/* Callback when import succeeds */
-static void on_import_success(const char *npub, const char *label, gpointer user_data) {
-  SheetSelectAccount *self = (SheetSelectAccount*)user_data;
-  if (!self) return;
-
-  /* Add to accounts store if not already present */
-  if (npub && *npub) {
-    if (!accounts_store_exists(self->accounts, npub)) {
-      accounts_store_add(self->accounts, npub, label, NULL);
-    } else if (label && *label) {
-      accounts_store_set_label(self->accounts, npub, label, NULL);
-    }
-    accounts_store_set_active(self->accounts, npub, NULL);
-    accounts_store_save(self->accounts, NULL);
-
-    /* Refresh the list */
-    populate_list(self);
-
-    /* Notify callback */
-    if (self->on_select) {
-      self->on_select(npub, self->on_select_ud);
-    }
+  GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(self));
+  if (GTK_IS_WINDOW(root)) {
+    onboarding_assistant_present(GTK_WINDOW(root)); adw_dialog_close(ADW_DIALOG(self));
   }
 }
 
@@ -274,13 +242,7 @@ static void on_import(GtkButton *btn, gpointer user_data) {
   SheetSelectAccount *self = user_data;
   if (!self) return;
 
-  /* Open import key dialog */
-  SheetImportKey *import_dlg = sheet_import_key_new();
-  sheet_import_key_set_on_success(import_dlg, on_import_success, self);
-
-  GtkWidget *parent = GTK_WIDGET(self);
-  GtkRoot *root = gtk_widget_get_root(parent);
-  adw_dialog_present(ADW_DIALOG(import_dlg), root ? GTK_WIDGET(root) : parent);
+  on_add_new(btn, self);
 }
 
 /* Dialog response callback for watch-only import */
@@ -471,7 +433,6 @@ static void on_import_pubkey_submit(GtkButton *btn, gpointer user_data) {
 
 static void sheet_select_account_finalize(GObject *obj) {
   SheetSelectAccount *self = SHEET_SELECT_ACCOUNT(obj);
-  accounts_store_free(self->accounts);
   g_free(self->selected_npub);
   G_OBJECT_CLASS(sheet_select_account_parent_class)->finalize(obj);
 }
@@ -494,9 +455,7 @@ static void sheet_select_account_class_init(SheetSelectAccountClass *klass) {
 static void sheet_select_account_init(SheetSelectAccount *self) {
   gtk_widget_init_template(GTK_WIDGET(self));
 
-  self->accounts = accounts_store_new();
-  accounts_store_load(self->accounts, NULL);
-  accounts_store_sync_with_secrets(self->accounts);
+  self->accounts = accounts_store_get_default();
 
   g_signal_connect(self->btn_cancel, "clicked", G_CALLBACK(on_cancel), self);
   g_signal_connect(self->btn_add_new, "clicked", G_CALLBACK(on_add_new), self);

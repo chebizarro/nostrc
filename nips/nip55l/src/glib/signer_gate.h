@@ -20,6 +20,7 @@ typedef enum {
   SIGNER_GATE_NIP44_ENCRYPT_B64,
   SIGNER_GATE_NIP44_DECRYPT_B64,
   SIGNER_GATE_DECRYPT_ZAP,
+  SIGNER_GATE_SELF_TEST, /* approver-only MANAGEMENT, always one-time */
   SIGNER_GATE_OP_COUNT
 } SignerGateOp;
 
@@ -38,6 +39,9 @@ typedef struct {
   gboolean existing_pairing; /* CONNECT only: authenticated NIP-46 adapter verified persisted admission */
   gboolean no_approval_ui; /* fail promptly if scoped policy requires review */
   gint64 deadline; /* monotonic microseconds; 0 = service's 300 s bound */
+  /* MANAGEMENT self-test only, on the owner context; borrowed until reply. */
+  void (*management_testing)(gpointer data);
+  gpointer management_data;
 } SignerGateContext;
 
 typedef struct _SignerGateHandle SignerGateHandle;

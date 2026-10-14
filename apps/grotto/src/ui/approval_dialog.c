@@ -7,7 +7,7 @@ struct _GnostrApprovalDialog {
   GtkImage *header_icon;
   GtkLabel *header_title, *subtitle_label, *label_from, *label_event_kind;
   GtkLabel *label_identity, *label_reason, *label_expiry, *label_scope, *label_details,
-      *label_timestamp;
+      *label_timestamp, *label_trust_explanation;
   GtkLabel *content_preview, *label_position;
   GtkFrame *content_frame;
   GtkExpander *details_expander, *batch_expander;
@@ -265,7 +265,7 @@ static void gnostr_approval_dialog_class_init(GnostrApprovalDialogClass *klass) 
   BIND(label_expiry);
   BIND(label_scope);
   BIND(label_details);
-  BIND(label_timestamp);
+  BIND(label_timestamp); BIND(label_trust_explanation);
   BIND(batch_expander);
   BIND(batch_box);
   BIND(btn_approve_selected);
@@ -381,7 +381,7 @@ void gnostr_approval_dialog_set_request(GnostrApprovalDialog *self, const char *
                                         const char *app, const char *claimed, gboolean verified,
                                         const char *preview) {
   gnostr_approval_dialog_set_app_name(self, app);
-  gtk_label_set_text(self->label_event_kind, kind ? kind : "Unknown request");
+  gtk_label_set_text(self->label_event_kind, kind && !strcmp(kind, "self_test") ? "Identity self-test" : kind ? kind : "Unknown request");
   g_autofree gchar *details =
       g_strdup_printf("%s%s%s", verified ? "Verified caller" : "Unverified app",
                       claimed && *claimed ? "\nClaimed name (unverified): " : "",
@@ -485,6 +485,11 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_approve), self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_deny), self->ready);
   gtk_widget_set_sensitive(GTK_WIDGET(self->chk_remember), rememberable);
+  gtk_widget_set_visible(GTK_WIDGET(self->chk_remember), strcmp(op, "self_test") != 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->btn_change_trust), strcmp(op, "self_test") != 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->ttl_dropdown), strcmp(op, "self_test") != 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->trust_dropdown), strcmp(op, "self_test") != 0);
+  gtk_widget_set_visible(GTK_WIDGET(self->label_trust_explanation), strcmp(op, "self_test") != 0);
   gtk_check_button_set_active(self->chk_remember, FALSE);
   const char *reason = field(info, "reason");
   g_autofree gchar *reason_text = bounded(reason, 160);
@@ -592,6 +597,11 @@ void gnostr_approval_dialog_set_info(GnostrApprovalDialog *self, GVariant *info,
     if (!strcmp(op, "nip44_conversation_key"))
       impact =
           "Warning: this conversation key can open every NIP-44 message exchanged with this peer.";
+  } else if (!strcmp(op, "self_test")) {
+    preview = g_strdup("1. Sign an unpublished event and verify its ID, signature and public key.\n"
+                       "2. NIP-44 encrypt a random challenge to an ephemeral peer.\n"
+                       "3. NIP-44 decrypt the peer's reply and compare the challenge.");
+    impact = "One-time management self-test. Nothing is published and no client permissions are saved.";
   } else if (!strcmp(op, "connect")) {
     preview = g_strdup_printf("Client transport-key fingerprint: %s\nClaimed name (unverified): "
                               "%s\nRequested permissions (hints only): %s\nRelays: %s",

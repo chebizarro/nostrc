@@ -36,7 +36,7 @@ target_include_directories(nostr_nip55l_core PUBLIC
 find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_library(SECP256K1_LIB NAMES secp256k1 REQUIRED)
-target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
+target_link_libraries(nostr_nip55l_core PUBLIC nostr nip04 nip06 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB})
 target_link_libraries(nostr_nip55l_core PRIVATE Threads::Threads)
 # Custody-owned NIP-49 management export (G04), with the adapter's once-only
 # Unicode NFKC normalization. Core-only builds still support explicit raw nsec.
@@ -113,6 +113,9 @@ if (PkgConfig_FOUND AND ENABLE_NIP55L)
 endif()
 
 if (GIO_FOUND AND ENABLE_NIP55L)
+  # The explicit legacy default is a daemon GSettings contract on every backend.
+  target_link_libraries(nostr_nip55l_core PRIVATE PkgConfig::GIO)
+  target_compile_definitions(nostr_nip55l_core PRIVATE NIP55L_HAVE_GSETTINGS=1)
   # Generate DBus glue from XML using gdbus-codegen
   find_program(GDBUS_CODEGEN gdbus-codegen)
   if (NOT GDBUS_CODEGEN)
@@ -317,7 +320,7 @@ if (BUILD_TESTING)
     target_compile_definitions(test_nip55l_keychain_migration PRIVATE
       NIP55L_HAVE_KEYCHAIN NIP55L_KEYCHAIN_TEST_HOOKS)
     target_link_libraries(test_nip55l_keychain_migration PRIVATE
-      nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
+      nostr nip04 nip06 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
       ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
     target_compile_options(test_nip55l_keychain_migration PRIVATE -Wall -Wextra -Werror)
     add_test(NAME nip55l_keychain_migration COMMAND test_nip55l_keychain_migration)
@@ -371,7 +374,7 @@ if (BUILD_TESTING)
     target_include_directories(test_nip55l_cache_concurrency PRIVATE
       $<TARGET_PROPERTY:nostr_nip55l_core,INCLUDE_DIRECTORIES>)
     target_link_libraries(test_nip55l_cache_concurrency PRIVATE
-      nostr nip04 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
+      nostr nip04 nip06 nip19 nostr_nip44_core OpenSSL::Crypto ${SECP256K1_LIB}
       PkgConfig::GIO Threads::Threads)
     target_compile_options(test_nip55l_cache_concurrency PRIVATE -Wall -Wextra -Werror)
     add_test(NAME nip55l_cache_concurrency COMMAND test_nip55l_cache_concurrency)

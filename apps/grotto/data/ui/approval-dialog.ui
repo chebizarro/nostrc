@@ -223,7 +223,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                           </object>
                         </child>
                         <child>
-                          <object class="GtkLabel">
+                          <object class="GtkLabel" id="label_trust_explanation">
                             <property name="label" translatable="yes">Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions.</property>
                             <property name="wrap">true</property>
                             <property name="xalign">0</property>

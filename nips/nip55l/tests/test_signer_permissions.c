@@ -375,12 +375,22 @@ static void test_tiers(void) {
   remember(p, IDENTITY, "get_public_key", -1, FALSE, 0);
   g_assert_cmpint(signer_permissions_evaluate(p, PRINCIPAL, IDENTITY, "get_public_key", -1, TRUE, NULL), ==, SIGNER_PERMISSION_DENY);
 }
+static void test_management_self_test_has_no_scope(void) {
+  g_autoptr(SignerPermissions) p = start(); g_autoptr(GError) error = NULL;
+  g_assert_false(signer_permissions_remember(p, PRINCIPAL, IDENTITY, "self_test", -1, TRUE, 600, &error));
+  g_assert_nonnull(error);
+  /* Unknown-operation denials remain a fail-closed evaluator feature; the
+   * MANAGEMENT gate itself ignores remember for both approval and denial. */
+  g_autoptr(GVariant) rows = signer_permissions_list(p, PRINCIPAL, NULL);
+  g_assert_nonnull(rows); g_assert_cmpuint(g_variant_n_children(rows), ==, 0);
+}
 int main(int argc, char **argv) {
   g_test_init(&argc, &argv, NULL);
   g_setenv("NOSTRC_TEST_ISOLATION", "1", TRUE);
   g_autofree gchar *config = g_dir_make_tmp("signer-permissions-XXXXXX", NULL);
   g_assert_nonnull(config); g_setenv("XDG_CONFIG_HOME", config, TRUE);
   g_autofree gchar *dir = g_build_filename(config, "gnostr", NULL); g_assert_cmpint(g_mkdir(dir, 0700), ==, 0);
+  g_test_add_func("/permissions/management-self-test-no-scope", test_management_self_test_has_no_scope);
   g_test_add_func("/permissions/exact-scope-restart", test_exact_scope_and_restart);
   g_test_add_func("/permissions/expiry-deny-conflict", test_expiry_deny_and_conflict);
   g_test_add_func("/permissions/migration-legacy-revoke", test_migration_and_legacy_revoke);

@@ -28,6 +28,11 @@ int main(int argc, char **argv) {
   denied(bus, argv[1], "SetClientTrust", g_variant_new("(ss)", "exe:/client", "full"));
   denied(bus, argv[1], "SetDefaultIdentityForLegacy", g_variant_new("(s)", ""));
   denied(bus, argv[1], "ExportIdentity", g_variant_new("(sss)", "", "ncryptsec", "passphrase"));
+  denied(bus, argv[1], "StoreKeyWithMnemonic", g_variant_new("(sss)", "", "", ""));
+  denied(bus, argv[1], "ImportIdentity", g_variant_new("(ssss)", "key", "", "", ""));
+  denied(bus, argv[1], "SelfTestIdentity", g_variant_new("(s)", ""));
+  denied(bus, argv[1], "CancelIdentitySelfTest", g_variant_new("(s)", ""));
+  denied(bus, argv[1], "GetIdentityMigration", g_variant_new("(s)", ""));
   denied(bus, argv[1], "ExportRawIdentity", g_variant_new("(s)", "")); denied(bus, argv[1], "RotateIdentity", g_variant_new("(s)", ""));
   denied(bus, argv[1], "ConfigureBunker", g_variant_new("(@a{sv})", g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0)));
   denied(bus, argv[1], "CreatePairing", g_variant_new("(ss)", "", ""));

@@ -45,6 +45,9 @@ guint signer_approval_service_pending_count(SignerApprovalService *service);
 void signer_approval_service_prune_connections(SignerApprovalService *service,
     gboolean (*alive)(const gchar *connection, gpointer data), gpointer data);
 void signer_approval_service_connection_closed(SignerApprovalService *service, const gchar *key);
+/* Cancels only the approver's self-test continuation for an exact identity. */
+void signer_approval_service_cancel_self_test(SignerApprovalService *service,
+    const gchar *principal, const gchar *identity);
 void signer_approval_service_cancel_principal(SignerApprovalService *service, const gchar *principal);
 void signer_approval_service_fail_request(SignerApprovalService *service, const gchar *id,
                                          const gchar *error, const gchar *message);
@@ -62,6 +65,8 @@ SignerPermissions *signer_approval_service_permissions(SignerApprovalService *se
 void signer_approval_service_shutdown(SignerApprovalService *service);
 /* Borrowed exported instance, NULL before export/after unexport. */
 SignerApprovalService *signer_get_approval_service(void);
+/* Owner-context coarse inventory signal after a successful custody mutation. */
+void signer_notify_identities_changed(void);
 #ifdef NIP55L_TEST_TRUST_ENV
 /* Test-only external-I/O seam: blocks a worker after backend return, before
  * owner delivery. Never built into distribution builds (BUILD_TESTING=OFF). */

@@ -1,16 +1,13 @@
 /* Settings page controller: wires buttons to open sheets */
 #include "page-settings.h"
+#include "page-identity-detail.h"
+#include "onboarding-assistant.h"
 #include "app-resources.h"
 #include "sheets/sheet-select-account.h"
-#include "sheets/sheet-import-key.h"
-#include "sheets/sheet-account-backup.h"
-#include "sheets/sheet-backup.h"
 #include "sheets/sheet-orbot-setup.h"
 #include "sheets/sheet-user-list.h"
 #include "sheets/sheet-relay-config.h"
 #include "sheets/sheet-profile-editor.h"
-#include "sheets/sheet-key-rotation.h"
-#include "sheets/sheet-social-recovery.h"
 #include "../secret_store.h"
 #include "../profile_store.h"
 #include "../relay_store.h"
@@ -27,12 +24,6 @@
 
 /* Forward declarations for relay publish helpers */
 static void publish_signed_event_to_relays(const gchar *signed_event_json, const gchar *event_type);
-
-/* Provided by settings_page.c for cross-component updates */
-extern void gnostr_settings_apply_import_success(const char *npub, const char *label);
-
-/* Sheet import success callback (file-scope) */
-static void on_sheet_import_success(const char *npub, const char *label, gpointer ud){ (void)ud; gnostr_settings_apply_import_success(npub, label); }
 
 struct _PageSettings {
   AdwPreferencesPage parent_instance;
@@ -194,31 +185,12 @@ static void on_select_account(GtkButton *b, gpointer user_data){
 }
 static void on_add_account(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
-  SheetImportKey *dlg = sheet_import_key_new();
-  /* When import succeeds, Settings applies account changes and refreshes */
-  sheet_import_key_set_on_success(dlg, on_sheet_import_success, NULL);
-  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+  onboarding_assistant_present(get_parent_window(GTK_WIDGET(self)));
 }
 static void on_backup_keys(GtkButton *b, gpointer user_data){
   (void)b; PageSettings *self = user_data; if (!self) return;
 
-  /* Get the currently active npub */
-  gchar *npub = NULL;
-  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
-
-  if (rc != SECRET_STORE_OK || !npub || !*npub) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
-    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
-    g_object_unref(ad);
-    return;
-  }
-
-  /* Create and present the comprehensive backup/recovery dialog */
-  SheetBackup *dlg = sheet_backup_new();
-  sheet_backup_set_account(dlg, npub);
-  g_free(npub);
-
-  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
+  page_identity_detail_present(GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
 }
 
 /* Profile editor save callback - called when user saves profile locally */
@@ -391,65 +363,6 @@ static void on_edit_profile(GtkButton *b, gpointer user_data){
   }
 
   profile_store_free(ps);
-  g_free(npub);
-
-  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
-}
-
-/* Key rotation completion callback */
-static void on_key_rotation_complete(const gchar *old_npub, const gchar *new_npub, gpointer ud) {
-  (void)ud;
-  g_message("Key rotation complete: %s -> %s", old_npub, new_npub);
-  /* The accounts_store is already updated by the rotation module */
-}
-
-static void on_key_rotation(GtkButton *b, gpointer user_data){
-  (void)b; PageSettings *self = user_data; if (!self) return;
-
-  /* Get the currently active npub */
-  gchar *npub = NULL;
-  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
-
-  if (rc != SECRET_STORE_OK || !npub || !*npub) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
-    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
-    g_object_unref(ad);
-    return;
-  }
-
-  /* Create and present the key rotation dialog */
-  SheetKeyRotation *dlg = sheet_key_rotation_new();
-  sheet_key_rotation_set_account(dlg, npub);
-  sheet_key_rotation_set_on_complete(dlg, on_key_rotation_complete, NULL);
-  g_free(npub);
-
-  adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
-}
-
-/* Social recovery completion callback */
-static void on_social_recovery_complete(const gchar *npub, gpointer ud) {
-  (void)ud;
-  g_message("Social recovery action complete for %s", npub);
-}
-
-static void on_social_recovery(GtkButton *b, gpointer user_data){
-  (void)b; PageSettings *self = user_data; if (!self) return;
-
-  /* Get the currently active npub */
-  gchar *npub = NULL;
-  SecretStoreResult rc = secret_store_get_public_key(NULL, &npub);
-
-  if (rc != SECRET_STORE_OK || !npub || !*npub) {
-    GtkAlertDialog *ad = gtk_alert_dialog_new("No account selected. Please select or add an account first.");
-    gtk_alert_dialog_show(ad, get_parent_window(GTK_WIDGET(self)));
-    g_object_unref(ad);
-    return;
-  }
-
-  /* Create and present the social recovery dialog */
-  SheetSocialRecovery *dlg = sheet_social_recovery_new();
-  sheet_social_recovery_set_account(dlg, npub);
-  sheet_social_recovery_set_on_complete(dlg, on_social_recovery_complete, NULL);
   g_free(npub);
 
   adw_dialog_present(ADW_DIALOG(dlg), GTK_WIDGET(get_parent_window(GTK_WIDGET(self))));
@@ -933,9 +846,11 @@ static void page_settings_init(PageSettings *self) {
   g_signal_connect(self->btn_add_account, "clicked", G_CALLBACK(on_add_account), self);
   g_signal_connect(self->btn_select_account, "clicked", G_CALLBACK(on_select_account), self);
   g_signal_connect(self->btn_backup_keys, "clicked", G_CALLBACK(on_backup_keys), self);
-  g_signal_connect(self->btn_social_recovery, "clicked", G_CALLBACK(on_social_recovery), self);
+  /* OC-3: no custody round-trip acceptance, so no social-recovery surface. */
+  GtkWidget *recovery_row = gtk_widget_get_ancestor(GTK_WIDGET(self->btn_social_recovery), ADW_TYPE_ACTION_ROW);
+  gtk_widget_set_visible(recovery_row ? recovery_row : GTK_WIDGET(self->btn_social_recovery), FALSE);
   g_signal_connect(self->btn_edit_profile, "clicked", G_CALLBACK(on_edit_profile), self);
-  g_signal_connect(self->btn_key_rotation, "clicked", G_CALLBACK(on_key_rotation), self);
+  g_signal_connect(self->btn_key_rotation, "clicked", G_CALLBACK(on_backup_keys), self);
   g_signal_connect(self->btn_orbot_setup, "clicked", G_CALLBACK(on_orbot_setup), self);
   g_signal_connect(self->btn_relays, "clicked", G_CALLBACK(on_relays), self);
   g_signal_connect(self->btn_logs, "clicked", G_CALLBACK(on_logs), self);

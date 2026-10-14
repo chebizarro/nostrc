@@ -13,6 +13,7 @@
 #include "secure-memory.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 #ifdef __APPLE__
 #include <sys/mman.h>

@@ -532,6 +532,8 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
   add_dependencies(signer-tests test-approval-integration)
 endif()
 
+include(identity-tests.cmake)
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)
