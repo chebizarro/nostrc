@@ -5862,6 +5862,66 @@ add_group_message(GhConversationStore *store, gboolean mls, guint author, gint64
   return message;
 }
 
+static gboolean
+can_ask_group(GhConversation *conversation, gpointer data)
+{
+  g_assert_cmpint(gh_conversation_get_backend(conversation), ==, GH_CONVERSATION_BACKEND_MLS);
+  return *(gboolean *)data;
+}
+
+/* nostrc-vsrnf: history and chips remain readable in a left group, but
+ * neither the button, menu, a stale picker nor a chip can send a reaction. */
+static void
+test_left_group_reactions(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *target = add_group_message(f->store, TRUE, 2, noon_today(), "react here");
+  GhConversation *conversation = room_of(f->store, target);
+  g_autoptr(GhReactionStore) reactions = gh_reaction_store_new();
+  gh_reaction_store_set_account(reactions, hex[1], NULL, NULL, NULL);
+  g_autoptr(GhReaction) reaction = gh_reaction_new(gh_message_get_rumor_id(target),
+    "left-group-reaction", hex[2], "👍", now_seconds(), gh_message_get_room_id(target));
+  g_assert_true(gh_reaction_store_admit(reactions, reaction, NULL));
+  gh_conversation_view_set_reaction_store(f->view, reactions);
+  ReactCall call = { 0 };
+  gh_conversation_view_set_reaction_func(f->view, capture_react, &call, NULL);
+  gboolean active = TRUE;
+  gh_conversation_view_set_can_ask_func(f->view, can_ask_group, &active, NULL);
+  show(f, conversation, 640, 360);
+  GhMessageRow *row = row_for(f->view, target);
+  GtkWidget *bar = row_child(row, "reaction_bar");
+  g_assert_nonnull(bar);
+  g_assert_true(gtk_widget_is_sensitive(bar));
+  g_assert_true(shown(row_child(row, "react_button")));
+  click(row_child(row, "react_button"));
+  g_autoptr(GPtrArray) pickers = g_ptr_array_new();
+  collect(GTK_WIDGET(row), GH_TYPE_REACTION_PICKER, pickers);
+  g_assert_cmpuint(pickers->len, ==, 1);
+
+  active = FALSE;
+  gh_conversation_view_set_can_ask_func(f->view, can_ask_group, &active, NULL);
+  g_assert_false(gtk_widget_get_visible(row_child(row, "react_button")));
+  g_assert_false(gtk_widget_is_sensitive(bar));
+  g_assert_cmpuint(chip_count(bar), ==, 1);
+  g_assert_false(gtk_widget_get_visible(g_ptr_array_index(pickers, 0)));
+  g_autofree gchar *labels = menu_labels(open_menu(row));
+  g_assert_null(strstr(labels, "Reaction"));
+  close_popover(gh_message_row_get_menu(row));
+  g_signal_emit_by_name(bar, "reaction-toggled", "👍", TRUE);
+  g_signal_emit_by_name(g_ptr_array_index(pickers, 0), "emoji-picked", "❤️");
+  gtk_widget_activate_action(GTK_WIDGET(f->view), "conversation.react", "(ssb)",
+                            gh_message_get_rumor_id(target), "👍", FALSE);
+  g_assert_cmpuint(call.calls, ==, 0);
+
+  active = TRUE;
+  gh_conversation_view_set_can_ask_func(f->view, can_ask_group, &active, NULL);
+  g_assert_true(gtk_widget_get_visible(row_child(row, "react_button")));
+  g_assert_true(gtk_widget_is_sensitive(bar));
+  g_signal_emit_by_name(bar, "reaction-toggled", "👍", TRUE);
+  g_assert_cmpuint(call.calls, ==, 1);
+  g_free(call.emoji);
+}
+
 /* Opt-in evidence: GROUNDHOG_DELETION_SCREENSHOTS=<dir> saves
  * <dir>/groundhog-deletion-<name>.png with the app stylesheet. */
 static void
@@ -6054,6 +6114,7 @@ main(int argc, char **argv)
   ADD("open-timing", test_open_timing);
   ADD("recycled-scroll-directions", test_recycled_scroll_directions);
   ADD("reaction-view-binding", test_reaction_view_binding);
+  ADD("left-group-reactions", test_left_group_reactions);
 #undef ADD
   g_test_add_func("/groundhog/conversation-view/recycled-optional-subtrees", test_recycled_optional_subtrees);
   g_test_add_func("/groundhog/conversation-view/rtl-message-row", test_rtl_message_row);

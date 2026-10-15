@@ -143,15 +143,20 @@ void gh_conversation_view_set_delete_func(GhConversationView *self,
                                           GhConversationViewDeleteFunc func,
                                           gpointer user_data,
                                           GDestroyNotify destroy);
-/* Whether the conversation can take a request for everyone now (nostrc-knbkr:
- * not an encrypted group the account left or is leaving). Unset: always.
- * Asked each time a bubble's menu opens. */
+/* Whether the conversation can take a deletion request or reaction now
+ * (nostrc-knbkr, nostrc-vsrnf: not an encrypted group the account left or
+ * is leaving). Unset: always. Rechecked at action time; call
+ * actions_changed() when the callback's state changes. */
 typedef gboolean (*GhConversationViewCanAskFunc)(GhConversation *conversation,
                                                  gpointer user_data);
 void gh_conversation_view_set_can_ask_func(GhConversationView *self,
                                            GhConversationViewCanAskFunc func,
                                            gpointer user_data,
                                            GDestroyNotify destroy);
+/* Shared send permission for reactions and Delete for Everyone. Notify
+ * rooted rows when the callback's state (e.g. MLS membership) changes. */
+gboolean gh_conversation_view_can_ask(GhConversationView *self);
+void gh_conversation_view_actions_changed(GhConversationView *self);
 gboolean gh_conversation_view_can_delete_message(GhConversationView *self,
                                                  GhMessage *message,
                                                  gboolean for_everyone);

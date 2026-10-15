@@ -1505,6 +1505,75 @@ test_send_republished_after_restart(void)
 }
 
 
+typedef struct {
+  WireRelay *relay;
+  const gchar *id;
+  guint at_least;
+} OfferWait;
+
+static gboolean offered_times(gpointer data);
+
+/* The first retry after an unanswered round is due within 1.5 x RETRY_MIN_S
+ * (15 s, gh-mls-service.c). */
+#define RETRY_WAIT_S 23
+
+/* nostrc-jitfg: failed polls and votes retry their stored envelope both on
+ * backoff and after restart; only the relay's OK settles the outbox. */
+static void
+test_poll_vote_retried(gconstpointer data)
+{
+  gboolean voting = GPOINTER_TO_INT(data);
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_fake_clock = TRUE;
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *group = create_group(alice, "Retry poll", (const guint[]){ BOB }, 1);
+  join(bob, ALICE);
+  wait_live(group);
+  const gchar *labels[] = { "Coffee", "Tea" };
+  g_autoptr(GError) error = NULL;
+  if (!voting)
+    w.g.close_on_event = TRUE;
+  g_autoptr(GhMessage) poll = gh_mls_service_create_poll(
+    alice->service, group, "What to drink?", labels, G_N_ELEMENTS(labels),
+    GH_MLS_POLL_SINGLE_CHOICE, 0, &error);
+  g_assert_no_error(error);
+  g_assert_nonnull(poll);
+  g_autoptr(GhMessage) vote = NULL;
+  if (voting) {
+    StatusWait poll_sent = { alice, gh_mls_group_get_room_id(group), "What to drink?" };
+    spin_until(sent, &poll_sent, "the poll sent before voting");
+    GhMlsPoll *state = gh_mls_service_lookup_poll(alice->service,
+      gh_mls_group_get_group_id(group), gh_message_get_rumor_id(poll));
+    g_assert_nonnull(state);
+    const gchar *choices[] = { gh_mls_poll_get_option(state, 0)->id };
+    w.g.close_on_event = TRUE;
+    vote = gh_mls_service_cast_vote(alice->service, group,
+      gh_message_get_rumor_id(poll), choices, 1, &error);
+    g_assert_no_error(error);
+    g_assert_nonnull(vote);
+  }
+  GhMessage *message = voting ? vote : poll;
+  StatusWait retrying = { alice, gh_message_get_room_id(message),
+                          gh_message_get_content(message) };
+  spin_until(retrying_status, &retrying, "the poll or vote waiting for retry");
+  g_autoptr(GPtrArray) attempts = published(&w.g, 445);
+  g_autofree gchar *envelope = event_id_dup(g_ptr_array_index(attempts, attempts->len - 1));
+  gh_clock_fake_advance(alice->clock, (gint64)RETRY_WAIT_S * G_USEC_PER_SEC);
+  OfferWait again = { &w.g, envelope, 2 };
+  spin_until(offered_times, &again, "the same poll or vote retried on backoff");
+  spin_until(retrying_status, &retrying, "the poll or vote retry unanswered");
+  w.g.close_on_event = FALSE;
+  app_restart(alice);
+  StoredWait stored = { &w.g, envelope };
+  spin_until(relay_stored, &stored, "the same poll or vote resumed after restart");
+  spin_until(sent, &retrying, "the relay accepted the resumed poll or vote");
+  world_down(&w);
+}
+
 /* Polls and votes use inner kinds 1068 and 1018, not the kind-9 text path.
  * Restart through the service's real store/model wiring, not a hand-filled
  * in-memory conversation as the card tests do. */
@@ -4155,10 +4224,6 @@ test_delete_messages(void)
   world_down(&w);
 }
 
-/* The first retry after an unanswered round is due within 1.5 x RETRY_MIN_S
- * (15 s, gh-mls-service.c). */
-#define RETRY_WAIT_S 23
-
 /* nostrc-knbkr: the outbox state of @app's one kind-5 request, or -1. */
 static gint
 request_state(App *app)
@@ -4204,12 +4269,6 @@ count_id(GPtrArray *ids, const gchar *id)
     n += g_strcmp0(g_ptr_array_index(ids, i), id) == 0;
   return n;
 }
-
-typedef struct {
-  WireRelay *relay;
-  const gchar *id;
-  guint at_least;
-} OfferWait;
 
 static gboolean
 offered_times(gpointer data)
@@ -4351,6 +4410,61 @@ test_delete_not_resent_after_leaving(void)
   StoredWait stored = { &w.g, request };
   g_assert_false(relay_stored(&stored));
   g_assert_nonnull(find_message(alice, room, "bob says"));
+  world_down(&w);
+}
+
+/* nostrc-49tse: leaving or removal stops pending chat, but an already
+ * accepted message stays sent. Both outcomes survive a restart. */
+static void
+test_pending_chat_not_sent_when_group_ends(gconstpointer data)
+{
+  gboolean removed = GPOINTER_TO_INT(data);
+  World w;
+  const guint keys[] = { ALICE, BOB };
+  world_up(&w, keys, G_N_ELEMENTS(keys));
+  App *alice = &w.apps[ALICE], *bob = &w.apps[BOB];
+  wait_key_packages(&w, keys, G_N_ELEMENTS(keys));
+  accept_contact(alice, BOB);
+  GhMlsGroup *ga = create_group(alice, "End pending", (const guint[]){ BOB }, 1);
+  g_autofree gchar *room = g_strdup(gh_mls_group_get_room_id(ga));
+  GhMlsGroup *gb = join(bob, ALICE);
+  wait_live(ga);
+  send_text(bob, gb, "already sent");
+  StatusWait accepted = { bob, room, "already sent" };
+  spin_until(sent, &accepted, "the earlier message accepted");
+  wait_message(alice, room, "already sent");
+  w.g.close_on_event = TRUE;
+  send_text(bob, gb, "cannot send later");
+  StatusWait pending = { bob, room, "cannot send later" };
+  spin_until(retrying_status, &pending, "the pending chat awaiting retry");
+  g_autoptr(GPtrArray) attempts = published(&w.g, 445);
+  g_autofree gchar *envelope = event_id_dup(g_ptr_array_index(attempts, attempts->len - 1));
+  g_autoptr(GError) error = NULL;
+  if (removed) {
+    w.g.close_on_event = FALSE;
+    const gchar *bob_only[] = { hex[BOB], NULL };
+    OpWait removal = { 0 };
+    gh_mls_service_remove_members_async(alice->service, ga, bob_only, NULL, on_changed,
+                                       &removal);
+    change(alice, &removal);
+  } else {
+    g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
+    g_assert_no_error(error);
+    w.g.close_on_event = FALSE;
+  }
+  spin_until(group_ended, gb, "the group ended");
+  g_assert_cmpint(gh_mls_group_get_end(gb), ==,
+                  removed ? GH_MLS_GROUP_END_REMOVED : GH_MLS_GROUP_END_LEFT);
+  GhMessage *message = find_message(bob, room, "cannot send later");
+  g_assert_nonnull(message);
+  g_assert_cmpint(gh_message_get_status(message), ==, GH_MESSAGE_STATUS_NOT_SENT);
+  g_assert_true(sent(&accepted));
+  app_restart(bob);
+  message = find_message(bob, room, "cannot send later");
+  g_assert_nonnull(message);
+  g_assert_cmpint(gh_message_get_status(message), ==, GH_MESSAGE_STATUS_NOT_SENT);
+  g_autoptr(GPtrArray) offered = offered_ids(&w.g);
+  g_assert_cmpuint(count_id(offered, envelope), ==, 1);
   world_down(&w);
 }
 
@@ -4664,6 +4778,12 @@ main(int argc, char **argv)
                   test_join_reads_from_welcome);
   g_test_add_func("/groundhog/mls-service/send-republished-after-restart",
                   test_send_republished_after_restart);
+  g_test_add_data_func("/groundhog/mls-service/poll-retried", GINT_TO_POINTER(FALSE), test_poll_vote_retried);
+  g_test_add_data_func("/groundhog/mls-service/vote-retried", GINT_TO_POINTER(TRUE), test_poll_vote_retried);
+  g_test_add_data_func("/groundhog/mls-service/pending-chat-not-sent-when-group-ends",
+                       GINT_TO_POINTER(FALSE), test_pending_chat_not_sent_when_group_ends);
+  g_test_add_data_func("/groundhog/mls-service/pending-chat-not-sent-when-removed",
+                       GINT_TO_POINTER(TRUE), test_pending_chat_not_sent_when_group_ends);
   g_test_add_func("/groundhog/mls-service/poll-restored-after-restart",
                   test_poll_restored_after_restart);
   g_test_add_func("/groundhog/mls-service/same-text-two-groups", test_same_text_two_groups);
