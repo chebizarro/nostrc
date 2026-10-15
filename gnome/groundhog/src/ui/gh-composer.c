@@ -39,6 +39,7 @@ struct _GhComposer {
   GtkButton *cancel_recording_button;
   GtkButton *stop_recording_button;
 
+  GtkDropTarget *drop_target; /* owned; shared by the entry and conversation drop zone */
   GtkTextBuffer *buffer; /* the text view's */
   GStrv mention_candidates;
   GStrv mention_members;
@@ -673,20 +674,64 @@ action_cancel_recording(GtkWidget *widget, const char *name, GVariant *parameter
   g_signal_emit(widget, signals[SIGNAL_CANCEL_RECORDING], 0);
 }
 
-/* A dropped file (the first of several) or image. */
+static void
+attachment_toast(GhComposer *self, const gchar *text)
+{
+  GtkWidget *overlay = gtk_widget_get_ancestor(GTK_WIDGET(self), ADW_TYPE_TOAST_OVERLAY);
+  if (overlay) {
+    AdwToast *toast = adw_toast_new(text);
+    adw_toast_set_use_markup(toast, FALSE); /* filenames are plain text */
+    adw_toast_overlay_add_toast(ADW_TOAST_OVERLAY(overlay), toast);
+  }
+}
+
+static GdkDragAction
+on_drop_enter(GtkDropTarget *target, gdouble x, gdouble y, GhComposer *self)
+{
+  (void)target;
+  (void)x;
+  (void)y;
+  gtk_widget_add_css_class(GTK_WIDGET(self), "attachment-drop-active");
+  return GDK_ACTION_COPY;
+}
+
+static void
+on_drop_leave(GtkDropTarget *target, GhComposer *self)
+{
+  (void)target;
+  gtk_widget_remove_css_class(GTK_WIDGET(self), "attachment-drop-active");
+}
+
+/* The attachment flow has one preview/load at a time, not a pending-file queue. */
 static gboolean
 on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComposer *self)
 {
   (void)target;
   (void)x;
   (void)y;
-  if (!attach_possible(self))
+  on_drop_leave(target, self);
+  if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && !G_VALUE_HOLDS(value, G_TYPE_FILE) &&
+      !G_VALUE_HOLDS(value, GDK_TYPE_TEXTURE))
     return FALSE;
+  /* Consume file/image drops even when sending is unavailable: falling through
+   * to GtkTextView would insert a Finder/Files path as text instead. */
+  if (!attach_possible(self)) {
+    attachment_toast(self, self->reason ? self->reason :
+                     _("Files can't be sent in this conversation"));
+    return TRUE;
+  }
   if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
     GSList *files = gdk_file_list_get_files(g_value_get_boxed(value));
     GFile *file = files ? files->data : NULL;
-    if (file)
+    if (file) {
+      if (files->next) {
+        g_autofree gchar *name = g_file_get_basename(file);
+        g_autofree gchar *notice = g_strdup_printf(
+          _("Only one file can be attached at a time. Attaching “%s”."), name);
+        attachment_toast(self, notice);
+      }
       g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, file);
+    }
     g_slist_free(files);
     return file != NULL;
   }
@@ -699,14 +744,6 @@ on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComp
     return TRUE;
   }
   return FALSE;
-}
-
-static GdkDragAction
-on_drop_accept(GtkDropTarget *target, GdkDrop *drop, GhComposer *self)
-{
-  (void)target;
-  (void)drop;
-  return attach_possible(self) ? GDK_ACTION_COPY : 0;
 }
 
 typedef struct {
@@ -890,6 +927,12 @@ gh_composer_dispose(GObject *object)
 {
   GhComposer *self = GH_COMPOSER(object);
   self->disposing = TRUE;
+  if (self->drop_target) {
+    GtkWidget *zone = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(self->drop_target));
+    if (zone)
+      gtk_widget_remove_controller(zone, GTK_EVENT_CONTROLLER(self->drop_target));
+    g_clear_object(&self->drop_target);
+  }
   if (self->paste_read)
     g_cancellable_cancel(self->paste_read);
   g_clear_object(&self->paste_read);
@@ -1056,8 +1099,15 @@ gh_composer_init(GhComposer *self)
   GType types[] = { GDK_TYPE_FILE_LIST, G_TYPE_FILE, GDK_TYPE_TEXTURE };
   gtk_drop_target_set_gtypes(drop, types, G_N_ELEMENTS(types));
   gtk_event_controller_set_name(GTK_EVENT_CONTROLLER(drop), "groundhog-composer-drop");
-  g_signal_connect(drop, "accept", G_CALLBACK(on_drop_accept), self);
-  g_signal_connect(drop, "drop", G_CALLBACK(on_drop), self);
+  /* Capture before GtkTextView's built-in string target consumes mixed
+   * text/file drags. Keep GTK's default format/action acceptance, independent
+   * of can-attach, so unavailable attachments get an explanation on drop. */
+  gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drop), GTK_PHASE_CAPTURE);
+  gtk_drop_target_set_preload(drop, TRUE);
+  g_signal_connect_object(drop, "enter", G_CALLBACK(on_drop_enter), self, 0);
+  g_signal_connect_object(drop, "leave", G_CALLBACK(on_drop_leave), self, 0);
+  g_signal_connect_object(drop, "drop", G_CALLBACK(on_drop), self, 0);
+  self->drop_target = g_object_ref(drop);
   gtk_widget_add_controller(GTK_WIDGET(self), GTK_EVENT_CONTROLLER(drop));
   g_signal_connect(self->text_view, "paste-clipboard", G_CALLBACK(on_paste_clipboard), self);
 
@@ -1368,6 +1418,21 @@ gh_composer_get_timer_slot(GhComposer *self)
 {
   g_return_val_if_fail(GH_IS_COMPOSER(self), NULL);
   return self->timer_slot;
+}
+
+void
+gh_composer_set_drop_zone(GhComposer *self, GtkWidget *zone)
+{
+  g_return_if_fail(GH_IS_COMPOSER(self));
+  g_return_if_fail(GTK_IS_WIDGET(zone));
+  g_return_if_fail(zone == GTK_WIDGET(self) || gtk_widget_is_ancestor(GTK_WIDGET(self), zone));
+  GtkEventController *controller = GTK_EVENT_CONTROLLER(self->drop_target);
+  GtkWidget *previous = gtk_event_controller_get_widget(controller);
+  if (previous == zone)
+    return;
+  if (previous)
+    gtk_widget_remove_controller(previous, controller);
+  gtk_widget_add_controller(zone, g_object_ref(controller));
 }
 
 void

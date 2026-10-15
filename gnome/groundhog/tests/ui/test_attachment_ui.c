@@ -1310,12 +1310,15 @@ test_drop_and_paste(void)
   g_assert_true(g_file_set_contents(path, g_bytes_get_data(jpeg, NULL),
                                     (gssize)g_bytes_get_size(jpeg), NULL));
   g_autoptr(GFile) file = g_file_new_for_path(path);
-  g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(GTK_WIDGET(composer));
   GtkDropTarget *drop = NULL;
-  for (guint i = 0; i < g_list_model_get_n_items(controllers) && !drop; i++) {
-    g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
-    if (g_strcmp0(gtk_event_controller_get_name(controller), "groundhog-composer-drop") == 0)
-      drop = GTK_DROP_TARGET(controller);
+  for (GtkWidget *zone = GTK_WIDGET(composer); zone && !drop;
+       zone = gtk_widget_get_parent(zone)) {
+    g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(zone);
+    for (guint i = 0; i < g_list_model_get_n_items(controllers) && !drop; i++) {
+      g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
+      if (g_strcmp0(gtk_event_controller_get_name(controller), "groundhog-composer-drop") == 0)
+        drop = GTK_DROP_TARGET(controller);
+    }
   }
   g_assert_nonnull(drop);
   GValue value = G_VALUE_INIT;

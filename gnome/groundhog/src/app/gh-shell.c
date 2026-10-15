@@ -758,6 +758,11 @@ static void
 gh_content_page_init(GhContentPage *self)
 {
   gtk_widget_init_template(GTK_WIDGET(self));
+  /* One capture target covers both the message entry and conversation view. */
+  GtkWidget *zone = GTK_WIDGET(gtk_widget_get_template_child(GTK_WIDGET(self),
+                                                            GH_TYPE_CONTENT_PAGE,
+                                                            "conversation_bin"));
+  gh_composer_set_drop_zone(self->composer, zone);
   self->default_title = g_strdup(adw_navigation_page_get_title(ADW_NAVIGATION_PAGE(self)));
 }
 

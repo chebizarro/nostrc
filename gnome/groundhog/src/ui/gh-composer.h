@@ -68,11 +68,13 @@ G_BEGIN_DECLS
  * Attachments (charter §6, G22): while "can-attach" is set (the owner can
  * send a file in the shown conversation) the attach button is shown; it
  * ("composer.attach") emits "attach-requested", for the owner's file
- * chooser. A file dropped on the composer (the first, when several) emits
+ * chooser. A file dropped on its drop zone (the first, when several, with
+ * a toast identifying it) emits
  * "attach-file" (GFile), a dropped image "attach-texture" (GdkTexture); a
  * paste of an image, or of copied files without text, emits the same
  * instead of pasting text. Nothing is offered while the composer is
- * disabled. The composer only hands the file over; the owner shows what
+ * disabled; dropped attachments are consumed with an explanatory toast.
+ * The composer only hands the file over; the owner shows what
  * will be sent before anything leaves.
  *
  * Properties: "compact" (hides the emoji button, tighter padding), "max-lines"
@@ -149,6 +151,9 @@ void gh_composer_set_disappearing_timer(GhComposer *self, gint64 seconds);
 gint64 gh_composer_get_disappearing_timer(GhComposer *self);
 /* The box holding the timer indicator (visible while the timer is on). */
 GtkBox *gh_composer_get_timer_slot(GhComposer *self);
+/* Move the existing attachment target to an ancestor covering the entry
+ * and conversation view. Defaults to the composer itself. */
+void gh_composer_set_drop_zone(GhComposer *self, GtkWidget *zone);
 /* Whether a file can be sent in the shown conversation (see above). */
 void gh_composer_set_can_attach(GhComposer *self, gboolean can_attach);
 gboolean gh_composer_get_can_attach(GhComposer *self);
