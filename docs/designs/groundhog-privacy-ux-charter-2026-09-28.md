@@ -1762,3 +1762,27 @@ flowchart LR
 - SoupSession: https://libsoup.gnome.org/libsoup-3.0/class.Session.html
 - SQLCipher: https://www.zetetic.net/sqlcipher/sqlcipher-api/
 - libsecret: https://gnome.pages.gitlab.gnome.org/libsecret/
+
+## Addendum — 2026-10-14: Allow local network (nostrc-ft99r)
+
+Owner-approved exception: Preferences → Network → Connection offers **Allow
+local network** (`allow-local-network`, default **off**). When enabled outside
+Tor mode, pictures (including profile pictures and preview artwork), link
+previews and attachment/Blossom downloads and public-only uploads may reach
+non-public addresses. Someone can make Groundhog send requests to devices on
+your network. This grants address access only: Web Content switches, per-item
+consent, file validation, size limits and HTTPS rules remain unchanged. It
+fetches nothing by itself.
+
+`GhNetHttp` reads the setting for each public-only request and redirect;
+Blossom's early server/host checks use the same policy. Switching it off ends
+pending public-only requests. Existing public-address filtering, including
+connect-time DNS-rebinding protection, remains the default. User-configured
+Blossom uploads that already allowed private hosts are unchanged.
+
+In Tor mode the row is insensitive and explains that Tor exits refuse private
+addresses. The setting never bypasses Tor or its remote DNS, changes .onion
+handling, permits plain HTTP beyond the existing loopback-fixture/.onion
+exceptions, or changes relay URL policy (`ws://` remains loopback-only outside
+Tor). **NIP-05 address checks are deliberately excluded**: their existing
+address and no-redirect rules are unchanged, not widened by this preference.

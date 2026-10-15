@@ -26,6 +26,20 @@ Before downgrading to an alpha without remote-signer support, select a
 Grotto-backed account or read-only mode. Older versions cannot use a
 remote-only selection.
 
+## Remote content and local networks
+
+Pictures, link previews and files require explicit consent; enabling a Web
+Content switch alone fetches nothing. Preferences → Network → Connection →
+**Allow local network** is off by default. Turning it on lets pictures,
+previews and files (including Blossom downloads and public-only uploads) reach
+non-public addresses. Someone can make Groundhog send requests to devices on
+your network. Changes apply without restarting; turning it off ends pending
+public-only requests. It does not enable automatic loading or relax HTTPS,
+.onion or relay URL rules, and does not affect NIP-05 address checks.
+In Tor mode it is not applicable: Tor exits refuse private addresses, and the
+switch is disabled with an explanation. Explicitly configured Blossom uploads
+that already allowed private hosts are unchanged.
+
 ## Running multiple instances
 
 A named instance runs Groundhog with fully isolated data, so two

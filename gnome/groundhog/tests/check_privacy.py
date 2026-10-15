@@ -237,6 +237,7 @@ GSETTINGS = {
     # §7.9: Marmot by default; the user can change this in Preferences.
     "default-dm-protocol": Key("s", "'marmot'", ("marmot", "nip17")),
     # §7.11 Network / Connection (§4.2).
+    "allow-local-network": Key("b", "false"),
     "network-mode": Key("s", "'system'", ("system", "none", "tor")),
     "tor-socks-address": Key("s", "'127.0.0.1:9050'"),
     # §7.11 Network / Relays (PD-13, PT-9: no relay before the user confirms one).

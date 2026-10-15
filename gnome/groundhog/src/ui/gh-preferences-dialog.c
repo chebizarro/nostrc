@@ -60,6 +60,7 @@ struct _GhPreferencesDialog {
   AdwComboRow *disappearing_row;
   AdwComboRow *retention_row;
   AdwComboRow *network_mode_row;
+  AdwSwitchRow *allow_local_network_row;
   AdwEntryRow *tor_address_row;
   GtkLabel *tor_address_error;
   AdwActionRow *tor_status_row;
@@ -204,6 +205,7 @@ static const struct {
   { "run-in-background", G_STRUCT_OFFSET(GhPreferencesDialog, run_in_background_row) },
   { "launch-on-login", G_STRUCT_OFFSET(GhPreferencesDialog, launch_on_login_row) },
   { "diagnostics-enabled", G_STRUCT_OFFSET(GhPreferencesDialog, diagnostics_row) },
+  { "allow-local-network", G_STRUCT_OFFSET(GhPreferencesDialog, allow_local_network_row) },
 };
 
 /* ---- URL rules ---------------------------------------------------------------- */
@@ -760,6 +762,13 @@ sync_network(GhPreferencesDialog *self)
   gboolean tor_available = (self->features & GH_PREFERENCES_FEATURE_TOR) != 0;
   g_autofree gchar *mode = g_settings_get_string(self->settings, "network-mode");
   gboolean tor = tor_available && g_str_equal(mode, "tor");
+  gboolean local_applicable = !g_str_equal(mode, "tor");
+  gtk_widget_set_sensitive(GTK_WIDGET(self->allow_local_network_row), local_applicable);
+  adw_action_row_set_subtitle(ADW_ACTION_ROW(self->allow_local_network_row),
+    local_applicable
+      ? _("Lets pictures, previews and files load from addresses on your own network. "
+          "Someone can make Groundhog send requests to devices on your network.")
+      : _("Not applicable in Tor mode: Tor exits refuse private network addresses."));
   gboolean refused = !tor_available && !g_str_equal(mode, "system") &&
                      !g_str_equal(mode, "none");
   gtk_widget_set_visible(GTK_WIDGET(self->tor_address_row), tor);
@@ -1811,6 +1820,7 @@ gh_preferences_dialog_class_init(GhPreferencesDialogClass *klass)
   BIND(disappearing_row);
   BIND(retention_row);
   BIND(network_mode_row);
+  BIND(allow_local_network_row);
   BIND(tor_address_row);
   BIND(tor_address_error);
   BIND(tor_status_row);

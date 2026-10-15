@@ -344,6 +344,11 @@ template $GhPreferencesDialog: Adw.PreferencesDialog {
         };
       }
 
+      Adw.SwitchRow allow_local_network_row {
+        title: _("Allow local network");
+        subtitle: _("Lets pictures, previews and files load from addresses on your own network. Someone can make Groundhog send requests to devices on your network.");
+      }
+
       Adw.EntryRow tor_address_row {
         title: _("Tor Proxy Address");
         visible: false;

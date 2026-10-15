@@ -49,8 +49,14 @@ typedef struct {
 G_DECLARE_FINAL_TYPE(GhNetHttp, gh_net_http, GH, NET_HTTP, GObject)
 
 /* settings (nullable: "system") supplies network-mode and tor-socks-address,
- * read at each request. */
+ * and allow-local-network, read at each request (and each redirect). */
 GhNetHttp *gh_net_http_new(GSettings *settings);
+
+/* The one local-network policy for web content and Blossom's early host
+ * checks. FALSE without settings or in Tor mode; otherwise the live
+ * allow-local-network preference (default FALSE). Does not change ordinary
+ * GETs (NIP-05), relay policy, HTTPS or .onion handling. */
+gboolean gh_net_http_allows_local_network(GhNetHttp *self);
 
 void gh_net_http_get_async(GhNetHttp *self, const gchar *uri, gsize max_bytes,
                            GCancellable *cancellable, GAsyncReadyCallback callback,
@@ -65,7 +71,9 @@ GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **e
 
 /* nostrc-qi5e: as gh_net_http_get_accept_async(), for a URL someone else
  * chose (a G21 attachment download), which may only reach a public address
- * (gh_net_address_is_public()). In System and No Proxy modes this is checked
+ * (gh_net_address_is_public()) unless allow-local-network is enabled outside
+ * Tor mode. Disabling that preference ends pending public-only requests.
+ * In System and No Proxy modes the public-address restriction is checked
  * where the connection is made. The request has a session of its own whose
  * one target is the URL's host, and every address the host name resolves to
  * as the connection is attempted, and any literal address, is checked before
@@ -79,7 +87,8 @@ GBytes *gh_net_http_get_finish(GhNetHttp *self, GAsyncResult *result, GError **e
  * with gh_net_http_get_finish(). Up to three redirects are followed (W33:
  * Blossom servers such as Primal's answer with a 302 to their storage
  * host), each hop checked again exactly like the first: https only, .onion
- * only through Tor, a public address. The other GETs never follow one
+ * only through Tor, a public address unless the preference allows local
+ * access. The other GETs never follow one
  * (NIP-05 forbids it). */
 void gh_net_http_get_public_async(GhNetHttp *self, const gchar *uri, const gchar *accept,
                                   gsize max_bytes, GCancellable *cancellable,
