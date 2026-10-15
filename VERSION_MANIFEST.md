@@ -18,7 +18,7 @@ files already declare a version.
 | libmarmot | `libmarmot/` | 0.12.0 | Unreleased | — | `libmarmot/CMakeLists.txt`, `libmarmot/meson.build` |
 | marmot-gobject | `marmot-gobject/` | 1.5.0 | Unreleased | — | `marmot-gobject/CMakeLists.txt`, `marmot-gobject/meson.build` |
 | gnostr | `apps/gnostr/` | 0.1.0 | 0.1.0-preview | `gnostr-v0.1.0-preview` | `apps/gnostr/CMakeLists.txt` |
-| groundhog | `gnome/groundhog/` | 0.12.1 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
+| groundhog | `gnome/groundhog/` | 0.12.0 | Unreleased | — | `gnome/groundhog/CMakeLists.txt` |
 | nostr-homed | `gnome/nostr-homed/` | 0.2.2 | Unreleased | — | `gnome/nostr-homed/CMakeLists.txt`, `gnome/nostr-homed/meson.build`, `gnome/nostr-homed/nostr-homed.pc.in` |
 | Grotto (Preview) | `apps/grotto/` | 0.1.0 | Unreleased | — | `apps/grotto/CMakeLists.txt` (`GROTTO_VERSION`), `apps/grotto/meson.build` (`project` version); About and daemon consume the build version; duplicate package values: `apps/grotto/data/org.nostr.Grotto.metainfo.xml`, `apps/grotto/packaging/debian/changelog`, `apps/grotto/packaging/rpm/grotto.spec`, `apps/grotto/packaging/archlinux/PKGBUILD`, `flake.nix` (Grotto version), `apps/grotto/packaging/macos/create-dmg.sh`, `apps/grotto/packaging/windows/grotto.nsi`, `apps/grotto/packaging/windows/build-msys2.sh` |
 | Nostr Shell extension | `gnome/nostr-shell-extension/` | 0.5.0 | Unreleased | — | `gnome/nostr-shell-extension/metadata.json` (`version-name`) |
@@ -31,10 +31,11 @@ files already declare a version.
 
 ## Recorded version decisions
 
-- nostrc-0wggt: Groundhog 0.12.0 → 0.12.1 (PATCH). Fix existing attachment
-  drag-and-drop routing and feedback; reuse one target across the conversation
-  and entry. No installed API, storage, configuration, or wire-format change.
-  Other components: no bump. Release columns unchanged (no release published).
+- nostrc-0wggt: Groundhog attachment drag-and-drop routing and feedback fix
+  (one target across the conversation and entry). PATCH-class fix folded into
+  the unreleased 0.12.0 feature wave (0.12.0-alpha7 is the feature freeze);
+  no further bump. No installed API, storage, configuration, or wire-format
+  change. Other components: no bump. Release columns unchanged.
 
 Decisions for components affected by another component's change (AGENTS.md,
 "Updating versions", step 5).
