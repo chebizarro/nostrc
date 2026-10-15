@@ -44,6 +44,18 @@ static SignetKeyStore *open_test_ks(char **out_path) {
   return ks;
 }
 
+static sqlite3 *open_test_db(const char *path) {
+  sqlite3 *db = NULL;
+  CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+  if (signet_store_sqlcipher_available()) {
+    char *pragma = sqlite3_mprintf("PRAGMA key = '%q';", MASTER_KEY);
+    CHECK(pragma != NULL);
+    CHECK(sqlite3_exec(db, pragma, NULL, NULL, NULL) == SQLITE_OK);
+    sqlite3_free(pragma);
+  }
+  return db;
+}
+
 /* ----------------------------- Provisioning ------------------------------ */
 
 static void test_provision_and_load(void) {
@@ -461,14 +473,13 @@ static void test_pre_history_writer_db_fails_closed(void) {
   int64_t epoch = 0;
   CHECK(signet_key_store_writer_acquire(ks, "service", OWNER_A, &epoch) == 0);
   signet_key_store_free(ks);
-  sqlite3 *db = NULL;
-  CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+  sqlite3 *db = open_test_db(path);
   CHECK(sqlite3_exec(db, "DROP TABLE writer_client_keys;", NULL, NULL, NULL)
         == SQLITE_OK);
   sqlite3_close(db);
   SignetKeyStoreConfig cfg = {.db_path = path, .master_key = MASTER_KEY};
   CHECK(signet_key_store_new(NULL, &cfg) == NULL);
-  CHECK(sqlite3_open(path, &db) == SQLITE_OK);
+  db = open_test_db(path);
   sqlite3_stmt *history = NULL;
   CHECK(sqlite3_prepare_v2(db,
       "SELECT 1 FROM sqlite_master WHERE type='table' AND name='writer_client_keys';",
