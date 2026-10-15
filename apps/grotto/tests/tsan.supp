@@ -1,0 +1,10 @@
+# nostrc-wls0w: pinned, instrumented GLib 2.80.0 internal GSource.flags race.
+# g_main_context_check_unlocked writes G_SOURCE_READY (gmain.c:4093) while
+# g_source_is_destroyed reads G_SOURCE_ACTIVE (gmain.c:3211), called from
+# GLocalFileMonitor's inotify worker. That API explicitly permits any-thread
+# opportunistic checks; both accesses and source ownership are GLib-internal.
+# Owner-approved external-runtime exception, not a libgo/nip55l/Grotto race
+# suppression. Limit the match to this private file-monitor event function;
+# do not suppress g_source_is_destroyed, g_main_context_* or entire libraries.
+# Remove when the pinned GLib runtime fixes the flags access.
+race:^g_file_monitor_source_handle_event$
