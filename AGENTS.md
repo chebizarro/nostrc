@@ -21,6 +21,14 @@ scripts/install-hooks.sh
 
 This installs the fast pre-push hook (static checks, no build; CI builds and tests).
 
+**Staged testing migration (2026-10-15):**
+`docs/plans/dependency-aware-testing-ci-2026-10-15.md` is the specification;
+`docs/reviews/dependency-aware-testing-ci-2026-10-15-w1-baseline.md` records the
+W1 operational audit and remaining rollout evidence. Proposed selective commands
+are not an accepted default in this phase. Keep the existing gate, build/test,
+keychain and push requirements below; no schedule or protection cutover is
+approved by the baseline audit.
+
 ---
 
 ## Component Versioning Policy

@@ -1,5 +1,17 @@
 # Test Strategy & Suite Documentation
 
+> **Dependency-aware migration (2026-10-15): W1 audit only.** The
+> [plan](plans/dependency-aware-testing-ci-2026-10-15.md) describes proposed
+> commands, not an accepted replacement for current gates. See the
+> [operational baseline](reviews/dependency-aware-testing-ci-2026-10-15-w1-baseline.md)
+> for current workflow/profile identities, advisory/quarantine distinctions,
+> source changes and measurement limits. Existing local defaults and push
+> requirements remain unchanged. The older GNostr CI/nightly table and universal
+> environment wording below are historical guidance, not a verified repository-wide
+> workflow/schedule or execution guarantee: the extended BP workflow is manual-only,
+> while MDK daily and Grotto fuzz weekly schedules still exist. No schedule is removed
+> and no selective command/default is documented as implemented in this phase.
+
 ## Overview
 
 The gnostr test suite validates memory safety, performance budgets, widget correctness, event flow integrity, and zero-copy sliding window invariants across the three library layers (`nostr-gobject`, `nostr-gtk`) and the application (`apps/gnostr`).

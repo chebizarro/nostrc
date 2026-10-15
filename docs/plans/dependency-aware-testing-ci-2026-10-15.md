@@ -1,8 +1,10 @@
 # Dependency-aware testing and CI/CD
 
-**Status:** Plan complete. Pipeline implementation has not started.
+**Status:** Specification complete; implementation work is underway in scoped worktrees. W1 operational audit recorded, representative baseline incomplete. No integration acceptance or default cutover.
 
-**Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`).
+**Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
+
+Sections 2–7 retain the implementation specification and historical planning evidence. Current execution progress and refreshed source references are recorded in §8; proposed commands below are not an assertion that they are integrated or available.
 
 ## Goal
 
@@ -1057,3 +1059,14 @@ The single bounded critique is retained at `docs/reviews/dependency-aware-testin
 The final fidelity pass retained the planning response's applicable current-state, interface/schema, graph, edge-case, file-impact, rollout, measurement, sequencing and verification detail. Corrections are evidence/scope based: optional-component inventory does not authorize new CI support; previously unsupported tags validate without gaining a publisher; prose-only changes select policy/static checks; source/header and runtime ownership—not prerequisite tests or filenames—determine impact. Initial savings percentages are engineering acceptance targets, not measured results or additional owner decisions. No pipeline or live acceptance has been performed.
 
 **Version assessment:** the plan itself requires no bump. Internal selector, workflow, test metadata, and documentation changes require no bump if shipped artifacts and public build contracts remain unchanged. Any separately necessary shipped packaging/build correction must receive the component-specific assessment required by `AGENTS.md`; do not hide it inside the CI-only exemption.
+
+## 8. Execution progress — W1 first phase, 2026-10-15
+
+**Evidence:** [W1 operational baseline](../reviews/dependency-aware-testing-ci-2026-10-15-w1-baseline.md), owned by `nostrc-0cfsg.5` (in progress, not closed). This phase changes documentation only; **no component bump**. The specification, acceptance thresholds, existing defaults, workflow triggers and schedules are unchanged.
+
+- **W1 partial:** source-level job/profile and blocking/advisory inventory, read-only live rules/protection/merge-queue audit, local tools and bounded historical timings are recorded. GitHub access succeeded: no rulesets or classic master protection returned, master merge queue null, repository self-hosted runner list empty. These observations do not establish hosted capacity or authorize a protection change.
+- **Delta `5d19e80f8..9b8dc253c`:** Groundhog alpha8 About/CLI version and `groundhog-packaging-version` now require four external packaging runtime inputs (`flake.nix`, Arch PKGBUILD, RPM spec, Debian changelog). The source-job tag/version guard is at `groundhog-release.yml:46-62`, not a completed W10 release gate. Shared RPM changes reach Grotto's zbar/GStreamer video dependencies and Control1/autostart/icon/daemon-example install contracts. Exact references and implications are in the report; the design remains unchanged.
+- **W2/W3 work is concurrent and outside this phase:** `.1` owns selector/inventory/Python core; `.2` owns CMake/realization/runtime Python. Their changes are not integrated or accepted by this audit. No proposed command is promoted to current testing instructions.
+- **W1 remaining / W11 NOT RUN:** all seven representative clean/incremental workload conditions, five samples per condition, registration/input completeness, cost/savings comparisons, 20 representative PR shadow comparisons, two successful broad replacement integration runs, release dry run, selected-skip/cancellation and merge-group acceptance, external artifact/manual consumers. Historical legacy runs and a tiny script-mode probe do not satisfy these gates.
+- **W12 NOT RUN:** no hook/default/documented-command switch, old requirement removal, schedule removal, workflow rename or duplicate-trigger cleanup. Parent-directed integration verification must precede later docs/default work.
+- **Environment limit:** `bd dolt pull` returned `fetch from origin/main: Error 1105: no remote`; local bead reads/updates succeeded. No direct tracking-file edits, remote sync workaround, destructive build, live MDK run, settings change, merge or push was performed. `.5` remains open for the later phase.
