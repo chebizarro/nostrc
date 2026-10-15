@@ -23,10 +23,12 @@
 #define NOSTRC_PROFILE_GUARD_H
 
 #include <glib.h>
-#include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef G_OS_WIN32
+#include <pwd.h>
 #include <unistd.h>
+#endif
 
 #define NOSTRC_PROFILE_GUARD_ENV "NOSTRC_TEST_ISOLATION"
 #define NOSTRC_PROFILE_GUARD_TEST_BUS_ENV "NOSTRC_TEST_BUS_ADDRESS"
@@ -41,28 +43,38 @@ nostrc_profile_guard_under_test(void)
 static inline const gchar *
 nostrc_profile_guard_real_home(void)
 {
+#ifdef G_OS_WIN32
+  /* No password database; GLib asks the system for the profile directory. */
+  return g_get_home_dir();
+#else
   struct passwd *pw = getpwuid(getuid());
   return pw ? pw->pw_dir : NULL;
+#endif
 }
 
-/* Lexically normalised absolute path, symlinks resolved when it exists. */
+/* Lexically normalised absolute path, symlinks resolved when it exists
+ * (POSIX; on Windows the lexical form, there is no realpath). */
 static inline gchar *
 nostrc_profile_guard_canonical(const gchar *path)
 {
-  g_autofree gchar *abs = g_canonicalize_filename(path, "/");
+  g_autofree gchar *abs = g_canonicalize_filename(path, G_DIR_SEPARATOR_S);
+#ifdef G_OS_WIN32
+  return g_steal_pointer(&abs);
+#else
   char *real = realpath(abs, NULL);
   if (!real)
     return g_steal_pointer(&abs);
   gchar *out = g_strdup(real);
   free(real);
   return out;
+#endif
 }
 
 static inline gboolean
 nostrc_profile_guard_is_within(const gchar *path, const gchar *root)
 {
   gsize n = strlen(root);
-  return strncmp(path, root, n) == 0 && (path[n] == '\0' || path[n] == '/');
+  return strncmp(path, root, n) == 0 && (path[n] == '\0' || G_IS_DIR_SEPARATOR(path[n]));
 }
 
 /* Pure: is path (or below) one of the real user's profile directories? */
@@ -74,7 +86,7 @@ nostrc_profile_guard_is_real_profile_for(const gchar *real_home, const gchar *pa
   static const gchar *const profile_dirs[] = {
     ".local/share", ".config", ".cache", ".local/state", "Library",
   };
-  g_autofree gchar *lexical = g_canonicalize_filename(path, "/");
+  g_autofree gchar *lexical = g_canonicalize_filename(path, G_DIR_SEPARATOR_S);
   g_autofree gchar *resolved = nostrc_profile_guard_canonical(path);
   for (guint i = 0; i < G_N_ELEMENTS(profile_dirs); i++) {
     g_autofree gchar *dir = g_build_filename(real_home, profile_dirs[i], NULL);
