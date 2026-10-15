@@ -400,7 +400,7 @@ static void setup_window_shortcuts(SignerWindow *self) {
   );
   gtk_shortcut_controller_add_shortcut(GTK_SHORTCUT_CONTROLLER(controller), shortcut_lock);
 
-  /* Ctrl+,: Preferences/Settings */
+  /* Ctrl+,: Preferences */
   GtkShortcut *shortcut_prefs = gtk_shortcut_new(
     gtk_keyval_trigger_new(GDK_KEY_comma, GDK_CONTROL_MASK),
     gtk_named_action_new("win.preferences")
@@ -606,27 +606,27 @@ static void signer_window_init(SignerWindow *self) {
 
     /* Profile section - use window actions for shortcuts */
     GMenu *profile_section = g_menu_new();
-    g_menu_append(profile_section, _("New identity\tCtrl+N"), "win.new-profile");
-    g_menu_append(profile_section, _("Import identity\tCtrl+I"), "win.import-profile");
-    g_menu_append(profile_section, _("Export/Backup\tCtrl+E"), "win.export");
-    g_menu_append(profile_section, _("Connect an application…"), "win.pair-application");
+    g_menu_append(profile_section, _("New Identity…\tCtrl+N"), "win.new-profile");
+    g_menu_append(profile_section, _("Import Identity…\tCtrl+I"), "win.import-profile");
+    g_menu_append(profile_section, _("Export/Backup…\tCtrl+E"), "win.export");
+    g_menu_append(profile_section, _("Connect an Application…"), "win.pair-application");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(profile_section));
     g_object_unref(profile_section);
 
     /* Security section */
     GMenu *security_section = g_menu_new();
-    g_menu_append(security_section, _("Lock management\tCtrl+L"), "win.lock");
+    g_menu_append(security_section, _("Lock Management\tCtrl+L"), "win.lock");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(security_section));
     g_object_unref(security_section);
 
     /* App section */
     GMenu *app_section = g_menu_new();
-    g_menu_append(app_section, _("Preferences\tCtrl+,"), "win.preferences");
+    g_menu_append(app_section, _("Preferences"), "win.preferences");
     g_menu_append(app_section, _("Keyboard Shortcuts\tCtrl+?"), "win.show-shortcuts");
     g_menu_append(app_section, _("About Grotto\tF1"), "win.about");
-    g_menu_append(app_section, _("Pause signing"), "app.pause-signing");
-    g_menu_append(app_section, _("Resume signing…"), "app.resume-signing");
-    g_menu_append(app_section, _("Quit approval UI (authorised signing continues)\tCtrl+Q"), "win.quit");
+    g_menu_append(app_section, _("Pause Signing"), "app.pause-signing");
+    g_menu_append(app_section, _("Resume Signing…"), "app.resume-signing");
+    g_menu_append(app_section, _("Quit Approval UI (authorised signing continues)\tCtrl+Q"), "win.quit");
     g_menu_append_section(menu, NULL, G_MENU_MODEL(app_section));
     g_object_unref(app_section);
 

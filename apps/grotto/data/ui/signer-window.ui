@@ -175,7 +175,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                     <child>
                                       <object class="GtkListBoxRow">
                                         <accessibility>
-                                          <property name="label" translatable="yes">Settings</property>
+                                          <property name="label" translatable="yes">Preferences</property>
                                         </accessibility>
                                         <child>
                                           <object class="GtkBox">
@@ -191,7 +191,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                             </child>
                                             <child>
                                               <object class="GtkLabel">
-                                                <property name="label" translatable="yes">Settings</property>
+                                                <property name="label" translatable="yes">Preferences</property>
                                               </object>
                                             </child>
                                           </object>
@@ -248,7 +248,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                                         <child>
                                           <object class="AdwViewStackPage">
                                             <property name="name">settings</property>
-                                            <property name="title" translatable="yes">Settings</property>
+                                            <property name="title" translatable="yes">Preferences</property>
                                             <property name="icon-name">emblem-system-symbolic</property>
                                             <property name="child">
                                               <object class="PageSettings" id="page_settings"></object>

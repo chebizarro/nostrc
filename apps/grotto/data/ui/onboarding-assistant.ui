@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="OnboardingAssistant" parent="AdwWindow">
-    <property name="title" translatable="yes">Set up Grotto</property>
+    <property name="title" translatable="yes">Set Up Grotto</property>
     <property name="default-width">560</property>
     <property name="default-height">600</property>
     <property name="width-request">320</property>
@@ -18,12 +18,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
           <object class="AdwHeaderBar">
             <property name="title-widget">
               <object class="AdwWindowTitle">
-                <property name="title" translatable="yes">Identity setup</property>
+                <property name="title" translatable="yes">Identity Setup</property>
               </object>
             </property>
             <child type="end">
               <object class="GtkButton" id="btn_skip">
-                <property name="label" translatable="yes">Skip setup</property>
+                <property name="label" translatable="yes">Skip Setup</property>
               </object>
             </child>
           </object>
@@ -48,7 +48,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="child">
                           <object class="AdwStatusPage">
                             <property name="icon-name">org.nostr.Grotto</property>
-                            <property name="title" translatable="yes">Your identity, your control</property>
+                            <property name="title" translatable="yes">Your Identity, Your Control</property>
                             <property name="description" translatable="yes">Keys live in your system keyring. Applications never receive your secret key, and each application asks for permission before signing. Grotto's explicit key-management screens may handle your recovery material briefly.</property>
                           </object>
                         </property>
@@ -63,7 +63,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">18</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">How would you like to start?</property>
+                                <property name="label" translatable="yes">How Would You Like to Start?</property>
                                 <style>
                                   <class name="title-1"/>
                                 </style>
@@ -72,19 +72,19 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="radio_create">
-                                <property name="label" translatable="yes">Create an identity</property>
+                                <property name="label" translatable="yes">Create an Identity</property>
                                 <property name="active">true</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="radio_import">
-                                <property name="label" translatable="yes">Import an identity</property>
+                                <property name="label" translatable="yes">Import an Identity</property>
                                 <property name="group">radio_create</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkCheckButton" id="radio_connect">
-                                <property name="label" translatable="yes">Connect an application</property>
+                                <property name="label" translatable="yes">Connect an Application</property>
                                 <property name="group">radio_create</property>
                               </object>
                             </child>
@@ -101,7 +101,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">18</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Create an identity</property>
+                                <property name="label" translatable="yes">Create an Identity</property>
                                 <style>
                                   <class name="title-1"/>
                                 </style>
@@ -133,7 +133,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">12</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Import an identity</property>
+                                <property name="label" translatable="yes">Import an Identity</property>
                                 <style>
                                   <class name="title-1"/>
                                 </style>
@@ -186,7 +186,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="child">
                           <object class="AdwStatusPage">
                             <property name="icon-name">network-workgroup-symbolic</property>
-                            <property name="title" translatable="yes">Connect an application</property>
+                            <property name="title" translatable="yes">Connect an Application</property>
                             <property name="description" translatable="yes">Local GNOME applications need no manual registration: their first call asks for consent. Remote applications pair from Connect after you have a signable identity. If you do not have one yet, go Back and create or import it first.</property>
                           </object>
                         </property>
@@ -201,7 +201,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">18</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Verify your stored identity</property>
+                                <property name="label" translatable="yes">Verify Your Stored Identity</property>
                                 <style>
                                   <class name="title-1"/>
                                 </style>
@@ -217,7 +217,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_retry">
-                                <property name="label" translatable="yes">Retry self-test</property>
+                                <property name="label" translatable="yes">Retry Self-Test</property>
                               </object>
                             </child>
                           </object>
@@ -233,7 +233,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="spacing">18</property>
                             <child>
                               <object class="GtkLabel">
-                                <property name="label" translatable="yes">Back up your identity</property>
+                                <property name="label" translatable="yes">Back Up Your Identity</property>
                                 <style>
                                   <class name="title-1"/>
                                 </style>
@@ -257,17 +257,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_copy_seed">
-                                <property name="label" translatable="yes">Copy seed words (clipboard managers may retain them)</property>
+                                <property name="label" translatable="yes">Copy Seed Words (clipboard managers may retain them)</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_backup_retry">
-                                <property name="label" translatable="yes">Retry seed-word export</property>
+                                <property name="label" translatable="yes">Retry Seed-Word Export</property>
                               </object>
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_backup_export">
-                                <property name="label" translatable="yes">Use encrypted backup instead…</property>
+                                <property name="label" translatable="yes">Use Encrypted Backup Instead…</property>
                               </object>
                             </child>
                             <child>
@@ -285,7 +285,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         <property name="child">
                           <object class="AdwStatusPage">
                             <property name="icon-name">emblem-ok-symbolic</property>
-                            <property name="title" translatable="yes">Ready to review signing requests</property>
+                            <property name="title" translatable="yes">Ready to Review Signing Requests</property>
                             <property name="child">
                               <object class="GtkLabel" id="ready_summary">
                                 <property name="wrap">true</property>

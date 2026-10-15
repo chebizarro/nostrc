@@ -324,7 +324,7 @@ static void show_result(SheetQrScanner *self, const gchar *data, GnQrContentType
     g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
     pairing_preview = g_strdup_printf("Client: %s\nName (unverified): %s\nRelays:\n%s\nPermissions are hints only. No relay has been contacted for this link.", uri.client_pubkey_hex, uri.name ? uri.name : "Not supplied", relays);
     grotto_connect_clear(&uri);
-    gtk_button_set_label(GTK_BUTTON(self->btn_import), "Choose identity");
+    gtk_button_set_label(GTK_BUTTON(self->btn_import), "Choose Identity…");
   }
   /* Stop camera if running */
   if (self->scanner_widget && GN_IS_QR_SCANNER(self->scanner_widget)) {

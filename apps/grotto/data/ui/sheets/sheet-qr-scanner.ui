@@ -92,7 +92,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             </child>
                             <child>
                               <object class="GtkButton" id="btn_file">
-                                <property name="label" translatable="yes">Open File</property>
+                                <property name="label" translatable="yes">Open File…</property>
                                 <accessibility>
                                   <property name="label">Open file</property>
                                   <property name="description">Scan QR code from image file</property>

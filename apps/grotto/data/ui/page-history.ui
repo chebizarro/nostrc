@@ -10,7 +10,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="title" translatable="yes">Activity</property>
     <child>
       <object class="AdwPreferencesGroup">
-        <property name="title" translatable="yes">Signer activity</property>
+        <property name="title" translatable="yes">Signer Activity</property>
         <property name="description" translatable="yes">Daemon-recorded outcomes, not publication receipts. No content is stored.</property>
         <child>
           <object class="GtkSearchEntry" id="client_filter">
@@ -62,13 +62,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton" id="older">
-            <property name="label" translatable="yes">Load older activity</property>
+            <property name="label" translatable="yes">Load Older Activity</property>
             <property name="halign">1</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="clear">
-            <property name="label" translatable="yes">Clear activity…</property>
+            <property name="label" translatable="yes">Clear Activity…</property>
             <property name="halign">1</property>
           </object>
         </child>

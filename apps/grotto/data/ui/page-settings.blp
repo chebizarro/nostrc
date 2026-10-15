@@ -1,9 +1,9 @@
 using Gtk 4.0;
 using Adw 1;
 template $PageSettings: Adw.PreferencesPage {
-  title: _("Settings");
+  title: _("Preferences");
   Adw.PreferencesGroup appearance {
-    title: _("Appearance and accessibility");
+    title: _("Appearance and Accessibility");
     Adw.ComboRow theme { title: _("Appearance"); model: StringList { strings [_("System"), _("Light"), _("Dark"), _("High contrast")] }; }
     Adw.SwitchRow high_contrast { title: _("Force high contrast"); }
     Adw.ComboRow contrast_variant { title: _("High-contrast colours"); model: StringList { strings [_("Black on white"), _("White on black"), _("Yellow on black")] }; }
@@ -18,15 +18,15 @@ template $PageSettings: Adw.PreferencesPage {
     Adw.ActionRow confirmation { title: _("Always confirm these event types"); subtitle: _("Overrides remembered allows and trust levels"); activatable: true;
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
-    Button { label: _("Pause signing"); action-name: "app.pause-signing"; halign: start; }
+    Button { label: _("Pause Signing"); action-name: "app.pause-signing"; halign: start; }
   }
   Adw.PreferencesGroup remote {
-    title: _("Remote signing");
+    title: _("Remote Signing");
     Adw.ActionRow runtime { title: _("Runtime status"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }
     Adw.ActionRow relays { title: _("Relays and method allowlist"); subtitle: _("Changes apply without restarting the signer"); activatable: true;
       [suffix] Image { icon-name: "go-next-symbolic"; }
     }
-    Button reset { label: _("Reset remote endpoint…"); halign: start; }
+    Button reset { label: _("Reset Remote Endpoint…"); halign: start; }
   }
   Adw.PreferencesGroup retention {
     title: _("Activity"); description: _("Metadata only — no messages, secrets or event content.");
@@ -34,9 +34,9 @@ template $PageSettings: Adw.PreferencesPage {
       title: _("Keep activity (days)");
       adjustment: Adjustment { lower: 1; upper: 30; step-increment: 1; value: 30; };
     }
-    Button { label: _("View activity"); action-name: "win.activity"; halign: start; }
+    Button { label: _("View Activity"); action-name: "win.activity"; halign: start; }
   }
   Adw.PreferencesGroup about {
-    Button { label: _("About Grotto (Preview)"); action-name: "win.about"; halign: start; }
+    Button { label: _("About Grotto"); action-name: "win.about"; halign: start; }
   }
 }

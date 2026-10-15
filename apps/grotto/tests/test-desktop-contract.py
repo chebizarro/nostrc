@@ -29,7 +29,11 @@ assert entry['Desktop Entry']['DBusActivatable'] == 'true'
 assert entry['Desktop Entry']['X-GNOME-UsesNotifications'] == 'true'
 assert set(entry['Desktop Entry']['Actions'].strip(';').split(';')) == {'new-identity', 'settings'}
 assert entry['Desktop Action new-identity']['Exec'] == 'grotto --new-identity'
-assert entry['Desktop Action settings']['Exec'] == 'grotto --settings'
+assert entry['Desktop Action settings']['Name'] == 'Preferences'
+assert entry['Desktop Action settings']['Exec'] == 'grotto --preferences'
+help_text = subprocess.check_output([str(build / 'apps/grotto/grotto'), '--help'], text=True)
+assert '--preferences' in help_text
+assert '--settings' not in help_text
 assert set(entry['Desktop Entry']['MimeType'].strip(';').split(';')) == {
     'x-scheme-handler/bunker', 'x-scheme-handler/nostrconnect', 'x-scheme-handler/grotto'}
 login = desktop(build / 'apps/grotto/org.nostr.Grotto-autostart.desktop')

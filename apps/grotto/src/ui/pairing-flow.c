@@ -75,7 +75,7 @@ static void preview_uri(PairingFlow *f, const gchar *text) {
         "This is not a valid Nostr Connect link. Use nostrconnect:// with a client key, secret, and supported relays."); return;
   }
   f->uri = g_strdup(text);
-  adw_dialog_set_title(f->dialog, "Connect with which identity?");
+  adw_dialog_set_title(f->dialog, "Connect with Which Identity?");
   g_autofree gchar *relays = g_strjoinv("\n", uri.relays);
   g_autofree gchar *preview = g_strdup_printf("Client transport key: %s\nName supplied by the client (unverified): %s\nRequested permissions (hints only): %s\nRelays:\n%s\n\nThese relays see your network address and connection timing. Nothing has been contacted for this link.",
       uri.client_pubkey_hex, uri.name ? uri.name : "Not supplied", uri.perms_csv ? uri.perms_csv : "None", relays);
@@ -116,7 +116,7 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
   GDBusConnection *bus = app ? g_application_get_dbus_connection(app) : NULL; if (bus) f->bus = g_object_ref(bus);
   g_object_set_data_full(G_OBJECT(f->dialog), "pairing-flow", f, flow_free);
   g_signal_connect(f->dialog, "closed", G_CALLBACK(flow_closed), f);
-  adw_dialog_set_title(f->dialog, "Connect an application"); adw_dialog_set_content_width(f->dialog, 520);
+  adw_dialog_set_title(f->dialog, "Connect an Application"); adw_dialog_set_content_width(f->dialog, 520);
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 18); gtk_widget_set_margin_bottom(box, 18);
   f->status = gtk_label_new("Local GNOME applications do not need pairing. They ask for permission the first time they call Grotto.");
@@ -125,12 +125,12 @@ void grotto_pairing_present(GtkWidget *parent, const gchar *uri) {
     f->entry = gtk_label_new(NULL); gtk_label_set_wrap(GTK_LABEL(f->entry), TRUE); gtk_label_set_selectable(GTK_LABEL(f->entry), TRUE);
     gtk_box_append(GTK_BOX(box), f->entry);
     f->identities = gtk_drop_down_new(NULL, NULL); gtk_widget_set_tooltip_text(f->identities, "Connect with which identity?"); gtk_box_append(GTK_BOX(box), f->identities);
-    f->submit = gtk_button_new_with_label("Review connection"); gtk_widget_set_sensitive(f->submit, FALSE);
+    f->submit = gtk_button_new_with_label("Review Connection"); gtk_widget_set_sensitive(f->submit, FALSE);
     g_signal_connect(f->submit, "clicked", G_CALLBACK(request_review), f); gtk_box_append(GTK_BOX(box), f->submit);
     preview_uri(f, uri);
   } else {
     f->entry = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(f->entry), "Paste a nostrconnect:// link"); gtk_box_append(GTK_BOX(box), f->entry);
-    const gchar *labels[] = {"Preview pasted link", "Scan a QR code", "Create a pairing link / Relay settings"};
+    const gchar *labels[] = {"Preview Pasted Link", "Scan a QR Code…", "Create a Pairing Link / Relay Preferences…"};
     GCallback callbacks[] = {G_CALLBACK(pasted), G_CALLBACK(scan), G_CALLBACK(create)};
     for (guint i = 0; i < 3; i++) { GtkWidget *b = gtk_button_new_with_label(labels[i]); g_signal_connect(b, "clicked", callbacks[i], f); gtk_box_append(GTK_BOX(box), b); }
   }

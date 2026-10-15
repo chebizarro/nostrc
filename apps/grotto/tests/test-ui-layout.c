@@ -228,6 +228,8 @@ static void layout_activate(GApplication *application, gpointer data) {
   g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, "home");
   g_autoptr(GtkSelectionModel) pages = adw_view_stack_get_pages(stack);
   g_assert_cmpuint(g_list_model_get_n_items(G_LIST_MODEL(pages)), ==, 4);
+  g_autoptr(AdwViewStackPage) preferences = g_list_model_get_item(G_LIST_MODEL(pages), 3);
+  g_assert_cmpstr(adw_view_stack_page_get_title(preferences), ==, _("Preferences"));
   const gchar *names[] = {"home", "activity", "connect", "settings"};
   for (guint i = 0; i < G_N_ELEMENTS(names); i++) {
     signer_window_show_page(window, names[i]); wait_frames(GTK_WIDGET(window)); assert_visible_focus(window); g_assert_cmpstr(adw_view_stack_get_visible_child_name(stack), ==, names[i]);
@@ -291,7 +293,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone);
       wait_frames(GTK_WIDGET(editor));
       GtkWidget *decision = find_decision(GTK_WIDGET(editor)); g_assert_nonnull(decision); gtk_drop_down_set_selected(GTK_DROP_DOWN(decision), 1);
-      GtkWidget *save = find_button(GTK_WIDGET(editor), _("Save permission")); g_assert_nonnull(save);
+      GtkWidget *save = find_button(GTK_WIDGET(editor), _("Save Permission")); g_assert_nonnull(save);
       force_conflict = TRUE; g_signal_emit_by_name(save, "clicked");
       WAIT(permission_attempts == 1 && gtk_widget_get_sensitive(save) && gtk_widget_is_sensitive(low));
       wait_frames(GTK_WIDGET(editor));
@@ -303,7 +305,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_assert_cmpstr(adw_banner_get_title(editor_feedback), ==, adw_banner_get_title(feedback));
       snapshot(GTK_WIDGET(window), "permission-conflict");
       g_assert_cmpuint(permission_writes, ==, 0); g_assert_true(contains_permission(npub, "allow"));
-      g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(save)), ==, _("Retry permission"));
+      g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(save)), ==, _("Retry Permission"));
       g_signal_emit_by_name(editor_feedback, "button-clicked"); WAIT(permission_writes == 1 && gtk_widget_is_sensitive(low));
       WAIT(editors_gone == 1 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission(npub, "allow")); g_assert_true(contains_permission(npub, "deny"));
@@ -320,14 +322,14 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_assert_nonnull(all_types); g_assert_nonnull(kind_input); g_assert_true(gtk_check_button_get_active(GTK_CHECK_BUTTON(all_types)));
       gtk_check_button_set_active(GTK_CHECK_BUTTON(all_types), FALSE);
       gtk_spin_button_set_value(GTK_SPIN_BUTTON(kind_input), NOSTR_KIND_TEXT_NOTE);
-      save = find_button(GTK_WIDGET(editor), _("Save permission")); g_signal_emit_by_name(save, "clicked");
+      save = find_button(GTK_WIDGET(editor), _("Save Permission")); g_signal_emit_by_name(save, "clicked");
       g_assert_cmpuint(permission_attempts, ==, 2); /* no wildcard allow may be submitted */
       gtk_drop_down_set_selected(GTK_DROP_DOWN(identity_picker), 1); conflict_cleanup = TRUE;
       g_signal_emit_by_name(save, "clicked");
       WAIT(permission_writes == 2 && !conflict_cleanup && gtk_widget_is_sensitive(save) && gtk_widget_is_sensitive(low));
       g_assert_true(contains_permission(npub, "allow")); g_assert_true(contains_permission("*", "review"));
       g_assert_cmpstr(adw_banner_get_title(feedback), ==, _("Scoped permission saved, but the legacy review entry was not removed. Review the refreshed entries and retry removal."));
-      g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(save)), ==, _("Retry removing legacy entry"));
+      g_assert_cmpstr(gtk_button_get_label(GTK_BUTTON(save)), ==, _("Retry Removing Legacy Entry"));
       g_signal_emit_by_name(save, "clicked"); WAIT(permission_writes == 3);
       WAIT(editors_gone == 2 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_true(scoped_saved_before_cleanup); g_assert_false(contains_permission("*", "review"));
@@ -336,7 +338,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
       g_assert_null(find_identity_picker(GTK_WIDGET(editor)));
-      save = find_button(GTK_WIDGET(editor), _("Save permission")); g_signal_emit_by_name(save, "clicked");
+      save = find_button(GTK_WIDGET(editor), _("Save Permission")); g_signal_emit_by_name(save, "clicked");
       WAIT(permission_writes == 4);
       WAIT(editors_gone == 3 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission(npub, "review"));
@@ -349,7 +351,7 @@ static void layout_activate(GApplication *application, gpointer data) {
       WAIT((legacy = find_permission(detail, "*", "review")) && gtk_widget_is_sensitive(legacy));
       g_signal_emit_by_name(legacy, "activated"); editor = adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window));
       g_object_weak_ref(G_OBJECT(editor), finalised, &editors_gone); wait_frames(GTK_WIDGET(editor));
-      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), _("Remove permission")), "clicked"); WAIT(permission_writes == 5);
+      g_signal_emit_by_name(find_button(GTK_WIDGET(editor), _("Remove Permission")), "clicked"); WAIT(permission_writes == 5);
       WAIT(editors_gone == 4 && adw_application_window_get_visible_dialog(ADW_APPLICATION_WINDOW(window)) == NULL);
       g_assert_false(contains_permission("*", "review"));
       fail_permission_read = TRUE; g_signal_emit_by_name(feedback, "button-clicked");

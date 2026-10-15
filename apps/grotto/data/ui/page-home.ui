@@ -19,7 +19,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
     <child>
       <object class="AdwPreferencesGroup">
-        <property name="title" translatable="yes">Your identities</property>
+        <property name="title" translatable="yes">Your Identities</property>
         <child>
           <object class="GtkBox">
             <property name="orientation">1</property>
@@ -152,7 +152,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
     <child>
       <object class="AdwPreferencesGroup">
-        <property name="title" translatable="yes">Connected clients</property>
+        <property name="title" translatable="yes">Connected Clients</property>
         <child>
           <object class="GtkListBox" id="clients_list">
             <property name="selection-mode">0</property>
@@ -163,7 +163,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="AdwStatusPage" id="empty_clients">
-            <property name="title" translatable="yes">No connected apps</property>
+            <property name="title" translatable="yes">No Connected Apps</property>
             <property name="description" translatable="yes">Tap Connect to pair your first app</property>
             <property name="icon-name">network-wireless-symbolic</property>
             <child>

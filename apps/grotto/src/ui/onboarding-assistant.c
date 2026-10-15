@@ -64,8 +64,8 @@ static void navigation(OnboardingAssistant *self) {
       (self->state != ONBOARDING_BACKUP || (self->backup_presented && gtk_check_button_get_active(self->seed_written_down))));
   gtk_widget_set_visible(GTK_WIDGET(self->btn_retry), self->capabilities_ready && self->identity_stored && !self->self_test_passed && !self->busy);
   gtk_button_set_label(self->btn_next, self->state == ONBOARDING_READY ? "Open Grotto" :
-      self->state == ONBOARDING_CREATE ? "Create identity" : self->state == ONBOARDING_IMPORT ? "Import identity" :
-      self->state == ONBOARDING_TEST_FAILED ? "Enter management with warning" : "Next");
+      self->state == ONBOARDING_CREATE ? "Create Identity" : self->state == ONBOARDING_IMPORT ? "Import Identity" :
+      self->state == ONBOARDING_TEST_FAILED ? "Enter Management with Warning" : "Next");
   gtk_widget_set_sensitive(GTK_WIDGET(self->seed_written_down), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_copy_seed), self->backup_presented && !self->busy);
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_backup_retry), !self->busy);

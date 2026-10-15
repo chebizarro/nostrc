@@ -135,9 +135,9 @@ static void do_finish(GnostrApprovalDialog *self, gboolean allow) {
     g_autofree gchar *body =
         g_strdup_printf("%s forever: %s. This permission does not raise the client's trust level.",
                         allow ? "Allow" : "Deny", gtk_label_get_text(self->label_scope));
-    AdwDialog *alert = adw_alert_dialog_new("Remember forever?", body);
+    AdwDialog *alert = adw_alert_dialog_new("Remember Forever?", body);
     adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", "Cancel", "remember",
-                                   "Remember forever", NULL);
+                                   "Remember Forever", NULL);
     adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
     adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
     Forever *f = g_new0(Forever, 1);
@@ -234,14 +234,14 @@ static void change_trust_clicked(GtkButton *button, gpointer data) {
   change->dialog = g_object_ref(self);
   change->tier = tiers[index];
   self->confirming = TRUE;
-  g_autofree gchar *heading = g_strdup_printf("Change client to %s trust?", tiers[index]);
+  g_autofree gchar *heading = g_strdup_printf("Change Client to %s Trust?", tiers[index]);
   AdwDialog *alert = adw_alert_dialog_new(
       heading,
       "This changes future requests immediately. Full auto-signs permitted operations except "
       "required confirmations; Medium allows public publishing. Explicit permissions remain. This "
       "does not approve this request.");
   adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(alert), "cancel", "Cancel", "change",
-                                 "Change trust level", NULL);
+                                 "Change Trust Level", NULL);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(alert), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(alert), "cancel");
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(alert), GTK_WIDGET(self), NULL, tier_confirmed, change);

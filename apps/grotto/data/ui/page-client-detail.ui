@@ -52,7 +52,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Trust level</property>
+                        <property name="title" translatable="yes">Trust Level</property>
                         <property name="description" translatable="yes">Required-confirmation events and key exports still need review. Explicit denials always win.</property>
                         <child>
                           <object class="AdwActionRow">
@@ -112,7 +112,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="clear_permissions">
-                            <property name="label" translatable="yes">Clear remembered permissions</property>
+                            <property name="label" translatable="yes">Clear Remembered Permissions…</property>
                             <property name="halign">1</property>
                           </object>
                         </child>
@@ -120,7 +120,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Recent activity</property>
+                        <property name="title" translatable="yes">Recent Activity</property>
                         <child>
                           <object class="GtkListBox" id="activity">
                             <property name="selection-mode">0</property>
@@ -135,7 +135,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                       <object class="AdwPreferencesGroup">
                         <child>
                           <object class="GtkButton" id="revoke">
-                            <property name="label" translatable="yes">Revoke client</property>
+                            <property name="label" translatable="yes">Revoke Client…</property>
                             <property name="halign">1</property>
                             <style>
                               <class name="destructive-action"/>

@@ -7,7 +7,7 @@ template $GrottoPageHome: Adw.PreferencesPage {
     Box pending_slot { orientation: vertical; }
   }
   Adw.PreferencesGroup {
-    title: _("Your identities");
+    title: _("Your Identities");
     Box {
       orientation: vertical; spacing: 12;
       ScrolledWindow {
@@ -54,10 +54,10 @@ template $GrottoPageHome: Adw.PreferencesPage {
     Label status_message { wrap: true; margin-top: 12; }
   }
   Adw.PreferencesGroup {
-    title: _("Connected clients");
+    title: _("Connected Clients");
     ListBox clients_list { selection-mode: none; styles ["boxed-list"] }
     Adw.StatusPage empty_clients {
-      title: _("No connected apps");
+      title: _("No Connected Apps");
       description: _("Tap Connect to pair your first app");
       icon-name: "network-wireless-symbolic";
       Button { label: _("Connect"); halign: center; action-name: "win.connect"; styles ["suggested-action"] }

@@ -120,6 +120,11 @@ flatpak-builder --force-clean build-dir org.nostr.Grotto.yaml
 
 ### Running the Flatpak
 
+Open in-app **Preferences** from the primary menu (**Ctrl+,**) or run
+`flatpak run org.nostr.Grotto --preferences`. Native builds use
+`grotto --preferences`; `--settings` is a hidden compatibility alias in this
+unreleased 0.1.0 wave.
+
 ```bash
 flatpak run org.nostr.Grotto
 ```

@@ -271,9 +271,9 @@ static void confirm(GrottoIdentityDetail *self, const gchar *title, const gchar 
   g_signal_connect_data(dialog, "response", G_CALLBACK(confirmed), context(self, operation), confirmation_free, 0);
   adw_dialog_present(dialog, GTK_WIDGET(self));
 }
-static void raw_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Reveal secret key?", "Anyone with this key can control your identity. Clipboard managers may retain it. Never paste it into software you do not trust.", RAW); }
-static void rotate_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Create a successor identity?", "Both identities remain stored. Applications will NOT be redirected and permissions will NOT be copied. A signed migration announcement is saved, not published.", ROTATE); }
-static void remove_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Remove this identity?", "Confirm you have a usable backup and no application still needs this key. This cannot be undone by Grotto.", REMOVE); }
+static void raw_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Reveal Secret Key?", "Anyone with this key can control your identity. Clipboard managers may retain it. Never paste it into software you do not trust.", RAW); }
+static void rotate_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Create a Successor Identity?", "Both identities remain stored. Applications will NOT be redirected and permissions will NOT be copied. A signed migration announcement is saved, not published.", ROTATE); }
+static void remove_clicked(GtkButton *b, gpointer data) { (void)b; confirm(data, "Remove This Identity?", "Confirm you have a usable backup and no application still needs this key. This cannot be undone by Grotto.", REMOVE); }
 static void bus_ready(GObject *source, GAsyncResult *result, gpointer data) {
   (void)source; DetailCtx *ctx = data; GrottoIdentityDetail *self = ctx->self; g_autoptr(GError) error = NULL;
   GDBusConnection *bus = g_bus_get_finish(result, &error);
@@ -344,7 +344,7 @@ static void detail_closed(AdwDialog *dialog, gpointer data) {
   adw_dialog_set_child(dialog, NULL);
 }
 void page_identity_detail_present_identity(GtkWidget *parent, const gchar *npub) {
-  AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, "Identity and backup");
+  AdwDialog *dialog = adw_dialog_new(); adw_dialog_set_title(dialog, "Identity and Backup");
   adw_dialog_set_content_width(dialog, 560); adw_dialog_set_content_height(dialog, 640);
   GtkWidget *navigation = adw_navigation_view_new();
   adw_navigation_view_add(ADW_NAVIGATION_VIEW(navigation), ADW_NAVIGATION_PAGE(page_identity_detail_new(npub)));

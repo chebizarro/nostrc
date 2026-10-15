@@ -88,7 +88,7 @@ static gboolean dialog_frame(GtkWidget *widget, GdkFrameClock *clock, gpointer d
   (void)widget; (void)clock; (*(guint *)data)++; return G_SOURCE_CONTINUE;
 }
 static GtkWidget *response_button(GtkWidget *widget) {
-  if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), "Resume signing")) return widget;
+  if (GTK_IS_BUTTON(widget) && !g_strcmp0(gtk_button_get_label(GTK_BUTTON(widget)), "Resume Signing")) return widget;
   for (GtkWidget *child = gtk_widget_get_first_child(widget); child; child = gtk_widget_get_next_sibling(child)) {
     GtkWidget *found = response_button(child); if (found) return found;
   }
@@ -164,6 +164,8 @@ static gboolean exercise(gpointer data) {
   for (guint i = 0; i < G_N_ELEMENTS(action_names); i++) g_assert_true(g_action_group_has_action(G_ACTION_GROUP(app), action_names[i]));
   g_auto(GStrv) accel = gtk_application_get_accels_for_action(GTK_APPLICATION(app), "app.close-window");
   g_assert_cmpstr(accel[0], ==, "<Control>w");
+  g_auto(GStrv) prefs_accel = gtk_application_get_accels_for_action(GTK_APPLICATION(app), "win.preferences");
+  g_assert_cmpstr(prefs_accel[0], ==, "<Control>comma");
   g_autoptr(GFile) uri = g_file_new_for_uri("bunker://test?secret=never-log-this");
   GFile *files[] = { uri }; g_application_open(app, files, 1, "");
   g_assert_cmpuint(g_list_length(gtk_application_get_windows(GTK_APPLICATION(app))), ==, 1);
@@ -250,7 +252,7 @@ static int worker(const char *value) {
   app = G_APPLICATION(grotto_application_new(G_APPLICATION_DEFAULT_FLAGS));
   g_idle_add(exercise, NULL);
   char *argv[] = { "desktop-worker", (!strcmp(mode, "service") || !strcmp(mode, "onboarding")) ? "--gapplication-service" :
-                                      !strcmp(mode, "settings") ? "--settings" : "--new-identity", NULL };
+                                      !strcmp(mode, "settings") ? "--settings" : !strcmp(mode, "preferences") ? "--preferences" : "--new-identity", NULL };
   int status = g_application_run(app, 2, argv);
   g_assert_true(done);
   GrottoBackground *bg = g_object_get_data(G_OBJECT(app), "grotto-background");
@@ -281,7 +283,7 @@ int main(int argc, char **argv) {
   if (!nostrc_test_bus_available() || !g_getenv("DISPLAY"))
     g_error("Desktop activation requires a private bus and a display; run under Xvfb");
   NostrcTestBus *bus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE); nostrc_test_bus_up(bus);
-  const char *modes[] = { "service", "settings", "new-identity", "onboarding" };
+  const char *modes[] = { "service", "settings", "preferences", "new-identity", "onboarding" };
   for (guint i = 0; i < G_N_ELEMENTS(modes); i++) {
     gboolean finished = FALSE;
     g_autoptr(GSubprocess) process = g_subprocess_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_MERGE, NULL, argv[0], "--worker", modes[i], NULL);

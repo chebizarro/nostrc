@@ -1,7 +1,7 @@
 using Gtk 4.0;
 using Adw 1;
 template $GrottoIdentityDetail: Adw.NavigationPage {
-  title: _("Identity and backup");
+  title: _("Identity and Backup");
   tag: "identity-detail";
   Adw.ToolbarView {
     [top] Adw.HeaderBar {}
@@ -16,9 +16,9 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
           Label setup_warning { wrap: true; xalign: 0; styles ["warning"] }
           Label public_key { wrap: true; selectable: true; xalign: 0; styles ["monospace"] }
           Entry label_entry { placeholder-text: _("Local identity label"); }
-          Button btn_label { label: _("Save local label"); }
+          Button btn_label { label: _("Save Local Label"); }
           Adw.PreferencesGroup {
-            title: _("Key backup and safety tips");
+            title: _("Key Backup and Safety Tips");
             description: _("Your secret key gives full control. Never paste it into software you do not trust. Grotto developers never ask for it. Keep a private backup. Clipboard managers can retain anything you copy.");
             Adw.ActionRow {
               title: _("Show seed words");
@@ -29,25 +29,25 @@ template $GrottoIdentityDetail: Adw.NavigationPage {
           }
           Box seed_words { orientation: vertical; styles ["monospace"] }
           CheckButton backup_written_down { label: _("I have safely backed up this identity"); }
-          Button btn_backup_done { label: _("Confirm backup"); }
+          Button btn_backup_done { label: _("Confirm Backup"); }
           Label { label: _("Encrypted export passphrase (NIP-49 only)"); wrap: true; xalign: 0; }
           Box export_passphrase_box { orientation: vertical; }
-          Button btn_export { label: _("Export encrypted key (NIP-49)"); }
-          Button btn_qr { label: _("Show encrypted key QR code"); }
-          Button btn_raw { label: _("Copy secret key…"); styles ["destructive-action"] }
+          Button btn_export { label: _("Export Encrypted Key (NIP-49)"); }
+          Button btn_qr { label: _("Show Encrypted Key QR Code…"); }
+          Button btn_raw { label: _("Copy Secret Key…"); styles ["destructive-action"] }
           Adw.PreferencesGroup {
-            title: _("Identity management");
+            title: _("Identity Management");
             description: _("Managing this identity never switches identities for another application.");
             Adw.ActionRow {
               title: _("Default for older apps");
               subtitle: _("Only applications that do not specify an identity use this default");
-              [suffix] Button btn_default { label: _("Set default"); valign: center; }
+              [suffix] Button btn_default { label: _("Set Default"); valign: center; }
             }
           }
-          Button btn_test { label: _("Retry identity self-test"); }
-          Button btn_rotate { label: _("Create successor identity…"); }
-          Button btn_migration { label: _("Export saved migration announcement"); }
-          Button btn_remove { label: _("Remove this identity…"); styles ["destructive-action"] }
+          Button btn_test { label: _("Retry Identity Self-Test"); }
+          Button btn_rotate { label: _("Create Successor Identity…"); }
+          Button btn_migration { label: _("Export Saved Migration Announcement"); }
+          Button btn_remove { label: _("Remove This Identity…"); styles ["destructive-action"] }
           Label status_label { wrap: true; xalign: 0; }
         }
       }

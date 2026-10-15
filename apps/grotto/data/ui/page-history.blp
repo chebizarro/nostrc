@@ -3,7 +3,7 @@ using Adw 1;
 template $GnPageHistory: Adw.PreferencesPage {
   title: _("Activity");
   Adw.PreferencesGroup {
-    title: _("Signer activity");
+    title: _("Signer Activity");
     description: _("Daemon-recorded outcomes, not publication receipts. No content is stored.");
     SearchEntry client_filter { placeholder-text: _("Filter by client"); accessibility { label: _("Filter activity by client"); } }
     Adw.EntryRow kind_filter { title: _("Event type number (empty for all)"); }
@@ -12,7 +12,7 @@ template $GnPageHistory: Adw.PreferencesPage {
   Adw.PreferencesGroup {
     ListBox records { selection-mode: none; styles ["boxed-list"] }
     Label status { wrap: true; }
-    Button older { label: _("Load older activity"); halign: start; }
-    Button clear { label: _("Clear activity…"); halign: start; }
+    Button older { label: _("Load Older Activity"); halign: start; }
+    Button clear { label: _("Clear Activity…"); halign: start; }
   }
 }

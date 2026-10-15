@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $GnostrApprovalDialog: Adw.Dialog {
-  title: _("Review request");
+  title: _("Review Request");
   content-width: 440;
   width-request: 300;
   follows-content-size: true;
@@ -19,7 +19,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
         margin-end: 20;
         margin-bottom: 20;
         Image header_icon { icon-name: "dialog-question-symbolic"; pixel-size: 24; }
-        Label header_title { label: _("Review request"); wrap: true; styles ["title-3"] }
+        Label header_title { label: _("Review Request"); wrap: true; styles ["title-3"] }
         Label subtitle_label { wrap: true; xalign: 0; }
         Label label_from { wrap: true; wrap-mode: word_char; xalign: 0; selectable: true; }
         Label label_event_kind { wrap: true; xalign: 0; }
@@ -52,7 +52,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
             orientation: vertical;
             spacing: 8;
             Box batch_box { orientation: vertical; spacing: 8; }
-            Button btn_approve_selected { label: _("Approve selected once"); sensitive: false; }
+            Button btn_approve_selected { label: _("Approve Selected Once"); sensitive: false; }
           }
         }
         Label label_scope { wrap: true; wrap-mode: word_char; xalign: 0; styles ["dim-label"] }
@@ -71,7 +71,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
           spacing: 8;
           Button btn_deny { label: _("Deny"); tooltip-text: _("Deny once (Ctrl+D, Escape)"); }
           Button btn_approve { label: _("Approve"); receives-default: false; tooltip-text: _("Approve (Ctrl+A)"); styles ["suggested-action"] }
-          Button btn_not_now { label: _("Not now"); tooltip-text: _("Keep this request waiting"); }
+          Button btn_not_now { label: _("Not Now"); tooltip-text: _("Keep this request waiting"); }
         }
         Expander details_expander {
           label: _("Details");
@@ -82,7 +82,7 @@ template $GnostrApprovalDialog: Adw.Dialog {
             Label label_timestamp { wrap: true; xalign: 0; }
             Label label_trust_explanation { label: _("Changing trust is separate from remembering this decision. Lowering trust keeps explicit permissions."); wrap: true; xalign: 0; }
             DropDown trust_dropdown { }
-            Button btn_change_trust { label: _("Change trust level"); sensitive: false; }
+            Button btn_change_trust { label: _("Change Trust Level…"); sensitive: false; }
           }
         }
       }

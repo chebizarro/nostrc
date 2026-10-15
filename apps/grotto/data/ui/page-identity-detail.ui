@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GrottoIdentityDetail" parent="AdwNavigationPage">
-    <property name="title" translatable="yes">Identity and backup</property>
+    <property name="title" translatable="yes">Identity and Backup</property>
     <property name="tag">identity-detail</property>
     <child>
       <object class="AdwToolbarView">
@@ -61,12 +61,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_label">
-                        <property name="label" translatable="yes">Save local label</property>
+                        <property name="label" translatable="yes">Save Local Label</property>
                       </object>
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Key backup and safety tips</property>
+                        <property name="title" translatable="yes">Key Backup and Safety Tips</property>
                         <property name="description" translatable="yes">Your secret key gives full control. Never paste it into software you do not trust. Grotto developers never ask for it. Keep a private backup. Clipboard managers can retain anything you copy.</property>
                         <child>
                           <object class="AdwActionRow">
@@ -101,7 +101,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_backup_done">
-                        <property name="label" translatable="yes">Confirm backup</property>
+                        <property name="label" translatable="yes">Confirm Backup</property>
                       </object>
                     </child>
                     <child>
@@ -118,17 +118,17 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_export">
-                        <property name="label" translatable="yes">Export encrypted key (NIP-49)</property>
+                        <property name="label" translatable="yes">Export Encrypted Key (NIP-49)</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_qr">
-                        <property name="label" translatable="yes">Show encrypted key QR code</property>
+                        <property name="label" translatable="yes">Show Encrypted Key QR Code…</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_raw">
-                        <property name="label" translatable="yes">Copy secret key…</property>
+                        <property name="label" translatable="yes">Copy Secret Key…</property>
                         <style>
                           <class name="destructive-action"/>
                         </style>
@@ -136,7 +136,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="AdwPreferencesGroup">
-                        <property name="title" translatable="yes">Identity management</property>
+                        <property name="title" translatable="yes">Identity Management</property>
                         <property name="description" translatable="yes">Managing this identity never switches identities for another application.</property>
                         <child>
                           <object class="AdwActionRow">
@@ -144,7 +144,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                             <property name="subtitle" translatable="yes">Only applications that do not specify an identity use this default</property>
                             <child type="suffix">
                               <object class="GtkButton" id="btn_default">
-                                <property name="label" translatable="yes">Set default</property>
+                                <property name="label" translatable="yes">Set Default</property>
                                 <property name="valign">3</property>
                               </object>
                             </child>
@@ -154,22 +154,22 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_test">
-                        <property name="label" translatable="yes">Retry identity self-test</property>
+                        <property name="label" translatable="yes">Retry Identity Self-Test</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_rotate">
-                        <property name="label" translatable="yes">Create successor identity…</property>
+                        <property name="label" translatable="yes">Create Successor Identity…</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_migration">
-                        <property name="label" translatable="yes">Export saved migration announcement</property>
+                        <property name="label" translatable="yes">Export Saved Migration Announcement</property>
                       </object>
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_remove">
-                        <property name="label" translatable="yes">Remove this identity…</property>
+                        <property name="label" translatable="yes">Remove This Identity…</property>
                         <style>
                           <class name="destructive-action"/>
                         </style>

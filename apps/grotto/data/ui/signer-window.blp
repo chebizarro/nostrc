@@ -48,10 +48,10 @@ template $SignerWindow: Adw.ApplicationWindow {
                       Label { label: _("Connect"); }
                     }
                   }
-                  ListBoxRow { accessibility { label: _("Settings"); }
+                  ListBoxRow { accessibility { label: _("Preferences"); }
                     Box { spacing: 12; margin-start: 12; margin-end: 12; margin-top: 12; margin-bottom: 12;
                       Image { icon-name: "emblem-system-symbolic"; }
-                      Label { label: _("Settings"); }
+                      Label { label: _("Preferences"); }
                     }
                   }
                 }
@@ -67,7 +67,7 @@ template $SignerWindow: Adw.ApplicationWindow {
                     Adw.ViewStackPage { name: "home"; title: _("Home"); icon-name: "go-home-symbolic"; child: $GrottoPageHome page_home {}; }
                     Adw.ViewStackPage { name: "activity"; title: _("Activity"); icon-name: "document-open-recent-symbolic"; child: $GnPageHistory page_history {}; }
                     Adw.ViewStackPage { name: "connect"; title: _("Connect"); icon-name: "network-wireless-symbolic"; child: $GrottoPageConnect page_connect {}; }
-                    Adw.ViewStackPage { name: "settings"; title: _("Settings"); icon-name: "emblem-system-symbolic"; child: $PageSettings page_settings {}; }
+                    Adw.ViewStackPage { name: "settings"; title: _("Preferences"); icon-name: "emblem-system-symbolic"; child: $PageSettings page_settings {}; }
                   };
                 }
               };

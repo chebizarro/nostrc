@@ -119,8 +119,8 @@ static void revoke_confirmed(GObject *source, GAsyncResult *result, gpointer dat
 }
 static void revoke_clicked(GtkButton *button, gpointer data) {
   (void)button; GrottoClientDetail *self = data;
-  AdwDialog *d = adw_alert_dialog_new(_("Revoke this client?"), _("Pending requests will be cancelled and all remembered permissions removed. The app must ask again."));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "revoke", _("Revoke client"), NULL);
+  AdwDialog *d = adw_alert_dialog_new(_("Revoke This Client?"), _("Pending requests will be cancelled and all remembered permissions removed. The app must ask again."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "revoke", _("Revoke Client"), NULL);
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(d), "revoke", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel");
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), GTK_WIDGET(self), NULL, revoke_confirmed, g_object_ref(self));
@@ -134,7 +134,7 @@ static void clear_scope(GtkButton *button, gpointer data) {
   s->revision = self->revision; s->owner = g_strdup(self->owner);
   GVariantBuilder b; g_variant_builder_init(&b, G_VARIANT_TYPE("aa{sv}")); s->rows = g_variant_ref_sink(g_variant_builder_end(&b));
   g_autofree gchar *body = g_strdup_printf(_("Remove every explicit allow and deny for this client and identity %s? The trust tier remains unchanged."), *identity ? identity : "(identity-independent)");
-  AdwDialog *d = adw_alert_dialog_new(_("Clear remembered permissions?"), body);
+  AdwDialog *d = adw_alert_dialog_new(_("Clear Remembered Permissions?"), body);
   adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "save", _("Clear"), NULL);
   adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(d), "save", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel");
@@ -151,15 +151,15 @@ static void open_permissions(AdwActionRow *row, gpointer data) {
     adw_header_bar_set_show_end_title_buttons(ADW_HEADER_BAR(header), FALSE);
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
     self->permission_banner = ADW_BANNER(adw_banner_new(""));
-    adw_banner_set_button_label(self->permission_banner, _("Refresh permissions"));
+    adw_banner_set_button_label(self->permission_banner, _("Refresh Permissions"));
     g_signal_connect(self->permission_banner, "button-clicked", G_CALLBACK(refresh_permissions), self);
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(self->permission_banner));
     GtkWidget *prefs = adw_preferences_page_new(); self->effective = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-    adw_preferences_group_set_title(self->effective, _("Effective from trust level"));
+    adw_preferences_group_set_title(self->effective, _("Effective from Trust Level"));
     adw_preferences_group_set_description(self->effective, _("Read-only policy. Explicit denials win; required-confirmation events and key exports still need review."));
     adw_preferences_page_add(ADW_PREFERENCES_PAGE(prefs), self->effective);
     AdwPreferencesGroup *explicit = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-    adw_preferences_group_set_title(explicit, _("Remembered permissions"));
+    adw_preferences_group_set_title(explicit, _("Remembered Permissions"));
     adw_preferences_group_set_description(explicit, _("Exact client + identity + operation + event type. Expiry is absolute, not extended by activity. Needs-review entries cannot authorize signing."));
     self->explicit_list = GTK_LIST_BOX(gtk_list_box_new()); gtk_list_box_set_selection_mode(self->explicit_list, GTK_SELECTION_NONE);
     gtk_widget_add_css_class(GTK_WIDGET(self->explicit_list), "boxed-list"); adw_preferences_group_add(explicit, GTK_WIDGET(self->explicit_list));
@@ -220,15 +220,15 @@ static void editor_refreshed(GrottoClientDetail *self) {
   if (!found || g_strcmp0(e->save->owner, self->owner)) {
     e->blocked = TRUE;
     editor_feedback(self, _("The original entry or signer changed. Your edit was not retried. Close this editor and review the new entries."));
-    adw_banner_set_button_label(e->feedback, _("Review updated permissions"));
+    adw_banner_set_button_label(e->feedback, _("Review Updated Permissions"));
     gtk_widget_set_sensitive(GTK_WIDGET(e->submit), FALSE); return;
   }
   e->blocked = FALSE;
   g_clear_pointer(&e->snapshot, g_variant_unref); e->snapshot = g_variant_ref(self->rows);
   e->save->revision = self->revision;
   gtk_widget_set_sensitive(GTK_WIDGET(e->submit), TRUE);
-  gtk_button_set_label(e->submit, e->cleanup ? _("Retry removing legacy entry") : e->failed ? _("Retry permission") : _("Save permission"));
-  adw_banner_set_button_label(e->feedback, e->cleanup ? _("Retry removing legacy entry") : _("Retry permission"));
+  gtk_button_set_label(e->submit, e->cleanup ? _("Retry Removing Legacy Entry") : e->failed ? _("Retry Permission") : _("Save Permission"));
+  adw_banner_set_button_label(e->feedback, e->cleanup ? _("Retry Removing Legacy Entry") : _("Retry Permission"));
   if (e->cleanup_ready) { e->cleanup_ready = FALSE; edited(e->submit, e); }
 }
 static void kind_item_setup(GtkSignalListItemFactory *factory, GtkListItem *item, gpointer data) {
@@ -295,7 +295,7 @@ static void edited(GtkButton *button, gpointer data) {
     g_autofree gchar *event_scope = !e->kind ? g_strdup("") : kind < 0 ? g_strdup(_(" · all event types")) : g_strdup_printf(_(" · %s (%d)"), gnostr_approval_kind_name(kind), kind);
     g_autofree gchar *scope = g_strdup_printf(_("Remember %s for %s, identity %s, operation %s%s forever?"), decision_label(decision),
         s->page->principal, s->identity, gn_page_history_operation_label(text(e->original, "operation")), event_scope);
-    AdwDialog *d = adw_alert_dialog_new(_("Remember forever?"), scope);
+    AdwDialog *d = adw_alert_dialog_new(_("Remember Forever?"), scope);
     adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "save", _("Remember"), NULL);
     adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel");
     adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), GTK_WIDGET(s->page), NULL, confirmed, s);
@@ -314,7 +314,7 @@ static void edit_row(AdwActionRow *row, gpointer data) {
   e->snapshot = g_variant_ref(self->rows); e->save = g_new0(Save, 1); e->save->page = g_object_ref(self);
   e->save->identity = g_strdup(text(e->original, "identity")); e->save->revision = self->revision; e->save->owner = g_strdup(self->owner);
   self->editor = e;
-  e->dialog = adw_dialog_new(); adw_dialog_set_title(e->dialog, _("Edit remembered permission"));
+  e->dialog = adw_dialog_new(); adw_dialog_set_title(e->dialog, _("Edit Remembered Permission"));
   adw_dialog_set_content_width(e->dialog, 400); adw_dialog_set_content_height(e->dialog, 560);
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
   gtk_widget_set_margin_start(box, 18); gtk_widget_set_margin_end(box, 18); gtk_widget_set_margin_top(box, 18); gtk_widget_set_margin_bottom(box, 18);
@@ -369,15 +369,15 @@ static void edit_row(AdwActionRow *row, gpointer data) {
   e->expiry = GTK_DROP_DOWN(gtk_drop_down_new_from_strings(durations)); gtk_drop_down_set_selected(e->expiry, !strcmp(text(e->original, "state"), "needs-review") ? 1 : 0);
   gtk_accessible_update_property(GTK_ACCESSIBLE(e->expiry), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Permission expiry"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(e->expiry));
   e->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(e->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(e->error));
-  GtkWidget *save = gtk_button_new_with_label(_("Save permission")); e->submit = GTK_BUTTON(save); g_signal_connect(save, "clicked", G_CALLBACK(edited), e); gtk_box_append(GTK_BOX(box), save);
-  GtkWidget *remove = gtk_button_new_with_label(_("Remove permission")); g_object_set_data(G_OBJECT(remove), "remove", GINT_TO_POINTER(1));
+  GtkWidget *save = gtk_button_new_with_label(_("Save Permission")); e->submit = GTK_BUTTON(save); g_signal_connect(save, "clicked", G_CALLBACK(edited), e); gtk_box_append(GTK_BOX(box), save);
+  GtkWidget *remove = gtk_button_new_with_label(_("Remove Permission")); g_object_set_data(G_OBJECT(remove), "remove", GINT_TO_POINTER(1));
   g_signal_connect(remove, "clicked", G_CALLBACK(edited), e); gtk_box_append(GTK_BOX(box), remove);
   g_signal_connect(e->dialog, "closed", G_CALLBACK(editor_closed), e);
   g_object_set_data_full(G_OBJECT(e->dialog), "editor", e, editor_free); GtkWidget *scroll = gtk_scrolled_window_new();
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
-  e->feedback = ADW_BANNER(adw_banner_new("")); adw_banner_set_button_label(e->feedback, _("Retry permission"));
+  e->feedback = ADW_BANNER(adw_banner_new("")); adw_banner_set_button_label(e->feedback, _("Retry Permission"));
   g_signal_connect(e->feedback, "button-clicked", G_CALLBACK(editor_retry), e);
   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), GTK_WIDGET(e->feedback));
   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll); adw_dialog_set_child(e->dialog, toolbar); adw_dialog_present(e->dialog, GTK_WIDGET(self));
@@ -412,7 +412,7 @@ static void render_permissions(GrottoClientDetail *self) {
     const gchar *identity = text(permission, "identity"), *op = text(permission, "operation"); gint kind = -1; guint64 expires = 0;
     g_variant_lookup(permission, "event-kind", "i", &kind); g_variant_lookup(permission, "expires-at", "t", &expires);
     if (g_hash_table_add(scopes, g_strdup(identity))) {
-      GtkWidget *clear = gtk_button_new_with_label(_("Clear this identity’s permissions…"));
+      GtkWidget *clear = gtk_button_new_with_label(_("Clear This Identity’s Permissions…"));
       g_object_set_data_full(G_OBJECT(clear), "identity", g_strdup(identity), g_free); g_signal_connect(clear, "clicked", G_CALLBACK(clear_scope), self);
       gtk_list_box_append(self->explicit_list, clear);
     }

@@ -23,9 +23,9 @@ X-Nostr-Kinds=
 Actions=new-identity;settings;
 
 [Desktop Action new-identity]
-Name=New Identity
+Name=New Identity…
 Exec=grotto --new-identity
 
 [Desktop Action settings]
-Name=Settings
-Exec=grotto --settings
+Name=Preferences
+Exec=grotto --preferences

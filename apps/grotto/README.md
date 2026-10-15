@@ -44,7 +44,7 @@ without remote-signer support, select a Grotto-backed account or read-only mode.
 
 ## Background and desktop activation
 
-Background review defaults on **after setup disclosure or an explicit Settings
+Background review defaults on **after setup disclosure or an explicit Preferences
 choice**. Launch on login defaults off. Closing a window (Ctrl+W) saves its
 geometry and destroys it; background/request holds do not retain hidden windows.
 Ctrl+Q quits only the approval UI for this session: already-authorised signing
@@ -64,7 +64,7 @@ observation is unavailable, signing stays paused. Unlock requests are not proof
 of an unlocked desktop, and unlocking never resumes signing automatically.
 The GUI's GNOME ScreenSaver observer is only a redundant pause trigger.
 
-Settings reports desktop background permission: unavailable portals are nonfatal
+Preferences reports desktop background permission: unavailable portals are nonfatal
 for native installations; denial removes continuous residence but does not disable
 request-scoped D-Bus activation. Portal v2 status contains only generic readiness,
 waiting or paused text, updated only when that generic state changes. Only an
@@ -77,13 +77,17 @@ portal autostart instead with `dbus-activatable=false`, never both. A durable
 `portal-autostart-created` marker is set before requesting login and cleared only
 on confirmed removal, so disabled login is reconciled even after a restart.
 Native login remains disabled while an old portal entry awaits removal.
-Experimental AppImage login is unsupported and visibly disabled in Settings.
+Experimental AppImage login is unsupported and visibly disabled in Preferences.
 Turning background off turns login launch off;
 turning login launch off does not turn background off. Migration v1 reads the old
 `autostart`/`start-minimized` preferences once; explicit launches and reviews are
 always visible, never minimized by those old settings.
 
-Desktop actions `grotto --new-identity` and `grotto --settings` reuse the existing
+Open **Preferences** from the primary menu with **Ctrl+,**. The `--preferences`
+switch opens the same page; `--settings` remains a hidden compatibility alias for
+the unreleased 0.1.0 wave.
+
+Desktop actions `grotto --new-identity` and `grotto --preferences` reuse the existing
 management/onboarding window. The desktop entry handles `bunker:`, `nostrconnect:`
 and local `grotto:` activation, never `nostr:`. Pairing previews and the identity
 chooser precede supplied-relay contact. Another signer's `bunker://` link does not
@@ -102,7 +106,7 @@ module owns `org.nostr.Shell.Signer1`, preventing duplicate indicators.
 - **Connect**: paste, camera/file QR, link entry and single-use pairing offers.
   Local apps need no pairing. Approved remote connections waiting for relay OK
   remain visibly incomplete, not paired.
-- **Settings**: background/login, appearance/accessibility, management lock,
+- **Preferences**: background/login, appearance/accessibility, management lock,
   screen-lock pause, required-confirmation event types, remote runtime/configuration,
   1–30 day activity retention, and About. Required-confirmation defaults and Medium's
   public-publishing set come from G03 policy data; final membership awaits owner sign-off.
@@ -211,7 +215,7 @@ See [packaging/macos/README.md](packaging/macos/README.md) for detailed macOS pa
 
 ## Remote application pairing
 
-The window menu's **Connect an application…** opens paste, native camera/image scan, explicit identity selection, shared pairing review, and daemon-issued single-use QR offers. Relay settings apply without a daemon restart. See [pairing, headless configuration, and the systemd operator check](docs/pairing.md). Linux GUI builds require libqrencode, zbar, and GStreamer (core/video/appsink plus the native capture/base/good runtime plugins).
+The window menu's **Connect an Application…** opens paste, native camera/image scan, explicit identity selection, shared pairing review, and daemon-issued single-use QR offers. Relay settings apply without a daemon restart. See [pairing, headless configuration, and the systemd operator check](docs/pairing.md). Linux GUI builds require libqrencode, zbar, and GStreamer (core/video/appsink plus the native capture/base/good runtime plugins).
 
 ## Usage
 

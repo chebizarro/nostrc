@@ -291,7 +291,7 @@ static void attach_pending_group(GtkWindow *win) {
   if (SIGNER_IS_WINDOW(win) && background &&
       !g_object_get_data(G_OBJECT(win), "grotto-background-group")) {
     AdwPreferencesGroup *group = ADW_PREFERENCES_GROUP(adw_preferences_group_new());
-    adw_preferences_group_set_title(group, "Background and signing");
+    adw_preferences_group_set_title(group, "Background and Signing");
     AdwActionRow *permission = ADW_ACTION_ROW(adw_action_row_new());
     adw_preferences_row_set_title(ADW_PREFERENCES_ROW(permission), "Allow background operation");
     adw_action_row_set_subtitle(permission, "Review the setup disclosure before requesting desktop permission");
@@ -548,9 +548,9 @@ static void on_resume_signing(GSimpleAction *action, GVariant *parameter, gpoint
   GtkWindow *win = present_pending(global_app);
   review_activation = FALSE;
   if (resume_dialog) { adw_dialog_present(resume_dialog, GTK_WIDGET(win)); return; }
-  resume_dialog = adw_alert_dialog_new("Resume signing?",
+  resume_dialog = adw_alert_dialog_new("Resume Signing?",
       "Previously authorised clients will be able to sign again. Confirm only after unlocking your session.");
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(resume_dialog), "cancel", "Cancel", "resume", "Resume signing", NULL);
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(resume_dialog), "cancel", "Cancel", "resume", "Resume Signing", NULL);
   adw_alert_dialog_set_default_response(ADW_ALERT_DIALOG(resume_dialog), "cancel");
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(resume_dialog), "cancel");
   g_object_set_data_full(G_OBJECT(resume_dialog), "grotto-control-owner", g_strdup(control_owner), g_free);
@@ -824,7 +824,7 @@ static void disclosure_response(AdwAlertDialog *dialog, const char *response, gp
 static void maybe_disclose_background(GtkWindow *win) {
   if (!background_settings || review_activation ||
       g_settings_get_boolean(background_settings, "background-disclosure-accepted")) return;
-  AdwDialog *dialog = adw_alert_dialog_new("Review requests in the background?",
+  AdwDialog *dialog = adw_alert_dialog_new("Review Requests in the Background?",
       "Closing a window destroys it. Grotto can keep reviewing requests without a window, "
       "subject to desktop permission. Launch on login stays off. Quitting the approval UI "
       "does not pause already-authorised signing; a later request can start Grotto again.");
@@ -863,8 +863,8 @@ static gint on_command_line(GApplication *app, GApplicationCommandLine *command,
   GVariantDict *options = g_application_command_line_get_options_dict(command);
   if (g_variant_dict_contains(options, "new-identity"))
     g_action_group_activate_action(G_ACTION_GROUP(app), "new-identity", NULL);
-  else if (g_variant_dict_contains(options, "settings"))
-    g_action_group_activate_action(G_ACTION_GROUP(app), "settings", NULL);
+  else if (g_variant_dict_contains(options, "preferences") || g_variant_dict_contains(options, "settings"))
+    g_action_group_activate_action(G_ACTION_GROUP(app), "preferences", NULL);
   else {
     gint argc;
     g_auto(GStrv) argv = g_application_command_line_get_arguments(command, &argc);
@@ -1028,8 +1028,11 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
   AdwApplication *app = adw_application_new("org.nostr.Grotto", app_flags | G_APPLICATION_HANDLES_OPEN | G_APPLICATION_HANDLES_COMMAND_LINE);
   g_application_add_main_option(G_APPLICATION(app), "new-identity", 0, G_OPTION_FLAG_NONE,
       G_OPTION_ARG_NONE, "Create or import an identity", NULL);
-  g_application_add_main_option(G_APPLICATION(app), "settings", 0, G_OPTION_FLAG_NONE,
-      G_OPTION_ARG_NONE, "Open settings", NULL);
+  g_application_add_main_option(G_APPLICATION(app), "preferences", 0, G_OPTION_FLAG_NONE,
+      G_OPTION_ARG_NONE, "Open preferences", NULL);
+  /* Compatibility alias for the unreleased 0.1.0 wave; documented in README. */
+  g_application_add_main_option(G_APPLICATION(app), "settings", 0, G_OPTION_FLAG_HIDDEN,
+      G_OPTION_ARG_NONE, "Alias for --preferences", NULL);
 
   /* Store global app reference for theme change callbacks */
   global_app = GTK_APPLICATION(app);
@@ -1064,8 +1067,9 @@ AdwApplication *grotto_application_new(GApplicationFlags app_flags) {
   const char *quit_accels[] = { "<Primary>q", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
 
-  const char *prefs_accels[] = { "<Primary>comma", NULL };
+  const char *prefs_accels[] = { "<Control>comma", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.preferences", prefs_accels);
+  gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.preferences", prefs_accels);
 
   const char *new_profile_accels[] = { "<Primary>n", NULL };
   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.new-profile", new_profile_accels);

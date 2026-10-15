@@ -133,9 +133,9 @@ static void reset_chosen(GObject *source, GAsyncResult *result, gpointer data) {
 }
 static void reset_clicked(GtkButton *button, gpointer data) {
   (void)button; SheetCreateBunker *s = data;
-  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new("Reset remote signing endpoint?",
+  AdwAlertDialog *dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new("Reset Remote Signing Endpoint?",
       "This explicitly creates a new transport credential in the daemon's key store. All existing remote clients and their permissions are revoked and must be paired again. Identity keys do not change."));
-  adw_alert_dialog_add_responses(dialog, "cancel", "Cancel", "reset", "Reset and revoke clients", NULL);
+  adw_alert_dialog_add_responses(dialog, "cancel", "Cancel", "reset", "Reset and Revoke Clients", NULL);
   adw_alert_dialog_set_default_response(dialog, "cancel"); adw_alert_dialog_set_close_response(dialog, "cancel");
   adw_alert_dialog_set_response_appearance(dialog, "reset", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_choose(dialog, GTK_WIDGET(s), s->cancel, reset_chosen, g_object_ref(s));

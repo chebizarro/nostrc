@@ -3,7 +3,7 @@ using Adw 1;
 template $GrottoPageConnect: Adw.PreferencesPage {
   title: _("Connect");
   Adw.PreferencesGroup {
-    title: _("Connect an application");
+    title: _("Connect an Application");
     description: _("Choose an identity and review the connection before any supplied relay is contacted. New apps start at Low trust.");
     Adw.ActionRow paste {
       title: _("Paste a Nostr Connect link"); subtitle: _("Preview a link from your clipboard"); activatable: true;
@@ -29,7 +29,7 @@ template $GrottoPageConnect: Adw.PreferencesPage {
   Adw.PreferencesGroup {
     Adw.ActionRow runtime { title: _("Remote signing"); subtitle: _("Connecting to signer…"); subtitle-lines: 3; }
     Label {
-      label: _("Local GNOME applications need no pairing. They ask the first time they call Grotto, and you choose what they may do. Remote apps need remote signing enabled in Settings; approving a connection does not grant signing permissions.");
+      label: _("Local GNOME applications need no pairing. They ask the first time they call Grotto, and you choose what they may do. Remote apps need remote signing enabled in Preferences; approving a connection does not grant signing permissions.");
       wrap: true; xalign: 0;
     }
   }

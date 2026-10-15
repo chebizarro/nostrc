@@ -1,8 +1,8 @@
 # Screenshot provenance
 
 Captured 2026-10-14 from **real Grotto templates** by `signer/ui-layout`, not a
-mock window or generated illustration. Base integration: `5ef33513c` plus the G12
-packaging/copy changes. The private-bus fixture supplies disposable identities,
+mock window or generated illustration. Base integration: `a28b31869` plus G14
+Preferences terminology and header capitalisation (nostrc-u6v55.16). The private-bus fixture supplies disposable identities,
 Jank client, trust/permissions and Signed today=117. These are **fixture values**,
 not claims of real account history or live browser/relay acceptance. No private
 keys, seed words or live pairing tokens are shown.
@@ -20,7 +20,7 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
 
 The test writes `_build/screenshots/` (or `<build>/screenshots/` for another build
 folder). Copy the light/dark Home, 360px Home, Client, Permissions, Connect and
-Settings PNGs here without image editing. Dynamic fixture timestamps can change
+Preferences PNGs (the internal `settings-*.png` filenames are unchanged) here without image editing. Dynamic fixture timestamps can change
 bytes on regeneration. AppStream references `home-light.png`,
 `permissions-light.png`, `settings-dark.png` from this directory on master;
 those remote URLs become available only after landing, not merely a branch push.

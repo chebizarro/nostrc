@@ -10,7 +10,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     <property name="title" translatable="yes">Connect</property>
     <child>
       <object class="AdwPreferencesGroup">
-        <property name="title" translatable="yes">Connect an application</property>
+        <property name="title" translatable="yes">Connect an Application</property>
         <property name="description" translatable="yes">Choose an identity and review the connection before any supplied relay is contacted. New apps start at Low trust.</property>
         <child>
           <object class="AdwActionRow" id="paste">
@@ -93,7 +93,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkLabel">
-            <property name="label" translatable="yes">Local GNOME applications need no pairing. They ask the first time they call Grotto, and you choose what they may do. Remote apps need remote signing enabled in Settings; approving a connection does not grant signing permissions.</property>
+            <property name="label" translatable="yes">Local GNOME applications need no pairing. They ask the first time they call Grotto, and you choose what they may do. Remote apps need remote signing enabled in Preferences; approving a connection does not grant signing permissions.</property>
             <property name="wrap">true</property>
             <property name="xalign">0</property>
           </object>

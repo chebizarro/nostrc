@@ -74,7 +74,7 @@ static void mock_signer_window_init(MockSignerWindow *self) {
   adw_view_stack_add_named(self->stack, self->page_settings, "settings");
 
   /* Create sidebar rows */
-  const char *pages[] = { "Permissions & Connection", "Applications", "Active Sessions", "Settings" };
+  const char *pages[] = { "Permissions & Connection", "Applications", "Active Sessions", "Preferences" };
   for (int i = 0; i < 4; i++) {
     GtkWidget *row = gtk_list_box_row_new();
     GtkWidget *label = gtk_label_new(pages[i]);
@@ -2218,7 +2218,7 @@ static void mock_auth_aware_toolbar_init(MockAuthAwareToolbar *self) {
   self->btn_import = gtk_button_new_with_label("Import");
   self->btn_export = gtk_button_new_with_label("Export");
   self->btn_lock = gtk_button_new_with_label("Lock");
-  self->btn_settings = gtk_button_new_with_label("Settings");
+  self->btn_settings = gtk_button_new_with_label("Preferences");
 
   gtk_box_append(GTK_BOX(self), self->btn_sign);
   gtk_box_append(GTK_BOX(self), self->btn_new_identity);

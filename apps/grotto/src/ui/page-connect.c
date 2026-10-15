@@ -73,7 +73,7 @@ static void open_link(AdwActionRow *row, gpointer data) {
   if (self->file_cancel) g_cancellable_cancel(self->file_cancel);
   g_clear_object(&self->file_cancel); self->file_cancel = g_cancellable_new();
   LinkFile *file = g_new0(LinkFile, 1); g_weak_ref_init(&file->page, data); file->cancel = g_object_ref(self->file_cancel);
-  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open a Nostr Connect link file"));
+  g_autoptr(GtkFileDialog) dialog = gtk_file_dialog_new(); gtk_file_dialog_set_title(dialog, _("Open a Nostr Connect Link File"));
   gtk_file_dialog_open(dialog, GTK_WINDOW(root), file->cancel, link_selected, file);
 }
 static void create_link(AdwActionRow *row, gpointer data) {

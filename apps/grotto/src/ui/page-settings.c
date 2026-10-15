@@ -64,8 +64,8 @@ static void reset_confirmed(GObject *source, GAsyncResult *result, gpointer data
 }
 static void reset_clicked(GtkButton *button, gpointer data) {
   (void)button; PageSettings *self = data;
-  AdwDialog *d = adw_alert_dialog_new(_("Reset remote endpoint?"), _("Remote clients and pairing links will be invalidated. Account identities and local-app permissions are kept."));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "reset", _("Reset endpoint"), NULL);
+  AdwDialog *d = adw_alert_dialog_new(_("Reset Remote Endpoint?"), _("Remote clients and pairing links will be invalidated. Account identities and local-app permissions are kept."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "reset", _("Reset Endpoint"), NULL);
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel"); adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(d), "reset", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), GTK_WIDGET(self), NULL, reset_confirmed, g_object_ref(self));
 }
@@ -97,7 +97,7 @@ static void policy_default(GtkButton *button, gpointer data) {
 }
 static void confirmation(AdwActionRow *row, gpointer data) {
   (void)row; PageSettings *self = data; Policy *p = g_new0(Policy, 1); p->settings = g_object_ref(self->settings); p->checks = g_ptr_array_new();
-  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Always confirm event types")); adw_dialog_set_content_width(p->dialog, 400);
+  p->dialog = adw_dialog_new(); adw_dialog_set_title(p->dialog, _("Always Confirm Event Types")); adw_dialog_set_content_width(p->dialog, 400);
   GtkWidget *toolbar = adw_toolbar_view_new(); adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), adw_header_bar_new());
   GtkWidget *scroll = gtk_scrolled_window_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -120,8 +120,8 @@ static void confirmation(AdwActionRow *row, gpointer data) {
   gtk_editable_set_text(GTK_EDITABLE(p->custom), others->str); g_string_free(others, TRUE);
   gtk_accessible_update_property(GTK_ACCESSIBLE(p->custom), GTK_ACCESSIBLE_PROPERTY_LABEL, _("Additional custom event types"), -1); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->custom));
   p->error = GTK_LABEL(gtk_label_new(NULL)); gtk_label_set_wrap(p->error, TRUE); gtk_box_append(GTK_BOX(box), GTK_WIDGET(p->error));
-  GtkWidget *save = gtk_button_new_with_label(_("Save confirmation policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
-  GtkWidget *defaults = gtk_button_new_with_label(_("Restore defaults")); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
+  GtkWidget *save = gtk_button_new_with_label(_("Save Confirmation Policy")); g_signal_connect(save, "clicked", G_CALLBACK(policy_save), p); gtk_box_append(GTK_BOX(box), save);
+  GtkWidget *defaults = gtk_button_new_with_label(_("Restore Defaults")); g_signal_connect(defaults, "clicked", G_CALLBACK(policy_default), p); gtk_box_append(GTK_BOX(box), defaults);
   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), box); adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), scroll);
   g_object_set_data_full(G_OBJECT(p->dialog), "policy", p, policy_free); adw_dialog_set_child(p->dialog, toolbar); adw_dialog_present(p->dialog, GTK_WIDGET(self));
 }

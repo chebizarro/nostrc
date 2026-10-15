@@ -3,9 +3,9 @@
 grotto \- manage Nostr identities and review signing requests (Preview)
 .SH SYNOPSIS
 .B grotto
-[\fB\-\-new-identity\fR | \fB\-\-settings\fR] [\fIURI\fR]
+[\fB\-\-new-identity\fR | \fB\-\-preferences\fR] [\fIURI\fR]
 .SH DESCRIPTION
-Grotto provides Home, Activity, Connect and Settings for the session daemon.
+Grotto provides Home, Activity, Connect and Preferences for the session daemon.
 Each consumer selects its own identity; management selection changes no other app.
 Local NIP-55L apps need no pairing. Remote NIP-46 apps pair with explicit consent.
 .SH OPTIONS
@@ -13,8 +13,11 @@ Local NIP-55L apps need no pairing. Remote NIP-46 apps pair with explicit consen
 .B \-\-new-identity
 Open identity creation/import in the existing management window.
 .TP
+.B \-\-preferences
+Open Preferences in the existing window (also available from the primary menu with Ctrl+,).
+.TP
 .B \-\-settings
-Open Settings in the existing window.
+Hidden compatibility alias for \-\-preferences in the unreleased 0.1.0 wave.
 .TP
 .B \-\-gapplication-service
 D-Bus/login service activation without an unnecessary management window.

@@ -512,7 +512,7 @@ gn_lock_screen_set_busy(GnLockScreen *self, gboolean busy)
   gtk_widget_set_sensitive(GTK_WIDGET(self->btn_unlock), !busy);
 
   if (busy) {
-    gtk_button_set_label(self->btn_unlock, _("Unlocking..."));
+    gtk_button_set_label(self->btn_unlock, _("Unlocking…"));
   } else {
     gtk_button_set_label(self->btn_unlock, "_Unlock");
   }

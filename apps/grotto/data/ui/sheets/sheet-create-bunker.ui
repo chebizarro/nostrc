@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="SheetCreateBunker" parent="AdwDialog">
-    <property name="title" translatable="yes">Connect with which identity?</property>
+    <property name="title" translatable="yes">Connect with Which Identity?</property>
     <property name="content-width">520</property>
     <child>
       <object class="GtkBox">
@@ -57,7 +57,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton" id="btn_apply">
-            <property name="label" translatable="yes">Apply relay settings (no restart)</property>
+            <property name="label" translatable="yes">Apply Relay Preferences (no restart)</property>
           </object>
         </child>
         <child>
@@ -68,13 +68,13 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton" id="btn_create">
-            <property name="label" translatable="yes">Create single-use pairing link</property>
+            <property name="label" translatable="yes">Create Single-Use Pairing Link</property>
             <property name="sensitive">false</property>
           </object>
         </child>
         <child>
           <object class="GtkButton" id="btn_reset">
-            <property name="label" translatable="yes">Set up / Reset remote signing endpoint…</property>
+            <property name="label" translatable="yes">Set Up / Reset Remote Signing Endpoint…</property>
           </object>
         </child>
         <child>

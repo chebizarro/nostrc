@@ -7,7 +7,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="GnostrApprovalDialog" parent="AdwDialog">
-    <property name="title" translatable="yes">Review request</property>
+    <property name="title" translatable="yes">Review Request</property>
     <property name="content-width">440</property>
     <property name="width-request">300</property>
     <property name="follows-content-size">true</property>
@@ -37,7 +37,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                 </child>
                 <child>
                   <object class="GtkLabel" id="header_title">
-                    <property name="label" translatable="yes">Review request</property>
+                    <property name="label" translatable="yes">Review Request</property>
                     <property name="wrap">true</property>
                     <style>
                       <class name="title-3"/>
@@ -145,7 +145,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_approve_selected">
-                            <property name="label" translatable="yes">Approve selected once</property>
+                            <property name="label" translatable="yes">Approve Selected Once</property>
                             <property name="sensitive">false</property>
                           </object>
                         </child>
@@ -218,7 +218,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                     </child>
                     <child>
                       <object class="GtkButton" id="btn_not_now">
-                        <property name="label" translatable="yes">Not now</property>
+                        <property name="label" translatable="yes">Not Now</property>
                         <property name="tooltip-text" translatable="yes">Keep this request waiting</property>
                       </object>
                     </child>
@@ -257,7 +257,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
                         </child>
                         <child>
                           <object class="GtkButton" id="btn_change_trust">
-                            <property name="label" translatable="yes">Change trust level</property>
+                            <property name="label" translatable="yes">Change Trust Level…</property>
                             <property name="sensitive">false</property>
                           </object>
                         </child>

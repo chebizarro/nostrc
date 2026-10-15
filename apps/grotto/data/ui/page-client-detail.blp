@@ -15,7 +15,7 @@ template $GrottoClientDetail: Adw.NavigationPage {
             Label message { wrap: true; xalign: 0; }
           }
           Adw.PreferencesGroup {
-            title: _("Trust level");
+            title: _("Trust Level");
             description: _("Required-confirmation events and key exports still need review. Explicit denials always win.");
             Adw.ActionRow { title: _("Full"); subtitle: _("Auto-sign all requests");
               activatable-widget: full;
@@ -32,14 +32,14 @@ template $GrottoClientDetail: Adw.NavigationPage {
             Adw.ActionRow permissions { title: _("Permissions"); activatable: true;
               [suffix] Image { icon-name: "go-next-symbolic"; }
             }
-            Button clear_permissions { label: _("Clear remembered permissions"); halign: start; }
+            Button clear_permissions { label: _("Clear Remembered Permissions…"); halign: start; }
           }
           Adw.PreferencesGroup {
-            title: _("Recent activity");
+            title: _("Recent Activity");
             ListBox activity { selection-mode: none; styles ["boxed-list"] }
           }
           Adw.PreferencesGroup {
-            Button revoke { label: _("Revoke client"); halign: start; styles ["destructive-action"] }
+            Button revoke { label: _("Revoke Client…"); halign: start; styles ["destructive-action"] }
           }
         }
       };

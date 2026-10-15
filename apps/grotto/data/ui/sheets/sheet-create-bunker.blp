@@ -2,7 +2,7 @@ using Gtk 4.0;
 using Adw 1;
 
 template $SheetCreateBunker: Adw.Dialog {
-  title: _("Connect with which identity?");
+  title: _("Connect with Which Identity?");
   content-width: 520;
   Box {
     orientation: vertical;
@@ -18,10 +18,10 @@ template $SheetCreateBunker: Adw.Dialog {
     Entry entry_relay { placeholder-text: _("Explicit relay URLs, separated by spaces"); }
     Label { label: _("Relays see your network address and connection timing. No default relays or Tor proxy are used."); wrap: true; }
     CheckButton enabled { label: _("Enable remote signing"); }
-    Button btn_apply { label: _("Apply relay settings (no restart)"); }
+    Button btn_apply { label: _("Apply Relay Preferences (no restart)"); }
     Label status { label: _("Reading daemon status…"); wrap: true; }
-    Button btn_create { label: _("Create single-use pairing link"); sensitive: false; }
-    Button btn_reset { label: _("Set up / Reset remote signing endpoint…"); }
+    Button btn_create { label: _("Create Single-Use Pairing Link"); sensitive: false; }
+    Button btn_reset { label: _("Set Up / Reset Remote Signing Endpoint…"); }
     Button btn_cancel { label: _("Close"); }
   }
 }

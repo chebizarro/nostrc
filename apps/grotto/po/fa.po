@@ -6,8 +6,8 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: grotto 0.1.0\n"
-"Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-14 14:36-0700\n"
+"Report-Msgid-Bugs-To: https://github.com/chebizarro/nostrc/issues\n"
+"POT-Creation-Date: 2026-10-14 23:00-0700\n"
 "PO-Revision-Date: 2024-01-23 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Persian\n"
@@ -19,7 +19,7 @@ msgstr ""
 "X-Text-Direction: RTL\n"
 
 #: data/ui/approval-dialog.ui:10 data/ui/approval-dialog.ui:40
-msgid "Review request"
+msgid "Review Request"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:117
@@ -39,7 +39,7 @@ msgid "Requests in this flow"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:148
-msgid "Approve selected once"
+msgid "Approve Selected Once"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:179
@@ -73,7 +73,7 @@ msgid "Approve (Ctrl+A)"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:221
-msgid "Not now"
+msgid "Not Now"
 msgstr ""
 
 #: data/ui/approval-dialog.ui:222
@@ -91,7 +91,7 @@ msgid ""
 msgstr ""
 
 #: data/ui/approval-dialog.ui:260
-msgid "Change trust level"
+msgid "Change Trust Level…"
 msgstr ""
 
 #: data/ui/lock-screen.ui:15
@@ -178,19 +178,19 @@ msgid "Locked at 12:00"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:10
-msgid "Set up Grotto"
+msgid "Set Up Grotto"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:21
-msgid "Identity setup"
+msgid "Identity Setup"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:26
-msgid "Skip setup"
+msgid "Skip Setup"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:51
-msgid "Your identity, your control"
+msgid "Your Identity, Your Control"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:52
@@ -201,20 +201,20 @@ msgid ""
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:66
-msgid "How would you like to start?"
+msgid "How Would You Like to Start?"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:75 data/ui/onboarding-assistant.ui:104
-msgid "Create an identity"
+msgid "Create an Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:81 data/ui/onboarding-assistant.ui:136
-msgid "Import an identity"
+msgid "Import an Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:87 data/ui/onboarding-assistant.ui:189
 #: data/ui/page-connect.ui:13
-msgid "Connect an application"
+msgid "Connect an Application"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:113
@@ -253,7 +253,7 @@ msgid ""
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:204
-msgid "Verify your stored identity"
+msgid "Verify Your Stored Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:213
@@ -264,11 +264,11 @@ msgid ""
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:220
-msgid "Retry self-test"
+msgid "Retry Self-Test"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:236
-msgid "Back up your identity"
+msgid "Back Up Your Identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:245
@@ -279,15 +279,15 @@ msgid ""
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:260
-msgid "Copy seed words (clipboard managers may retain them)"
+msgid "Copy Seed Words (clipboard managers may retain them)"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:265
-msgid "Retry seed-word export"
+msgid "Retry Seed-Word Export"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:270
-msgid "Use encrypted backup instead…"
+msgid "Use Encrypted Backup Instead…"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:275
@@ -295,7 +295,7 @@ msgid "I have safely backed up my identity"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:288
-msgid "Ready to review signing requests"
+msgid "Ready to Review Signing Requests"
 msgstr ""
 
 #: data/ui/onboarding-assistant.ui:325 data/ui/sheets/sheet-qr-scanner.ui:207
@@ -309,7 +309,7 @@ msgid "Home"
 msgstr "خانه"
 
 #: data/ui/page-home.ui:22
-msgid "Your identities"
+msgid "Your Identities"
 msgstr ""
 
 #: data/ui/page-home.ui:48
@@ -341,11 +341,11 @@ msgid "Pending"
 msgstr ""
 
 #: data/ui/page-home.ui:155
-msgid "Connected clients"
+msgid "Connected Clients"
 msgstr ""
 
 #: data/ui/page-home.ui:166
-msgid "No connected apps"
+msgid "No Connected Apps"
 msgstr ""
 
 #: data/ui/page-home.ui:167
@@ -396,7 +396,7 @@ msgstr ""
 msgid "A single-use link and QR code, with an explicit identity"
 msgstr ""
 
-#: data/ui/page-connect.ui:89 data/ui/page-settings.ui:123
+#: data/ui/page-connect.ui:89
 msgid "Remote signing"
 msgstr ""
 
@@ -408,7 +408,7 @@ msgstr ""
 msgid ""
 "Local GNOME applications need no pairing. They ask the first time they call "
 "Grotto, and you choose what they may do. Remote apps need remote signing "
-"enabled in Settings; approving a connection does not grant signing "
+"enabled in Preferences; approving a connection does not grant signing "
 "permissions."
 msgstr ""
 
@@ -430,7 +430,7 @@ msgid "Connected since"
 msgstr ""
 
 #: data/ui/page-client-detail.ui:55
-msgid "Trust level"
+msgid "Trust Level"
 msgstr ""
 
 #: data/ui/page-client-detail.ui:56
@@ -483,15 +483,15 @@ msgid "Permissions"
 msgstr "مجوزها"
 
 #: data/ui/page-client-detail.ui:115
-msgid "Clear remembered permissions"
+msgid "Clear Remembered Permissions…"
 msgstr ""
 
 #: data/ui/page-client-detail.ui:123
-msgid "Recent activity"
+msgid "Recent Activity"
 msgstr ""
 
-#: data/ui/page-client-detail.ui:138 src/ui/page-client-detail.c:123
-msgid "Revoke client"
+#: data/ui/page-client-detail.ui:138
+msgid "Revoke Client…"
 msgstr ""
 
 #: data/ui/page-history.ui:10 data/ui/page-settings.ui:153
@@ -501,7 +501,7 @@ msgid "Activity"
 msgstr ""
 
 #: data/ui/page-history.ui:13
-msgid "Signer activity"
+msgid "Signer Activity"
 msgstr ""
 
 #: data/ui/page-history.ui:14
@@ -530,21 +530,22 @@ msgid "All outcomes"
 msgstr ""
 
 #: data/ui/page-history.ui:65
-msgid "Load older activity"
+msgid "Load Older Activity"
 msgstr ""
 
 #: data/ui/page-history.ui:71
-msgid "Clear activity…"
+msgid "Clear Activity…"
 msgstr ""
 
 #: data/ui/page-settings.ui:10 data/ui/shortcuts-window.ui:44
 #: data/ui/signer-window.ui:178 data/ui/signer-window.ui:194
 #: data/ui/signer-window.ui:251 data/org.nostr.Grotto.desktop:30
-msgid "Settings"
-msgstr "تنظیمات"
+#: src/ui/signer-window.c:624
+msgid "Preferences"
+msgstr ""
 
 #: data/ui/page-settings.ui:13
-msgid "Appearance and accessibility"
+msgid "Appearance and Accessibility"
 msgstr ""
 
 #: data/ui/page-settings.ui:16
@@ -650,7 +651,11 @@ msgid "Overrides remembered allows and trust levels"
 msgstr ""
 
 #: data/ui/page-settings.ui:114 src/ui/signer-window.c:627
-msgid "Pause signing"
+msgid "Pause Signing"
+msgstr ""
+
+#: data/ui/page-settings.ui:123
+msgid "Remote Signing"
 msgstr ""
 
 #: data/ui/page-settings.ui:126
@@ -666,7 +671,7 @@ msgid "Changes apply without restarting the signer"
 msgstr ""
 
 #: data/ui/page-settings.ui:145
-msgid "Reset remote endpoint…"
+msgid "Reset Remote Endpoint…"
 msgstr ""
 
 #: data/ui/page-settings.ui:154
@@ -678,15 +683,15 @@ msgid "Keep activity (days)"
 msgstr ""
 
 #: data/ui/page-settings.ui:170
-msgid "View activity"
+msgid "View Activity"
 msgstr ""
 
 #: data/ui/page-settings.ui:181
-msgid "About Grotto (Preview)"
+msgid "About Grotto"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:10
-msgid "Identity and backup"
+msgid "Identity and Backup"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:34
@@ -698,11 +703,11 @@ msgid "Local identity label"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:64
-msgid "Save local label"
+msgid "Save Local Label"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:69
-msgid "Key backup and safety tips"
+msgid "Key Backup and Safety Tips"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:70
@@ -729,7 +734,7 @@ msgid "I have safely backed up this identity"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:104
-msgid "Confirm backup"
+msgid "Confirm Backup"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:109
@@ -737,19 +742,19 @@ msgid "Encrypted export passphrase (NIP-49 only)"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:121
-msgid "Export encrypted key (NIP-49)"
+msgid "Export Encrypted Key (NIP-49)"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:126
-msgid "Show encrypted key QR code"
+msgid "Show Encrypted Key QR Code…"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:131
-msgid "Copy secret key…"
+msgid "Copy Secret Key…"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:139
-msgid "Identity management"
+msgid "Identity Management"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:140
@@ -766,23 +771,23 @@ msgid "Only applications that do not specify an identity use this default"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:147
-msgid "Set default"
+msgid "Set Default"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:157
-msgid "Retry identity self-test"
+msgid "Retry Identity Self-Test"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:162
-msgid "Create successor identity…"
+msgid "Create Successor Identity…"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:167
-msgid "Export saved migration announcement"
+msgid "Export Saved Migration Announcement"
 msgstr ""
 
 #: data/ui/page-identity-detail.ui:172
-msgid "Remove this identity…"
+msgid "Remove This Identity…"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:14
@@ -790,36 +795,36 @@ msgid "Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:17 data/ui/signer-window.ui:209
-#: data/org.nostr.Grotto.desktop:3 packaging/appimage/grotto.desktop:3
+#: packaging/appimage/grotto.desktop:3
 msgid "Grotto"
 msgstr "امضاکننده GNostr"
 
-#: data/ui/shortcuts-window.ui:20
-msgid "New identity"
+#: data/ui/shortcuts-window.ui:20 data/org.nostr.Grotto.desktop:26
+msgid "New Identity…"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:26
-msgid "Import identity"
+msgid "Import Identity…"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:32
-msgid "Backup identity"
+msgid "Back Up Identity…"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:38
-msgid "Lock management"
+msgid "Lock Management"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:50
-msgid "Close window"
+msgid "Close Window"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:56
-msgid "Quit approval UI (authorised signing continues)"
+msgid "Quit Approval UI (authorised signing continues)"
 msgstr ""
 
 #: data/ui/shortcuts-window.ui:62
-msgid "Keyboard shortcuts"
+msgid "Keyboard Shortcuts"
 msgstr ""
 
 #: data/ui/signer-window.ui:15
@@ -851,12 +856,15 @@ msgid "Bottom navigation"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:10
-#: data/ui/sheets/sheet-create-bunker.ui:28
-msgid "Connect with which identity?"
+msgid "Connect with Which Identity?"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:22
 msgid "Choose the identity this application may request."
+msgstr ""
+
+#: data/ui/sheets/sheet-create-bunker.ui:28
+msgid "Connect with which identity?"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:33
@@ -882,7 +890,7 @@ msgid "Enable remote signing"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:60
-msgid "Apply relay settings (no restart)"
+msgid "Apply Relay Preferences (no restart)"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:65
@@ -890,11 +898,11 @@ msgid "Reading daemon status…"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:71
-msgid "Create single-use pairing link"
+msgid "Create Single-Use Pairing Link"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:77
-msgid "Set up / Reset remote signing endpoint…"
+msgid "Set Up / Reset Remote Signing Endpoint…"
 msgstr ""
 
 #: data/ui/sheets/sheet-create-bunker.ui:82
@@ -949,7 +957,7 @@ msgid "Paste from Clipboard"
 msgstr ""
 
 #: data/ui/sheets/sheet-qr-scanner.ui:95
-msgid "Open File"
+msgid "Open File…"
 msgstr ""
 
 #: data/ui/sheets/sheet-qr-scanner.ui:108
@@ -1000,21 +1008,20 @@ msgstr ""
 msgid "Warning: Caps Lock is enabled"
 msgstr ""
 
+#: data/org.nostr.Grotto.desktop:3
+msgid "Grotto (Preview)"
+msgstr ""
+
 #: data/org.nostr.Grotto.desktop:4 packaging/appimage/grotto.desktop:4
 msgid "Nostr Signer"
 msgstr ""
 
 #: data/org.nostr.Grotto.desktop:5
-msgid ""
-"Keeps your Nostr keys and signs for all your Nostr apps (NIP-55L, NIP-46)"
+msgid "Manage Nostr identities and review signing requests (NIP-55L, NIP-46)"
 msgstr ""
 
 #: data/org.nostr.Grotto.desktop:11
 msgid "nostr;signer;keys;identity;crypto;signing;"
-msgstr ""
-
-#: data/org.nostr.Grotto.desktop:26
-msgid "New Identity"
 msgstr ""
 
 #: packaging/appimage/grotto.desktop:5
@@ -1068,27 +1075,23 @@ msgid "Window: unlock requested from lock screen"
 msgstr ""
 
 #: src/ui/signer-window.c:609
-msgid "New identity\tCtrl+N"
+msgid "New Identity…\tCtrl+N"
 msgstr ""
 
 #: src/ui/signer-window.c:610
-msgid "Import identity\tCtrl+I"
+msgid "Import Identity…\tCtrl+I"
 msgstr ""
 
 #: src/ui/signer-window.c:611
-msgid "Export/Backup\tCtrl+E"
+msgid "Export/Backup…\tCtrl+E"
 msgstr ""
 
 #: src/ui/signer-window.c:612
-msgid "Connect an application…"
+msgid "Connect an Application…"
 msgstr ""
 
 #: src/ui/signer-window.c:618
-msgid "Lock management\tCtrl+L"
-msgstr ""
-
-#: src/ui/signer-window.c:624
-msgid "Preferences\tCtrl+,"
+msgid "Lock Management\tCtrl+L"
 msgstr ""
 
 #: src/ui/signer-window.c:625
@@ -1100,11 +1103,11 @@ msgid "About Grotto\tF1"
 msgstr ""
 
 #: src/ui/signer-window.c:628
-msgid "Resume signing…"
+msgid "Resume Signing…"
 msgstr ""
 
 #: src/ui/signer-window.c:629
-msgid "Quit approval UI (authorised signing continues)\tCtrl+Q"
+msgid "Quit Approval UI (authorised signing continues)\tCtrl+Q"
 msgstr ""
 
 #: src/ui/signer-window.c:770
@@ -1202,7 +1205,7 @@ msgid "Locked at %H:%M"
 msgstr ""
 
 #: src/ui/lock-screen.c:515
-msgid "Unlocking..."
+msgid "Unlocking…"
 msgstr ""
 
 #. Generated by scripts/generate-grotto-kind-catalog.py; do not edit.
@@ -1374,7 +1377,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-connect.c:76
-msgid "Open a Nostr Connect link file"
+msgid "Open a Nostr Connect Link File"
 msgstr ""
 
 #: src/ui/page-connect.c:89
@@ -1402,13 +1405,17 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-client-detail.c:122
-msgid "Revoke this client?"
+msgid "Revoke This Client?"
 msgstr ""
 
 #: src/ui/page-client-detail.c:122
 msgid ""
 "Pending requests will be cancelled and all remembered permissions removed. "
 "The app must ask again."
+msgstr ""
+
+#: src/ui/page-client-detail.c:123
+msgid "Revoke Client"
 msgstr ""
 
 #: src/ui/page-client-detail.c:136
@@ -1419,7 +1426,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-client-detail.c:137
-msgid "Clear remembered permissions?"
+msgid "Clear Remembered Permissions?"
 msgstr ""
 
 #: src/ui/page-client-detail.c:138
@@ -1427,11 +1434,11 @@ msgid "Clear"
 msgstr ""
 
 #: src/ui/page-client-detail.c:154
-msgid "Refresh permissions"
+msgid "Refresh Permissions"
 msgstr ""
 
 #: src/ui/page-client-detail.c:158
-msgid "Effective from trust level"
+msgid "Effective from Trust Level"
 msgstr ""
 
 #: src/ui/page-client-detail.c:159
@@ -1441,7 +1448,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-client-detail.c:162
-msgid "Remembered permissions"
+msgid "Remembered Permissions"
 msgstr ""
 
 #: src/ui/page-client-detail.c:163
@@ -1484,20 +1491,20 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-client-detail.c:223
-msgid "Review updated permissions"
+msgid "Review Updated Permissions"
 msgstr ""
 
 #: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:231
-msgid "Retry removing legacy entry"
+msgid "Retry Removing Legacy Entry"
 msgstr ""
 
 #: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:231
 #: src/ui/page-client-detail.c:380
-msgid "Retry permission"
+msgid "Retry Permission"
 msgstr ""
 
 #: src/ui/page-client-detail.c:230 src/ui/page-client-detail.c:372
-msgid "Save permission"
+msgid "Save Permission"
 msgstr ""
 
 #: src/ui/page-client-detail.c:262
@@ -1527,7 +1534,7 @@ msgid "Remember %s for %s, identity %s, operation %s%s forever?"
 msgstr ""
 
 #: src/ui/page-client-detail.c:298
-msgid "Remember forever?"
+msgid "Remember Forever?"
 msgstr ""
 
 #: src/ui/page-client-detail.c:299
@@ -1535,7 +1542,7 @@ msgid "Remember"
 msgstr ""
 
 #: src/ui/page-client-detail.c:317
-msgid "Edit remembered permission"
+msgid "Edit Remembered Permission"
 msgstr ""
 
 #: src/ui/page-client-detail.c:321
@@ -1612,7 +1619,7 @@ msgid "Permission expiry"
 msgstr ""
 
 #: src/ui/page-client-detail.c:373
-msgid "Remove permission"
+msgid "Remove Permission"
 msgstr ""
 
 #: src/ui/page-client-detail.c:390
@@ -1654,7 +1661,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-client-detail.c:415
-msgid "Clear this identity’s permissions…"
+msgid "Clear This Identity’s Permissions…"
 msgstr ""
 
 #: src/ui/page-client-detail.c:420 src/ui/page-history.c:58
@@ -2417,7 +2424,7 @@ msgid "Activity could not be cleared."
 msgstr ""
 
 #: src/ui/page-history.c:104
-msgid "Clear activity?"
+msgid "Clear Activity?"
 msgstr ""
 
 #: src/ui/page-history.c:104
@@ -2426,7 +2433,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-history.c:105
-msgid "Clear activity"
+msgid "Clear Activity"
 msgstr ""
 
 #: src/ui/page-settings.c:46
@@ -2444,7 +2451,7 @@ msgid "Endpoint reset failed. Your identities were not removed."
 msgstr ""
 
 #: src/ui/page-settings.c:67
-msgid "Reset remote endpoint?"
+msgid "Reset Remote Endpoint?"
 msgstr ""
 
 #: src/ui/page-settings.c:67
@@ -2454,7 +2461,7 @@ msgid ""
 msgstr ""
 
 #: src/ui/page-settings.c:68
-msgid "Reset endpoint"
+msgid "Reset Endpoint"
 msgstr ""
 
 #: src/ui/page-settings.c:85
@@ -2466,7 +2473,7 @@ msgid "The confirmation policy could not be saved."
 msgstr ""
 
 #: src/ui/page-settings.c:100
-msgid "Always confirm event types"
+msgid "Always Confirm Event Types"
 msgstr ""
 
 #: src/ui/page-settings.c:119
@@ -2478,9 +2485,9 @@ msgid "Additional custom event types"
 msgstr ""
 
 #: src/ui/page-settings.c:123
-msgid "Save confirmation policy"
+msgid "Save Confirmation Policy"
 msgstr ""
 
 #: src/ui/page-settings.c:124
-msgid "Restore defaults"
+msgid "Restore Defaults"
 msgstr ""

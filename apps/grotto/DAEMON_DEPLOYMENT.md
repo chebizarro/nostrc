@@ -7,6 +7,10 @@ post-login, user-session signer, not a greeter, PAM service or system-bus broker
 Installed desktop acceptance is pending; see the
 [manual matrix](../../docs/testing/grotto-manual-acceptance.md).
 
+In-app configuration is **Preferences**, available from the primary menu with
+**Ctrl+,** or `grotto --preferences`. The old `--settings` switch remains a hidden
+compatibility alias for unreleased 0.1.0; neither switch starts another daemon.
+
 ## Native installation and activation
 
 Use GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80. Build from the **monorepo root**, not

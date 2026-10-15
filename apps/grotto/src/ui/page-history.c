@@ -101,8 +101,8 @@ static void clear_confirmed(GObject *source, GAsyncResult *result, gpointer data
   g_object_unref(self);
 }
 static void clear(GtkButton *button, gpointer data) {
-  (void)button; AdwDialog *d = adw_alert_dialog_new(_("Clear activity?"), _("Delete the signer's retained operation metadata? Permissions are not changed."));
-  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "clear", _("Clear activity"), NULL);
+  (void)button; AdwDialog *d = adw_alert_dialog_new(_("Clear Activity?"), _("Delete the signer's retained operation metadata? Permissions are not changed."));
+  adw_alert_dialog_add_responses(ADW_ALERT_DIALOG(d), "cancel", _("Cancel"), "clear", _("Clear Activity"), NULL);
   adw_alert_dialog_set_close_response(ADW_ALERT_DIALOG(d), "cancel"); adw_alert_dialog_set_response_appearance(ADW_ALERT_DIALOG(d), "clear", ADW_RESPONSE_DESTRUCTIVE);
   adw_alert_dialog_choose(ADW_ALERT_DIALOG(d), data, NULL, clear_confirmed, g_object_ref(data));
 }

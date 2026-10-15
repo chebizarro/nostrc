@@ -7,10 +7,10 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
 <interface>
   <requires lib="gtk" version="4.0"/>
   <template class="PageSettings" parent="AdwPreferencesPage">
-    <property name="title" translatable="yes">Settings</property>
+    <property name="title" translatable="yes">Preferences</property>
     <child>
       <object class="AdwPreferencesGroup" id="appearance">
-        <property name="title" translatable="yes">Appearance and accessibility</property>
+        <property name="title" translatable="yes">Appearance and Accessibility</property>
         <child>
           <object class="AdwComboRow" id="theme">
             <property name="title" translatable="yes">Appearance</property>
@@ -111,7 +111,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton">
-            <property name="label" translatable="yes">Pause signing</property>
+            <property name="label" translatable="yes">Pause Signing</property>
             <property name="action-name">app.pause-signing</property>
             <property name="halign">1</property>
           </object>
@@ -120,7 +120,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
     </child>
     <child>
       <object class="AdwPreferencesGroup" id="remote">
-        <property name="title" translatable="yes">Remote signing</property>
+        <property name="title" translatable="yes">Remote Signing</property>
         <child>
           <object class="AdwActionRow" id="runtime">
             <property name="title" translatable="yes">Runtime status</property>
@@ -142,7 +142,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton" id="reset">
-            <property name="label" translatable="yes">Reset remote endpoint…</property>
+            <property name="label" translatable="yes">Reset Remote Endpoint…</property>
             <property name="halign">1</property>
           </object>
         </child>
@@ -167,7 +167,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
         </child>
         <child>
           <object class="GtkButton">
-            <property name="label" translatable="yes">View activity</property>
+            <property name="label" translatable="yes">View Activity</property>
             <property name="action-name">win.activity</property>
             <property name="halign">1</property>
           </object>
@@ -178,7 +178,7 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
       <object class="AdwPreferencesGroup" id="about">
         <child>
           <object class="GtkButton">
-            <property name="label" translatable="yes">About Grotto (Preview)</property>
+            <property name="label" translatable="yes">About Grotto</property>
             <property name="action-name">win.about</property>
             <property name="halign">1</property>
           </object>

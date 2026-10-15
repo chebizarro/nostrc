@@ -17,49 +17,49 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
             <property name="title" translatable="yes">Grotto</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">New identity</property>
+                <property name="title" translatable="yes">New Identity…</property>
                 <property name="accelerator">&lt;Control&gt;n</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Import identity</property>
+                <property name="title" translatable="yes">Import Identity…</property>
                 <property name="accelerator">&lt;Control&gt;i</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Backup identity</property>
+                <property name="title" translatable="yes">Back Up Identity…</property>
                 <property name="accelerator">&lt;Control&gt;e</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Lock management</property>
+                <property name="title" translatable="yes">Lock Management</property>
                 <property name="accelerator">&lt;Control&gt;l</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Settings</property>
+                <property name="title" translatable="yes">Preferences</property>
                 <property name="accelerator">&lt;Control&gt;comma</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Close window</property>
+                <property name="title" translatable="yes">Close Window</property>
                 <property name="accelerator">&lt;Control&gt;w</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Quit approval UI (authorised signing continues)</property>
+                <property name="title" translatable="yes">Quit Approval UI (authorised signing continues)</property>
                 <property name="accelerator">&lt;Control&gt;q</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes">Keyboard shortcuts</property>
+                <property name="title" translatable="yes">Keyboard Shortcuts</property>
                 <property name="accelerator">&lt;Control&gt;question</property>
               </object>
             </child>
