@@ -1,11 +1,12 @@
-/* TSAN-aware wrappers for nsync mutex/cv operations.
- *
- * nsync's mutexes are not pthread mutexes, so ThreadSanitizer cannot see
- * the synchronization unless it is told via __tsan_mutex_* annotations.
- * channel.c historically defined these wrappers privately; select.c (and
- * any future file) must use the SAME annotations when touching the same
- * nsync_mu, otherwise TSAN reports false data races between an annotated
- * lock (channel.c) and an invisible raw lock (select.c) on the same mutex.
+/* TSan handoffs for an uninstrumented system nsync (nostrc-u6v55.14.4).
+ * Instrumented nsync already annotates its locks and CV unlock/relock.
+ * Do not wrap that with __tsan_mutex_pre/post_*: their ignore-sync scopes
+ * hide nsync's own transitions, and a CV wait cannot be modelled as one
+ * uninterrupted mutex operation. This produced races even with the same
+ * mutex in both reported locksets. Acquire/release handoffs add the missing
+ * happens-before edges for system nsync without nesting lock annotations
+ * or hiding any memory accesses/synchronization from instrumented nsync.
+ * All channel/select callers use the same helpers.
  */
 #ifndef GO_TSAN_H
 #define GO_TSAN_H
@@ -29,18 +30,16 @@
 #endif
 
 #ifdef GO_TSAN_ENABLED
-extern void __tsan_mutex_pre_lock(void *addr, unsigned flags);
-extern void __tsan_mutex_post_lock(void *addr, unsigned flags, int recursion);
-extern void __tsan_mutex_pre_unlock(void *addr, unsigned flags);
-extern void __tsan_mutex_post_unlock(void *addr, unsigned flags);
-static inline void tsan_mu_lock(nsync_mu *m){ __tsan_mutex_pre_lock(m, 0); nsync_mu_lock(m); __tsan_mutex_post_lock(m, 0, 0); }
-static inline void tsan_mu_unlock(nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_mu_unlock(m); __tsan_mutex_post_unlock(m, 0); }
-static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_mutex_pre_unlock(m, 0); nsync_cv_wait(cv, m); __tsan_mutex_post_lock(m, 0, 0); }
+extern void __tsan_acquire(void *addr);
+extern void __tsan_release(void *addr);
+static inline void tsan_mu_lock(nsync_mu *m){ nsync_mu_lock(m); __tsan_acquire(m); }
+static inline void tsan_mu_unlock(nsync_mu *m){ __tsan_release(m); nsync_mu_unlock(m); }
+static inline void tsan_cv_wait(nsync_cv *cv, nsync_mu *m){ __tsan_release(m); nsync_cv_wait(cv, m); __tsan_acquire(m); }
 static inline int tsan_cv_wait_with_deadline(nsync_cv *cv, nsync_mu *m, nsync_time deadline, nsync_note note){
     int rc;
-    __tsan_mutex_pre_unlock(m, 0);
+    __tsan_release(m);
     rc = nsync_cv_wait_with_deadline(cv, m, deadline, note);
-    __tsan_mutex_post_lock(m, 0, 0);
+    __tsan_acquire(m);
     return rc;
 }
 #  define NLOCK(mu_ptr)   tsan_mu_lock((mu_ptr))

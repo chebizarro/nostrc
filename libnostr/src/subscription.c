@@ -834,7 +834,17 @@ void nostr_subscription_register_with_relay(NostrSubscription *sub) {
 }
 
 bool nostr_subscription_fire(NostrSubscription *subscription, Error **err) {
-    if (!subscription || !subscription->relay || !subscription->relay->connection) {
+    if (!subscription || !subscription->relay) {
+        if (err) *err = new_error(1, "subscription or connection is NULL");
+        return false;
+    }
+    /* Reconnect publishes/replaces this pointer under the relay mutex.
+     * We only need its presence here; nostr_relay_write owns the write path
+     * and handles a connection closing after this check (nostrc-coh0m). */
+    nsync_mu_lock(&subscription->relay->priv->mutex);
+    bool has_connection = subscription->relay->connection != NULL;
+    nsync_mu_unlock(&subscription->relay->priv->mutex);
+    if (!has_connection) {
         if (err) *err = new_error(1, "subscription or connection is NULL");
         return false;
     }

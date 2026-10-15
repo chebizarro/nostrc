@@ -28,6 +28,7 @@
 #ifndef G_OS_WIN32
 #include <pwd.h>
 #include <unistd.h>
+#include <errno.h>
 #endif
 
 #define NOSTRC_PROFILE_GUARD_ENV "NOSTRC_TEST_ISOLATION"
@@ -47,8 +48,27 @@ nostrc_profile_guard_real_home(void)
   /* No password database; GLib asks the system for the profile directory. */
   return g_get_home_dir();
 #else
-  struct passwd *pw = getpwuid(getuid());
-  return pw ? pw->pw_dir : NULL;
+  /* getpwuid() returns process-global storage which another thread may
+   * overwrite (nostrc-p64qw). Keep our own immutable copy, not $HOME. */
+  static gsize initialized;
+  static gchar *home;
+  if (g_once_init_enter(&initialized)) {
+    long suggested = sysconf(_SC_GETPW_R_SIZE_MAX);
+    gsize size = suggested > 0 ? (gsize)suggested : 16384;
+    struct passwd entry, *pw = NULL;
+    gchar *buffer = g_malloc(size);
+    int rc;
+    while ((rc = getpwuid_r(getuid(), &entry, buffer, size, &pw)) == ERANGE &&
+           size <= G_MAXSIZE / 2) {
+      size *= 2;
+      buffer = g_realloc(buffer, size);
+    }
+    if (rc == 0 && pw)
+      home = g_strdup(pw->pw_dir);
+    g_free(buffer);
+    g_once_init_leave(&initialized, 1);
+  }
+  return home;
 #endif
 }
 
