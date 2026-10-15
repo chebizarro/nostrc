@@ -72,7 +72,7 @@ RUN set -eu; \
     done > /etc/apt/sources.list.d/ddebs.list; \
     apt-get update; \
     gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"; \
-    if ! apt-cache show "libgtk-4-1-dbgsym=$gtk_version" >/dev/null 2>&1; then \
+    if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then \
       # Noble updates' 4.14.5+ds-0ubuntu0.10 has no amd64 dbgsym. \
       gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"; \
       test -n "$gtk_version"; \

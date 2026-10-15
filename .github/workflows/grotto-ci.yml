@@ -99,7 +99,7 @@ jobs:
           done | sudo tee /etc/apt/sources.list.d/ddebs.list
           sudo apt-get update
           gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
-          if ! apt-cache show "libgtk-4-1-dbgsym=$gtk_version" >/dev/null 2>&1; then
+          if ! apt-cache madison libgtk-4-1-dbgsym | grep -qF "| $gtk_version |"; then
             # Noble updates' 4.14.5+ds-0ubuntu0.10 has no amd64 dbgsym.
             # Keep GTK runtime, headers and tools at a version with real symbols.
             gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
