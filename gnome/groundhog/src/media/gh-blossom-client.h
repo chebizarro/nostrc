@@ -36,6 +36,11 @@ G_BEGIN_DECLS
  * ["server", <host>] (BUD-11), so it is good for this file on this server
  * only, briefly.
  *
+ * Public-address restrictions below are the default. The live
+ * allow-local-network preference on the client's GhNetHttp permits private
+ * hosts for downloads and public-only uploads outside Tor mode, including
+ * these early host/server checks. It never changes URL or file validation.
+ *
  * Download (charter §6 "Download"). Only ever the user's explicit action
  * (PD-2, AT-7): nothing here runs on its own. The answer is read into
  * memory, capped at min(size, cap + 16) + 1 KiB (AT-3), and never written to
@@ -183,8 +188,9 @@ void gh_blossom_client_upload_public_async(GhBlossomClient *self, const gchar *c
                                            GAsyncReadyCallback callback, gpointer user_data);
 
 /* The servers of a list someone else named that this client may contact:
- * http(s) URLs whose host is public (as for downloads; any host with
- * gh_blossom_client_set_allow_private_hosts(), tests only), in order. */
+ * http(s) URLs whose host is public (as for downloads), or non-public when
+ * gh_net_http_allows_local_network() permits it. The tests-only
+ * gh_blossom_client_set_allow_private_hosts() override still works. In order. */
 GStrv gh_blossom_client_dup_public_servers(GhBlossomClient *self,
                                            const gchar *const *servers);
 

@@ -653,6 +653,19 @@ request_start(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
                      callback, user_data);
 }
 
+gboolean
+gh_net_http_allows_local_network(GhNetHttp *self)
+{
+  g_return_val_if_fail(GH_IS_NET_HTTP(self), FALSE);
+  g_autofree gchar *mode = setting(self, "network-mode", "system");
+  if (!self->settings || gh_net_mode_from_string(mode) == GH_NET_MODE_TOR)
+    return FALSE;
+  g_autoptr(GSettingsSchema) schema = NULL;
+  g_object_get(self->settings, "settings-schema", &schema, NULL);
+  return schema && g_settings_schema_has_key(schema, "allow-local-network") &&
+         g_settings_get_boolean(self->settings, "allow-local-network");
+}
+
 static void
 request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *uri,
                    const gchar *accept, gsize max_bytes, gboolean public_only,
@@ -671,8 +684,9 @@ request_start_hops(GhNetHttp *self, const GhNetHttpRequest *send, const gchar *u
   }
   /* Public only: checked where the connection is made, in System and No
    * Proxy modes; through Tor (or a desktop proxy) the proxy resolves. */
-  gboolean own_session = mode == GH_NET_MODE_TOR || public_only;
-  g_autoptr(SoupSession) session = public_only && mode != GH_NET_MODE_TOR
+  gboolean require_public = public_only && !gh_net_http_allows_local_network(self);
+  gboolean own_session = mode == GH_NET_MODE_TOR || require_public;
+  g_autoptr(SoupSession) session = require_public && mode != GH_NET_MODE_TOR
                                      ? public_session_new(mode, parsed)
                                      : session_for(self, mode, &error);
   if (!session) {
@@ -826,21 +840,23 @@ gh_net_http_transport(void)
 /* A mode change ends every request made in another mode (as the relay
  * dispatcher closes every old connection): e.g. a System-mode request
  * still waiting for its server when the user chooses Tor completes no more.
- * The kept session of the old mode goes too. */
+ * The kept session of the old mode goes too. Revoking local-network access
+ * also ends public-only requests that may have connected under that grant. */
 static void
 on_mode_changed(GSettings *settings, const gchar *key, gpointer data)
 {
   (void)settings;
-  (void)key;
   GhNetHttp *self = data;
   g_autofree gchar *name = setting(self, "network-mode", "system");
   GhNetMode mode = gh_net_mode_from_string(name);
+  gboolean revoked = mode != GH_NET_MODE_TOR && g_str_equal(key, "allow-local-network") &&
+                     !gh_net_http_allows_local_network(self);
   /* Mark first: cancelling may finish (and free) a request at once, so hold
    * the cancellables, not the requests. */
   g_autoptr(GPtrArray) cancel = g_ptr_array_new_with_free_func(g_object_unref);
   for (guint i = 0; i < self->requests->len; i++) {
     Request *request = g_ptr_array_index(self->requests, i);
-    if (request->mode != mode) {
+    if (request->mode != mode || (revoked && request->public_only)) {
       request->mode_changed = TRUE;
       g_ptr_array_add(cancel, g_object_ref(request->cancellable));
     }
@@ -862,6 +878,8 @@ gh_net_http_new(GSettings *settings)
   self->settings = settings ? g_object_ref(settings) : NULL;
   if (settings) {
     g_signal_connect(settings, "changed::network-mode", G_CALLBACK(on_mode_changed), self);
+    g_signal_connect(settings, "changed::allow-local-network", G_CALLBACK(on_mode_changed), self);
+    (void)gh_net_http_allows_local_network(self);
     /* GSettings reports a change only of a key read since connecting. */
     g_free(setting(self, "network-mode", NULL));
   }

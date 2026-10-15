@@ -77,7 +77,7 @@ static const char *const not_preferences[] = {
 static const char *const preference_keys[] = {
   "notifications-enabled", "notification-privacy", "sound-enabled", "load-remote-images",
   "link-previews", "load-profile-pictures", "filter-unknown-senders", "show-message-previews",
-  "network-mode", "tor-socks-address", "discovery-relays",
+  "network-mode", "allow-local-network", "tor-socks-address", "discovery-relays",
   "run-in-background", "launch-on-login", "diagnostics-enabled", "retention-days",
   "default-disappearing-seconds", "enter-sends",
   "blossom-servers", "only-join-verified-mls-groups", "mls-legacy-key-packages",
@@ -87,7 +87,7 @@ static const char *const preference_keys[] = {
 static const char *const switch_keys[] = {
   "notifications-enabled", "sound-enabled", "load-remote-images", "link-previews",
   "load-profile-pictures", "filter-unknown-senders", "show-message-previews", "enter-sends",
-  "run-in-background", "launch-on-login", "diagnostics-enabled",
+  "run-in-background", "launch-on-login", "diagnostics-enabled", "allow-local-network",
   "only-join-verified-mls-groups", "mls-legacy-key-packages",
 };
 
@@ -1407,6 +1407,7 @@ test_gated_rows_this_build(Fixture *f, gconstpointer data)
     { "filter-unknown-senders", GH_FEATURE_REQUEST_FILTER },
     { "show-message-previews", TRUE },
     { "network-mode", TRUE },
+    { "allow-local-network", TRUE },
     { "tor-socks-address", GH_FEATURE_TOR },
     { "discovery-relays", TRUE },
     { "run-in-background", TRUE },
@@ -1531,6 +1532,30 @@ test_copy_follows_features(void)
   reset_all(settings);
 }
 
+static void
+test_local_network_tor(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  AdwSwitchRow *row = child(f, "allow_local_network_row");
+  g_assert_false(adw_switch_row_get_active(row));
+  g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(row)));
+  g_settings_set_boolean(f->settings, "allow-local-network", TRUE);
+  g_assert_true(adw_switch_row_get_active(row));
+  g_settings_set_string(f->settings, "network-mode", "tor");
+  drain_idle();
+  g_assert_false(gtk_widget_get_sensitive(GTK_WIDGET(row)));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "Not applicable"));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "Tor exits"));
+  /* Tor does not erase the user's choice for a later direct connection. */
+  g_assert_true(g_settings_get_boolean(f->settings, "allow-local-network"));
+  g_settings_set_string(f->settings, "network-mode", "none");
+  drain_idle();
+  g_assert_true(gtk_widget_get_sensitive(GTK_WIDGET(row)));
+  g_assert_nonnull(strstr(adw_action_row_get_subtitle(ADW_ACTION_ROW(row)), "Someone can"));
+  adw_switch_row_set_active(row, FALSE);
+  g_assert_false(g_settings_get_boolean(f->settings, "allow-local-network"));
+}
+
 /* ---- layout -------------------------------------------------------------------------- */
 
 static void
@@ -1598,6 +1623,12 @@ take_shot(GSettings *settings, const char *dir, const char *page, gboolean confi
   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(window));
   adw_preferences_dialog_set_visible_page_name(ADW_PREFERENCES_DIALOG(dialog), page);
   spin_until(is_mapped, dialog);
+  /* Mapping the dialog shell is earlier than mapping its page on macOS;
+   * a snapshot then contains only a blank sheet, not the preference rows. */
+  GtkWidget *visible_page = GTK_WIDGET(
+    adw_preferences_dialog_get_visible_page(ADW_PREFERENCES_DIALOG(dialog)));
+  spin_until(is_mapped, visible_page);
+  gtk_test_widget_wait_for_draw(visible_page);
   if (confirm_delete) {
     RootWait wait = { GTK_WIDGET(gtk_widget_get_template_child(
                         GTK_WIDGET(dialog), GH_TYPE_PREFERENCES_DIALOG, "delete_all_dialog")),
@@ -1702,6 +1733,7 @@ main(int argc, char **argv)
   ADD("gated-rows-no-feature", test_gated_rows_none, 0);
   /* The bindings themselves, with every feature a row can need. */
   ADD("switch-rows-bind-both-ways", test_switch_rows_bind_both_ways, all);
+  ADD("local-network-tor", test_local_network_tor, all);
   ADD("choice-rows-bind-both-ways", test_choice_rows_bind_both_ways, no_tor);
   ADD("tor-hidden-without-g09", test_tor_hidden_without_g09, no_tor);
   ADD("tor-with-g09", test_tor_with_g09, all);

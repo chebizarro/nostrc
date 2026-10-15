@@ -794,7 +794,8 @@ gh_blossom_client_dup_public_servers(GhBlossomClient *self, const gchar *const *
   for (guint i = 0; servers && servers[i]; i++) {
     g_autofree gchar *host = NULL;
     g_autofree gchar *normalized = normalize_server(servers[i], &host);
-    if (normalized && (self->allow_private_hosts || host_public(host)))
+    if (normalized && (self->allow_private_hosts || gh_net_http_allows_local_network(self->http) ||
+                       host_public(host)))
       g_strv_builder_add(out, servers[i]);
   }
   return g_strv_builder_end(out);
@@ -836,7 +837,8 @@ download_url_allowed(GhBlossomClient *self, const gchar *url, const gchar *sha25
                         "downloaded");
     return FALSE;
   }
-  if (!self->allow_private_hosts && !host_public(host)) {
+  if (!self->allow_private_hosts && !gh_net_http_allows_local_network(self->http) &&
+      !host_public(host)) {
     g_set_error_literal(error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED,
                         "This file's address points at your own computer or local network, "
                         "so it isn't downloaded");

@@ -943,6 +943,28 @@ test_download_address_policy(void)
   }
   g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, before);
 
+  /* The real setting, not the fixture seam: live host preflight and HTTP
+   * connection policy both allow this same loopback file, and revoke it. */
+  const gchar *servers[] = { blossom_fixture_url(f.blossom), "https://printer.local", NULL };
+  g_settings_set_boolean(f.settings, "allow-local-network", TRUE);
+  g_auto(GStrv) local = gh_blossom_client_dup_public_servers(f.client, servers);
+  g_assert_cmpuint(g_strv_length(local), ==, 2);
+  download(&f, NULL, file, &r, NULL);
+  g_assert_no_error(r.error);
+  g_assert_nonnull(r.bytes);
+  result_clear(&r);
+  g_settings_set_string(f.settings, "network-mode", "tor");
+  g_auto(GStrv) tor = gh_blossom_client_dup_public_servers(f.client, servers);
+  g_assert_cmpuint(g_strv_length(tor), ==, 0);
+  g_settings_set_string(f.settings, "network-mode", "none");
+  g_settings_set_boolean(f.settings, "allow-local-network", FALSE);
+  g_auto(GStrv) public = gh_blossom_client_dup_public_servers(f.client, servers);
+  g_assert_cmpuint(g_strv_length(public), ==, 0);
+  download(&f, NULL, file, &r, NULL);
+  g_assert_error(r.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  result_clear(&r);
+  g_settings_reset(f.settings, "allow-local-network");
+
   /* With the seam, the fixture's own address (and an extension) downloads. */
   gh_blossom_client_set_allow_private_hosts(f.client, TRUE);
   g_autoptr(GhNip17File) with_ext = gh_nip17_file_copy(file);
@@ -1115,6 +1137,36 @@ on_keyed(GObject *source, GAsyncResult *result, gpointer data)
   w->done = TRUE;
 }
 static void
+test_local_network_upload(void)
+{
+  Fixture f;
+  fixture_up(&f, "none");
+  gh_blossom_client_set_allow_private_hosts(f.client, FALSE);
+  const gchar *servers[] = { blossom_fixture_url(f.blossom), NULL };
+  g_autoptr(GBytes) blob = g_bytes_new_static("ciphertext", 10);
+  g_autofree gchar *sha = g_compute_checksum_for_bytes(G_CHECKSUM_SHA256, blob);
+  guint8 key[32];
+  memset(key, 0x11, sizeof key);
+  KeyedWait w = { 0 };
+  gh_blossom_client_upload_keyed_async(f.client, servers, blob, sha, key, NULL, on_keyed, &w);
+  spin_until(keyed_done, &w);
+  g_assert_nonnull(w.error);
+  g_assert_null(w.url);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, NULL), ==, 0);
+  g_clear_error(&w.error);
+  w.done = FALSE;
+  g_settings_set_boolean(f.settings, "allow-local-network", TRUE);
+  gh_blossom_client_upload_keyed_async(f.client, servers, blob, sha, key, NULL, on_keyed, &w);
+  spin_until(keyed_done, &w);
+  g_assert_no_error(w.error);
+  g_assert_nonnull(w.url);
+  g_assert_cmpuint(blossom_fixture_count(f.blossom, "PUT"), ==, 1);
+  g_free(w.url);
+  g_settings_reset(f.settings, "allow-local-network");
+  fixture_down(&f);
+}
+
+static void
 test_keyed_upload_rebinding(void)
 {
   Fixture f;
@@ -1213,6 +1265,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/blossom/download-address-policy", test_download_address_policy);
   g_test_add_func("/groundhog/blossom/download-rebinding", test_download_rebinding);
   g_test_add_func("/groundhog/blossom/keyed-upload-rebinding", test_keyed_upload_rebinding);
+  g_test_add_func("/groundhog/blossom/local-network-upload", test_local_network_upload);
   int status = g_test_run();
   canary_log_capture_uninstall();
   remove_tree(root);

@@ -360,6 +360,12 @@ corresponding .blp file and regenerate this file with blueprint-compiler.
               </object>
             </child>
             <child>
+              <object class="AdwSwitchRow" id="allow_local_network_row">
+                <property name="title" translatable="yes">Allow local network</property>
+                <property name="subtitle" translatable="yes">Lets pictures, previews and files load from addresses on your own network. Someone can make Groundhog send requests to devices on your network.</property>
+              </object>
+            </child>
+            <child>
               <object class="AdwEntryRow" id="tor_address_row">
                 <property name="title" translatable="yes">Tor Proxy Address</property>
                 <property name="visible">false</property>

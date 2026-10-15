@@ -100,6 +100,11 @@
     </key>
 
     <!-- Network / Connection -->
+    <key name="allow-local-network" type="b">
+      <default>false</default>
+      <summary>Allow local network</summary>
+      <description>Allow pictures, previews and files to load from non-public addresses on your own network. Someone can make Groundhog send requests to devices on your network. Does not apply in Tor mode or to NIP-05 address checks, and does not enable loading content without consent.</description>
+    </key>
     <key name="network-mode" type="s">
       <choices>
         <choice value="system"/>

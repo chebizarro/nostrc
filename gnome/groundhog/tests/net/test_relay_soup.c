@@ -549,6 +549,8 @@ on_http(SoupServer *server, SoupServerMessage *message, const char *path, GHashT
     soup_server_message_set_status(message, SOUP_STATUS_OK, NULL);
     soup_server_message_set_response(message, "application/json", SOUP_MEMORY_STATIC, doc,
                                      strlen(doc));
+  } else if (g_str_equal(path, "/redirect")) {
+    soup_server_message_set_redirect(message, SOUP_STATUS_FOUND, "/relay");
   } else if (g_str_equal(path, "/hold")) {
     /* Unanswered until release_held(). */
     http->held = message;
@@ -1262,12 +1264,129 @@ test_public_only(void)
   g_assert_cmpstr(request->host, ==, REBIND_HOST);
   g_assert_cmpuint(dns_names->len, ==, looked_up);
 
+  g_settings_set_boolean(settings, "allow-local-network", TRUE);
+  g_assert_false(gh_net_http_allows_local_network(net));
+  gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_nonnull(fetched.error); /* still through SOCKS, not direct */
+  fetched_clear(&fetched);
+  g_assert_cmpuint(requests->len, ==, 2);
+  request = g_ptr_array_index(requests, 1);
+  g_assert_cmpuint(request->atyp, ==, 0x03);
+  g_assert_cmpstr(request->host, ==, REBIND_HOST);
+  g_assert_cmpuint(dns_names->len, ==, looked_up);
+  g_settings_reset(settings, "allow-local-network");
+
   g_clear_object(&net);
   g_settings_reset(settings, "network-mode");
   g_settings_reset(settings, "tor-socks-address");
   socks5_fixture_free(socks);
   tripwire_clear(&listener);
   g_ptr_array_set_size(dns_names, 0); /* the rebinding name's lookups, on purpose */
+}
+
+/* The live preference gates full GETs, prefix GETs, sends and every
+ * redirect, without changing ordinary (NIP-05) requests or Tor routing. */
+static void
+test_allow_local_network(void)
+{
+  Http http = { 0 };
+  http_init(&http);
+  g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
+  g_settings_reset(settings, "allow-local-network");
+  g_settings_set_string(settings, "network-mode", "none");
+  g_autoptr(GhNetHttp) net = gh_net_http_new(settings);
+  g_autofree gchar *url = g_strdup_printf("http://127.0.0.1:%u/relay", http.port);
+  Fetched fetched = { 0 };
+  g_assert_false(g_settings_get_boolean(settings, "allow-local-network"));
+  g_assert_false(gh_net_http_allows_local_network(net));
+  gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  fetched_clear(&fetched);
+  g_assert_cmpuint(http.hits, ==, 0);
+
+  /* No new HTTP client: setting changes apply to the same instance. */
+  g_settings_set_boolean(settings, "allow-local-network", TRUE);
+  g_assert_true(gh_net_http_allows_local_network(net));
+  gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  g_assert_nonnull(fetched.value);
+  fetched_clear(&fetched);
+  gh_net_http_get_public_prefix_async(net, url, NULL, 4, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  fetched_clear(&fetched);
+  GhNetHttpRequest send = { .uri = url, .max_bytes = 1024, .public_only = TRUE };
+  gh_net_http_send_async(net, &send, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  fetched_clear(&fetched);
+  g_assert_cmpuint(http.hits, ==, 3);
+
+  g_autofree gchar *redirect = g_strdup_printf("http://127.0.0.1:%u/redirect", http.port);
+  gh_net_http_get_public_async(net, redirect, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  fetched_clear(&fetched);
+  g_assert_cmpuint(http.hits, ==, 5);
+  /* The opt-in is not permission for plaintext LAN or non-Tor .onion. */
+  const gchar *const forbidden[] = { "http://192.168.1.1/file", "http://example.onion/file" };
+  for (guint i = 0; i < G_N_ELEMENTS(forbidden); i++) {
+    gh_net_http_get_public_async(net, forbidden[i], NULL, 1024, NULL, on_get, &fetched);
+    spin_until(fetched_done, &fetched);
+    gint expected = i == 0 ? G_IO_ERROR_INVALID_ARGUMENT : G_IO_ERROR_PERMISSION_DENIED;
+    g_assert_error(fetched.error, G_IO_ERROR, expected);
+    fetched_clear(&fetched);
+  }
+
+  /* Revoking the grant ends a pending fetch, and the next one is refused. */
+  g_autofree gchar *hold = g_strdup_printf("http://127.0.0.1:%u/hold", http.port);
+  gh_net_http_get_public_async(net, hold, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_settings_set_boolean(settings, "allow-local-network", FALSE);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED);
+  fetched_clear(&fetched);
+  release_held(&http);
+  gh_net_http_get_public_async(net, url, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_PERMISSION_DENIED);
+  fetched_clear(&fetched);
+
+  /* NIP-05's ordinary GET remains unchanged, without following redirects. */
+  gh_net_http_get_async(net, url, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  fetched_clear(&fetched);
+  gh_net_http_get_async(net, redirect, 1024, NULL, on_get, &fetched);
+  spin_until(fetched_done, &fetched);
+  g_assert_error(fetched.error, G_IO_ERROR, G_IO_ERROR_FAILED);
+  fetched_clear(&fetched);
+
+  Socks5Fixture *socks = socks5_fixture_new();
+  socks5_fixture_set_domain_port(socks, http.port);
+  g_settings_set_string(settings, "tor-socks-address", socks5_fixture_address(socks));
+  g_settings_set_boolean(settings, "allow-local-network", TRUE);
+  g_settings_set_string(settings, "network-mode", "tor");
+  g_assert_false(gh_net_http_allows_local_network(net));
+  /* Inapplicable means no effect on an in-flight Tor request either. */
+  g_autofree gchar *onion_hold = onion_url("http", http.port, "/hold");
+  gh_net_http_get_public_async(net, onion_hold, NULL, 1024, NULL, on_get, &fetched);
+  spin_until(http_holding, &http);
+  g_settings_set_boolean(settings, "allow-local-network", FALSE);
+  release_held(&http);
+  spin_until(fetched_done, &fetched);
+  g_assert_no_error(fetched.error);
+  fetched_clear(&fetched);
+  g_assert_cmpuint(socks5_fixture_requests(socks)->len, ==, 1);
+  g_settings_reset(settings, "allow-local-network");
+  g_settings_reset(settings, "network-mode");
+  g_settings_reset(settings, "tor-socks-address");
+  g_clear_object(&net);
+  socks5_fixture_free(socks);
+  http_clear(&http);
 }
 
 /* ---- nostrc-qp24.91: the public-only enumerator, lookup order by lookup order ------ */
@@ -1542,6 +1661,7 @@ main(int argc, char **argv)
   g_test_add_func("/groundhog/net/mode-switch", test_mode_switch);
   g_test_add_func("/groundhog/net/isolation", test_isolation);
   g_test_add_func("/groundhog/net/no-session-refuses", test_no_session_refuses);
+  g_test_add_func("/groundhog/net/allow-local-network", test_allow_local_network);
   g_test_add_func("/groundhog/net/public-address", test_public_address);
   g_test_add_func("/groundhog/net/public-only", test_public_only);
   g_test_add_func("/groundhog/net/public-enumerator", test_public_enumerator);
