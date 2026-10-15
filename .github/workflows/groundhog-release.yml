@@ -46,7 +46,20 @@ jobs:
       - id: v
         run: |
           v="${GITHUB_REF_NAME#groundhog-v}"
-          [ "${GITHUB_REF_NAME}" = "$v" ] && v="0.0.0-$(git rev-parse --short HEAD)"
+          if [ "${GITHUB_REF_NAME}" = "$v" ]; then
+            v="0.0.0-$(git rev-parse --short HEAD)"
+          else
+            # The tag must be the version the app shows (About, --version):
+            # project() VERSION plus GROUNDHOG_PRERELEASE in gnome/groundhog/CMakeLists.txt.
+            cmake_file=gnome/groundhog/CMakeLists.txt
+            base=$(sed -n 's/^project(groundhog VERSION \([0-9.]*\).*/\1/p' "$cmake_file")
+            pre=$(sed -n 's/^set(GROUNDHOG_PRERELEASE "\([^"]*\)")/\1/p' "$cmake_file")
+            full="$base${pre:+-$pre}"
+            if [ "$v" != "$full" ]; then
+              echo "tag version $v does not match the app's version $full ($cmake_file)" >&2
+              exit 1
+            fi
+          fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - run: scripts/make-desktop-source-archive.sh "${{ steps.v.outputs.version }}" dist
       - uses: actions/upload-artifact@v4

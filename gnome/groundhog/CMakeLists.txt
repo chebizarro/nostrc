@@ -1,6 +1,19 @@
 cmake_minimum_required(VERSION 3.16)
 project(groundhog VERSION 0.12.0 LANGUAGES C)
 
+# The pre-release label testers see (About, --version): "alpha8" makes
+# GROUNDHOG_VERSION_FULL "0.12.0-alpha8"; empty for a final release. Bump it
+# with flake.nix (desktopVersion), packaging/archlinux/groundhog/PKGBUILD
+# (_version), packaging/rpm/groundhog.spec (upstream_version, Release) and
+# packaging/debian-desktop/changelog: the groundhog-packaging-version test
+# checks they agree, and the release workflow refuses a groundhog-v* tag that
+# does not equal GROUNDHOG_VERSION_FULL.
+set(GROUNDHOG_PRERELEASE "alpha8")
+set(GROUNDHOG_VERSION_FULL "${PROJECT_VERSION}")
+if (GROUNDHOG_PRERELEASE)
+  string(APPEND GROUNDHOG_VERSION_FULL "-${GROUNDHOG_PRERELEASE}")
+endif()
+
 # W28: accept old preview build invocations while dropping their cached gate.
 # The feature is enabled in normal and packaging builds, regardless of the
 # obsolete value. This lets an existing preview build directory be reused.
@@ -182,7 +195,7 @@ target_compile_options(groundhog-ui PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog-ui PUBLIC PkgConfig::GROUNDHOG_DEPS PkgConfig::GROUNDHOG_QRENCODE)
 
 add_executable(groundhog src/main.c)
-target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}"
+target_compile_definitions(groundhog PRIVATE GROUNDHOG_VERSION="${GROUNDHOG_VERSION_FULL}"
   GROUNDHOG_LOCALEDIR="${CMAKE_INSTALL_FULL_LOCALEDIR}")
 target_compile_options(groundhog PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-ui)
@@ -840,7 +853,11 @@ endforeach()
 
 if (BUILD_TESTING)
   add_test(NAME groundhog-version COMMAND groundhog --version)
-  set_tests_properties(groundhog-version PROPERTIES PASS_REGULAR_EXPRESSION "Groundhog ${PROJECT_VERSION}")
+  set_tests_properties(groundhog-version PROPERTIES PASS_REGULAR_EXPRESSION "Groundhog ${GROUNDHOG_VERSION_FULL}\n")
+  # The packaging files name the same version as GROUNDHOG_VERSION_FULL.
+  add_test(NAME groundhog-packaging-version
+    COMMAND ${CMAKE_COMMAND} -DVERSION=${GROUNDHOG_VERSION_FULL} -DROOT=${CMAKE_SOURCE_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckPackagingVersion.cmake)
   add_test(NAME groundhog-launch COMMAND groundhog --smoke)
   # Memory settings: the smoke never reads a real account, so it contacts no
   # relay and writes no inbox state.
@@ -1579,7 +1596,7 @@ endif()
 add_library(groundhog-about STATIC src/ui/gh-about-dialog.c)
 target_include_directories(groundhog-about PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ui)
 target_link_libraries(groundhog-about PUBLIC PkgConfig::GROUNDHOG_DEPS)
-target_compile_definitions(groundhog-about PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(groundhog-about PRIVATE GROUNDHOG_VERSION="${GROUNDHOG_VERSION_FULL}")
 target_compile_options(groundhog-about PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(groundhog PRIVATE groundhog-about)
 if (BUILD_TESTING)
@@ -1589,7 +1606,7 @@ if (BUILD_TESTING)
   add_executable(test-groundhog-about tests/ui/test_about.c ${GROUNDHOG_RESOURCE_C})
   target_include_directories(test-groundhog-about PRIVATE ${CMAKE_SOURCE_DIR}/tests/common)
   target_link_libraries(test-groundhog-about PRIVATE groundhog-about)
-  target_compile_definitions(test-groundhog-about PRIVATE GROUNDHOG_VERSION="${PROJECT_VERSION}")
+  target_compile_definitions(test-groundhog-about PRIVATE GROUNDHOG_VERSION="${GROUNDHOG_VERSION_FULL}")
   target_compile_options(test-groundhog-about PRIVATE -Wall -Wextra -Werror)
   add_test(NAME groundhog-about COMMAND test-groundhog-about)
   add_test(NAME groundhog-about-gui COMMAND test-groundhog-about --gui)
