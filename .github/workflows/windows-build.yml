@@ -84,26 +84,26 @@ jobs:
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MINGW64
+          msystem: UCRT64
           update: true
           install: >-
             base-devel
             git
-            mingw-w64-x86_64-toolchain
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-gtk4
-            mingw-w64-x86_64-libadwaita
-            mingw-w64-x86_64-glib2
-            mingw-w64-x86_64-json-glib
-            mingw-w64-x86_64-jansson
-            mingw-w64-x86_64-libsodium
-            mingw-w64-x86_64-libsecret
-            mingw-w64-x86_64-libwebsockets
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-curl
-            mingw-w64-x86_64-libsoup3
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-gtk4
+            mingw-w64-ucrt-x86_64-libadwaita
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-json-glib
+            mingw-w64-ucrt-x86_64-jansson
+            mingw-w64-ucrt-x86_64-libsodium
+            mingw-w64-ucrt-x86_64-libsecret
+            mingw-w64-ucrt-x86_64-libwebsockets
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-curl
+            mingw-w64-ucrt-x86_64-libsoup3
 
       # mingw-w64-x86_64-nsis 3.13-1 is broken upstream: plugin resolution
       # finds nothing ("Plugin directories:" empty for every call,
@@ -155,13 +155,13 @@ jobs:
               -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
             cmake --build $HOME/nsync-build --target nsync -j
             # Install C library and headers (skip nsync_cpp which may fail on MinGW)
-            cp $HOME/nsync-build/libnsync.a /mingw64/lib/ 2>/dev/null || true
-            cp $HOME/nsync-src/public/nsync*.h /mingw64/include/ 2>/dev/null || true
+            cp $HOME/nsync-build/libnsync.a /ucrt64/lib/ 2>/dev/null || true
+            cp $HOME/nsync-src/public/nsync*.h /ucrt64/include/ 2>/dev/null || true
             # Create minimal pkg-config file (use printf to avoid heredoc indentation issues).
             # The POSIX backend pulls in pthread symbols, so advertise -lpthread as a
             # private (static-link) dependency for downstream consumers.
             printf '%s\n' \
-              'prefix=/mingw64' \
+              'prefix=/ucrt64' \
               'libdir=${prefix}/lib' \
               'includedir=${prefix}/include' \
               '' \
@@ -171,7 +171,7 @@ jobs:
               'Libs: -L${libdir} -lnsync' \
               'Libs.private: -lpthread' \
               'Cflags: -I${includedir}' \
-              > /mingw64/lib/pkgconfig/nsync.pc
+              > /ucrt64/lib/pkgconfig/nsync.pc
           fi
 
       - name: Build secp256k1 from source (if not packaged)
@@ -180,7 +180,7 @@ jobs:
             git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git $HOME/secp256k1-src
             cmake -S $HOME/secp256k1-src -B $HOME/secp256k1-build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_INSTALL_PREFIX=/mingw64 \
+              -DCMAKE_INSTALL_PREFIX=/ucrt64 \
               -DSECP256K1_BUILD_TESTS=OFF \
               -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
               -DSECP256K1_BUILD_BENCHMARK=OFF
