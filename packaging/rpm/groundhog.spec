@@ -179,6 +179,13 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_datadir}/icons/hicolor/*/apps/org.nostr.Grotto.png
 %{_metainfodir}/org.nostr.Grotto.metainfo.xml
 %{_userunitdir}/grotto-daemon.service
+%{_datadir}/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
+%dir %{_datadir}/grotto
+%{_datadir}/grotto/org.nostr.Grotto-autostart.desktop
+%{_datadir}/icons/hicolor/scalable/apps/org.nostr.Grotto-symbolic.svg
+%dir %{_datadir}/doc/grotto
+%dir %{_datadir}/doc/grotto/examples
+%doc %{_datadir}/doc/grotto/examples/*.conf.example
 
 %changelog
 * Thu Oct 15 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.8.alpha8
