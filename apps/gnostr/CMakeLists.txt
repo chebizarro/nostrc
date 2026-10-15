@@ -1397,6 +1397,18 @@ if (BUILD_TESTING)
     TIMEOUT 30
     LABELS "nip10;thread;manager;unit;gnostr")
 
+  # Committed synchronous ingest regression (nostrc-fbn01)
+  add_executable(gnostr-test-ndb-ingest-sync tests/test_ndb_ingest_sync.c)
+  target_compile_features(gnostr-test-ndb-ingest-sync PRIVATE c_std_11)
+  target_include_directories(gnostr-test-ndb-ingest-sync PRIVATE
+    ${PROJECT_ROOT}/nostr-gobject/include)
+  target_link_libraries(gnostr-test-ndb-ingest-sync PRIVATE PkgConfig::GLIB nostr_gobject)
+  _gnostr_apply_sanitizers(gnostr-test-ndb-ingest-sync)
+  add_test(NAME gnostr-test-ndb-ingest-sync COMMAND gnostr-test-ndb-ingest-sync)
+  set_tests_properties(gnostr-test-ndb-ingest-sync PROPERTIES
+    TIMEOUT 30
+    LABELS "storage;unit;gnostr")
+
   # Timeline query unit tests (nostrc-whu3)
   add_executable(gnostr-test-timeline-query tests/test_timeline_query.c)
   target_compile_features(gnostr-test-timeline-query PRIVATE c_std_11)

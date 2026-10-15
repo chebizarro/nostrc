@@ -43,9 +43,13 @@ void storage_ndb_shutdown(void);
 int storage_ndb_ingest_ldjson(const char *buf, size_t len);
 int storage_ndb_ingest_event_json(const char *json, const char *relay_opt);
 
-/* Synchronous event ingestion for tests. Uses ndb_process_event() directly,
- * bypassing async ingester threads. Events are immediately queryable after return.
- * Returns 0 on success, nonzero on failure. */
+/* Synchronous event ingestion for tests/worker threads (blocks the caller).
+	* Queues raw JSON via ndb_process_event_with(), then waits for an exact-ID post-commit
+	* subscription notification, for at most 5 seconds. Returns 0 only when the
+	* event is queryable in a new read transaction (including existing duplicates).
+	* Returns nonzero on queue/query failure or deadline expiry; a timed-out event
+	* may still commit later. Do not call from a writer notification callback or
+	* while holding a read transaction. The store must remain open during the call. */
 int storage_ndb_ingest_event_json_sync(const char *json);
 
 /* nostrc-mzab: Async batch ingestion — runs storage_ndb_ingest_event_json for

@@ -46,6 +46,35 @@ static ln_store *g_store = NULL;
 static storage_ndb_notify_fn g_sub_cb = NULL;
 static void *g_sub_cb_ctx = NULL;
 
+/* nostrdb invokes this dispatcher after commit, on its writer thread. */
+typedef struct {
+  uint64_t subid;
+  gboolean committed;
+  GCond cond;
+} SyncIngestWait;
+
+static GMutex g_sync_ingest_mutex;
+static GList *g_sync_ingest_waits;
+
+static void storage_ndb_subscription_notify(void *ctx G_GNUC_UNUSED, uint64_t subid)
+{
+  gboolean internal = FALSE;
+  g_mutex_lock(&g_sync_ingest_mutex);
+  for (GList *it = g_sync_ingest_waits; it; it = it->next) {
+    SyncIngestWait *wait = it->data;
+    if (wait->subid == subid) {
+      wait->committed = TRUE;
+      g_cond_signal(&wait->cond);
+      internal = TRUE;
+      break;
+    }
+  }
+  g_mutex_unlock(&g_sync_ingest_mutex);
+
+  if (!internal && g_sub_cb)
+    g_sub_cb(g_sub_cb_ctx, subid);
+}
+
 /* Diagnostic counters */
 static guint64 g_ingest_count = 0;
 static guint64 g_ingest_bytes = 0;
@@ -187,6 +216,7 @@ int storage_ndb_init(const char *dbdir, const char *opts_json, GError **error)
   ln_store *s = NULL;
   fprintf(stderr, "[storage_ndb_init] Calling ln_store_open...\n");
   fflush(stderr);
+  ln_ndb_set_sub_callback(storage_ndb_subscription_notify, NULL);
   int rc = ln_store_open("nostrdb", dbdir ? dbdir : ".ndb-demo",
                          opts_json ? opts_json : "{\"mapsize\":1073741824,\"ingester_threads\":1}",
                          &s);
@@ -325,31 +355,93 @@ int storage_ndb_ingest_event_json(const char *json, const char *relay_opt)
   return rc;
 }
 
+/* Use a fresh snapshot, not the backend's TLS-cached read transaction. */
+static int sync_ingest_note_exists(struct ndb *ndb, const unsigned char id[32])
+{
+  /* An idle backend snapshot still occupies this thread's LMDB reader slot. */
+  storage_ndb_invalidate_txn_cache();
+  struct ndb_txn txn;
+  if (!ndb_begin_query(ndb, &txn)) return -1;
+  size_t note_size;
+  uint64_t note_key;
+  gboolean found = ndb_get_note_by_id(&txn, id, &note_size, &note_key) != NULL;
+  ndb_end_query(&txn);
+  return found;
+}
+
 int storage_ndb_ingest_event_json_sync(const char *json)
 {
   if (!g_store || !json) return LN_ERR_INGEST;
-
-  /* Get raw NDB handle to call ndb_process_event directly */
   struct ndb *ndb = get_ndb();
   if (!ndb) return LN_ERR_INGEST;
 
-  /* CRITICAL FIX: Add tags field if missing */
-  char *fixed_json = ensure_tags_field(json);
+  g_autofree char *fixed_json = ensure_tags_field(json);
   if (!fixed_json) return LN_ERR_INGEST;
-
-  /* Synchronous ingestion - bypasses async ingester threads */
   size_t len = strlen(fixed_json);
-  int rc = ndb_process_event(ndb, fixed_json, (int)len);
+  if (len > G_MAXINT) return LN_ERR_INGEST;
 
-  if (rc != 0) {
-    fprintf(stderr, "[storage_ndb_ingest_sync] FAILED rc=%d len=%zu json_head=%.100s\n", rc, len, fixed_json);
-    fflush(stderr);
-  } else {
-    g_ingest_count++;
-    g_ingest_bytes += len;
+  g_autofree char *id_hex = gnostr_json_get_string(fixed_json, "id", NULL);
+  if (!id_hex || strlen(id_hex) != 64) return LN_ERR_INGEST;
+  unsigned char id[32];
+  for (int i = 0; i < 32; i++) {
+    int hi = g_ascii_xdigit_value(id_hex[2 * i]);
+    int lo = g_ascii_xdigit_value(id_hex[2 * i + 1]);
+    if (hi < 0 || lo < 0) return LN_ERR_INGEST;
+    id[i] = (unsigned char)((hi << 4) | lo);
   }
 
-  free(fixed_json);
+  /* Subscribe before checking/enqueuing so a concurrent commit cannot be lost. */
+  g_autofree char *filter_json = g_strdup_printf("{\"ids\":[\"%s\"]}", id_hex);
+  SyncIngestWait wait = {0};
+  g_cond_init(&wait.cond);
+  wait.subid = storage_ndb_subscribe(filter_json);
+  if (!wait.subid) {
+    g_cond_clear(&wait.cond);
+    return LN_ERR_INGEST;
+  }
+  g_mutex_lock(&g_sync_ingest_mutex);
+  g_sync_ingest_waits = g_list_prepend(g_sync_ingest_waits, &wait);
+  g_mutex_unlock(&g_sync_ingest_mutex);
+
+  struct ndb_ingest_meta meta;
+  ndb_ingest_meta_init(&meta, 1, NULL); /* Raw event JSON, not a relay envelope. */
+  int rc = LN_ERR_INGEST;
+  int found = sync_ingest_note_exists(ndb, id);
+  if (found < 0) {
+    rc = LN_ERR_DB_TXN;
+  } else if (found) {
+    /* Already committed duplicates do not generate another notification. */
+    rc = LN_OK;
+  } else if (!ndb_process_event_with(ndb, fixed_json, (int)len, &meta)) {
+    fprintf(stderr, "[storage_ndb_ingest_sync] Failed to queue event %s\n", id_hex);
+  } else {
+    const gint64 deadline = g_get_monotonic_time() + 5 * G_TIME_SPAN_SECOND;
+    g_mutex_lock(&g_sync_ingest_mutex);
+    while (!wait.committed) {
+      if (!g_cond_wait_until(&wait.cond, &g_sync_ingest_mutex, deadline)) break;
+    }
+    g_mutex_unlock(&g_sync_ingest_mutex);
+
+    found = sync_ingest_note_exists(ndb, id);
+    if (found > 0) {
+      rc = LN_OK;
+      g_ingest_count++;
+      g_ingest_bytes += len;
+    } else if (found < 0) {
+      rc = LN_ERR_DB_TXN;
+    } else {
+      fprintf(stderr, "[storage_ndb_ingest_sync] Event %s not queryable after 5s; "
+                      "ingest may have been rejected or may still commit\n", id_hex);
+    }
+  }
+
+  /* Unsubscribe first, without holding our mutex: the writer takes the
+   * monitor lock before invoking us. Keep the wait registered until it stops. */
+  ndb_unsubscribe(ndb, wait.subid);
+  g_mutex_lock(&g_sync_ingest_mutex);
+  g_sync_ingest_waits = g_list_remove(g_sync_ingest_waits, &wait);
+  g_mutex_unlock(&g_sync_ingest_mutex);
+  g_cond_clear(&wait.cond);
   return rc;
 }
 
@@ -808,10 +900,9 @@ void storage_ndb_set_notify_callback(storage_ndb_notify_fn fn, void *ctx)
 {
   g_sub_cb = fn;
   g_sub_cb_ctx = ctx;
-  /* Push the callback down to libnostr's nostrdb backend so that the next
-   * ln_ndb_open() forwards it to nostrdb via ndb_config.sub_cb. libnostr no
-   * longer reaches up into this layer, which lets it link as a shared lib. */
-  ln_ndb_set_sub_callback((ln_ndb_sub_notify_fn)fn, ctx);
+  /* Keep the internal commit-wait dispatcher installed alongside the caller's
+   * notification callback. nostrdb snapshots this callback when opened. */
+  ln_ndb_set_sub_callback(storage_ndb_subscription_notify, NULL);
 }
 
 void storage_ndb_get_notify_callback(storage_ndb_notify_fn *fn_out, void **ctx_out)
