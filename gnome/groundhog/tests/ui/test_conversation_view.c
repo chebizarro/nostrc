@@ -5732,6 +5732,35 @@ capture_delete(GhConversation *conversation, GhMessage *message, gboolean for_ev
   return TRUE;
 }
 
+/* Closing a focused menu and recycling its row in the same frame must not
+ * leave GTK's deferred focus move retaining an unrealized popover. */
+static void
+test_bubble_menu_close_lifetime(Fixture *f, gconstpointer data)
+{
+  (void)data;
+  GhMessage *message = add_dm(f->store, 2, 1, noon_today(), "Close this menu");
+  GhConversation *conversation = room_of(f->store, message);
+  gh_conversation_accept(conversation);
+  show(f, conversation, 640, 360);
+  GtkPopover *menu = open_menu(row_for(f->view, message));
+  g_assert_true(gtk_widget_child_focus(GTK_WIDGET(menu), GTK_DIR_TAB_FORWARD));
+  GtkRoot *root = GTK_ROOT(f->window);
+  GtkWidget *focus = gtk_root_get_focus(root);
+  g_assert_nonnull(focus);
+  g_assert_true(focus == GTK_WIDGET(menu) || gtk_widget_is_ancestor(focus, GTK_WIDGET(menu)));
+  gpointer weak = menu;
+  g_object_add_weak_pointer(G_OBJECT(menu), &weak);
+
+  /* No frame or drain between popdown and row removal. This also covers
+   * GTK's own menu dismissal, not just product-initiated popdown calls. */
+  gtk_popover_popdown(menu);
+  focus = gtk_root_get_focus(root);
+  g_assert_true(!focus || (focus != GTK_WIDGET(menu) &&
+                           !gtk_widget_is_ancestor(focus, GTK_WIDGET(menu))));
+  gh_conversation_view_set_conversation(f->view, NULL);
+  spin_until(is_null, &weak);
+}
+
 static gboolean
 row_gone(gpointer data)
 {
@@ -6059,6 +6088,7 @@ main(int argc, char **argv)
   ADD("markdown-copy-identity", test_markdown_copy_identity);
   ADD("bubble-padding", test_bubble_padding);
   ADD("bubble-menu", test_bubble_menu);
+  ADD("bubble-menu-close-lifetime", test_bubble_menu_close_lifetime);
   ADD("area-menus", test_area_menus);
   ADD("bubble-delete", test_bubble_delete);
   g_test_add("/groundhog/conversation-view/group-delete-mls", Fixture, GINT_TO_POINTER(TRUE),

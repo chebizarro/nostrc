@@ -31,6 +31,13 @@ files already declare a version.
 
 ## Recorded version decisions
 
+- nostrc-7qnod: release message-menu keyboard focus on dismissal so GTK 4.14
+  cannot retain an unrealized popover for a delayed tooltip after row teardown.
+  PATCH-class Groundhog bug fix folded into unreleased 0.12.0; no further bump,
+  new feature, public API, storage, configuration, or wire-format change.
+  Regression tests require no separate bump; other components and release
+  columns unchanged.
+
 - nostrc-0wggt: Groundhog attachment drag-and-drop routing and feedback fix
   (one target across the conversation and entry). PATCH-class fix folded into
   the unreleased 0.12.0 feature wave (0.12.0-alpha7 is the feature freeze);

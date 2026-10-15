@@ -1616,6 +1616,15 @@ menu_area(GhMessageRow *self, GtkWidget *widget)
   return NULL;
 }
 
+static void
+on_menu_closed(GtkPopover *popover, gpointer data)
+{
+  (void)data;
+  /* GTK can dismiss the menu itself. Release focus before a row unbind can
+   * overwrite GTK 4.14's deferred focus reference (see gh-unparent.h). */
+  gh_widget_release_focus(GTK_WIDGET(popover));
+}
+
 /* Pops up @area's menu at (@x, @y) in @area (negative: the whole area). The
  * popover always hangs off the bubble, which the row never empties. */
 static gboolean
@@ -1635,6 +1644,7 @@ popup_area_menu(GhMessageRow *self, GtkWidget *area, gdouble x, gdouble y)
     gh_widget_unparent_unfocused(GTK_WIDGET(self->menu));
   self->menu = GTK_POPOVER_MENU(gtk_popover_menu_new_from_model(model));
   gtk_widget_set_name(GTK_WIDGET(self->menu), "message_menu");
+  g_signal_connect(self->menu, "closed", G_CALLBACK(on_menu_closed), NULL);
   gtk_widget_set_halign(GTK_WIDGET(self->menu), GTK_ALIGN_START);
   gtk_popover_set_has_arrow(GTK_POPOVER(self->menu), FALSE);
   gtk_widget_set_parent(GTK_WIDGET(self->menu), GTK_WIDGET(self->bubble));
