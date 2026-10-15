@@ -91,20 +91,34 @@ jobs:
       - name: Matching third-party symbols for narrow GUI LSan exceptions
         if: matrix.mode == 'asan-ubsan'
         run: |
-          # Same packages as linux-ci.Dockerfile; symbols only, no runtime patch.
-          # nostrc-ydtdf / nostrc-ojtu3; never fall back to module-wide patterns.
-          arch="$(dpkg --print-architecture)"
-          for spec in f/fontconfig:libfontconfig1 g/gtk4:libgtk-4-1 \
-              g/glib2.0:libglib2.0-0t64 p/pango1.0:libpangoft2-1.0-0; do
-            source="${spec%%:*}"; package="${spec#*:}"
+          set -eu
+          # Same packages as linux-ci.Dockerfile (nostrc-ydtdf / nostrc-ojtu3).
+          sudo apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring
+          for suite in noble noble-updates noble-proposed; do
+            echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"
+          done | sudo tee /etc/apt/sources.list.d/ddebs.list
+          sudo apt-get update
+          gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"
+          if ! apt-cache show "libgtk-4-1-dbgsym=$gtk_version" >/dev/null 2>&1; then
+            # Noble updates' 4.14.5+ds-0ubuntu0.10 has no amd64 dbgsym.
+            # Keep GTK runtime, headers and tools at a version with real symbols.
+            gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"
+            test -n "$gtk_version"
+            test "$gtk_version" != '(none)'
+            echo "::warning::Installed GTK has no matching dbgsym; using GTK $gtk_version with matching symbols for sanitizer coverage"
+            sudo apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+              "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+              "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+              "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"
+          fi
+          set --
+          for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do
             version="$(dpkg-query -W -f='${Version}' "$package")"
-            curl --fail --location --retry 3 \
-              "https://ddebs.ubuntu.com/ubuntu/pool/main/$source/${package}-dbgsym_${version}_${arch}.ddeb" \
-              --output /tmp/grotto-dbgsym.ddeb
-            test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Package)" = "$package-dbgsym"
-            test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Version)" = "$version"
-            sudo dpkg-deb --extract /tmp/grotto-dbgsym.ddeb /
+            echo "Required symbols: $package-dbgsym=$version"
+            set -- "$@" "$package-dbgsym=$version"
           done
+          # Exact dependencies fail closed; never skip symbols or widen suppressions.
+          sudo apt-get install -y --no-install-recommends --no-remove "$@"
       - name: Build an instrumented unmodified GLib for TSan only
         if: matrix.mode == 'tsan'
         run: |
