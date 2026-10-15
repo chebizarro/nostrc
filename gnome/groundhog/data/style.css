@@ -27,9 +27,15 @@
   border: 1px solid alpha(currentColor, 0.3);
 }
 
+/* The row template adds 6px on every side; libadwaita's navigation rows
+ * otherwise add 8px only horizontally. Keep a 14px content inset throughout. */
+listview.navigation-sidebar > row {
+  padding: 8px;
+}
+
 .groundhog-requests-button {
   margin: 6px;
-  padding: 6px 12px;
+  padding: 14px;
 }
 
 /* == bubbles (G12) == */

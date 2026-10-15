@@ -766,6 +766,31 @@ test_search_clear_and_focus(Fixture *f, gconstpointer data)
   assert_list(f, all, 2);
 }
 
+static void save_png(GtkWidget *window, const char *dir, const char *name);
+
+static void
+assert_content_inset(GtkWidget *container, GtkWidget *content, const char *name)
+{
+  graphene_rect_t bounds;
+  g_assert_true(gtk_widget_compute_bounds(container, content, &bounds));
+  /* Bounds include CSS borders; the list's 1px separator is not padding.
+   * GTK has no non-deprecated accessor for the computed border widths. */
+  GtkBorder border;
+  G_GNUC_BEGIN_IGNORE_DEPRECATIONS
+  gtk_style_context_get_border(gtk_widget_get_style_context(container), &border);
+  G_GNUC_END_IGNORE_DEPRECATIONS
+  float left = -bounds.origin.x - border.left;
+  float top = -bounds.origin.y - border.top;
+  float right = bounds.origin.x + bounds.size.width - gtk_widget_get_width(content) - border.right;
+  float bottom = bounds.origin.y + bounds.size.height - gtk_widget_get_height(content) - border.bottom;
+  g_test_message("%s content inset T/R/B/L=%.0f/%.0f/%.0f/%.0f (excluding border)",
+                 name, top, right, bottom, left);
+  g_assert_cmpfloat(left, ==, 14);
+  g_assert_cmpfloat(top, ==, left);
+  g_assert_cmpfloat(right, ==, left);
+  g_assert_cmpfloat(bottom, ==, left);
+}
+
 static void
 test_sidebar_spacing(Fixture *f, gconstpointer data)
 {
@@ -787,6 +812,24 @@ test_sidebar_spacing(Fixture *f, gconstpointer data)
   g_assert_cmpint(gtk_widget_get_margin_bottom(row), ==, 6);
   gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
   g_assert_cmpint(gtk_widget_get_height(row), >=, 40);
+  g_autoptr(GPtrArray) rows = rows_of(f->sidebar);
+  for (guint i = 0; i < rows->len; i++) {
+    GtkWidget *content = g_ptr_array_index(rows, i);
+    assert_content_inset(gtk_widget_get_parent(content), content, "conversation");
+  }
+  const char *buttons[] = { "requests_button", "invitations_button" };
+  for (guint i = 0; i < G_N_ELEMENTS(buttons); i++) {
+    GtkWidget *button = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, buttons[i]);
+    gtk_widget_set_visible(button, TRUE);
+  }
+  gtk_test_widget_wait_for_draw(GTK_WIDGET(f->window));
+  for (guint i = 0; i < G_N_ELEMENTS(buttons); i++) {
+    GtkWidget *button = template_child(f->sidebar, GH_TYPE_SIDEBAR_PAGE, buttons[i]);
+    assert_content_inset(button, gtk_button_get_child(GTK_BUTTON(button)), buttons[i]);
+  }
+  const char *dir = g_getenv("GROUNDHOG_TEST_SCREENSHOTS");
+  if (dir && *dir)
+    save_png(GTK_WIDGET(f->window), dir, "sidebar-padding");
 }
 
 static void
