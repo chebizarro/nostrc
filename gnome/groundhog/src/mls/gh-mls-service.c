@@ -1895,7 +1895,7 @@ read_relays_of(GhMlsGroup *group)
   return sorted_strv(urls);
 }
 
-static void requests_cancel(GhMlsGroup *group);
+static void outgoing_end(GhMlsGroup *group);
 
 /* Reads everything the group shows from libmarmot and notifies what changed.
  * A changed routing (relays or nostr group id) re-subscribes. */
@@ -2038,7 +2038,7 @@ group_refresh(GhMlsGroup *group)
     g_object_notify_by_pspec(object, group_props[GROUP_PROP_END]);
   }
   if (ended_now && end != GH_MLS_GROUP_END_NONE)
-    requests_cancel(group);
+    outgoing_end(group);
   if (g_strcmp0(group->removed_by, removed_by) != 0) {
     g_free(group->removed_by);
     group->removed_by = g_steal_pointer(&removed_by);
@@ -6015,13 +6015,37 @@ unsigned_id_of(const gchar *json, gint *out_kind)
   return ok ? g_strdup(id) : NULL;
 }
 
-/* @group ended (left, removed): its unfinished reaction and deletion requests
- * are cancelled and any round in flight stopped, so none goes out later
- * (nostrc-knbkr). Chat messages stay as they are, shown not sent. */
+/* An ended group's unfinished application sends stop permanently. Requests
+ * are cancelled (nostrc-knbkr); unsent chat stays in history as Not sent
+ * (nostrc-49tse). An envelope already accepted by a relay remains Sent. */
 static GhMlsGroup *group_of_envelope(GhMlsService *self, const gchar *event_json);
 
 static void
-requests_cancel(GhMlsGroup *group)
+send_end(GhMlsService *self, GhStoreOutboxEntry *entry, const gchar *inner_id,
+         gboolean request)
+{
+  g_autofree gchar *key = outbox_key(entry->id);
+  g_hash_table_remove(self->deliveries, key);
+  gboolean accepted = FALSE;
+  GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
+  for (guint i = 0; i < event->targets->len; i++) {
+    GhStoreOutboxTarget *target = g_ptr_array_index(event->targets, i);
+    accepted |= target->outcome == OUTCOME_ACCEPTED;
+  }
+  outbox_set(self, entry->id, request ? GH_STORE_OUTBOX_CANCELLED
+                                    : accepted ? GH_STORE_OUTBOX_SETTLED
+                                               : GH_STORE_OUTBOX_NEEDS_ATTENTION,
+             "mls-group-ended", FALSE);
+  if (!request && account_matches_model(self)) {
+    GhMessage *message = gh_conversation_store_lookup_message(self->conversations, inner_id);
+    if (message)
+      gh_message_set_status(message, accepted ? GH_MESSAGE_STATUS_SENT
+                                              : GH_MESSAGE_STATUS_NOT_SENT);
+  }
+}
+
+static void
+outgoing_end(GhMlsGroup *group)
 {
   GhMlsService *self = group->service;
   if (!self->store)
@@ -6030,7 +6054,7 @@ requests_cancel(GhMlsGroup *group)
   g_autoptr(GArray) ids = gh_store_outbox_list_unfinished(self->store, GH_STORE_BACKEND_MLS,
                                                           &error);
   if (!ids) {
-    g_debug("Groundhog could not list an ended group's requests: %s", error->message);
+    g_debug("Groundhog could not list an ended group's sends: %s", error->message);
     return;
   }
   for (guint i = 0; i < ids->len; i++) {
@@ -6038,29 +6062,31 @@ requests_cancel(GhMlsGroup *group)
     g_autoptr(GhStoreOutboxEntry) entry = gh_store_outbox_load(self->store, id, NULL);
     gint kind = 0;
     g_autofree gchar *inner_id = entry ? unsigned_id_of(entry->rumor_json, &kind) : NULL;
-    if (!inner_id || (kind != 5 && kind != 7) || entry->events->len != 1)
+    if (!inner_id || entry->events->len != 1)
       continue;
     GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
-    if (group_of_envelope(self, event->event_json) != group)
+    if (event->role != GH_STORE_OUTBOX_ROLE_MLS_MESSAGE ||
+        group_of_envelope(self, event->event_json) != group)
       continue;
-    g_autofree gchar *key = outbox_key(id);
-    g_hash_table_remove(self->deliveries, key);
-    outbox_set(self, id, GH_STORE_OUTBOX_CANCELLED, "mls-group-ended", FALSE);
+    send_end(self, entry, inner_id, kind == 5 || kind == 7);
   }
 }
 
 /* After a restart or a failed round: the stored kind 445, byte for byte.
- * Nothing goes to a group being left (nostrc-2um6); a reaction or deletion
- * request (@request) to a group that ended is cancelled, so it never goes
- * out, even if the account is added again (nostrc-knbkr). */
+ * Nothing goes to a group being left (nostrc-2um6). Once it ends, requests
+ * are cancelled and unsent chat is marked Not sent; neither goes out even
+ * if the account is added again (nostrc-knbkr, nostrc-49tse). */
 static void
 send_resume(GhMlsService *self, GhStoreOutboxEntry *entry, GhMlsGroup *group, gboolean request)
 {
   g_autofree gchar *key = outbox_key(entry->id);
-  if (request && group && !group->active && group->end != GH_MLS_GROUP_END_NONE) {
-    outbox_set(self, entry->id, GH_STORE_OUTBOX_CANCELLED, "mls-group-ended", FALSE);
+  if (group && !group->active && group->end != GH_MLS_GROUP_END_NONE) {
+    g_autofree gchar *inner_id = unsigned_id_of(entry->rumor_json, NULL);
+    send_end(self, entry, inner_id, request);
     return;
   }
+  if (g_strcmp0(entry->last_error, "mls-group-ended") == 0)
+    return;   /* Never revive a send from a previous membership. */
   if (!group || !group->active || group->leaving ||
       g_hash_table_contains(self->deliveries, key) || entry->events->len != 1)
     return;
@@ -9408,10 +9434,13 @@ resume_all(GhMlsService *self)
     gint kind = 0;
     g_autofree gchar *id = entry ? unsigned_id_of(entry->rumor_json, &kind) : NULL;
     gboolean request = kind == 5 || kind == 7;
-    if (!id || (kind != GH_MESSAGE_MLS_KIND && !request) || entry->events->len != 1)
-      continue;   /* Commits: gh-mls-commits; Welcome wraps: welcomes_pump */
+    if (!id || entry->events->len != 1)
+      continue;
     GhStoreOutboxEvent *event = g_ptr_array_index(entry->events, 0);
-    send_resume(self, entry, group_of_envelope(self, event->event_json), request);
+    /* Resume every sealed application message, including polls and votes
+     * (nostrc-jitfg). Commits and Welcome wraps have their own pumps. */
+    if (event->role == GH_STORE_OUTBOX_ROLE_MLS_MESSAGE)
+      send_resume(self, entry, group_of_envelope(self, event->event_json), request);
   }
   for (guint i = 0; i < self->groups->len; i++) {
     GhMlsGroup *group = g_ptr_array_index(self->groups, i);
