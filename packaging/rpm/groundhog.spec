@@ -40,6 +40,9 @@ BuildRequires:  pkgconfig(sqlcipher)
 BuildRequires:  pkgconfig(libxml-2.0)
 BuildRequires:  pkgconfig(gstreamer-1.0) >= 1.20
 BuildRequires:  pkgconfig(gstreamer-app-1.0)
+# Grotto camera pairing (apps/grotto/CMakeLists.txt, Linux only)
+BuildRequires:  pkgconfig(gstreamer-video-1.0)
+BuildRequires:  pkgconfig(zbar)
 BuildRequires:  pkgconfig(openssl) >= 3.0
 BuildRequires:  pkgconfig(libsecp256k1)
 BuildRequires:  pkgconfig(libsodium)
@@ -178,7 +181,7 @@ appstream-util validate-relax --nonet %{buildroot}%{_metainfodir}/org.nostr.Grou
 %{_userunitdir}/grotto-daemon.service
 
 %changelog
-* Wed Oct 15 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.8.alpha8
+* Thu Oct 15 2026 Biz <chebizarro@protonmail.com> - 0.12.0-0.8.alpha8
 - The version shown in About and by --version now carries the alpha
   label (0.12.0-alpha8), so testers can report the exact build.
 - Allow local network (Preferences > Network, off by default): pictures,
