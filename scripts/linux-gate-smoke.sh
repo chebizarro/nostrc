@@ -261,7 +261,7 @@ run_perf() {
 if run_logged "$STATE_DIR/ctest.log" --parallel "$JOBS" -LE '^perf$' "${SELECT[@]}"; then
   check_forbidden "$STATE_DIR/ctest.log"
   run_perf
-  echo "==> $GATE: $SUITE passed, $(grep -E "tests passed" "$STATE_DIR/ctest.log" | sed "s/.*out of //") run ($(stamp))"
+  echo "==> $GATE: $SUITE gate succeeded; $(grep -E "tests passed" "$STATE_DIR/ctest.log" | sed "s/.*out of //") selected, $(grep -Ec '^[[:space:]]*[0-9]+/[0-9]+ Test .* Passed[[:space:]]' "$STATE_DIR/ctest.log") passed, $(grep -Ec '^[[:space:]]*[0-9]+/[0-9]+ Test .*\*\*\*Skipped' "$STATE_DIR/ctest.log") skipped ($(stamp))"
   exit 0
 fi
 
@@ -368,6 +368,6 @@ for test in $failed; do
   echo "!!   $test needed a rerun in $count of the last $gates gate(s)"
 done
 run_perf
-echo "==> $GATE: $SUITE passed after a rerun, $(printf "%s" "$first" | sed "s/.*out of //") run ($(stamp))"
+echo "==> $GATE: $SUITE gate succeeded after rerun; $(printf "%s" "$first" | sed "s/.*out of //") selected, $(grep -Ec '^[[:space:]]*[0-9]+/[0-9]+ Test .* Passed[[:space:]]' "$kept") initially passed, $(grep -Ec '^[[:space:]]*[0-9]+/[0-9]+ Test .*\*\*\*Skipped' "$kept") skipped; $n_failed initial failure(s) passed on serial rerun ($(stamp))"
 exit 0
 }

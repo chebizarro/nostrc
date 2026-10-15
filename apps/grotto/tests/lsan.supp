@@ -1,0 +1,28 @@
+# Linux ASAN GUI workers only: signer/approval-integration and signer/onboarding.
+# detect_leaks=1 stays on. Never load this in controller/private-bus suites.
+# No module, allocator, GObject, GVariant or wildcard suppressions.
+# Matching Ubuntu debug symbols are required (also for inlined/static frames).
+# Source proof, build IDs and counterfactual checks: G12 release-readiness report.
+
+# nostrc-ydtdf: Pango 1.52.1 pangofc-fontmap.c match_in_thread stores the
+# FcFontSetMatch result in PangoFcPatterns.match, owned by the font-map cache.
+leak:match_in_thread
+# nostrc-ydtdf: pango_fc_font_map_load_fontset populates the same process-lived
+# fontset/pattern caches through pango_fc_font_map_get_patterns/default_substitute.
+leak:pango_fc_font_map_load_fontset
+# nostrc-ydtdf: fontconfig 2.15.0 fcxml.c FcParsePattern appends parsed patterns
+# to the default configuration; these are not Grotto-owned font allocations.
+leak:FcParsePattern
+
+# nostrc-ojtu3: GTK 4.14 gtk_path_bar_set_file_finish replaces button_list
+# without freeing the old list nodes allocated by this callback.
+leak:gtk_path_bar_get_info_callback
+# nostrc-ojtu3: gtk_file_system_model_got_enumerator frees non-cancellation
+# errors only, losing the cancelled GError returned by GIO.
+leak:gtk_file_system_model_got_enumerator
+# nostrc-ojtu3: GTK's path-bar callback also never unrefs the GFileInfo from
+# g_file_query_info_finish. Its allocation stack is the asynchronous GIO worker,
+# not the consuming GTK callback. Match that worker, NOT GObject/GLib allocators.
+# Restricted to these two GUI tests; neither Grotto nor their fixture owns/calls
+# async file-info queries. Reassess this exception if that changes.
+leak:query_info_async_thread

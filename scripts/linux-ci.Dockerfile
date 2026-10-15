@@ -62,6 +62,21 @@ RUN for element in appsrc appsink decodebin audioconvert audioresample \
 # Native Grotto package verification uses the same debhelper toolchain as CI.
 RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot \
  && rm -rf /var/lib/apt/lists/*
+# Grotto's GUI-only LSan exceptions name static third-party functions, not modules
+# (nostrc-ydtdf, nostrc-ojtu3). Install matching symbols, never replace runtime libs.
+RUN arch="$(dpkg --print-architecture)" \
+ && for spec in f/fontconfig:libfontconfig1 g/gtk4:libgtk-4-1 \
+      g/glib2.0:libglib2.0-0t64 p/pango1.0:libpangoft2-1.0-0; do \
+      source="${spec%%:*}"; package="${spec#*:}"; \
+      version="$(dpkg-query -W -f='${Version}' "$package")"; \
+      curl --fail --location --retry 3 \
+        "https://ddebs.ubuntu.com/ubuntu/pool/main/$source/${package}-dbgsym_${version}_${arch}.ddeb" \
+        --output /tmp/grotto-dbgsym.ddeb \
+      && test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Package)" = "$package-dbgsym" \
+      && test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Version)" = "$version" \
+      && dpkg-deb --extract /tmp/grotto-dbgsym.ddeb / \
+      && rm /tmp/grotto-dbgsym.ddeb || exit 1; \
+    done
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock

@@ -666,6 +666,17 @@ foreach(resource_test test-approval-integration test-desktop-activation)
   endif()
 endforeach()
 
+# Only the real GTK GUI workers encounter these source-proven upstream leaks.
+# Controller/nip55l fixture ownership is checked without any LSan suppression.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND (GNOSTR_ENABLE_ASAN OR GO_ENABLE_ASAN))
+  foreach(gui_suite signer/approval-integration signer/onboarding)
+    if(TEST ${gui_suite})
+      set_property(TEST ${gui_suite} APPEND PROPERTY ENVIRONMENT
+        "LSAN_OPTIONS=suppressions=${CMAKE_CURRENT_SOURCE_DIR}/lsan.supp:print_suppressions=1")
+    endif()
+  endforeach()
+endif()
+
 # Private HOME/XDG_* and NOSTRC_TEST_ISOLATION for every test above
 # (nostrc-wqn0u). Must stay last, after every add_test() in this directory.
 if (BUILD_TESTING)

@@ -111,7 +111,6 @@
           groundhog = self.packages.${final.system}.groundhog;
           grotto = self.packages.${final.system}.grotto;
           grotto-daemon = self.packages.${final.system}.grotto-daemon;
-          grotto-daemon-tcp = self.packages.${final.system}.grotto-daemon-tcp;
         };
       };
 }

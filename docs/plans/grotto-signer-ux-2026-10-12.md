@@ -488,7 +488,7 @@ Room-send orchestration is in `gh-dm-send.c` / `gh-nip17-envelope.c`, not the NI
 |---|---|
 | G00 proved original listener nonfunctional; remote runtime now substantially changed | G05/G06 real loopback suites; installed network/custody/interop acceptance remains required |
 | Async core callback changes | Add APIs; keep old ABI; Grotto uses only the request-aware path |
-| New sanitizer coverage exposes latent fixture/library/channel issues | `.14.3` GUI LSan and `.14.4` core TSan remain blocking; never quarantine reports, disable leak detection or call workflow presence a green run |
+| New sanitizer coverage exposes latent fixture/library/channel issues | `.14.3` requires leak-detection-on ownership fixes and narrowly source-proven third-party exceptions. Owner permits `.14.4` advisory after one pinned-runtime attempt for G12 delivery only; TSan promotion gate remains NOT MET. Never count advisory/quarantined evidence as a met gate |
 | Shared-gate refactor weakens caller isolation | Run existing nip55l contract/security suites before connecting the bunker |
 | Scoped permissions invalidate broad approvals | "Needs review" migration; no silent expansion; explain once |
 | Rollback restores insecure grants | Remove executable legacy broad allows during migration; older binaries can't use scoped permissions |
@@ -597,7 +597,7 @@ Commits below are in the `5ef33513c` integration tree; review documents under
 | G10 | `3f80ac819`, `5ef33513c` | Home/Connect/templates/i18n/focus + review fixes; stock GTK kept, Launchpad filing remains nostrc-9n2n9 |
 | G11 | `823925632`, `295a029b4` | Bounded ephemeral flow consent + invalidation/fences; required-kind policy preserved |
 | G13 | `b9842a32b`, `673ed12a1`, `0988d8156` | Shell module + review fixes, single unreleased 0.5.0 bump; live 46/50 NOT RUN (.13.1) |
-| G12 | `304d1da0` packaging/CI/release-evidence checkpoint (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; G12 remains open for blocking sanitizer .14.3/.14.4, no promotion |
+| G12 | `304d1da0` packaging/CI/release-evidence checkpoint (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; G12 delivery close-out requires .14.3 plus native gates; owner-approved .14.4 remains advisory/open, no promotion |
 
 **Atomic landing assessment:** local/socket call sites and the shared gate landed
 with G02; scoped migration/evaluation/legacy revoke with G03; async core/wrapper/
@@ -610,10 +610,16 @@ boundaries. This does not certify every manual/platform acceptance item.
 common-gate, malformed/unknown-client, persistence and pause evidence exists;
 manual 24.04 stock GNOME / Ubuntu / 26.04, physical camera, Shell and accessibility
 are **NOT RUN**. CI must be green on floor/current runners and required sanitizer
-stages; no named baseline flake is silently disabled. Dedicated local sanitizer
-runs exposed still-blocking GUI LSan (`nostrc-u6v55.14.3`) and core channel/TSan
-annotation (`.14.4`) diagnostics. G12 remains open until these pass; implementing
-a workflow is not green execution evidence. Do not remove Preview.
+stages; no named baseline flake is silently disabled. Initial dedicated sanitizer
+runs exposed GUI LSan (`nostrc-u6v55.14.3`) and core channel/TSan annotation
+(`.14.4`) diagnostics. LSan remediation now passes its required local selections;
+TSan still fails. The owner-approved G12 close-out rule requires `.14.3` to pass with
+`detect_leaks=1` and only source-proven narrow third-party exceptions; after one
+pinned-runtime attempt `.14.4` may stay open with an explicitly advisory CI job.
+This is **not** a met TSan promotion gate. Hosted required jobs and installed
+manual acceptance remain **NOT MET** until genuine exact-SHA/session evidence
+exists; workflow presence, skips, quarantines and advisory results do not count.
+Do not remove Preview.
 
 **G00(c) size reassessment:** unchanged — G01 S–M / 2–3 days (surface the confirmed listener failure), G05 XL / 7–11 (key/session wiring is already in transport custody scope), G06 L / 6–8 (pairing/configuration scope unchanged).
 

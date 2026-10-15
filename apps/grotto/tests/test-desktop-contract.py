@@ -86,6 +86,8 @@ assert '#define DAEMON_VERSION GROTTO_VERSION' in (app / 'daemon/main_daemon.c')
 assert (app / 'packaging/debian/changelog').read_text().startswith(f'grotto ({version}-')
 assert f'Version:        {version}\n' in (app / 'packaging/rpm/grotto.spec').read_text()
 assert f'pkgver={version}\n' in (app / 'packaging/archlinux/PKGBUILD').read_text()
+# The removed unsupported TCP package must not survive as a dangling overlay export.
+assert 'grotto-daemon-tcp' not in (root / 'flake.nix').read_text()
 control = (app / 'packaging/debian/control').read_text()
 assert control.count('\nPackage: ') == 1 and '\nPackage: grotto\n' in control
 for payload in ('usr/bin/grotto-daemon', 'org.nostr.Signer.service',

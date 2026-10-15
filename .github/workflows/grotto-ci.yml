@@ -34,7 +34,10 @@ concurrency:
 
 jobs:
   signer:
-    name: ${{ matrix.runner }} / ${{ matrix.mode }}
+    name: ${{ matrix.runner }} / ${{ matrix.mode }}${{ matrix.mode == 'tsan' && ' (ADVISORY, non-gating)' || '' }}
+    # nostrc-u6v55.14.4: the pinned-runtime attempt exposes channel/annotation
+    # failures. Owner-approved advisory evidence, never a met promotion gate.
+    continue-on-error: ${{ matrix.mode == 'tsan' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -85,6 +88,23 @@ jobs:
           cat /etc/os-release >> dependency-versions.txt
           python3 scripts/check-linux-ci-packages.py --self-test
           python3 scripts/test-grotto-quarantine.py
+      - name: Matching third-party symbols for narrow GUI LSan exceptions
+        if: matrix.mode == 'asan-ubsan'
+        run: |
+          # Same packages as linux-ci.Dockerfile; symbols only, no runtime patch.
+          # nostrc-ydtdf / nostrc-ojtu3; never fall back to module-wide patterns.
+          arch="$(dpkg --print-architecture)"
+          for spec in f/fontconfig:libfontconfig1 g/gtk4:libgtk-4-1 \
+              g/glib2.0:libglib2.0-0t64 p/pango1.0:libpangoft2-1.0-0; do
+            source="${spec%%:*}"; package="${spec#*:}"
+            version="$(dpkg-query -W -f='${Version}' "$package")"
+            curl --fail --location --retry 3 \
+              "https://ddebs.ubuntu.com/ubuntu/pool/main/$source/${package}-dbgsym_${version}_${arch}.ddeb" \
+              --output /tmp/grotto-dbgsym.ddeb
+            test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Package)" = "$package-dbgsym"
+            test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Version)" = "$version"
+            sudo dpkg-deb --extract /tmp/grotto-dbgsym.ddeb /
+          done
       - name: Build an instrumented unmodified GLib for TSan only
         if: matrix.mode == 'tsan'
         run: |
@@ -110,6 +130,9 @@ jobs:
             -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF "${flags[@]}"
       - name: Build
         run: cmake --build build --parallel 2
+      - name: Prove GUI LSan exceptions do not hide application fixture leaks
+        if: matrix.mode == 'asan-ubsan'
+        run: python3 scripts/test-grotto-lsan-suppressions.py build/lsan-counterfactuals
       - name: Run signer and nip55l suites (no quarantines)
         env:
           MODE: ${{ matrix.mode }}
@@ -204,6 +227,7 @@ jobs:
             dependency-versions.txt
             tsan-runtime.log
             build/tsan-runtime-linkage.txt
+            build/lsan-counterfactuals/
             build/signer-ctest.*
             build/selected-tests.json
             build/Testing/Temporary/LastTest.log
