@@ -51,8 +51,7 @@ endif
 nostr_gobject_shared = cc.find_library('nostr-gobject-1.0',
   dirs: [cmake_build_dir / 'nostr-gobject'])
 nostr_gobject_inc = include_directories('../../nostr-gobject/include')
-# BunkerService now submits to the shared daemon gate (no GUI crypto path).
-nip55l_glib_lib = cc.find_library('nostr_nip55l_glib', dirs: [cmake_build_dir / 'nips/nip55l'])
+# The GUI uses Control1; only the CMake-owned daemon hosts the bunker/gate.
 nip55l_core_lib = cc.find_library('nostr_nip55l_core', dirs: [cmake_build_dir / 'nips/nip55l'])
 nostr_gobject_dep = declare_dependency(
   dependencies: nostr_gobject_shared,
@@ -65,7 +64,7 @@ foreach component : [
   ['nostr_nip46_core', 'nips/nip46'], ['nip04', 'nips/nip04'], ['nip06', 'nips/nip06'],
   ['nip19', 'nips/nip19'], ['nip11', 'nips/nip11'], ['nostr_nip44_core', 'nips/nip44'],
   ['nostr_nip49_core', 'nips/nip49'], ['nostr_nip49_glib', 'nips/nip49'],
-  ['nostr_nip5f_core', 'nips/nip5f'], ['gnostr-secret', 'gnome/seahorse'],
+  ['gnostr-secret', 'gnome/seahorse'],
   ['nostr', 'libnostr'], ['nostrgo', 'libgo'], ['nostr-json', 'libjson'],
   ['nostrdb_storage', 'components/nostrdb'], ['nostrdb_vendored', 'components/nostrdb'],
   ['nostrdb', 'libnostr']]
@@ -160,7 +159,6 @@ app_sources = files(
   '../../gnome/common/gn-status-notifier.c',
   'src/accounts_store.c',
   'src/backup-recovery.c',
-  'src/bunker_service.c',
   'src/cache-manager.c',
   'src/client_session.c',
   'src/delegation.c',
@@ -288,7 +286,7 @@ executable(app_bin,
     nips_inc,
     nostr_gobject_inc,
   ] + dependency_include_dirs,
-  dependencies: app_deps + [nip55l_glib_lib, nip55l_core_lib] + protocol_deps,
+  dependencies: app_deps + [nip55l_core_lib] + protocol_deps,
   c_args: [
     '-DGROTTO_VERSION="@0@"'.format(meson.project_version()),
     '-DAPP_ID="@0@"'.format(app_id),
