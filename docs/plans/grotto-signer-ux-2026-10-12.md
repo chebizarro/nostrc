@@ -597,7 +597,7 @@ Commits below are in the `5ef33513c` integration tree; review documents under
 | G10 | `3f80ac819`, `5ef33513c` | Home/Connect/templates/i18n/focus + review fixes; stock GTK kept, Launchpad filing remains nostrc-9n2n9 |
 | G11 | `823925632`, `295a029b4` | Bounded ephemeral flow consent + invalidation/fences; required-kind policy preserved |
 | G13 | `b9842a32b`, `673ed12a1`, `0988d8156` | Shell module + review fixes, single unreleased 0.5.0 bump; live 46/50 NOT RUN (.13.1) |
-| G12 | `304d1da0` packaging/CI/release-evidence checkpoint (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; G12 delivery close-out requires .14.3 plus native gates; owner-approved .14.4 remains advisory/open, no promotion |
+| G12 | `304d1da0` implementation, `b9f2f92b` checkpoint index, `82eb2449` LSan/critique remediation (nostrc-u6v55.14) | Native recipes/workflow/AppStream/manual handoff; real fixture ownership fixes and narrowly source-proven upstream exceptions pass required LSan15/15, .14.3 closed; native gates rerun with skips/retries recorded; dangling Nix overlay fixed, supplied critique committed unchanged. .14.1 owns unrun matrix; owner-approved .14.4 advisory/open; no promotion |
 
 **Atomic landing assessment:** local/socket call sites and the shared gate landed
 with G02; scoped migration/evaluation/legacy revoke with G03; async core/wrapper/
@@ -612,8 +612,8 @@ manual 24.04 stock GNOME / Ubuntu / 26.04, physical camera, Shell and accessibil
 are **NOT RUN**. CI must be green on floor/current runners and required sanitizer
 stages; no named baseline flake is silently disabled. Initial dedicated sanitizer
 runs exposed GUI LSan (`nostrc-u6v55.14.3`) and core channel/TSan annotation
-(`.14.4`) diagnostics. LSan remediation now passes its required local selections;
-TSan still fails. The owner-approved G12 close-out rule requires `.14.3` to pass with
+(`.14.4`) diagnostics. LSan remediation passes all 15 required local selections with zero skips or
+quarantines (`82eb2449`), and `.14.3` is closed; TSan still fails. The owner-approved G12 close-out rule requires `.14.3` to pass with
 `detect_leaks=1` and only source-proven narrow third-party exceptions; after one
 pinned-runtime attempt `.14.4` may stay open with an explicitly advisory CI job.
 This is **not** a met TSan promotion gate. Hosted required jobs and installed

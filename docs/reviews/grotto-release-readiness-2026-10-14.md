@@ -7,7 +7,8 @@ decision after all final gates, not an automatic consequence of G00–G13 delive
 No release tag, merge or release publication is authorized by this report.
 
 Scope: `grotto/g12-packaging-ci`, base `5ef33513c` (G00–G11 + G13 integration),
-plus G12 implementation checkpoint `304d1da0` and its evidence follow-up. G12
+plus G12 implementation checkpoint `304d1da0`, evidence index `b9f2f92b`, and
+LSan/critique remediation `82eb2449` (`.14.3` closed). G12
 has completed its required local remediation and native reruns; delivery closure
 is separate from promotion. Owner remediation decision: `.14.3`
 must pass with leak detection and narrow source-proven third-party exceptions;
