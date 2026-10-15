@@ -460,7 +460,9 @@ amber_answer_qr(WireRelay *relay, const gchar *uri)
 }
 
 /* Pairs through the dialog and clicks the real Save button: the account is
- * active at once; the dialog closes once the credential is stored. */
+ * active at once; the dialog closes once the credential is stored. The host
+ * must be a shown AdwWindow: libadwaita 1.5 does not emit "closed" for the
+ * separate-window fallback used with a plain GtkWindow. */
 static GhNip46PairDialog *
 pair_and_save(GhAccountController *accounts, GSettings *settings, WireRelay *relay,
               GtkWidget *window, const gchar *bunker_uri, GSubprocess **connect,
@@ -576,7 +578,7 @@ test_bunker(void)
   g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
   reset_settings(settings);
   GhAccountController *accounts = new_controller(settings, TRUE);
-  GtkWidget *window = gtk_window_new();
+  GtkWidget *window = adw_window_new();
   gtk_window_present(GTK_WINDOW(window));
   g_autofree gchar *escaped = g_uri_escape_string(relay.url, NULL, FALSE);
   g_autofree gchar *uri = g_strdup_printf("bunker://%s?relay=%s&secret=groundhogpairing",
@@ -654,7 +656,7 @@ test_qr(void)
   g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
   reset_settings(settings);
   GhAccountController *accounts = new_controller(settings, FALSE);
-  GtkWidget *window = gtk_window_new();
+  GtkWidget *window = adw_window_new();
   gtk_window_present(GTK_WINDOW(window));
   gboolean closed = FALSE;
   guint reqs_at_save = 0;
@@ -690,7 +692,7 @@ test_qr_amber(void)
   g_autoptr(GSettings) settings = g_settings_new("org.nostr.Groundhog");
   reset_settings(settings);
   GhAccountController *accounts = new_controller(settings, FALSE);
-  GtkWidget *window = gtk_window_new();
+  GtkWidget *window = adw_window_new();
   gtk_window_present(GTK_WINDOW(window));
   gboolean closed = FALSE;
   guint reqs_at_save = 0;
@@ -720,11 +722,28 @@ main(int argc, char **argv)
   g_test_init(&argc, &argv, NULL);
   nak = g_find_program_in_path("nak");
   if (!nak) { g_print("SKIP: nak is not installed\n"); return 77; }
-  if (!gtk_init_check()) return 77;
+  /* GTK/libadwaita retain the session-bus singleton, so start the private
+   * credential bus (and isolate HOME/XDG) before either library initializes. */
+  if (!setup_store()) {
+    g_print("SKIP: no private credential store\n");
+    teardown_store();
+    g_free(nak);
+    return 77;
+  }
+#ifndef __APPLE__
+  /* Neither service is under test. Keep GTK/libadwaita from retaining the
+   * private session connection past credential-store teardown. */
+  g_setenv("GTK_A11Y", "none", TRUE);
+  g_setenv("ADW_DISABLE_PORTAL", "1", TRUE);
+#endif
+  if (!gtk_init_check()) {
+    teardown_store();
+    g_free(nak);
+    return 77;
+  }
   adw_init();
   groundhog_register_resource();
   nostrc_test_tolerate_gdk_frame_warning();
-  if (!setup_store()) { g_print("SKIP: no private credential store\n"); return 77; }
   g_mutex_init(&hang.lock);
   g_cond_init(&hang.cond);
   g_test_add_func("/groundhog/nip46/pair-nak/bunker-active-restore-unlock", test_bunker);
