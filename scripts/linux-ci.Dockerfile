@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
     libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev libzbar-dev \
     gettext locales desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core python3-gi \
-    blueprint-compiler gnome-keyring adwaita-icon-theme librsvg2-common \
+    blueprint-compiler gnome-keyring gjs adwaita-icon-theme librsvg2-common \
     # W27 voice messages (groundhog-ci.yml sanitizer job)
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
@@ -59,6 +59,9 @@ RUN localedef -i en_US -f UTF-8 en_US.UTF-8
 RUN for element in appsrc appsink decodebin audioconvert audioresample \
     scaletempo autoaudiosrc autoaudiosink level opusenc opusdec oggmux \
     oggdemux qtdemux avdec_aac; do gst-inspect-1.0 "$element" >/dev/null; done
+# Native Grotto package verification uses the same debhelper toolchain as CI.
+RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot \
+ && rm -rf /var/lib/apt/lists/*
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock

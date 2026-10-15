@@ -1,3 +1,5 @@
+# EXPERIMENTAL: not a release-supported signer. See README.md for all five gates.
+# Never relax caller/approver checks to make a sandbox smoke pass.
 # Flatpak manifest for Grotto
 # Build with: flatpak-builder --user --install build-dir org.nostr.Grotto.yml
 #

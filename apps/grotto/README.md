@@ -1,4 +1,12 @@
-# Grotto
+# Grotto (Preview 0.1.0)
+
+Native Linux is the primary distribution (GTK ≥4.14, libadwaita ≥1.5, GLib ≥2.80).
+The single `grotto` package contains GUI and daemon and recommends the optional
+GNOME Shell extension. RPM/Arch/Nix recipes require installed-platform validation;
+Flatpak and AppImage signer bundles are **experimental, not release-supported**.
+See [packaging](packaging/README.md), the [manual acceptance matrix](../../docs/testing/grotto-manual-acceptance.md)
+and [release readiness](../../docs/reviews/grotto-release-readiness-2026-10-14.md).
+Preview removal requires a separate owner decision after all promotion gates.
 
 Grotto keeps your Nostr identities and signs, encrypts and decrypts for the
 apps you allow. Client apps never receive the private key; explicit identity
@@ -125,7 +133,7 @@ bus. These are local source/layout proofs, not the G12 installed GNOME/Orca matr
 - **Secure Identity Management**: Securely store and manage Nostr identities
 - **Permission Control**: Scoped control over which applications may sign, encrypt or decrypt
 - **DBus Integration**: Provides a D-Bus interface for system integration
-- **Cross-Platform**: Works on Linux, macOS, and other platforms
+- **Native Linux first**: macOS build/test support is not installed-desktop release acceptance
 - **User Approval Flow**: Interactive approval dialogs for signing requests
 - **Backup & Recovery**: Secure backup and recovery options for identities
 
@@ -144,24 +152,25 @@ The application consists of two main components:
 - libadwaita 1.5+
 - GLib 2.80+
 - blueprint-compiler 0.22.2
-- CMake 3.16+
+- CMake 3.22+
 - pkg-config
 - Compiler with C11 support
 
 ### Build Instructions
 
 ```bash
-# Clone the repository
-# Navigate to the project directory
-mkdir build && cd build
-cmake ..
-make
+# From the monorepo root, with submodules initialized:
+git submodule update --init --recursive
+cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/usr \
+  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF \
+  -DGROTTO_WITH_PKCS11=OFF -DGROTTO_WITH_HW_WALLET=OFF
+cmake --build build --target apps/grotto/all
 ```
 
 ### Installation
 
 ```bash
-sudo make install
+sudo cmake --install build/apps/grotto
 ```
 
 ### macOS Application Bundle
@@ -220,7 +229,12 @@ grotto
 ## Security Considerations
 
 - Private keys are stored encrypted using the system keyring (Linux: libsecret, macOS: Keychain)
-- All signing operations require explicit user approval
+- Requests use the shared daemon gate: explicit denies, required-confirmation kinds,
+  per-client tiers and scoped permissions determine whether a new review is needed.
+- Grotto is not a security boundary against same-user malware. PID-attested Linux
+  checks installed executable paths/inodes; UID-only buses have weaker inherited
+  caller/approver guarantees (see the D-Bus interface limitations).
+- Signing is not publication; client apps decide whether to publish returned events.
 - Communication between components is secured using D-Bus authentication (Linux) or Unix sockets (macOS)
 - macOS builds use hardened runtime with appropriate entitlements for Keychain access
 
@@ -231,23 +245,24 @@ grotto
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** - Developer guide and coding standards
 - **[DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md)** - Quick start guide for the daemon
 - **[DAEMON_DEPLOYMENT.md](DAEMON_DEPLOYMENT.md)** - Comprehensive deployment guide
-- **[DAEMON_IMPROVEMENTS.md](DAEMON_IMPROVEMENTS.md)** - Summary of production improvements
+- **[Release readiness](../../docs/reviews/grotto-release-readiness-2026-10-14.md)** - Current evidence, limitations and promotion gates
 - **[packaging/macos/README.md](packaging/macos/README.md)** - macOS packaging and distribution guide
 
-## Daemon
+## Daemon and upgrades
 
-The grotto-daemon is production-ready with:
+The daemon is D-Bus activated, one per user session. Its native unit preserves
+host `/proc` caller attestation and blocks remote network access by default.
+Use the explicit bunker drop-in for remote signing and the headless example for
+`--bunker --no-approval-ui`; pre-paired scoped operations can run without the GUI,
+new consent fails closed. Closing/locking the GUI is not cryptographic pause.
 
-- ✅ **D-Bus Interface** - System integration for desktop applications
-- ✅ **Unix Domain Sockets** - High-performance local IPC
-- ✅ **TCP Support** (optional) - Network-based access with authentication
-- ✅ **Comprehensive Security** - Multiple layers of protection
-- ✅ **Systemd Integration** - Automatic start and monitoring
-- ✅ **Graceful Shutdown** - Proper cleanup and resource management
-- ✅ **Statistics & Monitoring** - Track connections, requests, and errors
-- ✅ **Production Hardening** - Ready for deployment
-
-See [DAEMON_QUICKSTART.md](DAEMON_QUICKSTART.md) for quick start instructions or [DAEMON_DEPLOYMENT.md](DAEMON_DEPLOYMENT.md) for comprehensive deployment information.
+Migration removes unsafe broad legacy event allows from executable authority and
+shows them as **Needs review**. Non-event grants and broad denials preserve their
+scope; legacy allowlists never become signing grants. See
+[deployment and rollback](DAEMON_DEPLOYMENT.md#upgrade-migration-and-rollback)
+for versioned files, backup and the unsafe-old-binary rollback limit.
+No installed GNOME, physical-camera, Orca or manual release-matrix step is claimed
+by the local automated suites.
 
 ## Contributing
 

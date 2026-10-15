@@ -38,6 +38,8 @@
 #                              default nostrc-linux-gate[-asan]-<arch>. The
 #                              cross-gate build/test locks remain shared.
 #   NOSTRC_GATE_LINUX_TESTS=0  build only; skip the smoke tests (not --sanitizers).
+#   NOSTRC_CTEST_QUARANTINE_PLATFORM=linux  opt in to named G12 baseline failures;
+#                              tests still run; sanitizer reports always block.
 #   JOBS                       build and test parallelism (default: container CPUs).
 #   NOSTRC_SANITIZER_TEST_JOBS --sanitizers test parallelism (default: the job's
 #                              ctest --parallel; under more load its ASAN tests
@@ -288,6 +290,8 @@ exec docker run --rm --init --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \
     -e SANITIZER_TEST_JOBS="${NOSTRC_SANITIZER_TEST_JOBS:-}" \
+    -e NOSTRC_CTEST_QUARANTINE_PLATFORM="${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}" \
+    -e NOSTRC_CTEST_QUARANTINE_FILE=/work/src/scripts/grotto-ci-quarantine.tsv \
     -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
     -v "$SCRIPTS/sanitizer-gate-ci.py:/gate/sanitizer-gate-ci.py:ro" \
     -v "$VOLUME:/work" -v nostrc-linux-gate-tests:/gate-lock "$IMAGE" \

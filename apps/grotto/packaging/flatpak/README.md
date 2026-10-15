@@ -1,191 +1,29 @@
-# Flatpak Packaging for Grotto
+# Grotto Flatpak — experimental, release blocked
 
-This directory contains the Flatpak manifest and supporting files for building and distributing Grotto as a Flatpak application.
+These manifests are research inputs, not a supported signer distribution. A build
+or sandbox launch does not demonstrate safe caller identification or key custody.
+Use the native `grotto` package; a Groundhog Flatpak may talk to a native signer.
+Do not use real identities in sandbox smoke tests or publish these on Flathub yet.
 
-## Overview
+## Mandatory release gates (§5.11)
 
-Grotto is packaged as `org.nostr.Grotto` and uses the GNOME Platform runtime for GTK4 and libadwaita support.
+All five need source-grounded and installed-system negative/positive evidence:
 
-## Prerequisites
+1. **Host caller attestation**: identify the real host caller across the sandbox
+   boundary without trusting caller-supplied names; preserve origin isolation.
+2. **Trusted approver identification**: prove only the installed trusted GUI can
+   approve, export or resume; do not relax absolute-path/device/inode checks.
+3. **Secret-portal custody**: prove durable, isolated custody, unlock cancellation,
+   migration, export and transport-key non-enumeration using the intended portal.
+   `--talk-name=org.freedesktop.secrets` alone is not this proof.
+4. **Activation ownership**: prove one session daemon and one approver, host ↔
+   sandbox activation, restart and version-skew behavior without name collisions.
+5. **Browser-host behavior**: prove native messaging host activation, actual
+   executable attestation and independent browser-origin authority end to end.
 
-### Install Flatpak and flatpak-builder
-
-On Fedora/RHEL:
-```bash
-sudo dnf install flatpak flatpak-builder
-```
-
-On Debian/Ubuntu:
-```bash
-sudo apt install flatpak flatpak-builder
-```
-
-On Arch Linux:
-```bash
-sudo pacman -S flatpak flatpak-builder
-```
-
-### Install GNOME Runtime and SDK
-
-```bash
-flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install flathub org.gnome.Platform//47 org.gnome.Sdk//47
-```
-
-## Building
-
-### Quick Build and Install (Development)
-
-From the `packaging/flatpak/` directory:
-
-```bash
-# Build and install for the current user
-flatpak-builder --user --install --force-clean build-dir org.nostr.Grotto.yml
-```
-
-### Build Only (No Install)
-
-```bash
-flatpak-builder --force-clean build-dir org.nostr.Grotto.yml
-```
-
-### Build with Verbose Output
-
-```bash
-flatpak-builder --verbose --force-clean build-dir org.nostr.Grotto.yml
-```
-
-### Build a Repository for Distribution
-
-```bash
-# Build and export to a local repo
-flatpak-builder --repo=repo --force-clean build-dir org.nostr.Grotto.yml
-
-# Create a single-file bundle
-flatpak build-bundle repo org.nostr.Grotto.flatpak org.nostr.Grotto
-```
-
-## Running
-
-After installation, run the application:
-
-```bash
-flatpak run org.nostr.Grotto
-```
-
-Or launch from your desktop environment's application menu.
-
-## Sandbox Permissions
-
-The Flatpak is configured with the following sandbox permissions:
-
-| Permission | Purpose |
-|------------|---------|
-| `--share=ipc` | D-Bus IPC for desktop integration |
-| `--socket=wayland` | Wayland display access |
-| `--socket=fallback-x11` | X11 fallback for non-Wayland systems |
-| `--talk-name=org.freedesktop.secrets` | GNOME Keyring/Secret Service for secure key storage |
-| `--own-name=org.nostr.Signer` | Own the D-Bus name for NIP-55L interface |
-| `--share=network` | Network access for Nostr relay connections |
-| `--talk-name=org.freedesktop.Notifications` | Desktop notifications for signing requests |
-| `--talk-name=org.freedesktop.portal.Desktop` | Portal access for system integration |
-| `--talk-name=org.freedesktop.portal.FileChooser` | File chooser portal for backup/restore |
-| `--talk-name=org.freedesktop.portal.Background` | Background portal for daemon auto-start |
-
-## Dependencies Built from Source
-
-The manifest builds these dependencies that are not included in the GNOME runtime:
-
-| Library | Version | Purpose |
-|---------|---------|---------|
-| libsecp256k1 | 0.5.1 | Elliptic curve crypto for Nostr (Schnorr signatures) |
-| libsodium | 1.0.20 | Modern cryptography (NIP-44, secure memory) |
-| nsync | 1.29.2 | Google's C synchronization library |
-| jansson | 2.14 | JSON parsing library |
-| flatcc | 0.6.1 | FlatBuffers compiler and runtime |
-| libwebsockets | 4.3.3 | WebSocket library for relay connections |
-
-## Files
-
-| File | Description |
-|------|-------------|
-| `org.nostr.Grotto.yml` | Main Flatpak manifest (YAML format) |
-| `org.nostr.Signer.service` | D-Bus service file for the daemon |
-
-## Troubleshooting
-
-### Build Fails to Find Dependencies
-
-Ensure the GNOME SDK is installed:
-```bash
-flatpak list | grep org.gnome.Sdk
-```
-
-If not listed, install it:
-```bash
-flatpak install flathub org.gnome.Sdk//47
-```
-
-### Application Won't Start
-
-Check the logs:
-```bash
-flatpak run --verbose org.nostr.Grotto
-```
-
-### D-Bus Service Issues
-
-Verify the service is properly installed:
-```bash
-flatpak run --command=ls org.nostr.Grotto /app/share/dbus-1/services/
-```
-
-### Keyring Access Issues
-
-Ensure GNOME Keyring is running:
-```bash
-systemctl --user status gnome-keyring-daemon
-```
-
-## Development
-
-### Testing Changes
-
-For rapid iteration during development:
-
-```bash
-# Build incrementally (reuses cached builds)
-flatpak-builder --user --install build-dir org.nostr.Grotto.yml
-
-# Run with debugging
-flatpak run --env=G_MESSAGES_DEBUG=all org.nostr.Grotto
-```
-
-### Updating Dependencies
-
-To update a dependency version:
-
-1. Update the `tag` field in the manifest
-2. Optionally update the `commit` field for reproducible builds
-3. Rebuild with `--force-clean` to fetch the new version
-
-### Validating the Manifest
-
-Use `flatpak-builder` to validate the manifest syntax:
-
-```bash
-flatpak-builder --show-manifest org.nostr.Grotto.yml
-```
-
-## Publishing to Flathub
-
-To publish on Flathub:
-
-1. Fork the [Flathub repository](https://github.com/flathub/flathub)
-2. Create a new repository for `org.nostr.Grotto`
-3. Submit the manifest with proper source URLs (replace `type: dir` with actual git repository)
-4. Follow Flathub's submission guidelines
-
-## License
-
-The Flatpak packaging is provided under the same MIT license as Grotto.
+No gate has installed acceptance attached in G12. See `nostrc-mevv`, `nostrc-9z5w`,
+the [packaging plan](../../../../docs/designs/groundhog-packaging-plan-2026-10-05.md)
+and [manual matrix](../../../../docs/testing/grotto-manual-acceptance.md).
+AppImage additionally has a changing mount path; `nostrc-h3kh` remains deferred.
+Snap is only on owner demand. An experimental build is not permission to bypass
+any identity/custody check, add a fallback signer, or claim publication success.

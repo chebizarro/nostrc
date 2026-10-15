@@ -1,0 +1,33 @@
+# Build from a local, complete grotto-0.1.0.tar.gz archive (including submodules).
+# No published Grotto release is implied. See ../README.md.
+pkgname=grotto
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Nostr identity management and signing service (Preview)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/chebizarro/nostrc'
+license=('MIT')
+makedepends=('cmake' 'ninja' 'pkgconf' 'python' 'glib2-devel' 'gettext')
+depends=('glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret'
+         'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
+         'zbar' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base' 'gst-plugins-good'
+         'hicolor-icon-theme')
+optdepends=('gnome-keyring: Secret Service key custody'
+            'gnome-shell-extension-nostr: optional signer panel indicator')
+source=("grotto-${pkgver}.tar.gz")
+# A local development archive, not an unchecked remote release.
+sha256sums=('SKIP')
+build() {
+  cmake -S "grotto-${pkgver}" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG=OFF \
+    -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
+    -DBUILD_SIGNER_TESTS=OFF -DBUILD_NATIVE_HOST=ON \
+    -DGROTTO_WITH_PKCS11=OFF -DGROTTO_WITH_HW_WALLET=OFF \
+    -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF -DBUILD_LIBHANAMI=OFF
+  cmake --build build --target apps/grotto/all
+}
+package() {
+  DESTDIR="$pkgdir" cmake --install build/apps/grotto
+  install -Dm644 "grotto-${pkgver}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

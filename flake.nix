@@ -40,7 +40,7 @@
           gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
           openssl secp256k1 libsodium jansson libwebsockets nsync curl
           qrencode # Groundhog's NIP-46 pairing QR and Grotto's own QR UI
-          gdk-pixbuf
+          gdk-pixbuf zbar
         ];
       in {
         packages = {
@@ -70,16 +70,23 @@
           };
           grotto = pkgs.stdenv.mkDerivation {
             pname = "grotto";
-            version = desktopVersion;
+            version = "0.1.0";
             src = ./.;
             nativeBuildInputs = desktopNativeBuildInputs;
             buildInputs = desktopBuildInputs;
-            cmakeFlags = desktopCmakeFlags;
+            # wrapGAppsHook renames the ELF; attest the actual executable,
+            # never the shell wrapper. Installed acceptance must verify this.
+            cmakeFlags = desktopCmakeFlags ++ [
+              "-DNIP55L_APPROVAL_UI_PATHS=${builtins.placeholder "out"}/bin/.grotto-wrapped"
+            ];
             ninjaFlags = [ "apps/grotto/all" ];
             doCheck = false;
             installPhase = ''
               runHook preInstall
               cmake --install apps/grotto
+              substituteInPlace "$out/share/systemd/user/grotto-daemon.service" \
+                "$out/share/doc/grotto/examples/"*.conf.example \
+                --replace-fail /usr/bin/grotto-daemon "$out/bin/grotto-daemon"
               runHook postInstall
             '';
             meta = with pkgs.lib; {
@@ -90,30 +97,8 @@
               platforms = platforms.linux;
             };
           };
-          grotto-daemon = pkgs.stdenv.mkDerivation {
-            pname = "grotto-daemon";
-            version = "0.0.0"; # update on tag
-            src = ./.;
-            nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
-            buildInputs = with pkgs; [ glib jansson openssl libsecp256k1 libwebsockets nsync gtk4 libadwaita libsecret ];
-            cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" ];
-            doCheck = false;
-            installPhase = ''
-              cmake --install build --prefix $out
-            '';
-          };
-          grotto-daemon-tcp = pkgs.stdenv.mkDerivation {
-            pname = "grotto-daemon-tcp";
-            version = "0.0.0"; # update on tag
-            src = ./.;
-            nativeBuildInputs = with pkgs; [ cmake ninja pkg-config ];
-            buildInputs = with pkgs; [ glib jansson openssl libsecp256k1 libwebsockets nsync gtk4 libadwaita libsecret ];
-            cmakeFlags = [ "-DCMAKE_BUILD_TYPE=Release" "-DENABLE_TCP_IPC=ON" ];
-            doCheck = false;
-            installPhase = ''
-              cmake --install build --prefix $out
-            '';
-          };
+          # The native signer is one GUI+daemon output, also for headless use.
+          grotto-daemon = self.packages.${system}.grotto;
         };
         defaultPackage = self.packages.${system}.grotto-daemon;
 

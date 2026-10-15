@@ -290,6 +290,7 @@ executable(app_bin,
   ] + dependency_include_dirs,
   dependencies: app_deps + [nip55l_glib_lib, nip55l_core_lib] + protocol_deps,
   c_args: [
+    '-DGROTTO_VERSION="@0@"'.format(meson.project_version()),
     '-DAPP_ID="@0@"'.format(app_id),
     '-DAPP_NAME="@0@"'.format(app_name),
     '-DAPP_RESOURCE_PATH="/org/gnostr/signer"',
@@ -313,6 +314,14 @@ executable(app_bin,
 install_data('data/org.nostr.Grotto.gschema.xml',
   install_dir: get_option('datadir') / 'glib-2.0' / 'schemas',
 )
+
+# Ship the same native unit/examples as CMake; login remains opt-in.
+install_data('daemon/packaging/systemd/user/grotto-daemon.service',
+  install_dir: get_option('datadir') / 'systemd/user')
+install_data(
+  'daemon/packaging/systemd/user/grotto-daemon.service.d/bunker.conf.example',
+  'daemon/packaging/systemd/user/grotto-daemon.service.d/headless-bunker.conf.example',
+  install_dir: get_option('datadir') / 'doc/grotto/examples')
 
 # CMake builds the daemon; Meson currently builds only the GUI. Keep the
 # canonical management XML available to clients in either installation.

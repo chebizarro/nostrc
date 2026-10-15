@@ -226,7 +226,9 @@ if(APPLE)
     # environments where the Quartz backend cannot safely create/present windows.
     set(_UI_TEST_ENV "GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto;GTK_A11Y=none;GNOSTR_SKIP_UI_TESTS=1")
 else()
-    set(_UI_TEST_ENV "GDK_BACKEND=x11;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto;GTK_A11Y=none")
+    # A real test ATContext owns relation values; `none` leaks GTK 4.14's
+    # mnemonic-label lists and skips the accessible object model entirely.
+    set(_UI_TEST_ENV "GDK_BACKEND=x11;GSETTINGS_BACKEND=memory;GSETTINGS_SCHEMA_DIR=${CMAKE_BINARY_DIR}/apps/grotto;GTK_A11Y=test")
 endif()
 set_tests_properties(signer/ui PROPERTIES
     TIMEOUT 180
@@ -568,7 +570,7 @@ if (TARGET grotto-daemon AND "NIP55L_TEST_TRUST_ENV=1" IN_LIST _nip55l_definitio
     add_dependencies(test-room-flow grotto-daemon room-flow-schemas)
     add_test(NAME signer/room-flow COMMAND test-room-flow $<TARGET_FILE:grotto-daemon>)
     set_tests_properties(signer/room-flow PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 LABELS "signer;integration"
-      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${_room_schemas};GSETTINGS_BACKEND=memory;NOSTRC_TEST_ISOLATION=1;G_DEBUG=fatal-warnings;GDK_BACKEND=x11;GTK_A11Y=none")
+      ENVIRONMENT "GSETTINGS_SCHEMA_DIR=${_room_schemas};GSETTINGS_BACKEND=memory;NOSTRC_TEST_ISOLATION=1;G_DEBUG=fatal-warnings;GDK_BACKEND=x11;GTK_A11Y=test")
     add_dependencies(signer-tests test-room-flow)
   endif()
 endif()

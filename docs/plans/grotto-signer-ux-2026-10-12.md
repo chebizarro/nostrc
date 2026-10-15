@@ -1,6 +1,6 @@
 # Grotto Signer UX: Plan
 
-Status: draft v2 (2026-10-12). v1 was authored hands-off; v2 folds in the owner's answers to the eight decision questions (§2) and the Clave/Amber screenshots (§6.3), and adds the Mermaid app-flow diagrams (§14).
+Status: implementation G00–G11 + G13 landed at `5ef33513c`; G12 delivery/release-evidence pass 2026-10-14. **Preview, not promoted**: installed manual acceptance remains NOT RUN. See `docs/reviews/grotto-release-readiness-2026-10-14.md` and `docs/testing/grotto-manual-acceptance.md`. Historical analysis below is dated baseline evidence, not current runtime claims. Plan v2 (2026-10-12). v1 was authored hands-off; v2 folds in the owner's answers to the eight decision questions (§2) and the Clave/Amber screenshots (§6.3), and adds the Mermaid app-flow diagrams (§14).
 
 ## 1. Goal
 
@@ -486,8 +486,9 @@ Room-send orchestration is in `gh-dm-send.c` / `gh-nip17-envelope.c`, not the NI
 
 | Risk | Mitigation / release rule |
 |---|---|
-| Lower NIP-46 listener/key behaviour unknown | G00 real smoke; retain evidence for both outcomes |
+| G00 proved original listener nonfunctional; remote runtime now substantially changed | G05/G06 real loopback suites; installed network/custody/interop acceptance remains required |
 | Async core callback changes | Add APIs; keep old ABI; Grotto uses only the request-aware path |
+| New sanitizer coverage exposes latent fixture/library/channel issues | `.14.3` GUI LSan and `.14.4` core TSan remain blocking; never quarantine reports, disable leak detection or call workflow presence a green run |
 | Shared-gate refactor weakens caller isolation | Run existing nip55l contract/security suites before connecting the bunker |
 | Scoped permissions invalidate broad approvals | "Needs review" migration; no silent expansion; explain once |
 | Rollback restores insecure grants | Remove executable legacy broad allows during migration; older binaries can't use scoped permissions |
@@ -497,7 +498,7 @@ Room-send orchestration is in `gh-dm-send.c` / `gh-nip17-envelope.c`, not the NI
 | Same-UID malware | State the limit; keep attestation; never promise a same-user boundary |
 | NIP-46 AUTH/`auth_url` interoperability | Real client tests; claim capability only after passing |
 | Export expands secret-handling surface | Trusted UI only, explicit action, no raw history/logs, secure cleanup |
-| Dormant-source removal breaks builds | Explicit source inventory; both build systems compile in CI |
+| Dormant-source removal breaks builds | G10 explicit source inventory; G12 CMake + alternate Meson GUI CI; Meson still consumes CMake-built daemon/libraries |
 | Notification behaviour varies by Shell (46 vs 50, DND, lock screen) | Manual release matrix (§9); inbox is always the source of truth |
 | External protocol docs disagree | Canonical XML + running-service tests win; update both |
 | Platform floor raise (GTK 4.14/Adw 1.5/GLib 2.80) | Matches Ubuntu 24.04; confirm Debian/Fedora targets before landing |
@@ -576,6 +577,44 @@ Epic `nostrc-u6v55` with one child bead per item (IDs inline below; dependencies
 | 13 | **G13** `nostrc-u6v55.13` **Shell panel indicator** | Stock-GNOME presence | `lib/signer.js` states/badge/menu; `SetPaused(true)` rule in Control1; `shell-version` 46–50; headless unit + manual matrix; no duplicate icon with AppIndicator | `gnome/nostr-shell-extension/*`, `grotto_control.c` | G04, G08 | M / 4–6 |
 | 14 | **G12** `nostrc-u6v55.14` **Packaging, CI, release evidence** | Preview → promotable | Ubuntu 24.04/26.04 matrix, sanitizers, install/activation, accurate metadata, new CI workflow, Grotto manifest row (OC-9) | `.github/workflows`, packaging, `metainfo.xml`, `VERSION_MANIFEST.md`, docs | all | M / 4–6 |
 
+### Landed execution evidence (2026-10-14)
+
+Commits below are in the `5ef33513c` integration tree; review documents under
+`docs/reviews/` record independent critiques, not blanket release approval.
+
+| Item | Landed commits | Evidence / remaining acceptance |
+|---|---|---|
+| G00 | `2f24e994e`, `df9830922`, `924088ec0` | Version ownership + real nonfunctional baseline; inversion removed by G05 |
+| G01 | `2df9431ff` | Honest startup ERROR; real lifecycle suite later in G05 |
+| G02 | `9dcfd6e19`, `47a50253c`, `9e6ab256a` | Shared gate/context + review fixes; nip55l approval/cache/contract suites |
+| G03 | `09749959f`, `7d3a98794`, `f050a6f62` | Scoped policy/migration + security review; permissions/trust-tiers |
+| G04 | `70619bc63`, `eaf62ae4c` | Control1/clients/activity + review fixes; extra coverage remains nostrc-ew9qv |
+| G05 | `3c3cbcfb8`, `2dd7468d5` | Request-aware NIP-46, replay/custody + review fixes; real bunker-e2e/headless; not full installed custody/race proof |
+| G06 | `26550a440`, `718ca898c`, `4dde0be7e` | Pairing/camera/live config + review fixes; physical camera/native unit NOT RUN (.7.1) |
+| G07 | `f5813c02e`, `08ce0943c`, `44508fb06` | Controller/reviews + summary/inbox fixes; AUTH path policy remains nostrc-z6ps9 |
+| G08 | `167709f8a`, `c48ebece0` | Background/activation + lock/pause fixes; stock-GNOME windowless acceptance open (.9.1) |
+| G09 | `f1a58b4b0`, `5a6b1c4a2` | Custody/onboarding/export + review fixes; installed keyring/a11y matrix still required |
+| G10 | `3f80ac819`, `5ef33513c` | Home/Connect/templates/i18n/focus + review fixes; stock GTK kept, Launchpad filing remains nostrc-9n2n9 |
+| G11 | `823925632`, `295a029b4` | Bounded ephemeral flow consent + invalidation/fences; required-kind policy preserved |
+| G13 | `b9842a32b`, `673ed12a1`, `0988d8156` | Shell module + review fixes, single unreleased 0.5.0 bump; live 46/50 NOT RUN (.13.1) |
+| G12 | This packaging/CI/release-evidence change (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; no promotion |
+
+**Atomic landing assessment:** local/socket call sites and the shared gate landed
+with G02; scoped migration/evaluation/legacy revoke with G03; async core/wrapper/
+Grotto adapter with G05; Blueprint + generated UI/resources/source inventories
+with G10. G12 consolidates About/daemon version consumption and updates native
+recipes/manifest together. Canonical contract/layout/drift tests enforce those
+boundaries. This does not certify every manual/platform acceptance item.
+
+**Final promotion assessment:** see the item-by-item readiness report. Automated
+common-gate, malformed/unknown-client, persistence and pause evidence exists;
+manual 24.04 stock GNOME / Ubuntu / 26.04, physical camera, Shell and accessibility
+are **NOT RUN**. CI must be green on floor/current runners and required sanitizer
+stages; no named baseline flake is silently disabled. Dedicated local sanitizer
+runs exposed still-blocking GUI LSan (`nostrc-u6v55.14.3`) and core channel/TSan
+annotation (`.14.4`) diagnostics. G12 remains open until these pass; implementing
+a workflow is not green execution evidence. Do not remove Preview.
+
 **G00(c) size reassessment:** unchanged — G01 S–M / 2–3 days (surface the confirmed listener failure), G05 XL / 7–11 (key/session wiring is already in transport custody scope), G06 L / 6–8 (pairing/configuration scope unchanged).
 
 Existing beads mapping: G01/G05/G06/G13 ↔ none open (new); G07 ↔ nostrc-mevv/9z5w (caller identification in packaged installs — validate under native package only); G08 ↔ boq9.7, boq9.8; G09 ↔ qgsn, boq9 findings; G10 ↔ 7o76; G11 ↔ mweu; G12 ↔ 0ulk, 8otj (R3/R4 close-out), h3kh (AppImage bundling stays deferred), nfnw/w8lf (sanitizer baseline).
@@ -597,12 +636,14 @@ Existing beads mapping: G01/G05/G06/G13 ↔ none open (new); G07 ↔ nostrc-mevv
 
 Answered on 2026-10-12 and folded in: notification content and buttons, trust model, creation passphrase/backup, default page, advanced-feature scope, packaging + Shell extension, camera scan, host deadline + manifest row (§2 OC-1…OC-9). Still open:
 
-1. Does `grotto-daemon --bunker` listen end to end today? Answered by G00; may re-size items 2, 6, 7.
-2. Who owns NIP-46 versioning (`nips/nip46` is "Unversioned" in the manifest)? G00 decision.
-3. Will gnostr/Groundhog/other consumers adopt `CallWithContext` on their schedule, and is a feature-detect fallback acceptable long-term for reason display?
-4. Is the GTK 4.14 / Adwaita 1.5 / GLib 2.80 floor acceptable for the Debian stable and Fedora targets in the packaging plan?
-5. Core NIP-46 built-ins: are any consumers beyond Grotto, homed tests and `nips/nip46/tests` relying on the legacy server paths? If none, a later cleanup could remove them.
-6. Exact membership of the registry's **public-publishing set** (Medium tier) and the default **required-confirmation kinds** (§5.4) — proposed defaults need a one-line owner sign-off before G07.
+1. G11 Groundhog now adopts `CallWithContext` with fallback. Will gnostr/other consumers adopt it, and is fallback acceptable long-term for reason display?
+2. Which Debian stable/Fedora targets are accepted at GTK 4.14 / Adwaita 1.5 / GLib 2.80? Recipes enforce floors; installed distro acceptance is not inferred.
+3. Can legacy core NIP-46 built-ins be removed later? They remain for non-Grotto consumers; Grotto uses the request-aware path. Cleanup is not G12.
+4. Exact registry public-publishing/required-confirmation membership still needs explicit owner sign-off; current G03 defaults remain, not a G12 policy invention.
+5. Credential-bearing AUTH relay paths: supported URL/provenance policy is undecided (nostrc-z6ps9); never strip or silently alter the exact relay.
+6. Installed acceptance remains open: .14.1 full three-session matrix, .9.1 stock-GNOME first request, .7.1 physical camera/native unit, .13.1 live Shell 46/50. External Launchpad/SRU filing still needs an authenticated owner reference (nostrc-9n2n9).
+7. Preview removal is a separate owner promotion decision after all §10 gates; Flatpak/AppImage release gates remain unproven and nostrc-h3kh stays deferred.
+8. Legacy Groundhog Debian/Arch bundles share the bundle package version. Transitioning their existing installations to independent Grotto 0.1.0 packages needs explicit owner release policy (nostrc-u6v55.15); G12 preserves that pipeline and supplies standalone recipes, not a silent downgrade.
 
 ## 13. References
 

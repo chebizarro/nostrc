@@ -3,12 +3,12 @@ Section: net
 Priority: optional
 Maintainer: Biz <chebizarro@protonmail.com>
 Build-Depends: debhelper-compat (= 13),
-               cmake (>= 3.20),
+               cmake (>= 3.22),
                ninja-build,
                pkg-config,
                python3,
                gettext,
-               libglib2.0-dev,
+               libglib2.0-dev (>= 2.80),
                libgtk-4-dev (>= 4.14),
                libadwaita-1-dev (>= 1.5),
                libjson-glib-dev,
@@ -25,7 +25,8 @@ Build-Depends: debhelper-compat (= 13),
                libwebsockets-dev,
                libnsync-dev,
                libcurl4-openssl-dev,
-               libqrencode-dev
+               libqrencode-dev,
+               libzbar-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/chebizarro/nostrc
 Vcs-Browser: https://github.com/chebizarro/nostrc
@@ -64,7 +65,9 @@ Package: grotto
 Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         dbus-user-session
+         dbus-user-session,
+         gstreamer1.0-plugins-base,
+         gstreamer1.0-plugins-good
 Recommends: gnome-keyring | org.freedesktop.secrets,
             gnome-shell-extension-nostr
 Provides: grotto-daemon
@@ -73,10 +76,12 @@ Description: Keeps your Nostr keys and signs for your apps (preview)
  encrypts and decrypts for every Nostr app that speaks NIP-55L (local apps
  over the session bus, org.nostr.Signer) or NIP-46 (Nostr Connect, remote
  apps over relays). One Grotto serves them all, Groundhog included. Each
- app is identified, and you approve what it may do; private keys never
- leave Grotto.
+ app's verified authority and scoped permissions govern what it may do.
+ Client apps do not receive private keys; explicit Grotto key-management UI
+ may transiently handle them. Signing is not publication and this is not
+ a boundary against same-user malware.
  .
  This package contains the Grotto app (approvals, identities, settings) and
  its background service, which starts on demand when an app asks.
  .
- Grotto is a preview: its interface is still being reworked.
+ Grotto is Preview 0.1.0; installed-desktop release acceptance remains pending.

@@ -1,478 +1,177 @@
-# Grotto Daemon - Deployment Guide
+# Grotto daemon deployment (Preview 0.1.0)
 
-## Overview
+Native Linux is the primary distribution. The one `grotto` package includes
+`grotto`, `grotto-daemon`, their activation assets and optional network examples.
+The GNOME Shell extension is recommended, never a security dependency. This is a
+post-login, user-session signer, not a greeter, PAM service or system-bus broker.
+Installed desktop acceptance is pending; see the
+[manual matrix](../../docs/testing/grotto-manual-acceptance.md).
 
-The grotto-daemon provides secure Nostr key management and signing services through multiple interfaces:
-- **D-Bus**: System integration for desktop applications
-- **Unix Domain Sockets**: High-performance local IPC
-- **TCP (optional)**: Network-based access with token authentication
+## Native installation and activation
 
-## Architecture
+Use GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80. Build from the **monorepo root**, not
+`apps/grotto`, with complete submodules:
 
-```
-┌─────────────────────────────────────────┐
-│         Client Applications             │
-│  (Nostr clients, browser extensions)    │
-└────────────┬────────────────────────────┘
-             │
-    ┌────────┴────────┐
-    │                 │
-┌───▼────┐      ┌────▼─────┐
-│ D-Bus  │      │   Unix   │
-│        │      │  Socket  │
-└───┬────┘      └────┬─────┘
-    │                │
-    └────────┬───────┘
-             │
-    ┌────────▼────────┐
-    │  grotto  │
-    │     daemon      │
-    │                 │
-    │  • Key Storage  │
-    │  • Signing      │
-    │  • Encryption   │
-    └─────────────────┘
-```
-
-## Installation
-
-### From Source
-
-```bash
-cd apps/grotto
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_TCP_IPC=ON
-make
-sudo make install
-```
-
-### Post-Installation
-
-```bash
-# Reload systemd user daemon
+```sh
+git submodule update --init --recursive
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
+  -DBUILD_GNOSTR_APP=OFF -DBUILD_TESTING=OFF -DBUILD_SIGNER_TESTS=OFF \
+  -DGROTTO_WITH_PKCS11=OFF -DGROTTO_WITH_HW_WALLET=OFF
+cmake --build build --target apps/grotto/all
+sudo cmake --install build/apps/grotto
 systemctl --user daemon-reload
-
-# Enable and start the daemon
-systemctl --user enable grotto-daemon.service
-systemctl --user start grotto-daemon.service
-
-# Check status
-systemctl --user status grotto-daemon.service
 ```
 
-## Configuration
+Never install a testing build (it carries guarded test seams). Native recipes use
+CMake's component install, not the AppImage desktop file or legacy appdata.
+A consumer call to session name `org.nostr.Signer` starts the daemon on demand;
+GUI approvals activate `org.nostr.Grotto` with `--gapplication-service` (windowless
+until explicit review). Do not enable a resident daemon or login GUI merely to
+make activation work. Explicitly starting `systemctl --user start
+grotto-daemon.service` is optional. Do not run a second daemon manually beside it.
 
-### Environment Variables
+The canonical user unit is under `share/systemd/user`; package recipes may place
+it in the distro user-unit directory. The GUI's opt-in launch-on-login copies
+`share/grotto/org.nostr.Grotto-autostart.desktop` into the user's autostart
+folder; the package does **not** install an always-enabled login entry. Background
+review is on after disclosure, login launch off. Portal denial disables continuous
+GUI residence but preserves request-scoped activation and the pending inbox.
 
-The daemon can be configured using environment variables:
+The NIP-07 native host retains name `org.nostr.signer_bridge`. Where a recipe
+includes it, its browser manifests and explicit user-install helper are under
+`share/nostr-signer-webext-host`; installing Grotto alone does not install a browser
+extension. Verify browser origin isolation with the actual installed host.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NOSTR_SIGNER_ENDPOINT` | IPC endpoint specification | `unix:$XDG_RUNTIME_DIR/gnostr/signer.sock` |
-| `NOSTR_SIGNER_MAX_CONNECTIONS` | Maximum concurrent TCP connections | `100` |
-| `NOSTR_DEBUG` | Enable debug logging | (unset) |
-| `G_MESSAGES_DEBUG` | GLib debug domains | (unset) |
+## Pause and local operation
 
-### Endpoint Configuration
-
-#### Unix Domain Socket (Recommended)
-
-```bash
-export NOSTR_SIGNER_ENDPOINT="unix:/run/user/$(id -u)/gnostr/signer.sock"
-```
-
-#### TCP Socket (Development Only)
-
-```bash
-export NOSTR_SIGNER_ENDPOINT="tcp:127.0.0.1:5897"
-```
-
-**Security Note**: TCP mode requires authentication via a token file stored at `$XDG_RUNTIME_DIR/gnostr/token`. Only use TCP for development or when Unix sockets are not available.
-
-### Systemd Service Configuration
-
-Edit the user service file to customize the daemon:
-
-```bash
-systemctl --user edit grotto-daemon.service
-```
-
-Example override:
+All local NIP-55L, optional NIP-5F socket and remote NIP-46 operations use the same
+daemon-owned gate. NIP-5F is off unless explicitly configured, for example:
 
 ```ini
 [Service]
-Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/custom.sock
-Environment=G_MESSAGES_DEBUG=all
+Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
 ```
+
+Use **Pause signing** to stop remembered signing too. Pause invalidates pending
+and queued work; an in-flight backend result is suppressed before delivery if its
+security generation changed. Session pause is not persisted. Optional pause on
+screen lock is daemon-enforced; inability to observe the session fails closed
+when enabled. Unlock does not resume; **Resume signing** needs trusted GUI
+confirmation and an unlocked session. A management-window lock is not a key lock.
+Ctrl+Q quits approval UI only: the daemon and persisted permissions continue.
+Later review-required requests can re-summon it.
 
 ## Remote signing and headless deployment (G05)
 
-`grotto-daemon --bunker` uses a persistent **transport credential**, not an
-account key, to receive NIP-46 envelopes. Its public key names the endpoint;
-`get_public_key` and content cryptography use the authenticated client's pinned
-account through the same scoped approval gate as local applications.
+Pair through **Connect** using paste, physical camera/file QR or an identity-bound
+single-use offer. Choose the identity before contacting supplied relays. A foreign
+`bunker://` link is not an identity import. See the exact
+[pairing/configuration and installed-unit procedure](docs/pairing.md).
 
-Configure `org.nostr.Grotto` GSettings explicitly: `bunker-enabled`,
-`bunker-relays`, `bunker-allowed-methods`, and `default-identity`. There are no
-fallback relays. Only `wss://` or loopback `ws://` are accepted; Tor is not
-supported. `bunker-allowed-pubkeys` is legacy **admission inventory**, not a
-pairing or signing grant; empty admits no new clients. Global
-`bunker-auto-approve-kinds` and GUI client sessions are not signing authority.
+The transport credential is distinct from account keys. Its public key names the
+endpoint; `get_public_key` and cryptography use the authenticated client's pinned
+account. Missing credentials produce ERROR, not automatic regeneration. Use the
+trusted **Set up / Reset remote signing endpoint** action to create/replace the
+credential; this revokes remote clients and permissions, not identity keys.
 
-The credential lives in Secret Service schema
-`org.nostr.Grotto.BunkerTransport`, attribute `slot=default`, or Keychain service
-`Grotto Bunker Transport`, account `default`. It is never an identity-list item.
-A missing/unavailable credential produces `ERROR`, never automatic regeneration.
-Control1 `ResetBunkerEndpoint` requires the Grotto approver check; on PID-attested
-Linux an ordinary shell `gdbus` caller is not an approver. UID-only buses retain
-the documented same-UID approver exception (see `docs/dbus-interface.md`); do not
-claim caller isolation on those buses. Reset stops remote work,
-revokes all remote clients/permissions, replaces the transport key and restarts
-when enabled. Clients must re-pair. During profile reset/uninstall, the owner
-should also remove this distinct credential using their key manager; do not
-change the default keychain or its search list.
+Custody roles: Secret Service schema `org.nostr.Grotto.BunkerTransport`, attribute
+`slot=default`; Keychain service `Grotto Bunker Transport`, account `default`.
+This item is never enumerated as an identity. Explicit seed backup uses a separate
+mnemonic item. Client apps never receive private keys, while Grotto's explicit
+create/import/export UI may transiently handle them. Never alter a developer's
+default keychain or search list, even temporarily.
 
-Runtime is reported by Control1 `GetStatus`: `DISABLED`, `STARTING`,
-`LISTENING` (EOSE on every configured relay), `DEGRADED` (some usable relays),
-`OFFLINE`, `STOPPING`, or `ERROR`. Opening a websocket alone is not readiness.
-CLOSED, AUTH challenges and rejected response publications remove relay
-readiness; AUTH is not silently signed. Journal state/error messages are
-sanitised. Pairing tokens, `nostrconnect://` acknowledgement, camera scanning and
-live `ConfigureBunker` are G06, not shipped setup flows in G05.
+Configure relays explicitly (no fallback); `wss://` or loopback `ws://` only.
+Tor/onion routing is not supported. Direct connections expose IP/timing and
+transport-key linkage to the selected relays. Runtime states are DISABLED,
+STARTING, LISTENING (EOSE on every configured relay), DEGRADED (some usable),
+OFFLINE, STOPPING or ERROR. Desired enabled state and websocket-send success are
+not readiness. CLOSED, AUTH and rejected response publication remove readiness;
+AUTH is not automatically signed. A client-URI pairing stays pending-ack until
+its encrypted acknowledgement receives `OK true`; failed delivery is not admission.
 
-For unattended service use **`--bunker --no-approval-ui`**, with
-`headless-bunker.conf.example` installed as a user-service drop-in (examples are
-under `share/doc/grotto/examples`). The explicit `ExecStart` override matters;
-relaxing the IP filter alone does not enable bunker/headless mode. Already
-paired clients operate within their scopes; anything requiring review fails
-promptly with `org.nostr.Signer.Error.NoApprovalAgent` (`NO_APPROVER`). This mode
-also suppresses approval UI activation for local/socket calls; existing scoped
-and first-party grants continue to work.
+### Explicit network drop-in
 
-Provision the transport credential and explicit client consent before enabling
-headless mode. The daemon-owned, versioned files are:
+The shipped unit keeps `IPAddressDeny=any` and localhost-only allowance. Remote
+relays do **not** work through that policy. For an interactive bunker:
 
-- `$XDG_CONFIG_HOME/grotto/clients.ini` v1: `[meta] version=1`, one section named
-  SHA-256 of `nip46:<lowercase-client-hex>`, containing `principal`,
-  `transport=NIP46`, `identity=<canonical account npub>`, `label`, `claimed-name`,
-  `tier` (0 Low / 1 Medium / 2 Full), `paired=true`, `relays` (GKeyFile string
-  list), `first-consented-at` and `last-used-at` (Unix seconds). A permission-only
-  record without explicit first consent and paired admission cannot connect
-  unattended. Offline operator provisioning is an explicit consent action, not
-  a migration from an allowlist or from client-supplied permission hints.
-- `$XDG_CONFIG_HOME/gnostr/signer-permissions-v2.ini`: scoped principal/account/
-  operation/event-kind decisions with absolute expiry; use Control1 permission
-  management (or the canonical `SignerPermissions` writer), not broad legacy
-  event allows. Encryption/decryption are separate grants; pairing is not one.
-- `$XDG_CONFIG_HOME/grotto/bunker-seen.ini` v1: bounded replay metadata only
-  (event IDs, hashed RPC identities/parameter digests, expiry). Written durably
-  **before** execution. Never delete it on an ordinary restart. A corrupt or
-  unwritable guard fails closed; only authenticated endpoint rotation may clear
-  it after revoking pairings. Recent response bodies stay in memory, are wiped
-  on eviction, expire after ten minutes and are capped at 1,024 entries.
-
-Keep directories private (0700) and files private (0600). Future file versions
-are not silently accepted. The E2E test's `provision_headless()` demonstrates
-canonical file writers with disposable keys; the test-only file credential
-backend requires `NOSTRC_TEST_ISOLATION` and is not a production backend.
-
-Pause/revoke, deadlines, explicit client cancellation, disable/reconfiguration
-and shutdown cancel outstanding gate continuations. Replayed old successes
-cannot bypass current pairing, pause, permission revision/expiry or account
-binding. Clients should retry with fresh RPC IDs after a policy change; identical
-pending arguments share the common gate's review, never create a new grant.
-
-## Security
-
-### Hardening Features
-
-The daemon implements multiple security layers:
-
-1. **Process Isolation**
-   - Core dumps disabled
-   - No new privileges
-   - Private /tmp
-   - Restricted system calls
-
-2. **File System Protection**
-   - Socket files: 0600 permissions
-   - Config directory: 0700 permissions
-   - Read-only system directories
-
-3. **Network Restrictions**
-   - Loopback-only binding for TCP
-   - Token-based authentication
-   - Connection limits
-
-4. **Memory Protection**
-   - Write-execute memory denied
-   - Personality locked
-   - ASLR enabled
-
-### Key Storage
-
-Private keys are stored securely using:
-- **Linux**: libsecret (GNOME Keyring, KWallet)
-- **macOS**: Keychain
-- **Windows**: DPAPI
-
-### Audit Logging
-
-The daemon logs all security-relevant events:
-- Connection attempts
-- Authentication failures
-- Signing requests
-- Key operations
-
-View logs:
-```bash
-journalctl --user -u grotto-daemon.service -f
+```sh
+install -d -m700 ~/.config/systemd/user/grotto-daemon.service.d
+install -m600 /usr/share/doc/grotto/examples/bunker.conf.example \
+  ~/.config/systemd/user/grotto-daemon.service.d/bunker.conf
+systemctl --user daemon-reload
+systemctl --user restart grotto-daemon.service
+systemctl --user show grotto-daemon.service -p ExecStart -p IPAddressDeny -p MainPID
 ```
 
-## Monitoring
+Inspect the example before applying: it resets `ExecStart` and `IPAddressDeny`.
+For headless operation use **headless-bunker.conf.example instead**, whose command
+is `grotto-daemon --bunker --no-approval-ui`; do not install both variants.
+The one restart applies systemd policy. Subsequent `ConfigureBunker` changes do
+not restart the daemon. Record PID stability, outage/reconnect and native policy
+in manual acceptance. Preserve namespace-free hardening and host `/proc` access;
+do not add PrivateTmp/ProtectHome/ProtectSystem to a user unit: these break caller
+attestation. There is no SIGHUP reload contract; do not send HUP.
 
-### Health Checks
+Provision the transport credential, actual owner-approved client pairings and
+scoped permissions **before** headless use. Existing scoped/pre-approved work
+succeeds; new consent or pairing fails promptly with typed NoApprovalAgent rather
+than silently allowing or starting a GUI. There is no unattended token-admission
+or allow-all mode. Arbitrary `gdbus` calls cannot administer a PID-attested daemon.
 
-Check if the daemon is running:
+## Upgrade, migration and rollback
 
-```bash
-# Via systemd
-systemctl --user is-active grotto-daemon.service
+Stop the daemon before backing up or provisioning its files; store copies
+privately. Preserve both `$XDG_CONFIG_HOME/gnostr` and `$XDG_CONFIG_HOME/grotto`,
+plus the matching custody items through the owner's key manager. Config files
+alone are not a key backup. Never put pairing tokens in logs/configuration.
 
-# Via D-Bus
-dbus-send --session --print-reply \
-  --dest=org.nostr.Signer \
-  /org/nostr/signer \
-  org.freedesktop.DBus.Introspectable.Introspect
+| File | Ownership and upgrade rule |
+|---|---|
+| `gnostr/signer-grants.ini` | Legacy compatibility; every load re-sanitizes unsafe broad event allows |
+| `gnostr/signer-permissions-v2.ini` | Scoped identity/operation/exact-kind decisions and absolute expiry; broad legacy allows become non-executable Needs review |
+| `grotto/clients.ini` v1 (`[clients] version=1`) | SHA-256 principal sections, explicit consent, selected identity, trust tier, paired admission and approved client relays; pending-ack is not paired |
+| `grotto/bunker.ini` v1 (`[meta] version=1`) | Authoritative durable desired enabled/relays/allowed-methods; legacy GSettings imported only if absent |
+| `grotto/bunker-seen.ini` v1 | Bounded replay fences written before execution; preserve across restart |
+| `grotto/activity.json` | Metadata only, bounded retention; logging failure cannot change a crypto result |
 
-# Via Unix socket
-echo "test" | nc -U $XDG_RUNTIME_DIR/gnostr/signer.sock
+Use private 0700 directories and atomic 0600 files; reject higher schema versions.
+Legacy non-event grants keep scope; broad event denials remain denials. Never
+convert a global auto-approve-kind setting or pubkey allowlist into a signing
+grant. An allowlisted but unpaired client still needs explicit connect review.
+Use the GUI/Control1 or canonical in-tree writers while stopped for offline
+provisioning, not hand-invented sections. The E2E fixture's guarded file credential
+backend is **test-only**, not a production vault.
+
+Unsafe broad allows are removed from the live legacy file before scoped policy
+is enabled. Rolling back binaries cannot reconstruct scoped permissions; an old
+binary may reintroduce unsafe grants. Do not restore an old broad-allow backup
+into a live signer. Use an owner-reviewed migration/restore, or stay stopped and
+re-pair/review. Never delete the replay guard to make a restart work; corrupt or
+unwritable replay state fails closed. Endpoint reset is the authenticated recovery
+path and revokes remote admission first. Pairing tokens and session pause are not
+persisted. After installing an upgrade, reload systemd, restart once, inspect
+status/store health, then exercise one explicitly allowed and one denied request.
+
+## Diagnostics and limits
+
+```sh
+systemctl --user status grotto-daemon.service
+journalctl --user -u grotto-daemon.service -n 50
+# Coarse status is available to same-session callers; this may activate the daemon.
+gdbus call --session --dest org.nostr.Signer --object-path /org/nostr/signer/grotto \
+  --method org.nostr.Grotto.Control1.GetStatus
 ```
 
-### Statistics
+Never infer signing success from an IPC send, window state or a returned
+ApprovalCompleted boolean; check the operation's result. Signing is not publication.
+Activity contains metadata, not raw event/message bodies or reasons. Avoid debug
+logging of secret-bearing input. See the canonical XML and
+[D-Bus contract](../../docs/dbus-interface.md) for typed errors and management auth.
 
-The daemon tracks and logs statistics on shutdown:
-- Total connections
-- Active connections
-- Total requests
-- Error count
-- Uptime
-
-### Performance Tuning
-
-Adjust resource limits in the systemd service:
-
-```ini
-[Service]
-LimitNOFILE=8192
-TasksMax=64
-```
-
-## Troubleshooting
-
-### Daemon Won't Start
-
-1. Check logs:
-   ```bash
-   journalctl --user -u grotto-daemon.service -n 50
-   ```
-
-2. Verify D-Bus availability:
-   ```bash
-   echo $DBUS_SESSION_BUS_ADDRESS
-   ```
-
-3. Check socket directory permissions:
-   ```bash
-   ls -la $XDG_RUNTIME_DIR/gnostr/
-   ```
-
-### Connection Refused
-
-1. Verify the daemon is running:
-   ```bash
-   systemctl --user status grotto-daemon.service
-   ```
-
-2. Check the socket file exists:
-   ```bash
-   ls -l $XDG_RUNTIME_DIR/gnostr/signer.sock
-   ```
-
-3. Verify permissions:
-   ```bash
-   stat -c "%a %U:%G" $XDG_RUNTIME_DIR/gnostr/signer.sock
-   ```
-
-### High CPU Usage
-
-1. Check for connection leaks:
-   ```bash
-   lsof -U | grep gnostr
-   ```
-
-2. Review recent logs for errors:
-   ```bash
-   journalctl --user -u grotto-daemon.service --since "1 hour ago"
-   ```
-
-3. Restart the daemon:
-   ```bash
-   systemctl --user restart grotto-daemon.service
-   ```
-
-### Permission Denied
-
-1. Ensure you're in the correct user session:
-   ```bash
-   echo $XDG_RUNTIME_DIR
-   ```
-
-2. Check SELinux/AppArmor policies:
-   ```bash
-   # SELinux
-   ausearch -m avc -ts recent | grep gnostr
-
-   # AppArmor
-   sudo aa-status | grep gnostr
-   ```
-
-## Upgrading
-
-### Safe Upgrade Procedure
-
-1. Stop the daemon:
-   ```bash
-   systemctl --user stop grotto-daemon.service
-   ```
-
-2. Backup configuration:
-   ```bash
-   cp -r ~/.config/gnostr ~/.config/gnostr.backup
-   ```
-
-3. Install new version:
-   ```bash
-   sudo make install
-   ```
-
-4. Reload systemd:
-   ```bash
-   systemctl --user daemon-reload
-   ```
-
-5. Start the daemon:
-   ```bash
-   systemctl --user start grotto-daemon.service
-   ```
-
-6. Verify operation:
-   ```bash
-   systemctl --user status grotto-daemon.service
-   ```
-
-## Development
-
-### Running in Debug Mode
-
-```bash
-# Stop the system service
-systemctl --user stop grotto-daemon.service
-
-# Run manually with debug output
-G_MESSAGES_DEBUG=all ./grotto-daemon
-```
-
-### Testing IPC Endpoints
-
-#### Unix Socket Test
-
-```bash
-# Start daemon with custom socket
-NOSTR_SIGNER_ENDPOINT=unix:/tmp/test-signer.sock ./grotto-daemon &
-
-# Test connection
-echo '{"method":"get_public_key"}' | nc -U /tmp/test-signer.sock
-```
-
-#### TCP Socket Test
-
-```bash
-# Start daemon with TCP (requires ENABLE_TCP_IPC=ON)
-NOSTR_SIGNER_ENDPOINT=tcp:127.0.0.1:5897 ./grotto-daemon &
-
-# Get auth token
-cat $XDG_RUNTIME_DIR/gnostr/token
-
-# Test connection
-echo "AUTH <token>" | nc localhost 5897
-```
-
-## Production Deployment
-
-### Recommended Configuration
-
-```ini
-[Service]
-Type=dbus
-BusName=org.nostr.Signer
-Environment=NOSTR_SIGNER_ENDPOINT=unix:%t/gnostr/signer.sock
-Restart=on-failure
-RestartSec=5s
-
-# Resource limits
-LimitNOFILE=4096
-LimitCORE=0
-TasksMax=32
-
-# Full security hardening enabled
-NoNewPrivileges=yes
-PrivateTmp=yes
-ProtectSystem=strict
-ProtectHome=read-only
-```
-
-### Monitoring Setup
-
-1. Enable persistent logging:
-   ```bash
-   sudo mkdir -p /var/log/journal
-   sudo systemd-tmpfiles --create --prefix /var/log/journal
-   ```
-
-2. Set up log rotation in systemd:
-   ```bash
-   sudo systemctl edit systemd-journald.service
-   ```
-
-   Add:
-   ```ini
-   [Journal]
-   SystemMaxUse=500M
-   SystemMaxFileSize=50M
-   ```
-
-3. Monitor with journalctl:
-   ```bash
-   journalctl --user -u grotto-daemon.service -f
-   ```
-
-## Best Practices
-
-1. **Always use Unix sockets in production** - Better performance and security
-2. **Enable all systemd hardening options** - Defense in depth
-3. **Monitor logs regularly** - Detect issues early
-4. **Keep the daemon updated** - Security patches
-5. **Backup keys regularly** - Disaster recovery
-6. **Test upgrades in staging** - Avoid production issues
-7. **Use systemd activation** - Automatic start on demand
-8. **Limit resource usage** - Prevent DoS
-9. **Enable audit logging** - Compliance and forensics
-10. **Document your configuration** - Team knowledge
-
-## Support
-
-For issues and questions:
-- GitHub Issues: https://github.com/chebizarro/nostrc/issues
-- Documentation: https://github.com/chebizarro/nostrc/tree/main/apps/grotto
-- Matrix Channel: (TBD)
+Same-user malware is outside the boundary. Linux PID/path/inode attestation is
+retained; UID-only buses inherit weaker caller and approver isolation as documented
+there. Flatpak/AppImage cannot bypass those checks for a smoke test; their caller
+attestation, trusted-approver, Secret-portal custody, activation ownership and
+browser-host gates remain open. No production readiness, physical-camera or live
+GNOME/Orca acceptance is inferred from a local test run.

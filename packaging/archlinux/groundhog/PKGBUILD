@@ -22,7 +22,7 @@ makedepends=(
   'glib2' 'glib2-devel' 'gtk4' 'libadwaita' 'json-glib' 'libsoup3' 'libsecret'
   'sqlcipher' 'libxml2' 'gstreamer' 'gst-plugins-base-libs'
   'openssl' 'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets'
-  'curl' 'qrencode'
+  'curl' 'qrencode' 'zbar'
 )
 source=("groundhog-${_version}.tar.gz::https://github.com/chebizarro/nostrc/releases/download/groundhog-v${_version}/groundhog-${_version}.tar.gz")
 sha256sums=('SKIP')
@@ -76,13 +76,19 @@ package_groundhog() {
 }
 
 package_grotto() {
-  pkgdesc="Keeps your Nostr keys and signs for all your Nostr apps: NIP-55L and NIP-46 (preview)"
+  # Split packages share the bundle pkgver. Independently versioned Grotto
+  # builds use apps/grotto/packaging/archlinux/PKGBUILD instead.
+  pkgdesc="Nostr identity management and signing service (Preview)"
   depends=(
-    'glib2' 'gtk4' 'libadwaita' 'json-glib' 'libsecret' 'openssl'
+    'glib2>=2.80' 'gtk4>=4.14' 'libadwaita>=1.5' 'json-glib' 'libsecret' 'openssl'
     'libsecp256k1' 'libsodium' 'jansson' 'libwebsockets' 'qrencode'
-    'gdk-pixbuf2' 'gstreamer' 'hicolor-icon-theme'
+    'gdk-pixbuf2' 'gstreamer' 'gst-plugins-base-libs' 'gst-plugins-base'
+    'gst-plugins-good' 'zbar' 'hicolor-icon-theme'
   )
-  optdepends=('gnome-keyring: keeps your keys (any Secret Service provider works)')
+  optdepends=(
+    'gnome-keyring: keeps your keys (any Secret Service provider works)'
+    'gnome-shell-extension-nostr: optional signer panel indicator'
+  )
   DESTDIR="$pkgdir" cmake --install build/apps/grotto
   install -Dm644 "groundhog-${_version}/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

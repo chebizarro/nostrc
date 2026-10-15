@@ -1,72 +1,41 @@
-.TH GNOSTR-SIGNER 1 "January 2025" "grotto 0.1.0" "User Commands"
+.TH GROTTO 1 "October 2026" "Grotto Preview 0.1.0" "User Commands"
 .SH NAME
-grotto \- Secure Nostr identity management and signing service
+grotto \- manage Nostr identities and review signing requests (Preview)
 .SH SYNOPSIS
 .B grotto
-[\fIOPTIONS\fR]
+[\fB\-\-new-identity\fR | \fB\-\-settings\fR] [\fIURI\fR]
 .SH DESCRIPTION
-.B grotto
-is a GTK4/libadwaita application for managing Nostr identities and signing
-events securely. It keeps your private keys safe while allowing Nostr clients
-to request signatures through a secure D-Bus interface.
-.PP
-The application provides a graphical interface for:
-.IP \(bu 2
-Creating and managing multiple Nostr identities
-.IP \(bu 2
-Approving or denying signing requests from applications
-.IP \(bu 2
-Configuring per-application permissions
-.IP \(bu 2
-Setting up NIP-46 remote signer (bunker) connections
-.IP \(bu 2
-Backing up and restoring keys
+Grotto provides Home, Activity, Connect and Settings for the session daemon.
+Each consumer selects its own identity; management selection changes no other app.
+Local NIP-55L apps need no pairing. Remote NIP-46 apps pair with explicit consent.
 .SH OPTIONS
 .TP
-.B \-\-new\-identity
-Open the new identity creation dialog
+.B \-\-new-identity
+Open identity creation/import in the existing management window.
 .TP
 .B \-\-settings
-Open the settings page directly
+Open Settings in the existing window.
 .TP
-.B \-\-help
-Display help information and exit
-.TP
-.B \-\-version
-Display version information and exit
-.SH ENVIRONMENT
-.TP
-.B GSETTINGS_SCHEMA_DIR
-Directory containing GSettings schemas. Set this if running from a non-standard
-location.
-.TP
-.B G_MESSAGES_DEBUG
-Set to "all" to enable debug logging
-.SH FILES
-.TP
-.I ~/.config/gnostr/
-User configuration directory
-.TP
-.I ~/.local/share/gnostr/
-User data directory (permissions, audit logs)
-.TP
-.I /usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
-GSettings schema file
-.SH D-BUS INTERFACE
-The signer communicates with the daemon via D-Bus at:
+.B \-\-gapplication-service
+D-Bus/login service activation without an unnecessary management window.
+.SH URI HANDLERS
+bunker:, nostrconnect: and local grotto: are supported activation schemes, not nostr:.
+Supplied relays are previewed before identity choice and consent. A foreign
+bunker link does not import an identity or delegate custody.
+.SH BACKGROUND AND SECURITY
+Closing a window destroys it, not the daemon. Ctrl+Q quits approval UI only;
+already-authorized signing continues and a later request can summon review again.
+Pause signing is the separate session-wide security action. Resume needs trusted
+GUI confirmation; unlocking the desktop does not automatically resume.
 .PP
-.RS
-Bus Name: org.nostr.Signer
-.br
-Object Path: /org/nostr/signer
-.RE
+Keys use native keyring custody. Client apps do not receive private keys; explicit
+Grotto create/import/backup operations may handle them. Same-user malware is outside
+the security boundary. Signing returns an event, not proof it was published.
+.PP
+Background review defaults on after disclosure; launch-on-login defaults off.
+Native packages do not install an always-enabled autostart entry. Flatpak/AppImage
+signer builds are experimental, not release-supported.
 .SH SEE ALSO
-.BR grotto-daemon (1),
-.BR gnome-keyring (1),
-.BR dbus-daemon (1)
-.SH BUGS
-Report bugs at: https://github.com/gnostr-org/grotto/issues
-.SH AUTHOR
-GNostr Project <gnostr@example.com>
-.SH COPYRIGHT
-Copyright \(co 2024-2025 GNostr Project. License: MIT.
+.BR grotto-daemon (1)
+.PP
+https://github.com/chebizarro/nostrc/tree/master/apps/grotto

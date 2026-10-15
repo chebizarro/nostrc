@@ -1,17 +1,16 @@
-# Grotto GTK application
 usr/bin/grotto
-
-# Desktop file and icons. The file id must stay org.nostr.Grotto: it is
-# DBusActivatable, and its id is the bus name the launcher activates.
+usr/bin/grotto-daemon
+usr/lib/grotto/*
 usr/share/applications/org.nostr.Grotto.desktop
-usr/share/icons/hicolor/*/apps/org.nostr.Grotto.*
-
-# D-Bus activation of the GUI (org.nostr.Grotto; the daemon's
-# org.nostr.Signer.service is in grotto-daemon)
+usr/share/icons/hicolor/*/apps/org.nostr.Grotto*
 usr/share/dbus-1/services/org.nostr.Grotto.service
-
-# GSettings schema
+usr/share/dbus-1/services/org.nostr.Signer.service
+usr/share/dbus-1/interfaces/org.nostr.Grotto.Control1.xml
 usr/share/glib-2.0/schemas/org.nostr.Grotto.gschema.xml
-
-# AppStream metadata
 usr/share/metainfo/org.nostr.Grotto.metainfo.xml
+usr/share/systemd/user/grotto-daemon.service
+usr/share/doc/grotto/examples/*
+usr/share/grotto/org.nostr.Grotto-autostart.desktop
+usr/libexec/nostr-signer-webext-host
+usr/share/nostr-signer-webext-host/*
+usr/share/doc/nostr-signer-webext-host/*

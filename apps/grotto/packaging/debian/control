@@ -1,14 +1,17 @@
 Source: grotto
 Section: utils
 Priority: optional
-Maintainer: GNostr Project <gnostr@example.com>
+Maintainer: Biz <chebizarro@protonmail.com>
 Build-Depends: debhelper-compat (= 13),
-               cmake (>= 3.20),
+               cmake (>= 3.22),
                ninja-build,
                pkg-config,
-               libgtk-4-dev,
-               libadwaita-1-dev,
-               libglib2.0-dev,
+               python3,
+               gettext,
+               libjansson-dev,
+               libgtk-4-dev (>= 4.14),
+               libadwaita-1-dev (>= 1.5),
+               libglib2.0-dev (>= 2.80),
                libjson-glib-dev,
                libsecret-1-dev,
                libsecp256k1-dev,
@@ -16,35 +19,30 @@ Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                libwebsockets-dev,
                libnsync-dev,
-               libp11-kit-dev,
                libqrencode-dev,
                libzbar-dev,
                libgstreamer1.0-dev,
                libgstreamer-plugins-base1.0-dev
 Standards-Version: 4.6.2
-Homepage: https://github.com/gnostr-org/grotto
-Vcs-Browser: https://github.com/gnostr-org/grotto
-Vcs-Git: https://github.com/gnostr-org/grotto.git
+Homepage: https://github.com/chebizarro/nostrc
+Vcs-Browser: https://github.com/chebizarro/nostrc
+Vcs-Git: https://github.com/chebizarro/nostrc.git
 Rules-Requires-Root: no
 
 Package: grotto
 Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         libgtk-4-1,
-         libadwaita-1-0,
-         libglib2.0-0,
-         libjson-glib-1.0-0,
-         libsecret-1-0,
-         libzbar0,
+         libgtk-4-1 (>= 4.14),
+         libadwaita-1-0 (>= 1.5),
+         dbus-user-session,
          gstreamer1.0-plugins-base,
-         gstreamer1.0-plugins-good,
-         gnome-keyring | kwalletd5
+         gstreamer1.0-plugins-good
 Recommends: gnome-shell-extension-nostr,
-            libsecp256k1-1,
-            libsodium23,
-            libwebsockets16 | libwebsockets17 | libwebsockets19
-Description: Secure Nostr identity management and signing service
+            gnome-keyring | org.freedesktop.secrets
+Breaks: grotto-daemon (<= 0.1.0-1)
+Replaces: grotto-daemon (<= 0.1.0-1)
+Description: Nostr identity management and signing service (Preview)
  Grotto is a GTK4/libadwaita application for managing Nostr identities
  and signing events. It keeps your private keys safe while allowing Nostr
  clients to request signatures through a secure D-Bus interface.
@@ -58,22 +56,7 @@ Description: Secure Nostr identity management and signing service
   * Backup and recovery options
   * Audit logging of signing operations
  .
- Grotto implements NIP-55 (Signer Application) for local signing
- and NIP-46 (Nostr Connect) for remote signing capabilities.
-
-Package: grotto-daemon
-Architecture: any
-Depends: ${shlibs:Depends},
-         ${misc:Depends},
-         libglib2.0-0,
-         libjson-glib-1.0-0,
-         libsecret-1-0,
-         dbus-user-session
-Recommends: grotto
-Description: Grotto D-Bus daemon for Nostr signing operations
- The Grotto daemon provides D-Bus and Unix socket interfaces for
- Nostr signing operations. It handles cryptographic operations without
- exposing private keys to client applications.
- .
- This package is typically used alongside grotto for headless
- operation or as a background service activated via D-Bus.
+ This single package includes the GUI and D-Bus-activated daemon. Local
+ applications use NIP-55L; explicitly paired remote clients use NIP-46.
+ Signing is not publication. This is not a security boundary against
+ malware running as the same user.

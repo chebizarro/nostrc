@@ -4,7 +4,7 @@
   <id>org.nostr.Grotto</id>
 
   <name>Grotto (Preview)</name>
-  <summary>Keeps your Nostr keys and signs for all your Nostr apps</summary>
+  <summary>Manage Nostr identities and review signing requests</summary>
 
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
@@ -14,31 +14,27 @@
   </developer>
 
   <description>
-    <p>
-      Grotto keeps your Nostr identities and signs, encrypts and decrypts for
-      the apps you allow; your private keys never leave it. It is the signer
-      for every Nostr app that speaks NIP-55L, on this computer over the
-      session bus, or NIP-46 (Nostr Connect), remotely over relays.
-    </p>
-    <p>
-      One Grotto serves all of them, Groundhog included: each app names the
-      identity it uses, and you approve what it may do.
-    </p>
-    <p>Features include:</p>
+    <p>Grotto is a Preview Nostr signer for a user's desktop session. Local
+      NIP-55L apps and explicitly paired NIP-46 remote clients request signing,
+      encryption and decryption through the daemon's shared permission gate.
+      Each consumer chooses its own identity.</p>
     <ul>
-      <li>Secure key storage using the system keyring (GNOME Keyring/libsecret)</li>
-      <li>Granular permission control for each application</li>
-      <li>Interactive approval dialogs for signing requests</li>
-      <li>NIP-46 remote signer (bunker) support</li>
-      <li>Multiple identity management with profiles</li>
-      <li>Backup and recovery options</li>
-      <li>Audit logging of signing operations</li>
+      <li>Review pending requests with an identity and operation preview</li>
+      <li>Manage per-client trust and scoped, expiring permissions</li>
+      <li>Pause signing independently of closing or locking the management UI</li>
+      <li>Pair remote clients using links or QR codes and explicit consent</li>
+      <li>Create and import identities; explicitly export seed words or encrypted backups</li>
+      <li>Inspect metadata-only activity without retaining message content</li>
     </ul>
-    <p>
-      Grotto implements NIP-55L (the Linux desktop signer interface,
-      org.nostr.Signer on the session bus) for local apps and NIP-46 (Nostr
-      Connect) for remote ones.
-    </p>
+    <p>On native Linux, key custody uses a Secret Service provider. Client apps
+      do not receive private keys; Grotto's explicit create, import and backup
+      interfaces may transiently handle key material. Grotto is not a security
+      boundary against same-user malware.</p>
+    <p>Signing is not publication: a signed event is returned to the requesting
+      app, which decides whether to publish it. Remote signing requires explicit
+      relay configuration and the native service's network drop-in. Native Linux
+      is the primary distribution; sandboxed signer packages remain experimental.
+      Installed-desktop and accessibility release acceptance is still pending.</p>
   </description>
 
   <launchable type="desktop-id">org.nostr.Grotto.desktop</launchable>
@@ -54,25 +50,25 @@
 
   <screenshots>
     <screenshot type="default">
-      <caption>Main window with identity overview</caption>
-      <image>https://raw.githubusercontent.com/gnostr-org/grotto/main/assets/screenshot-main.png</image>
+      <caption>Home with a disposable identity and fixture client</caption>
+      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/home-light.png</image>
     </screenshot>
     <screenshot>
-      <caption>Permission management for applications</caption>
-      <image>https://raw.githubusercontent.com/gnostr-org/grotto/main/assets/screenshot-permissions.png</image>
+      <caption>Client permissions in the real application templates</caption>
+      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/permissions-light.png</image>
     </screenshot>
     <screenshot>
-      <caption>Settings and security options</caption>
-      <image>https://raw.githubusercontent.com/gnostr-org/grotto/main/assets/screenshot-settings.png</image>
+      <caption>Settings in dark appearance</caption>
+      <image>https://raw.githubusercontent.com/chebizarro/nostrc/master/apps/grotto/data/screenshots/settings-dark.png</image>
     </screenshot>
   </screenshots>
 
   <content_rating type="oars-1.1" />
 
   <releases>
-    <release version="0.1.0" date="2025-01-22">
+    <release version="0.1.0" type="development" date="2026-10-14">
       <description>
-        <p>Initial release of Grotto with core functionality:</p>
+        <p>Unreleased Preview development snapshot; not promotion to stable:</p>
         <ul>
           <li>Secure identity creation and management</li>
           <li>D-Bus interface for client applications (NIP-55L)</li>
@@ -126,6 +122,6 @@
   </keywords>
 
   <custom>
-    <value key="Purism::form_factor">mobile</value>
+    <value key="Purism::form_factor">workstation</value>
   </custom>
 </component>

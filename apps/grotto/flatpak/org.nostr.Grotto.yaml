@@ -1,3 +1,5 @@
+# EXPERIMENTAL: not a release-supported signer. See ../packaging/flatpak/README.md.
+# Caller attestation, trusted approver, Secret portal, activation and browser gates open.
 # Flatpak manifest for Grotto
 # Build with: flatpak-builder --user --install build-dir org.nostr.Grotto.yaml
 #

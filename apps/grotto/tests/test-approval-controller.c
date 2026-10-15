@@ -58,7 +58,7 @@ static GVariant *snapshot(Fixture *f) {
   g_variant_builder_init(&rows, G_VARIANT_TYPE("aa{sv}"));
   for (guint i = 0; i < f->rows->len; i++)
     g_variant_builder_add_value(&rows, f->rows->pdata[i]);
-  return g_variant_ref_sink(g_variant_builder_end(&rows));
+  return g_variant_builder_end(&rows);
 }
 static void emit_completed(Fixture *f, const char *id) {
   g_dbus_connection_emit_signal(f->server, NULL, "/org/nostr/signer", "org.nostr.Signer",
@@ -87,7 +87,7 @@ static void method(GDBusConnection *bus, const char *sender, const char *path,
     } else if (f->delay) {
       g_assert_null(f->delayed);
       f->delayed = g_object_ref(invocation);
-      f->delayed_rows = snapshot(f);
+      f->delayed_rows = g_variant_ref_sink(snapshot(f));
     } else
       g_dbus_method_invocation_return_value(invocation, g_variant_new("(@aa{sv})", snapshot(f)));
   } else {
@@ -114,7 +114,7 @@ static void method(GDBusConnection *bus, const char *sender, const char *path,
         f->delayed_is_info = TRUE;
       } else
         g_dbus_method_invocation_return_value(invocation,
-                                              g_variant_new("(@a{sv})", g_variant_ref(row)));
+                                              g_variant_new("(@a{sv})", row));
     } else if (!strcmp(name, "ApproveRequest")) {
       f->decisions++;
       if (f->fail_decision)
@@ -201,7 +201,8 @@ static void delayed_reply(Fixture *f) {
   f->delay = FALSE;
   g_dbus_method_invocation_return_value(f->delayed,
                                         g_variant_new(f->delayed_is_info ? "(@a{sv})" : "(@aa{sv})",
-                                                      g_steal_pointer(&f->delayed_rows)));
+                                                      f->delayed_rows));
+  g_clear_pointer(&f->delayed_rows, g_variant_unref);
   g_clear_object(&f->delayed);
   f->delayed_is_info = FALSE;
 }

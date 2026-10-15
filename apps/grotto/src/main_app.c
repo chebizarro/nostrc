@@ -73,15 +73,15 @@ static void on_app_about(GSimpleAction *action, GVariant *param, gpointer user_d
   GtkApplication *app = GTK_APPLICATION(user_data);
   GtkWindow *parent = gtk_application_get_active_window(app);
   AdwDialog *about = adw_about_dialog_new();
-  adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Grotto");
+  adw_about_dialog_set_application_name(ADW_ABOUT_DIALOG(about), "Grotto (Preview)");
   adw_about_dialog_set_application_icon(ADW_ABOUT_DIALOG(about), "org.nostr.Grotto");
-  adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), "0.1.0");
+  adw_about_dialog_set_version(ADW_ABOUT_DIALOG(about), GROTTO_VERSION);
   adw_about_dialog_set_website(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc");
   adw_about_dialog_set_issue_url(ADW_ABOUT_DIALOG(about), "https://github.com/chebizarro/nostrc/issues");
   adw_about_dialog_set_comments(ADW_ABOUT_DIALOG(about),
-    "Keeps your Nostr keys and signs for all your Nostr apps: local apps over "
-    "NIP-55L and remote apps over NIP-46 (Nostr Connect). One Grotto serves "
-    "them all; your private keys never leave it.");
+    "Review Nostr signing requests and manage identities and scoped permissions. "
+    "Client apps do not receive private keys; explicit Grotto key management may "
+    "handle them. Signing is not publication. Not a boundary against same-user malware.");
   const char *devs[] = { "GNostr Team", NULL };
   adw_about_dialog_set_developers(ADW_ABOUT_DIALOG(about), devs);
   adw_dialog_present(about, parent ? GTK_WIDGET(parent) : NULL);

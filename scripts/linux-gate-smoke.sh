@@ -186,7 +186,7 @@ print_failures() {
 
 # A report of AddressSanitizer, LeakSanitizer (its SUMMARY is AddressSanitizer's
 # when both run) or UndefinedBehaviorSanitizer in test $2's output in log $1.
-SANITIZER_REPORT_RE='(ERROR|SUMMARY): [A-Za-z]+Sanitizer|: runtime error: '
+SANITIZER_REPORT_RE='(ERROR|SUMMARY|WARNING|FATAL): [A-Za-z]+Sanitizer|: runtime error: '
 # (grep without -q reads to the end: with -q it can stop early and the pipe's
 # writer, killed by SIGPIPE, would fail the pipeline under pipefail.)
 has_report() {
@@ -289,6 +289,33 @@ if [ "$SANITIZER_REPORTS" = block ]; then
     echo "==> $GATE: sanitizer report in:$reported (output above); a report is not rerun"
     echo "==> $GATE: $SUITE_FAILED ($(stamp)); full log: $kept$WHERE"
     exit 1
+  fi
+fi
+
+# Opt-in G12 baseline quarantine: every test above still ran with its original
+# assertions. Exact names and owning beads only; no wildcard or sanitizer-report
+# suppression. Keep the complete first-run log and a machine-readable ledger.
+if [ -n "${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}" ]; then
+  quarantine="${NOSTRC_CTEST_QUARANTINE_FILE:?set the named quarantine TSV}"
+  [ -f "$quarantine" ] || { echo "Missing quarantine registry: $quarantine" >&2; exit 1; }
+  remaining=""
+  for test in $failed; do
+    bead="$(awk -F '\t' -v platform="$NOSTRC_CTEST_QUARANTINE_PLATFORM" -v name="$test" \
+      '$1 == platform && $2 == name && $3 ~ /^nostrc-[a-z0-9.]+$/ { print $3 }' "$quarantine")"
+    status="$(rerun_status "$STATE_DIR/ctest.log" "$test")"
+    if [ -n "$bead" ] && [[ "$status" != *"Not Run"* && "$status" != *Skipped* && "$status" != "not run" ]] &&
+       ! has_report "$STATE_DIR/ctest.log" "$test"; then
+      printf '%s\t%s\t%s\t%s\n' "$RUN_ID" "$test" "$bead" "$kept" >> "$HISTORY/quarantined.tsv"
+      echo "!! QUARANTINED FAILURE: $test ($bead); not disabled, output retained at $kept"
+    else
+      remaining="$remaining $test"
+    fi
+  done
+  failed="${remaining# }"
+  if [ -z "$failed" ]; then
+    run_perf
+    echo "==> $GATE: $SUITE green WITH NAMED QUARANTINE, not an all-tests pass ($(stamp))"
+    exit 0
   fi
 fi
 

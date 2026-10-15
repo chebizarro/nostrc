@@ -800,7 +800,10 @@ int main(int argc, char **argv) {
     g_signal_emit_by_name(app, "shutdown");
     while (gtk_application_get_windows(GTK_APPLICATION(app)))
       gtk_window_destroy(gtk_application_get_windows(GTK_APPLICATION(app))->data);
+    gpointer app_weak = app;
+    g_object_add_weak_pointer(G_OBJECT(app), &app_weak);
     g_clear_object(&app);
+    WAIT(app_weak == NULL);
     nostr_json_cleanup();
     return 0;
   }

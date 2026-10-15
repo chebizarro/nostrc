@@ -1,6 +1,6 @@
 /* test_signer_dbus_contract — real-service D-Bus contract test (nostrc-tf3b).
  *
- * Spins up a private session bus with GTestDBus, spawns the actual
+ * Spins up a supervised private session bus with NostrcTestBus, spawns the actual
  * nostr-signer-daemon on it, and drives the full round-trip through the
  * generated org.nostr.Signer glue: GetPublicKey → SignEvent (with a
  * pre-populated ACL) → parse and cryptographically verify the returned
@@ -61,6 +61,7 @@
  */
 
 #include <gio/gio.h>
+#include "nostrc-test-bus.h"
 #include <glib.h>
 #include <glib/gstdio.h>
 
@@ -233,11 +234,11 @@ static char *self_principal(void) {
 }
 
 /* ---------------------------------------------------------------------------
- * Fixture: tmp dir tree + daemon subprocess on a private GTestDBus bus.
+ * Fixture: tmp dir tree + daemon subprocess on a supervised private bus.
  * ------------------------------------------------------------------------- */
 
 typedef struct {
-  GTestDBus  *tbus;
+  NostrcTestBus *tbus;
   GSubprocess *keyring;  /* phase 3 only: gnome-keyring-daemon on tbus */
   GSubprocess *secrets;  /* identity phase only: this executable as a fake Secret Service */
   GSubprocess *daemon;
@@ -259,69 +260,7 @@ static GVariant *interactive(Ctx *ctx, const char *method, GVariant *args,
  * Exit cleanup (nostrc-oauv)
  * ------------------------------------------------------------------------- */
 
-#ifdef __APPLE__
-/* GTestDBus's first g_test_dbus_up() forks a watcher: a copy of this process
- * that reads commands from a pipe and, when this process exits, should kill
- * the bus daemons still registered with it. On macOS GLib's g_poll() is
- * select() based and never reports G_IO_HUP, so the watcher takes the pipe's
- * end for a command, reads a NULL line and crashes in sscanf(NULL): the
- * strlen(NULL) SEGV under g_test_dbus_up in hosted ASan logs, at every exit,
- * and it never cleans up. Once every fixture is down it has nothing to do:
- * kill it before this process's exit closes the pipe. It is the only child
- * running this executable (the daemons, keyring and shell are exec'd). */
-static void watcher_kill(void) {
-  char self[PROC_PIDPATHINFO_MAXSIZE], path[PROC_PIDPATHINFO_MAXSIZE];
-  if (proc_pidpath(getpid(), self, sizeof self) <= 0) return;
-  pid_t kids[256];
-  memset(kids, 0, sizeof kids);
-  (void)proc_listchildpids(getpid(), kids, (int)sizeof kids);
-  for (size_t i = 0; i < G_N_ELEMENTS(kids); i++) {
-    if (kids[i] <= 0) continue;
-    if (proc_pidpath(kids[i], path, sizeof path) > 0 && strcmp(path, self) == 0) {
-      kill(kids[i], SIGKILL);
-      (void)waitpid(kids[i], NULL, 0);
-    }
-  }
-}
-#elif defined(__linux__)
-/* Here g_poll() reports the hang-up, but the watcher checks for it before
- * reading the commands still in the pipe (GLib 2.80 watch_parent()). When
- * this process exits right after g_test_dbus_stop() wrote "remove <pid>" and
- * the watcher was not scheduled in between (a loaded machine), it sees both
- * at once, says "cleaning up pid <pid>" for the daemon already stopped and
- * kills that pid again (nostrc-pk7zx). Once every fixture is down it has
- * nothing to do: kill it, as on macOS. It is the only child running this
- * executable: forked, never exec'd; the daemons, keyring and shell are. */
-static void watcher_kill(void) {
-  g_autofree gchar *self = g_file_read_link("/proc/self/exe", NULL);
-  if (!self) return;
-  GDir *proc = g_dir_open("/proc", 0, NULL);
-  if (!proc) return;
-  const char *name;
-  while ((name = g_dir_read_name(proc))) {
-    if (!g_ascii_isdigit(name[0])) continue;
-    g_autofree gchar *stat_path = g_build_filename("/proc", name, "stat", NULL);
-    g_autofree gchar *stat = NULL;
-    if (!g_file_get_contents(stat_path, &stat, NULL, NULL)) continue;
-    /* "pid (comm) state ppid ...": comm may hold spaces and parentheses. */
-    const char *after = strrchr(stat, ')');
-    char state = 0;
-    int ppid = 0;
-    if (!after || sscanf(after + 1, " %c %d", &state, &ppid) != 2 || ppid != getpid())
-      continue;
-    g_autofree gchar *exe_path = g_build_filename("/proc", name, "exe", NULL);
-    g_autofree gchar *exe = g_file_read_link(exe_path, NULL);
-    if (exe && strcmp(exe, self) == 0) {
-      pid_t pid = (pid_t)atoi(name);
-      kill(pid, SIGKILL);
-      (void)waitpid(pid, NULL, 0);
-    }
-  }
-  g_dir_close(proc);
-}
-#else
-static void watcher_kill(void) {}
-#endif
+static void ctx_teardown(Ctx *ctx);
 
 /* The fixture that is up, if any. */
 static Ctx *live_ctx;
@@ -363,25 +302,12 @@ static void remove_dir_now(const char *dir) {
   rm_tree(dir);
 }
 
-/* A failed CHECK exits with the fixture up. Stop the daemon and the private
- * bus then and remove the temporary directories, or they outlive the test: GTestDBus's dbus-daemon shares this
- * process's stdout and stderr, so ctest keeps reading until its timeout (the
- * "Timeout" of nostrc-oauv). The watcher that should kill it does not work on
- * macOS (watcher_kill()). */
+/* CHECK failures still release fixture-owned children and connections. The
+ * private bus lifeline also handles abnormal process death without a watcher. */
 static void teardown_at_exit(void) {
-  Ctx *ctx = live_ctx;
-  live_ctx = NULL;
-  if (ctx) {
-    if (ctx->daemon) g_subprocess_force_exit(ctx->daemon);
-    if (ctx->keyring) g_subprocess_force_exit(ctx->keyring);
-    if (ctx->secrets) g_subprocess_force_exit(ctx->secrets);
-    if (ctx->bus) g_dbus_connection_set_exit_on_close(ctx->bus, FALSE);
-    if (ctx->tbus) g_test_dbus_stop(ctx->tbus);
-    if (ctx->tmpdir) rm_tree(ctx->tmpdir);
-  }
+  if (live_ctx) ctx_teardown(live_ctx);
   for (size_t i = 0; i < G_N_ELEMENTS(exit_dirs); i++)
     if (exit_dirs[i]) remove_dir_now(exit_dirs[i]);
-  watcher_kill();
 }
 
 /* Principal the daemon assigns to a call from this process naming @app. */
@@ -530,14 +456,13 @@ static void ctx_setup_full(Ctx *ctx, gboolean allow_mutations, gboolean write_re
     g_free(nostr_dir);
   }
 
-  /* Private session bus. g_test_dbus_up sets DBUS_SESSION_BUS_ADDRESS in
-   * this process's env, which g_subprocess_new inherits. */
-  ctx->tbus = g_test_dbus_new(G_TEST_DBUS_NONE);
-  if (approval_ui_service_dir) g_test_dbus_add_service_dir(ctx->tbus, approval_ui_service_dir);
-  g_test_dbus_up(ctx->tbus);
+  /* The lifeline owns the bus even when an assertion aborts this process. */
+  ctx->tbus = nostrc_test_bus_new(NOSTRC_TEST_BUS_FLAGS_NONE);
+  if (approval_ui_service_dir) nostrc_test_bus_add_service_dir(ctx->tbus, approval_ui_service_dir);
+  nostrc_test_bus_up(ctx->tbus);
   /* nostrc-wqn0u: declare the bus private, so the daemon (which inherits
    * this) may use a Secret Service on it under NOSTRC_TEST_ISOLATION. */
-  g_setenv("NOSTRC_TEST_BUS_ADDRESS", g_test_dbus_get_bus_address(ctx->tbus), TRUE);
+  g_setenv("NOSTRC_TEST_BUS_ADDRESS", nostrc_test_bus_get_address(ctx->tbus), TRUE);
 
   /* Does the bus attest our PID? (Linux dbus-daemon: yes; macOS: no.) */
   ctx->bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
@@ -635,28 +560,13 @@ static void ctx_teardown(Ctx *ctx) {
     (void)g_subprocess_wait(ctx->secrets, NULL, NULL);
     g_clear_object(&ctx->secrets);
   }
-  if (ctx->bus) g_object_unref(ctx->bus);
-  if (ctx->tbus) {
-    if (ctx->keyring) {
-      /* libsecret's sync API parks proxies (and their session-bus refs) on
-       * private main contexts that are never iterated again, so the bus
-       * singleton is never finalized and g_test_dbus_down — also run by
-       * GTestDBus's dispose — stalls on its 30 s weak-notify timeout. The
-       * keyring fixture runs last: stop the bus without that check and let
-       * process exit reclaim the GTestDBus object. */
 #ifdef NIP55L_TEST_HAVE_LIBSECRET
-      secret_service_disconnect();
+  secret_service_disconnect();
 #endif
-      GDBusConnection *singleton = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, NULL);
-      if (singleton) {
-        g_dbus_connection_set_exit_on_close(singleton, FALSE);
-        g_object_unref(singleton);
-      }
-      g_test_dbus_stop(ctx->tbus);
-    } else {
-      g_test_dbus_down(ctx->tbus);
-      g_object_unref(ctx->tbus);
-    }
+  g_clear_object(&ctx->bus);
+  if (ctx->tbus) {
+    nostrc_test_bus_down(ctx->tbus);
+    ctx->tbus = NULL;
   }
   g_clear_object(&ctx->keyring);
   if (ctx->tmpdir) {
@@ -2422,7 +2332,7 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
     return FALSE;
   }
   gboolean ok = FALSE; const char *out_npub = NULL;
-  g_variant_get(ret, "(bs)", &ok, &out_npub);
+  g_variant_get(ret, "(b&s)", &ok, &out_npub);
   CHECK(ok);
   /* The daemon derives npub from the stored key, not from the env-var key. */
   CHECK(g_strcmp0(out_npub, fresh_npub) == 0);
@@ -2453,7 +2363,7 @@ static gboolean try_store_and_clear_key(Ctx *ctx) {
 #ifdef NIP55L_TEST_HAVE_LIBSECRET
   /* Test-only cleanup addresses the disposable Secret Service directly;
    * production deletion is covered through authenticated Control1. */
-  SecretService *service = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &err);
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
   CHECK(service != NULL && err == NULL);
   GHashTable *attrs = g_hash_table_new(g_str_hash, g_str_equal); g_hash_table_insert(attrs, "npub", fresh_npub);
   secret_service_clear_sync(service, &gnostr_secret_schema, attrs, NULL, &err);
@@ -2501,7 +2411,7 @@ typedef struct {
 /* Items of schema, optionally filtered by one attribute, secrets loaded. */
 static GList *search_items(const SecretSchema *schema, const char *attr, const char *value) {
   GError *err = NULL;
-  SecretService *svc = secret_service_get_sync(SECRET_SERVICE_OPEN_SESSION, NULL, &err);
+  SecretService *svc = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
   if (!svc) { g_printerr("secret service: %s\n", err ? err->message : "?"); exit(1); }
   GHashTable *a = g_hash_table_new(g_str_hash, g_str_equal);
   if (attr) g_hash_table_insert(a, (gpointer)attr, (gpointer)value);
@@ -2529,12 +2439,17 @@ static void seed(const SecretSchema *schema, const char *label, const char *secr
     g_hash_table_insert(attrs, (gpointer)k, (gpointer)va_arg(ap, const char *));
   va_end(ap);
   GError *err = NULL;
-  if (!secret_password_storev_sync(schema, attrs, SECRET_COLLECTION_DEFAULT, label,
-                                   secret, NULL, &err)) {
+  SecretService *service = secret_service_get_sync(SECRET_SERVICE_NONE, NULL, &err);
+  SecretValue *value = secret_value_new(secret, -1, "text/plain");
+  gboolean stored = service && secret_service_store_sync(service, schema, attrs,
+      SECRET_COLLECTION_DEFAULT, label, value, NULL, &err);
+  secret_value_unref(value);
+  if (service) g_object_unref(service);
+  g_hash_table_unref(attrs);
+  if (!stored) {
     g_printerr("seed %s: %s\n", schema->name, err ? err->message : "?");
     exit(1);
   }
-  g_hash_table_unref(attrs);
 }
 
 /* Start gnome-keyring-daemon on the private bus (login keyring unlocked

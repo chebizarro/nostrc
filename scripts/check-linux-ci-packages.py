@@ -23,6 +23,7 @@ import tempfile
 
 DOCKERFILE = "scripts/linux-ci.Dockerfile"
 MIRRORED = (
+    ".github/workflows/grotto-ci.yml",
     ".github/workflows/groundhog-ci.yml",
     ".github/workflows/gnostr-appimage.yml",
     ".github/workflows/signet-ci.yml",
@@ -45,6 +46,12 @@ REQUIRED_GSTREAMER_RUNTIME = {
     "gstreamer1.0-plugins-good",
     "gstreamer1.0-plugins-bad",
     "gstreamer1.0-libav",
+}
+
+# G06 camera pairing is required, not an optional build that CI may omit.
+REQUIRED_GROTTO = REQUIRED_GSTREAMER_RUNTIME | {
+    "libzbar-dev", "libqrencode-dev", "libgstreamer1.0-dev",
+    "libgstreamer-plugins-base1.0-dev", "gjs",
 }
 
 PACKAGE_RE = re.compile(r"^[a-z0-9][a-z0-9.+-]+$")
@@ -83,6 +90,8 @@ def check(root):
     if not image:
         return [f"{DOCKERFILE}: no apt-get install packages found"]
     problems = []
+    for package in sorted(REQUIRED_GROTTO - image):
+        problems.append(f"{DOCKERFILE}: missing required signer package {package}")
     for package in sorted(REQUIRED_GSTREAMER_RUNTIME - image):
         problems.append(f"{DOCKERFILE}: missing required voice runtime package {package}")
     for workflow in MIRRORED:
@@ -94,6 +103,9 @@ def check(root):
         if workflow == ".github/workflows/groundhog-ci.yml":
             for package in sorted(REQUIRED_GSTREAMER_RUNTIME - workflow_packages):
                 problems.append(f"{workflow}: missing required voice runtime package {package}")
+        if workflow == ".github/workflows/grotto-ci.yml":
+            for package in sorted(REQUIRED_GROTTO - workflow_packages):
+                problems.append(f"{workflow}: missing required signer package {package}")
         missing = workflow_packages - image - set(NOT_BUILD_DEPS)
         for package in sorted(missing):
             problems.append(f"{workflow}: installs {package}, which {DOCKERFILE} does not")
@@ -101,7 +113,7 @@ def check(root):
 
 
 def self_test():
-    runtime = " ".join(sorted(REQUIRED_GSTREAMER_RUNTIME))
+    runtime = " ".join(sorted(REQUIRED_GROTTO))
     dockerfile = ("RUN apt-get update && apt-get install -y --no-install-recommends \\\n"
                   "    # a comment line inside the command\n"
                   "    build-essential libfoo-dev \\\n"
@@ -123,10 +135,14 @@ def self_test():
         (root / MIRRORED[0]).write_text(bad)
         found = check(root)
         assert found == [f"{MIRRORED[0]}: installs libnew-dev, which {DOCKERFILE} does not"], found
-        (root / MIRRORED[0]).write_text(good.replace("gstreamer1.0-libav", ""))
+        (root / MIRRORED[0]).write_text(good.replace("libzbar-dev", ""))
         found = check(root)
-        assert found == [f"{MIRRORED[0]}: missing required voice runtime package gstreamer1.0-libav"], found
+        assert found == [f"{MIRRORED[0]}: missing required signer package libzbar-dev"], found
         (root / MIRRORED[0]).write_text(good)
+        (root / MIRRORED[1]).write_text(good.replace("gstreamer1.0-libav", ""))
+        found = check(root)
+        assert found == [f"{MIRRORED[1]}: missing required voice runtime package gstreamer1.0-libav"], found
+        (root / MIRRORED[1]).write_text(good)
         (root / MIRRORED[1]).unlink()
         assert any("missing" in p for p in check(root))
     print("check-linux-ci-packages self-test passed")

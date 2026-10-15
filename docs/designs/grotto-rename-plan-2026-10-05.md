@@ -54,6 +54,30 @@ files, `gnostr_signer` 448/46, `GnostrSigner` 228/41, `org.gnostr.Signer`
    names its identity. Documented in `apps/grotto/README.md`,
    `gnome/groundhog/README.md` and the package descriptions.
 
+## Close-out reconciliation (G12, 2026-10-14)
+
+R1 (`nostrc-f7fm`) and R2 (`nostrc-exnn`) are closed; mechanical rename is in
+`7dfb8d433`. `src/legacy_dirs.c` still performs the guarded one-time XDG move
+and `signer/legacy-dirs` covers it. Stored key schema/service identifiers and
+wire/native-host names remain deliberately unchanged, not unfinished branding.
+Historical internal `Gnostr*` C types and `/org/gnostr/signer` template prefix
+are intentionally retained per the signer UX plan §5.11, rather than mechanically
+renamed again; the table above was the original target inventory.
+
+R3 (`nostrc-0ulk`) has the owner's painted icon (`64cc2c985`), canonical AppStream,
+real-template screenshots and explicit Preview labels in desktop/About. About and
+daemon version now consume the same 0.1.0 build version. R4 (`nostrc-wic1`) was
+closed on 2026-10-07; G08–G10 subsequently delivered the reviewed lifecycle,
+onboarding and adaptive UI, without adding --instance or exposing dormant hardware.
+`signer/desktop-contract`, layout and drift suites plus the old-name static guard
+are the source/automated close-out evidence.
+
+Rename/identity delivery is not release promotion. **Preview remains** until a
+separate owner decision after the full installed matrix. Real GNOME/Shell/camera/
+keyring/accessibility evidence is NOT RUN, tracked by G12's open acceptance beads
+in `docs/testing/grotto-manual-acceptance.md`. No developer keychain change is
+permitted to manufacture that evidence. Flatpak/AppImage gates remain open.
+
 ## Risks
 
 - **Template and type names.** GObject type names appear in Blueprint/`.ui`

@@ -40,7 +40,7 @@ static BunkerService *g_bunker = NULL;
 static GrottoControl *g_control = NULL;
 
 // Daemon version and build info
-#define DAEMON_VERSION "0.1.0"
+#define DAEMON_VERSION GROTTO_VERSION
 #define DAEMON_NAME "grotto-daemon"
 
 static void on_bus_acquired(GDBusConnection *connection, const gchar *name, gpointer user_data) {

@@ -1,0 +1,213 @@
+name: Grotto Preview CI
+
+on:
+  push:
+    paths: &inputs
+      - '.github/workflows/grotto-ci.yml'
+      - 'apps/grotto/**'
+      - 'nips/**'
+      - 'libnostr/**'
+      - 'libgo/**'
+      - 'nostr-gobject/**'
+      - 'nostr-gtk/**'
+      - 'third_party/**'
+      - 'components/**'
+      - 'cmake/**'
+      - 'CMakeLists.txt'
+      - 'VERSION_MANIFEST.md'
+      - 'flake.nix'
+      - 'packaging/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'gnome/seahorse/**'
+      - 'gnome/common/**'
+      - 'gnome/nostr-shell-extension/**'
+  pull_request:
+    paths: *inputs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: grotto-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signer:
+    name: ${{ matrix.runner }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, mode: native}
+          - {runner: ubuntu-latest, mode: native}
+          - {runner: ubuntu-24.04, mode: asan-ubsan}
+          - {runner: ubuntu-24.04, mode: tsan}
+    env:
+      G_SLICE: always-malloc
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      TSAN_OPTIONS: halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build, keyring, camera and display dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang cmake ninja-build meson pkg-config python3 python3-gi \
+            debhelper dpkg-dev fakeroot rsync \
+            libxml2-dev libgtk-4-dev libadwaita-1-dev libglib2.0-dev libsecret-1-dev \
+            libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
+            libssl-dev libcurl4-openssl-dev libsoup-3.0-dev libjson-glib-dev glib-networking \
+            libgit2-dev libsqlite3-dev libnsync-dev libsqlcipher-dev libqrencode-dev libzbar-dev \
+            gettext locales desktop-file-utils appstream xvfb xauth dbus-bin at-spi2-core \
+            gnome-keyring gjs adwaita-icon-theme librsvg2-common curl \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+          sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+          # Same pinned, checksum-verified compiler as scripts/linux-ci.Dockerfile.
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o /tmp/blueprint.tar.xz
+          echo '231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  /tmp/blueprint.tar.xz' | sha256sum -c
+          mkdir /tmp/blueprint
+          tar -xJf /tmp/blueprint.tar.xz --strip-components=1 -C /tmp/blueprint
+          meson setup /tmp/blueprint-build /tmp/blueprint --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C /tmp/blueprint-build
+          sudo meson install -C /tmp/blueprint-build
+          blueprint-compiler --version | grep -x 0.22.2
+          pkg-config --modversion gtk4 libadwaita-1 glib-2.0 zbar gstreamer-app-1.0 | tee dependency-versions.txt
+          cat /etc/os-release >> dependency-versions.txt
+          python3 scripts/check-linux-ci-packages.py --self-test
+          python3 scripts/test-grotto-quarantine.py
+      - name: Build an instrumented unmodified GLib for TSan only
+        if: matrix.mode == 'tsan'
+        run: |
+          bash scripts/grotto-tsan-runtime.sh "$RUNNER_TEMP/grotto-tsan" | tee tsan-runtime.log
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/grotto-tsan/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+      - name: Configure
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          flags=()
+          groundhog=OFF
+          case "$MODE" in
+            native) groundhog=ON ;;
+            asan-ubsan) flags+=(-DGNOSTR_ENABLE_ASAN=ON -DGNOSTR_ENABLE_UBSAN=ON) ;;
+            tsan) flags+=(-DGNOSTR_ENABLE_TSAN=ON -DNOSTR_USE_SYSTEM_NSYNC=OFF -DGO_TSAN_MPMC_SLOTS=ON
+              '-DCMAKE_C_FLAGS=-fsanitize=thread -fno-omit-frame-pointer'
+              '-DCMAKE_CXX_FLAGS=-fsanitize=thread -fno-omit-frame-pointer') ;;
+          esac
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_APPS=ON -DBUILD_GNOSTR_APP=OFF -DBUILD_GROUNDHOG="$groundhog" \
+            -DBUILD_TESTING=ON -DBUILD_SIGNER_TESTS=ON -DBUILD_NATIVE_HOST=ON \
+            -DNIP55L_SECRET_BACKEND=libsecret -DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service \
+            -DBUILD_RELAYD=OFF -DSIGNET_ENABLE=OFF "${flags[@]}"
+      - name: Build
+        run: cmake --build build --parallel 2
+      - name: Run signer and nip55l suites (no quarantines)
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          set -euo pipefail
+          regex='^(signer/|nip55l_|nostr_signer_webext_host_)'
+          required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/background signer/onboarding signer/clients signer/activity signer/ui-layout signer/desktop-contract signer/blueprint-drift signer/qr-scanner signer/trust-tiers signer/home-model nip55l_approval_service nip55l_dbus_contract'
+          case "$MODE" in
+            asan-ubsan)
+              required='signer/bunker signer/bunker-e2e signer/approval-controller signer/approval-integration signer/permissions signer/trust-tiers signer/onboarding signer/background signer/clients signer/activity nip55l_approval_service nip55l_cache_concurrency nip55l_dbus_contract'
+              regex="^($(echo "$required" | tr ' ' '|'))$" ;;
+            tsan)
+              required='signer/bunker signer/bunker-e2e nip55l_approval_service nip55l_cache_concurrency'
+              regex="^($(echo "$required" | tr ' ' '|'))$" ;;
+          esac
+          if [ "$MODE" = tsan ]; then
+            # CMake RPATH selects private instrumented GLib for our binaries.
+            # Do not inject it into uninstrumented system helpers (schema compiler).
+            ldd build/nips/nip55l/test_nip55l_approval_service | tee build/tsan-runtime-linkage.txt
+            grep -F "$RUNNER_TEMP/grotto-tsan/lib/libglib" build/tsan-runtime-linkage.txt
+            python3 - <<'PY'
+          import json
+          units = [u for u in json.load(open('build/compile_commands.json')) if '/third_party/nsync/' in u['file']]
+          assert units and all('-fsanitize=thread' in u['command'] for u in units), 'nsync must be instrumented too'
+          PY
+          fi
+          ctest --test-dir build -N -R "$regex" --show-only=json-v1 > build/selected-tests.json
+          python3 - "$required" <<'PY'
+          import json, sys
+          names = {t['name'] for t in json.load(open('build/selected-tests.json'))['tests']}
+          missing = set(sys.argv[1].split()) - names
+          assert not missing, f'Missing required suites: {sorted(missing)}'
+          PY
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' \
+            ctest --test-dir build -j1 -R "$regex" --no-tests=error --output-on-failure \
+              --output-junit "$PWD/build/signer-ctest.xml" | tee build/signer-ctest.log
+          ! grep -E '\*\*\*Skipped|Not Run' build/signer-ctest.log
+      - name: Go toolchain for the real nak baseline test
+        if: matrix.mode == 'native'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: false
+      - name: Build pinned nak (same interop peer as Groundhog CI)
+        if: matrix.mode == 'native'
+        run: |
+          go install github.com/fiatjaf/nak@v0.19.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/nak" --version
+      - name: Known desktop baseline tests (executed, named quarantine)
+        if: matrix.mode == 'native'
+        env:
+          BUILD_DIR: ${{ github.workspace }}/build
+          STATE_DIR: ${{ github.workspace }}/build/baseline
+          TEST_REGEX: '^(groundhog-nip29-service|groundhog-mls-service|groundhog-nip46-pair-nak)$'
+          JOBS: 1
+          CTEST_TIMEOUT: ''
+          NOSTRC_CTEST_QUARANTINE_PLATFORM: linux
+          NOSTRC_CTEST_QUARANTINE_FILE: ${{ github.workspace }}/scripts/grotto-ci-quarantine.tsv
+          SANITIZER_REPORTS: block
+          FORBID_PATTERN: '\*\*\*Skipped|Not Run'
+          TAIL_LINES: all
+        run: bash scripts/linux-gate-smoke.sh
+      - name: Build the alternate GUI frontend
+        if: matrix.mode == 'native'
+        run: |
+          meson setup build-meson apps/grotto -Dcmake_build_dir="$PWD/build"
+          meson compile -C build-meson
+      - name: Build and inspect the single native deb
+        if: matrix.mode == 'native'
+        run: |
+          mkdir -p /tmp/grotto-package/source
+          rsync -a --exclude=.git --exclude=/build --exclude=/build-meson --exclude=/debian \
+            ./ /tmp/grotto-package/source/
+          cp -a apps/grotto/packaging/debian /tmp/grotto-package/source/debian
+          (cd /tmp/grotto-package/source && dpkg-buildpackage -b -us -uc -j2)
+          mkdir build/packages
+          cp /tmp/grotto-package/grotto_*.deb build/packages/
+          dpkg-deb -c build/packages/grotto_*.deb | tee build/packages/contents.txt
+          ! ls /tmp/grotto-package/grotto-daemon_*.deb
+      - name: Shell extension tests
+        if: matrix.mode == 'native'
+        run: |
+          # Private-bus GJS unit, not live GNOME Shell acceptance.
+          sh gnome/nostr-shell-extension/tests/run-signer.sh
+      - name: Upload evidence (including failures and real-template screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grotto-${{ matrix.runner }}-${{ matrix.mode }}
+          path: |
+            dependency-versions.txt
+            tsan-runtime.log
+            build/tsan-runtime-linkage.txt
+            build/signer-ctest.*
+            build/selected-tests.json
+            build/Testing/Temporary/LastTest.log
+            build/baseline/
+            build/packages/
+            build/screenshots/
+          if-no-files-found: warn

@@ -1,101 +1,32 @@
-Grotto Debian Packaging
-==============================
+Grotto Debian Packaging (Preview 0.1.0)
+======================================
 
-This directory contains the Debian packaging files for grotto.
+Build from a complete nostrc monorepo checkout with initialized submodules.
+Use a clean source copy: the repository's root debian/ is a different,
+headless package recipe. Replace it only in that disposable copy:
 
-Building the Package
---------------------
+    cp -a apps/grotto/packaging/debian debian
+    dpkg-buildpackage -us -uc -b
 
-### Prerequisites
+Install build dependencies from debian/control in the target distribution.
+Supported floor is Ubuntu 24.04: GTK >=4.14, libadwaita >=1.5, GLib >=2.80.
+Do not claim Ubuntu 22.04/Debian 12 support. Debian stable and Fedora target
+acceptance is a separate owner decision. Build one deb per distro ABI; do not
+assume a 24.04 binary installs on 26.04.
 
-Install the build dependencies on Debian/Ubuntu:
+The single grotto_0.1.0-1_<arch>.deb includes GUI, daemon, both activation
+services, Control1 XML, private JSON runtime library, icons,
+schema, metainfo, opt-in autostart template, systemd user unit, network examples
+and native-host assets. The Shell extension is an optional recommendation.
+The old split grotto-daemon package is replaced, not newly emitted.
 
-    sudo apt install devscripts debhelper cmake ninja-build \
-        libgtk-4-dev libadwaita-1-dev libglib2.0-dev libjson-glib-dev \
-        libsecret-1-dev libsecp256k1-dev libsodium-dev libssl-dev \
-        libwebsockets-dev libnsync-dev libp11-kit-dev
+Build testing is OFF (a testing build must not be installed). Dedicated
+Grotto CI runs the real private-bus signer/nip55l suites separately. Native
+packaging uses CMake's apps/grotto component install. Do not substitute the
+AppImage desktop file or legacy appdata XML. No login or network access is
+automatically enabled; D-Bus activation starts the daemon on demand.
+See ../README.md and ../../DAEMON_DEPLOYMENT.md for source/installed procedures.
 
-### Building from Source
-
-1. Copy the debian directory to the source root:
-
-       cp -r apps/grotto/packaging/debian ./debian
-
-2. Build the package:
-
-       dpkg-buildpackage -us -uc -b
-
-   Or using debuild:
-
-       debuild -us -uc -b
-
-3. The resulting .deb files will be in the parent directory:
-   - grotto_0.1.0-1_amd64.deb
-   - grotto-daemon_0.1.0-1_amd64.deb
-
-### Building in a Clean Environment (Recommended)
-
-Using pbuilder or sbuild ensures all dependencies are properly declared:
-
-    # Create a chroot (once)
-    sudo pbuilder create --distribution bookworm
-
-    # Build the package
-    pdebuild
-
-### Installing
-
-    sudo dpkg -i grotto_0.1.0-1_amd64.deb grotto-daemon_0.1.0-1_amd64.deb
-    sudo apt install -f  # Install any missing dependencies
-
-Target Distributions
---------------------
-
-- Ubuntu 22.04 LTS (Jammy Jellyfish) and later
-- Debian 12 (Bookworm) and later
-
-These distributions provide GTK4 and libadwaita in their repositories.
-
-Package Structure
------------------
-
-The packaging creates two binary packages:
-
-1. **grotto**: The GTK4 GUI application
-   - /usr/bin/grotto
-   - Desktop file, icons, GSettings schema
-   - AppStream metadata
-
-2. **grotto-daemon**: The D-Bus/UDS daemon
-   - /usr/bin/grotto-daemon
-   - D-Bus service file
-   - Systemd user service
-
-Post-Installation
------------------
-
-After installation, enable the daemon for automatic startup:
-
-    systemctl --user enable --now grotto-daemon
-
-The daemon will also be automatically activated via D-Bus when applications
-request the org.nostr.Signer service.
-
-Lintian Checks
---------------
-
-Run lintian to check the package for common issues:
-
-    lintian --info --display-info grotto_*.deb
-
-Notes
------
-
-- The package does not enable the systemd user service by default.
-  Users must explicitly enable it with `systemctl --user enable`.
-
-- The GSettings schema is compiled in the postinst script.
-
-- The D-Bus service file is configured for session bus activation.
-
-- Man pages are included for both binaries.
+Run lintian on the resulting package and follow docs/testing/grotto-manual-acceptance.md
+before promotion. A successful package build is not installed-GNOME acceptance.
+Flatpak/AppImage remain experimental with all five signer release gates open.

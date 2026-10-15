@@ -168,11 +168,10 @@ differ.
   Flatpak talks to a natively installed Grotto for Grotto-backed accounts**;
   remote-only accounts do not need Grotto. There is **no Grotto Flatpak**,
   and the **AppImage waits** for that design.
-- **First run needs Grotto open by hand (nostrc-sh5h).** The daemon rejects
-  any request that needs approval unless the Grotto app is already running,
-  and the app started as a D-Bus service does not listen for requests. This
-  is independent of packaging and is the main obstacle to a first run that
-  just works.
+- **Historical first-run blocker (nostrc-sh5h), superseded by G08.** The
+  daemon now summons the windowless approver and it subscribes before catch-up.
+  Source/private-bus proof is not installed stock-GNOME acceptance: that remains
+  open in nostrc-u6v55.9.1 and the G12 manual matrix.
 - **One deb per release.** A deb built on Ubuntu 24.04 does not install on
   26.04 or Debian 13: secp256k1's library package is `libsecp256k1-1`,
   `-6` and `-2` respectively. The release builds a deb for each (version
@@ -198,6 +197,44 @@ messages remain readable when a phone is offline, but new decryptions and
 signing wait for the signer. Before rolling back to an alpha without NIP-46
 support, select a Grotto account or read-only mode; a remote-only selection
 cannot be used by the older binary.
+
+## Grotto G12 reconciliation (2026-10-14)
+
+Grotto is **Preview 0.1.0**, independently versioned, unreleased. One `grotto`
+deb contains GUI + daemon and recommends `gnome-shell-extension-nostr`. Native
+recipes must satisfy GTK ≥4.14, libadwaita ≥1.5 and GLib ≥2.80; historical RHEL 9 /
+Fedora 38 targets cannot be inferred compatible. Debian stable/Fedora installed
+acceptance is still open. Required camera dependencies are zbar, libqrencode and
+GStreamer core/video/appsink + base/good runtime capture plugins. The dedicated
+CI and shared local image/package checker enforce those dependencies.
+
+Component recipe: `apps/grotto/packaging/debian`; desktop bundle recipe remains
+`packaging/debian-desktop` (same single Grotto package). RPM and standalone Arch
+recipes now use canonical CMake component installs and a complete local source
+archive, not fictitious tags or the AppImage desktop file. Nix has one 0.1.0
+GUI+daemon output with the actual wrapped executable attested; its old daemon
+output aliases it. Each recipe still needs its own native install acceptance.
+Canonical assets include desktop file, both activation services, metainfo,
+painted/symbolic icons, schema, Control1 XML, opt-in autostart template, native
+user unit and explicit bunker/headless network drop-ins. The base unit remains
+localhost-only; no SIGHUP reload, no automatic remote or login enablement.
+
+**Sandbox gate outcome: NOT ACCEPTED.** Grotto Flatpak/AppImage remain experimental,
+not release-supported, until all five gates pass with positive and negative
+installed-system evidence: host caller attestation, trusted approver identification,
+Secret-portal custody, activation ownership and browser-host behavior. Do not relax
+path/device/inode checks. Existing manifests are not proof. AppImage bundling
+`nostrc-h3kh` stays deferred; Snap only on demand. A Groundhog Flatpak using a
+native signer is a different distribution path, not acceptance of a sandboxed signer.
+
+AppStream says **Grotto (Preview)**, signing is not publication, same-user malware
+is outside the boundary, and explicit key-management UI can transiently handle
+keys. Screenshots under `apps/grotto/data/screenshots` are real UI templates with
+disposable fixture data from `signer/ui-layout`, not installed-session evidence.
+The [manual acceptance handoff](../testing/grotto-manual-acceptance.md) covers all
+three Ubuntu sessions, camera, systemd, Shell 46/50 and a11y, with open bead owners.
+See [release readiness](../reviews/grotto-release-readiness-2026-10-14.md).
+Removing Preview requires a separate owner decision after all promotion gates.
 
 ## Risks
 

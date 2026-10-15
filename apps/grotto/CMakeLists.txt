@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 project(grotto)
 
 set(GROTTO_VERSION "0.1.0" CACHE STRING "Application version for packaging")
+# About and daemon output consume the same component version as packaging.
+add_compile_definitions(GROTTO_VERSION="${GROTTO_VERSION}")
 
 include(GNUInstallDirs)
 

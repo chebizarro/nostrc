@@ -350,8 +350,9 @@ if (BUILD_TESTING)
   if (GIO_FOUND AND ENABLE_NIP55L)
     add_executable(test_nip55l_dbus_contract
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_signer_dbus_contract.c)
+    include(${CMAKE_SOURCE_DIR}/cmake/NostrcTestBus.cmake)
     target_link_libraries(test_nip55l_dbus_contract PRIVATE
-      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO nostr_nip55l_glib)
+      nostr_nip55l_core nostr nostr_nip44_core PkgConfig::GIO nostr_nip55l_glib nostrc-test-bus)
     # signer_caller.h: the test derives its own principal the daemon's way.
     target_include_directories(test_nip55l_dbus_contract PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/src/glib)

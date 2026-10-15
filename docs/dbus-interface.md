@@ -1,10 +1,10 @@
-# GNostr Signer D-Bus Interface
+# Grotto Signer D-Bus Interface (Preview)
 
 This document describes the D-Bus interfaces exposed by `grotto-daemon` for secure Nostr key management and cryptographic operations.
 
 ## Overview
 
-The GNostr Signer provides a secure D-Bus service for:
+Grotto provides the post-login session D-Bus service for:
 
 - **Key Management**: Secure storage and retrieval of Nostr private keys
 - **Event Signing**: Cryptographic signing of Nostr events (NIP-01)
@@ -21,7 +21,7 @@ Client signing/encryption APIs never return private keys. The trusted Grotto man
 | **Bus Name** | `org.nostr.Signer` |
 | **Object Path** | `/org/nostr/signer` |
 | **Interface** | `org.nostr.Signer` |
-| **Bus Type** | Session bus (default) or System bus (`--system` flag) |
+| **Bus Type** | Session bus; system-bus/greeter deployment is not a supported Grotto mode |
 
 ## Grotto management: `org.nostr.Grotto.Control1` (G04)
 
@@ -43,8 +43,9 @@ cache or environment fallbacks.
 Every sensitive read and mutation uses a **fresh** `signer_caller_is_approver()`
 check (verified installed path + device/inode, or attested approval-UI app).
 Grotto consumes the nip55l implementation headers with PRIVATE build includes;
-they are installed under `libexec/grotto/private/nip55l`, not advertised as a
-public authorization API. The UID-only-bus limitation below also applies here.
+a full library/development install places them under
+`libexec/grotto/private/nip55l`, not a public authorization API. The native
+app-only runtime package does not need or ship those implementation headers. The UID-only-bus limitation below also applies here.
 Two owner-confirmed exceptions (2026-10-12): **any same-session, same-UID caller**
 may read the coarse, identity-free `GetStatus`, or call **`SetPaused(true)`**.
 `SetPaused(false)` still requires the approver. This lets the untrusted Shell
@@ -66,7 +67,7 @@ steps; always use the returned flags rather than inferring them from a version.
 A GUI must feature-detect Control1/version/capabilities: absence or an older
 version means a read-only **Update Grotto** state, not legacy mutation fallback.
 The daemon keeps the preserved legacy client/approval contract for older UIs.
-G04 establishes the daemon side; GUI version-skew presentation belongs to G07/G10.
+The GUI implements owner/epoch/revision checks and read-only version-skew presentation; see `signer/home-model` and `signer/ui-layout`. These automated checks do not replace installed-desktop acceptance.
 
 ### Methods
 
@@ -95,22 +96,23 @@ are rejected by GDBus using the canonical XML before dispatch.
 | `RotateIdentity` | `(identity:s) → s` | Create and store a mnemonic-backed successor, save an old-key-signed migration announcement, return the successor npub. No publication, redirection, permission copy or old-key removal; pause-generation fenced |
 | `RemoveIdentity` | `(identity:s, typed_confirmation:s) → b` | Full canonical npub must exactly match the typed confirmation; mismatches → `ConfirmationRequired`, unresolved/pending/executing requests or active key-management work → `IdentityBusy`; custody and default change only after successful deletion |
 | `GetIdentityMigration` | `(identity:s) → s` | Read the saved public signed migration event for an exact old npub; user/application chooses whether to publish it |
-| `ConfigureBunker` | `(config:a{sv}) → a{sv}` | Authenticated typed unavailable response; G06 implements durable desired config + live apply |
-| `CreatePairing` | `(identity:s, label:s) → a{sv}` | Authenticated typed unavailable response; G05/G06 implement account-bound, single-use pairing |
-| `AcceptConnectURI` | `(uri:s, identity:s) → s` | Authenticated typed unavailable response; G06 validates/reviews/acks, no relay contact now |
-| `CancelPairing` | `(pairing_id:s) → ()` | Authenticated typed unavailable response; G06 invalidates token + request |
-| `ResetBunkerEndpoint` | `() → ()` | Authenticated typed unavailable response; G05/G06 rotate transport custody and revoke pairing |
+| `ConfigureBunker` | `(config:a{sv}) → a{sv}` | Validate a full candidate, atomically persist bunker.ini, apply live relay differences; return status, not a fabricated readiness receipt |
+| `CreatePairing` | `(identity:s, label:s) → a{sv}` | Resolve a signable identity; issue a bounded single-use bunker offer only while LISTENING |
+| `AcceptConnectURI` | `(uri:s, identity:s) → s` | Require enabled remote signing, validate and pin identity, create connect review; supplied relays are contacted only after consent |
+| `CancelPairing` | `(pairing_id:s) → ()` | Invalidate the token and pending pairing request |
+| `ResetBunkerEndpoint` | `() → ()` | Stop remote work, revoke remote pairings/permissions and replace transport custody; explicit first setup or destructive reset, never silent regeneration |
 | `ListActivity` | `(before_sequence:t, limit:u) → aa{sv}` | Newest first; 0 cursor = latest, otherwise strictly before cursor; limit 0 = empty, >100 → `InvalidInput` |
 | `ClearActivity` | `() → ()` | UI confirms first; atomic clear, preserving sequence high-water mark |
 
-Bunker unavailable responses consult the actual `BunkerService`: **`NotReady`**
-when absent/stopped/starting/error, **`NotSupported`** when its current state is
-RUNNING but the management feature is not implemented. They never return a fake
-pairing URI, claim durable config or call the legacy nonfunctional connect path.
-Each dispatcher branch names its G05/G06 owner. The prospective `bunker.ini` v1
-(`enabled`, `relays`, `allowed-methods`) is G06-owned: G04 does not manufacture or
-accept it through an unavailable ConfigureBunker method. Runtime state still
-comes from the existing service; it does not claim protocol-proven LISTENING.
+Runtime state comes from the real `BunkerService`, not desired configuration or
+websocket-send success. `bunker.ini` v1 is daemon-owned (`enabled`, `relays`,
+`allowed-methods`); higher/invalid versions fail closed. A new offer requires
+EOSE-backed LISTENING. An accepted client URI persists consent as pending until
+the encrypted acknowledgement receives relay `OK true`; rejection, timeout or
+shutdown does not become paired admission. Reset/configuration races return typed
+unavailability rather than a fake offer. See [pairing and native network policy](../apps/grotto/docs/pairing.md).
+The default native unit intentionally cannot reach remote relays without its
+explicit bunker/headless network drop-in.
 
 `ExportIdentity(format="mnemonic")` reads only `org.nostr.Grotto.Mnemonic`, a
 separate Secret Service/Keychain custody role keyed by npub, and verifies its
@@ -1067,7 +1069,7 @@ the unit in a user namespace that hides callers' `/proc`).
 
 ```python
 #!/usr/bin/env python3
-"""Example: Sign a Nostr event using GNostr Signer D-Bus interface."""
+"""Example: Sign a Nostr event using Grotto Signer D-Bus interface."""
 
 from pydbus import SessionBus
 import json
@@ -1090,7 +1092,7 @@ except Exception as e:
 # Create an unsigned event
 event = {
     "kind": 1,
-    "content": "Hello from GNostr Signer!",
+    "content": "Hello from Grotto Signer!",
     "tags": [],
     "created_at": int(time.time()),
     "pubkey": ""  # Will be filled by signer
@@ -1128,7 +1130,7 @@ except Exception as e:
 
 ```python
 #!/usr/bin/env python3
-"""Example: Listen for approval requests from GNostr Signer."""
+"""Example: Listen for approval requests from Grotto Signer."""
 
 from pydbus import SessionBus
 from gi.repository import GLib
@@ -1169,7 +1171,7 @@ loop.run()
 ```javascript
 #!/usr/bin/env node
 /**
- * Example: Sign a Nostr event using GNostr Signer D-Bus interface.
+ * Example: Sign a Nostr event using Grotto Signer D-Bus interface.
  */
 
 const dbus = require('dbus-native');
@@ -1231,7 +1233,7 @@ service.getInterface(
 
 ```c
 /**
- * Example: Sign a Nostr event using GNostr Signer D-Bus interface.
+ * Example: Sign a Nostr event using Grotto Signer D-Bus interface.
  * Compile: gcc -o sign_event sign_event.c $(pkg-config --cflags --libs gio-2.0)
  */
 
@@ -1319,7 +1321,7 @@ int main(int argc, char *argv[]) {
 
 ```c
 /**
- * Example: Listen for approval signals from GNostr Signer.
+ * Example: Listen for approval signals from Grotto Signer.
  * Compile: gcc -o listen_signals listen_signals.c $(pkg-config --cflags --libs gio-2.0)
  */
 
@@ -1414,7 +1416,7 @@ int main(int argc, char *argv[]) {
 
 ```bash
 #!/bin/bash
-# Example: Interact with GNostr Signer using gdbus CLI
+# Example: Interact with Grotto Signer using gdbus CLI
 
 # Get public key
 gdbus call --session \
@@ -1509,7 +1511,7 @@ The dependency-purity gate (`scripts/check-authd-dep-purity.sh`) enforces that
 
 ## Related Documentation
 
-- [GNostr Signer README](/apps/gnostr-signer/README.md)
+- [Grotto Signer README](/apps/grotto/README.md)
 - [Architecture Overview](/apps/gnostr-signer/ARCHITECTURE.md)
 - [Daemon Deployment Guide](/apps/gnostr-signer/DAEMON_DEPLOYMENT.md)
 - [NIP-04 Migration Guide](/docs/NIP04_MIGRATION.md)

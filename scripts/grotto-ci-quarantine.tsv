@@ -1,0 +1,8 @@
+# platform<TAB>exact CTest name<TAB>owning bead
+# Tests still execute. Only their known non-sanitizer failure is nonblocking.
+linux	groundhog-nip29-service	nostrc-q1974
+linux	groundhog-mls-service	nostrc-pf4gd
+linux	groundhog-nip46-pair-nak	nostrc-otxhq
+macos	test_nostr_gtk_widget_churn_leaks	nostrc-x6arp
+# nfnw's macOS sanitizer/fork failure is NOT a Linux signer exclusion.
+macos-asan	nip55l_dbus_contract	nostrc-nfnw

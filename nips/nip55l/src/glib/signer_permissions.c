@@ -85,7 +85,7 @@ static gboolean valid_row(Row *r) {
       strlen(r->principal) > 4096 || strlen(r->identity) > 4096 || !r->operation || !*r->operation ||
       strlen(r->operation) > 64 || !g_utf8_validate(r->operation, -1, NULL) ||
       (!known_operation(r->operation) && strcmp(r->decision, "deny")) ||
-      (strcmp(r->decision, "allow") && strcmp(r->decision, "deny") && strcmp(r->decision, "review"))) return FALSE;
+      (strcmp(r->decision, "allow") && strcmp(r->decision, "deny") && g_strcmp0(r->decision, "review"))) return FALSE;
   gboolean event = !strcmp(r->operation, "event");
   if (r->kind < -1 || r->kind > G_MAXUINT16 || (!event && r->kind != -1)) return FALSE;
   if (event && r->kind == -1 && !strcmp(r->decision, "allow")) return FALSE;
@@ -95,7 +95,7 @@ static gboolean valid_row(Row *r) {
   if (!strcmp(r->decision, "allow") && !strcmp(r->identity, "*") &&
       strcmp(r->operation, "get_relays") && !inherited) return FALSE;
   if (!*r->identity && strcmp(r->operation, "get_relays") && strcmp(r->operation, "ping") && strcmp(r->operation, "connect")) return FALSE;
-  if (!strcmp(r->decision, "review") && (!r->created || !r->legacy || !*r->legacy)) return FALSE;
+  if (!g_strcmp0(r->decision, "review") && (!r->created || !r->legacy || !*r->legacy)) return FALSE;
   return TRUE;
 }
 static gchar *row_id(Row *r) {
