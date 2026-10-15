@@ -28,6 +28,7 @@ pkgs="build-essential cmake ninja-build pkg-config git ca-certificates python3-p
   libsecret-1-dev libssl-dev libpeas-2-dev libjson-glib-dev
   libsoup-3.0-dev libsqlite3-dev libqrencode-dev libsecp256k1-dev
   libsodium-dev libcurl4-openssl-dev
+  libzbar-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
   librsvg2-dev libgdk-pixbuf-2.0-dev adwaita-icon-theme"
 [ "$fpm" = 1 ] && pkgs="$pkgs ruby ruby-dev rubygems rpm"
 [ "$appimage" = 1 ] && pkgs="$pkgs wget file patchelf desktop-file-utils xvfb xauth"
