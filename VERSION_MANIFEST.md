@@ -39,7 +39,11 @@ files already declare a version.
   columns unchanged.
 
 - nostrc-0wggt: Groundhog attachment drag-and-drop routing and feedback fix
-  (one target across the conversation and entry). PATCH-class fix folded into
+  (one target across the conversation and entry), including the macOS Finder
+  follow-up: defer the GTK value read until drop so it runs in the native drop
+  handler's main context, and keep attachment loading on the application
+  context; add diagnostic logging and a non-installed drop probe.
+  PATCH-class fix folded into
   the unreleased 0.12.0 feature wave (0.12.0-alpha7 is the feature freeze);
   no further bump. No installed API, storage, configuration, or wire-format
   change. Other components: no bump. Release columns unchanged.
