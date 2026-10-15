@@ -63,20 +63,34 @@ RUN for element in appsrc appsink decodebin audioconvert audioresample \
 RUN apt-get update && apt-get install -y --no-install-recommends debhelper dpkg-dev fakeroot \
  && rm -rf /var/lib/apt/lists/*
 # Grotto's GUI-only LSan exceptions name static third-party functions, not modules
-# (nostrc-ydtdf, nostrc-ojtu3). Install matching symbols, never replace runtime libs.
-RUN arch="$(dpkg --print-architecture)" \
- && for spec in f/fontconfig:libfontconfig1 g/gtk4:libgtk-4-1 \
-      g/glib2.0:libglib2.0-0t64 p/pango1.0:libpangoft2-1.0-0; do \
-      source="${spec%%:*}"; package="${spec#*:}"; \
+# (nostrc-ydtdf, nostrc-ojtu3). Keep in sync with grotto-ci.yml's symbol step.
+RUN set -eu; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ubuntu-dbgsym-keyring ; \
+    for suite in noble noble-updates noble-proposed; do \
+      echo "deb [signed-by=/usr/share/keyrings/ubuntu-dbgsym-keyring.gpg] http://ddebs.ubuntu.com $suite main universe"; \
+    done > /etc/apt/sources.list.d/ddebs.list; \
+    apt-get update; \
+    gtk_version="$(dpkg-query -W -f='${Version}' libgtk-4-1)"; \
+    if ! apt-cache show "libgtk-4-1-dbgsym=$gtk_version" >/dev/null 2>&1; then \
+      # Noble updates' 4.14.5+ds-0ubuntu0.10 has no amd64 dbgsym. \
+      gtk_version="$(apt-cache policy libgtk-4-1-dbgsym | awk '/Candidate:/ {print $2}')"; \
+      test -n "$gtk_version"; \
+      test "$gtk_version" != '(none)'; \
+      echo "WARNING: Installed GTK has no matching dbgsym; using GTK $gtk_version with matching symbols for sanitizer coverage"; \
+      apt-get install -y --no-install-recommends --no-remove --allow-downgrades \
+        "libgtk-4-1=$gtk_version" "libgtk-4-common=$gtk_version" \
+        "libgtk-4-dev=$gtk_version" "libgtk-4-bin=$gtk_version" \
+        "gir1.2-gtk-4.0=$gtk_version" "libgtk-4-media-gstreamer=$gtk_version"; \
+    fi; \
+    set --; \
+    for package in libfontconfig1 libgtk-4-1 libglib2.0-0t64 libpangoft2-1.0-0; do \
       version="$(dpkg-query -W -f='${Version}' "$package")"; \
-      curl --fail --location --retry 3 \
-        "https://ddebs.ubuntu.com/ubuntu/pool/main/$source/${package}-dbgsym_${version}_${arch}.ddeb" \
-        --output /tmp/grotto-dbgsym.ddeb \
-      && test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Package)" = "$package-dbgsym" \
-      && test "$(dpkg-deb -f /tmp/grotto-dbgsym.ddeb Version)" = "$version" \
-      && dpkg-deb --extract /tmp/grotto-dbgsym.ddeb / \
-      && rm /tmp/grotto-dbgsym.ddeb || exit 1; \
-    done
+      echo "Required symbols: $package-dbgsym=$version"; \
+      set -- "$@" "$package-dbgsym=$version"; \
+    done; \
+    apt-get install -y --no-install-recommends --no-remove "$@"; \
+    rm -rf /var/lib/apt/lists/*
 # /gate-lock: scripts/linux-gate.sh mounts a volume there whose lock lets one
 # gate test run (smoke or sanitizer) at a time.
 RUN useradd -m -u 1001 ci && install -d -o ci -g ci /build /work /gate-lock
