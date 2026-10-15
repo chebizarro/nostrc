@@ -164,6 +164,8 @@ endif()
 
 # Main GTK4 application (UI shell)
 file(GLOB APP_SRC CONFIGURE_DEPENDS src/*.c)
+# Only the daemon hosts the shared approval gate; the GUI uses Control1.
+list(REMOVE_ITEM APP_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/bunker_service.c")
 # Explicit production UI inventory: dormant pages/sheets cannot re-enter via a glob.
 set(APP_UI_SRC
   src/ui/approval_dialog.c src/ui/lock-screen.c src/ui/onboarding-assistant.c
@@ -219,11 +221,12 @@ target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/libnost
 target_link_libraries(${APP_SIGNER_BIN} PRIVATE PkgConfig::GTK4 PkgConfig::GLIB PkgConfig::ADWAITA PkgConfig::JSON_GLIB nostr_nip55l_core nip04)
 # Ensure library directories are passed to linker (macOS fix)
 target_link_directories(${APP_SIGNER_BIN} PRIVATE ${GLIB_LIBRARY_DIRS})
-# Link NIP-46 core for bunker service
+# Link NIP-46 core for the GUI's protocol helpers.
 if (TARGET nostr_nip46_core)
-  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core nostr_nip55l_glib)
-target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
+  target_link_libraries(${APP_SIGNER_BIN} PRIVATE nostr_nip46_core)
 endif()
+# Header-only consent-kind data is shared with the review UI.
+target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/nips/nip55l/src/glib)
 # Link NIP-19 for bech32 encoding
 if (TARGET nip19)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE nip19)
@@ -333,9 +336,8 @@ if (UNIX AND NOT APPLE)
   target_link_libraries(${APP_SIGNER_BIN} PRIVATE m)
 endif()
 
-# Daemon providing DBus (55L) and UDS (5F) fallback (skeleton now)
-# Skip on Windows — daemon requires NIP55L (DBus), NIP5F (Unix sockets), sys/un.h
-if(NOT WIN32)
+# The daemon and bunker require the real approval gate and Unix socket transport.
+if(TARGET nostr_nip55l_glib AND TARGET nostr_nip5f_core)
 option(ENABLE_TCP_IPC "Enable TCP IPC backend in grotto-daemon" OFF)
 
 # Control1 embeds this exact canonical XML; updates trigger reconfiguration.
@@ -370,8 +372,7 @@ target_link_libraries(grotto-daemon PRIVATE nostr_nip55l_glib nostr_nip5f_core n
 
 # NIP-46 bunker mode (--bunker). bunker_service.c and its GTK-free closure
 # (settings, accounts, secret store, sessions, rate limiter, history) build
-# into a static library for the headless daemon; the GUI keeps compiling its
-# own copy through APP_SRC.
+# into a static library only for the headless daemon, which owns the gate.
 add_library(grotto_bunker_core STATIC
   src/bunker_service.c src/pairing_uri.c src/accounts_store.c src/client_session.c
   src/event_history.c src/gn-signer-error.c src/key_provider.c
@@ -436,7 +437,7 @@ endif()
 if (ENABLE_TCP_IPC)
   target_compile_definitions(grotto-daemon PRIVATE GNOSTR_ENABLE_TCP_IPC=1)
 endif()
-endif() # NOT WIN32 — skip daemon
+endif() # approval gate and Unix socket transport
 
 # Compile GSettings schema for development/testing
 set(SIGNER_SCHEMA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data)
@@ -466,12 +467,16 @@ target_sources(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common/gn-sta
 target_include_directories(${APP_SIGNER_BIN} PRIVATE ${CMAKE_SOURCE_DIR}/gnome/common)
 
 install(TARGETS ${APP_SIGNER_BIN} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-if(NOT WIN32)
+if(TARGET grotto-daemon)
   install(TARGETS grotto-daemon RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 if(NOT WIN32)
   include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/NostrcPrivateJsonLib.cmake)
-  nostrc_install_private_json(grotto ${APP_SIGNER_BIN} grotto-daemon)
+  set(_grotto_install_targets ${APP_SIGNER_BIN})
+  if(TARGET grotto-daemon)
+    list(APPEND _grotto_install_targets grotto-daemon)
+  endif()
+  nostrc_install_private_json(grotto ${_grotto_install_targets})
   # With Groundhog in the same build nostr_gobject is shared; Grotto links it,
   # so it ships a private copy beside libnostr-json (same RUNPATH).
   if (NOT APPLE AND TARGET nostr_gobject)
@@ -487,6 +492,7 @@ endif()
 
 # GSettings schema
 install(FILES data/org.nostr.Grotto.gschema.xml DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/glib-2.0/schemas)
+if(TARGET grotto-daemon)
 # DBus activation (session). grotto is the single owner of
 # org.nostr.Signer.service; nips/nip55l installs its own copy only with
 # ENABLE_NIP55L_STANDALONE_ACTIVATION, and the two must never coexist.
@@ -507,6 +513,7 @@ if(BUILD_TESTING)
                    -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
   set_tests_properties(grotto_dbus_service_configured PROPERTIES LABELS "signer;packaging")
 endif()
+endif() # grotto-daemon
 # The GUI's own activation file (nostrc-tw2z). org.nostr.Grotto.desktop sets
 # DBusActivatable=true, so GDesktopAppInfo / Shell launch it by activating the
 # bus name equal to the desktop-file id; without this file that silently fails.
@@ -525,8 +532,8 @@ if(BUILD_TESTING)
                    -P ${CMAKE_SOURCE_DIR}/cmake/CheckDbusServiceFile.cmake)
   set_tests_properties(grotto_app_dbus_service_configured PROPERTIES LABELS "signer;packaging")
 endif()
-# Systemd user unit (daemon) — Unix only
-if(NOT WIN32)
+# Systemd user unit only when the daemon is built.
+if(TARGET grotto-daemon)
   install(FILES daemon/packaging/systemd/user/grotto-daemon.service
             DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/systemd/user)
   install(FILES
@@ -561,13 +568,11 @@ foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
           OPTIONAL)
 endforeach()
 
-# Update icon cache on install if available (optional)
+# Update only after the icons exist, respecting staged/relocated installs.
 find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
 if (GTK_UPDATE_ICON_CACHE)
-  add_custom_target(update-icon-cache ALL
-    COMMAND ${GTK_UPDATE_ICON_CACHE} -f -t ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor || true
-    COMMENT "Updating icon cache"
-  )
+  install(CODE "execute_process(COMMAND \"${GTK_UPDATE_ICON_CACHE}\" -f -t
+    \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${ICON_INSTALL_ROOT}\")")
 endif()
 
 # ==============================================================================
