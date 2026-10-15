@@ -15,7 +15,7 @@
         # must stay OFF (a testing build refuses to install). From a git
         # checkout build with `nix build '.?submodules=1#groundhog'`: the
         # nostrdb and nsync submodules are part of the source.
-        desktopVersion = "0.12.0-alpha7";
+        desktopVersion = "0.12.0-alpha8";
         desktopCmakeFlags = [
           "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
           "-DCMAKE_INSTALL_LIBDIR=lib"

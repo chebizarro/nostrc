@@ -1,3 +1,32 @@
+groundhog (0.12.0~alpha8-1) unstable; urgency=medium
+
+  * The version shown in About and by --version now carries the alpha
+    label (0.12.0-alpha8), so testers can report the exact build.
+  * Allow local network (Preferences > Network, off by default):
+    pictures, previews and files may load from addresses on your own
+    network.
+  * Drag and drop a file or image onto the message entry or the
+    conversation to attach it (fixed on macOS); a highlight while
+    hovering and an explanation when files cannot be sent there.
+  * Delete for Me and Delete for Everyone in encrypted and NIP-29
+    groups; deletion requests that arrive before their message are
+    kept; encrypted-group deletions and reactions are retried.
+  * Encrypted groups: reactions are not offered after leaving; polls
+    and votes are resumed after a restart; unsent chat in an ended
+    group is marked Not sent; Remove old invitation keys in Group
+    Invitations.
+  * NIP-29 groups kept in the account's group list, with Restore
+    Groups.
+  * One-click start when picking a single contact in New Message.
+  * Issue form: typed uploads, Upload as my account, maintainer tags,
+    Retry as My Account for refused files.
+  * Quotes and reposts read as text everywhere; tidier card for an
+    unavailable note; link-preview text has the short menu.
+  * Groundhog no longer hangs when the session bus does not answer.
+  * Even sidebar row padding; bubble-menu focus crash fixed.
+
+ -- Biz <chebizarro@protonmail.com>  Wed, 15 Oct 2026 12:00:00 +0000
+
 groundhog (0.12.0~alpha7-1) unstable; urgency=medium
 
   * Shared nostr-gtk components ported from gnostr: Markdown, link
