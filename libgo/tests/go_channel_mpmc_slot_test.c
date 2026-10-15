@@ -17,8 +17,7 @@
  * The white-box cases below put a slot into exactly the state a preempted
  * peer leaves it in (claimed, not yet published/released), so they are
  * deterministic.  They are skipped when the library is built without MPMC
- * slots.  The API-level cases run in both modes, sized for the single-lock
- * ring's one-empty-slot discipline when slots are off.
+ * slots.  The API-level cases run in both modes with the same logical capacity.
  *
  * Capacity 1 (review F1): the slot protocol needs a physical ring of at least
  * two slots.  With one, "ticket t published" and "slot free for ticket t+1"
@@ -26,8 +25,7 @@
  * claimed but not yet read: the element was lost, slot_seq went backwards and
  * the channel wedged (try paths failed forever, a blocking receive spun at
  * 100% CPU and ignored close).  Cases 6 and 7 cover it.  Case 6 is
- * white-box (MPMC only); case 7 runs wherever a capacity-1 channel can hold
- * an element, which the index-derived single-lock ring cannot (nostrc-ecz3).
+ * white-box (MPMC only); case 7 runs in both modes.
  */
 #include <pthread.h>
 #include <stdatomic.h>
@@ -58,10 +56,7 @@ static int mpmc_enabled(GoChannel *c) { return c->slot_seq != NULL; }
 /* Physical slots.  With MPMC slots this can exceed the logical capacity. */
 static size_t ring_slots(GoChannel *c) { return c->mask + 1; }
 
-/* How many elements a fresh channel of @capacity actually holds.  MPMC slots
- * and the size-counted single-lock ring hold @capacity; the index-derived
- * single-lock ring (DERIVE_SIZE, what TSAN builds use) keeps one slot empty
- * and holds @capacity - 1 -- none at all for capacity 1 (nostrc-ecz3). */
+/* How many elements a fresh channel of @capacity actually holds. */
 static unsigned channel_holds(size_t capacity) {
     GoChannel *c = go_channel_create(capacity);
     unsigned n = 0;
@@ -364,7 +359,6 @@ static void *cap1_try_consumer(void *p) {
 /* 1 try_send producer x 1 blocking go_channel_receive consumer, then close:
  * every sent token arrives and the consumer returns promptly on close. */
 static void test_capacity1_try_send_blocking_receive(void) {
-    if (channel_holds(1) != 1) { printf("7a: skipped (capacity-1 ring holds nothing; nostrc-ecz3)\n"); return; }
 
     Cap1Stress s = { .c = go_channel_create(1) };
     pthread_t prod, cons;
@@ -390,7 +384,6 @@ static void test_capacity1_try_send_blocking_receive(void) {
 /* 2 try_send producers x 2 try_receive consumers, then drain: nothing lost,
  * and the channel still works afterwards (it used to wedge in <2000 ops). */
 static void test_capacity1_try_try(void) {
-    if (channel_holds(1) != 1) { printf("7b: skipped (capacity-1 ring holds nothing; nostrc-ecz3)\n"); return; }
 
     Cap1Stress s = { .c = go_channel_create(1) };
     pthread_t prod[2], cons[2];
@@ -545,7 +538,35 @@ static void test_mixed_stress(void) {
     printf("5: ok\n");
 }
 
+/* nostrc-ecz3: logical capacity must not depend on the ring implementation.
+ * Repeated fill/drain cycles cross the physical wrap boundary; a partial
+ * refill checks occupancy with nonzero, differently wrapped in/out indices. */
+static void test_exact_capacity(void) {
+    const size_t capacities[] = { 0, 1, 2, 4, 8, 16 };
+    for (size_t k = 0; k < sizeof(capacities) / sizeof(capacities[0]); ++k) {
+        size_t capacity = capacities[k] ? capacities[k] : 1;
+        CHECK(channel_holds(capacities[k]) == capacity, "exact logical capacity");
+        GoChannel *c = go_channel_create(capacities[k]);
+        CHECK(c != NULL && c->capacity == capacity, "capacity preserved");
+        for (unsigned lap = 0; lap < 64; ++lap) {
+            void *v = NULL;
+            for (size_t i = 0; i < capacity; ++i)
+                CHECK(go_channel_try_send(c, V(i + 1)) == 0, "fill every slot");
+            CHECK(go_channel_try_send(c, V(999)) != 0, "reject over capacity");
+            CHECK(go_channel_try_receive(c, &v) == 0 && v == V(1), "take first");
+            CHECK(go_channel_try_send(c, V(capacity + 1)) == 0, "refill freed slot");
+            CHECK(go_channel_try_send(c, V(999)) != 0, "refill is full");
+            for (size_t i = 1; i <= capacity; ++i)
+                CHECK(go_channel_try_receive(c, &v) == 0 && v == V(i + 1), "FIFO drain");
+            CHECK(go_channel_try_receive(c, &v) != 0, "empty after drain");
+        }
+        go_channel_unref(c);
+    }
+    printf("exact_capacity: ok\n");
+}
+
 int main(void) {
+    test_exact_capacity();
     test_try_receive_skips_nothing();
     test_try_send_waits_for_release();
     test_blocking_receive_waits_for_publish(0);
