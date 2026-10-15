@@ -526,7 +526,7 @@ static void click_review(GrottoApprovalController *controller, GApplication *app
     guint alert_frames = 0;
     gtk_widget_add_tick_callback(GTK_WIDGET(alert), count_frame, &alert_frames, NULL);
     WAIT(alert_frames >= 2);
-    GtkWidget *confirm = find_button(GTK_WIDGET(alert), "Change trust level");
+    GtkWidget *confirm = find_button(GTK_WIDGET(alert), "Change Trust Level");
     g_assert_nonnull(confirm);
     g_signal_emit_by_name(confirm, "clicked");
     WAIT(trust_changes > before);
