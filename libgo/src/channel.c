@@ -394,19 +394,11 @@ static inline size_t go_channel_occupancy(const GoChannel *c) {
     return in - out;
 #else
     size_t in = c->in, out = c->out;
-    if (in >= out) return in - out; // 0..capacity-1
-    return c->capacity - (out - in);
+    return (in - out) & c->mask;
 #endif
 }
 static inline int go_channel_is_full(const GoChannel *c) {
-#if NOSTR_CHANNEL_MPMC_SLOTS
-    // Full when occupancy reaches capacity
     return go_channel_occupancy(c) >= c->capacity;
-#else
-    // One-empty-slot discipline: full if next_in would equal out
-    size_t next_in = (c->in + 1) & c->mask;
-    return next_in == c->out;
-#endif
 }
 #endif
 
@@ -700,8 +692,7 @@ int __attribute__((hot)) go_channel_try_send(GoChannel *chan, void *data) {
     // Lockless full check to avoid mutex on obvious failure
     size_t in_a = atomic_load_explicit(&chan->in, memory_order_acquire);
     size_t out_a = atomic_load_explicit(&chan->out, memory_order_acquire);
-    size_t next_in_a = (in_a + 1) & chan->mask;
-    if (next_in_a == out_a) {
+    if (((in_a - out_a) & chan->mask) >= chan->capacity) {
         atomic_fetch_sub_explicit(&chan->active_waiters, 1, memory_order_release);
         nostr_metric_counter_add("go_chan_try_send_failures", 1);
         return -1;
@@ -1019,7 +1010,16 @@ GoChannel *go_channel_create(size_t capacity) {
     size_t ring = 2;
     while (ring < cap) ring <<= 1;
 #else
-    size_t ring = cap;
+    /* Keep an empty physical slot so equal wrapped indices mean empty,
+     * without sacrificing any of the logical capacity (nostrc-ecz3). */
+    size_t ring = 1;
+    while (ring <= cap) {
+        if (ring > SIZE_MAX / 2) {
+            free(chan);
+            return NULL;
+        }
+        ring <<= 1;
+    }
 #endif
     // Align the ring buffer to cache line size to reduce cross-line traffic
     _Atomic(void*) *buf = NULL;

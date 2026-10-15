@@ -163,6 +163,8 @@ jobs:
               regex="^($(echo "$required" | tr ' ' '|'))$" ;;
           esac
           if [ "$MODE" = tsan ]; then
+            # nostrc-wls0w: only the pinned GLib internal file-monitor flags race.
+            export TSAN_OPTIONS="${TSAN_OPTIONS}:suppressions=$PWD/apps/grotto/tests/tsan.supp"
             # CMake RPATH selects private instrumented GLib for our binaries.
             # Do not inject it into uninstrumented system helpers (schema compiler).
             ldd build/nips/nip55l/test_nip55l_approval_service | tee build/tsan-runtime-linkage.txt

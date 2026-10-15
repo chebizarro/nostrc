@@ -41,6 +41,40 @@ real_home(void)
   return pw->pw_dir;
 }
 
+typedef struct {
+  GMutex start;
+  const gchar *expected;
+} HomeLookup;
+
+static gpointer
+lookup_home_thread(gpointer data)
+{
+  HomeLookup *lookup = data;
+  g_mutex_lock(&lookup->start);
+  g_mutex_unlock(&lookup->start);
+  for (guint i = 0; i < 1000; ++i)
+    g_assert_cmpstr(nostrc_profile_guard_real_home(), ==, lookup->expected);
+  return NULL;
+}
+
+static void
+test_concurrent_real_home(void)
+{
+  /* This test runs before any other use of this translation unit's cache.
+   * The expected home comes from passwd, not the isolated HOME. */
+  g_autofree gchar *expected = g_strdup(real_home());
+  HomeLookup lookup = { .expected = expected };
+  GThread *threads[8];
+  g_mutex_init(&lookup.start);
+  g_mutex_lock(&lookup.start);
+  for (guint i = 0; i < G_N_ELEMENTS(threads); ++i)
+    threads[i] = g_thread_new("profile-home", lookup_home_thread, &lookup);
+  g_mutex_unlock(&lookup.start);
+  for (guint i = 0; i < G_N_ELEMENTS(threads); ++i)
+    g_thread_join(threads[i]);
+  g_mutex_clear(&lookup.start);
+}
+
 static void
 test_rules(void)
 {
@@ -180,6 +214,7 @@ int
 main(int argc, char *argv[])
 {
   g_test_init(&argc, &argv, NULL);
+  g_test_add_func("/profile-guard/concurrent-real-home", test_concurrent_real_home);
   g_test_add_func("/profile-guard/rules", test_rules);
   g_test_add_func("/profile-guard/environment", test_environment);
   g_test_add_func("/profile-guard/secret-store", test_secret_store);
