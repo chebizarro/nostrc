@@ -853,7 +853,8 @@ enum { PROP_0, PROP_CONVERSATION, PROP_COMPACT, PROP_SETTINGS, N_PROPS };
 static GParamSpec *props[N_PROPS];
 
 enum { SIGNAL_RETRY_REQUESTED, SIGNAL_UNLOCK_REQUESTED, SIGNAL_OPEN_URI, SIGNAL_COPY_TEXT,
-       SIGNAL_PREVIEW_CHANGED, SIGNAL_RENDER_CHANGED, SIGNAL_PUBLIC_REFERENCE_ACTION, N_SIGNALS };
+       SIGNAL_PREVIEW_CHANGED, SIGNAL_RENDER_CHANGED, SIGNAL_ACTIONS_CHANGED,
+       SIGNAL_PUBLIC_REFERENCE_ACTION, N_SIGNALS };
 static guint signals[N_SIGNALS];
 
 #ifdef GROUNDHOG_CONVERSATION_OPEN_PROBE
@@ -3017,7 +3018,7 @@ gh_conversation_view_can_delete_message(GhConversationView *self, GhMessage *mes
   if (!gh_message_is_self(message) || gh_message_get_withdrawn(message))
     return FALSE;
   /* Not where nothing can be sent any more (a group left: nostrc-knbkr). */
-  if (self->can_ask_func && !self->can_ask_func(self->conversation, self->can_ask_data))
+  if (!gh_conversation_view_can_ask(self))
     return FALSE;
   switch (gh_message_get_status(message)) {
   case GH_MESSAGE_STATUS_NONE:
@@ -3120,6 +3121,21 @@ gh_conversation_view_set_delete_func(GhConversationView *self,
   self->delete_destroy = destroy;
 }
 
+gboolean
+gh_conversation_view_can_ask(GhConversationView *self)
+{
+  g_return_val_if_fail(GH_IS_CONVERSATION_VIEW(self), FALSE);
+  return self->conversation &&
+    (!self->can_ask_func || self->can_ask_func(self->conversation, self->can_ask_data));
+}
+
+void
+gh_conversation_view_actions_changed(GhConversationView *self)
+{
+  g_return_if_fail(GH_IS_CONVERSATION_VIEW(self));
+  g_signal_emit(self, signals[SIGNAL_ACTIONS_CHANGED], 0);
+}
+
 void
 gh_conversation_view_set_can_ask_func(GhConversationView *self,
                                       GhConversationViewCanAskFunc func,
@@ -3131,6 +3147,7 @@ gh_conversation_view_set_can_ask_func(GhConversationView *self,
   self->can_ask_func = func;
   self->can_ask_data = user_data;
   self->can_ask_destroy = destroy;
+  gh_conversation_view_actions_changed(self);
 }
 
 /* Menu and Shift+F10 on a message (its list item, its text or a button in
@@ -3232,7 +3249,7 @@ action_react(GtkWidget *widget, const char *name, GVariant *parameter)
 {
   GhConversationView *self = GH_CONVERSATION_VIEW(widget);
   (void)name;
-  if (!self->react_func || !self->conversation)
+  if (!self->react_func || !gh_conversation_view_can_ask(self))
     return;
   const gchar *rumor_id = NULL, *emoji = NULL;
   gboolean add = FALSE;
@@ -3588,6 +3605,8 @@ gh_conversation_view_class_init(GhConversationViewClass *klass)
     G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_PREVIEW_CHANGED] = g_signal_new("preview-changed", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
+  signals[SIGNAL_ACTIONS_CHANGED] = g_signal_new("actions-changed", G_TYPE_FROM_CLASS(klass),
+    G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 0);
   signals[SIGNAL_RENDER_CHANGED] = g_signal_new("render-changed", G_TYPE_FROM_CLASS(klass),
     G_SIGNAL_RUN_LAST, 0, NULL, NULL, NULL, G_TYPE_NONE, 1, G_TYPE_STRING);
   signals[SIGNAL_PUBLIC_REFERENCE_ACTION] = g_signal_new("public-reference-action",

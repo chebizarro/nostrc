@@ -454,6 +454,27 @@ arrange_meta(GhMessageRow *self, gboolean outgoing, gboolean force)
   }
 }
 
+static gboolean
+can_react(GhMessageRow *self)
+{
+  return !self->view || gh_conversation_view_can_ask(self->view);
+}
+
+static void
+update_reaction_actions(GhMessageRow *self)
+{
+  gboolean allowed = can_react(self);
+  gtk_widget_set_visible(GTK_WIDGET(self->react_button), allowed);
+  if (self->reaction_bar)
+    gtk_widget_set_sensitive(GTK_WIDGET(self->reaction_bar), allowed);
+  if (!allowed) {
+    if (self->picker)
+      gtk_popover_popdown(GTK_POPOVER(self->picker));
+    if (self->menu)
+      gtk_popover_popdown(GTK_POPOVER(self->menu));
+  }
+}
+
 static void
 sync_reaction_bar(GhMessageRow *self)
 {
@@ -473,6 +494,7 @@ sync_reaction_bar(GhMessageRow *self)
     gtk_box_remove(self->meta_box, GTK_WIDGET(self->reaction_bar));
     self->reaction_bar = NULL;
   }
+  update_reaction_actions(self);
 }
 
 static void
@@ -1453,6 +1475,8 @@ ensure_picker(GhMessageRow *self)
 static void
 show_picker(GhMessageRow *self, gdouble x, gdouble y)
 {
+  if (!can_react(self))
+    return;
   ensure_picker(self);
   if (x >= 0 && y >= 0) {
     GdkRectangle rect = { (int)x, (int)y, 1, 1 };
@@ -1854,6 +1878,9 @@ gh_message_row_root(GtkWidget *widget)
                           G_CONNECT_SWAPPED);
   g_signal_connect_object(view, "render-changed", G_CALLBACK(on_render_changed), self,
                           G_CONNECT_SWAPPED);
+  g_signal_connect_object(view, "actions-changed", G_CALLBACK(update_reaction_actions), self,
+                          G_CONNECT_SWAPPED);
+  update_reaction_actions(self);
   refresh_body_markup(self);
   refresh_preview_uri(self);
   update_preview(self);
@@ -1871,6 +1898,7 @@ gh_message_row_unroot(GtkWidget *widget)
   if (self->view) {
     g_signal_handlers_disconnect_by_func(self->view, on_preview_changed, self);
     g_signal_handlers_disconnect_by_func(self->view, on_render_changed, self);
+    g_signal_handlers_disconnect_by_func(self->view, update_reaction_actions, self);
     g_clear_pointer(&self->compact_binding, g_binding_unbind);
     self->view = NULL;
   }
@@ -2169,6 +2197,8 @@ action_add_reaction(GtkWidget *widget, const char *name, GVariant *parameter)
   (void)name;
   (void)parameter;
   GhMessageRow *self = GH_MESSAGE_ROW(widget);
+  if (!can_react(self))
+    return;
   /* From the react button: the picker points at it, not at the whole
    * message (W33, owner). */
   graphene_rect_t bounds;

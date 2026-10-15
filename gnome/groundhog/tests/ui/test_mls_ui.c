@@ -2455,6 +2455,7 @@ test_gui_left_group_delete(void)
   g_autofree gchar *member = bubble_menu(window, "Bob's own words", "member-menu");
   g_assert_nonnull(strstr(member, "_Delete for Me…"));
   g_assert_nonnull(strstr(member, "Delete for _Everyone…"));
+  g_assert_nonnull(strstr(member, "Add _Reaction…"));
 
   g_autoptr(GError) error = NULL;
   g_assert_true(gh_mls_service_leave(bob->service, gb, &error));
@@ -2463,6 +2464,7 @@ test_gui_left_group_delete(void)
   g_autofree gchar *left = bubble_menu(window, "Bob's own words", "left-menu");
   g_assert_nonnull(strstr(left, "_Delete for Me…"));
   g_assert_null(strstr(left, "Delete for _Everyone…"));
+  g_assert_null(strstr(left, "Add _Reaction…"));
 
   /* Delete for Me still works there. */
   GhMessage *own = find_message(bob, room, "Bob's own words");

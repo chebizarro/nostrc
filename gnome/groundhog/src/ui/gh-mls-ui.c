@@ -113,6 +113,7 @@ sync_unreadable(MlsUi *ui)
   GhConversationView *view = view_of(ui);
   if (!view)
     return;
+  gh_conversation_view_actions_changed(view);
   gh_conversation_view_set_decrypt_pending(
     view, ui->shown && gh_mls_group_get_decrypt_pending(ui->shown));
   /* A change refused for good is said as such, by its recorded cause,
@@ -623,9 +624,10 @@ gh_mls_ui_attach_if_enabled(GhWindow *window, const GhMlsUiConfig *config)
   return TRUE;
 }
 
-/* nostrc-knbkr: Delete for Everyone only where the group still takes a
- * message: not one the account left or is leaving (or that ended, or whose
- * service is not running); every other conversation is not ours to judge. */
+/* nostrc-knbkr, nostrc-vsrnf: Delete for Everyone and reactions only where
+ * the group still takes a message: not one the account left or is leaving
+ * (or that ended, or whose service is not running); every other
+ * conversation is not ours to judge. */
 static gboolean
 can_ask(GhConversation *conversation, gpointer data)
 {
