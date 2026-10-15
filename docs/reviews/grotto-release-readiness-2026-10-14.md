@@ -7,7 +7,9 @@ decision after all final gates, not an automatic consequence of G00–G13 delive
 No release tag, merge or release publication is authorized by this report.
 
 Scope: `grotto/g12-packaging-ci`, base `5ef33513c` (G00–G11 + G13 integration),
-plus this G12 change. Independent review reports under `docs/reviews/` are
+plus G12 implementation checkpoint `304d1da0` and its evidence follow-up. G12
+remains **OPEN**, blocked on `.14.3` / `.14.4`, not complete or promoted.
+Independent review reports under `docs/reviews/` are
 commit-scoped critiques; their original REQUEST CHANGES verdicts are not silently
 rewritten as approvals. Follow-up commits are listed in the plan §10 execution
 index. This report is a release-evidence evaluation, not that independent critique.

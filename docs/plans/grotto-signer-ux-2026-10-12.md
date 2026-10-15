@@ -597,7 +597,7 @@ Commits below are in the `5ef33513c` integration tree; review documents under
 | G10 | `3f80ac819`, `5ef33513c` | Home/Connect/templates/i18n/focus + review fixes; stock GTK kept, Launchpad filing remains nostrc-9n2n9 |
 | G11 | `823925632`, `295a029b4` | Bounded ephemeral flow consent + invalidation/fences; required-kind policy preserved |
 | G13 | `b9842a32b`, `673ed12a1`, `0988d8156` | Shell module + review fixes, single unreleased 0.5.0 bump; live 46/50 NOT RUN (.13.1) |
-| G12 | This packaging/CI/release-evidence change (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; no promotion |
+| G12 | `304d1da0` packaging/CI/release-evidence checkpoint (nostrc-u6v55.14) | Native recipes, dedicated workflow, AppStream assets and manual handoff; .14.1 owns unrun matrix; G12 remains open for blocking sanitizer .14.3/.14.4, no promotion |
 
 **Atomic landing assessment:** local/socket call sites and the shared gate landed
 with G02; scoped migration/evaluation/legacy revoke with G03; async core/wrapper/
