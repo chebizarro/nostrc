@@ -568,11 +568,15 @@ foreach(sz IN ITEMS 16 24 32 48 64 128 256 512)
           OPTIONAL)
 endforeach()
 
-# Update only after the icons exist, respecting staged/relocated installs.
+# Refresh the icon cache after the icons exist, for direct installs only:
+# staged installs (DESTDIR: deb, rpm, Flatpak) must not ship an
+# icon-theme.cache (dh_missing rejects it; the packages' triggers build it).
 find_program(GTK_UPDATE_ICON_CACHE gtk-update-icon-cache)
 if (GTK_UPDATE_ICON_CACHE)
-  install(CODE "execute_process(COMMAND \"${GTK_UPDATE_ICON_CACHE}\" -f -t
-    \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${ICON_INSTALL_ROOT}\")")
+  install(CODE "if(NOT DEFINED ENV{DESTDIR})
+    execute_process(COMMAND \"${GTK_UPDATE_ICON_CACHE}\" -f -t
+      \"\${CMAKE_INSTALL_PREFIX}/${ICON_INSTALL_ROOT}\")
+  endif()")
 endif()
 
 # ==============================================================================
