@@ -130,7 +130,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # All pass: one run, nothing about reruns.
 FIRST_FAIL="" RERUN_FAIL="" gate > "$tmp/out" 2>&1 || fail "a clean run failed"
-grep -q 'smoke tests passed, 3 run' "$tmp/out" || fail "no pass line"
+grep -q 'smoke tests gate succeeded; 3 selected, ' "$tmp/out" || fail "no pass line"
 [ "$(grep -c '^CTEST' "$tmp/trace")" -eq 1 ] || fail "a clean run reran"
 ! grep -q RERUN "$tmp/out" || fail "a clean run reported a rerun"
 initial_gate="$(head -1 "$tmp/state/gate-history/gates")"
@@ -207,7 +207,7 @@ grep -q 'OUTPUT-OF-beta-first' "$tmp/out" || fail "the first failure's output wa
 grep -q -- '---- beta: output of its failed run (2 lines' "$tmp/out" || fail "no output header"
 grep -q 'RERUN: failed in the parallel run, passed alone: beta' "$tmp/out" || fail "rerun not surfaced"
 grep -q 'beta needed a rerun in 1 of the last 2 gate(s)' "$tmp/out" || fail "rerun not counted"
-grep -q 'smoke tests passed after a rerun' "$tmp/out" || fail "no pass-after-rerun line"
+grep -q 'smoke tests gate succeeded after rerun; ' "$tmp/out" || fail "no pass-after-rerun line"
 grep -qF -- "-R ^(beta)\$" "$tmp/trace" || fail "the rerun did not select beta by name"
 kept="$(ls "$tmp/state/gate-history/"*-first-run.log)"
 grep -q 'OUTPUT-OF-beta-first' "$kept" || fail "the first run's log was not kept"
@@ -276,7 +276,7 @@ sanitizers() {
         GATE="Sanitizer gate" SUITE="sanitizer tests" gate
 }
 FIRST_FAIL="" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1 || fail "a clean sanitizer run failed"
-grep -q 'Sanitizer gate: sanitizer tests passed, 3 run' "$tmp/out" || fail "no sanitizer pass line"
+grep -q 'Sanitizer gate: sanitizer tests gate succeeded; 3 selected, ' "$tmp/out" || fail "no sanitizer pass line"
 ! grep -q '^XVFB' "$tmp/trace" || fail "the sanitizer set ran under a display (the job has none)"
 ! grep -q -- '--timeout' "$tmp/trace" || fail "the sanitizer set overrode CTest's timeout"
 grep -qF -- '-R ^(alpha|beta|gamma)$' "$tmp/trace" || fail "TEST_REGEX did not select"
@@ -309,7 +309,7 @@ grep -q 'OUTPUT-OF-alpha-first' "$tmp/out" || fail "the other failure's output w
 FIRST_FAIL="gamma" RERUN_FAIL="" sanitizers > "$tmp/out" 2>&1 || fail "a sanitizer-set flake failed the gate"
 grep -q 'RERUN: failed in the parallel run, passed alone: gamma' "$tmp/out" || fail "sanitizer rerun not surfaced"
 grep -q 'gamma needed a rerun in 1 of the last' "$tmp/out" || fail "sanitizer rerun not counted"
-grep -q 'sanitizer tests passed after a rerun' "$tmp/out" || fail "no sanitizer pass-after-rerun line"
+grep -q 'sanitizer tests gate succeeded after rerun; ' "$tmp/out" || fail "no sanitizer pass-after-rerun line"
 # ... but a report in the rerun blocks.
 if FIRST_FAIL="gamma" RERUN_FAIL="gamma" RERUN_REPORT="gamma" sanitizers > "$tmp/out" 2>&1; then
     fail "a report in the rerun passed the gate"
@@ -408,7 +408,7 @@ PERF
     TEST_REGEX= SMOKE_EXCLUDE="$emulation_exclude" PERF_FAIL=1 real_gate > "$tmp/out" 2>&1 ||
         { cat "$tmp/out"; fail "real CTest: emulation exclusions failed the gate"; }
     [ "$(wc -l < "$real/build/perf-count" | tr -d ' ')" = 1 ] || fail "real CTest: excluded perf ran"
-    grep -q 'tests passed, 2 run' "$tmp/out" || fail "real CTest: emulation functional tests did not run"
+    grep -q 'gate succeeded; 2 selected, ' "$tmp/out" || fail "real CTest: emulation functional tests did not run"
     if PERF_FAIL=1 real_gate > "$tmp/out" 2>&1; then
         fail "real CTest: a failing serial perf test passed"
     fi

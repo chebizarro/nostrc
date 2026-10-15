@@ -243,7 +243,7 @@ absent '^PARALLEL_RERUN$' "$tmp/trace"
 grep -q 'DUMMY-OUTPUT-first' "$tmp/flaky-output"
 grep -q '!! macOS gate: RERUN: failed in the parallel run, passed alone: dummy' "$tmp/flaky-output"
 grep -qE 'dummy needed a rerun in 1 of the last [0-9]+ gate\(s\)' "$tmp/flaky-output"
-grep -q 'macOS gate: tests passed after a rerun' "$tmp/flaky-output"
+grep -q 'macOS gate: tests gate succeeded after rerun; ' "$tmp/flaky-output"
 # Each test's result is printed as it comes (W25 review N4).
 grep -q '^==> macOS gate: running tests, 3 at a time' "$tmp/flaky-output"
 grep -q '^   1/1 Test #1: dummy .*Failed' "$tmp/flaky-output"
