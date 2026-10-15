@@ -3444,34 +3444,69 @@ test_day_format(void)
 
 /* ---- screenshots (opt-in evidence) ------------------------------------------------------ */
 
+static void
+on_shot_contents(GdkPaintable *paintable, GskRenderNode **node)
+{
+  if (*node)
+    return;
+  GtkSnapshot *snapshot = gtk_snapshot_new();
+  gdk_paintable_snapshot(paintable, snapshot,
+                         gdk_paintable_get_intrinsic_width(paintable),
+                         gdk_paintable_get_intrinsic_height(paintable));
+  *node = gtk_snapshot_free_to_node(snapshot);
+}
+
+static gboolean
+shot_node_ready(gpointer data)
+{
+  return *(GskRenderNode **)data != NULL;
+}
+
+/* A queued redraw clears GTK's cached node even on a mapped, allocated
+ * widget. Observe the paintable before requesting a draw and capture its
+ * nonempty contents on invalidation, not merely on a frame-clock tick.
+ * Keep that node: a later redraw must not invalidate the screenshot. */
+static GskRenderNode *
+shot_node(GtkWidget *widget)
+{
+  g_assert_true(gtk_widget_get_mapped(widget));
+  g_autoptr(GdkPaintable) paintable = gtk_widget_paintable_new(widget);
+  GskRenderNode *node = NULL;
+  gulong handler = g_signal_connect(paintable, "invalidate-contents",
+                                    G_CALLBACK(on_shot_contents), &node);
+  gtk_widget_queue_draw(widget);
+  spin_until(shot_node_ready, &node);
+  g_signal_handler_disconnect(paintable, handler);
+  return node;
+}
+
 /* The window as drawn, plus an open popover (a surface of its own) where
  * it sits, like a screenshot of the screen. */
 static void
 save_png_path(GtkWidget *window, GtkWidget *popover, const char *path)
 {
+  g_autoptr(GskRenderNode) window_node = shot_node(window);
+  g_autoptr(GskRenderNode) popover_node =
+    popover && gtk_widget_get_mapped(popover) ? shot_node(popover) : NULL;
   GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
   int width = gdk_surface_get_width(surface);
   int height = gdk_surface_get_height(surface);
   double wx = 0, wy = 0;
   gtk_native_get_surface_transform(GTK_NATIVE(window), &wx, &wy);
   GtkSnapshot *snapshot = gtk_snapshot_new();
-  g_autoptr(GdkPaintable) window_paintable = gtk_widget_paintable_new(window);
   gtk_snapshot_save(snapshot);
   gtk_snapshot_translate(snapshot, &GRAPHENE_POINT_INIT(wx, wy));
-  gdk_paintable_snapshot(window_paintable, snapshot, gtk_widget_get_width(window),
-                         gtk_widget_get_height(window));
+  gtk_snapshot_append_node(snapshot, window_node);
   gtk_snapshot_restore(snapshot);
-  if (popover && gtk_widget_get_mapped(popover)) {
+  if (popover_node) {
     GdkSurface *popup = gtk_native_get_surface(GTK_NATIVE(popover));
     double px = 0, py = 0;
     gtk_native_get_surface_transform(GTK_NATIVE(popover), &px, &py);
-    g_autoptr(GdkPaintable) popover_paintable = gtk_widget_paintable_new(popover);
     gtk_snapshot_save(snapshot);
     gtk_snapshot_translate(snapshot,
                            &GRAPHENE_POINT_INIT(gdk_popup_get_position_x(GDK_POPUP(popup)) + px,
                                                 gdk_popup_get_position_y(GDK_POPUP(popup)) + py));
-    gdk_paintable_snapshot(popover_paintable, snapshot, gtk_widget_get_width(popover),
-                           gtk_widget_get_height(popover));
+    gtk_snapshot_append_node(snapshot, popover_node);
     gtk_snapshot_restore(snapshot);
   }
   g_autoptr(GskRenderNode) node = gtk_snapshot_free_to_node(snapshot);
