@@ -2138,7 +2138,9 @@ provider_drop(GtkWidget *destination, GdkContentProvider *provider)
   g_assert_nonnull(target);
   g_assert_cmpint(gtk_event_controller_get_propagation_phase(GTK_EVENT_CONTROLLER(target)),
                   ==, GTK_PHASE_CAPTURE);
-  g_assert_true(gtk_drop_target_get_preload(target));
+  /* Native macOS mouse-up runs a different main context from enter.
+   * Do not start a read on enter that the drop context cannot dispatch. */
+  g_assert_false(gtk_drop_target_get_preload(target));
   g_autoptr(GdkContentFormats) formats = gdk_content_provider_ref_formats(provider);
   GType type = gdk_content_formats_match_gtype(gtk_drop_target_get_formats(target), formats);
   if (type == G_TYPE_INVALID)
@@ -2159,12 +2161,16 @@ typedef struct {
   guint files;
   GFile *last;
   guint textures;
+  GMainContext *context; /* borrowed, effective context seen by the consumer */
 } DropSink;
 
 static void
 sink_file(GhComposer *composer G_GNUC_UNUSED, GFile *file, DropSink *sink)
 {
   sink->files++;
+  sink->context = g_main_context_get_thread_default();
+  if (!sink->context)
+    sink->context = g_main_context_default();
   g_set_object(&sink->last, file);
 }
 
@@ -2173,6 +2179,9 @@ sink_texture(GhComposer *composer G_GNUC_UNUSED, GdkTexture *texture G_GNUC_UNUS
              DropSink *sink)
 {
   sink->textures++;
+  sink->context = g_main_context_get_thread_default();
+  if (!sink->context)
+    sink->context = g_main_context_default();
 }
 
 static GdkContentProvider *
@@ -2337,6 +2346,46 @@ test_attachment_drops(void)
   g_assert_true(provider_drop(view, image));
   g_assert_cmpuint(sink.textures, ==, 1);
   assert_composer_text(composer, "caption");
+
+  /* Empty/native read results must be diagnosable refusals, not signals
+   * carrying NULL into the attachment UI. Plain text remains unclaimed. */
+  g_autoptr(GdkContentProvider) empty = file_provider(files, 0, FALSE);
+  g_assert_false(provider_drop(entry, empty));
+  g_autoptr(GdkContentProvider) no_list =
+    gdk_content_provider_new_typed(GDK_TYPE_FILE_LIST, NULL);
+  g_assert_false(provider_drop(entry, no_list));
+  g_autoptr(GdkContentProvider) no_file = gdk_content_provider_new_typed(G_TYPE_FILE, NULL);
+  g_assert_false(provider_drop(entry, no_file));
+  g_autoptr(GdkContentProvider) no_texture =
+    gdk_content_provider_new_typed(GDK_TYPE_TEXTURE, NULL);
+  g_assert_false(provider_drop(view, no_texture));
+  GValue text_value = G_VALUE_INIT;
+  g_value_init(&text_value, G_TYPE_STRING);
+  g_value_set_static_string(&text_value, "plain text");
+  gboolean accepted = TRUE;
+  g_signal_emit_by_name(attachment_drop_at(entry), "drop", &text_value, 10.0, 10.0, &accepted);
+  g_assert_false(accepted);
+  g_value_unset(&text_value);
+  g_assert_cmpuint(sink.files, ==, 5);
+  g_assert_cmpuint(sink.textures, ==, 1);
+  assert_composer_text(composer, "caption");
+
+  /* GTK 4.24's macOS performDragOperation pushes a private context. File
+   * metadata/read callbacks started by the consumer must not be stranded
+   * there when the native handler finishes and stops iterating it. */
+  g_autoptr(GMainContext) native_context = g_main_context_new();
+  g_main_context_push_thread_default(native_context);
+  g_assert_true(provider_drop(entry, list));
+  g_assert_true(sink.context == g_main_context_default());
+  g_assert_true(g_main_context_get_thread_default() == native_context);
+  g_assert_true(provider_drop(entry, single));
+  g_assert_true(sink.context == g_main_context_default());
+  g_assert_true(provider_drop(view, image));
+  g_assert_true(sink.context == g_main_context_default());
+  g_assert_true(g_main_context_get_thread_default() == native_context);
+  g_main_context_pop_thread_default(native_context);
+  g_assert_cmpuint(sink.files, ==, 7);
+  g_assert_cmpuint(sink.textures, ==, 2);
 
   g_clear_object(&sink.last);
   fixture_clear(&f);

@@ -15,6 +15,9 @@ if (CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
 endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GROUNDHOG_DEPS REQUIRED IMPORTED_TARGET gtk4>=4.14 libadwaita-1>=1.5)
+# Manual native drag diagnostic, explicitly built and never installed.
+add_executable(groundhog-drop-probe EXCLUDE_FROM_ALL tools/drop-probe.c)
+target_link_libraries(groundhog-drop-probe PRIVATE PkgConfig::GROUNDHOG_DEPS)
 # The QR flow is the primary Amber pairing path; never ship a GUI without it.
 pkg_check_modules(GROUNDHOG_QRENCODE REQUIRED IMPORTED_TARGET libqrencode)
 find_program(GLIB_COMPILE_RESOURCES glib-compile-resources)

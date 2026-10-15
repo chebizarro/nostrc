@@ -782,8 +782,10 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
   g_return_if_fail(GH_IS_WINDOW(window));
   g_return_if_fail(G_IS_FILE(file));
   GhAttachmentUi *ui = ui_of(GTK_WIDGET(window));
-  if (!ui)
+  if (!ui) {
+    g_debug("groundhog-attachment-ui: refused file, attachment UI unavailable");
     return;
+  }
   /* Only a file on this device (charter §4.2): a dropped or pasted web
    * address arrives as an https:// GFile, and GVfs would fetch it directly
    * from the user's IP address, outside GhNetHttp and Tor, before the send
@@ -792,6 +794,7 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
   g_autofree gchar *path = g_file_is_native(file) ? g_file_get_path(file) : NULL;
   if (!g_file_is_native(file) || gh_attachment_path_on_remote_mount(path)) {
     /* A GVfs FUSE path (W25, as gh-mls-media.h): the same remote location. */
+    g_debug("groundhog-attachment-ui: refused non-local file");
     toast(ui, _("Only files on this device can be sent"));
     return;
   }
@@ -802,6 +805,7 @@ gh_attachment_ui_offer_file(GhWindow *window, GFile *file)
   LoadOp *op = g_new0(LoadOp, 1);
   op->window = g_object_ref(GTK_WIDGET(window));
   op->cancellable = g_object_ref(ui->loading);
+  g_debug("groundhog-attachment-ui: querying offered file");
   g_file_query_info_async(file,
                           G_FILE_ATTRIBUTE_STANDARD_TYPE "," G_FILE_ATTRIBUTE_STANDARD_SIZE ","
                           G_FILE_ATTRIBUTE_STANDARD_DISPLAY_NAME ","
@@ -946,6 +950,7 @@ static void
 on_attach_file(GhComposer *composer, GFile *file, GtkWidget *window)
 {
   (void)composer;
+  g_debug("groundhog-attachment-ui: received attach-file");
   gh_attachment_ui_offer_file(GH_WINDOW(window), file);
 }
 
@@ -955,6 +960,7 @@ static void
 on_attach_texture(GhComposer *composer, GdkTexture *texture, GtkWidget *window)
 {
   (void)composer;
+  g_debug("groundhog-attachment-ui: received attach-texture");
   g_autoptr(GBytes) png = gdk_texture_save_to_png_bytes(texture);
   gh_attachment_ui_offer_bytes(GH_WINDOW(window), png, _("Pasted image.png"), "image/png");
 }

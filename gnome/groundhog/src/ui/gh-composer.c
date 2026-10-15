@@ -688,9 +688,13 @@ attachment_toast(GhComposer *self, const gchar *text)
 static GdkDragAction
 on_drop_enter(GtkDropTarget *target, gdouble x, gdouble y, GhComposer *self)
 {
-  (void)target;
   (void)x;
   (void)y;
+  GdkDrop *drop = gtk_drop_target_get_current_drop(target);
+  g_autofree gchar *formats = drop ?
+    gdk_content_formats_to_string(gdk_drop_get_formats(drop)) : NULL;
+  g_debug("groundhog-composer-drop: enter formats=%s preload=%d", formats ? formats : "(none)",
+          gtk_drop_target_get_preload(target));
   gtk_widget_add_css_class(GTK_WIDGET(self), "attachment-drop-active");
   return GDK_ACTION_COPY;
 }
@@ -699,7 +703,19 @@ static void
 on_drop_leave(GtkDropTarget *target, GhComposer *self)
 {
   (void)target;
+  g_debug("groundhog-composer-drop: leave");
   gtk_widget_remove_css_class(GTK_WIDGET(self), "attachment-drop-active");
+}
+
+static void
+emit_drop_attachment(GhComposer *self, guint signal, gpointer attachment)
+{
+  /* macOS dispatches drop in a short-lived private context. The attachment
+   * UI's asynchronous file load must outlive it on the application context. */
+  GMainContext *context = g_main_context_default();
+  g_main_context_push_thread_default(context);
+  g_signal_emit(self, signal, 0, attachment);
+  g_main_context_pop_thread_default(context);
 }
 
 /* The attachment flow has one preview/load at a time, not a pending-file queue. */
@@ -710,18 +726,37 @@ on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComp
   (void)x;
   (void)y;
   on_drop_leave(target, self);
+  guint n_files = 0;
+  GSList *files = NULL;
+  if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
+    GdkFileList *list = g_value_get_boxed(value);
+    files = list ? gdk_file_list_get_files(list) : NULL;
+    n_files = g_slist_length(files);
+  } else if (G_VALUE_HOLDS(value, G_TYPE_FILE) && g_value_get_object(value)) {
+    n_files = 1;
+  }
+  g_debug("groundhog-composer-drop: drop type=%s files=%u", G_VALUE_TYPE_NAME(value), n_files);
   if (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && !G_VALUE_HOLDS(value, G_TYPE_FILE) &&
-      !G_VALUE_HOLDS(value, GDK_TYPE_TEXTURE))
+      !G_VALUE_HOLDS(value, GDK_TYPE_TEXTURE)) {
+    g_debug("groundhog-composer-drop: refused unsupported value type");
     return FALSE;
+  }
+  if ((G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && !files) ||
+      (!G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST) && !g_value_get_object(value))) {
+    g_debug("groundhog-composer-drop: refused empty attachment value");
+    return FALSE;
+  }
   /* Consume file/image drops even when sending is unavailable: falling through
    * to GtkTextView would insert a Finder/Files path as text instead. */
   if (!attach_possible(self)) {
+    g_debug("groundhog-composer-drop: refused attachment unavailable can-attach=%d editable=%d",
+            self->can_attach, editable(self));
     attachment_toast(self, self->reason ? self->reason :
                      _("Files can't be sent in this conversation"));
+    g_slist_free(files);
     return TRUE;
   }
   if (G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) {
-    GSList *files = gdk_file_list_get_files(g_value_get_boxed(value));
     GFile *file = files ? files->data : NULL;
     if (file) {
       if (files->next) {
@@ -730,17 +765,20 @@ on_drop(GtkDropTarget *target, const GValue *value, gdouble x, gdouble y, GhComp
           _("Only one file can be attached at a time. Attaching “%s”."), name);
         attachment_toast(self, notice);
       }
-      g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, file);
+      g_debug("groundhog-composer-drop: emitting attach-file (first of %u)", n_files);
+      emit_drop_attachment(self, signals[SIGNAL_ATTACH_FILE], file);
     }
     g_slist_free(files);
     return file != NULL;
   }
   if (G_VALUE_HOLDS(value, G_TYPE_FILE)) {
-    g_signal_emit(self, signals[SIGNAL_ATTACH_FILE], 0, g_value_get_object(value));
+    g_debug("groundhog-composer-drop: emitting attach-file");
+    emit_drop_attachment(self, signals[SIGNAL_ATTACH_FILE], g_value_get_object(value));
     return TRUE;
   }
   if (G_VALUE_HOLDS(value, GDK_TYPE_TEXTURE)) {
-    g_signal_emit(self, signals[SIGNAL_ATTACH_TEXTURE], 0, g_value_get_object(value));
+    g_debug("groundhog-composer-drop: emitting attach-texture");
+    emit_drop_attachment(self, signals[SIGNAL_ATTACH_TEXTURE], g_value_get_object(value));
     return TRUE;
   }
   return FALSE;
@@ -1103,7 +1141,10 @@ gh_composer_init(GhComposer *self)
    * text/file drags. Keep GTK's default format/action acceptance, independent
    * of can-attach, so unavailable attachments get an explanation on drop. */
   gtk_event_controller_set_propagation_phase(GTK_EVENT_CONTROLLER(drop), GTK_PHASE_CAPTURE);
-  gtk_drop_target_set_preload(drop, TRUE);
+  /* GTK 4.24's macOS performDragOperation runs a private main context.
+   * A preload started on enter belongs to the outer context and can stall
+   * there while mouse-up waits for it. Start the read in the drop context. */
+  gtk_drop_target_set_preload(drop, FALSE);
   g_signal_connect_object(drop, "enter", G_CALLBACK(on_drop_enter), self, 0);
   g_signal_connect_object(drop, "leave", G_CALLBACK(on_drop_leave), self, 0);
   g_signal_connect_object(drop, "drop", G_CALLBACK(on_drop), self, 0);
