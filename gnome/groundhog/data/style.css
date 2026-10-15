@@ -292,6 +292,12 @@ groundhog-reaction-bar > flowbox > flowboxchild {
   border-top: 1px solid alpha(currentColor, 0.15);
 }
 
+.groundhog-composer.attachment-drop-active .groundhog-composer-entry {
+  outline: 2px dashed @accent_color;
+  outline-offset: -2px;
+  background-color: alpha(@accent_bg_color, 0.12);
+}
+
 .groundhog-composer.compact {
   padding: 4px 6px 6px 6px;
 }

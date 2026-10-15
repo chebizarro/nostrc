@@ -2113,6 +2113,235 @@ test_preedit_enter(void)
   sink_clear(&sink);
 }
 
+/* ---- attachment drops (nostrc-0wggt) ------------------------------------------------ */
+
+static GtkDropTarget *
+attachment_drop_at(GtkWidget *widget)
+{
+  for (GtkWidget *zone = widget; zone; zone = gtk_widget_get_parent(zone)) {
+    g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(zone);
+    for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+      g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
+      if (g_strcmp0(gtk_event_controller_get_name(controller), "groundhog-composer-drop") == 0)
+        return GTK_DROP_TARGET(controller); /* owned by the zone/composer */
+    }
+  }
+  return NULL;
+}
+
+/* Simulate GTK's capture-phase format negotiation and drop signal, using a
+ * real content provider. No system clipboard or native drag session is used. */
+static gboolean
+provider_drop(GtkWidget *destination, GdkContentProvider *provider)
+{
+  GtkDropTarget *target = attachment_drop_at(destination);
+  g_assert_nonnull(target);
+  g_assert_cmpint(gtk_event_controller_get_propagation_phase(GTK_EVENT_CONTROLLER(target)),
+                  ==, GTK_PHASE_CAPTURE);
+  g_assert_true(gtk_drop_target_get_preload(target));
+  g_autoptr(GdkContentFormats) formats = gdk_content_provider_ref_formats(provider);
+  GType type = gdk_content_formats_match_gtype(gtk_drop_target_get_formats(target), formats);
+  if (type == G_TYPE_INVALID)
+    return FALSE; /* plain text stays with GtkTextView's target */
+  GValue value = G_VALUE_INIT;
+  g_value_init(&value, type);
+  g_assert_true(gdk_content_provider_get_value(provider, &value, NULL));
+  GdkDragAction action = 0;
+  g_signal_emit_by_name(target, "enter", 10.0, 10.0, &action);
+  g_assert_cmpint(action, ==, GDK_ACTION_COPY);
+  gboolean accepted = FALSE;
+  g_signal_emit_by_name(target, "drop", &value, 10.0, 10.0, &accepted);
+  g_value_unset(&value);
+  return accepted;
+}
+
+typedef struct {
+  guint files;
+  GFile *last;
+  guint textures;
+} DropSink;
+
+static void
+sink_file(GhComposer *composer G_GNUC_UNUSED, GFile *file, DropSink *sink)
+{
+  sink->files++;
+  g_set_object(&sink->last, file);
+}
+
+static void
+sink_texture(GhComposer *composer G_GNUC_UNUSED, GdkTexture *texture G_GNUC_UNUSED,
+             DropSink *sink)
+{
+  sink->textures++;
+}
+
+static GdkContentProvider *
+file_provider(GFile **files, guint n_files, gboolean mixed)
+{
+  GValue value = G_VALUE_INIT;
+  g_value_init(&value, GDK_TYPE_FILE_LIST);
+  g_value_take_boxed(&value, gdk_file_list_new_from_array(files, n_files));
+  GdkContentProvider *provider = gdk_content_provider_new_for_value(&value);
+  g_value_unset(&value);
+  if (!mixed)
+    return provider;
+  /* Put text first, as a realistic Finder/Files offer. The attachment target
+   * must still negotiate the file list, never insert this path as text. */
+  GdkContentProvider *providers[] = {
+    gdk_content_provider_new_typed(G_TYPE_STRING, "file:///tmp/drop-first.png"), provider
+  };
+  return gdk_content_provider_new_union(providers, G_N_ELEMENTS(providers));
+}
+
+static GtkWidget *
+find_drop_label(GtkWidget *widget, const gchar *text)
+{
+  if (GTK_IS_LABEL(widget) && g_strcmp0(gtk_label_get_text(GTK_LABEL(widget)), text) == 0)
+    return widget;
+  for (GtkWidget *child = gtk_widget_get_first_child(widget); child;
+       child = gtk_widget_get_next_sibling(child)) {
+    GtkWidget *label = find_drop_label(child, text);
+    if (label)
+      return label;
+  }
+  return NULL;
+}
+
+typedef struct {
+  GtkWidget *widget;
+  const gchar *text;
+} ToastWait;
+
+static gboolean
+toast_visible(gpointer data)
+{
+  ToastWait *wait = data;
+  return find_drop_label(wait->widget, wait->text) != NULL;
+}
+
+static GhComposer *
+drop_fixture_up(Fixture *f, DropSink *sink)
+{
+  fixture_init(f, bus.client);
+  fixture_up(f, 960, 680);
+  GhConversation *bob = receive(f, 2, NULL, "Hi from Bob");
+  send_stack_select(&f->s, bob);
+  GhComposer *composer = send_stack_composer(&f->s);
+  g_signal_connect(composer, "attach-file", G_CALLBACK(sink_file), sink);
+  g_signal_connect(composer, "attach-texture", G_CALLBACK(sink_texture), sink);
+  stack_type(composer, "caption");
+  return composer;
+}
+
+static void
+test_attachment_drops(void)
+{
+  Fixture f = { 0 };
+  DropSink sink = { 0 };
+  GhComposer *composer = drop_fixture_up(&f, &sink);
+  GtkWidget *entry = GTK_WIDGET(gh_composer_get_text_view(composer));
+  GtkWidget *view = GTK_WIDGET(send_stack_view(&f.s));
+  gh_composer_set_can_attach(composer, TRUE);
+
+  GtkDropTarget *drop = attachment_drop_at(entry);
+  g_assert_nonnull(drop);
+  g_assert_true(drop == attachment_drop_at(view)); /* one target, both zones */
+  g_autoptr(GListModel) controllers = gtk_widget_observe_controllers(GTK_WIDGET(composer));
+  for (guint i = 0; i < g_list_model_get_n_items(controllers); i++) {
+    g_autoptr(GtkEventController) controller = g_list_model_get_item(controllers, i);
+    g_assert_false(GTK_IS_DROP_TARGET(controller)); /* moved, not duplicated */
+  }
+
+  g_autoptr(GFile) first = g_file_new_for_path("/tmp/drop-first.png");
+  g_autoptr(GFile) second = g_file_new_for_path("/tmp/drop-second.png");
+  GFile *files[] = { first, second };
+  g_autoptr(GdkContentProvider) list = file_provider(files, 1, FALSE);
+  g_assert_true(provider_drop(entry, list));
+  g_assert_cmpuint(sink.files, ==, 1);
+  g_assert_true(g_file_equal(sink.last, first));
+  assert_composer_text(composer, "caption");
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(composer), "attachment-drop-active"));
+
+  g_autoptr(GdkContentProvider) mixed = file_provider(files, 1, TRUE);
+  g_autoptr(GListModel) entry_controllers = gtk_widget_observe_controllers(entry);
+  gboolean text_target_matches = FALSE;
+  g_autoptr(GdkContentFormats) mixed_formats = gdk_content_provider_ref_formats(mixed);
+  for (guint i = 0; i < g_list_model_get_n_items(entry_controllers); i++) {
+    g_autoptr(GtkEventController) controller = g_list_model_get_item(entry_controllers, i);
+    if (GTK_IS_DROP_TARGET(controller) &&
+        gdk_content_formats_match_gtype(gtk_drop_target_get_formats(GTK_DROP_TARGET(controller)),
+                                       mixed_formats) == G_TYPE_STRING)
+      text_target_matches = TRUE;
+  }
+  g_assert_true(text_target_matches); /* the competing built-in target is present */
+  g_assert_true(provider_drop(entry, mixed));
+  g_assert_cmpuint(sink.files, ==, 2);
+  assert_composer_text(composer, "caption");
+  g_assert_true(provider_drop(view, mixed));
+  g_assert_cmpuint(sink.files, ==, 3);
+  assert_composer_text(composer, "caption");
+
+  GdkDragAction action = 0;
+  g_signal_emit_by_name(drop, "enter", 10.0, 10.0, &action);
+  g_assert_true(gtk_widget_has_css_class(GTK_WIDGET(composer), "attachment-drop-active"));
+  g_signal_emit_by_name(drop, "leave");
+  g_assert_false(gtk_widget_has_css_class(GTK_WIDGET(composer), "attachment-drop-active"));
+
+  g_autoptr(GdkContentProvider) many = file_provider(files, 2, TRUE);
+  g_assert_true(provider_drop(view, many));
+  g_assert_cmpuint(sink.files, ==, 4);
+  g_assert_true(g_file_equal(sink.last, first));
+  ToastWait wait = { GTK_WIDGET(f.s.window),
+    "Only one file can be attached at a time. Attaching “drop-first.png”." };
+  gh_test_spin_until(toast_visible, &wait);
+  g_clear_object(&controllers);
+  g_clear_object(&entry_controllers);
+  fixture_clear(&f);
+
+  /* Each notice has a fresh overlay, independent of toast queue/animations
+   * and libadwaita's private dismissal widgets across versions. */
+  composer = drop_fixture_up(&f, &sink);
+  entry = GTK_WIDGET(gh_composer_get_text_view(composer));
+  gh_composer_set_can_attach(composer, FALSE);
+  g_assert_true(provider_drop(entry, mixed));
+  g_assert_cmpuint(sink.files, ==, 4); /* accepted, but not offered for sending */
+  assert_composer_text(composer, "caption");
+  wait.widget = GTK_WIDGET(f.s.window);
+  wait.text = "Files can't be sent in this conversation";
+  gh_test_spin_until(toast_visible, &wait);
+  fixture_clear(&f);
+
+  composer = drop_fixture_up(&f, &sink);
+  entry = GTK_WIDGET(gh_composer_get_text_view(composer));
+  view = GTK_WIDGET(send_stack_view(&f.s));
+  gh_composer_set_can_attach(composer, TRUE);
+  gh_composer_set_disabled_reason(composer, "Message storage is locked.");
+  g_assert_true(provider_drop(entry, mixed));
+  g_assert_cmpuint(sink.files, ==, 4);
+  assert_composer_text(composer, "caption");
+  wait.widget = GTK_WIDGET(f.s.window);
+  wait.text = "Message storage is locked.";
+  gh_test_spin_until(toast_visible, &wait);
+  gh_composer_set_disabled_reason(composer, NULL);
+
+  g_autoptr(GdkContentProvider) text = gdk_content_provider_new_typed(G_TYPE_STRING, "text");
+  g_assert_false(provider_drop(entry, text));
+  g_autoptr(GdkContentProvider) single = gdk_content_provider_new_typed(G_TYPE_FILE, first);
+  g_assert_true(provider_drop(entry, single));
+  g_assert_cmpuint(sink.files, ==, 5);
+  const guint8 pixel[] = { 0xff, 0x00, 0x00, 0xff };
+  g_autoptr(GBytes) bytes = g_bytes_new_static(pixel, sizeof(pixel));
+  g_autoptr(GdkTexture) texture = GDK_TEXTURE(gdk_memory_texture_new(
+    1, 1, GDK_MEMORY_R8G8B8A8, bytes, 4));
+  g_autoptr(GdkContentProvider) image = gdk_content_provider_new_typed(GDK_TYPE_TEXTURE, texture);
+  g_assert_true(provider_drop(view, image));
+  g_assert_cmpuint(sink.textures, ==, 1);
+  assert_composer_text(composer, "caption");
+
+  g_clear_object(&sink.last);
+  fixture_clear(&f);
+}
+
 /* ---- screenshots (opt-in evidence) --------------------------------------------------- */
 
 static gboolean
@@ -2283,6 +2512,7 @@ main(int argc, char **argv)
   ADD("timer-indicator", test_timer_indicator);
   ADD("timer-live", test_timer_live);
   ADD("preedit-enter", test_preedit_enter);
+  ADD("attachment-drops", test_attachment_drops);
   ADD("screenshots", test_screenshots);
 #undef ADD
   int status = g_test_run();
