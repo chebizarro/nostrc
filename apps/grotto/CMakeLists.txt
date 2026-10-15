@@ -588,7 +588,9 @@ endif()
 # Unit Tests
 # ==============================================================================
 # Include test suite (uses CTest/GLib testing framework)
-option(BUILD_SIGNER_TESTS "Build grotto unit tests" ON)
+# Follows BUILD_TESTING: release configures (scripts/ci/configure-release.sh)
+# must not need the tests' tools (msgfmt, the test bus).
+option(BUILD_SIGNER_TESTS "Build grotto unit tests" ${BUILD_TESTING})
 if (BUILD_SIGNER_TESTS)
   add_subdirectory(tests)
 endif()

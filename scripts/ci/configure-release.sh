@@ -38,6 +38,7 @@ cmake -S "$root" -B "$root/$build" -G Ninja \
   -DBUILD_RELAYD=OFF \
   -DBUILD_LIBHANAMI=OFF \
   -DBUILD_TESTING=OFF \
+  -DBUILD_SIGNER_TESTS=OFF \
   -DBUILD_TESTING_FRAMEWORK=OFF \
   ${extra_cflags:+"-DCMAKE_C_FLAGS=$extra_cflags"} \
   "$@"
