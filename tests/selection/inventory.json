@@ -5080,7 +5080,8 @@
         "static.policy",
         "version.contract",
         "gnome.nostr_homed",
-        "gnome.nostr_homed.test_inputs"
+        "gnome.nostr_homed.test_inputs",
+        "shared.tests"
       ],
       "profiles": [
         "static.policy"
@@ -5201,7 +5202,12 @@
         "{source}/scripts/mdk-gate.py",
         "{source}/scripts/sanitizer-gate-ci.py",
         "{source}/scripts/test-gate.sh",
-        "{source}/scripts/test-plan.py",
+          "{source}/scripts/test-plan.py",
+          "{source}/scripts/run_bp_matrix.py",
+          "{source}/scripts/metrics_summary.py",
+          "{source}/scripts/aggregate_bp_matrix.py",
+          "{source}/scripts/generate_bp_report.py",
+          "{source}/tests/fixtures/bp_metrics_reporting.jsonl",
         "{source}/scripts/test_selection.py",
         "{source}/scripts/test_selection_custody.py",
           "{source}/scripts/test_selection_realization.py",
@@ -5236,6 +5242,7 @@
         "{source}/tests/selection/test_mdk_gate.py",
           "{source}/tests/selection/test_nonmember_ownership.py",
           "{source}/tests/selection/test_diagnostic_nonmembers.py",
+          "{source}/tests/selection/test_bp_metrics_reporting.py",
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
