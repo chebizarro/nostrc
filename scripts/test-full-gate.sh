@@ -15,6 +15,9 @@ cp "$scripts/install-hooks.sh" "$repo/scripts/install-hooks.sh"
 cp "$scripts/linux-gate.sh" "$repo/scripts/linux-gate.sh"
 cp "$scripts/linux-gate-smoke.sh" "$repo/scripts/linux-gate-smoke.sh"
 cp "$scripts/sanitizer-gate-ci.py" "$repo/scripts/sanitizer-gate-ci.py"
+cp "$scripts/test_selection.py" "$repo/scripts/test_selection.py"
+mkdir -p "$repo/tests/selection"
+cp "$scripts/../tests/selection/inventory.json" "$repo/tests/selection/inventory.json"
 cat > "$repo/scripts/test-gate.sh" <<'GATE'
 #!/bin/bash
 set -eu
@@ -210,7 +213,7 @@ grep -q '^CTEST ' "$tmp/trace"
 grep -q '^DOCKER_RUN linux .*/linux-src:/src:ro' "$tmp/trace"
 # The candidate touches gnome/groundhog: the sanitizer stage runs beside it.
 grep -q '^DOCKER_RUN sanitizer .*nostrc-linux-gate-asan-arm64:/work' "$tmp/trace"
-grep -q 'sanitizer stage runs: the range touches gnome/groundhog/' "$tmp/output"
+grep -q 'sanitizer stage runs: shared' "$tmp/output"
 # Its tests start only after the host (macOS) build.
 awk '/^BUILD /{b=NR} /^SANITIZER_TESTS$/{t=NR} END{exit !(b && t && b < t)}' "$tmp/trace"
 absent 'SKIPPED' "$tmp/output"
@@ -407,17 +410,29 @@ fi
 absent '^CONFIGURE ' "$tmp/trace"
 assert_clean
 
-printf 'unrelated\n' > "$branch/unrelated"
-git -C "$branch" add unrelated
+mkdir -p "$branch/docs"
+printf 'unrelated prose\n' > "$branch/docs/prose.md"
+git -C "$branch" add docs/prose.md
 git -C "$branch" commit -qm unrelated
 base="$candidate"
 candidate="$(git -C "$branch" rev-parse HEAD)"
 run_hook > "$tmp/unrelated-output" 2>&1
 grep -q 'BUILD_GROUNDHOG=OFF' "$tmp/trace"
 # Nothing the sanitizer job tests changed: that stage is skipped, and says why.
-grep -q 'sanitizer stage skipped for refs/heads/candidate: none of its 1 changed file(s) is under' "$tmp/unrelated-output"
+grep -q 'sanitizer stage skipped for refs/heads/candidate: shared selection contains no sanitizer execution' "$tmp/unrelated-output"
 grep -q '^DOCKER_RUN linux ' "$tmp/trace"
 absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
+assert_clean
+
+# Unknown ownership now broadens through the shared selector, never skips.
+printf 'unknown\n' > "$branch/new-unclassified-input"
+git -C "$branch" add new-unclassified-input
+git -C "$branch" commit -qm unknown
+base="$candidate"
+candidate="$(git -C "$branch" rev-parse HEAD)"
+run_hook > "$tmp/unknown-output" 2>&1
+grep -q 'shared selection broadened' "$tmp/unknown-output"
+grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
 assert_clean
 
 # Each new commit changes only a Groundhog dependency/config input, not
@@ -438,7 +453,7 @@ for path in CMakeLists.txt cmake/BuildConfig.cmake gnome/seahorse/secret_store.c
     run_hook > "$tmp/dep-output" 2>&1
     grep -q 'BUILD_GROUNDHOG=ON' "$tmp/trace"
     grep -q '^DOCKER_RUN sanitizer ' "$tmp/trace"
-    grep -q 'sanitizer stage runs: the range touches' "$tmp/dep-output"
+    grep -q 'sanitizer stage runs: shared' "$tmp/dep-output"
     assert_clean
 done
 # Inputs of the sanitizer build that are not Groundhog's own inputs, and its
@@ -480,7 +495,7 @@ git -C "$branch" commit -qm docs
 candidate="$(git -C "$branch" rev-parse HEAD)"
 base=0000000000000000000000000000000000000000
 run_hook > "$tmp/docs-output" 2>&1
-grep -q 'sanitizer stage skipped for refs/heads/candidate: none of its 1 changed file(s)' "$tmp/docs-output"
+grep -q 'sanitizer stage skipped for refs/heads/candidate: shared selection contains no sanitizer execution' "$tmp/docs-output"
 absent '^DOCKER_RUN sanitizer ' "$tmp/trace"
 assert_clean
 
