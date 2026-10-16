@@ -507,7 +507,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             from test_selection_custody import CustodyError, validate_lifecycle
             try:
                 validate_lifecycle(receipt.get("contained_lifecycle"), plan, lane["profile"], profile,
-                                   receipt.get("profile_fingerprint"))
+                                   receipt.get("profile_fingerprint"), evidence=receipt)
             except (CustodyError, KeyError, TypeError, ValueError) as exc:
                 errors.append(f"{lane_id}: contained lifecycle did not qualify: {exc}")
             if complete:

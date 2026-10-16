@@ -59,6 +59,80 @@ def context_hash(root):
     return digest(entries)
 
 
+def retained_files(work):
+    """Snapshot retained build/provenance and execution evidence, not live services."""
+    work = Path(work).resolve(strict=True)
+    entries = {}
+    for name in ('build', 'execution'):
+        root = work / name
+        if not root.exists():
+            continue
+        if root.is_symlink() or not root.is_dir():
+            raise CustodyError('unsafe retained evidence root: ' + name)
+        for path in sorted(root.rglob('*')):
+            relative = path.relative_to(work).as_posix()
+            if path.is_symlink():
+                target = path.resolve(strict=True)
+                parts = target.relative_to(work).parts if target.is_relative_to(work) else ()
+                if not parts or parts[0] not in {'build', 'execution'}:
+                    raise CustodyError('retained evidence link escapes sealed roots: ' + relative)
+                entries[relative] = {'kind': 'symlink', 'target': os.readlink(path)}
+            elif path.is_file():
+                entries[relative] = {'kind': 'file', 'sha256': file_hash(path)}
+            elif not path.is_dir():
+                raise CustodyError('special retained evidence entry: ' + relative)
+    return entries
+
+
+def retained_claims(result):
+    """Original hashes consumed by command/CTest receipts; never refresh them."""
+    claims = {}
+    def claim(path, expected):
+        relative = Path(path).relative_to('/work')
+        if '..' in relative.parts or not relative.parts or relative.parts[0] not in {'build', 'execution'}:
+            raise CustodyError('receipt evidence outside retained roots: ' + str(path))
+        if not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected):
+            raise CustodyError('receipt evidence hash missing: ' + str(path))
+        name = relative.as_posix()
+        if name in claims and claims[name] != expected:
+            raise CustodyError('contradictory retained evidence hashes: ' + name)
+        claims[name] = expected
+    records = [result]
+    if isinstance(result.get('backend_receipt'), dict):
+        records.append(result['backend_receipt'])
+    for record in records:
+        for check in record.get('checks', {}).values():
+            if 'log' in check or 'log_sha256' in check:
+                claim(check['log'], check['log_sha256'])
+            for artifact in check.get('artifacts', {}).values():
+                claim(artifact['path'], artifact['sha256'])
+        records.extend(record.get('previous_attempts', []))
+        audit = record.get('input_audit')
+        if isinstance(audit, dict):
+            for path, expected in audit.get('input_hashes', {}).items():
+                if Path(path).is_relative_to('/work'):
+                    claim(path, expected)
+    return claims
+
+
+def attest_retained_evidence(work, result, state):
+    expected = state['retained_evidence']
+    if state['retained_evidence_hash'] != digest(expected):
+        raise CustodyError('retained evidence seal hash differs')
+    actual = retained_files(work)
+    claims = retained_claims(result)
+    errors = []
+    for path in sorted(set(expected) | set(actual)):
+        if expected.get(path) != actual.get(path):
+            errors.append({'path': path, 'reason': 'missing' if path not in actual else 'added' if path not in expected else 'changed'})
+    for path, expected_hash in claims.items():
+        if expected.get(path) != {'kind': 'file', 'sha256': expected_hash}:
+            errors.append({'path': path, 'reason': 'original receipt hash differs from seal'})
+    return {'status': 'failed' if errors else 'verified', 'errors': errors,
+            'expected_hash': digest(expected), 'actual_hash': digest(actual),
+            'claims_hash': digest(claims), 'actual': actual}
+
+
 def verify_final_receipt(receipt, binding):
     """Offline structural verifier; producer alone performs actual daemon checks."""
     if not isinstance(receipt, dict) or receipt.get("binding") != binding or receipt.get("binding_hash") != digest(binding):
@@ -85,7 +159,7 @@ def verify_final_receipt(receipt, binding):
         raise CustodyError("contained raw log drain missing")
 
 
-def validate_lifecycle(lifecycle, plan, profile_id, profile, fingerprint):
+def validate_lifecycle(lifecycle, plan, profile_id, profile, fingerprint, *, evidence=None):
     if not isinstance(lifecycle, dict):
         raise CustodyError('final contained lifecycle missing')
     receipt = lifecycle['receipt']
@@ -101,6 +175,14 @@ def validate_lifecycle(lifecycle, plan, profile_id, profile, fingerprint):
         raise CustodyError('final contained peer/runtime domain differs')
     verify_final_receipt(receipt, binding)
     state = lifecycle['runtime_state']
+    final = lifecycle['retained_evidence']
+    seal_hash = digest(state['retained_evidence'])
+    if (state['retained_evidence_hash'] != seal_hash or final['status'] != 'verified' or final['errors']
+            or final['expected_hash'] != seal_hash or final['actual_hash'] != seal_hash
+            or digest(final['actual']) != seal_hash):
+        raise CustodyError('final retained evidence did not verify after namespace exit')
+    if evidence is not None and final['claims_hash'] != digest(retained_claims(evidence)):
+        raise CustodyError('final retained evidence claims differ')
     if (state['status'] != 'succeeded' or state['container_id'] != receipt['container_id']
             or state['run_id'] != receipt['run_id'] or state['realization_fingerprint'] != fingerprint
             or state['effective_configure_args'] != profile['configure_args']

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Container-only shared-engine runner. Host finalization is still mandatory."""
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import sys
 
 import test_selection as selection
 import test_selection_realization as backend
-from test_selection_custody import PreparedContext, file_hash, write_json
+from test_selection_custody import PreparedContext, CustodyError, canonical, digest, file_hash, retained_files, retained_claims, write_json
 
 
 def provision(capabilities, state):
@@ -71,18 +72,25 @@ def main():
             '--build-dir', '/work/build', '--evidence-dir', '/work/execution', '--configure',
             '--parallel', str(profile.get('parallelism', 2)), '--timeout', str(control['timeout'])])
         result, code = cli.realization_command(args, policy, backend, custody=context)
-        write_json('/work/backend.json', result)
         realized = backend.load_realization('/work/build', plan['source_identity'])
         artifacts = {}
         vectors = Path('/work/build/mdk011-interop-artifacts/vectors.jsonl')
         if vectors.is_file():
             artifacts[str(vectors)] = file_hash(vectors)
-        state.update(artifacts=artifacts, realization_fingerprint=realized['profile_fingerprint'], phase_context=realized['phase_context'],
+        retained = retained_files('/work')
+        for path, expected in retained_claims(result).items():
+            if retained.get(path) != {'kind': 'file', 'sha256': expected}:
+                raise CustodyError('retained evidence already differs from receipt: ' + path)
+        state.update(artifacts=artifacts, retained_evidence=retained, retained_evidence_hash=digest(retained),
+                     realization_fingerprint=realized['profile_fingerprint'], phase_context=realized['phase_context'],
                      phase_context_hash=realized['phase_context_hash'], configure_argv=realized['commands'][0] if realized['commands'] else None,
                      prepared_cache=context.cache_values, compiler_toolchains=realized.get('toolchains'),
                      effective_configure_args=realized['profile']['configure_args'],
                      cache_sha256=file_hash('/work/build/CMakeCache.txt') if Path('/work/build/CMakeCache.txt').is_file() else None,
-                     backend_sha256=file_hash('/work/backend.json'), status='succeeded' if code == 0 else 'failed')
+                     backend_sha256=hashlib.sha256(canonical(result) + b'\n').hexdigest(), status='succeeded' if code == 0 else 'failed')
+        # Publish only after sealing. Escaped writers remain owned until exit;
+        # the host must compare these original claims with final filesystem bytes.
+        write_json('/work/backend.json', result)
     except KeyboardInterrupt as exc:
         state.update(status='cancelled', error=str(exc))
         code = 130
