@@ -77,6 +77,8 @@ jobs:
     needs: select-fuzz
     name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
+    env:
+      FUZZ_CORPUS: ${{ matrix.target == 'json-event' && 'json_event' || matrix.target }}
     strategy:
       fail-fast: false
       matrix:
@@ -100,10 +102,28 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config clang llvm \
+            build-essential cmake ninja-build meson pkg-config clang llvm libclang-rt-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
-            libnsync-dev libjson-glib-dev libgit2-dev
+            libnsync-dev libjson-glib-dev libgit2-dev \
+            libgtk-4-dev libadwaita-1-dev libsecret-1-dev libxml2-dev libpeas-2-dev \
+            libqrencode-dev libzbar-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gettext python3 python3-gi curl ca-certificates xz-utils
+
+      - name: Install pinned Blueprint compiler
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$work/compiler.tar.xz"
+          printf '%s  %s\n' 231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07 "$work/compiler.tar.xz" | sha256sum -c
+          mkdir "$work/source"
+          tar -xJf "$work/compiler.tar.xz" --strip-components=1 -C "$work/source"
+          meson setup "$work/build" "$work/source" --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C "$work/build"
+          sudo meson install -C "$work/build"
+          blueprint-compiler --version | grep -x 0.22.2
 
       - name: Configure with fuzz targets
         run: |
@@ -124,7 +144,7 @@ jobs:
         run: |
           set -euo pipefail
           FUZZ_BIN="build/apps/grotto/tests/fuzz/fuzz-${{ matrix.target }}"
-          CORPUS_DIR="build/apps/grotto/tests/fuzz/corpus/${{ matrix.target }}"
+          CORPUS_DIR="build/apps/grotto/tests/fuzz/corpus/${FUZZ_CORPUS}"
           ARTIFACTS_DIR="fuzz-artifacts-${{ matrix.target }}"
 
           mkdir -p "${ARTIFACTS_DIR}"
@@ -161,7 +181,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.artifact_prefix }}fuzz-corpus-${{ matrix.target }}
-          path: build/apps/grotto/tests/fuzz/corpus/${{ matrix.target }}/
+          path: build/apps/grotto/tests/fuzz/corpus/${{ env.FUZZ_CORPUS }}/
           if-no-files-found: ignore
 
   coverage-report:
@@ -188,10 +208,13 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config clang llvm \
+            build-essential cmake ninja-build meson pkg-config clang llvm libclang-rt-dev \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
-            libnsync-dev libjson-glib-dev libgit2-dev lcov
+            libnsync-dev libjson-glib-dev libgit2-dev \
+            libgtk-4-dev libadwaita-1-dev libsecret-1-dev libxml2-dev libpeas-2-dev \
+            libqrencode-dev libzbar-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gettext python3 python3-gi curl ca-certificates xz-utils lcov
 
       - name: Download all corpus artifacts
         uses: actions/download-artifact@v4
@@ -199,6 +222,21 @@ jobs:
           pattern: ${{ inputs.artifact_prefix }}fuzz-corpus-*
           path: downloaded-corpus
           merge-multiple: false
+
+      - name: Install pinned Blueprint compiler
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          curl -fL --retry 3 https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$work/compiler.tar.xz"
+          printf '%s  %s\n' 231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07 "$work/compiler.tar.xz" | sha256sum -c
+          mkdir "$work/source"
+          tar -xJf "$work/compiler.tar.xz" --strip-components=1 -C "$work/source"
+          meson setup "$work/build" "$work/source" --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C "$work/build"
+          sudo meson install -C "$work/build"
+          blueprint-compiler --version | grep -x 0.22.2
 
       - name: Configure with coverage
         run: |

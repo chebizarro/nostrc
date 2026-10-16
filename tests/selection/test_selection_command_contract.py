@@ -27,6 +27,13 @@ SUPPORT_INPUTS = {
     "tests/TestInventory.cmake",
     "nostr-gtk/TestInventory.cmake",
     "gnome/groundhog/TestInventory.cmake",
+    "gnome/nostr-homed/tests/unit/test_manifest.c",
+    "gnome/nostr-homed/tests/unit/test_cache.c",
+    "gnome/nostr-homed/tests/unit/test_cache_config.c",
+    "gnome/nostr-homed/tests/unit/test_uid_map.c",
+    "gnome/nostr-homed/tests/unit/test_groups.c",
+    "gnome/nostr-homed/src/common/nostr_manifest.c",
+    "gnome/nostr-homed/src/common/nostr_cache.c",
     "scripts/check-macos-keychain.sh",
     "scripts/linux-gate.sh",
     "scripts/mdk-gate.py",
@@ -47,9 +54,10 @@ SUPPORT_INPUTS = {
 
 def expected_inputs(policy, root):
     tracked = {os.fsdecode(p) for p in s.git(root, "ls-files", "-z", "--",
-               "tests/selection", ".github/workflows").stdout.split(b"\0") if p}
+               "tests/selection", ".github/workflows", ":(glob)**/TestInventory.cmake").stdout.split(b"\0") if p}
     paths = SUPPORT_INPUTS | {p for p in tracked if p.startswith("tests/selection/")
-                            or Path(p).suffix in {".yml", ".yaml"}}
+                            or Path(p).suffix in {".yml", ".yaml"}
+                            or Path(p).name == "TestInventory.cmake"}
     for component in policy["release_components"].values():
         paths.update(source["path"] for source in component["version_sources"])
         if component.get("full_version_source"):
@@ -70,6 +78,14 @@ def validate_source_closure(policy, root):
     discovered.update("{source}/" + p.relative_to(root).as_posix()
                       for p in (root / ".github/workflows").glob("*")
                       if p.suffix in {".yml", ".yaml"})
+    # The collector loads descriptors beside registered source CMakeLists.
+    # Check those source directories even when a descriptor is not tracked yet.
+    cmake_sources = s.git(root, "ls-files", "-z", "--", "CMakeLists.txt",
+                         ":(glob)**/CMakeLists.txt").stdout.split(b"\0")
+    discovered.update("{source}/" + descriptor.relative_to(root).as_posix()
+                      for source in cmake_sources if source
+                      for descriptor in [root / Path(os.fsdecode(source)).parent / "TestInventory.cmake"]
+                      if descriptor.exists())
     if discovered - set(inputs):
         raise ValueError("undeclared discoverable command source: " + str(sorted(discovered - set(inputs))))
     for value in inputs:
@@ -133,6 +149,25 @@ class SelectionCommandContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "undeclared discoverable"):
                 validate_source_closure(self.policy, root)
 
+    def test_new_tracked_or_untracked_descriptor_requires_explicit_runtime_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            s.git(root, "init", "-q")
+            copy_inputs(self.policy, root)
+            source_dir = root / "nips/new-component"
+            source_dir.mkdir(parents=True)
+            (source_dir / "CMakeLists.txt").write_text("# descriptor source directory\n")
+            s.git(root, "add", ".")
+            validate_source_closure(self.policy, root)
+            descriptor = source_dir / "TestInventory.cmake"
+            descriptor.write_text("include_guard(DIRECTORY)\n")
+            with self.assertRaisesRegex(ValueError, "undeclared discoverable.*TestInventory"):
+                validate_source_closure(self.policy, root)
+            s.git(root, "add", str(descriptor))
+            self.assertIn(descriptor.relative_to(root).as_posix(), expected_inputs(self.policy, root))
+            with self.assertRaisesRegex(ValueError, "command source closure changed.*TestInventory"):
+                validate_source_closure(self.policy, root)
+
     def test_each_actual_input_has_semantic_impact_on_command(self):
         covered = r._impact_prerequisites(self.policy, self.policy["checks"]["selection.contract"]["nodes"])
         for path in sorted(expected_inputs(self.policy, ROOT)):
@@ -161,6 +196,10 @@ class SelectionCommandInputAuditTests(unittest.TestCase):
         check["profiles"] = ["closure.fixture"]
         copy_inputs(self.policy, self.root)
         r._git(self.root, "init", "-q")
+        # Keep automatic maintenance, but join it before copying/removing .git.
+        # A detached first-commit repack can otherwise outlive the fixture.
+        r._git(self.root, "config", "gc.autoDetach", "false")
+        r._git(self.root, "config", "maintenance.autoDetach", "false")
         r._git(self.root, "add", ".")
         r._git(self.root, "-c", "user.name=Input fixture", "-c", "user.email=input@example.invalid",
                "-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture")
