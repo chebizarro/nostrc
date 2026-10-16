@@ -130,6 +130,79 @@ def _identity(source_identity):
     return json.loads(json.dumps(source_identity, sort_keys=True))
 
 
+def _git(root, *args):
+    try:
+        return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.PIPE)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise RealizationError(f"cannot validate source checkout: {exc}") from exc
+
+
+def _validate_source_identity(root, identity, build_dir):
+    """Revalidate actual source, not the identity retained in generated JSON.
+
+    Dirty materializations use test-gate's indexed mode/path/content digest. This
+    reads the index and files only; it never stages or resets a caller's checkout.
+    """
+    root, build = Path(root).resolve(), Path(build_dir).resolve()
+    top = Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
+    if root != top:
+        raise RealizationError("source checkout root is not the canonical Git root")
+    head = _git(root, "rev-parse", "HEAD").decode().strip()
+    if identity.get("kind") not in {"committed", "dirty"} or identity.get("sha") != head:
+        raise RealizationError("source checkout HEAD does not match execution identity")
+    if identity["kind"] == "committed" and _git(root, "status", "--porcelain", "--untracked-files=no"):
+        raise RealizationError("committed source checkout has tracked changes")
+    for raw in _git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
+        if raw and not (root / os.fsdecode(raw)).is_relative_to(build):
+            raise RealizationError(f"source checkout has untracked input: {os.fsdecode(raw)}")
+    digest = hashlib.sha256()
+    committed = identity["kind"] == "committed"
+    # Read committed membership from HEAD, not an index whose assume-unchanged
+    # bits can hide working-file edits from git status.
+    entries = _git(root, "ls-tree", "-rz", "HEAD") if committed else _git(root, "ls-files", "--stage", "-z")
+    object_format = _git(root, "rev-parse", "--show-object-format").decode().strip()
+    for entry in entries.split(b"\0"):
+        if not entry:
+            continue
+        meta, raw_path = entry.split(b"\t", 1)
+        if committed:
+            mode, _, oid = meta.split()
+            stage = b"0"
+        else:
+            mode, oid, stage = meta.split()
+        if stage != b"0":
+            raise RealizationError("source checkout has an unresolved index")
+        path = root / os.fsdecode(raw_path)
+        try:
+            if mode == b"160000":
+                content = oid
+                if (path / ".git").exists():
+                    if (_git(path, "rev-parse", "HEAD").strip() != oid
+                            or _git(path, "status", "--porcelain", "--untracked-files=all")):
+                        raise RealizationError(f"source checkout submodule changed: {path}")
+                elif path.is_dir() and any(path.iterdir()):
+                    raise RealizationError(f"source checkout has uninitialized submodule content: {path}")
+            elif mode == b"120000":
+                content = os.fsencode(os.readlink(path))
+                if not path.resolve().is_relative_to(root):
+                    raise RealizationError(f"source snapshot symlink escapes checkout: {path}")
+            elif mode in (b"100644", b"100755"):
+                if path.is_symlink() or bool(path.stat().st_mode & 0o111) != (mode == b"100755"):
+                    raise RealizationError(f"source snapshot file mode changed: {path}")
+                content = path.read_bytes()
+            else:
+                raise RealizationError(f"unsupported source snapshot mode: {mode!r}")
+        except OSError as exc:
+            raise RealizationError(f"source snapshot input missing/invalid: {path}") from exc
+        if committed and mode != b"160000":
+            blob = b"blob " + str(len(content)).encode() + b"\0" + content
+            if hashlib.new(object_format, blob).hexdigest().encode() != oid:
+                raise RealizationError(f"committed source input changed: {path}")
+        digest.update(mode + b"\0" + raw_path + b"\0" + hashlib.sha256(content).digest())
+    if identity["kind"] == "dirty" and identity.get("snapshot_digest") != digest.hexdigest():
+        raise RealizationError("actual source snapshot digest changed or mismatches execution identity")
+
+
 def _cmake_literal_arguments(text, position):
     """Read only literal arguments emitted in generated CTest add_test calls.
 
@@ -232,6 +305,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     """
     root, build = Path(repo_root).resolve(), Path(build_dir).resolve()
     identity = _identity(source_identity)
+    _validate_source_identity(root, identity, build)
     _validate_native_profile(profile)
     build.mkdir(parents=True, exist_ok=True)
     record = build / "nostrc-test-realization.json"
@@ -295,6 +369,8 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
                          "generated": s.get("isGenerated", False),
                          "compiled": "compileGroupIndex" in s} for s in target.get("sources", [])],
             "dependencies": [d["id"] for d in target.get("dependencies", [])],
+            "compile_fragments": [f["fragment"] for group in target.get("compileGroups", [])
+                                  for f in group.get("compileCommandFragments", [])],
         }
     toolchains = client.get("toolchains-v1", {})
     tools = _read(reply_dir / toolchains["jsonFile"]) if "jsonFile" in toolchains else {}
@@ -334,6 +410,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
+    _validate_source_identity(root, identity, build)
     _atomic(record, realization)
     return realization
 
@@ -344,6 +421,7 @@ def load_realization(build_dir, expected_identity=None):
         raise RealizationError("unsupported realization schema")
     if expected_identity is not None and realization["source_identity"] != _identity(expected_identity):
         raise RealizationError("execution source identity changed (including dirty snapshot digest)")
+    _validate_source_identity(realization["repo_root"], realization["source_identity"], build_dir)
     for name, digest in realization.get("generation_files", {}).items():
         p = Path(name)
         if not p.is_file() or hashlib.sha256(p.read_bytes()).hexdigest() != digest:
@@ -439,6 +517,82 @@ def _target_closure(ids, realization):
     return sorted(found)
 
 
+def _baseline_exclusions(inventory, realization, tests, descriptors):
+    """Account only the explicitly coordinated pre-existing native baseline gap.
+
+    coverage_gaps is not a general exclusion language. A new registration/profile
+    exception requires a reviewed contract, not a reason string or wildcard.
+    """
+    ident = "libgo_macos_asan_stress_exclusion"
+    profile_id = "libgo.macos.asan"
+    registration = "GoChannelStressTest"
+    records = inventory.get("coverage_gaps", [])
+    if not isinstance(records, list):
+        raise RealizationError("coverage_gaps must be a list")
+    applicable = []
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict):
+            raise RealizationError("malformed coverage gap record")
+        if record.get("id") != ident:
+            if "registrations" in record:
+                raise RealizationError("unsupported registration exclusion coverage gap")
+            continue
+        if ident in seen:
+            raise RealizationError("duplicate baseline exclusion authority")
+        seen.add(ident)
+        if (set(record) != {"id", "profile", "registrations", "reason", "tracking"}
+                or record.get("profile") != profile_id
+                or record.get("registrations") != [registration]
+                or not isinstance(record.get("reason"), str) or not record["reason"].strip()
+                or not isinstance(record.get("tracking"), str) or not record["tracking"].strip()):
+            raise RealizationError("malformed/mismatched native baseline exclusion")
+        profile = inventory.get("profiles", {}).get(profile_id)
+        required = {"platform": "macos", "architecture": "arm64", "compiler": "clang",
+                    "build_type": "Debug", "instrumentation": "asan_ubsan", "source_dir": "libgo",
+                    "setup": ".github/workflows/libgo-ci.yml:build-and-test"}
+        options = {}
+        if isinstance(profile, dict):
+            for arg in profile.get("configure_args", []):
+                if isinstance(arg, str) and arg.startswith("-D") and "=" in arg:
+                    key, value = arg[2:].split("=", 1)
+                    options[key.split(":", 1)[0]] = value.upper()
+        if (not isinstance(profile, dict) or any(profile.get(k) != v for k, v in required.items())
+                or options.get("GO_ENABLE_ASAN") != "ON" or options.get("GO_ENABLE_UBSAN") != "ON"
+                or options.get("GO_ENABLE_TSAN") not in (None, "OFF")):
+            raise RealizationError("baseline exclusion profile does not match the established native variant")
+        if realization["profile_id"] != profile_id:
+            continue
+        if realization["profile"] != profile:
+            raise RealizationError("baseline exclusion realization/profile mismatch")
+        if registration not in tests:
+            raise RealizationError("baseline exclusion registration is missing")
+        for check in inventory["checks"].values():
+            if _eligible(check, profile_id) and registration in _membership(check, profile_id):
+                raise RealizationError("baseline-excluded registration is also claimed by a check")
+        props = _properties(tests[registration])
+        desc = descriptors.get(registration, {})
+        if (any(props.get(k) for k in ("DISABLED", "FIXTURES_SETUP", "FIXTURES_CLEANUP", "FIXTURES_REQUIRED", "DEPENDS"))
+                or desc.get("owner") != ["libgo"] or desc.get("requires")
+                or desc.get("expected") not in (None, [], ["pass"])):
+            raise RealizationError("baseline exclusion registration metadata changed")
+        target_ids = _mapped_targets(tests[registration], desc, realization)
+        targets = [realization["targets"][key] for key in target_ids]
+        if (len(targets) != 1 or targets[0]["name"] != "go_channel_stress_test"
+                or targets[0]["type"] != "EXECUTABLE"
+                or "libgo/tests/go_channel_stress_test.c" not in
+                {_relative(s["path"], realization["repo_root"]) for s in targets[0]["sources"]}):
+            raise RealizationError("baseline exclusion executable/source mapping changed")
+        fragments = " ".join(targets[0].get("compile_fragments", []))
+        sanitizers = {value for match in re.finditer(r"(?:^|\s)-fsanitize=([^\s]+)", fragments)
+                      for value in match[1].split(",")}
+        if not {"address", "undefined"}.issubset(sanitizers) or "thread" in sanitizers or "-fno-sanitize=" in fragments:
+            raise RealizationError("baseline exclusion actual sanitizer instrumentation differs")
+        applicable.append(dict(record, status="not_executed", authority="existing_workflow_baseline",
+                               target_ids=target_ids, audit_build_targets=[targets[0]["name"]]))
+    return applicable
+
+
 def _fixture_closure(names, tests, descriptors):
     selected, todo = set(), list(names)
     while todo:
@@ -477,6 +631,8 @@ def resolve_checks(inventory, plan, realization, profile_id):
     if plan.get("inventory_hash", realization["inventory_hash"]) != realization["inventory_hash"]:
         raise RealizationError("plan/realization inventory mismatch")
     tests, descriptors = _metadata(inventory, realization)
+    exclusions = _baseline_exclusions(inventory, realization, tests, descriptors)
+    excluded_names = {n for exclusion in exclusions for n in exclusion["registrations"]}
     claims = {}
     for ident, check in inventory["checks"].items():
         if check.get("kind") == "ctest" and _eligible(check, profile_id):
@@ -503,13 +659,16 @@ def resolve_checks(inventory, plan, realization, profile_id):
         checks[ident] = {"tests": sorted(names), "requirement": check.get("requirement", "blocking")}
         primary.update(names)
     selected = _fixture_closure(primary, tests, descriptors)
+    if excluded_names.intersection(selected):
+        raise RealizationError("baseline-excluded registration is required by selected execution closure")
     ids, inputs, capabilities = set(), set(), set()
     for name in selected:
         desc = descriptors.get(name, {})
         ids.update(_mapped_targets(tests[name], desc, realization))
         inputs.update(desc.get("inputs", []))
         capabilities.update(desc.get("requires", []))
-    closure = _target_closure(ids, realization)
+    audit_ids = {ident for exclusion in exclusions for ident in exclusion["target_ids"]}
+    closure = _target_closure(ids | audit_ids, realization)
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
         raise RealizationError(f"unavailable selected capabilities: {sorted(capabilities - available)}")
@@ -520,7 +679,10 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "profile_hash": _hash(realization["profile"]), "configuration": realization["configuration"],
         "build_dir": realization["build_dir"], "checks": checks,
         "tests": selected, "primary_tests": sorted(primary), "support_tests": sorted(set(selected) - primary),
-        "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids}),
+        "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids | audit_ids}),
+        "audit_build_targets": sorted({realization["targets"][i]["name"] for i in audit_ids}),
+        "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
+        "complete_gate_eligible": not bool(exclusions),
         "runtime_inputs": sorted(inputs), "required_capabilities": sorted(capabilities),
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
@@ -581,6 +743,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     if source_identity is not None and _identity(source_identity) != realization["source_identity"]:
         raise RealizationError("input audit identity mismatch")
     tests, descriptors = _metadata(inventory, realization)
+    exclusions = _baseline_exclusions(inventory, realization, tests, descriptors)
+    excluded_names = {n for exclusion in exclusions for n in exclusion["registrations"]}
     gaps, fingerprints = [], {}
     def gap(kind, **detail):
         gaps.append({"kind": kind, **detail})
@@ -598,6 +762,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     header_count = 0
     audited_targets = set()
     ninja_inputs = {}
+    execution_inputs = {}
     for name, test in sorted(tests.items()):
         desc = descriptors.get(name, {})
         owners = set(desc.get("owner", []))
@@ -625,9 +790,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         covered.update(_impact_prerequisites(inventory, check_owners))
         props = _properties(test)
         support = bool(props.get("FIXTURES_SETUP") or props.get("FIXTURES_CLEANUP") or desc.get("expected") == ["fixture"])
-        if not support and not check_owners:
+        if not support and not check_owners and name not in excluded_names:
             gap("unclaimed_registration", test=name)
-        elif not support and not owners.issubset(_impact_prerequisites(inventory, check_owners)):
+        elif not support and check_owners and not owners.issubset(_impact_prerequisites(inventory, check_owners)):
             gap("check_descriptor_owner_disagreement", test=name, owners=sorted(owners))
         try:
             ids = _target_closure(_mapped_targets(test, desc, realization), realization)
@@ -665,6 +830,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 expanded += [(str(p), kind) for p in files]
             else:
                 expanded.append((value, kind))
+        execution_inputs[name] = []
         for value, kind in sorted(set(expanded)):
             path = Path(value)
             relative = _relative(value, realization["repo_root"])
@@ -695,6 +861,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             if value not in fingerprints:
                 fingerprints[value] = hashlib.sha256(path.read_bytes()).hexdigest()
             input_owners, effect = _owners(inventory, relative)
+            execution_inputs[name].append((relative, kind, input_owners, effect))
             if effect == "global":
                 continue
             if effect == "non_execution" or not input_owners:
@@ -702,10 +869,34 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             elif input_owners.isdisjoint(covered):
                 gap("missing_impact_edge", test=name, input=relative,
                     input_kind=kind, owners=sorted(owners), missing_nodes=sorted(input_owners - covered))
+    # Selection must reach EACH consumer when ANY of its execution inputs
+    # changes. A support registration's own owners cannot provide this proof:
+    # they may be unrelated to the primary check that actually runs it.
+    for primary, ident in sorted(claims.items()):
+        if primary not in tests:
+            continue
+        check = inventory["checks"][ident]
+        covered = _impact_prerequisites(inventory, check.get("nodes", check.get("impact_nodes", [])))
+        try:
+            closure = _fixture_closure([primary], tests, descriptors)
+        except RealizationError as exc:
+            gap("support_closure", check=ident, test=primary, reason=str(exc))
+            continue
+        for support_name in closure:
+            for relative, kind, input_owners, effect in execution_inputs.get(support_name, []):
+                if effect == "global" or not input_owners or effect == "non_execution":
+                    continue  # unowned/non-execution inputs already block above
+                if input_owners.isdisjoint(covered):
+                    gap("missing_impact_edge", check=ident, test=primary,
+                        support_test=support_name, input=relative, input_kind=kind,
+                        owners=sorted(check.get("nodes", check.get("impact_nodes", []))),
+                        missing_nodes=sorted(input_owners - covered))
     if after_build and not header_count and any(t["type"] in ("EXECUTABLE", "STATIC_LIBRARY", "SHARED_LIBRARY") for t in realization["targets"].values()):
         gap("missing_discovered_header_index")
     result = {"schema_version": 1, "passed": not gaps, "requires_broad": bool(gaps),
-        "selective_enforcement": False if gaps or not after_build else True,
+        "selective_enforcement": False if gaps or not after_build or exclusions else True,
+        "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
+        "complete_gate_eligible": not bool(exclusions),
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
         "profile_fingerprint": realization["profile_fingerprint"], "after_build": after_build,
         "gaps": gaps, "input_hashes": fingerprints, "header_entries": header_count,
@@ -872,9 +1063,15 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
         "registration_audit": "passed", "job_conclusion": "success",
         "expected_executions": resolved["tests"], "support_tests": resolved["support_tests"],
-        "started": started, "commands": commands, "evidence_dir": str(directory)}
+        "started": started, "commands": commands, "evidence_dir": str(directory),
+        "baseline_exclusions": resolved.get("baseline_exclusions", []),
+        "coverage_gaps": resolved.get("coverage_gaps", []),
+        "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
+        "audit_build_targets": resolved.get("audit_build_targets", [])}
     if input_audit is None or not input_audit.get("passed") or not input_audit.get("after_build"):
         raise RealizationError("passing post-build input audit required before execution")
+    if input_audit.get("baseline_exclusions", []) != resolved.get("baseline_exclusions", []):
+        raise RealizationError("input audit baseline exclusion accounting mismatch")
     for key in ("source_identity", "inventory_hash", "profile_fingerprint"):
         if input_audit.get(key) != resolved[key]:
             raise RealizationError(f"input audit identity mismatch: {key}")
@@ -958,6 +1155,15 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
                                                   if any(outcomes[n] == "expected_incompatibility" for n in check["tests"]) else {})}
                              for ident, check in resolved["checks"].items()}
         receipt["outcome"] = "passed" if not process.returncode and all(o in ("passed", "expected_incompatibility") for o in outcomes.values()) else "failed"
+    receipt["execution_outcome"] = receipt["outcome"]
+    receipt["execution_clean_first_attempt"] = attempt == 1 and receipt["execution_outcome"] == "passed"
+    if not receipt["complete_gate_eligible"]:
+        receipt["incomplete_reasons"] = ["explicit baseline exclusion prevents complete gate acceptance"]
+        # The current core normalizer/aggregate does not enforce diagnostic flags.
+        # Retain successful primary outcomes, but never emit a successful lane
+        # conclusion that an older consumer could accept as complete coverage.
+        if receipt["outcome"] == "passed":
+            receipt["outcome"] = "failed"
     receipt["previous_attempts"] = previous_attempts
     receipt["clean_first_attempt"] = attempt == 1 and receipt["outcome"] == "passed"
     for ident, result in receipt["checks"].items():

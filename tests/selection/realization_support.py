@@ -1,5 +1,7 @@
 """Small real CMake/CTest fixture shared only by realization tests."""
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -66,7 +68,12 @@ nostrc_finalize_test_inventory()
 ''')
         self.profile = {"source_dir": ".", "configure_args": ["-G", "Ninja"],
                         "environment": {}, "capabilities": ["display"]}
-        self.identity = {"kind": "dirty", "sha": "synthetic-head", "snapshot_digest": "dirty-one"}
+        r._command(["git", "init", "-q", str(self.root)])
+        self.git("config", "user.name", "Realization fixture")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.git("add", ".")
+        self.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "fixture base")
+        self.refresh_identity()
         self.inventory = {"nodes": {"application": {"depends_on": ["core", "vectors"]},
                                     "core": {}, "vectors": {}, "testing": {}, "other": {}},
                           "path_rules": [
@@ -78,12 +85,32 @@ nostrc_finalize_test_inventory()
                               {"exact": "CMakeLists.txt", "nodes": [], "effect": "global"},
                               {"prefix": "cmake/", "nodes": [], "effect": "global"}],
                           "checks": {n: {"kind": "ctest", "profiles": ["synthetic"],
-                                          "ctest_tests": {"synthetic": [n]}, "nodes": ["application"]}
+                                          "ctest_tests": {"synthetic": [n]}, "nodes": ["application", "testing"]}
                                      for n in ("a-model", "gui", "omitted")}}
         self.plan = {"selected_checks": ["a-model"], "source_identity": self.identity,
                      "inventory_hash": "inventory-fixture"}
 
+    def git(self, *args):
+        return r._git(self.root, *args)
+
+    def refresh_identity(self):
+        self.git("add", "-A")
+        tree = self.git("write-tree").decode().strip()
+        digest = hashlib.sha256()
+        for entry in self.git("ls-tree", "-rz", tree).split(b"\0"):
+            if entry:
+                meta, raw = entry.split(b"\t", 1)
+                mode, kind, oid = meta.split()
+                path = self.root / os.fsdecode(raw)
+                content = oid if kind == b"commit" else os.fsencode(os.readlink(path)) if mode == b"120000" else path.read_bytes()
+                digest.update(mode + b"\0" + raw + b"\0" + hashlib.sha256(content).digest())
+        self.identity = {"kind": "dirty", "sha": self.git("rev-parse", "HEAD").decode().strip(),
+                         "snapshot_digest": digest.hexdigest()}
+        if hasattr(self, "plan"):
+            self.plan["source_identity"] = self.identity
+
     def configure(self):
+        self.refresh_identity()
         return r.configure_profile(self.root, self.build, "synthetic", self.profile,
                                    self.identity, "inventory-fixture")
 

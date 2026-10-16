@@ -47,7 +47,7 @@ class RealizationTests(Project):
         changed = dict(self.identity, snapshot_digest="dirty-two")
         with self.assertRaisesRegex(r.RealizationError, "identity changed"):
             r.load_realization(self.build, changed)
-        self.identity = changed
+        (self.root / "vector.txt").write_text("different snapshot contents\n")
         two = self.configure()
         self.assertNotEqual(one["profile_fingerprint"], two["profile_fingerprint"])
 
