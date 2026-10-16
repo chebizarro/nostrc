@@ -1,0 +1,4911 @@
+{
+  "aliases": {
+    "mdk011.matrix": [
+      "mdk011.adopted_commits",
+      "mdk011.adopted_welcome",
+      "mdk011.concurrent_commits",
+      "mdk011.control",
+      "mdk011.groundhog_invites_mdk",
+      "mdk011.mdk09_probe",
+      "mdk011.mdk_invites_groundhog",
+      "mdk011.mdk_invites_groundhog_gui",
+      "mdk011.media_policy",
+      "mdk011.polls",
+      "mdk011.routing_rotation",
+      "mdk011.white_noise_dm",
+      "mdk011.white_noise_media",
+      "mdk011.white_noise_reactions",
+      "mdk011.white_noise_voice",
+      "mdk011.white_noise_welcome"
+    ]
+  },
+  "checks": {
+    "grotto.build_contract": {
+      "build_targets": [],
+      "command": [
+        "cmake",
+        "--build",
+        "{build}",
+        "--target",
+        "signer-tests"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "build_contract",
+      "nodes": [
+        "grotto.gui",
+        "grotto.daemon",
+        "grotto.native_host",
+        "packaging.grotto",
+        "execution.grotto"
+      ],
+      "profiles": [
+        "grotto.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    },
+    "groundhog.about": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-about",
+          "groundhog-about-gui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.shell_ui",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.media": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.media",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.mls_files": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mls-files"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_files",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.mls_media": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mls-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_media",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.mls_service": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mls-service"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.mls_ui": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mls-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_ui",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.mls_ui_gui": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mls-ui-gui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_ui",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.packaging_version": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-packaging-version"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "packaging.groundhog",
+        "version.contract",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/cmake/CheckPackagingVersion.cmake",
+        "flake.nix",
+        "packaging/archlinux/groundhog/PKGBUILD",
+        "packaging/rpm/groundhog.spec",
+        "packaging/debian-desktop/changelog"
+      ]
+    },
+    "groundhog.poll_ui": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-poll-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.poll_ui",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "groundhog.shell": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-shell"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.shell_ui",
+        "groundhog.resources",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "libgo.channel": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "libgo.linux.asan": [
+          "GoChannelTest"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libgo",
+        "execution.libgo"
+      ],
+      "profiles": [
+        "libgo.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "marmot.vectors": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.linux": [
+          "marmot_test_interop",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_rfc9420_vectors"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libmarmot",
+        "marmot.vector_inputs",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.adopted_commits": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-adopted-commits"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.adopted_welcome": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-adopted-welcome"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.concurrent_commits": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-concurrent-commits"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.control": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-control"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.groundhog_invites_mdk": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-groundhog-invites-mdk"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.mdk09_probe": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-mdk09-probe"
+        ]
+      },
+      "expected_outcome": {
+        "case": "mdk09_incompatibility",
+        "exit_code": 77
+      },
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.mdk_invites_groundhog": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-mdk-invites-groundhog"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.mdk_invites_groundhog_gui": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-mdk-invites-groundhog-gui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.media_policy": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-media-policy"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.polls": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-polls"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.routing_rotation": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-routing-rotation"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.white_noise_dm": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-white-noise-dm"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.white_noise_media": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-white-noise-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.white_noise_reactions": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-white-noise-reactions"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.white_noise_voice": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-white-noise-voice"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk011.white_noise_welcome": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux": [
+          "groundhog-mdk011-interop-white-noise-welcome"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.media",
+        "groundhog.voice",
+        "execution.groundhog"
+      ],
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "mdk08.compatibility": {
+      "build_targets": [],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.mdk08": [
+          "groundhog-mdk-interop"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.legacy_harness_inputs",
+        "groundhog.media",
+        "groundhog.voice"
+      ],
+      "profiles": [
+        "groundhog.mdk08"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "selection.contract": {
+      "build_targets": [],
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests/selection"
+      ],
+      "cost": "ordinary",
+      "environment": {},
+      "expected_outcome": "pass",
+      "kind": "command",
+      "nodes": [
+        "selection.contract",
+        "static.policy",
+        "version.contract"
+      ],
+      "profiles": [
+        "static.policy"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [],
+      "working_directory": "{source}"
+    }
+  },
+  "coverage_gaps": [
+    {
+      "id": "supported_profile_union",
+      "reason": "Initial logical inventory is non-enforcing: complete native/toolchain/sanitizer/optional profile union and exact registration membership require realization plus workflow migration. Existing legacy gates remain authoritative.",
+      "tracking": "nostrc-0cfsg.2"
+    },
+    {
+      "id": "shadow_cutover",
+      "reason": "W11 measured baselines, 20 PRs, two broad runs and actual protection cutover NOT RUN; no selective production acceptance.",
+      "tracking": "nostrc-0cfsg.5"
+    }
+  ],
+  "enforcement_ready": false,
+  "legacy_global": {
+    "package_jobs": [
+      "build-appimage-gnostr",
+      "build-flatpak-gnostr.aarch64",
+      "build-flatpak-gnostr.x86_64",
+      "build-flatpak.aarch64",
+      "build-flatpak.x86_64",
+      "build-linux-daemon-tcp.aarch64",
+      "build-linux-daemon-tcp.x86_64",
+      "build-linux.aarch64",
+      "build-linux.x86_64",
+      "build-macos-signer-dmg",
+      "build-macos-tarball",
+      "build-snap-daemon.aarch64",
+      "build-snap-daemon.x86_64",
+      "build-snap-gnostr.aarch64",
+      "build-snap-gnostr.x86_64",
+      "build-snap-signer.aarch64",
+      "build-snap-signer.x86_64",
+      "source",
+      "windows.build"
+    ],
+    "publishers": [
+      "main",
+      "windows"
+    ]
+  },
+  "nodes": {
+    "benchmarks": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "benchmarks",
+      "owner_paths": [
+        "benchmark"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "blossom_cache": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "blossom_cache",
+      "owner_paths": [
+        "apps/blossom-cache"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "build.global": {
+      "depends_on": [],
+      "id": "build.global",
+      "owner_paths": [
+        "tests/selection/inventory.json"
+      ]
+    },
+    "execution.core": {
+      "depends_on": [],
+      "id": "execution.core",
+      "owner_paths": [
+        ".github/workflows"
+      ]
+    },
+    "execution.grotto": {
+      "depends_on": [],
+      "id": "execution.grotto",
+      "owner_paths": [
+        ".github/workflows"
+      ]
+    },
+    "execution.groundhog": {
+      "depends_on": [],
+      "id": "execution.groundhog",
+      "owner_paths": [
+        ".github/workflows"
+      ]
+    },
+    "execution.libgo": {
+      "depends_on": [],
+      "id": "execution.libgo",
+      "owner_paths": [
+        ".github/workflows"
+      ]
+    },
+    "gnome.common": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.common",
+      "owner_paths": [
+        "gnome/common"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.dbus": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.dbus",
+      "owner_paths": [
+        "gnome/dbus"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.libnostr_publish": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.libnostr_publish",
+      "owner_paths": [
+        "gnome/libnostr-publish"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_dav": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_dav",
+      "owner_paths": [
+        "gnome/nostr-dav"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_dispatcher": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_dispatcher",
+      "owner_paths": [
+        "gnome/nostr-dispatcher"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_homed": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_homed",
+      "owner_paths": [
+        "gnome/nostr-homed"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_nautilus": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_nautilus",
+      "owner_paths": [
+        "gnome/nostr-nautilus"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_seal": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_seal",
+      "owner_paths": [
+        "gnome/nostr-seal"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_search_provider": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_search_provider",
+      "owner_paths": [
+        "gnome/nostr-search-provider"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_settings": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_settings",
+      "owner_paths": [
+        "gnome/nostr-settings"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_share": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_share",
+      "owner_paths": [
+        "gnome/nostr-share"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_shell_extension": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_shell_extension",
+      "owner_paths": [
+        "gnome/nostr-shell-extension"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.nostr_wallet_agent": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.nostr_wallet_agent",
+      "owner_paths": [
+        "gnome/nostr-wallet-agent"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnome.seahorse": {
+      "coverage_gap": "No fully audited dedicated execution profile yet; broad recovery cannot prove this component validated.",
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "gnome.seahorse",
+      "owner_paths": [
+        "gnome/seahorse"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "gnostr": {
+      "depends_on": [
+        "nostr.gtk",
+        "nip17",
+        "nip29",
+        "nip44"
+      ],
+      "id": "gnostr",
+      "owner_paths": [
+        "apps/gnostr"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "grelay": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "grelay",
+      "owner_paths": [
+        "apps/grelay"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "grotto.daemon": {
+      "depends_on": [
+        "nostr.gobject",
+        "nip55l",
+        "nip5f",
+        "nip46"
+      ],
+      "id": "grotto.daemon",
+      "owner_paths": [
+        "apps/grotto/daemon"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "grotto.gui": {
+      "depends_on": [
+        "nostr.gobject",
+        "nip55l",
+        "nip04",
+        "nip46",
+        "nip19",
+        "nip49",
+        "nip06",
+        "nip44"
+      ],
+      "id": "grotto.gui",
+      "owner_paths": [
+        "apps/grotto"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "grotto.native_host": {
+      "depends_on": [
+        "nip55l"
+      ],
+      "id": "grotto.native_host",
+      "owner_paths": [
+        "apps/grotto/native-host"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.account_relays": {
+      "depends_on": [
+        "groundhog.identity_auth",
+        "groundhog.relay"
+      ],
+      "id": "groundhog.account_relays",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.conversations": {
+      "depends_on": [
+        "groundhog.store",
+        "groundhog.identity_auth"
+      ],
+      "id": "groundhog.conversations",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.dm": {
+      "depends_on": [
+        "groundhog.conversations",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "nip17",
+        "nip59"
+      ],
+      "id": "groundhog.dm",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.group_ui": {
+      "depends_on": [
+        "nip29",
+        "groundhog.conversations"
+      ],
+      "id": "groundhog.group_ui",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.identity_auth": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "groundhog.identity_auth",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.legacy_harness_inputs": {
+      "depends_on": [],
+      "id": "groundhog.legacy_harness_inputs",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ]
+    },
+    "groundhog.media": {
+      "depends_on": [
+        "groundhog.net",
+        "groundhog.store",
+        "groundhog.conversations"
+      ],
+      "id": "groundhog.media",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.mls_files": {
+      "depends_on": [
+        "groundhog.mls_service",
+        "groundhog.mls_media"
+      ],
+      "id": "groundhog.mls_files",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.mls_media": {
+      "depends_on": [
+        "groundhog.media",
+        "libmarmot",
+        "groundhog.mls_service"
+      ],
+      "id": "groundhog.mls_media",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.mls_service": {
+      "depends_on": [
+        "groundhog.mls_store",
+        "groundhog.dm",
+        "groundhog.identity_auth",
+        "groundhog.conversations",
+        "groundhog.account_relays",
+        "nip17",
+        "nip59"
+      ],
+      "id": "groundhog.mls_service",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.mls_store": {
+      "depends_on": [
+        "groundhog.store",
+        "libmarmot"
+      ],
+      "id": "groundhog.mls_store",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.mls_ui": {
+      "depends_on": [
+        "groundhog.mls_service",
+        "groundhog.group_ui",
+        "groundhog.mls_files"
+      ],
+      "id": "groundhog.mls_ui",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.net": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "groundhog.net",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.poll_ui": {
+      "depends_on": [
+        "groundhog.mls_ui"
+      ],
+      "id": "groundhog.poll_ui",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.relay": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "groundhog.relay",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.resources": {
+      "depends_on": [],
+      "id": "groundhog.resources",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ]
+    },
+    "groundhog.shell_ui": {
+      "depends_on": [
+        "groundhog.resources"
+      ],
+      "id": "groundhog.shell_ui",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.store": {
+      "depends_on": [
+        "nostrdb"
+      ],
+      "id": "groundhog.store",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "groundhog.unclassified": {
+      "coverage_gap": "Fine runtime ownership not yet realized; conservative broad coverage required.",
+      "depends_on": [],
+      "id": "groundhog.unclassified",
+      "owner_paths": [
+        "gnome/groundhog"
+      ]
+    },
+    "groundhog.voice": {
+      "depends_on": [
+        "groundhog.media",
+        "groundhog.mls_service"
+      ],
+      "id": "groundhog.voice",
+      "owner_paths": [
+        "gnome/groundhog/CMakeLists.txt"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "libgo": {
+      "depends_on": [
+        "vendor.nsync"
+      ],
+      "id": "libgo",
+      "owner_paths": [
+        "libgo"
+      ],
+      "rationale": "libgo links nsync; changes affect downstream consumers."
+    },
+    "libhanami": {
+      "depends_on": [],
+      "id": "libhanami",
+      "owner_paths": [
+        "libhanami"
+      ]
+    },
+    "libjson": {
+      "depends_on": [],
+      "id": "libjson",
+      "owner_paths": [
+        "libjson"
+      ]
+    },
+    "libmarmot": {
+      "depends_on": [
+        "libnostr",
+        "nip44"
+      ],
+      "id": "libmarmot",
+      "owner_paths": [
+        "libmarmot"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "libnostr": {
+      "depends_on": [
+        "libgo",
+        "vendor.nostrdb"
+      ],
+      "id": "libnostr",
+      "owner_paths": [
+        "libnostr"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "marmot.gobject": {
+      "depends_on": [
+        "libmarmot"
+      ],
+      "id": "marmot.gobject",
+      "owner_paths": [
+        "marmot-gobject"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "marmot.vector_inputs": {
+      "depends_on": [],
+      "id": "marmot.vector_inputs",
+      "owner_paths": [
+        "libmarmot/tests/vectors"
+      ]
+    },
+    "nip01": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip01",
+      "owner_paths": [
+        "nips/nip01"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip01.test_inputs": {
+      "depends_on": [],
+      "id": "nip01.test_inputs",
+      "owner_paths": [
+        "nips/nip01/tests"
+      ]
+    },
+    "nip02": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip02",
+      "owner_paths": [
+        "nips/nip02"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip02.test_inputs": {
+      "depends_on": [],
+      "id": "nip02.test_inputs",
+      "owner_paths": [
+        "nips/nip02/tests"
+      ]
+    },
+    "nip04": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip04",
+      "owner_paths": [
+        "nips/nip04"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip04.test_inputs": {
+      "depends_on": [],
+      "id": "nip04.test_inputs",
+      "owner_paths": [
+        "nips/nip04/tests"
+      ]
+    },
+    "nip05": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip05",
+      "owner_paths": [
+        "nips/nip05"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip05.test_inputs": {
+      "depends_on": [],
+      "id": "nip05.test_inputs",
+      "owner_paths": [
+        "nips/nip05/tests"
+      ]
+    },
+    "nip06": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip06",
+      "owner_paths": [
+        "nips/nip06"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip06.test_inputs": {
+      "depends_on": [],
+      "id": "nip06.test_inputs",
+      "owner_paths": [
+        "nips/nip06/tests"
+      ]
+    },
+    "nip10": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip10",
+      "owner_paths": [
+        "nips/nip10"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip10.test_inputs": {
+      "depends_on": [],
+      "id": "nip10.test_inputs",
+      "owner_paths": [
+        "nips/nip10/tests"
+      ]
+    },
+    "nip11": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip11",
+      "owner_paths": [
+        "nips/nip11"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip11.test_inputs": {
+      "depends_on": [],
+      "id": "nip11.test_inputs",
+      "owner_paths": [
+        "nips/nip11/tests"
+      ]
+    },
+    "nip13": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip13",
+      "owner_paths": [
+        "nips/nip13"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip13.test_inputs": {
+      "depends_on": [],
+      "id": "nip13.test_inputs",
+      "owner_paths": [
+        "nips/nip13/tests"
+      ]
+    },
+    "nip14": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip14",
+      "owner_paths": [
+        "nips/nip14"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip14.test_inputs": {
+      "depends_on": [],
+      "id": "nip14.test_inputs",
+      "owner_paths": [
+        "nips/nip14/tests"
+      ]
+    },
+    "nip17": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip17",
+      "owner_paths": [
+        "nips/nip17"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip17.test_inputs": {
+      "depends_on": [],
+      "id": "nip17.test_inputs",
+      "owner_paths": [
+        "nips/nip17/tests"
+      ]
+    },
+    "nip18": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip18",
+      "owner_paths": [
+        "nips/nip18"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip18.test_inputs": {
+      "depends_on": [],
+      "id": "nip18.test_inputs",
+      "owner_paths": [
+        "nips/nip18/tests"
+      ]
+    },
+    "nip19": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip19",
+      "owner_paths": [
+        "nips/nip19"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip19.test_inputs": {
+      "depends_on": [],
+      "id": "nip19.test_inputs",
+      "owner_paths": [
+        "nips/nip19/tests"
+      ]
+    },
+    "nip21": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip21",
+      "owner_paths": [
+        "nips/nip21"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip21.test_inputs": {
+      "depends_on": [],
+      "id": "nip21.test_inputs",
+      "owner_paths": [
+        "nips/nip21/tests"
+      ]
+    },
+    "nip22": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip22",
+      "owner_paths": [
+        "nips/nip22"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip22.test_inputs": {
+      "depends_on": [],
+      "id": "nip22.test_inputs",
+      "owner_paths": [
+        "nips/nip22/tests"
+      ]
+    },
+    "nip23": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip23",
+      "owner_paths": [
+        "nips/nip23"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip23.test_inputs": {
+      "depends_on": [],
+      "id": "nip23.test_inputs",
+      "owner_paths": [
+        "nips/nip23/tests"
+      ]
+    },
+    "nip24": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip24",
+      "owner_paths": [
+        "nips/nip24"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip24.test_inputs": {
+      "depends_on": [],
+      "id": "nip24.test_inputs",
+      "owner_paths": [
+        "nips/nip24/tests"
+      ]
+    },
+    "nip25": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip25",
+      "owner_paths": [
+        "nips/nip25"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip25.test_inputs": {
+      "depends_on": [],
+      "id": "nip25.test_inputs",
+      "owner_paths": [
+        "nips/nip25/tests"
+      ]
+    },
+    "nip27": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip27",
+      "owner_paths": [
+        "nips/nip27"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip27.test_inputs": {
+      "depends_on": [],
+      "id": "nip27.test_inputs",
+      "owner_paths": [
+        "nips/nip27/tests"
+      ]
+    },
+    "nip28": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip28",
+      "owner_paths": [
+        "nips/nip28"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip28.test_inputs": {
+      "depends_on": [],
+      "id": "nip28.test_inputs",
+      "owner_paths": [
+        "nips/nip28/tests"
+      ]
+    },
+    "nip29": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip29",
+      "owner_paths": [
+        "nips/nip29"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip29.test_inputs": {
+      "depends_on": [],
+      "id": "nip29.test_inputs",
+      "owner_paths": [
+        "nips/nip29/tests"
+      ]
+    },
+    "nip30": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip30",
+      "owner_paths": [
+        "nips/nip30"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip30.test_inputs": {
+      "depends_on": [],
+      "id": "nip30.test_inputs",
+      "owner_paths": [
+        "nips/nip30/tests"
+      ]
+    },
+    "nip31": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip31",
+      "owner_paths": [
+        "nips/nip31"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip31.test_inputs": {
+      "depends_on": [],
+      "id": "nip31.test_inputs",
+      "owner_paths": [
+        "nips/nip31/tests"
+      ]
+    },
+    "nip34": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip34",
+      "owner_paths": [
+        "nips/nip34"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip34.test_inputs": {
+      "depends_on": [],
+      "id": "nip34.test_inputs",
+      "owner_paths": [
+        "nips/nip34/tests"
+      ]
+    },
+    "nip39": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip39",
+      "owner_paths": [
+        "nips/nip39"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip39.test_inputs": {
+      "depends_on": [],
+      "id": "nip39.test_inputs",
+      "owner_paths": [
+        "nips/nip39/tests"
+      ]
+    },
+    "nip40": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip40",
+      "owner_paths": [
+        "nips/nip40"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip40.test_inputs": {
+      "depends_on": [],
+      "id": "nip40.test_inputs",
+      "owner_paths": [
+        "nips/nip40/tests"
+      ]
+    },
+    "nip42": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip42",
+      "owner_paths": [
+        "nips/nip42"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip44": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip44",
+      "owner_paths": [
+        "nips/nip44"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip44.test_inputs": {
+      "depends_on": [],
+      "id": "nip44.test_inputs",
+      "owner_paths": [
+        "nips/nip44/tests"
+      ]
+    },
+    "nip45": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip45",
+      "owner_paths": [
+        "nips/nip45"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip46": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip46",
+      "owner_paths": [
+        "nips/nip46"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip46.test_inputs": {
+      "depends_on": [],
+      "id": "nip46.test_inputs",
+      "owner_paths": [
+        "nips/nip46/tests"
+      ]
+    },
+    "nip47": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip47",
+      "owner_paths": [
+        "nips/nip47"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip47.test_inputs": {
+      "depends_on": [],
+      "id": "nip47.test_inputs",
+      "owner_paths": [
+        "nips/nip47/tests"
+      ]
+    },
+    "nip49": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip49",
+      "owner_paths": [
+        "nips/nip49"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip49.test_inputs": {
+      "depends_on": [],
+      "id": "nip49.test_inputs",
+      "owner_paths": [
+        "nips/nip49/tests"
+      ]
+    },
+    "nip50": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip50",
+      "owner_paths": [
+        "nips/nip50"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip51": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip51",
+      "owner_paths": [
+        "nips/nip51"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip51.test_inputs": {
+      "depends_on": [],
+      "id": "nip51.test_inputs",
+      "owner_paths": [
+        "nips/nip51/tests"
+      ]
+    },
+    "nip52": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip52",
+      "owner_paths": [
+        "nips/nip52"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip52.test_inputs": {
+      "depends_on": [],
+      "id": "nip52.test_inputs",
+      "owner_paths": [
+        "nips/nip52/tests"
+      ]
+    },
+    "nip53": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip53",
+      "owner_paths": [
+        "nips/nip53"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip53.test_inputs": {
+      "depends_on": [],
+      "id": "nip53.test_inputs",
+      "owner_paths": [
+        "nips/nip53/tests"
+      ]
+    },
+    "nip54": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip54",
+      "owner_paths": [
+        "nips/nip54"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip55l": {
+      "depends_on": [
+        "nip55l.core",
+        "nip55l.glib"
+      ],
+      "id": "nip55l",
+      "owner_paths": [
+        "nips/nip55l"
+      ],
+      "rationale": "Coarse NIP55L consumers include both separable core and GLib implementation."
+    },
+    "nip55l.core": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip55l.core",
+      "owner_paths": [
+        "nips/nip55l/src/core"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip55l.glib": {
+      "depends_on": [
+        "nip55l.core",
+        "nostr.gobject"
+      ],
+      "id": "nip55l.glib",
+      "owner_paths": [
+        "nips/nip55l/src/glib"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip55l.test_inputs": {
+      "depends_on": [],
+      "id": "nip55l.test_inputs",
+      "owner_paths": [
+        "nips/nip55l/tests"
+      ]
+    },
+    "nip57": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip57",
+      "owner_paths": [
+        "nips/nip57"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip57.test_inputs": {
+      "depends_on": [],
+      "id": "nip57.test_inputs",
+      "owner_paths": [
+        "nips/nip57/tests"
+      ]
+    },
+    "nip58": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip58",
+      "owner_paths": [
+        "nips/nip58"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip58.test_inputs": {
+      "depends_on": [],
+      "id": "nip58.test_inputs",
+      "owner_paths": [
+        "nips/nip58/tests"
+      ]
+    },
+    "nip59": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip59",
+      "owner_paths": [
+        "nips/nip59"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip59.test_inputs": {
+      "depends_on": [],
+      "id": "nip59.test_inputs",
+      "owner_paths": [
+        "nips/nip59/tests"
+      ]
+    },
+    "nip5f": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip5f",
+      "owner_paths": [
+        "nips/nip5f"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip5f.test_inputs": {
+      "depends_on": [],
+      "id": "nip5f.test_inputs",
+      "owner_paths": [
+        "nips/nip5f/tests"
+      ]
+    },
+    "nip60": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip60",
+      "owner_paths": [
+        "nips/nip60"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip60.test_inputs": {
+      "depends_on": [],
+      "id": "nip60.test_inputs",
+      "owner_paths": [
+        "nips/nip60/tests"
+      ]
+    },
+    "nip61": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip61",
+      "owner_paths": [
+        "nips/nip61"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip61.test_inputs": {
+      "depends_on": [],
+      "id": "nip61.test_inputs",
+      "owner_paths": [
+        "nips/nip61/tests"
+      ]
+    },
+    "nip65": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip65",
+      "owner_paths": [
+        "nips/nip65"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip65.test_inputs": {
+      "depends_on": [],
+      "id": "nip65.test_inputs",
+      "owner_paths": [
+        "nips/nip65/tests"
+      ]
+    },
+    "nip70": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip70",
+      "owner_paths": [
+        "nips/nip70"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip70.test_inputs": {
+      "depends_on": [],
+      "id": "nip70.test_inputs",
+      "owner_paths": [
+        "nips/nip70/tests"
+      ]
+    },
+    "nip73": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip73",
+      "owner_paths": [
+        "nips/nip73"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip73.test_inputs": {
+      "depends_on": [],
+      "id": "nip73.test_inputs",
+      "owner_paths": [
+        "nips/nip73/tests"
+      ]
+    },
+    "nip75": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip75",
+      "owner_paths": [
+        "nips/nip75"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip75.test_inputs": {
+      "depends_on": [],
+      "id": "nip75.test_inputs",
+      "owner_paths": [
+        "nips/nip75/tests"
+      ]
+    },
+    "nip77": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip77",
+      "owner_paths": [
+        "nips/nip77"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip77.test_inputs": {
+      "depends_on": [],
+      "id": "nip77.test_inputs",
+      "owner_paths": [
+        "nips/nip77/tests"
+      ]
+    },
+    "nip86": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip86",
+      "owner_paths": [
+        "nips/nip86"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip92": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip92",
+      "owner_paths": [
+        "nips/nip92"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip92.test_inputs": {
+      "depends_on": [],
+      "id": "nip92.test_inputs",
+      "owner_paths": [
+        "nips/nip92/tests"
+      ]
+    },
+    "nip94": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip94",
+      "owner_paths": [
+        "nips/nip94"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip94.test_inputs": {
+      "depends_on": [],
+      "id": "nip94.test_inputs",
+      "owner_paths": [
+        "nips/nip94/tests"
+      ]
+    },
+    "nip98": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip98",
+      "owner_paths": [
+        "nips/nip98"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip98.test_inputs": {
+      "depends_on": [],
+      "id": "nip98.test_inputs",
+      "owner_paths": [
+        "nips/nip98/tests"
+      ]
+    },
+    "nip99": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip99",
+      "owner_paths": [
+        "nips/nip99"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip99.test_inputs": {
+      "depends_on": [],
+      "id": "nip99.test_inputs",
+      "owner_paths": [
+        "nips/nip99/tests"
+      ]
+    },
+    "nip_cas0010": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip_cas0010",
+      "owner_paths": [
+        "nips/nip-cas0010"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip_cas0010.test_inputs": {
+      "depends_on": [],
+      "id": "nip_cas0010.test_inputs",
+      "owner_paths": [
+        "nips/nip-cas0010/tests"
+      ]
+    },
+    "nip_communikeys": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip_communikeys",
+      "owner_paths": [
+        "nips/nip-communikeys"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip_communikeys.test_inputs": {
+      "depends_on": [],
+      "id": "nip_communikeys.test_inputs",
+      "owner_paths": [
+        "nips/nip-communikeys/tests"
+      ]
+    },
+    "nip_concord": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nip_concord",
+      "owner_paths": [
+        "nips/nip-concord"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nip_concord.test_inputs": {
+      "depends_on": [],
+      "id": "nip_concord.test_inputs",
+      "owner_paths": [
+        "nips/nip-concord/tests"
+      ]
+    },
+    "nipb0": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nipb0",
+      "owner_paths": [
+        "nips/nipb0"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nipb0.test_inputs": {
+      "depends_on": [],
+      "id": "nipb0.test_inputs",
+      "owner_paths": [
+        "nips/nipb0/tests"
+      ]
+    },
+    "nostr.gobject": {
+      "depends_on": [
+        "libnostr",
+        "libjson",
+        "libgo",
+        "nostrdb"
+      ],
+      "id": "nostr.gobject",
+      "owner_paths": [
+        "nostr-gobject"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nostr.gtk": {
+      "depends_on": [
+        "nostr.gobject"
+      ],
+      "id": "nostr.gtk",
+      "owner_paths": [
+        "nostr-gtk"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nostrdb": {
+      "depends_on": [
+        "libnostr",
+        "vendor.nostrdb"
+      ],
+      "id": "nostrdb",
+      "owner_paths": [
+        "components/nostrdb"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "nson": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "nson",
+      "owner_paths": [
+        "nson"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "packaging.gnostr": {
+      "depends_on": [],
+      "id": "packaging.gnostr",
+      "owner_paths": [
+        "apps/gnostr/packaging"
+      ]
+    },
+    "packaging.grotto": {
+      "depends_on": [],
+      "id": "packaging.grotto",
+      "owner_paths": [
+        "apps/grotto/packaging"
+      ]
+    },
+    "packaging.groundhog": {
+      "depends_on": [],
+      "id": "packaging.groundhog",
+      "owner_paths": [
+        "packaging/archlinux/groundhog"
+      ]
+    },
+    "packaging.shared": {
+      "depends_on": [],
+      "id": "packaging.shared",
+      "owner_paths": [
+        "tests/selection/inventory.json"
+      ]
+    },
+    "pkcs11": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "pkcs11",
+      "owner_paths": [
+        "pkcs11"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "relayctl": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "relayctl",
+      "owner_paths": [
+        "apps/relayctl"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "relayd": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "relayd",
+      "owner_paths": [
+        "apps/relayd"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "schema": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "schema",
+      "owner_paths": [
+        "nips/schema"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "schema.test_inputs": {
+      "depends_on": [],
+      "id": "schema.test_inputs",
+      "owner_paths": [
+        "nips/schema/tests"
+      ]
+    },
+    "selection.contract": {
+      "depends_on": [],
+      "id": "selection.contract",
+      "owner_paths": [
+        "tests/selection/inventory.json"
+      ]
+    },
+    "shared.tests": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "shared.tests",
+      "owner_paths": [
+        "tests"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "signet": {
+      "depends_on": [
+        "libnostr",
+        "libjson",
+        "nip44",
+        "nip46",
+        "nip55l"
+      ],
+      "id": "signet",
+      "owner_paths": [
+        "signet"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "static.policy": {
+      "depends_on": [],
+      "id": "static.policy",
+      "owner_paths": [
+        "tests/selection/inventory.json"
+      ]
+    },
+    "testing.framework": {
+      "depends_on": [],
+      "id": "testing.framework",
+      "owner_paths": [
+        "Testing"
+      ]
+    },
+    "testkit": {
+      "depends_on": [],
+      "id": "testkit",
+      "owner_paths": [
+        "tests/testkit"
+      ]
+    },
+    "tools": {
+      "depends_on": [
+        "libnostr"
+      ],
+      "id": "tools",
+      "owner_paths": [
+        "tools"
+      ],
+      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+    },
+    "vendor.nostrdb": {
+      "depends_on": [],
+      "id": "vendor.nostrdb",
+      "owner_paths": [
+        "third_party/nostrdb"
+      ]
+    },
+    "vendor.nsync": {
+      "depends_on": [],
+      "id": "vendor.nsync",
+      "owner_paths": [
+        "third_party/nsync"
+      ]
+    },
+    "version.contract": {
+      "depends_on": [],
+      "id": "version.contract",
+      "owner_paths": [
+        "tests/selection/inventory.json"
+      ]
+    }
+  },
+  "path_rules": [
+    {
+      "effect": "impact",
+      "nodes": [
+        "libgo"
+      ],
+      "prefix": "libgo",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libnostr"
+      ],
+      "prefix": "libnostr",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libjson"
+      ],
+      "prefix": "libjson",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nostrdb"
+      ],
+      "prefix": "components/nostrdb",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libhanami"
+      ],
+      "prefix": "libhanami",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "libmarmot"
+      ],
+      "prefix": "libmarmot",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "marmot.gobject"
+      ],
+      "prefix": "marmot-gobject",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nostr.gobject"
+      ],
+      "prefix": "nostr-gobject",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nostr.gtk"
+      ],
+      "prefix": "nostr-gtk",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_cas0010"
+      ],
+      "prefix": "nips/nip-cas0010",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_cas0010.test_inputs"
+      ],
+      "prefix": "nips/nip-cas0010/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_communikeys"
+      ],
+      "prefix": "nips/nip-communikeys",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_communikeys.test_inputs"
+      ],
+      "prefix": "nips/nip-communikeys/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_concord"
+      ],
+      "prefix": "nips/nip-concord",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip_concord.test_inputs"
+      ],
+      "prefix": "nips/nip-concord/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip01"
+      ],
+      "prefix": "nips/nip01",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip01.test_inputs"
+      ],
+      "prefix": "nips/nip01/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip02"
+      ],
+      "prefix": "nips/nip02",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip02.test_inputs"
+      ],
+      "prefix": "nips/nip02/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip04"
+      ],
+      "prefix": "nips/nip04",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip04.test_inputs"
+      ],
+      "prefix": "nips/nip04/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip05"
+      ],
+      "prefix": "nips/nip05",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip05.test_inputs"
+      ],
+      "prefix": "nips/nip05/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip06"
+      ],
+      "prefix": "nips/nip06",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip06.test_inputs"
+      ],
+      "prefix": "nips/nip06/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip10"
+      ],
+      "prefix": "nips/nip10",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip10.test_inputs"
+      ],
+      "prefix": "nips/nip10/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip11"
+      ],
+      "prefix": "nips/nip11",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip11.test_inputs"
+      ],
+      "prefix": "nips/nip11/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip13"
+      ],
+      "prefix": "nips/nip13",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip13.test_inputs"
+      ],
+      "prefix": "nips/nip13/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip14"
+      ],
+      "prefix": "nips/nip14",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip14.test_inputs"
+      ],
+      "prefix": "nips/nip14/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip17"
+      ],
+      "prefix": "nips/nip17",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip17.test_inputs"
+      ],
+      "prefix": "nips/nip17/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip18"
+      ],
+      "prefix": "nips/nip18",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip18.test_inputs"
+      ],
+      "prefix": "nips/nip18/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip19"
+      ],
+      "prefix": "nips/nip19",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip19.test_inputs"
+      ],
+      "prefix": "nips/nip19/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip21"
+      ],
+      "prefix": "nips/nip21",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip21.test_inputs"
+      ],
+      "prefix": "nips/nip21/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip22"
+      ],
+      "prefix": "nips/nip22",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip22.test_inputs"
+      ],
+      "prefix": "nips/nip22/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip23"
+      ],
+      "prefix": "nips/nip23",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip23.test_inputs"
+      ],
+      "prefix": "nips/nip23/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip24"
+      ],
+      "prefix": "nips/nip24",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip24.test_inputs"
+      ],
+      "prefix": "nips/nip24/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip25"
+      ],
+      "prefix": "nips/nip25",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip25.test_inputs"
+      ],
+      "prefix": "nips/nip25/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip27"
+      ],
+      "prefix": "nips/nip27",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip27.test_inputs"
+      ],
+      "prefix": "nips/nip27/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip28"
+      ],
+      "prefix": "nips/nip28",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip28.test_inputs"
+      ],
+      "prefix": "nips/nip28/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip29"
+      ],
+      "prefix": "nips/nip29",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip29.test_inputs"
+      ],
+      "prefix": "nips/nip29/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip30"
+      ],
+      "prefix": "nips/nip30",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip30.test_inputs"
+      ],
+      "prefix": "nips/nip30/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip31"
+      ],
+      "prefix": "nips/nip31",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip31.test_inputs"
+      ],
+      "prefix": "nips/nip31/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip34"
+      ],
+      "prefix": "nips/nip34",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip34.test_inputs"
+      ],
+      "prefix": "nips/nip34/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip39"
+      ],
+      "prefix": "nips/nip39",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip39.test_inputs"
+      ],
+      "prefix": "nips/nip39/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip40"
+      ],
+      "prefix": "nips/nip40",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip40.test_inputs"
+      ],
+      "prefix": "nips/nip40/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip42"
+      ],
+      "prefix": "nips/nip42",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip44"
+      ],
+      "prefix": "nips/nip44",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip44.test_inputs"
+      ],
+      "prefix": "nips/nip44/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip45"
+      ],
+      "prefix": "nips/nip45",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip46"
+      ],
+      "prefix": "nips/nip46",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip46.test_inputs"
+      ],
+      "prefix": "nips/nip46/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip47"
+      ],
+      "prefix": "nips/nip47",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip47.test_inputs"
+      ],
+      "prefix": "nips/nip47/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip49"
+      ],
+      "prefix": "nips/nip49",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip49.test_inputs"
+      ],
+      "prefix": "nips/nip49/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip50"
+      ],
+      "prefix": "nips/nip50",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip51"
+      ],
+      "prefix": "nips/nip51",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip51.test_inputs"
+      ],
+      "prefix": "nips/nip51/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip52"
+      ],
+      "prefix": "nips/nip52",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip52.test_inputs"
+      ],
+      "prefix": "nips/nip52/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip53"
+      ],
+      "prefix": "nips/nip53",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip53.test_inputs"
+      ],
+      "prefix": "nips/nip53/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip54"
+      ],
+      "prefix": "nips/nip54",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip55l"
+      ],
+      "prefix": "nips/nip55l",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip55l.test_inputs"
+      ],
+      "prefix": "nips/nip55l/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip57"
+      ],
+      "prefix": "nips/nip57",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip57.test_inputs"
+      ],
+      "prefix": "nips/nip57/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip58"
+      ],
+      "prefix": "nips/nip58",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip58.test_inputs"
+      ],
+      "prefix": "nips/nip58/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip59"
+      ],
+      "prefix": "nips/nip59",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip59.test_inputs"
+      ],
+      "prefix": "nips/nip59/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip5f"
+      ],
+      "prefix": "nips/nip5f",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip5f.test_inputs"
+      ],
+      "prefix": "nips/nip5f/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip60"
+      ],
+      "prefix": "nips/nip60",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip60.test_inputs"
+      ],
+      "prefix": "nips/nip60/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip61"
+      ],
+      "prefix": "nips/nip61",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip61.test_inputs"
+      ],
+      "prefix": "nips/nip61/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip65"
+      ],
+      "prefix": "nips/nip65",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip65.test_inputs"
+      ],
+      "prefix": "nips/nip65/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip70"
+      ],
+      "prefix": "nips/nip70",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip70.test_inputs"
+      ],
+      "prefix": "nips/nip70/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip73"
+      ],
+      "prefix": "nips/nip73",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip73.test_inputs"
+      ],
+      "prefix": "nips/nip73/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip75"
+      ],
+      "prefix": "nips/nip75",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip75.test_inputs"
+      ],
+      "prefix": "nips/nip75/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip77"
+      ],
+      "prefix": "nips/nip77",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip77.test_inputs"
+      ],
+      "prefix": "nips/nip77/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip86"
+      ],
+      "prefix": "nips/nip86",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip92"
+      ],
+      "prefix": "nips/nip92",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip92.test_inputs"
+      ],
+      "prefix": "nips/nip92/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip94"
+      ],
+      "prefix": "nips/nip94",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip94.test_inputs"
+      ],
+      "prefix": "nips/nip94/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip98"
+      ],
+      "prefix": "nips/nip98",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip98.test_inputs"
+      ],
+      "prefix": "nips/nip98/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip99"
+      ],
+      "prefix": "nips/nip99",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip99.test_inputs"
+      ],
+      "prefix": "nips/nip99/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nipb0"
+      ],
+      "prefix": "nips/nipb0",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nipb0.test_inputs"
+      ],
+      "prefix": "nips/nipb0/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "schema"
+      ],
+      "prefix": "nips/schema",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "schema.test_inputs"
+      ],
+      "prefix": "nips/schema/tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip55l.core"
+      ],
+      "prefix": "nips/nip55l/src/core",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nip55l.glib"
+      ],
+      "prefix": "nips/nip55l/src/glib",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "grotto.gui"
+      ],
+      "prefix": "apps/grotto",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "grotto.daemon"
+      ],
+      "prefix": "apps/grotto/daemon",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "grotto.native_host"
+      ],
+      "prefix": "apps/grotto/native-host",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnostr"
+      ],
+      "prefix": "apps/gnostr",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "signet"
+      ],
+      "prefix": "signet",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "relayd"
+      ],
+      "prefix": "apps/relayd",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "grelay"
+      ],
+      "prefix": "apps/grelay",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "relayctl"
+      ],
+      "prefix": "apps/relayctl",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "blossom_cache"
+      ],
+      "prefix": "apps/blossom-cache",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "nson"
+      ],
+      "prefix": "nson",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "pkcs11"
+      ],
+      "prefix": "pkcs11",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "testkit"
+      ],
+      "prefix": "tests/testkit",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "testing.framework"
+      ],
+      "prefix": "Testing",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "shared.tests"
+      ],
+      "prefix": "tests",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "tools"
+      ],
+      "prefix": "tools",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "benchmarks"
+      ],
+      "prefix": "benchmark",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.common"
+      ],
+      "prefix": "gnome/common",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.dbus"
+      ],
+      "prefix": "gnome/dbus",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.libnostr_publish"
+      ],
+      "prefix": "gnome/libnostr-publish",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_dav"
+      ],
+      "prefix": "gnome/nostr-dav",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_dispatcher"
+      ],
+      "prefix": "gnome/nostr-dispatcher",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_homed"
+      ],
+      "prefix": "gnome/nostr-homed",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_nautilus"
+      ],
+      "prefix": "gnome/nostr-nautilus",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_seal"
+      ],
+      "prefix": "gnome/nostr-seal",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_search_provider"
+      ],
+      "prefix": "gnome/nostr-search-provider",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_settings"
+      ],
+      "prefix": "gnome/nostr-settings",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_share"
+      ],
+      "prefix": "gnome/nostr-share",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_shell_extension"
+      ],
+      "prefix": "gnome/nostr-shell-extension",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.nostr_wallet_agent"
+      ],
+      "prefix": "gnome/nostr-wallet-agent",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "gnome.seahorse"
+      ],
+      "prefix": "gnome/seahorse",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.unclassified"
+      ],
+      "prefix": "gnome/groundhog",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.identity_auth"
+      ],
+      "prefix": "gnome/groundhog/src/identity",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.relay"
+      ],
+      "prefix": "gnome/groundhog/src/relay",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.store"
+      ],
+      "prefix": "gnome/groundhog/src/store",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.net"
+      ],
+      "prefix": "gnome/groundhog/src/net",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.media"
+      ],
+      "prefix": "gnome/groundhog/src/media",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.group_ui"
+      ],
+      "prefix": "gnome/groundhog/src/nip29",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "groundhog.resources"
+      ],
+      "prefix": "gnome/groundhog/data",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/app/gh-account-relays.c",
+      "nodes": [
+        "groundhog.account_relays"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/app/gh-auth-policy.c",
+      "nodes": [
+        "groundhog.identity_auth"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/store/gh-store-conversations.c",
+      "nodes": [
+        "groundhog.conversations"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/store/gh-store-marmot.c",
+      "nodes": [
+        "groundhog.mls_store"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/store/gh-mls-commits.c",
+      "nodes": [
+        "groundhog.mls_store"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/mls/gh-mls-service.c",
+      "nodes": [
+        "groundhog.mls_service"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-mls-copy.c",
+      "nodes": [
+        "groundhog.mls_ui"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-create-poll-dialog.c",
+      "nodes": [
+        "groundhog.mls_ui"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-poll-card.c",
+      "nodes": [
+        "groundhog.mls_ui"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-poll-ui.c",
+      "nodes": [
+        "groundhog.poll_ui"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-about-dialog.c",
+      "nodes": [
+        "groundhog.shell_ui"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/mls/gh-mls-media.c",
+      "nodes": [
+        "groundhog.mls_media"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/mls/gh-mls-files.c",
+      "nodes": [
+        "groundhog.mls_files"
+      ],
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-mls-copy.c",
+      "nodes": [
+        "groundhog.mls_ui",
+        "groundhog.legacy_harness_inputs"
+      ],
+      "reason": "Directly compiled by legacy 0.8 harness and linked by adopted MLS UI consumers."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "marmot.vector_inputs"
+      ],
+      "prefix": "libmarmot/tests/vectors",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "vendor.nostrdb"
+      ],
+      "prefix": "third_party/nostrdb",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "vendor.nsync"
+      ],
+      "prefix": "third_party/nsync",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.groundhog"
+      ],
+      "prefix": "packaging/archlinux/groundhog",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.grotto"
+      ],
+      "prefix": "apps/grotto/packaging",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.gnostr"
+      ],
+      "prefix": "apps/gnostr/packaging",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.groundhog",
+        "packaging.grotto",
+        "packaging.shared",
+        "version.contract"
+      ],
+      "prefix": "packaging/debian-desktop",
+      "reason": "Shared desktop packaging, including Groundhog alpha8 version runtime inputs and Grotto camera/install dependencies; independent version sources remain separate."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.groundhog",
+        "packaging.grotto",
+        "packaging.shared",
+        "version.contract"
+      ],
+      "prefix": "packaging/rpm",
+      "reason": "Shared desktop packaging, including Groundhog alpha8 version runtime inputs and Grotto camera/install dependencies; independent version sources remain separate."
+    },
+    {
+      "effect": "impact",
+      "exact": "flake.nix",
+      "nodes": [
+        "packaging.groundhog",
+        "packaging.grotto",
+        "packaging.shared",
+        "version.contract"
+      ],
+      "reason": "Shared desktop packaging, including Groundhog alpha8 version runtime inputs and Grotto camera/install dependencies; independent version sources remain separate."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.shared"
+      ],
+      "prefix": "packaging",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.shared"
+      ],
+      "prefix": "debian",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "impact",
+      "nodes": [
+        "packaging.shared"
+      ],
+      "prefix": "snap",
+      "reason": "Component-owned inputs; reverse impact selects consumers, not prerequisite tests."
+    },
+    {
+      "effect": "global",
+      "exact": "CMakeLists.txt",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Shared graph/configuration change requires all supported profiles."
+    },
+    {
+      "effect": "global",
+      "exact": "NipOptions.cmake",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Shared graph/configuration change requires all supported profiles."
+    },
+    {
+      "effect": "global",
+      "exact": "CMakePresets.json",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Shared graph/configuration change requires all supported profiles."
+    },
+    {
+      "effect": "global",
+      "exact": ".gitmodules",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Shared graph/configuration change requires all supported profiles."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "prefix": "cmake",
+      "reason": "Selection/build metadata changes run broad before trusting refined mappings."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "prefix": "tests/selection",
+      "reason": "Selection/build metadata changes run broad before trusting refined mappings."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test-plan.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Shared selector/realization changes require broad validation."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Shared selector/realization changes require broad validation."
+    },
+    {
+      "effect": "global",
+      "exact": "scripts/test_selection_realization.py",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Shared selector/realization changes require broad validation."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "scripts",
+      "reason": "Unclassified shared execution/vendor input requires broad validation."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "skills",
+      "reason": "Unclassified shared execution/vendor input requires broad validation."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": ".github",
+      "reason": "Unclassified shared execution/vendor input requires broad validation."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "third_party",
+      "reason": "Unclassified shared execution/vendor input requires broad validation."
+    },
+    {
+      "effect": "non_execution",
+      "nodes": [],
+      "prefix": "docs",
+      "reason": "Prose/tracker allowlist only; executable inputs must override or broaden."
+    },
+    {
+      "effect": "non_execution",
+      "nodes": [],
+      "prefix": ".beads",
+      "reason": "Prose/tracker allowlist only; executable inputs must override or broaden."
+    },
+    {
+      "effect": "non_execution",
+      "exact": "LICENSE",
+      "nodes": [],
+      "reason": "License prose does not alter execution."
+    },
+    {
+      "effect": "impact",
+      "exact": "AGENTS.md",
+      "nodes": [
+        "static.policy",
+        "selection.contract"
+      ],
+      "reason": "Testing/development policy selects contract checks rather than runtime suites."
+    },
+    {
+      "effect": "impact",
+      "exact": "CLAUDE.md",
+      "nodes": [
+        "static.policy",
+        "selection.contract"
+      ],
+      "reason": "Testing/development policy selects contract checks rather than runtime suites."
+    },
+    {
+      "effect": "impact",
+      "exact": "docs/TESTING.md",
+      "nodes": [
+        "static.policy",
+        "selection.contract"
+      ],
+      "reason": "Testing/development policy selects contract checks rather than runtime suites."
+    },
+    {
+      "effect": "impact",
+      "exact": "DEVELOPMENT.md",
+      "nodes": [
+        "static.policy",
+        "selection.contract"
+      ],
+      "reason": "Testing/development policy selects contract checks rather than runtime suites."
+    },
+    {
+      "effect": "impact",
+      "exact": "CODING_STANDARDS.md",
+      "nodes": [
+        "static.policy",
+        "selection.contract"
+      ],
+      "reason": "Testing/development policy selects contract checks rather than runtime suites."
+    },
+    {
+      "effect": "impact",
+      "exact": "VERSION_MANIFEST.md",
+      "nodes": [
+        "version.contract",
+        "packaging.groundhog",
+        "packaging.grotto",
+        "packaging.gnostr"
+      ],
+      "reason": "Independent version/release contracts and affected packaging."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": ".ai-context",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": ".gitattributes",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": ".gitignore",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": ".windsurf",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "API.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "ARCHITECTURE.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "CHANGELOG.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "DATABASE.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "DEPLOYMENT.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "MAINTENANCE.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "Makefile.vm",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "README.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "TEMPLATE_AUDIT.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "impact",
+      "exact": "TEST_RESULTS.md",
+      "nodes": [
+        "static.policy"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "assets",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "beads",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "browser-extension",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "build_verbose.log",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "daemon.lock",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "delete_all.sh",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "examples",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "gir_wrappers",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "issues.jsonl",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "marmot-issues.jsonl",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "new-issues.jsonl",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "prompt-exports",
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "exact": "valgrind.supp",
+      "nodes": [
+        "build.global"
+      ],
+      "reason": "Explicit legacy root classification; non-prose/unknown implementation roots conservatively broaden."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "apps/CMakeLists.txt",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "nips/CMakeLists.txt",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "nips/create_nip.sh",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "nips/generate_cmake.sh",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "docs/nips",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "docs/reviews/avatar-fix-screenshots",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "global",
+      "nodes": [
+        "build.global"
+      ],
+      "prefix": "docs/reviews/nostr-profile-avatar-2026-09-22-greeter-session.png",
+      "reason": "Explicit non-prose/build/gitlink input; conservative broad coverage."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/src/ui/gh-about-dialog.h",
+      "nodes": [
+        "groundhog.shell_ui"
+      ],
+      "reason": "Isolated About implementation/header; no harness input edge."
+    },
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/grotto-ci.yml",
+      "nodes": [
+        "execution.grotto",
+        "selection.contract"
+      ],
+      "reason": "Workflow-only input selects owning execution profile(s) and policy contract validation."
+    },
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/groundhog-ci.yml",
+      "nodes": [
+        "execution.groundhog",
+        "selection.contract"
+      ],
+      "reason": "Workflow-only input selects owning execution profile(s) and policy contract validation."
+    },
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/libgo-ci.yml",
+      "nodes": [
+        "execution.libgo",
+        "selection.contract"
+      ],
+      "reason": "Workflow-only input selects owning execution profile(s) and policy contract validation."
+    },
+    {
+      "effect": "impact",
+      "exact": ".github/workflows/nostrc-ci.yml",
+      "nodes": [
+        "execution.core",
+        "selection.contract"
+      ],
+      "reason": "Workflow-only input selects owning execution profile(s) and policy contract validation."
+    }
+  ],
+  "profiles": {
+    "core.linux": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DBUILD_TESTING=ON"
+      ],
+      "environment": {},
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/nostrc-ci.yml",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    },
+    "grotto.linux": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_APPS=ON"
+      ],
+      "environment": {},
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/grotto-ci.yml",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    },
+    "groundhog.linux": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus",
+        "docker"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=ON",
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_MDK011_INTEROP=ON",
+        "-DMDK011_INTEROP_IMAGE=nostrc-mdk-interop:ci-w27-voice"
+      ],
+      "environment": {},
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/groundhog-ci.yml:groundhog",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    },
+    "groundhog.mdk08": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "docker",
+        "display",
+        "private_bus"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_MDK_INTEROP=ON"
+      ],
+      "environment": {},
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/marmot-mdk-interop.yml",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    },
+    "libgo.linux.asan": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [],
+      "compiler": "clang",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_C_STANDARD=11",
+        "-DCMAKE_C_EXTENSIONS=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DGOF_PORTABLE_CONTEXT=OFF"
+      ],
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+        "CC": "clang",
+        "CXX": "clang++",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1"
+      },
+      "feature_variants": [],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/libgo-ci.yml:build",
+      "source_dir": "libgo",
+      "timeout_seconds": 3600
+    },
+    "static.policy": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [],
+      "compiler": "gcc",
+      "configure_args": [],
+      "environment": {},
+      "feature_variants": [],
+      "instrumentation": "none",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/static-checks.yml",
+      "source_dir": ".",
+      "timeout_seconds": 3600
+    }
+  },
+  "release_components": {
+    "gnostr": {
+      "manifest_name": "gnostr",
+      "package_jobs": [
+        "source",
+        "build-linux.x86_64",
+        "build-linux.aarch64",
+        "build-appimage-gnostr",
+        "build-snap-gnostr.x86_64",
+        "build-snap-gnostr.aarch64",
+        "build-flatpak-gnostr.x86_64",
+        "build-flatpak-gnostr.aarch64",
+        "build-macos-tarball"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "apps/gnostr/CMakeLists.txt",
+          "pattern": "declare_component_version\\(GNOSTR\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "grotto": {
+      "manifest_name": "Grotto (Preview)",
+      "package_jobs": [
+        "source",
+        "build-linux.x86_64",
+        "build-linux.aarch64",
+        "build-linux-daemon-tcp.x86_64",
+        "build-linux-daemon-tcp.aarch64",
+        "build-snap-signer.x86_64",
+        "build-snap-signer.aarch64",
+        "build-snap-daemon.x86_64",
+        "build-snap-daemon.aarch64",
+        "build-flatpak.x86_64",
+        "build-flatpak.aarch64",
+        "build-macos-signer-dmg"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "path": "apps/grotto/CMakeLists.txt",
+          "pattern": "set\\(GROTTO_VERSION\\s+\"([0-9.]+)\"\\s+CACHE"
+        },
+        {
+          "path": "apps/grotto/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        }
+      ]
+    },
+    "groundhog": {
+      "full_version_source": {
+        "path": "gnome/groundhog/CMakeLists.txt",
+        "pattern": "set\\(GROUNDHOG_PRERELEASE \"([^\"]*)\"\\)"
+      },
+      "manifest_name": "groundhog",
+      "package_jobs": [
+        "source",
+        "deb.ubuntu24.04.x86_64",
+        "deb.ubuntu24.04.aarch64",
+        "deb.ubuntu26.04.x86_64",
+        "deb.ubuntu26.04.aarch64",
+        "deb.debian13.x86_64",
+        "deb.debian13.aarch64",
+        "rpm.x86_64",
+        "rpm.aarch64",
+        "arch.x86_64",
+        "arch.aarch64",
+        "flatpak.x86_64",
+        "flatpak.aarch64",
+        "nix.x86_64-linux",
+        "nix.aarch64-linux"
+      ],
+      "publisher": "groundhog",
+      "version_sources": [
+        {
+          "path": "gnome/groundhog/CMakeLists.txt",
+          "pattern": "project\\([^)]*?VERSION\\s+(\\d+\\.\\d+\\.\\d+)"
+        }
+      ]
+    },
+    "libgo": {
+      "manifest_name": "libgo",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libgo/CMakeLists.txt",
+          "pattern": "declare_component_version\\(LIBGO\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "libmarmot": {
+      "manifest_name": "libmarmot",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libmarmot/CMakeLists.txt",
+          "pattern": "set\\(MARMOT_VERSION_MAJOR (\\d+)\\)[\\s\\S]*?set\\(MARMOT_VERSION_MINOR (\\d+)\\)[\\s\\S]*?set\\(MARMOT_VERSION_PATCH (\\d+)\\)"
+        },
+        {
+          "path": "libmarmot/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        }
+      ]
+    },
+    "libnostr": {
+      "manifest_name": "libnostr",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "libnostr/CMakeLists.txt",
+          "pattern": "declare_component_version\\(NOSTR\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "marmot-gobject": {
+      "manifest_name": "marmot-gobject",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "marmot-gobject/CMakeLists.txt",
+          "pattern": "set\\(MARMOT_GOBJECT_MAJOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(MARMOT_GOBJECT_MINOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(MARMOT_GOBJECT_MICRO_VERSION (\\d+)\\)"
+        },
+        {
+          "path": "marmot-gobject/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        }
+      ]
+    },
+    "nip19": {
+      "manifest_name": "nip19 (NIP-19 codec)",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nips/nip19/CMakeLists.txt",
+          "pattern": "declare_component_version\\(nip19\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "nip34": {
+      "manifest_name": "nip34 (NIP-34 git events)",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nips/nip34/CMakeLists.txt",
+          "pattern": "declare_component_version\\(nip34\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "nip46": {
+      "manifest_name": "NIP-46 client/provider",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nips/nip46/CMakeLists.txt",
+          "pattern": "declare_component_version\\(nip46\\s+(\\d+)\\s+(\\d+)\\s+(\\d+)\\)"
+        }
+      ]
+    },
+    "nip55l": {
+      "manifest_name": "nip55l (Linux signer)",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nips/nip55l/include/nostr/nip55l/signer_ops.h",
+          "pattern": "NOSTR_NIP55L_VERSION_MAJOR (\\d+)[\\s\\S]*?NOSTR_NIP55L_VERSION_MINOR (\\d+)[\\s\\S]*?NOSTR_NIP55L_VERSION_PATCH (\\d+)"
+        }
+      ]
+    },
+    "nostr-gobject": {
+      "manifest_name": "nostr-gobject",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nostr-gobject/CMakeLists.txt",
+          "pattern": "set\\(NOSTR_GOBJECT_MAJOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(NOSTR_GOBJECT_MINOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(NOSTR_GOBJECT_MICRO_VERSION (\\d+)\\)"
+        },
+        {
+          "path": "nostr-gobject/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        }
+      ]
+    },
+    "nostr-gtk": {
+      "manifest_name": "nostr-gtk",
+      "package_jobs": [
+        "source"
+      ],
+      "publisher": "main",
+      "version_sources": [
+        {
+          "join": ".",
+          "path": "nostr-gtk/CMakeLists.txt",
+          "pattern": "set\\(NOSTR_GTK_MAJOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(NOSTR_GTK_MINOR_VERSION (\\d+)\\)[\\s\\S]*?set\\(NOSTR_GTK_MICRO_VERSION (\\d+)\\)"
+        },
+        {
+          "path": "nostr-gtk/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        }
+      ]
+    },
+    "nostr-homed": {
+      "manifest_name": "nostr-homed",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "gnome/nostr-homed/CMakeLists.txt",
+          "pattern": "project\\([^)]*?VERSION\\s+(\\d+\\.\\d+\\.\\d+)"
+        },
+        {
+          "path": "gnome/nostr-homed/meson.build",
+          "pattern": "version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        },
+        {
+          "expected_literal": "@PROJECT_VERSION@",
+          "path": "gnome/nostr-homed/nostr-homed.pc.in",
+          "pattern": "^Version:\\s*([^\\n]+)"
+        }
+      ]
+    },
+    "nostr-seal": {
+      "manifest_name": "nostr-seal",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "gnome/nostr-seal/src/main.c",
+          "pattern": "#define NOSTR_SEAL_VERSION \"([0-9.]+)\""
+        }
+      ]
+    },
+    "nostr-shell-extension": {
+      "manifest_name": "Nostr Shell extension",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "gnome/nostr-shell-extension/metadata.json",
+          "pattern": "\"version-name\":\\s*\"([0-9.]+)\""
+        }
+      ]
+    },
+    "signet": {
+      "manifest_name": "signet",
+      "package_jobs": [],
+      "publisher": "none",
+      "version_sources": [
+        {
+          "path": "signet/meson.build",
+          "pattern": "(?m)^\\s*version:\\s*['\\\"]([0-9]+\\.[0-9]+\\.[0-9]+)['\\\"]"
+        },
+        {
+          "path": "signet/src/signetd_main.c",
+          "pattern": "#define SIGNET_VERSION \"([0-9.]+)\""
+        },
+        {
+          "path": "signet/src/signetctl_main.c",
+          "pattern": "#define SIGNETCTL_VERSION \"([0-9.]+)\""
+        }
+      ]
+    }
+  },
+  "schema_version": 1,
+  "test_overrides": []
+}
