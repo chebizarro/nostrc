@@ -23,11 +23,15 @@ class ProductionInventory(unittest.TestCase):
 
     def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
         evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
-        self.assertEqual(len(evidence["audits"]), 3)
+        self.assertEqual(len(evidence["audits"]), 4)
         for audit in evidence["audits"]:
             if audit["profile"] == "groundhog.linux.sanitizers":
                 self.assertEqual(audit["source_sha"], "b8dd3583766893e3b97e017dc063da5ed1c47413")
-                self.assertEqual(audit["evidence_kind"], "native_production_configure_input_audit_failed")
+                self.assertIn(audit["evidence_kind"], {"native_production_configure_input_audit_failed", "native_production_postbuild_input_audit_failed"})
+                if audit["evidence_kind"] == "native_production_postbuild_input_audit_failed":
+                    self.assertEqual(audit["header_entries"], 7605712)
+                    self.assertEqual(audit["input_hash_count"], 3316)
+                    self.assertTrue(any(edge["input_kind"] == "header" for edge in audit["edges"]))
                 self.assertEqual(audit["actual_architecture"], "aarch64")
                 self.assertEqual(audit["declared_architecture"], "x86_64")
             else:
