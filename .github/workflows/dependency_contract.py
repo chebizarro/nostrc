@@ -11,9 +11,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import test_selection as selection
 
 # Each lane is a separate reusable call so needs supplies an independent conclusion.
-LANES = {"core.linux": "core", "grotto.linux": "grotto", "groundhog.linux": "groundhog",
-         "groundhog.mdk08": "mdk08", "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native",
-         "static.policy": "policy"}
+LANES = {"core.linux": "core", "core.linux.asan": "core_asan", "core.macos.asan": "core_native",
+         "grotto.linux": "grotto", "groundhog.linux": "groundhog",
+         "groundhog.linux.sanitizers": "groundhog_sanitizers", "groundhog.mdk08": "mdk08",
+         "libgo.linux.asan": "libgo", "libgo.macos.asan": "libgo_native", "static.policy": "policy"}
 FAMILIES = ("nostrc-ci", "libgo-ci", "libhanami-ci", "libnostr-gi", "groundhog-ci", "grotto-ci",
             "nip55l-libsecret-ci", "nostr-homed-ci", "signet-ci", "static-checks", "gnostr-appimage",
             "windows-validation", "bp-matrix", "bp-matrix-nightly", "grotto-fuzz", "marmot-mdk-interop",

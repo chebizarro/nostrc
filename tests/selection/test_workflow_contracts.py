@@ -87,6 +87,23 @@ class WorkerAccountingTests(unittest.TestCase):
         plan = s.make_plan(self.p, [], head="a" * 40, context="ci")
         self.assertFalse(ci.aggregate(ROOT, self.p, plan, self.needs, [])["passed"])
 
+    def test_unsupported_new_lane_fails_independently_without_hiding_other_conclusions(self):
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')
+        needs = {job: {'result': 'success'} for job in ci.LANES.values()}
+        needs.update(select={'result': 'success'}, broad={'result': 'success'})
+        for lane in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers'):
+            with self.subTest(lane=lane):
+                failed = copy.deepcopy(needs)
+                failed[ci.LANES[lane]]['result'] = 'failure'
+                errors, conclusions = ci.check_jobs(plan, failed)
+                self.assertEqual(errors, [f'{lane}: expected success, observed failure'])
+                self.assertEqual(conclusions[lane], 'failure')
+                self.assertTrue(all(value == 'success' for key, value in conclusions.items() if key != lane))
+                result = ci.aggregate(ROOT, p, plan, failed, [])
+                self.assertFalse(result['passed'])
+                self.assertTrue(any(lane in error for error in result['errors']))
+
     def test_new_unwired_profile_cannot_silently_disappear(self):
         plan = copy.deepcopy(self.plan)
         plan["expected_lane_ids"] = ["new.profile"]
@@ -151,6 +168,24 @@ class EventToWorkerTests(GitCase):
                 result, outputs, _ = self.invoke(name, event)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(outputs["broad"], "true")
+
+    def test_current_inventory_broad_selection_dispatches_every_distinct_profile(self):
+        # Reproduce the hosted selector failure with the actual inventory, not ready_policy.
+        self.p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        self.write('tests/selection/inventory.json', s.canonical(self.p).decode())
+        self.write('scripts/test_selection_realization.py', (ROOT / 'scripts/test_selection_realization.py').read_text())
+        self.head = self.commit()
+        result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads((directory / 'plan.json').read_text())
+        self.assertEqual(set(plan['expected_lane_ids']), set(self.p['profiles']))
+        self.assertEqual(set(json.loads(outputs['lanes'])), set(ci.LANES))
+        self.assertEqual(outputs['sha'], self.head)
+        self.assertEqual(outputs['run'], 'true')
+        self.assertEqual(outputs['broad'], 'true')
+        # Dispatch success is not a complete-gate or profile-union attestation.
+        self.assertFalse(plan['enforcement_ready'])
+        self.assertTrue(plan['coverage_gaps'])
 
     def test_annotated_validation_only_tag_reaches_broad_workers_without_publisher(self):
         self.git("tag", "-am", "annotated", "library-v4.5.6")
@@ -363,6 +398,103 @@ class WorkflowWiringTests(unittest.TestCase):
             self.assertIn("profile: " + lane, block)
             self.assertIn("contains(fromJSON(needs.select.outputs.lanes), '" + lane + "')", block)
             self.assertIn("sha: ${{ needs.select.outputs.sha }}", block)
+
+    def test_current_inventory_profiles_have_exact_independent_worker_calls_and_gate_needs(self):
+        expected = {
+            'core.linux': 'core', 'core.linux.asan': 'core_asan', 'core.macos.asan': 'core_native',
+            'grotto.linux': 'grotto', 'groundhog.linux': 'groundhog',
+            'groundhog.linux.sanitizers': 'groundhog_sanitizers', 'groundhog.mdk08': 'mdk08',
+            'libgo.linux.asan': 'libgo', 'libgo.macos.asan': 'libgo_native', 'static.policy': 'policy',
+        }
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        plan = s.make_plan(p, [], head='a' * 40, context='ci', mode='broad')
+        self.assertEqual(set(plan['expected_lane_ids']), set(expected))
+        self.assertEqual(ci.LANES, expected)
+        self.assertEqual(len(set(ci.LANES.values())), len(ci.LANES))
+        text = workflow('dependency-tests')
+        gate_needs = re.search(r'^    needs: \[(.*)\]$', job_block(text, 'gate'), re.M).group(1)
+        self.assertEqual({x.strip() for x in gate_needs.split(',')}, {'select', 'broad', *expected.values()})
+        for lane, job in expected.items():
+            with self.subTest(lane=lane):
+                block = job_block(text, job)
+                self.assertIn('    needs: select\n', block)
+                self.assertIn('uses: ./.github/workflows/dependency-worker.yml', block)
+                self.assertIn('profile: ' + lane + '\n', block)
+                self.assertIn('plan_id: ${{ needs.select.outputs.plan_id }}', block)
+                self.assertIn('sha: ${{ needs.select.outputs.sha }}', block)
+                self.assertNotIn('continue-on-error', block)
+
+    def test_native_root_setup_and_phase_metadata_are_not_standalone_libgo_aliases(self):
+        text = workflow('dependency-worker')
+        self.assertIn("(inputs.profile == 'libgo.macos.asan' || inputs.profile == 'core.macos.asan') && 'macos-latest' || 'ubuntu-24.04'", text)
+        root_setup = text.split('- name: Install native root ASan prerequisites', 1)[1].split('- name:', 1)[0]
+        self.assertIn("if: runner.os == 'macOS' && inputs.profile == 'core.macos.asan'", root_setup)
+        for package in ('jansson', 'secp256k1', 'libwebsockets', 'libsodium', 'openssl@3', 'libsoup@3', 'nsync', 'flatcc', 'json-glib', 'libgit2', 'dbus'):
+            self.assertIn(package, root_setup)
+        self.assertNotIn('|| true', root_setup)
+        self.assertIn("profile['platform'] == actual_platform and profile['architecture'] == platform.machine()", text)
+        self.assertIn('--profile "$PROFILE"', text)
+        self.assertIn('--configure --phase all', text)
+        self.assertNotIn('--configure-arg', text)
+        self.assertNotIn('ASAN_OPTIONS:', text)  # No worker-level environment flattening/override.
+        p = s.load_inventory(ROOT / 'tests/selection/inventory.json')
+        root = p['profiles']['core.macos.asan']
+        self.assertEqual((root['platform'], root['architecture'], root['source_dir']), ('macos', 'arm64', '.'))
+        self.assertIn('-DGO_ENABLE_ASAN=ON', root['configure_args'])
+        self.assertIn('-DGO_ENABLE_UBSAN=ON', root['configure_args'])
+        self.assertNotEqual(root['environment']['ASAN_OPTIONS'], p['profiles']['libgo.macos.asan']['environment']['ASAN_OPTIONS'])
+        sanitizer = p['profiles']['groundhog.linux.sanitizers']
+        self.assertEqual(sanitizer['phase_environments']['configure'], {})
+        self.assertEqual(sanitizer['phase_environments']['build'], {})
+        self.assertIn('LSAN_OPTIONS', sanitizer['phase_environments']['test'])
+        self.assertIn('sanitizer_compatibility', sanitizer)
+
+    def test_worker_pipeline_preserves_named_failure_without_synthesizing_receipt(self):
+        # Execute the real worker shell with a fake CLI; this is routing/pipefail evidence only.
+        text = workflow('dependency-worker')
+        block = text.split('- name: Resolve, audit, build and execute exact selected checks', 1)[1].split('      #', 1)[0]
+        script = '\n'.join(line[10:] for line in block.split('        run: |\n', 1)[1].splitlines())
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / 'bin'
+            binary.mkdir()
+            fake = binary / 'python3'
+            fake.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
+args = sys.argv[1:]
+pathlib.Path(os.environ['CAPTURE']).write_text(json.dumps(args))
+if os.environ['FAIL_RUNTIME'] == '1':
+    print(os.environ['PROFILE'] + ': unsupported runtime/capabilities', file=sys.stderr)
+    sys.exit(23)
+output = pathlib.Path(args[args.index('--output') + 1])
+output.write_text(json.dumps({'profile': os.environ['PROFILE'], 'synthetic_test_only': True}))
+''')
+            fake.chmod(0o755)
+            for name, skip in (('xvfb-run', 1), ('dbus-run-session', 1)):
+                wrapper = binary / name
+                wrapper.write_text('#!/bin/sh\nshift ' + str(skip) + '\nexec "$@"\n')
+                wrapper.chmod(0o755)
+            for profile in ('core.linux.asan', 'core.macos.asan', 'groundhog.linux.sanitizers'):
+                for fail in ('0', '1'):
+                    with self.subTest(profile=profile, failure=fail):
+                        temp = root / (profile + '-' + fail)
+                        temp.mkdir()
+                        capture = temp / 'argv.json'
+                        env = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ['PATH'],
+                                   PROFILE=profile, RUNNER_TEMP=str(temp), CAPTURE=str(capture), FAIL_RUNTIME=fail,
+                                   RUNNER_OS='macOS' if profile == 'core.macos.asan' else 'Linux')
+                        result = subprocess.run(['bash', '-c', script], env=env, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 23 if fail == '1' else 0, result.stdout + result.stderr)
+                        args = json.loads(capture.read_text())
+                        self.assertEqual(args[:2], ['scripts/test-plan.py', 'run'])
+                        self.assertEqual(args[args.index('--profile') + 1], profile)
+                        self.assertEqual(args[args.index('--phase') + 1], 'all')
+                        receipt_path = temp / 'dependency/receipts' / profile / 'receipt.json'
+                        self.assertEqual(receipt_path.exists(), fail == '0')
+                        if fail == '1':
+                            log = (receipt_path.parent / 'worker.log').read_text()
+                            self.assertIn(profile + ': unsupported runtime/capabilities', log)
+        self.assertIn("name: dependency-receipt-${{ inputs.plan_id }}-${{ inputs.profile }}-${{ github.run_attempt }}", text)
+        self.assertIn('if: always()', text.split('- name: Retain incomplete evidence', 1)[1])
 
     def test_all_broad_families_reusable_and_same_sha_without_publisher_recursion(self):
         text = workflow("dependency-broad")

@@ -15,7 +15,7 @@ permissions:
   contents: read
 jobs:
   execute:
-    runs-on: ${{ inputs.profile == 'libgo.macos.asan' && 'macos-latest' || 'ubuntu-24.04' }}
+    runs-on: ${{ (inputs.profile == 'libgo.macos.asan' || inputs.profile == 'core.macos.asan') && 'macos-latest' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     env:
       REQUESTED_SHA: ${{ inputs.sha }}
@@ -62,22 +62,29 @@ jobs:
             libsqlcipher-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             libzbar-dev libpeas-dev blueprint-compiler xvfb dbus-x11
       - name: Install existing native standalone libgo prerequisites
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && inputs.profile == 'libgo.macos.asan'
         run: brew install ninja libsoup@3 nsync
+      - name: Install native root ASan prerequisites
+        if: runner.os == 'macOS' && inputs.profile == 'core.macos.asan'
+        run: |
+          brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 dbus
+          command -v dbus-daemon
       - name: Resolve, audit, build and execute exact selected checks
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dependency/receipts/$PROFILE"
-          wrapper=()
+          wrapper=(env)
           if [[ "$RUNNER_OS" == Linux ]]; then wrapper=(xvfb-run -a dbus-run-session --); fi
           "${wrapper[@]}" python3 scripts/test-plan.py run \
             --plan "$RUNNER_TEMP/dependency/plan.json" --profile "$PROFILE" \
-            --build-dir "$RUNNER_TEMP/dependency-build" --configure --parallel 2 \
+            --build-dir "$RUNNER_TEMP/dependency-build" --configure --phase all --parallel 2 \
             --evidence-dir "$RUNNER_TEMP/dependency/evidence" \
             --output "$RUNNER_TEMP/dependency/receipts/$PROFILE/receipt.json" \
             2>&1 | tee "$RUNNER_TEMP/dependency/receipts/$PROFILE/worker.log"
-      # Unsupported non-CTest/live-peer paths fail above, without a synthesized receipt.
+      # The CLI consumes the exact profile args/environment/phase metadata from the plan's
+      # inventory. Unsupported runtimes/live-peer lifecycles fail only this selected lane;
+      # neither a failed command nor a missing receipt is promoted to success.
       - name: Retain incomplete evidence on failure or cancellation
         if: always()
         uses: actions/upload-artifact@v4
