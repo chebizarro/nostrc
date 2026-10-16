@@ -3898,6 +3898,7 @@
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
+        "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_profile_contracts.py",
         "{source}/tests/selection/test_realization.py",
         "{source}/tests/selection/test_realization_exclusions.py",
