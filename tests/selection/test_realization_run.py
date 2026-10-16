@@ -83,6 +83,29 @@ class ExecutionTests(Project):
         self.assertEqual(receipt["checks"]["a-model"]["expected_executions"], ["a-model"])
         self.assertEqual(receipt["checks"]["a-model"]["observed_executions"], ["a-model"])
 
+    def test_checked_in_selector_normalizes_actual_backend_receipt(self):
+        # Exercise the actual sibling adapter, not a reimplemented receipt shape.
+        import importlib.util
+        import sys
+        from realization_support import ROOT
+        self.plan["plan_id"] = "adapter-test-plan"
+        self.plan["lanes"] = [{"id": "synthetic", "profile": "synthetic", "profile_hash": r._hash(self.profile), "checks": ["a-model"]}]
+        resolved, audit = self.ready()
+        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)
+        self.assertTrue(raw["input_audit"]["passed"])
+        self.assertTrue(raw["input_audit"]["after_build"])
+        self.assertEqual(raw["checks"]["a-model"]["executions"], ["a-model"])
+        sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            spec = importlib.util.spec_from_file_location("real_cli_adapter", ROOT / "scripts/test-plan.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            receipt = module.normalize_receipt(self.inventory, self.plan, resolved, raw)
+        finally:
+            sys.path.pop(0)
+        self.assertEqual(receipt["input_audit"], "passed")
+        self.assertEqual(receipt["checks"]["a-model"]["observed_executions"], ["a-model"])
+
     def test_only_named_incompatibility_with_exact_evidence_is_accepted(self):
         # Synthetic structured-result adversaries, not live MDK evidence.
         path = self.root.parent / "synthetic-junit.xml"

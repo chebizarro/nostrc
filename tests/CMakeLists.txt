@@ -285,6 +285,14 @@ add_test(NAME test_fuzz_filter_parse COMMAND test_fuzz_filter_parse
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/good_tags.json
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_hash_tag.json
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_partial_search.json)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(test_fuzz_filter_parse OWNER shared.tests TARGETS test_fuzz_filter_parse
+    INPUTS "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/good_minimal.json"
+      "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_explicit_tag.json"
+      "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/good_tags.json"
+      "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_duplicate_hash_tag.json"
+      "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/filters/fallback_partial_search.json")
+endif()
 
 # Envelope serializer round trips (nostrc-ptwq): every envelope type through
 # serialize -> strict parse -> serialize, with jansson checking the JSON.
@@ -306,6 +314,10 @@ target_link_directories(test_fuzz_envelope_roundtrip PRIVATE ${SECP256K1_LIBRARY
 apply_sanitizers(test_fuzz_envelope_roundtrip)
 add_test(NAME test_fuzz_envelope_roundtrip COMMAND test_fuzz_envelope_roundtrip
   ${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(test_fuzz_envelope_roundtrip OWNER shared.tests TARGETS test_fuzz_envelope_roundtrip
+    INPUTS "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes")
+endif()
 set_tests_properties(test_fuzz_envelope_roundtrip PROPERTIES TIMEOUT 20)
 
 # Verify wrapper fuzz harness
@@ -355,6 +367,10 @@ if(ENABLE_FUZZING)
 endif()
 add_test(NAME test_json_envelope COMMAND test_json_envelope)
 add_test(NAME test_envelope_fallback COMMAND test_envelope_fallback)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(test_envelope_fallback OWNER shared.tests TARGETS test_envelope_fallback
+    INPUTS "${CMAKE_SOURCE_DIR}/tests/fuzz_seeds/envelopes/valid_signed_event.json")
+endif()
 add_test(NAME test_json_filter COMMAND test_json_filter)
 add_test(NAME test_json_filter_tags COMMAND test_json_filter_tags)
 add_test(NAME test_json_filter_robust COMMAND test_json_filter_robust)

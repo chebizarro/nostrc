@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -128,6 +130,98 @@ def _identity(source_identity):
     return json.loads(json.dumps(source_identity, sort_keys=True))
 
 
+def _cmake_literal_arguments(text, position):
+    """Read only literal arguments emitted in generated CTest add_test calls.
+
+    This is not a source-CMake evaluator. Variable expansion, lists in unquoted
+    arguments and unsupported escapes fail closed; no shell is involved.
+    """
+    arguments = []
+    while position < len(text):
+        while position < len(text) and text[position].isspace():
+            position += 1
+        if position >= len(text):
+            break
+        if text[position] == ")":
+            return arguments
+        bracket = re.match(r"\[(=*)\[", text[position:])
+        if bracket:
+            position += bracket.end()
+            end = text.find("]" + bracket[1] + "]", position)
+            if end < 0:
+                raise RealizationError("unterminated generated CTest bracket argument")
+            arguments.append(text[position:end])
+            position = end + len(bracket[1]) + 2
+        elif text[position] == '"':
+            position += 1
+            value = ""
+            while position < len(text) and text[position] != '"':
+                char = text[position]
+                position += 1
+                if char == "$":
+                    raise RealizationError("nonliteral generated CTest command requires an explicit descriptor")
+                if char == "\\":
+                    if position >= len(text):
+                        break
+                    char = text[position]
+                    position += 1
+                    if char in "nrt":
+                        char = {"n": "\n", "r": "\r", "t": "\t"}[char]
+                    elif char == "\n":
+                        continue
+                    elif char not in '\\";$[]()# ':
+                        raise RealizationError("unsupported escape in generated CTest command")
+                value += char
+            if position >= len(text):
+                raise RealizationError("unterminated generated CTest quoted argument")
+            arguments.append(value)
+            position += 1
+        else:
+            end = position
+            while end < len(text) and not text[end].isspace() and text[end] != ")":
+                end += 1
+            value = text[position:end]
+            if not value or any(char in value for char in "$;\\(\"#"):
+                raise RealizationError("nonliteral generated CTest argument")
+            arguments.append(value)
+            position = end
+    raise RealizationError("unterminated generated CTest add_test")
+
+
+def _generated_ctest_commands(build):
+    commands = {}
+    for path in sorted(Path(build).rglob("CTestTestfile.cmake")):
+        text = path.read_text()
+        for match in re.finditer(r"(?m)^add_test\(", text):
+            args = _cmake_literal_arguments(text, match.end())
+            if len(args) < 2:
+                raise RealizationError(f"invalid generated CTest registration in {path}")
+            name, command = args[0], args[1:]
+            if name in commands and commands[name] != command:
+                raise RealizationError(f"ambiguous generated CTest command: {name}")
+            commands[name] = command
+    return commands
+
+
+def _validate_native_profile(profile, toolchains=None, configuration=None):
+    system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
+    requested = profile.get("platform")
+    if requested and {"darwin": "macos"}.get(requested, requested) != system:
+        raise RealizationError(f"profile platform {requested} does not match actual native host {system}")
+    aliases = {"aarch64": "arm64", "amd64": "x86_64", "AMD64": "x86_64"}
+    architecture = aliases.get(platform.machine(), platform.machine())
+    expected = profile.get("architecture")
+    if expected and expected != "native" and aliases.get(expected, expected) != architecture:
+        raise RealizationError(f"profile architecture {expected} does not match actual native host {architecture}")
+    if configuration is not None and profile.get("build_type") and profile["build_type"] != configuration:
+        raise RealizationError(f"profile build type {profile['build_type']} differs from realized {configuration!r}")
+    if toolchains is not None and profile.get("compiler"):
+        wanted = {"gcc": {"GNU"}, "clang": {"Clang", "AppleClang"}, "msvc": {"MSVC"}}.get(profile["compiler"], {profile["compiler"]})
+        actual = {t.get("compiler", {}).get("id") for t in toolchains.get("toolchains", []) if t.get("language") in ("C", "CXX")}
+        if not actual or not actual.issubset(wanted):
+            raise RealizationError(f"profile compiler {profile['compiler']} differs from realized {sorted(actual)}")
+
+
 def configure_profile(repo_root, build_dir, profile_id, profile, source_identity,
                       inventory_hash):
     """Query BEFORE configure; consume replies only AFTER successful generate.
@@ -138,6 +232,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     """
     root, build = Path(repo_root).resolve(), Path(build_dir).resolve()
     identity = _identity(source_identity)
+    _validate_native_profile(profile)
     build.mkdir(parents=True, exist_ok=True)
     record = build / "nostrc-test-realization.json"
     record.unlink(missing_ok=True)  # failed configure must invalidate old success
@@ -182,6 +277,12 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     if config_name:
         ctest_cmd += ["-C", config_name]
     ctest = json.loads(_command(ctest_cmd, env=env))
+    # CTest suppresses command argv when a fresh executable is absent. Recover
+    # the literal generated registration, not an executable guessed from its name.
+    literal_commands = _generated_ctest_commands(build) if index.get("cmake", {}).get("generator", {}).get("name") == "Ninja" else {}
+    for test in ctest.get("tests", []):
+        if "command" not in test and test["name"] in literal_commands:
+            test["command"] = literal_commands[test["name"]]
     targets = {}
     target_settings = {}
     for ref in configs[0].get("targets", []):
@@ -197,6 +298,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         }
     toolchains = client.get("toolchains-v1", {})
     tools = _read(reply_dir / toolchains["jsonFile"]) if "jsonFile" in toolchains else {}
+    _validate_native_profile(profile, tools, config_name)
     runtime_manifest = {}
     for desc in descriptors["tests"]:
         files = []
@@ -248,6 +350,7 @@ def load_realization(build_dir, expected_identity=None):
             raise RealizationError(f"stale realization metadata: {name}")
     if not realization.get("generation_files"):
         raise RealizationError("unbound generation metadata")
+    _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"])
     return realization
 
 
@@ -516,6 +619,10 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                 gap("unsupported_expected_outcome", test=name, expected=expected)
         elif name in claims and inventory["checks"][claims[name]].get("expected_outcome", "pass") != "pass":
             gap("expected_outcome_disagreement", test=name)
+        # Logical checks may add test-only input nodes without making a
+        # production component depend on its own fixtures/vectors. Audit that
+        # actual selection coverage as well as the registration's owning node.
+        covered.update(_impact_prerequisites(inventory, check_owners))
         props = _properties(test)
         support = bool(props.get("FIXTURES_SETUP") or props.get("FIXTURES_CLEANUP") or desc.get("expected") == ["fixture"])
         if not support and not check_owners:
@@ -563,6 +670,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             relative = _relative(value, realization["repo_root"])
             build_relative = _relative(value, realization["build_dir"])
             if kind == "runtime" and not path.exists():
+                if build_relative is not None and ids and not after_build:
+                    continue  # declared build targets must produce this before execution
                 gap("missing_input", test=name, input=value)
                 continue
             if kind == "generated" or (build_relative is not None and kind != "header"):
@@ -708,6 +817,10 @@ def cli(args, policy):
                             timeout=profile.get("timeout_seconds"),
                             evidence_paths=[Path(args.build_dir) / "mdk011-interop-artifacts"])
                         result["build"] = build_result
+                        # cli() emits an aggregate-facing receipt; run_resolved()
+                        # retains the actual post-build audit object for adapters.
+                        result["input_audit_details"] = result["input_audit"]
+                        result["input_audit"] = result["input_audit_status"]
                         code = 0 if result["outcome"] in ("passed", "not_applicable") else 1
         if args.output:
             _atomic(args.output, result)
@@ -768,8 +881,8 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
     for name, digest in input_audit.get("input_hashes", {}).items():
         if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
             raise RealizationError(f"input changed since audit: {name}")
-    receipt["input_audit"] = "passed"
-    receipt["input_audit_details"] = {k: v for k, v in input_audit.items() if k != "input_hashes"}
+    receipt["input_audit"] = {k: v for k, v in input_audit.items() if k != "input_hashes"}
+    receipt["input_audit_status"] = "passed"
     env = dict(os.environ, **realization["profile"].get("environment", {}))
     if _hash(env) != realization["environment_hash"]:
         raise RealizationError("effective environment changed since configure; configure this profile again")
@@ -838,6 +951,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         receipt["observed_executions"] = outcomes
         receipt["checks"] = {ident: {"outcome": next((outcomes[n] for n in check["tests"] if outcomes[n] not in ("passed", "expected_incompatibility")),
                         "expected_incompatibility" if any(outcomes[n] == "expected_incompatibility" for n in check["tests"]) else "passed"),
+                                               "executions": check["tests"],
                                                "expected_executions": check["tests"],
                                                "observed_executions": [n for n in check["tests"] if outcomes[n] != "missing"],
                                                **({"exception_case": "mdk09_incompatibility", "exit_code": 77}

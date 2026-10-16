@@ -596,6 +596,12 @@ if(BUILD_TESTING)
   add_test(NAME nostr_gtk_portable_media_lint_selftest
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py
             --self-test)
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(nostr_gtk_portable_media_lint OWNER nostr.gtk
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py" "${CMAKE_CURRENT_SOURCE_DIR}/src")
+    nostrc_describe_test(nostr_gtk_portable_media_lint_selftest OWNER nostr.gtk
+      INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_portable_media.py")
+  endif()
 
   if (TARGET nostr-gtk-i18n)
   gn_add_gtest_xvfb(test_nostr_gtk_portable_i18n
@@ -610,6 +616,12 @@ if(BUILD_TESTING)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/cmake/nostrc-check-potfiles.py
             ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES
             ${NOSTR_GTK_PORTABLE_SOURCES} ${NOSTR_GTK_ISSUE_MODEL_SOURCES})
+  if(COMMAND nostrc_describe_test)
+    nostrc_describe_test(nostr_gtk_portable_potfiles OWNER nostr.gtk
+      INPUTS "${CMAKE_SOURCE_DIR}/cmake/nostrc-check-potfiles.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES"
+        ${NOSTR_GTK_PORTABLE_SOURCES} ${NOSTR_GTK_ISSUE_MODEL_SOURCES})
+  endif()
 
   # NIP-34 issue model (nostrc-8xfib.5): GTK-free, no display.
   gn_add_gtest(test_nostr_gtk_nip34_issue_model
