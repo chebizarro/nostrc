@@ -63,6 +63,23 @@ class ContainedCustodyContract(unittest.TestCase):
             with self.assertRaises(selection.ContractError):
                 selection.make_plan(policy, [], head='a' * 40, context=context, mode='broad', profiles=[profile])
 
+    def test_legacy_contextless_plan_only_qualifies_for_unrestricted_policy(self):
+        import test_selection as selection
+        policy = {'profiles': {'ordinary': {}}, 'checks': {'ordinary': {'profiles': ['ordinary']}}}
+        plan = {'schema_version': 1, 'head': 'a' * 40, 'tested_sha': 'a' * 40,
+                'source_identity': {'kind': 'committed', 'sha': 'a' * 40},
+                'inventory_hash': selection.digest(policy), 'selected_checks': ['ordinary'],
+                'expected_lane_ids': ['ordinary'], 'lanes': [{'id': 'ordinary', 'profile': 'ordinary',
+                    'profile_hash': selection.digest({}), 'checks': ['ordinary']}]}
+        plan['plan_id'] = selection.digest(plan)
+        selection.validate_plan(plan, policy)
+        policy['profiles']['ordinary']['contexts'] = ['local']
+        plan['inventory_hash'] = selection.digest(policy)
+        plan['lanes'][0]['profile_hash'] = selection.digest(policy['profiles']['ordinary'])
+        plan['plan_id'] = selection.digest({k: v for k, v in plan.items() if k != 'plan_id'})
+        with self.assertRaisesRegex(selection.ContractError, 'invalid plan context'):
+            selection.validate_plan(plan, policy)
+
     def test_local_context_cannot_be_relabelled_to_ci(self):
         import test_selection as selection
         policy = selection.load_inventory(Path(__file__).resolve().parents[2] / 'tests/selection/inventory.json')

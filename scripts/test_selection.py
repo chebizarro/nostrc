@@ -437,8 +437,11 @@ def validate_plan(plan, policy):
     identity = plan["source_identity"]
     require(identity.get("kind") in {"committed", "dirty"}, "invalid source identity kind")
     require(identity["kind"] != "dirty" or bool(identity.get("snapshot_digest")), "dirty identity requires content digest")
-    require(plan.get('context') in {'local', 'ci', 'release'}, 'invalid plan context')
-    require(plan.get('omitted_profiles', []) == omitted_context_profiles(policy, plan['context']),
+    context = plan.get('context')
+    if context is None and all('contexts' not in profile for profile in policy['profiles'].values()):
+        context = 'local'  # Existing unrestricted schema-v1 plans predate context admission.
+    require(context in {'local', 'ci', 'release'}, 'invalid plan context')
+    require(plan.get('omitted_profiles', []) == omitted_context_profiles(policy, context),
             'omitted context/profile accounting mismatch')
     lanes = plan.get("lanes")
     require(isinstance(lanes, list), "missing lanes")
@@ -447,7 +450,7 @@ def validate_plan(plan, policy):
         require(lane["id"] == lane["profile"] and lane["id"] not in seen, "duplicate/invalid lane")
         seen.add(lane["id"])
         require(lane["profile"] in policy["profiles"] and lane["profile_hash"] == digest(policy["profiles"][lane["profile"]]), "profile policy mismatch")
-        require(plan['context'] in policy['profiles'][lane['profile']].get('contexts', ['local', 'ci', 'release']),
+        require(context in policy['profiles'][lane['profile']].get('contexts', ['local', 'ci', 'release']),
                 'lane profile is unsupported in plan context')
         _ids(lane["checks"], policy["checks"], "lane checks")
         require(all(lane["profile"] in policy["checks"][c]["profiles"] for c in lane["checks"]), "ineligible check/profile")
