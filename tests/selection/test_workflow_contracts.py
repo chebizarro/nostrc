@@ -178,7 +178,17 @@ class EventToWorkerTests(GitCase):
         result, outputs, directory = self.invoke('workflow_dispatch', {'inputs': {}}, args=('--mode', 'broad'))
         self.assertEqual(result.returncode, 0, result.stderr)
         plan = json.loads((directory / 'plan.json').read_text())
-        self.assertEqual(set(plan['expected_lane_ids']), set(self.p['profiles']))
+        eligible = {ident for ident, profile in self.p['profiles'].items()
+                    if 'ci' in profile.get('contexts', ['local', 'ci', 'release'])}
+        self.assertEqual(set(plan['expected_lane_ids']), eligible)
+        omitted = {item['id']: item for item in plan['omitted_profiles']}
+        self.assertEqual(set(omitted), set(self.p['profiles']) - eligible)
+        for ident, item in omitted.items():
+            self.assertEqual(item['status'], 'not_executed')
+            self.assertEqual(item['context'], 'ci')
+            self.assertEqual(item['allowed_contexts'], self.p['profiles'][ident]['contexts'])
+            self.assertEqual(item['profile_hash'], s.digest(self.p['profiles'][ident]))
+            self.assertTrue(item['reason'])
         self.assertEqual(set(json.loads(outputs['lanes'])), set(ci.LANES))
         self.assertEqual(outputs['sha'], self.head)
         self.assertEqual(outputs['run'], 'true')

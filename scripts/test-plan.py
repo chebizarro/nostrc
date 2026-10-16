@@ -58,7 +58,7 @@ def parser():
     return root
 
 
-def realization_command(args, policy, backend):
+def realization_command(args, policy, backend, *, custody=None):
     """Compose the real realization API; never emulate a configure/audit/run."""
     selection.require(args.phase in ("configure", "build", "test", "all"), "unknown execution phase")
     plan = selection.read_json(args.plan) if args.plan else None
@@ -68,6 +68,9 @@ def realization_command(args, policy, backend):
     else:
         identity = None
     profile = policy["profiles"][args.profile]
+    if profile.get("execution_domain") == "prepared_peer_linux_v1":
+        from test_selection_custody import PreparedContext
+        selection.require(isinstance(custody, PreparedContext), "prepared profile requires the contained Linux runner")
     if identity and identity.get("kind") == "committed":
         selection.require(selection.commit_sha(args.repo, "HEAD") == identity["sha"], "execution checkout is not the selected committed SHA")
         if selection.git(args.repo, "diff", "--quiet", "HEAD", "--", check=False).returncode:
@@ -97,7 +100,8 @@ def realization_command(args, policy, backend):
             raise selection.CheckFailure(f"realization {field} does not match admitted execution checkout: {expected}")
     selection.require(realized["profile_id"] == args.profile and realized["profile"] == profile and realized["inventory_hash"] == selection.digest(policy), "realization policy/profile mismatch")
     if args.command in {"validate", "check-inputs"}:
-        audit = backend.check_inputs(policy, realized, identity, after_build=args.after_build)
+        audit = backend.check_inputs(policy, realized, identity, after_build=args.after_build,
+                                     **({'custody': custody} if custody is not None else {}))
         return audit, 0 if audit["passed"] else 1
     selection.require(plan is not None, "resolve/run requires --plan")
     resolved = backend.resolve_checks(policy, plan, realized, args.profile)
@@ -109,9 +113,12 @@ def realization_command(args, policy, backend):
     selection.require(args.evidence_dir is not None, "run requires --evidence-dir")
     selection.require(args.parallel > 0 and (args.timeout is None or args.timeout > 0), "parallel/timeout must be positive")
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
-    if set(resolved.get("required_capabilities", [])) & {"docker", "external_peer"}:
+    if custody is not None:
+        custody.validate(resolved)
+    elif set(resolved.get("required_capabilities", [])) & {"docker", "external_peer", "prepared_peer"}:
         raise selection.CheckFailure("live peer/image lifecycle requires the existing guarded adapter")
-    audit = backend.check_inputs(policy, realized, identity, after_build=False)
+    audit = backend.check_inputs(policy, realized, identity, after_build=False,
+                                 **({'custody': custody} if custody is not None else {}))
     if not audit["passed"]:
         return audit, 1
     if args.phase == "configure":
@@ -140,13 +147,15 @@ def realization_command(args, policy, backend):
         if returncode:
             raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
     realized = backend.load_realization(args.build_dir, identity)
-    audit = backend.check_inputs(policy, realized, identity, after_build=True)
+    audit = backend.check_inputs(policy, realized, identity, after_build=True,
+                                 **({'custody': custody} if custody is not None else {}))
     if not audit["passed"]:
         return audit, 1
     if args.phase in {"configure", "build"}:
         return {"schema_version": 1, "phase": args.phase, "resolved": resolved, "input_audit": audit, "execution_complete": False}, 0
     raw = backend.run_resolved(resolved, args.build_dir, args.evidence_dir, args.attempt, input_audit=audit,
-                               build=False, parallel=args.parallel, timeout=args.timeout, evidence_paths=args.evidence_path)
+                               build=False, parallel=args.parallel, timeout=args.timeout, evidence_paths=args.evidence_path,
+                               **({"custody": custody} if custody is not None else {}))
     raw["build_seconds"] = build_seconds
     raw["configure_seconds"] = realized.get("configure_seconds")
     raw["commands"] = build_commands + raw.get("commands", [])
