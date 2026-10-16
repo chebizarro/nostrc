@@ -119,6 +119,12 @@ def validate_inventory(policy):
         require(isinstance(profile.get("configure_args"), list) and all(isinstance(x, str) for x in profile["configure_args"]), f"{ident}: configure_args")
         require(isinstance(profile.get("environment"), dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in profile["environment"].items()), f"{ident}: environment")
         require(isinstance(profile.get("capabilities"), list), f"{ident}: capabilities")
+        if "phase_environments" in profile or "sanitizer_compatibility" in profile:
+            from test_selection_realization import RealizationError, validate_phase_profile
+            try:
+                validate_phase_profile(profile)
+            except RealizationError as exc:
+                raise ContractError(f"{ident}: {exc}") from exc
     claimed = {}
     for ident, check in checks.items():
         _ids(check.get("nodes", []), nodes, f"{ident}.nodes")

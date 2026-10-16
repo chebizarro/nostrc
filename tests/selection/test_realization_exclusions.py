@@ -2,6 +2,7 @@
 import copy
 import json
 import unittest
+from unittest import mock
 from realization_support import ROOT, r
 
 
@@ -20,6 +21,7 @@ def baseline_fixture():
     realization = {"profile_id": profile_id, "profile": profile, "repo_root": "/source", "build_dir": "/build",
                    "source_identity": {"kind": "committed", "sha": "fixture"}, "inventory_hash": "fixture",
                    "profile_fingerprint": "fixture-fingerprint",
+                   "phase_context": {"template_inputs": []}, "phase_context_hash": "fixture-phase-context",
                    "tests": [test], "descriptors": [descriptor],
                    "targets": {ident: {"id": ident, "name": "go_channel_stress_test", "type": "EXECUTABLE",
                                         "artifacts": test["command"], "dependencies": [],
@@ -108,14 +110,17 @@ class BaselineExclusionTests(unittest.TestCase):
                                           "ctest_tests": {"libgo.macos.asan": ["Regular"]}}}
         realization["tests"].append({"name": "Regular", "properties": [{"name": "DEPENDS", "value": ["GoChannelStressTest"]}]})
         realization["descriptors"].append({"name": "Regular", "owner": ["libgo"], "declared_depends": ["GoChannelStressTest"]})
-        with self.assertRaisesRegex(r.RealizationError, "required by selected"):
+        # This policy-only fixture deliberately has nonexistent /source paths;
+        # native phase custody is covered by real phase-environment projects.
+        with mock.patch.object(r, "_validate_phase_context"), self.assertRaisesRegex(r.RealizationError, "required by selected"):
             r.resolve_checks(policy, {"selected_checks": ["regular"]}, realization, "libgo.macos.asan")
 
     def test_excluded_sources_and_unknown_registrations_are_still_audited(self):
         policy, realization = baseline_fixture()
         realization["tests"].append({"name": "UnknownTest", "command": ["/build/go_channel_stress_test"], "properties": []})
         realization["descriptors"].append({"name": "UnknownTest", "owner": ["libgo"], "targets": ["go_channel_stress_test"]})
-        audit = r.check_inputs(policy, realization)
+        with mock.patch.object(r, "_validate_phase_context"):
+            audit = r.check_inputs(policy, realization)
         self.assertFalse(audit["passed"])
         self.assertFalse(audit["complete_gate_eligible"])
         self.assertEqual([g["test"] for g in audit["gaps"] if g["kind"] == "unclaimed_registration"], ["UnknownTest"])

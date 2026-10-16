@@ -47,10 +47,15 @@ class ToolchainIdentityTests(unittest.TestCase):
         r._validate_native_profile({"compiler": "clang"}, tools(cxx="Clang"))
 
     def test_phase_specific_sanitizer_metadata_cannot_be_silently_flattened(self):
-        for extra in ({"phase_environments": {"configure": {}, "build": {}, "test": {"ASAN_OPTIONS": "detect_leaks=1"}}},
-                      {"sanitizer_compatibility": {"GH_SAN_CONFIGURE_ENV": [], "GH_SAN_ENV": ["ASAN_OPTIONS=detect_leaks=1"]}}):
-            with self.subTest(extra=extra), self.assertRaisesRegex(r.RealizationError, "phase-specific sanitizer environment metadata is unsupported"):
-                r._validate_native_profile(dict(compiler="clang", **extra), tools(), compiled_languages=["C"])
+        profile = {"compiler": "clang", "phase_environments": {
+            "configure": {}, "build": {}, "test": {"ASAN_OPTIONS": "detect_leaks=1"}}}
+        r._validate_native_profile(profile, tools(), compiled_languages=["C"])
+        self.assertNotIn("ASAN_OPTIONS", r.phase_environment(profile, "/source", "configure", {}))
+        self.assertNotIn("ASAN_OPTIONS", r.phase_environment(profile, "/source", "build", {}))
+        self.assertEqual(r.phase_environment(profile, "/source", "test", {})["ASAN_OPTIONS"], "detect_leaks=1")
+        profile["sanitizer_compatibility"] = {"GH_SAN_CONFIGURE_ENV": [], "GH_SAN_ENV": ["ASAN_OPTIONS=detect_leaks=1"]}
+        with self.assertRaisesRegex(r.RealizationError, "invalid sanitizer_compatibility"):
+            r._validate_native_profile(profile, tools(), compiled_languages=["C"])
 
 
 class NativeCodemodelLanguageTests(Project):

@@ -366,9 +366,149 @@ def _generated_ctest_commands(build):
     return commands
 
 
+PHASES = ("configure", "build", "test")
+
+
+def _environment_map(value, label):
+    if not isinstance(value, dict) or any(
+            not isinstance(k, str) or not k or "=" in k or "\x00" in k
+            or not isinstance(v, str) or "\x00" in v for k, v in value.items()):
+        raise RealizationError(f"{label} must be a string environment map")
+    for content in value.values():
+        _expand_source(content, "/source-root")
+    return value
+
+
+def _expand_source(value, source_root):
+    if not isinstance(value, str) or "\x00" in value:
+        raise RealizationError("invalid profile string")
+    # Validate the template BEFORE substitution: a literal brace in a checkout
+    # path is not an authored template, and must not be interpreted a second time.
+    remainder = value.replace("{source_root}", "")
+    if "{" in remainder or "}" in remainder:
+        raise RealizationError("unsupported profile substitution (only {source_root})")
+    return value.replace("{source_root}", str(source_root))
+
+
+def validate_phase_profile(profile):
+    """Validate authored metadata without host checks or environment flattening."""
+    common = _environment_map(profile.get("environment", {}), "environment")
+    phases = profile.get("phase_environments", {p: {} for p in PHASES})
+    if not isinstance(phases, dict) or set(phases) != set(PHASES):
+        raise RealizationError("phase_environments requires exactly configure/build/test")
+    for phase in PHASES:
+        _environment_map(phases[phase], f"phase_environments.{phase}")
+    args = profile.get("configure_args", [])
+    if not isinstance(args, list) or any(not isinstance(x, str) or not x or "\x00" in x for x in args):
+        raise RealizationError("configure_args must be an argument array")
+    for value in args:
+        _expand_source(value, "/source-root")
+    compat = profile.get("sanitizer_compatibility")
+    if "sanitizer_compatibility" not in profile:
+        return
+    fields = {"GH_SAN_CONFIGURE", "GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV",
+              "GH_SAN_TARGETS", "GH_SAN_TESTS", "GH_SAN_TEST_JOBS", "GH_SAN_SKIP_PATTERN"}
+    if not isinstance(compat, dict) or set(compat) != fields or "phase_environments" not in profile:
+        raise RealizationError("invalid sanitizer_compatibility contract fields/phases")
+    if compat["GH_SAN_CONFIGURE"] != args:
+        raise RealizationError("sanitizer_compatibility configure disagreement")
+    for phase, field in zip(PHASES, ("GH_SAN_CONFIGURE_ENV", "GH_SAN_BUILD_ENV", "GH_SAN_ENV")):
+        values, mirror = compat[field], {}
+        if not isinstance(values, list):
+            raise RealizationError(f"invalid sanitizer_compatibility {field}")
+        for value in values:
+            if not isinstance(value, str) or "=" not in value:
+                raise RealizationError(f"invalid sanitizer_compatibility {field}")
+            key, content = value.split("=", 1)
+            if key in mirror:
+                raise RealizationError(f"duplicate sanitizer_compatibility environment: {key}")
+            mirror[key] = content
+        _environment_map(mirror, field)
+        if mirror != dict(common, **phases[phase]):
+            raise RealizationError(f"sanitizer_compatibility {phase} environment disagreement")
+    for field in ("GH_SAN_TARGETS", "GH_SAN_TESTS"):
+        values = compat[field]
+        if (not isinstance(values, list) or not values
+                or any(not isinstance(x, str) or not x or "\x00" in x for x in values)
+                or len(values) != len(set(values))):
+            raise RealizationError(f"invalid sanitizer_compatibility {field}")
+    jobs = profile.get("parallelism")
+    if type(jobs) is not int or jobs < 1 or compat["GH_SAN_TEST_JOBS"] != str(jobs):
+        raise RealizationError("sanitizer_compatibility parallelism disagreement")
+    if compat["GH_SAN_SKIP_PATTERN"] != r"\*\*\*Skipped|Not Run":
+        raise RealizationError("unsupported sanitizer_compatibility skip policy")
+    if dict(common, **phases["test"]).get("GROUNDHOG_SANITIZER_TESTS") != " ".join(compat["GH_SAN_TESTS"]):
+        raise RealizationError("sanitizer_compatibility test environment/membership disagreement")
+
+
+def phase_environment(profile, source_root, phase, base_environment=None):
+    """Ambient + common + ONE phase overlay; source_root is the checkout root.
+
+    Callers must not export test overlays into the parent process. Captured full
+    environment hashes bind ambient inputs too, without persisting their values.
+    """
+    if phase not in PHASES:
+        raise RealizationError(f"unknown environment phase: {phase}")
+    validate_phase_profile(profile)
+    overlay = dict(profile.get("environment", {}), **profile.get("phase_environments", {}).get(phase, {}))
+    return dict(os.environ if base_environment is None else base_environment,
+                **{k: _expand_source(v, source_root) for k, v in overlay.items()})
+
+
+def _phase_context(profile, root, source, configuration):
+    environments = {p: phase_environment(profile, root, p) for p in PHASES}
+    # Template inputs are paths, optionally followed by colon/semicolon options
+    # (e.g. LSAN suppressions). Reject non-path suffix syntax rather than guessing.
+    inputs = set()
+    values = list(profile.get("environment", {}).values()) + profile.get("configure_args", [])
+    values += [v for m in profile.get("phase_environments", {}).values() for v in m.values()]
+    for value in values:
+        for suffix in re.findall(r"\{source_root\}([^:;{}]*)", value):
+            path = Path(str(root) + suffix).resolve()
+            if not path.is_relative_to(root) or not path.exists():
+                raise RealizationError(f"profile template input escapes/misses source root: {path}")
+            inputs.add(str(path))
+    return {"source_root": str(root), "source_dir": str(source), "configuration": configuration,
+            "environment_overlays": {p: {k: _expand_source(v, root) for k, v in
+                dict(profile.get("environment", {}), **profile.get("phase_environments", {}).get(p, {})).items()} for p in PHASES},
+            "environment_hashes": {p: _hash(env) for p, env in environments.items()},
+            "template_inputs": sorted(inputs)}
+
+
+def _profile_fingerprint(realization):
+    keys = ("profile_id", "profile", "source_identity", "inventory_hash", "cmake", "toolchains",
+            "compiled_languages", "target_settings", "environment_hash", "tool_versions", "phase_context")
+    return _hash({k: realization.get(k) for k in keys})
+
+
+def _validate_phase_context(realization):
+    root = Path(realization["repo_root"]).resolve()
+    source = (root / _expand_source(realization["profile"].get("source_dir", "."), root)).resolve()
+    if not source.is_relative_to(root) or not source.is_dir() or str(source) != realization["source_dir"]:
+        raise RealizationError("profile source directory changed/escapes checkout")
+    current = _phase_context(realization["profile"], root, source, realization["configuration"])
+    if (current != realization.get("phase_context")
+            or _hash(current) != realization.get("phase_context_hash")
+            or current["environment_hashes"]["configure"] != realization.get("environment_hash")):
+        raise RealizationError("effective phase environment changed or phase/source/configuration identity mismatch; configure again")
+    if _profile_fingerprint(realization) != realization["profile_fingerprint"]:
+        raise RealizationError("cached profile fingerprint mismatch; configure again")
+    return current
+
+
+def _validate_resolved_phase(resolved, realization):
+    for key in ("profile_hash", "configuration", "phase_context", "phase_context_hash"):
+        expected = _hash(realization["profile"]) if key == "profile_hash" else realization[key]
+        if resolved.get(key) != expected:
+            raise RealizationError(f"resolved phase identity mismatch: {key}")
+    compatibility_targets = sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", []))
+    if (resolved.get("compatibility_build_targets", []) != compatibility_targets
+            or not set(compatibility_targets).issubset(resolved["build_targets"])):
+        raise RealizationError("resolved sanitizer_compatibility build targets changed")
+
+
 def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):
-    if "phase_environments" in profile or "sanitizer_compatibility" in profile:
-        raise RealizationError("phase-specific sanitizer environment metadata is unsupported by this engine; existing adapter required")
+    validate_phase_profile(profile)
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
     requested = profile.get("platform")
     if requested and {"darwin": "macos"}.get(requested, requested) != system:
@@ -426,20 +566,21 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     root, build = Path(repo_root).resolve(), Path(build_dir).resolve()
     identity = _identity(source_identity)
     _validate_source_identity(root, identity, build)
-    _validate_native_profile(profile)
     build.mkdir(parents=True, exist_ok=True)
     record = build / "nostrc-test-realization.json"
     record.unlink(missing_ok=True)  # failed configure must invalidate old success
+    _validate_native_profile(profile)
     query = build / ".cmake/api/v1/query/client-nostrc-test-selection"
     query.mkdir(parents=True, exist_ok=True)
     (query / "codemodel-v2").touch()
     (query / "toolchains-v1").touch()
     token = uuid.uuid4().hex
-    env = dict(os.environ, **profile.get("environment", {}))
-    args = profile.get("configure_args", [])
-    if not isinstance(args, list) or any(not isinstance(x, str) for x in args):
-        raise ValueError("configure_args must be an argument array")
-    source = (root / profile.get("source_dir", ".")).absolute()
+    env = phase_environment(profile, root, "configure")
+    args = [_expand_source(x, root) for x in profile.get("configure_args", [])]
+    source = (root / _expand_source(profile.get("source_dir", "."), root)).resolve()
+    if not source.is_relative_to(root) or not source.is_dir():
+        raise RealizationError("profile source directory escapes/misses checkout")
+    initial_context = _phase_context(profile, root, source, profile.get("configuration", ""))
     cmd = ["cmake", "-S", str(source), "-B", str(build), *args,
            f"-DNOSTRC_TEST_SELECTION_TOKEN={token}"]
     before = {p.name: p.read_bytes() for p in (build / ".cmake/api/v1/reply").glob("index-*.json")}
@@ -463,6 +604,9 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     if len(configs) != 1:
         raise RealizationError("ambiguous/missing codemodel configuration; specify configuration")
     config_name = configs[0]["name"]
+    if profile.get("configuration") and profile["configuration"] != config_name:
+        raise RealizationError("profile configuration differs from realized configuration")
+    context = dict(initial_context, configuration=config_name)
     descriptor_path = build / f"nostrc-test-descriptors-{config_name}.json"
     descriptors = _read(descriptor_path)
     if descriptors.get("schema_version") != 1 or descriptors.get("generation_token") != token:
@@ -470,7 +614,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     ctest_cmd = ["ctest", "--test-dir", str(build), "--show-only=json-v1"]
     if config_name:
         ctest_cmd += ["-C", config_name]
-    ctest = json.loads(_command(ctest_cmd, env=env))
+    ctest = json.loads(_command(ctest_cmd, env=phase_environment(profile, root, "test")))
     # CTest suppresses command argv when a fresh executable is absent. Recover
     # the literal generated registration, not an executable guessed from its name.
     literal_commands = _generated_ctest_commands(build) if index.get("cmake", {}).get("generator", {}).get("name") == "Ninja" else {}
@@ -521,23 +665,27 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         "runtime_file_manifest": runtime_manifest,
         "toolchains": tools, "compiled_languages": compiled_languages, "cmake": index.get("cmake", {}),
         "target_settings": target_settings, "environment_hash": _hash(env),
-        "tool_versions": {"ctest": _command(["ctest", "--version"]).strip(),
-                          "ninja": _command(["ninja", "--version"]).strip()
+        "phase_context": context, "phase_context_hash": _hash(context),
+        "tool_versions": {"ctest": _command(["ctest", "--version"], env=phase_environment(profile, root, "test")).strip(),
+                          "ninja": _command(["ninja", "--version"], env=phase_environment(profile, root, "build")).strip()
                           if index.get("cmake", {}).get("generator", {}).get("name") == "Ninja" else None},
         "commands": [cmd, ctest_cmd], "generation_token": token,
         "configure_seconds": time.monotonic() - started,
     }
-    realization["profile_fingerprint"] = _hash({"profile_id": profile_id, "profile": profile,
-        "source_identity": identity, "inventory_hash": inventory_hash,
-        "cmake": realization["cmake"], "toolchains": tools, "compiled_languages": compiled_languages,
-        "target_settings": target_settings, "environment_hash": realization["environment_hash"],
-        "tool_versions": realization["tool_versions"]})
+    realization["profile_fingerprint"] = _profile_fingerprint(realization)
+    compat = profile.get("sanitizer_compatibility")
+    if compat:
+        if not set(compat["GH_SAN_TARGETS"]).issubset({t["name"] for t in targets.values()}):
+            raise RealizationError("sanitizer_compatibility target missing from codemodel")
+        if not set(compat["GH_SAN_TESTS"]).issubset({t["name"] for t in realization["tests"]}):
+            raise RealizationError("sanitizer_compatibility test missing from CTest")
     # Bind all generated metadata. A later native configure invalidates this file.
     bound = [descriptor_path, indexes[-1], reply_dir / response["jsonFile"]]
     bound += [reply_dir / t["jsonFile"] for t in configs[0].get("targets", [])]
     bound += list(build.rglob("CTestTestfile.cmake"))
     realization["generation_files"] = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in bound}
     _validate_source_identity(root, identity, build)
+    _validate_phase_context(realization)
     _atomic(record, realization)
     return realization
 
@@ -561,6 +709,7 @@ def load_realization(build_dir, expected_identity=None):
         _validate_native_profile(realization["profile"])
     else:
         _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"], realization.get("compiled_languages"))
+    _validate_phase_context(realization)
     return realization
 
 
@@ -756,7 +905,7 @@ def configure_command_profile(repo_root, build_dir, profile_id, profile, source_
     identity = _identity(source_identity)
     _validate_source_identity(root, identity, build)
     _validate_native_profile(profile)
-    source = (root / profile["source_dir"]).resolve()
+    source = (root / _expand_source(profile["source_dir"], root)).resolve()
     if not source.is_relative_to(root) or not source.is_dir():
         raise RealizationError("command source directory escapes/misses checkout")
     if profile.get("configure_args") or profile.get("instrumentation", "none") != "none":
@@ -769,9 +918,14 @@ def configure_command_profile(repo_root, build_dir, profile_id, profile, source_
               "profile": profile, "source_identity": identity, "inventory_hash": inventory_hash,
               "configuration": "", "targets": {}, "tests": [], "descriptors": [],
               "cmake": {}, "toolchains": {}, "commands": [], "configure_seconds": 0,
-              "environment_hash": _hash(dict(os.environ, **profile.get("environment", {}))),
+              "environment_hash": _hash(phase_environment(profile, root, "configure")),
               "generation_files": {str(marker): hashlib.sha256(marker.read_bytes()).hexdigest()}}
-    result["profile_fingerprint"] = _hash(result)
+    if profile.get("phase_environments") or profile.get("sanitizer_compatibility"):
+        raise RealizationError("source-only commands cannot attest configure/build phase overlays")
+    result["phase_context"] = _phase_context(profile, root, source, "")
+    result["phase_context_hash"] = _hash(result["phase_context"])
+    result["profile_fingerprint"] = _profile_fingerprint(result)
+    _validate_phase_context(result)
     _atomic(build / "nostrc-test-realization.json", result)
     return result
 
@@ -793,7 +947,7 @@ def _command_specs(inventory, realization):
     """
     result = {}
     targets = {t["name"]: t for t in realization["targets"].values()}
-    env_base = dict(os.environ, **realization["profile"].get("environment", {}))
+    env_bases = {p: phase_environment(realization["profile"], realization["repo_root"], p) for p in ("build", "test")}
     for ident, check in inventory["checks"].items():
         if check.get("kind") == "ctest" or not _eligible(check, realization["profile_id"]):
             continue
@@ -807,7 +961,8 @@ def _command_specs(inventory, realization):
         environment = check.get("environment")
         if not isinstance(environment, dict) or any(not isinstance(k, str) or not k or "=" in k or "\x00" in k for k in environment):
             raise RealizationError(f"invalid command environment: {ident}")
-        env = dict(env_base, **{k: _substitute(v, realization) if v else "" for k, v in environment.items()})
+        phase = "build" if check["kind"] == "build_contract" else "test"
+        env = dict(env_bases[phase], **{k: _substitute(v, realization) if v else "" for k, v in environment.items()})
         required = check.get("requires", [])
         if not set(required).issubset(realization["profile"].get("capabilities", [])):
             raise RealizationError(f"unavailable command capabilities: {ident}")
@@ -860,11 +1015,60 @@ def _command_specs(inventory, realization):
         evidence = check.get("required_evidence", [])
         if any(not isinstance(p, str) or Path(p).is_absolute() or any(x in ("", ".", "..") for x in p.split("/")) for p in evidence):
             raise RealizationError(f"required_evidence must be normalized build-relative file paths: {ident}")
-        result[ident] = {"kind": check["kind"], "argv": argv, "cwd": str(cwd.resolve()),
+        result[ident] = {"kind": check["kind"], "phase": phase, "argv": argv, "cwd": str(cwd.resolve()),
                          "environment": {k: env[k] for k in environment}, "environment_hash": _hash(env), "inputs": sorted(set(inputs)),
                          "target_ids": target_ids, "build_targets": sorted(names),
                          "requires": sorted(required), "required_evidence": evidence}
     return result
+
+
+def _compatibility_target_ids(realization):
+    names = realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])
+    targets = {t["name"]: t["id"] for t in realization["targets"].values()}
+    if not set(names).issubset(targets):
+        raise RealizationError("sanitizer_compatibility target missing from codemodel")
+    return {targets[n] for n in names}
+
+
+def _audit_compatibility_targets(inventory, realization, after_build):
+    """Audit profile prerequisites (including the app), not fictitious checks."""
+    ids = _target_closure(_compatibility_target_ids(realization), realization)
+    if not ids:
+        return [], {}
+    covered = _impact_prerequisites(inventory, {n for c in inventory["checks"].values()
+        if _eligible(c, realization["profile_id"]) for n in c.get("nodes", [])})
+    headers = _ninja_headers(realization) if after_build else {}
+    gaps, hashes = [], {}
+    for key in ids:
+        target = realization["targets"][key]
+        paths = [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
+        if after_build:
+            output = _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
+                              env=phase_environment(realization["profile"], realization["repo_root"], "build"))
+            paths += [(_path(realization["build_dir"], p), "ninja") for p in output.splitlines()]
+            discovered = [p for obj, values in headers.items() if f"CMakeFiles/{target['name']}.dir/" in obj.replace("\\", "/") for p in values]
+            paths += [(_path(realization["build_dir"], p), "header") for p in discovered]
+            if not discovered and any(s.get("compiled") for s in target["sources"]):
+                gaps.append({"kind": "missing_discovered_header_index", "target": target["name"]})
+            for artifact in target["artifacts"]:
+                if not Path(artifact).is_file():
+                    gaps.append({"kind": "missing_profile_build_artifact", "target": target["name"], "input": artifact})
+        for value, kind in sorted(set(paths)):
+            path = Path(value)
+            if kind == "generated" or path.is_relative_to(Path(realization["build_dir"])):
+                continue
+            relative = _relative(value, realization["repo_root"])
+            if not path.is_file():
+                gaps.append({"kind": "missing_profile_input", "target": target["name"], "input": value})
+                continue
+            if relative is None and kind not in ("header", "ninja"):
+                gaps.append({"kind": "external_profile_input", "target": target["name"], "input": value})
+            elif relative is not None:
+                owners, effect = _owners(inventory, relative)
+                if not path.resolve().is_relative_to(Path(realization["repo_root"])) or (effect != "global" and (effect == "non_execution" or not owners or owners.isdisjoint(covered))):
+                    gaps.append({"kind": "uncovered_profile_build_input", "target": target["name"], "input": relative})
+            hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return gaps, hashes
 
 
 def _audit_commands(inventory, realization, specs, after_build):
@@ -878,7 +1082,8 @@ def _audit_commands(inventory, realization, specs, after_build):
             target = realization["targets"][key]
             paths += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
             if after_build:
-                paths += [(_path(realization["build_dir"], p), "ninja") for p in _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]]).splitlines()]
+                paths += [(_path(realization["build_dir"], p), "ninja") for p in _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
+                    env=phase_environment(realization["profile"], realization["repo_root"], "build")).splitlines()]
                 discovered = [p for obj, values in headers.items() if f"CMakeFiles/{target['name']}.dir/" in obj.replace("\\", "/") for p in values]
                 paths += [(_path(realization["build_dir"], p), "header") for p in discovered]
                 if not discovered and any(s.get("compiled") for s in target["sources"]):
@@ -931,8 +1136,15 @@ def resolve_checks(inventory, plan, realization, profile_id):
     plan.selected_checks is a list of stable IDs (or plan.checks). No name regex
     matching, alias expansion, profile projection or policy broadening happens here.
     """
+    _validate_phase_context(realization)
     if realization["profile_id"] != profile_id:
         raise RealizationError("profile mismatch")
+    if profile_id in inventory.get("profiles", {}) and inventory["profiles"][profile_id] != realization["profile"]:
+        raise RealizationError("profile policy changed; configure again")
+    compat = realization["profile"].get("sanitizer_compatibility")
+    if compat and set(compat["GH_SAN_TESTS"]) != {n for check in inventory["checks"].values()
+            if check.get("kind") == "ctest" and _eligible(check, profile_id) for n in _membership(check, profile_id)}:
+        raise RealizationError("sanitizer_compatibility policy membership disagreement")
     if plan.get("source_identity", realization["source_identity"]) != realization["source_identity"]:
         raise RealizationError("plan/realization source identity mismatch")
     if plan.get("inventory_hash", realization["inventory_hash"]) != realization["inventory_hash"]:
@@ -987,6 +1199,8 @@ def resolve_checks(inventory, plan, realization, profile_id):
             ids.update(spec["target_ids"])
     contract_ids = {key for spec in selected_commands.values() if spec["kind"] == "build_contract" for key in spec["target_ids"]}
     audit_ids = {ident for exclusion in exclusions for ident in exclusion["target_ids"]}
+    compatibility_ids = _compatibility_target_ids(realization)
+    audit_ids.update(compatibility_ids)
     closure = _target_closure(ids | audit_ids | contract_ids, realization)
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
@@ -996,6 +1210,7 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
         "plan_hash": _hash(plan), "plan_id": plan.get("plan_id", _hash(plan)),
         "profile_hash": _hash(realization["profile"]), "configuration": realization["configuration"],
+        "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "build_dir": realization["build_dir"], "checks": checks,
         "command_executions": selected_commands, "command_specs_hash": _hash(command_specs),
         "expected_executions": sorted(selected + list(selected_commands)),
@@ -1003,6 +1218,7 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "tests": selected, "primary_tests": sorted(primary), "support_tests": sorted(set(selected) - primary),
         "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids | audit_ids | contract_ids}),
         "audit_build_targets": sorted({realization["targets"][i]["name"] for i in audit_ids}),
+        "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
         "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
         "runtime_inputs": sorted(inputs), "required_capabilities": sorted(capabilities),
@@ -1044,7 +1260,8 @@ def _impact_prerequisites(inventory, owners):
 def _ninja_headers(realization):
     if realization.get("cmake", {}).get("generator", {}).get("name") != "Ninja":
         raise RealizationError("discovered-header audit requires existing Ninja profile")
-    output = _command(["ninja", "-C", realization["build_dir"], "-t", "deps"])
+    output = _command(["ninja", "-C", realization["build_dir"], "-t", "deps"],
+                      env=phase_environment(realization["profile"], realization["repo_root"], "build"))
     headers, current = {}, None
     for line in output.splitlines():
         if line and not line[0].isspace():
@@ -1062,6 +1279,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     after_build additionally checks Ninja inputs/discovered headers. An absent
     header index is an explicit gap, not evidence that a target uses no headers.
     """
+    _validate_phase_context(realization)
     if source_identity is not None and _identity(source_identity) != realization["source_identity"]:
         raise RealizationError("input audit identity mismatch")
     tests, descriptors = _metadata(inventory, realization)
@@ -1070,6 +1288,23 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     gaps, fingerprints = [], {}
     def gap(kind, **detail):
         gaps.append({"kind": kind, **detail})
+    root = Path(realization["repo_root"])
+    for value in realization["phase_context"]["template_inputs"]:
+        path = Path(value)
+        files = sorted(p for p in path.rglob("*") if (p.is_file() or p.is_symlink()) and ".git" not in p.relative_to(path).parts) if path.is_dir() else [path]
+        for file in files:
+            relative = _relative(file.resolve(), root)
+            owners, effect = _owners(inventory, relative)
+            if not file.is_file() or relative is None:
+                gap("invalid_profile_input", input=str(file))
+                continue
+            fingerprints[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+            if effect == "non_execution" or (not owners and effect != "global"):
+                gap("unowned_profile_input", input=relative)
+            elif effect != "global":
+                for ident, check in inventory["checks"].items():
+                    if _eligible(check, realization["profile_id"]) and owners.isdisjoint(_impact_prerequisites(inventory, check.get("nodes", []))):
+                        gap("missing_profile_impact_edge", check=ident, input=relative, owners=sorted(owners))
     headers = _ninja_headers(realization) if after_build and realization.get("realization_kind") != "command" else {}
     claims = {}
     for ident, check in inventory["checks"].items():
@@ -1127,7 +1362,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
             inputs += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
             if after_build:
                 if ident not in ninja_inputs:
-                    output = _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]])
+                    output = _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]],
+                                      env=phase_environment(realization["profile"], realization["repo_root"], "build"))
                     ninja_inputs[ident] = [(_path(realization["build_dir"], p), "ninja") for p in output.splitlines()]
                 inputs += ninja_inputs[ident]
                 target_headers = 0
@@ -1217,6 +1453,9 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     command_gaps, command_hashes = _audit_commands(inventory, realization, specs, after_build)
     gaps.extend(command_gaps)
     fingerprints.update(command_hashes)
+    compatibility_gaps, compatibility_hashes = _audit_compatibility_targets(inventory, realization, after_build)
+    gaps.extend(compatibility_gaps)
+    fingerprints.update(compatibility_hashes)
     command_targets = {key for spec in specs.values() for key in spec["target_ids"]}
     if after_build and not header_count and not command_targets and any(t["type"] in ("EXECUTABLE", "STATIC_LIBRARY", "SHARED_LIBRARY") for t in realization["targets"].values()):
         gap("missing_discovered_header_index")
@@ -1226,8 +1465,10 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
         "profile_fingerprint": realization["profile_fingerprint"], "after_build": after_build,
+        "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "gaps": gaps, "input_hashes": fingerprints, "header_entries": header_count,
         "command_specs_hash": _hash(specs),
+        "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
     result["audit_hash"] = _hash(result)
     return result
@@ -1267,6 +1508,7 @@ def build_resolved(resolved, build_dir, parallel=1):
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("build profile identity mismatch")
+    _validate_resolved_phase(resolved, realization)
     if not resolved["build_targets"]:
         return {"commands": [], "build_seconds": 0}
     cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
@@ -1274,8 +1516,10 @@ def build_resolved(resolved, build_dir, parallel=1):
         cmd += ["--config", resolved["configuration"]]
     cmd += ["--target", *resolved["build_targets"]]
     start = time.monotonic()
-    output = _command(cmd, env=dict(os.environ, **realization["profile"].get("environment", {})))
-    return {"commands": [cmd], "build_seconds": time.monotonic() - start, "output": output}
+    output = _command(cmd, env=phase_environment(realization["profile"], realization["repo_root"], "build"))
+    load_realization(build_dir, resolved["source_identity"])
+    return {"commands": [cmd], "build_seconds": time.monotonic() - start, "output": output,
+            "phase_context_hash": realization["phase_context_hash"]}
 
 
 def cli(args, policy):
@@ -1286,6 +1530,8 @@ def cli(args, policy):
     """
     import sys
     try:
+        if args.command == "run" and args.phase not in (*PHASES, "all"):
+            raise RealizationError(f"unknown execution phase: {args.phase}")
         profile_id = args.profile
         profile = policy["profiles"][profile_id]
         plan = _read(args.plan) if args.plan else None
@@ -1428,6 +1674,11 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("resolved profile fingerprint mismatch")
+    _validate_resolved_phase(resolved, realization)
+    if timeout is None:
+        timeout = realization["profile"].get("timeout_seconds")
+    if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
+        raise RealizationError("execution timeout must be positive")
     if set(resolved["required_capabilities"]) & {"docker", "external_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
@@ -1450,6 +1701,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "resolved_hash": resolved["resolved_hash"], "attempt": attempt,
         "lane_id": resolved["profile_id"], "profile": resolved["profile_id"],
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
+        "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
         "started": started, "commands": commands, "evidence_dir": str(directory),
@@ -1457,6 +1709,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "coverage_gaps": resolved.get("coverage_gaps", []),
         "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
         "audit_build_targets": resolved.get("audit_build_targets", []),
+        "compatibility_build_targets": resolved.get("compatibility_build_targets", []),
         "required_capabilities": resolved["required_capabilities"],
         "available_capabilities": realization["profile"].get("capabilities", []),
         "target_ids": resolved["target_ids"], "build_targets": resolved["build_targets"],
@@ -1464,9 +1717,11 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     if input_audit is None or not input_audit.get("passed") or not input_audit.get("after_build"):
         raise RealizationError("passing post-build input audit required before execution")
+    if input_audit.get("compatibility_build_targets", []) != resolved.get("compatibility_build_targets", []):
+        raise RealizationError("input audit sanitizer_compatibility targets mismatch")
     if input_audit.get("baseline_exclusions", []) != resolved.get("baseline_exclusions", []):
         raise RealizationError("input audit baseline exclusion accounting mismatch")
-    for key in ("source_identity", "inventory_hash", "profile_fingerprint"):
+    for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context", "phase_context_hash"):
         if input_audit.get(key) != resolved[key]:
             raise RealizationError(f"input audit identity mismatch: {key}")
     for name, digest in input_audit.get("input_hashes", {}).items():
@@ -1478,9 +1733,8 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         raise RealizationError("input audit command contract mismatch")
     receipt["input_audit"] = input_audit
     receipt["input_audit_status"] = "passed"
-    env = dict(os.environ, **realization["profile"].get("environment", {}))
-    if _hash(env) != realization["environment_hash"]:
-        raise RealizationError("effective environment changed since configure; configure this profile again")
+    env = phase_environment(realization["profile"], realization["repo_root"], "test")
+    build_env = phase_environment(realization["profile"], realization["repo_root"], "build")
     config = ["-C", resolved["configuration"]] if resolved["configuration"] else []
     if build and resolved["build_targets"]:
         cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
@@ -1490,7 +1744,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         commands.append(cmd)
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
         begin = time.monotonic()
-        result = _execute(cmd, env=env, log_path=directory / "build.log", timeout=timeout)
+        result = _execute(cmd, env=build_env, log_path=directory / "build.log", timeout=timeout)
         if result.returncode:
             raise RealizationError(f"selected prerequisite build failed: {result.returncode}")
         receipt["build_seconds"] = time.monotonic() - begin
@@ -1499,7 +1753,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     if resolved["build_targets"]:
         if realization["cmake"].get("generator", {}).get("name") != "Ninja":
             raise RealizationError("execution build-freshness proof requires the existing Ninja profile")
-        dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=env)
+        dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=build_env)
         if "ninja: no work to do." not in dry_run:
             raise RealizationError("selected targets are not up to date; build and re-audit before execution")
     fresh = [] if realization.get("realization_kind") == "command" else json.loads(_command(query, env=env))["tests"]
@@ -1536,7 +1790,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
         _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
-        process = _execute(cmd, env=env, log_path=directory / "ctest.log")
+        process = _execute(cmd, env=env, log_path=directory / "ctest.log", timeout=timeout)
         receipt["test_seconds"] = time.monotonic() - begin
         receipt["ctest_exit_code"] = process.returncode
         for value in evidence_paths:
@@ -1563,7 +1817,10 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     # support execution still fails the lane even if every primary check passed.
     specs = resolved.get("command_executions", {})
     for ident, spec in specs.items():
-        env_command = dict(env, **spec["environment"])
+        command_base = build_env if spec["kind"] == "build_contract" else env
+        if spec.get("phase") != ("build" if spec["kind"] == "build_contract" else "test"):
+            raise RealizationError(f"command phase changed: {ident}")
+        env_command = dict(command_base, **spec["environment"])
         if _hash(env_command) != spec["environment_hash"]:
             raise RealizationError(f"command environment changed: {ident}")
         for relative in spec["required_evidence"]:
@@ -1598,11 +1855,10 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
             receipt["outcome"] = "failed"
     # A command must not change the admitted source or any audited input. Evidence
     # belongs in the build/evidence directory, never in source fixtures.
-    if specs:
-        load_realization(build_dir, resolved["source_identity"])
-        for name, digest in input_audit.get("input_hashes", {}).items():
-            if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
-                raise RealizationError(f"input changed during command execution: {name}")
+    load_realization(build_dir, resolved["source_identity"])
+    for name, digest in input_audit.get("input_hashes", {}).items():
+        if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
+            raise RealizationError(f"input changed during execution: {name}")
     receipt["execution_outcome"] = receipt["outcome"]
     receipt["execution_clean_first_attempt"] = attempt == 1 and receipt["execution_outcome"] == "passed"
     if not receipt["complete_gate_eligible"]:
