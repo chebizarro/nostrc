@@ -193,8 +193,9 @@ full-gate fixture passed, not a causal resolution of the original failure.
 Parent final combined suite at `2d64a7ac22bcc08018d4ffdec91fee800f54df6f`:
 **307/307 passed, 0 skips, 125.303s**, `/tmp/nostrc-phase-final-selection.log`.
 Subsequent integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` adds only
-documentation/failure forensics; final six-shell/four-static/actionlint/whitespace
-gates at that source are **running/pending**, not assumed passed. Earlier 306-test
+documentation/failure forensics. Parent confirms at that source: **all six shell
+suites, four static checkers, full actionlint including ShellCheck and range
+whitespace passed**; logs `/tmp/nostrc-phase-final-test-*.log`. Earlier 306-test
 native and production Linux proofs above remain source-specific; no full wrapped,
 MDK, enforcement or W11 acceptance follows.
 
