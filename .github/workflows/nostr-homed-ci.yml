@@ -151,7 +151,8 @@ jobs:
           cmake -S . -B build -G Ninja -DENABLE_NOSTR_HOMED=ON -DBUILD_RELAYD=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_NOSTR_GTK=OFF -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_APPS=OFF -DBUILD_LIBHANAMI=OFF -DSIGNET_ENABLE=OFF -DWITH_NOSTRDB=OFF -DLIBNOSTR_WITH_NOSTRDB=OFF \
-            -DENABLE_NIP55L=OFF -DENABLE_NIP57=OFF -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF
+            -DENABLE_NIP55L=OFF -DENABLE_NIP57=OFF -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_TESTING=OFF -DBUILD_TESTING_FRAMEWORK=OFF \
+            -DNOSTR_HOMED_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build -j
@@ -161,8 +162,17 @@ jobs:
           RUN_MOCK_SIGNER=1 ctest --test-dir build --output-on-failure --timeout 60 -R "secrets_decrypt_integration" || true
 
       - name: Run unit tests (nostr-homed)
+        shell: bash
         run: |
-          ctest --test-dir build --output-on-failure --timeout 60 -R "(test_manifest|test_cache|test_cache_config|test_uid_map|test_groups)"
+          set -euo pipefail
+          selector='^homed_(manifest|cache|cache_config|uid_map|groups)$'
+          expected='homed_cache homed_cache_config homed_groups homed_manifest homed_uid_map'
+          listed="$(ctest --test-dir build -N -R "${selector}" | sed -n 's/^ *Test *#[0-9]*: //p' | sort | tr '\n' ' ' | sed 's/ $//')"
+          if [ "${listed}" != "${expected}" ]; then
+            echo "::error::nostr-homed unit selection drifted: got '${listed}', want '${expected}'"
+            exit 1
+          fi
+          ctest --test-dir build --no-tests=error --output-on-failure --timeout 60 -R "${selector}"
 
       - name: Run FUSE integration tests (skip gracefully if missing /dev/fuse)
         run: |
