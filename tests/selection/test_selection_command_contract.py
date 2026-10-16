@@ -22,6 +22,7 @@ SUPPORT_INPUTS = {
     "VERSION_MANIFEST.md",
     "cmake/NostrcTestInventory.cmake",
     "gnome/groundhog/TestInventory.cmake",
+    "scripts/check-macos-keychain.sh",
     "scripts/linux-gate.sh",
     "scripts/mdk-gate.py",
     "scripts/sanitizer-gate-ci.py",
