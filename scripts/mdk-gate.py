@@ -9,6 +9,9 @@ existing CTest fixtures/consumers. NOSTRC_MDK_DOCKER and NOSTRC_MDK011_IMAGE
 are also provided. The guard spans configure, image setup and all consumers.
 This standalone wrapper is not a live custody verifier for selector admission;
 environment/config and its final receipt never authorize guarded selector MDK.
+Only the original session and recorded containers have scoped cleanup results.
+Detached/reparented descendants cannot be proved absent: run refuses lifecycle
+success with cleanup_unverified even when the guarded command succeeds.
 """
 import argparse
 import contextlib
@@ -104,7 +107,8 @@ def session_members(session, root_pid, group=None):
     return active
 
 
-def stop_tree(child):
+def stop_original_session(child):
+    # This proves nothing about descendants which changed session/reparented.
     # The unreaped leader reserves our original PGID. Signal that owned group,
     # never a name match or a previously reaped/reused PID. Cooperative TERM
     # lets the backend stop its separately owned CTest command groups first.
@@ -257,7 +261,9 @@ def run(args):
     config_digest = hashlib.sha256(canonical(config)).hexdigest()
     print(f"mdk-gate: lifecycle evidence {state}", flush=True)
     status, code = "failed", 1
-    cleanup_complete, child_pid = False, None
+    child_pid, command_code = None, None
+    cleanup_results = {"original_session": "not_started", "recorded_containers": "not_started",
+                       "arbitrary_process_tree": "unverified"}
     def cancelled(signum, frame):
         raise KeyboardInterrupt()
     handlers = {s: signal.signal(s, cancelled) for s in (signal.SIGTERM, signal.SIGINT)}
@@ -277,7 +283,7 @@ def run(args):
             child = subprocess.Popen(command, env=env, start_new_session=True)
             child_pid = child.pid
             try:
-                code = wait_child(child)
+                code = command_code = wait_child(child)
                 if code == 0:
                     for version in images:
                         image = json.loads((state / (version + "-image.json")).read_text())
@@ -289,14 +295,21 @@ def run(args):
                             raise ValueError("guarded command concealed a failed/incomplete MDK consumer")
                     status = "command_succeeded"
             finally:
-                # Before releasing fixed-tag locks, stop only owned descendants
-                # and containers, even when cancellation interrupts Docker create.
+                # Best-effort scoped cleanup before lock release. This is not
+                # proof that arbitrary descendants stopped; they may change SID.
+                # Never turn that missing ownership proof into lifecycle success.
                 for s in handlers:
                     signal.signal(s, signal.SIG_IGN)
+                cleanup_results["original_session"] = "unverified"
                 try:
-                    stop_tree(child)
+                    stop_original_session(child)
+                    cleanup_results["original_session"] = "quiescent"
                 except (ValueError, OSError, subprocess.SubprocessError) as exc:
                     config.setdefault("cleanup_errors", []).append(str(exc))
+                if command_code is None:
+                    command_code = child.returncode
+                cleanup_results["recorded_containers"] = "unverified"
+                errors_before = len(config.get("cleanup_errors", []))
                 for path in (state / "containers").glob("*.json"):
                     entry = json.loads(path.read_text())
                     removed = subprocess.run([real, "rm", "-f", entry["name"]],
@@ -310,10 +323,13 @@ def run(args):
                         if remaining.returncode or remaining.stdout.strip():
                             config.setdefault("cleanup_errors", []).append(entry["name"])
                     write(path, preserve_artifact(state, entry))
-                if config.get("cleanup_errors"):
-                    status, code = "cleanup_failed", 1
-                else:
-                    cleanup_complete = True
+                cleanup_results["recorded_containers"] = (
+                    "failed" if len(config.get("cleanup_errors", [])) > errors_before else "removed")
+                if status == "command_succeeded":
+                    status = "cleanup_failed" if config.get("cleanup_errors") else "cleanup_unverified"
+                    code = 1
+                    if status == "cleanup_unverified":
+                        print("mdk-gate: arbitrary process-tree cleanup unverified; refusing lifecycle success", file=sys.stderr)
     except KeyboardInterrupt:
         status, code = "cancelled", 130
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
@@ -323,7 +339,13 @@ def run(args):
         for s, handler in handlers.items():
             signal.signal(s, handler)
         config.update(config_digest=config_digest,
-                      supervisor_pid=os.getpid(), child_pid=child_pid, cleanup_complete=cleanup_complete,
+                      supervisor_pid=os.getpid(), child_pid=child_pid,
+                      command_exit_code=command_code,
+                      command_status=("not_started" if child_pid is None else
+                                      "cancelled" if status == "cancelled" else
+                                      "succeeded" if command_code == 0 else "failed"),
+                      cleanup_complete=False, cleanup_results=cleanup_results,
+                      cleanup_limitation="No arbitrary-tree ownership proof across session changes/reparenting; scoped session/container results are not full process cleanup",
                       status=status, exit_code=code, complete=False,
                       image_results=[json.loads(p.read_text()) for p in state.glob("*-image.json")],
                       containers=[json.loads(p.read_text()) for p in (state / "containers").glob("*.json")])
