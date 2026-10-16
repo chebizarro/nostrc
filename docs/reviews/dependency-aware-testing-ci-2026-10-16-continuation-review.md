@@ -137,3 +137,26 @@ No additional introduced CMake exporter defect was confirmed in the reviewed cas
 ## Recommendations / handoff
 
 Parent should address **F1–F3** through the three open beads and add the targeted regressions before relying on the new lifecycle/diagnostic evidence. Preserve complete-gate refusal, legacy gates/triggers/schedules, explicit unsupported routes, and all keychain safety requirements. This review makes no implementation correction and grants no rollout approval. Only this report is committed; no merge or push.
+
+## Resolution status after source fixes
+
+**Dated continuation, 2026-10-16:** integration `ae36f5a2639ff1c28d6657621b8afb0d81771b2b`. The report committed as `24b7bb987` above remains the historical independent review of **`9c03e77126d8f2f092b22bafbd79280fbaf10950`**. Its F1–F3 findings, severity, reproductions and original evidence are intact. This appended section records fix commits, bounded tests and parent source spot-checks; it is **not a broad rereview, provider/Oracle review, or rollout approval**.
+
+| Finding / bead | Resolution and bounded evidence |
+|---|---|
+| **F1 / `.12` CLOSED** | `85a2e2ab633e77157b2c8ede80449e68977ed0d4` removes the false cleanup attestation, **not the underlying arbitrary-tree ownership limitation**. MDK helper receipts now unconditionally set `cleanup_complete=false`, `complete=false`, `cleanup_results.arbitrary_process_tree=unverified`. Otherwise successful command phases retain `command_status=succeeded` / `command_exit_code=0` but produce nonzero `cleanup_unverified` (or `cleanup_failed` for scoped errors). Original-session and recorded-container results are separate; original command failure/cancellation and cleanup errors remain explicit. Real detached-descendant regressions prove refusal while the descendant remains alive, then release only the fixture through its private identity-bound connection/EOF. Owner reports **16/16 focused MDK tests** and **248/248 branch selection tests** passed, using fake Docker plus real host processes/CTest, not new live acceptance. **`.8` remains OPEN** for actual process ownership/lifecycle/custody. |
+| **F2 / `.13` CLOSED** | `83a38d879c82429b07dd627a36a64e52e9810c1b` rejects `diagnostic_eligible=false` from either outer or nested backend receipt, including omitted outer duplicates. Focused eligibility **8/8** and A-branch suite evidence below; positive diagnostics still cannot establish complete-gate acceptance. |
+| **F3 / `.14` CLOSED** | `732346a87bf22df15ea1e11040b94f9e7eca01bc` captures/stores/hashes **raw bytes**, exposes lossless UTF-8/`surrogateescape` text, marks in-flight checkpoints `job_conclusion=running`, and finalizes failed receipts for unexpected execution exceptions. Original errors/output and separate cleanup errors are retained; direct-child termination/reap fallback handles group-signal denial. Real byte-command regressions cover invalid bytes/CRLF/NUL, immediate exits 0/7/77, a closed-output/live-child timeout, group `PermissionError`, and unexpected strict-text consumer failure. A branch reports **251/251 selection tests passed** at this commit, plus four static checkers and compile/whitespace checks. Copied real miniature receipts are retained at `/tmp/nostrc-0cfsg13-14-proof-732346a87/summary.json`; they are not native-profile/live/complete acceptance. |
+
+**Superseded cleanup claim:** the prior standalone MDK 0.11 smoke's **5/5 CTests** remains historical command/CTest evidence only. Its old `cleanup_complete=true` / successful-cleanup claim is superseded by F1 and `85a2e2ab`; it proves neither detached-tree quiescence nor current successful full lifecycle. There is **no current successful full-lifecycle proof**, no new live smoke, and no selector custody/finalization acceptance. The inherited-FD proposal remains failed/archived/not shipped.
+
+Parent performed source spot-checks of the fixes, **not a broad rereview**. The parent combined suite at `ae36f5a26` is still running / result **PENDING** at this documentation snapshot; no expected or final count is asserted. The earlier 244-case independent review run and the newer A-branch 251-case result are distinct receipts, not the combined result.
+
+Local evidence anchors (temporary files, not durable hosted artifacts):
+
+```text
+7410fc6faca6474337230f0bcf1f8d53df104dc15b2210d091f32b27fe4427c6  /tmp/nostrc-0cfsg12-detached-reproduction.log
+4da335925dcfd6a31287b8067798c4b70d5b5172254f78e002de3dd94ca1d940  /tmp/nostrc-0cfsg13-14-proof-732346a87/summary.json
+```
+
+**Version:** no component bump for these internal testing-tool fixes or this documentation continuation. Original `.7`/`.8`/`.9`/`.11` and rollout scopes remain open. No default/enforce/latency-threshold/exclusion/schedule/protection change; no completion or W11/W12 acceptance is claimed. Parent owns integration/push and remaining acceptance.

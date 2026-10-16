@@ -31,8 +31,11 @@ it does not replace them. A successful bounded diagnostic and `aggregate --parti
 may pass while remaining `complete_gate_eligible=false`; excluded registrations
 (including the native libgo stress case) stay visibly `not_executed`, never passed.
 Missing capabilities and unsupported execution fail visibly. The outer adapter
-still refuses non-CTest and phase-aware shared-sanitizer execution; standalone MDK
-smoke success does not establish selector custody/finalization or complete coverage.
+still refuses non-CTest and phase-aware shared-sanitizer execution. The standalone
+MDK helper always reports `cleanup_complete=false`: otherwise successful command
+phases refuse lifecycle success with nonzero `cleanup_unverified` (scoped cleanup
+errors remain explicit). Historical MDK smoke is command/CTest evidence only, not
+successful arbitrary-tree cleanup, selector custody/finalization or complete coverage.
 
 See `docs/TESTING.md` for current explicit commands and rollout limitations,
 `docs/plans/dependency-aware-testing-ci-2026-10-15.md` for the specification/progress,

@@ -81,8 +81,13 @@ change, exclusion, retry waiver or runtime correction.
 
 - The core backend now executes declared real `command` and `build_contract`
   checks, including prerequisite builds, bound argv/cwd/source/input identity,
-  capability checks, cancellation/nonzero status and required evidence. Native
-  miniature executions establish those contracts, not the complete production
+  capability checks, cancellation/nonzero status and required evidence. Fix
+  `732346a87` preserves raw output bytes with lossless UTF-8/surrogateescape text
+  decoding, finalizes failed receipts on unexpected execution errors, and retains
+  the original failure separately from cleanup errors. Fix `83a38d879` rejects a
+  negative diagnostic decision in either outer or nested receipt even when the
+  outer duplicate is absent. Native miniature executions establish those
+  contracts, not the complete production
   profile union. The outer `scripts/test-gate.sh` adapter **still refuses selected
   non-CTest checks** and guarded capabilities it cannot safely provide. Do not
   mistake that adapter refusal for absence of the core implementation.
@@ -96,14 +101,20 @@ change, exclusion, retry waiver or runtime correction.
   Shared phase-aware sanitizer execution is explicitly unsupported: both the
   outer adapter and reserved Linux shared route refuse, with no legacy fallback
   presented as shared proof. No shared ASan/UBSan/LSan acceptance follows.
-- The standalone MDK 0.11 helper actually configured/built and ran **5/5 CTests**
-  with Docker, private bus/throwaway Secret Service and passing read-only keychain
-  guards. Cleanup completed; its receipt stays `complete=false`. This is a safe
-  standalone smoke, **not selector custody/finalization**, the full 0.8/0.9 matrix,
-  shared sanitizer execution or a complete gate. The inherited-FD custody proposal
-  failed an actual CMake/Ninja/CTest traversal (`EBADF` at the consumer); the
-  unaccepted prototype/probe is archived outside the repository, **not shipped**.
-  No environment/config fallback or new transport is authorized by this result.
+- The prior MDK 0.11 Docker/private-bus/throwaway-Secret-Service smoke's **5/5
+  CTests** and passing read-only keychain guards remain **historical command/CTest
+  evidence only**. Review F1 proved the old successful-cleanup assertion false for
+  detached descendants. Fix `85a2e2ab` **always** records `cleanup_complete=false`
+  and `complete=false`; otherwise successful command phases return nonzero status
+  `cleanup_unverified` (or `cleanup_failed` for explicit scoped errors). Original
+  command status/exit and original-session/recorded-container results remain
+  separate. Arbitrary detached/reparented-tree cleanup is **unverified**; there is
+  **no current successful full-lifecycle proof**, and `.8` remains open. The old
+  smoke does not establish selector custody/finalization, full 0.8/0.9 matrix,
+  shared sanitizer or complete-gate acceptance. The inherited-FD custody proposal
+  also failed actual CMake/Ninja/CTest traversal (`EBADF`); its unaccepted
+  prototype/probe is archived outside the repository, **not shipped**. No
+  environment/config fallback or new transport is authorized.
 
 ### Shadow CI and release staging
 
@@ -125,24 +136,32 @@ change, exclusion, retry waiver or runtime correction.
   result/artifact. Do not enable it before W11/operator cutover. This variable
   controls publisher validation, not whether general shadow PR workflows exist.
 
-At integration `9c03e77126d8f2f092b22bafbd79280fbaf10950`, `.6` (workflow
-ShellCheck) and `.10` (CMake 3.22 inventory compatibility) are closed;
-`.7`/`.8`/`.9` remain open/in progress and `.11` remains open. Existing `.1`–`.5`
+At integration `ae36f5a2639ff1c28d6657621b8afb0d81771b2b`, `.6` (workflow
+ShellCheck), `.10` (CMake 3.22 inventory compatibility), and review-fix beads `.12`
+(false cleanup attestation), `.13` (nested negative diagnostics), `.14` (raw command
+output/failed-receipt finalization) are closed. `.12` closes only the false claim,
+not arbitrary-tree ownership: `.7`/`.8`/`.9` remain open/in progress and `.11` remains open. Existing `.1`–`.5`
 scopes are not closed by this handoff. Remaining acceptance includes complete
 ownership/runtime/header/semantic/profile union, guarded MDK custody/finalization,
 phase-aware shared sanitizer execution and W11/W12 evidence. No default/enforcement,
 requirement/protection, trigger or schedule change is authorized before W11/operator
 cutover.
 
-B's `3a7c685e02ba` slice passed **244 tests, six shell suites and static checks**.
-Parent confirms the combined **244/244 tests, 0 skips, 58.163s** at `9c03e7712`
+Historical B slice `3a7c685e02ba` passed **244 tests, six shell suites and static
+checks**. Parent confirmed the historical combined **244/244 tests, 0 skips,
+58.163s** at `9c03e7712`
 (`/tmp/nostrc-completion-final-selection.log`) and full actionlint including
 ShellCheck passed. Parent also confirms all six shell suites passed at that SHA:
 `test-sanitizer-gate.sh`, `test-full-gate.sh`, `test-linux-gate-lifecycle.sh`,
 `test-linux-gate-smoke.sh`, `test-pre-push.sh`, `test-test-gate.sh`; all four static
 checkers and range whitespace passed. These are final combined results, distinct
-from B's earlier pass. Independent review remains **in progress / pending**.
-The older 172-test result at `017039eea` remains a dated historical receipt.
+from B's earlier pass. The delivered [source review at `9c03e7712`](reviews/dependency-aware-testing-ci-2026-10-16-continuation-review.md)
+(`24b7bb987`) retains confirmed F1–F3; its appended resolution status records
+`85a2e2ab`, `83a38d879`, `732346a87`. Parent spot-checked the fixes; **no broad
+rereview is claimed**. A-branch core regressions passed **251 tests** at
+`732346a87`; the parent combined suite at `ae36f5a26` is **still running / result
+pending**, with no final count asserted. The older 172-test result at `017039eea`
+remains a dated historical receipt.
 Current bounded evidence, source-specific hashes and remaining acceptance are in
 the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
 Documentation/internal-testing changes require **no component bump**.
