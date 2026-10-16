@@ -1,0 +1,213 @@
+[
+  {
+    "name": "grotto_gui",
+    "paths": [
+      "apps/grotto/src/main.c"
+    ],
+    "mode": "affected",
+    "checks": [
+      "grotto.build_contract"
+    ],
+    "excluded_prefixes": [
+      "mdk"
+    ]
+  },
+  {
+    "name": "isolated_about",
+    "paths": [
+      "gnome/groundhog/src/ui/gh-about-dialog.c"
+    ],
+    "mode": "affected",
+    "checks": [
+      "groundhog.about",
+      "groundhog.shell"
+    ],
+    "excluded_prefixes": [
+      "mdk"
+    ]
+  },
+  {
+    "name": "mls_service",
+    "paths": [
+      "gnome/groundhog/src/mls/gh-mls-service.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011.",
+      "groundhog.mls_ui"
+    ],
+    "excluded_prefixes": [
+      "libgo."
+    ]
+  },
+  {
+    "name": "legacy_copy",
+    "paths": [
+      "gnome/groundhog/src/ui/gh-mls-copy.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011.",
+      "groundhog.poll_ui"
+    ]
+  },
+  {
+    "name": "poll_consumer",
+    "paths": [
+      "gnome/groundhog/src/ui/gh-poll-ui.c"
+    ],
+    "mode": "affected",
+    "checks": [
+      "groundhog.poll_ui"
+    ],
+    "excluded_prefixes": [
+      "mdk",
+      "groundhog.mls_ui"
+    ]
+  },
+  {
+    "name": "poll_widget",
+    "paths": [
+      "gnome/groundhog/src/ui/gh-poll-card.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk011.",
+      "groundhog.poll_ui"
+    ],
+    "excluded_prefixes": [
+      "mdk08."
+    ]
+  },
+  {
+    "name": "shared_store",
+    "paths": [
+      "gnome/groundhog/src/store/gh-store.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011."
+    ]
+  },
+  {
+    "name": "shared_media",
+    "paths": [
+      "gnome/groundhog/src/media/gh-attachment.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011.white_noise_voice",
+      "groundhog.media"
+    ]
+  },
+  {
+    "name": "shared_core",
+    "paths": [
+      "libgo/src/channel.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "libgo.",
+      "mdk08.",
+      "mdk011.",
+      "grotto."
+    ]
+  },
+  {
+    "name": "nip44",
+    "paths": [
+      "nips/nip44/src/core/nip44.c"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011.",
+      "grotto."
+    ]
+  },
+  {
+    "name": "local_vector",
+    "paths": [
+      "libmarmot/tests/vectors/mdk/vector.json"
+    ],
+    "mode": "affected",
+    "checks": [
+      "marmot.vectors"
+    ],
+    "excluded_prefixes": [
+      "mdk"
+    ]
+  },
+  {
+    "name": "unknown",
+    "paths": [
+      "new_component/source.c"
+    ],
+    "mode": "broad",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011.white_noise_voice"
+    ]
+  },
+  {
+    "name": "root_graph",
+    "paths": [
+      "CMakeLists.txt"
+    ],
+    "mode": "broad",
+    "required_prefixes": [
+      "mdk08.",
+      "mdk011."
+    ]
+  },
+  {
+    "name": "alpha8_packaging",
+    "paths": [
+      "packaging/rpm/groundhog.spec"
+    ],
+    "mode": "affected",
+    "required_prefixes": [
+      "groundhog.packaging_version",
+      "grotto."
+    ],
+    "excluded_prefixes": [
+      "mdk"
+    ]
+  },
+  {
+    "name": "prose",
+    "paths": [
+      "docs/plans/dependency-aware-testing-ci-2026-10-15.md"
+    ],
+    "mode": "affected",
+    "checks": []
+  },
+  {
+    "name": "testing_policy",
+    "paths": [
+      "docs/TESTING.md"
+    ],
+    "mode": "affected",
+    "checks": [
+      "selection.contract"
+    ]
+  },
+  {
+    "name": "grotto_workflow_only",
+    "paths": [
+      ".github/workflows/grotto-ci.yml"
+    ],
+    "mode": "affected",
+    "checks": [
+      "grotto.build_contract",
+      "selection.contract"
+    ],
+    "excluded_prefixes": [
+      "mdk"
+    ]
+  }
+]
