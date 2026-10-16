@@ -220,6 +220,43 @@ nostrc_finalize_test_inventory()'''))
         self.assertEqual({g["test"] for g in audit["gaps"] if g["kind"] == "unclaimed_registration"}, {"gui", "omitted"})
         self.assertFalse(audit["passed"])
 
+    def test_composed_configuration_rewrite_cannot_contradict_retained_debug_phase(self):
+        _, resolved, _, result = self.execute()
+        bad = copy.deepcopy(result)
+        def rewrite_bindings(value):
+            if isinstance(value, dict):
+                if set(value) == nm.NONMEMBER_BINDING_KEYS:
+                    value["configuration"] = "Release"
+                for child in value.values():
+                    rewrite_bindings(child)
+            elif isinstance(value, list):
+                for child in value:
+                    rewrite_bindings(child)
+        rewrite_bindings(bad)
+        raw = bad["backend_receipt"]
+        raw["configuration"] = "Release"
+        audit = raw["input_audit"]
+        audit["audit_hash"] = s.digest({k: v for k, v in audit.items() if k != "audit_hash"})
+        self.assertEqual(raw["phase_context"]["configuration"], "Debug")
+        self.assertEqual(audit["phase_context"]["configuration"], "Debug")
+        self.assertEqual(raw["profile_fingerprint"], result["profile_fingerprint"])
+        self.assertEqual(raw["resolved_hash"], resolved["resolved_hash"])
+        with self.assertRaisesRegex(s.ContractError, "configuration"):
+            adapter.normalize_receipt(self.inventory, self.plan, resolved, raw)
+        partial = s.aggregate(self.inventory, self.plan, [bad], complete=False)
+        self.assertFalse(partial["passed"], partial)
+        self.assertTrue(any("configuration" in error for error in partial["errors"]), partial)
+        # Even a consistent phase rewrite cannot override the reviewed profile.
+        raw["phase_context"] = copy.deepcopy(raw["phase_context"])
+        raw["phase_context"]["configuration"] = "Release"
+        raw["phase_context_hash"] = s.digest(raw["phase_context"])
+        audit["phase_context"] = raw["phase_context"]
+        audit["phase_context_hash"] = raw["phase_context_hash"]
+        bad["phase_context"] = raw["phase_context"]
+        bad["phase_context_hash"] = raw["phase_context_hash"]
+        audit["audit_hash"] = s.digest({k: v for k, v in audit.items() if k != "audit_hash"})
+        self.assertFalse(s.aggregate(self.inventory, self.plan, [bad], complete=False)["passed"])
+
     def test_effective_parallel_timeout_and_recorded_argv_drift_refuse(self):
         _, resolved, audit, result = self.execute()
         self.assertEqual(result["backend_receipt"]["execution_options"], {"parallel": 1, "timeout_seconds": 60})
@@ -247,6 +284,10 @@ nostrc_finalize_test_inventory()'''))
             bad = copy.deepcopy(result)
             command = next(c for c in bad["backend_receipt"]["commands"] if c[0] == "ctest")
             command[command.index(flag) + 1] = "99"
+            self.assertFalse(s.aggregate(self.inventory, self.plan, [bad], complete=False)["passed"])
+            bad = copy.deepcopy(result)
+            command = next(c for c in bad["backend_receipt"]["commands"] if c[0] == "ctest")
+            command += [flag, "99"]
             self.assertFalse(s.aggregate(self.inventory, self.plan, [bad], complete=False)["passed"])
         bad = copy.deepcopy(result)
         bad["backend_receipt"]["execution_options"]["parallel"] = 4

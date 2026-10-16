@@ -170,6 +170,11 @@ def realization_command(args, policy, backend, *, custody=None):
 def normalize_receipt(policy, plan, resolved, raw):
     """Retain backend evidence and validate it before adding logical lane identity."""
     profile_id = resolved["profile_id"]
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
+        configuration = policy["profiles"][profile_id]["build_type"]
+        selection.require(raw.get("configuration") == resolved.get("configuration") == configuration
+                          == resolved.get("phase_context", {}).get("configuration"),
+                          "backend diagnostic configuration differs from resolved/phase/profile configuration")
     lane = next((x for x in plan["lanes"] if x["profile"] == profile_id), None)
     selection.require(lane is not None, "backend returned unselected profile")
     for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context", "phase_context_hash"):

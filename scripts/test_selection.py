@@ -772,10 +772,15 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
             or receipt.get("diagnostic_eligible") is not True or receipt.get("complete") is not False):
         raise ValueError("exact nonmember accounting/incomplete flags required")
     evidence = backend if backend else receipt
+    configuration = profile["build_type"]
+    if (evidence.get("configuration") != configuration
+            or evidence.get("phase_context", {}).get("configuration") != configuration
+            or receipt.get("phase_context") != evidence.get("phase_context")):
+        raise ValueError("nonmember configuration differs from retained phase/profile configuration")
     expected = {"source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
                 "profile_id": lane["profile"], "profile_hash": lane["profile_hash"],
                 "profile_fingerprint": receipt["profile_fingerprint"],
-                "configuration": evidence["configuration"], "phase_context_hash": evidence["phase_context_hash"]}
+                "configuration": configuration, "phase_context_hash": evidence["phase_context_hash"]}
     binding = evidence.get("nonmember_binding")
     if not isinstance(binding, dict) or any(binding.get(k) != v for k, v in expected.items()):
         raise ValueError("nonmember execution realization binding missing/stale")
@@ -810,7 +815,7 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
             if command[0] == "ctest" and options["timeout_seconds"] is not None:
                 flags.append(("--timeout", options["timeout_seconds"]))
             for flag, value in flags:
-                if flag not in command or command[command.index(flag) + 1:command.index(flag) + 2] != [str(value)]:
+                if command.count(flag) != 1 or command[command.index(flag) + 1:command.index(flag) + 2] != [str(value)]:
                     raise ValueError("nonmember effective argv differs from authored profile")
     executed = set(evidence.get("expected_executions", []))
     if executed & set(contract["registrations"]) or not executed.issubset(contract["required_closure"]):
