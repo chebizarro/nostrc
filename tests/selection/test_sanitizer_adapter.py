@@ -28,9 +28,16 @@ class SanitizerSharedTests(unittest.TestCase):
         self.policy = json.loads((ROOT/'tests/selection/inventory.json').read_text())
         profile = copy.deepcopy(self.policy['profiles']['groundhog.linux'])
         profile['configure_args'] = self.config['GH_SAN_CONFIGURE']
-        profile['environment'] = dict(x.split('=',1) for x in self.config['GH_SAN_ENV'] if not x.startswith(ADAPTER.TESTS_VAR+'='))
+        profile['environment'] = {}
+        profile['phase_environments'] = {
+            phase: dict(x.split('=',1) for x in self.config[field])
+            for phase,field in [('configure','GH_SAN_CONFIGURE_ENV'),('build','GH_SAN_BUILD_ENV'),('test','GH_SAN_ENV')]}
         profile['sanitizer_compatibility'] = self.config
         self.policy['profiles'][PROFILE] = profile
+        # This is a synthetic membership fixture, not a second claimant of D's
+        # production sanitizer profile. Remove only this projection from peers.
+        for check in self.policy['checks'].values():
+            check.get('ctest_tests',{}).pop(PROFILE,None)
         self.policy['checks']['fixture.sanitizer'] = dict(kind='ctest',ctest_tests={PROFILE:self.config['GH_SAN_TESTS']})
 
     def invoke(self, expected=0):
@@ -56,6 +63,20 @@ class SanitizerSharedTests(unittest.TestCase):
                 if isinstance(value,list): value.append('unexpected')
                 else: self.policy['profiles'][PROFILE]['sanitizer_compatibility'][key] += '-changed'
                 self.assertIn('sanitizer',self.invoke(2).stderr)
+
+    def test_phases_are_not_flattened_or_selection_variable_dropped(self):
+        profile=self.policy['profiles'][PROFILE]
+        self.assertIn(ADAPTER.TESTS_VAR,profile['phase_environments']['test'])
+        self.assertNotIn(ADAPTER.TESTS_VAR,profile['phase_environments']['configure'])
+        profile['environment']['ASAN_OPTIONS']=profile['phase_environments']['test']['ASAN_OPTIONS']
+        self.assertIn('configure environment',self.invoke(2).stderr)
+
+    def test_missing_phase_or_selection_variable_fails(self):
+        profile=self.policy['profiles'][PROFILE]
+        del profile['phase_environments']['test'][ADAPTER.TESTS_VAR]
+        self.assertIn('test environment',self.invoke(2).stderr)
+        del profile['phase_environments']['build']
+        self.assertIn('explicit configure/build/test',self.invoke(2).stderr)
 
     def test_missing_metadata_no_fallback(self):
         del self.policy['profiles'][PROFILE]['sanitizer_compatibility']

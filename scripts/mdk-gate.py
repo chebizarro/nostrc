@@ -7,6 +7,8 @@ run --source-root DIR --evidence-dir DIR --version {08,09,011} [--version ...]
 COMMAND must apply NOSTRC_MDK_CONFIGURE_ARGS (JSON argv) to CMake, then run
 existing CTest fixtures/consumers. NOSTRC_MDK_DOCKER and NOSTRC_MDK011_IMAGE
 are also provided. The guard spans configure, image setup and all consumers.
+This standalone wrapper is not a live custody verifier for selector admission;
+environment/config and its final receipt never authorize guarded selector MDK.
 """
 import argparse
 import contextlib
@@ -22,6 +24,8 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
+import time
 import uuid
 
 VERSIONS = {"08": ("driver", "nostrc-mdk-interop:0.8.0"),
@@ -33,6 +37,15 @@ def write(path, value):
     tmp = path.with_name(path.name + "." + uuid.uuid4().hex)
     tmp.write_text(json.dumps(value, sort_keys=True) + "\n")
     os.replace(tmp, path)
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def file_identity(path):
+    path = Path(path).resolve(strict=True)
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def digest(root):
@@ -64,28 +77,68 @@ def lock(path, waiting=None):
         os.close(fd)
 
 
-def stop_tree(child):
-    if child.poll() is not None:
-        return  # never signal a reaped PID that the OS could have reused
-    # CTest creates its own process groups. Capture descendants before signalling
-    # and reparenting; never match executable names or signal sibling sessions.
-    rows = subprocess.check_output(["ps", "-axo", "pid=,ppid="]).decode().splitlines()
-    children = {}
+def child_exit(child, block=False):
+    # WNOWAIT retains the session leader's PID until owned-session cleanup.
+    # Reaping first would permit PID/PGID reuse and hide orphaned grandchildren.
+    return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOWAIT | (0 if block else os.WNOHANG))
+
+
+def wait_child(child):
+    result = child_exit(child, block=True)
+    return result.si_status if result.si_code == os.CLD_EXITED else -result.si_status
+
+
+def session_members(session, root_pid, group=None):
+    active = []
+    rows = subprocess.check_output(["ps", "-axo", "pid=,stat="]).decode().splitlines()
     for row in rows:
-        pid, ppid = map(int, row.split())
-        children.setdefault(ppid, []).append(pid)
-    found = []
-    def visit(pid):
-        for entry in children.get(pid, []):
-            visit(entry)
-        found.append(pid)
-    visit(child.pid)
-    for pid in found:
+        raw_pid, status = row.split(None, 1)
+        pid = int(raw_pid)
+        if pid == root_pid or status.startswith("Z"):
+            continue
         try:
-            os.kill(pid, signal.SIGKILL)
+            if os.getsid(pid) == session and (group is None or os.getpgid(pid) == group):
+                active.append(pid)
         except ProcessLookupError:
             pass
-    child.wait()
+    return active
+
+
+def stop_tree(child):
+    # The unreaped leader reserves our original PGID. Signal that owned group,
+    # never a name match or a previously reaped/reused PID. Cooperative TERM
+    # lets the backend stop its separately owned CTest command groups first.
+    if child_exit(child) is None:
+        os.killpg(child.pid, signal.SIGTERM)
+        ended = threading.Event()
+        waiter = threading.Thread(target=lambda: (wait_child(child), ended.set()), daemon=True)
+        waiter.start()
+        if not ended.wait(10):
+            os.killpg(child.pid, signal.SIGKILL)
+        waiter.join(timeout=5)
+        if waiter.is_alive():
+            raise ValueError("owned command did not stop; cleanup unconfirmed")
+    members = session_members(child.pid, child.pid, child.pid)
+    if members:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Darwin rejects a zombie-only group. It is benign only when
+            # the last active member really exited before this signal.
+            if session_members(child.pid, child.pid, child.pid):
+                raise
+    # Observe actual quiescence, not an arbitrary delay interpreted as success.
+    # A different process group surviving in our session is an explicit failure;
+    # do not signal an unreserved group/PID that could have been reused.
+    deadline = time.monotonic() + 2
+    members = session_members(child.pid, child.pid)
+    while members and time.monotonic() < deadline:
+        members = session_members(child.pid, child.pid)
+    child.wait()  # release the reserved leader only after group cleanup/check
+    if members:
+        raise ValueError("owned session descendants remain; cleanup unconfirmed: " + str(members))
 
 
 def preserve_artifact(state, record):
@@ -177,6 +230,7 @@ def run(args):
     real = shutil.which("docker")
     if not real:
         raise ValueError("Docker required; no unguarded fallback")
+    real = str(Path(real).resolve(strict=True))
     subprocess.run([real, "info"], check=True, stdout=subprocess.DEVNULL)
     images = {}
     for version in sorted(set(args.version)):
@@ -187,8 +241,6 @@ def run(args):
         content = digest(context)
         images[version] = dict(context=str(context), digest=content,
                                tag=tag or "nostrc-mdk-interop:0.11.0-" + content)
-    config = dict(schema_version=1, run_id=state.name, docker=real, source=str(source), images=images)
-    write(state / "config.json", config)
     wrapper = state / "docker"
     wrapper.write_text("#!/bin/sh\nexec " + shlex.join([sys.executable, str(Path(__file__).resolve()), "docker"]) + ' "$@"\n')
     wrapper.chmod(0o700)
@@ -196,11 +248,16 @@ def run(args):
     if "011" in images:
         configure += ["-DMDK011_INTEROP_IMAGE=" + images["011"]["tag"]]
     write(state / "configure-args.json", configure)
+    config = dict(schema_version=1, run_id=state.name, docker=real, source=str(source), state=str(state), images=images,
+                  helper=file_identity(__file__), wrapper=file_identity(wrapper), configure_args=configure)
+    write(state / "config.json", config)
     env = dict(os.environ, NOSTRC_MDK_STATE=str(state), NOSTRC_MDK_DOCKER=str(wrapper),
                NOSTRC_MDK_CONFIGURE_ARGS=json.dumps(configure),
                NOSTRC_MDK011_IMAGE=images.get("011", {}).get("tag", ""))
+    config_digest = hashlib.sha256(canonical(config)).hexdigest()
     print(f"mdk-gate: lifecycle evidence {state}", flush=True)
     status, code = "failed", 1
+    cleanup_complete, child_pid = False, None
     def cancelled(signum, frame):
         raise KeyboardInterrupt()
     handlers = {s: signal.signal(s, cancelled) for s in (signal.SIGTERM, signal.SIGINT)}
@@ -218,8 +275,9 @@ def run(args):
             if not command:
                 raise ValueError("missing guarded command")
             child = subprocess.Popen(command, env=env, start_new_session=True)
+            child_pid = child.pid
             try:
-                code = child.wait()
+                code = wait_child(child)
                 if code == 0:
                     for version in images:
                         image = json.loads((state / (version + "-image.json")).read_text())
@@ -235,7 +293,10 @@ def run(args):
                 # and containers, even when cancellation interrupts Docker create.
                 for s in handlers:
                     signal.signal(s, signal.SIG_IGN)
-                stop_tree(child)
+                try:
+                    stop_tree(child)
+                except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                    config.setdefault("cleanup_errors", []).append(str(exc))
                 for path in (state / "containers").glob("*.json"):
                     entry = json.loads(path.read_text())
                     removed = subprocess.run([real, "rm", "-f", entry["name"]],
@@ -251,6 +312,8 @@ def run(args):
                     write(path, preserve_artifact(state, entry))
                 if config.get("cleanup_errors"):
                     status, code = "cleanup_failed", 1
+                else:
+                    cleanup_complete = True
     except KeyboardInterrupt:
         status, code = "cancelled", 130
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
@@ -259,7 +322,9 @@ def run(args):
     finally:
         for s, handler in handlers.items():
             signal.signal(s, handler)
-        config.update(status=status, exit_code=code, complete=False,
+        config.update(config_digest=config_digest,
+                      supervisor_pid=os.getpid(), child_pid=child_pid, cleanup_complete=cleanup_complete,
+                      status=status, exit_code=code, complete=False,
                       image_results=[json.loads(p.read_text()) for p in state.glob("*-image.json")],
                       containers=[json.loads(p.read_text()) for p in (state / "containers").glob("*.json")])
         write(state / "receipt.json", config)

@@ -216,8 +216,10 @@ def host_guard(profile, checks, policy):
     wanted_arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(profile["architecture"], profile["architecture"])
     if {"darwin": "macos"}.get(profile["platform"], profile["platform"]) != host or wanted_arch not in {"native", arch}:
         raise RuntimeError(f"selected platform/architecture requires an unimplemented guarded container/native adapter: {profile['platform']}/{wanted_arch}; host={host}/{arch}")
+    if "phase_environments" in profile:
+        raise RuntimeError("phase-aware execution is unsupported by the current backend; metadata parity is not execution and phase values must not be dropped")
     if any(policy["checks"][x]["kind"] != "ctest" for x in checks):
-        raise RuntimeError("selected non-CTest checks are not supported by the shared backend; not bypassed")
+        raise RuntimeError("selected non-CTest checks are not supported by this outer adapter; not bypassed")
     caps = set(profile.get("capabilities", []))
     unsupported = caps - {"display", "private_bus"}
     if unsupported:
