@@ -1713,6 +1713,3986 @@
           "input_kind": "source"
         }
       ]
+    },
+    {
+      "profile": "groundhog.linux.sanitizers",
+      "source_sha": "b8dd3583766893e3b97e017dc063da5ed1c47413",
+      "actual_architecture": "aarch64",
+      "declared_architecture": "x86_64",
+      "evidence_kind": "native_production_configure_input_audit_failed",
+      "original_gap_count": 14383,
+      "receipt_sha256": "cdeecba346dd0283dcfa0e7eb29b625c5783c75c7e81dfd93efe64c66129d525",
+      "edges": [
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "groundhog.shell_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-about-dialog.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "test": "groundhog-background",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_conversations",
+          "test": "groundhog-conversations",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "groundhog.account_relays"
+          ],
+          "input": "gnome/groundhog/src/app/gh-account-relays.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "groundhog.media"
+          ],
+          "input": "gnome/groundhog/src/media/gh-metadata-strip.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-net-http.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_group_ui",
+          "test": "groundhog-group-ui",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_icons",
+          "test": "groundhog-icons",
+          "required_nodes": [
+            "groundhog.shell_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-about-dialog.c",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "sanitizer.groundhog_icons",
+          "test": "groundhog-icons",
+          "required_nodes": [
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-create-poll-dialog.c",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "sanitizer.groundhog_icons",
+          "test": "groundhog-icons",
+          "required_nodes": [
+            "groundhog.legacy_harness_inputs",
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-mls-copy.c",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "sanitizer.groundhog_icons",
+          "test": "groundhog-icons",
+          "required_nodes": [
+            "groundhog.poll_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-poll-ui.c",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "groundhog.account_relays"
+          ],
+          "input": "gnome/groundhog/src/app/gh-account-relays.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "groundhog.identity_auth"
+          ],
+          "input": "gnome/groundhog/src/app/gh-auth-policy.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip17"
+          ],
+          "input": "nips/nip17/src/nip17.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nip59"
+          ],
+          "input": "nips/nip59/src/nip59.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "test": "groundhog-inbox-setup",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_link_policy",
+          "test": "groundhog-link-policy",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "groundhog.media"
+          ],
+          "input": "gnome/groundhog/src/media/gh-attachment.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-net-http.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-clock.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media",
+          "test": "groundhog-media",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "groundhog.media"
+          ],
+          "input": "gnome/groundhog/src/media/gh-attachment.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-net-http.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-clock.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "groundhog.conversations"
+          ],
+          "input": "gnome/groundhog/src/store/gh-store-conversations.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_media_purge",
+          "test": "groundhog-media-purge",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_message_reply",
+          "test": "groundhog-message-reply",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_files",
+          "test": "groundhog-mls-files",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_media",
+          "test": "groundhog-mls-media",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_service",
+          "test": "groundhog-mls-service",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_mls_ui",
+          "test": "groundhog-mls-ui",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "groundhog.group_ui"
+          ],
+          "input": "gnome/groundhog/src/nip29/gh-nip29-group.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip29"
+          ],
+          "input": "nips/nip29/src/nip29.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip29",
+          "test": "groundhog-nip29",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "groundhog.identity_auth"
+          ],
+          "input": "gnome/groundhog/src/identity/gh-identity.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "test": "groundhog-nip46-credentials-keyring",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "test": "groundhog-privacy-mls",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "groundhog.account_relays"
+          ],
+          "input": "gnome/groundhog/src/app/gh-account-relays.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "groundhog.identity_auth"
+          ],
+          "input": "gnome/groundhog/src/app/gh-auth-policy.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip17"
+          ],
+          "input": "nips/nip17/src/nip17.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nip59"
+          ],
+          "input": "nips/nip59/src/nip59.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reaction_send",
+          "test": "groundhog-reaction-send",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_reactions",
+          "test": "groundhog-reactions",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay",
+          "test": "groundhog-relay",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish",
+          "test": "groundhog-relay-publish",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-net-http.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "test": "groundhog-relay-publish-wire",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-net-http.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_relay_wire",
+          "test": "groundhog-relay-wire",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "groundhog.identity_auth"
+          ],
+          "input": "gnome/groundhog/src/identity/gh-identity.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-store-key.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "test": "groundhog-secret-service-sessions",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store",
+          "test": "groundhog-store",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-clock.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_conversations",
+          "test": "groundhog-store-conversations",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_key",
+          "test": "groundhog-store-key",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-store-key.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_key_keyring",
+          "test": "groundhog-store-key-keyring",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-store-key.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_key_keyring",
+          "test": "groundhog-store-key-keyring",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nostrdb"
+          ],
+          "input": "components/nostrdb/src/nostrdb_storage.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "gnome.common"
+          ],
+          "input": "gnome/common/gn-session-bus-probe.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.account_relays"
+          ],
+          "input": "gnome/groundhog/src/app/gh-account-relays.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.identity_auth"
+          ],
+          "input": "gnome/groundhog/src/app/gh-auth-policy.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.media"
+          ],
+          "input": "gnome/groundhog/src/media/gh-attachment.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.mls_media"
+          ],
+          "input": "gnome/groundhog/src/mls/gh-mls-media.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.mls_service"
+          ],
+          "input": "gnome/groundhog/src/mls/gh-mls-service.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-issue-resolver.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.group_ui"
+          ],
+          "input": "gnome/groundhog/src/nip29/gh-nip29-group-list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.relay"
+          ],
+          "input": "gnome/groundhog/src/relay/gh-relay-auth.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-clock.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.mls_store"
+          ],
+          "input": "gnome/groundhog/src/store/gh-mls-commits.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.conversations"
+          ],
+          "input": "gnome/groundhog/src/store/gh-store-conversations.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.shell_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-about-dialog.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-create-poll-dialog.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.legacy_harness_inputs",
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-mls-copy.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "groundhog.poll_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-poll-ui.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "libmarmot"
+          ],
+          "input": "libmarmot/src/adopted.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip17"
+          ],
+          "input": "nips/nip17/src/nip17.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip29"
+          ],
+          "input": "nips/nip29/src/nip29.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nip59"
+          ],
+          "input": "nips/nip59/src/nip59.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nostr.gobject"
+          ],
+          "input": "nostr-gobject/src/crypto_utils.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "test": "groundhog-store-sqlite",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "gnome.common"
+          ],
+          "input": "gnome/common/gn-session-bus-probe.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.media"
+          ],
+          "input": "gnome/groundhog/src/media/gh-attachment.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.mls_media"
+          ],
+          "input": "gnome/groundhog/src/mls/gh-mls-media.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.net"
+          ],
+          "input": "gnome/groundhog/src/net/gh-issue-resolver.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.group_ui"
+          ],
+          "input": "gnome/groundhog/src/nip29/gh-nip29-group-list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.shell_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-about-dialog.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-create-poll-dialog.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.legacy_harness_inputs",
+            "groundhog.mls_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-mls-copy.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "groundhog.poll_ui"
+          ],
+          "input": "gnome/groundhog/src/ui/gh-poll-ui.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip29"
+          ],
+          "input": "nips/nip29/src/nip29.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "test": "groundhog-two-instance-acceptance",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.groundhog_voice",
+          "test": "groundhog-voice",
+          "required_nodes": [
+            "nostr.gtk"
+          ],
+          "input": "nostr-gtk/src/content_renderer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "sanitizer.test_connection_recv_drain",
+          "test": "test_connection_recv_drain",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        }
+      ],
+      "compatibility_edges": [
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gn_content_parser",
+          "input": "nostr-gtk/src/content_renderer.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gn_content_parser",
+          "input": "nostr-gtk/src/nostr-gtk-error.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gn_issue_model",
+          "input": "nostr-gtk/src/gn-nip34-issue-iface.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gn_issue_model",
+          "input": "nostr-gtk/src/gn-nip34-issue.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gn_issue_model",
+          "input": "nostr-gtk/src/gn-portable-i18n.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gnostr-secret",
+          "input": "gnome/seahorse/secret_store.c",
+          "required_nodes": [
+            "gnome.seahorse"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "gnostr-secret",
+          "input": "gnome/seahorse/secret_store.h",
+          "required_nodes": [
+            "gnome.seahorse"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "groundhog-about",
+          "input": "gnome/groundhog/src/ui/gh-about-dialog.c",
+          "required_nodes": [
+            "groundhog.shell_ui"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip04",
+          "input": "nips/nip04/src/nip04.c",
+          "required_nodes": [
+            "nip04"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip06",
+          "input": "nips/nip06/src/nip06.c",
+          "required_nodes": [
+            "nip06"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip11",
+          "input": "nips/nip11/src/nip11.c",
+          "required_nodes": [
+            "nip11"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip19",
+          "input": "nips/nip19/src/bech32.c",
+          "required_nodes": [
+            "nip19"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip19",
+          "input": "nips/nip19/src/nip19.c",
+          "required_nodes": [
+            "nip19"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip19",
+          "input": "nips/nip19/src/pointer.c",
+          "required_nodes": [
+            "nip19"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip19",
+          "input": "nips/nip19/src/pointer_api.c",
+          "required_nodes": [
+            "nip19"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip19",
+          "input": "nips/nip19/src/tlv.c",
+          "required_nodes": [
+            "nip19"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nip34",
+          "input": "nips/nip34/src/nip34.c",
+          "required_nodes": [
+            "nip34"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-animated-image.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-markdown-pango.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-markdown.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-media-decode.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-media-source.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-media-viewer.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-nip34-issue-fields.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-nip34-issue-view.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-nostr-reference-card.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-nostr-reference-resolver.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-nostr-reference.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-og-metadata.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-og-preview-card.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-og-preview-provider.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_gtk_portable",
+          "input": "nostr-gtk/src/gn-video-player.c",
+          "required_nodes": [
+            "nostr.gtk"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip46_core",
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "required_nodes": [
+            "nip46"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip46_core",
+          "input": "nips/nip46/src/core/nip46_msg.c",
+          "required_nodes": [
+            "nip46"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip46_core",
+          "input": "nips/nip46/src/core/nip46_session.c",
+          "required_nodes": [
+            "nip46"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip46_core",
+          "input": "nips/nip46/src/core/nip46_uri.c",
+          "required_nodes": [
+            "nip46"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip49_core",
+          "input": "nips/nip49/src/core/nip49.c",
+          "required_nodes": [
+            "nip49"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip49_core",
+          "input": "nips/nip49/src/core/nip49_aead.c",
+          "required_nodes": [
+            "nip49"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip49_core",
+          "input": "nips/nip49/src/core/nip49_bech.c",
+          "required_nodes": [
+            "nip49"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip49_core",
+          "input": "nips/nip49/src/core/nip49_kdf.c",
+          "required_nodes": [
+            "nip49"
+          ]
+        },
+        {
+          "check": "sanitizer.groundhog_background",
+          "target": "nostr_nip49_glib",
+          "input": "nips/nip49/src/glib/nip49_g.c",
+          "required_nodes": [
+            "nip49"
+          ]
+        }
+      ]
     }
   ]
 }
