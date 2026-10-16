@@ -1,6 +1,14 @@
 name: Backpressure Capacity Matrix
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   workflow_dispatch:
   push:
     branches: [ main ]
@@ -48,6 +56,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install dependencies
         run: |
@@ -91,5 +106,5 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bp-matrix-artifacts
+          name: ${{ inputs.artifact_prefix }}bp-matrix-artifacts
           path: build/bp_matrix

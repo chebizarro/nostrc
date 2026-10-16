@@ -14,7 +14,16 @@
 
 name: grotto Fuzz Testing
 
+# Weekly schedule retained until W11 replacement evidence is met.
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       fuzz_duration:
@@ -43,14 +52,35 @@ env:
   # Default duration for scheduled runs and PRs (shorter for PRs)
   DEFAULT_FUZZ_DURATION: 60
 
+permissions:
+  contents: read
+
 jobs:
+  select-fuzz:
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.select.outputs.targets }}
+      duration: ${{ steps.select.outputs.duration }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - id: select
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+          TARGET: ${{ inputs.target || 'all' }}
+          DURATION: ${{ inputs.fuzz_duration }}
+          MODE: ${{ inputs.sha != '' && 'broad' || github.event_name == 'pull_request' && 'affected' || 'broad' }}
+        run: python3 .github/workflows/dependency_contract.py fuzz --sha "$REQUESTED_SHA" --mode "$MODE" --fuzz-target "$TARGET" --duration "$DURATION"
   fuzz-test:
+    needs: select-fuzz
     name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [nip49, bip39, json-event]
+        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}
 
     steps:
       - name: Checkout
@@ -58,14 +88,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
-
-      - name: Filter targets for manual run
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.target != 'all'
-        run: |
-          if [ "${{ matrix.target }}" != "${{ github.event.inputs.target }}" ]; then
-            echo "Skipping ${{ matrix.target }} - only running ${{ github.event.inputs.target }}"
-            exit 0
-          fi
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install dependencies
         run: |
@@ -91,32 +120,20 @@ jobs:
         run: |
           cmake --build build --target fuzz-${{ matrix.target }}
 
-      - name: Determine fuzz duration
-        id: duration
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            DURATION="${{ github.event.inputs.fuzz_duration }}"
-          elif [ "${{ github.event_name }}" = "pull_request" ]; then
-            DURATION=60  # Shorter for PRs
-          else
-            DURATION=300  # Longer for scheduled runs
-          fi
-          echo "duration=${DURATION}" >> $GITHUB_OUTPUT
-
       - name: Run fuzz-${{ matrix.target }}
         run: |
-          set -e
+          set -euo pipefail
           FUZZ_BIN="build/apps/grotto/tests/fuzz/fuzz-${{ matrix.target }}"
           CORPUS_DIR="build/apps/grotto/tests/fuzz/corpus/${{ matrix.target }}"
           ARTIFACTS_DIR="fuzz-artifacts-${{ matrix.target }}"
 
           mkdir -p "${ARTIFACTS_DIR}"
 
-          echo "Running fuzz-${{ matrix.target }} for ${{ steps.duration.outputs.duration }} seconds..."
+          echo "Running fuzz-${{ matrix.target }} for ${{ needs.select-fuzz.outputs.duration }} seconds..."
 
           # Run the fuzzer
           ${FUZZ_BIN} "${CORPUS_DIR}" \
-            -max_total_time=${{ steps.duration.outputs.duration }} \
+            -max_total_time=${{ needs.select-fuzz.outputs.duration }} \
             -artifact_prefix="${ARTIFACTS_DIR}/" \
             -print_final_stats=1 \
             2>&1 | tee "fuzz-${{ matrix.target }}.log"
@@ -133,17 +150,17 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crashes-${{ matrix.target }}
+          name: ${{ inputs.artifact_prefix }}fuzz-crashes-${{ matrix.target }}
           path: |
             fuzz-artifacts-${{ matrix.target }}/
             fuzz-${{ matrix.target }}.log
           if-no-files-found: ignore
 
       - name: Upload updated corpus
-        if: success() && github.event_name == 'schedule'
+        if: success() && (inputs.sha != '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-corpus-${{ matrix.target }}
+          name: ${{ inputs.artifact_prefix }}fuzz-corpus-${{ matrix.target }}
           path: build/apps/grotto/tests/fuzz/corpus/${{ matrix.target }}/
           if-no-files-found: ignore
 
@@ -151,7 +168,7 @@ jobs:
     name: Generate coverage report
     runs-on: ubuntu-latest
     needs: fuzz-test
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: inputs.sha != '' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -159,6 +176,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install dependencies
         run: |
@@ -172,7 +196,7 @@ jobs:
       - name: Download all corpus artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: fuzz-corpus-*
+          pattern: ${{ inputs.artifact_prefix }}fuzz-corpus-*
           path: downloaded-corpus
           merge-multiple: false
 
@@ -195,7 +219,7 @@ jobs:
         run: |
           for target in nip49 bip39 json-event; do
             FUZZ_BIN="build/apps/grotto/tests/fuzz/fuzz-${target}"
-            CORPUS_DIR="downloaded-corpus/fuzz-corpus-${target}"
+            CORPUS_DIR="downloaded-corpus/${{ inputs.artifact_prefix }}fuzz-corpus-${target}"
             if [ -d "${CORPUS_DIR}" ] && [ -x "${FUZZ_BIN}" ]; then
               LLVM_PROFILE_FILE="fuzz-${target}.profraw" ${FUZZ_BIN} "${CORPUS_DIR}" -runs=0 || true
             fi

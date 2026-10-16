@@ -1,6 +1,15 @@
 name: Backpressure Matrix Nightly
 
+# Compatibility name retained until W11 evidence/consumer audit permits renaming.
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   workflow_dispatch:
 
 jobs:
@@ -11,6 +20,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: true
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install dependencies
         run: |
@@ -89,7 +105,7 @@ jobs:
       - name: Upload nightly artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: bp-matrix-nightly-artifacts
+          name: ${{ inputs.artifact_prefix }}bp-matrix-nightly-artifacts
           path: |
             build/bp_matrix_cu2000
             build/bp_matrix_cu5000

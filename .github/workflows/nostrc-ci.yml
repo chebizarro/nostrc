@@ -1,6 +1,14 @@
 name: nostrc CI
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   push:
     branches: [ main, master ]
     paths:
@@ -74,6 +82,14 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Select clang toolchain (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -181,7 +197,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ runner.os }}-${{ matrix.sanitizer }}-monorepo-logs
+          name: ${{ inputs.artifact_prefix }}${{ runner.os }}-${{ matrix.sanitizer }}-monorepo-logs
           path: |
             build/Testing/Temporary/*
             build/Testing/*/LastTest.log

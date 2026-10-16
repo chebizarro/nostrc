@@ -262,6 +262,9 @@
       "ctest_tests": {
         "libgo.linux.asan": [
           "GoChannelTest"
+        ],
+        "libgo.macos.asan": [
+          "GoChannelTest"
         ]
       },
       "expected_outcome": "pass",
@@ -271,8 +274,54 @@
         "execution.libgo"
       ],
       "profiles": [
-        "libgo.linux.asan"
+        "libgo.linux.asan",
+        "libgo.macos.asan"
       ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "libgo.native_standalone": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "libgo.macos.asan": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": ["libgo", "execution.libgo"],
+      "profiles": ["libgo.macos.asan"],
       "requirement": "blocking",
       "runtime_inputs": []
     },
@@ -721,6 +770,13 @@
     }
   },
   "coverage_gaps": [
+    {
+      "id": "libgo_macos_asan_stress_exclusion",
+      "profile": "libgo.macos.asan",
+      "registrations": ["GoChannelStressTest"],
+      "reason": "Existing libgo-ci.yml build-and-test macOS ASan/UBSan variant excludes GoChannelStressTest for intermittent timeout. The other 32 registrations are exact check members. This is an explicit coverage gap, not an expected skip, advisory pass or completed check; the realization audit must continue reporting the unclaimed registration until exclusion schema/policy is coordinated. Effective Test-step ASAN_OPTIONS is detect_leaks=0 (overrides the earlier strict_string_checks setting).",
+      "tracking": "nostrc-0cfsg.4"
+    },
     {
       "id": "supported_profile_union",
       "reason": "Initial logical inventory is non-enforcing: complete native/toolchain/sanitizer/optional profile union and exact registration membership require realization plus workflow migration. Existing legacy gates remain authoritative.",
@@ -4594,6 +4650,37 @@
       "parallelism": 2,
       "platform": "linux",
       "setup": ".github/workflows/libgo-ci.yml:build",
+      "source_dir": "libgo",
+      "timeout_seconds": 3600
+    },
+    "libgo.macos.asan": {
+      "architecture": "arm64",
+      "build_type": "Debug",
+      "capabilities": [],
+      "compiler": "clang",
+      "configure_args": [
+        "-G", "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_C_STANDARD=11",
+        "-DCMAKE_C_EXTENSIONS=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DGOF_PORTABLE_CONTEXT=OFF"
+      ],
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=0",
+        "CC": "clang",
+        "CXX": "clang++",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1"
+      },
+      "feature_variants": [],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host",
+      "parallelism": 2,
+      "platform": "macos",
+      "setup": ".github/workflows/libgo-ci.yml:build-and-test",
       "source_dir": "libgo",
       "timeout_seconds": 3600
     },

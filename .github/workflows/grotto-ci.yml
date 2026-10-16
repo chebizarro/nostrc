@@ -1,6 +1,14 @@
 name: Grotto Preview CI
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   push:
     paths: &inputs
       - '.github/workflows/grotto-ci.yml'
@@ -30,7 +38,7 @@ permissions:
   contents: read
 concurrency:
   group: grotto-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && inputs.sha == '' }}
 
 jobs:
   signer:
@@ -58,6 +66,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install build, keyring, camera and display dependencies
         run: |
           sudo apt-get update
@@ -238,7 +254,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: grotto-${{ matrix.runner }}-${{ matrix.mode }}
+          name: ${{ inputs.artifact_prefix }}grotto-${{ matrix.runner }}-${{ matrix.mode }}
           path: |
             dependency-versions.txt
             tsan-runtime.log
