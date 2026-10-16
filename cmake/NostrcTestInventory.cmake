@@ -29,6 +29,42 @@ function(_nostrc_inventory_string out value)
   set(${out} "\"${value}\"" PARENT_SCOPE)
 endfunction()
 
+# Conservative registration ownership follows the directory that authored the
+# add_test, never a test-name prefix. Unknown roots intentionally remain gaps.
+function(_nostrc_inventory_component_owner out dir)
+  file(RELATIVE_PATH _relative "${CMAKE_SOURCE_DIR}" "${dir}")
+  if(CMAKE_SOURCE_DIR STREQUAL "${dir}" AND PROJECT_NAME STREQUAL "libgo")
+    set(_owner libgo)
+  elseif(_relative STREQUAL "apps/grotto" OR _relative MATCHES "^apps/grotto/")
+    set(_owner grotto.gui grotto.daemon grotto.native_host)
+  elseif(_relative MATCHES "^nips/([^/]+)(/|$)")
+    string(REPLACE "-" "_" _owner "${CMAKE_MATCH_1}")
+  else()
+    set(_owner "")
+    foreach(_entry
+        "libgo|libgo" "libnostr|libnostr" "libjson|libjson"
+        "libhanami|libhanami" "libmarmot|libmarmot"
+        "marmot-gobject|marmot.gobject" "nostr-gobject|nostr.gobject"
+        "nostr-gtk|nostr.gtk" "components/nostrdb|nostrdb"
+        "tests/testkit|testkit" "tests|shared.tests" "Testing|testing.framework"
+        "apps/gnostr|gnostr" "apps/relayd|relayd" "apps/grelay|grelay"
+        "apps/relayctl|relayctl" "apps/blossom-cache|blossom_cache" "signet|signet"
+        "gnome/groundhog|groundhog.unclassified"
+        "gnome/common|gnome.common" "gnome/nostr-homed|gnome.nostr_homed"
+        "relayd|relayd" "grelay|grelay" "relayctl|relayctl"
+        "blossom-cache|blossom_cache" "nson|nson" "pkcs11|pkcs11")
+      string(REPLACE "|" ";" _parts "${_entry}")
+      list(GET _parts 0 _prefix)
+      list(GET _parts 1 _candidate)
+      if(_relative STREQUAL _prefix OR _relative MATCHES "^${_prefix}/")
+        set(_owner "${_candidate}")
+        break()
+      endif()
+    endforeach()
+  endif()
+  set(${out} "${_owner}" PARENT_SCOPE)
+endfunction()
+
 function(_nostrc_inventory_directory out dir)
   get_property(_tests DIRECTORY "${dir}" PROPERTY TESTS)
   get_property(_binary DIRECTORY "${dir}" PROPERTY BINARY_DIR)
@@ -38,9 +74,21 @@ function(_nostrc_inventory_directory out dir)
     _nostrc_inventory_string(_name "${_test}")
     _nostrc_inventory_string(_source "${dir}")
     _nostrc_inventory_string(_build "${_binary}")
-    set(_record "{\"name\":${_name},\"source_dir\":${_source},\"binary_dir\":${_build}")
+    get_property(_authored_owner TEST "${_test}" DIRECTORY "${dir}" PROPERTY NOSTRC_SELECTION_OWNER)
+    _nostrc_inventory_component_owner(_component_owner "${dir}")
+    if(_authored_owner)
+      set(_authority descriptor)
+    elseif(_component_owner)
+      set(_authority component_directory)
+    else()
+      set(_authority unresolved)
+    endif()
+    set(_record "{\"name\":${_name},\"source_dir\":${_source},\"binary_dir\":${_build},\"owner_authority\":\"${_authority}\"")
     foreach(_field OWNER TARGETS INPUTS REQUIRES EXPECTED DECLARED_DEPENDS)
       get_property(_values TEST "${_test}" DIRECTORY "${dir}" PROPERTY "NOSTRC_SELECTION_${_field}")
+      if(_field STREQUAL "OWNER" AND NOT _values)
+        _nostrc_inventory_component_owner(_values "${dir}")
+      endif()
       if(_field STREQUAL "DECLARED_DEPENDS")
         get_property(_values TEST "${_test}" DIRECTORY "${dir}" PROPERTY DEPENDS)
       endif()
