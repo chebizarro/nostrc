@@ -3804,7 +3804,11 @@
         "tests/selection"
       ],
       "cost": "ordinary",
-      "environment": {},
+      "environment": {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONPATH": ""
+      },
       "expected_outcome": "pass",
       "kind": "command",
       "nodes": [
@@ -3816,7 +3820,102 @@
         "static.policy"
       ],
       "requirement": "blocking",
-      "runtime_inputs": [],
+      "runtime_inputs": [
+        "{source}/.github/workflows/bp-matrix-nightly.yml",
+        "{source}/.github/workflows/bp-matrix.yml",
+        "{source}/.github/workflows/dependency-broad.yml",
+        "{source}/.github/workflows/dependency-tests.yml",
+        "{source}/.github/workflows/dependency-worker.yml",
+        "{source}/.github/workflows/dependency_contract.py",
+        "{source}/.github/workflows/gnostr-appimage.yml",
+        "{source}/.github/workflows/grotto-ci.yml",
+        "{source}/.github/workflows/grotto-fuzz.yml",
+        "{source}/.github/workflows/groundhog-ci.yml",
+        "{source}/.github/workflows/groundhog-release.yml",
+        "{source}/.github/workflows/libgo-ci.yml",
+        "{source}/.github/workflows/libhanami-ci.yml",
+        "{source}/.github/workflows/libnostr-gi.yml",
+        "{source}/.github/workflows/marmot-mdk-interop.yml",
+        "{source}/.github/workflows/marmot-mdk011-interop.yml",
+        "{source}/.github/workflows/nip55l-libsecret-ci.yml",
+        "{source}/.github/workflows/nostr-homed-ci.yml",
+        "{source}/.github/workflows/nostrc-ci.yml",
+        "{source}/.github/workflows/release-validation.yml",
+        "{source}/.github/workflows/release.yml",
+        "{source}/.github/workflows/signet-ci.yml",
+        "{source}/.github/workflows/static-checks.yml",
+        "{source}/.github/workflows/windows-build.yml",
+        "{source}/.github/workflows/windows-validation.yml",
+        "{source}/CMakeLists.txt",
+        "{source}/VERSION_MANIFEST.md",
+        "{source}/apps/gnostr/CMakeLists.txt",
+        "{source}/apps/grotto/CMakeLists.txt",
+        "{source}/apps/grotto/meson.build",
+        "{source}/cmake/NostrcTestInventory.cmake",
+        "{source}/gnome/groundhog/CMakeLists.txt",
+        "{source}/gnome/groundhog/TestInventory.cmake",
+        "{source}/gnome/nostr-homed/CMakeLists.txt",
+        "{source}/gnome/nostr-homed/meson.build",
+        "{source}/gnome/nostr-homed/nostr-homed.pc.in",
+        "{source}/gnome/nostr-seal/src/main.c",
+        "{source}/gnome/nostr-shell-extension/metadata.json",
+        "{source}/libgo/CMakeLists.txt",
+        "{source}/libmarmot/CMakeLists.txt",
+        "{source}/libmarmot/meson.build",
+        "{source}/libnostr/CMakeLists.txt",
+        "{source}/marmot-gobject/CMakeLists.txt",
+        "{source}/marmot-gobject/meson.build",
+        "{source}/nips/nip19/CMakeLists.txt",
+        "{source}/nips/nip34/CMakeLists.txt",
+        "{source}/nips/nip46/CMakeLists.txt",
+        "{source}/nips/nip55l/include/nostr/nip55l/signer_ops.h",
+        "{source}/nostr-gobject/CMakeLists.txt",
+        "{source}/nostr-gobject/meson.build",
+        "{source}/nostr-gtk/CMakeLists.txt",
+        "{source}/nostr-gtk/meson.build",
+        "{source}/scripts/linux-gate.sh",
+        "{source}/scripts/mdk-gate.py",
+        "{source}/scripts/sanitizer-gate-ci.py",
+        "{source}/scripts/test-gate.sh",
+        "{source}/scripts/test-plan.py",
+        "{source}/scripts/test_selection.py",
+        "{source}/scripts/test_selection_realization.py",
+        "{source}/signet/meson.build",
+        "{source}/signet/src/signetctl_main.c",
+        "{source}/signet/src/signetd_main.c",
+        "{source}/tests/selection/fixtures/profile_exports.json",
+        "{source}/tests/selection/golden/selection.json",
+        "{source}/tests/selection/inventory.json",
+        "{source}/tests/selection/profile_contract_support.py",
+        "{source}/tests/selection/realization_support.py",
+        "{source}/tests/selection/selector_support.py",
+        "{source}/tests/selection/test_aggregation.py",
+        "{source}/tests/selection/test_cmake_inventory_compat.py",
+        "{source}/tests/selection/test_command_execution.py",
+        "{source}/tests/selection/test_command_output_bytes.py",
+        "{source}/tests/selection/test_diagnostic_eligibility.py",
+        "{source}/tests/selection/test_git_ranges.py",
+        "{source}/tests/selection/test_mdk_cleanup.py",
+        "{source}/tests/selection/test_mdk_detached_cleanup.py",
+        "{source}/tests/selection/test_mdk_gate.py",
+        "{source}/tests/selection/test_phase_environments.py",
+        "{source}/tests/selection/test_profile_contracts.py",
+        "{source}/tests/selection/test_realization.py",
+        "{source}/tests/selection/test_realization_exclusions.py",
+        "{source}/tests/selection/test_realization_inputs.py",
+        "{source}/tests/selection/test_realization_run.py",
+        "{source}/tests/selection/test_realization_source_identity.py",
+        "{source}/tests/selection/test_realization_support_inputs.py",
+        "{source}/tests/selection/test_realization_toolchains.py",
+        "{source}/tests/selection/test_release_plan.py",
+        "{source}/tests/selection/test_sanitizer_adapter.py",
+        "{source}/tests/selection/test_sanitizer_route_refusal.py",
+        "{source}/tests/selection/test_selection_command_contract.py",
+        "{source}/tests/selection/test_selector.py",
+        "{source}/tests/selection/test_selector_checkout_binding.py",
+        "{source}/tests/selection/test_selector_cli.py",
+        "{source}/tests/selection/test_workflow_contracts.py"
+      ],
       "working_directory": "{source}"
     }
   },
@@ -5517,7 +5616,12 @@
       "depends_on": [],
       "id": "selection.contract",
       "owner_paths": [
-        "tests/selection/inventory.json"
+        "tests/selection",
+        "scripts/test-plan.py",
+        "scripts/test_selection.py",
+        "scripts/test_selection_realization.py",
+        "cmake/NostrcTestInventory.cmake",
+        "gnome/groundhog/TestInventory.cmake"
       ]
     },
     "shared.tests": {
@@ -5593,11 +5697,280 @@
       "depends_on": [],
       "id": "version.contract",
       "owner_paths": [
-        "tests/selection/inventory.json"
+        "VERSION_MANIFEST.md",
+        "apps/gnostr/CMakeLists.txt",
+        "apps/grotto/CMakeLists.txt",
+        "apps/grotto/meson.build",
+        "gnome/groundhog/CMakeLists.txt",
+        "gnome/nostr-homed/CMakeLists.txt",
+        "gnome/nostr-homed/meson.build",
+        "gnome/nostr-homed/nostr-homed.pc.in",
+        "gnome/nostr-seal/src/main.c",
+        "gnome/nostr-shell-extension/metadata.json",
+        "libgo/CMakeLists.txt",
+        "libmarmot/CMakeLists.txt",
+        "libmarmot/meson.build",
+        "libnostr/CMakeLists.txt",
+        "marmot-gobject/CMakeLists.txt",
+        "marmot-gobject/meson.build",
+        "nips/nip19/CMakeLists.txt",
+        "nips/nip34/CMakeLists.txt",
+        "nips/nip46/CMakeLists.txt",
+        "nips/nip55l/include/nostr/nip55l/signer_ops.h",
+        "nostr-gobject/CMakeLists.txt",
+        "nostr-gobject/meson.build",
+        "nostr-gtk/CMakeLists.txt",
+        "nostr-gtk/meson.build",
+        "signet/meson.build",
+        "signet/src/signetctl_main.c",
+        "signet/src/signetd_main.c"
       ]
     }
   },
   "path_rules": [
+    {
+      "effect": "impact",
+      "exact": "apps/gnostr/CMakeLists.txt",
+      "nodes": [
+        "gnostr",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/CMakeLists.txt",
+      "nodes": [
+        "grotto.gui",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "apps/grotto/meson.build",
+      "nodes": [
+        "grotto.gui",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/CMakeLists.txt",
+      "nodes": [
+        "groundhog.unclassified",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/TestInventory.cmake",
+      "nodes": [
+        "groundhog.unclassified",
+        "selection.contract"
+      ],
+      "reason": "Exact source read by selection.contract metadata tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/nostr-homed/CMakeLists.txt",
+      "nodes": [
+        "gnome.nostr_homed",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/nostr-homed/meson.build",
+      "nodes": [
+        "gnome.nostr_homed",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/nostr-homed/nostr-homed.pc.in",
+      "nodes": [
+        "gnome.nostr_homed",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/nostr-seal/src/main.c",
+      "nodes": [
+        "gnome.nostr_seal",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/nostr-shell-extension/metadata.json",
+      "nodes": [
+        "gnome.nostr_shell_extension",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "libgo/CMakeLists.txt",
+      "nodes": [
+        "libgo",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "libmarmot/CMakeLists.txt",
+      "nodes": [
+        "libmarmot",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "libmarmot/meson.build",
+      "nodes": [
+        "libmarmot",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "libnostr/CMakeLists.txt",
+      "nodes": [
+        "libnostr",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "marmot-gobject/CMakeLists.txt",
+      "nodes": [
+        "marmot.gobject",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "marmot-gobject/meson.build",
+      "nodes": [
+        "marmot.gobject",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip19/CMakeLists.txt",
+      "nodes": [
+        "nip19",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip34/CMakeLists.txt",
+      "nodes": [
+        "nip34",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip46/CMakeLists.txt",
+      "nodes": [
+        "nip46",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nips/nip55l/include/nostr/nip55l/signer_ops.h",
+      "nodes": [
+        "nip55l",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gobject/CMakeLists.txt",
+      "nodes": [
+        "nostr.gobject",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gobject/meson.build",
+      "nodes": [
+        "nostr.gobject",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/CMakeLists.txt",
+      "nodes": [
+        "nostr.gtk",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/meson.build",
+      "nodes": [
+        "nostr.gtk",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "signet/meson.build",
+      "nodes": [
+        "signet",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "signet/src/signetctl_main.c",
+      "nodes": [
+        "signet",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "signet/src/signetd_main.c",
+      "nodes": [
+        "signet",
+        "version.contract"
+      ],
+      "reason": "Exact version source read by selection.contract release-contract tests; retain component ownership."
+    },
     {
       "exact": "libnostr/include/nostr/metrics.h",
       "nodes": ["libnostr.metrics_header"],
