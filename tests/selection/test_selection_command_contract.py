@@ -47,9 +47,10 @@ SUPPORT_INPUTS = {
 
 def expected_inputs(policy, root):
     tracked = {os.fsdecode(p) for p in s.git(root, "ls-files", "-z", "--",
-               "tests/selection", ".github/workflows").stdout.split(b"\0") if p}
+               "tests/selection", ".github/workflows", ":(glob)**/TestInventory.cmake").stdout.split(b"\0") if p}
     paths = SUPPORT_INPUTS | {p for p in tracked if p.startswith("tests/selection/")
-                            or Path(p).suffix in {".yml", ".yaml"}}
+                            or Path(p).suffix in {".yml", ".yaml"}
+                            or Path(p).name == "TestInventory.cmake"}
     for component in policy["release_components"].values():
         paths.update(source["path"] for source in component["version_sources"])
         if component.get("full_version_source"):
@@ -70,6 +71,14 @@ def validate_source_closure(policy, root):
     discovered.update("{source}/" + p.relative_to(root).as_posix()
                       for p in (root / ".github/workflows").glob("*")
                       if p.suffix in {".yml", ".yaml"})
+    # The collector loads descriptors beside registered source CMakeLists.
+    # Check those source directories even when a descriptor is not tracked yet.
+    cmake_sources = s.git(root, "ls-files", "-z", "--", "CMakeLists.txt",
+                         ":(glob)**/CMakeLists.txt").stdout.split(b"\0")
+    discovered.update("{source}/" + descriptor.relative_to(root).as_posix()
+                      for source in cmake_sources if source
+                      for descriptor in [root / Path(os.fsdecode(source)).parent / "TestInventory.cmake"]
+                      if descriptor.exists())
     if discovered - set(inputs):
         raise ValueError("undeclared discoverable command source: " + str(sorted(discovered - set(inputs))))
     for value in inputs:
@@ -131,6 +140,25 @@ class SelectionCommandContractTests(unittest.TestCase):
             path = root / "tests/selection/ignored_support.py"
             path.write_text("# untracked or ignored imports are not audit inputs\n")
             with self.assertRaisesRegex(ValueError, "undeclared discoverable"):
+                validate_source_closure(self.policy, root)
+
+    def test_new_tracked_or_untracked_descriptor_requires_explicit_runtime_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            s.git(root, "init", "-q")
+            copy_inputs(self.policy, root)
+            source_dir = root / "nips/new-component"
+            source_dir.mkdir(parents=True)
+            (source_dir / "CMakeLists.txt").write_text("# descriptor source directory\n")
+            s.git(root, "add", ".")
+            validate_source_closure(self.policy, root)
+            descriptor = source_dir / "TestInventory.cmake"
+            descriptor.write_text("include_guard(DIRECTORY)\n")
+            with self.assertRaisesRegex(ValueError, "undeclared discoverable.*TestInventory"):
+                validate_source_closure(self.policy, root)
+            s.git(root, "add", str(descriptor))
+            self.assertIn(descriptor.relative_to(root).as_posix(), expected_inputs(self.policy, root))
+            with self.assertRaisesRegex(ValueError, "command source closure changed.*TestInventory"):
                 validate_source_closure(self.policy, root)
 
     def test_each_actual_input_has_semantic_impact_on_command(self):

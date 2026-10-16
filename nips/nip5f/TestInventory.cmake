@@ -1,0 +1,15 @@
+include_guard(DIRECTORY)
+if(NOT COMMAND nostrc_add_test_owners)
+  return()
+endif()
+
+# Exact registration/input relationships retained from the ab5 production audit.
+if(TEST "test_nip5f_loopback")
+  nostrc_add_test_owners("test_nip5f_loopback" OWNER nip5f.test_inputs)
+endif()
+if(TEST "test_nip5f_negative_env")
+  nostrc_add_test_owners("test_nip5f_negative_env" OWNER nip5f.test_inputs)
+endif()
+if(TEST "test_nip5f_tcp")
+  nostrc_add_test_owners("test_nip5f_tcp" OWNER nip5f.test_inputs)
+endif()

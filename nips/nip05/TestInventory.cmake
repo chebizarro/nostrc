@@ -1,0 +1,18 @@
+include_guard(DIRECTORY)
+if(NOT COMMAND nostrc_add_test_owners)
+  return()
+endif()
+
+# Exact registration/input relationships retained from the ab5 production audit.
+if(TEST "test_nip05_parse")
+  nostrc_add_test_owners("test_nip05_parse" OWNER libjson nip05.test_inputs)
+endif()
+if(TEST "test_nip05_resolve_json_errors")
+  nostrc_add_test_owners("test_nip05_resolve_json_errors" OWNER libjson nip05.test_inputs)
+endif()
+if(TEST "test_nip05_resolve_json_names")
+  nostrc_add_test_owners("test_nip05_resolve_json_names" OWNER libjson nip05.test_inputs)
+endif()
+if(TEST "test_nip05_resolve_json_relays")
+  nostrc_add_test_owners("test_nip05_resolve_json_relays" OWNER libjson nip05.test_inputs)
+endif()

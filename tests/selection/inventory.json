@@ -1521,7 +1521,9 @@
         "nip44",
         "nip46",
         "nip49",
+        "nip55l",
         "nostr.gobject",
+        "relayd",
         "testing.framework",
         "testkit"
       ],
@@ -1695,9 +1697,11 @@
         "nip44",
         "nip46",
         "nip49",
+        "nip55l",
         "nip55l.core",
         "testing.framework",
-        "vendor.nostrdb"
+        "vendor.nostrdb",
+        "version.contract"
       ],
       "profiles": [
         "core.macos.asan",
@@ -4252,8 +4256,36 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
         "groundhog.shell_ui",
-        "execution.groundhog"
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux"
@@ -4372,8 +4404,22 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.mls_ui",
-        "execution.groundhog"
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux"
@@ -4392,9 +4438,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified",
         "packaging.groundhog",
-        "version.contract",
-        "execution.groundhog"
+        "version.contract"
       ],
       "profiles": [
         "groundhog.linux"
@@ -4419,8 +4466,22 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.poll_ui",
-        "execution.groundhog"
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux"
@@ -4439,9 +4500,30 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
-        "groundhog.shell_ui",
+        "execution.groundhog",
+        "groundhog.relay",
         "groundhog.resources",
-        "execution.groundhog"
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux"
@@ -5039,21 +5121,66 @@
         "{source}/gnome/groundhog/CMakeLists.txt",
         "{source}/gnome/groundhog/TestInventory.cmake",
         "{source}/gnome/nostr-homed/CMakeLists.txt",
+        "{source}/gnome/nostr-homed/TestInventory.cmake",
         "{source}/gnome/nostr-homed/meson.build",
         "{source}/gnome/nostr-homed/nostr-homed.pc.in",
         "{source}/gnome/nostr-seal/src/main.c",
         "{source}/gnome/nostr-shell-extension/metadata.json",
         "{source}/libgo/CMakeLists.txt",
+        "{source}/libhanami/TestInventory.cmake",
         "{source}/libmarmot/CMakeLists.txt",
+        "{source}/libmarmot/TestInventory.cmake",
         "{source}/libmarmot/meson.build",
         "{source}/libnostr/CMakeLists.txt",
         "{source}/marmot-gobject/CMakeLists.txt",
         "{source}/marmot-gobject/meson.build",
+        "{source}/nips/nip-cas0010/TestInventory.cmake",
+        "{source}/nips/nip04/TestInventory.cmake",
+        "{source}/nips/nip05/TestInventory.cmake",
+        "{source}/nips/nip06/TestInventory.cmake",
+        "{source}/nips/nip11/TestInventory.cmake",
+        "{source}/nips/nip14/TestInventory.cmake",
+        "{source}/nips/nip17/TestInventory.cmake",
         "{source}/nips/nip19/CMakeLists.txt",
+        "{source}/nips/nip19/TestInventory.cmake",
+        "{source}/nips/nip21/TestInventory.cmake",
+        "{source}/nips/nip22/TestInventory.cmake",
+        "{source}/nips/nip23/TestInventory.cmake",
+        "{source}/nips/nip24/TestInventory.cmake",
+        "{source}/nips/nip25/TestInventory.cmake",
+        "{source}/nips/nip27/TestInventory.cmake",
+        "{source}/nips/nip28/TestInventory.cmake",
+        "{source}/nips/nip29/TestInventory.cmake",
+        "{source}/nips/nip30/TestInventory.cmake",
         "{source}/nips/nip34/CMakeLists.txt",
+        "{source}/nips/nip34/TestInventory.cmake",
+        "{source}/nips/nip39/TestInventory.cmake",
+        "{source}/nips/nip40/TestInventory.cmake",
+        "{source}/nips/nip44/TestInventory.cmake",
         "{source}/nips/nip46/CMakeLists.txt",
+        "{source}/nips/nip46/TestInventory.cmake",
+        "{source}/nips/nip47/TestInventory.cmake",
+        "{source}/nips/nip49/TestInventory.cmake",
+        "{source}/nips/nip51/TestInventory.cmake",
+        "{source}/nips/nip55l/TestInventory.cmake",
         "{source}/nips/nip55l/include/nostr/nip55l/signer_ops.h",
+        "{source}/nips/nip57/TestInventory.cmake",
+        "{source}/nips/nip58/TestInventory.cmake",
+        "{source}/nips/nip59/TestInventory.cmake",
+        "{source}/nips/nip5f/TestInventory.cmake",
+        "{source}/nips/nip60/TestInventory.cmake",
+        "{source}/nips/nip61/TestInventory.cmake",
+        "{source}/nips/nip70/TestInventory.cmake",
+        "{source}/nips/nip73/TestInventory.cmake",
+        "{source}/nips/nip75/TestInventory.cmake",
+        "{source}/nips/nip77/tests/TestInventory.cmake",
+        "{source}/nips/nip92/TestInventory.cmake",
+        "{source}/nips/nip98/TestInventory.cmake",
+        "{source}/nips/nip99/TestInventory.cmake",
+        "{source}/nips/nipb0/TestInventory.cmake",
+        "{source}/nips/schema/TestInventory.cmake",
         "{source}/nostr-gobject/CMakeLists.txt",
+        "{source}/nostr-gobject/TestInventory.cmake",
         "{source}/nostr-gobject/meson.build",
         "{source}/nostr-gtk/CMakeLists.txt",
         "{source}/nostr-gtk/TestInventory.cmake",
@@ -5078,6 +5205,7 @@
         "{source}/tests/custody/test_contained_linux.py",
         "{source}/tests/custody/workload.py",
         "{source}/tests/selection/fixtures/hosted_audit_edges.json",
+        "{source}/tests/selection/fixtures/nonmember_audit_edges.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
         "{source}/tests/selection/golden/selection.json",
         "{source}/tests/selection/inventory.json",
@@ -5097,6 +5225,7 @@
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
+        "{source}/tests/selection/test_nonmember_ownership.py",
         "{source}/tests/selection/test_phase_environments.py",
         "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
@@ -5571,6 +5700,21 @@
       "profile": "groundhog.linux.arm64.prepared011",
       "tracking": "nostrc-0cfsg.9",
       "reason": "New actual-architecture local-only prepared011 projection; A-owned contained admission/contexts support and attested binary/context/build/toolchain receipts required. Existing Docker fixtures and09 probe not_executed, never passed. Actual prepared consumer/registration/header/runtime union and hosted/nativeMac/original Docker build custody are not established."
+    },
+    {
+      "id": "homed_unit_profile_contract",
+      "tracking": "nostrc-0cfsg.9",
+      "reason": "Five actual opt-in homed unit registrations now exist and legacy workflow exact-list/no-tests guards run them. No distinct selective profile/worker or imported raw execution receipt is claimed here. Experimental roaming/auth/identity runtimes remain off.",
+      "status": "not_executed_by_selective_gate",
+      "source_commit": "20810a780fb032589ebd3206e8c8e8f6f683c564",
+      "not_selected_registrations": [
+        "homed_manifest",
+        "homed_cache",
+        "homed_cache_config",
+        "homed_uid_map",
+        "homed_groups"
+      ],
+      "not_selected_status": "not_executed"
     }
   ],
   "enforcement_ready": false,
@@ -6265,13 +6409,14 @@
     },
     "nip11": {
       "depends_on": [
+        "libjson",
         "libnostr"
       ],
       "id": "nip11",
       "owner_paths": [
         "nips/nip11"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip11/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip11.test_inputs": {
       "depends_on": [],
@@ -6316,13 +6461,14 @@
     },
     "nip17": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip44"
       ],
       "id": "nip17",
       "owner_paths": [
         "nips/nip17"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip17/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip17.test_inputs": {
       "depends_on": [],
@@ -6367,13 +6513,14 @@
     },
     "nip21": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip19"
       ],
       "id": "nip21",
       "owner_paths": [
         "nips/nip21"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip21/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip21.test_inputs": {
       "depends_on": [],
@@ -6452,13 +6599,15 @@
     },
     "nip27": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip19",
+        "nip21"
       ],
       "id": "nip27",
       "owner_paths": [
         "nips/nip27"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip27/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip27.test_inputs": {
       "depends_on": [],
@@ -6486,13 +6635,14 @@
     },
     "nip29": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip19"
       ],
       "id": "nip29",
       "owner_paths": [
         "nips/nip29"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip29/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip29.test_inputs": {
       "depends_on": [],
@@ -6625,13 +6775,16 @@
     },
     "nip46": {
       "depends_on": [
-        "libnostr"
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip44"
       ],
       "id": "nip46",
       "owner_paths": [
         "nips/nip46"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip46/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip46.test_inputs": {
       "depends_on": [],
@@ -6642,13 +6795,16 @@
     },
     "nip47": {
       "depends_on": [
-        "libnostr"
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip44"
       ],
       "id": "nip47",
       "owner_paths": [
         "nips/nip47"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip47/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip47.test_inputs": {
       "depends_on": [],
@@ -6659,13 +6815,14 @@
     },
     "nip49": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip19"
       ],
       "id": "nip49",
       "owner_paths": [
         "nips/nip49"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip49/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip49.test_inputs": {
       "depends_on": [],
@@ -6686,13 +6843,14 @@
     },
     "nip51": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip44"
       ],
       "id": "nip51",
       "owner_paths": [
         "nips/nip51"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip51/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip51.test_inputs": {
       "depends_on": [],
@@ -6820,13 +6978,14 @@
     },
     "nip59": {
       "depends_on": [
-        "libnostr"
+        "libnostr",
+        "nip44"
       ],
       "id": "nip59",
       "owner_paths": [
         "nips/nip59"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip59/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip59.test_inputs": {
       "depends_on": [],
@@ -6837,13 +6996,16 @@
     },
     "nip5f": {
       "depends_on": [
-        "libnostr"
+        "libjson",
+        "libnostr",
+        "nip19",
+        "nip44"
       ],
       "id": "nip5f",
       "owner_paths": [
         "nips/nip5f"
       ],
-      "rationale": "Prerequisite-to-consumer impact; realized target/runtime input audit must confirm complete closure."
+      "rationale": "Unconditional library target links in nips/nip5f/CMakeLists.txt; test inputs remain descriptor/check-local."
     },
     "nip5f.test_inputs": {
       "depends_on": [],
@@ -7353,6 +7515,14 @@
         "signet/src/signetctl_main.c",
         "signet/src/signetd_main.c"
       ]
+    },
+    "gnome.nostr_homed.test_inputs": {
+      "id": "gnome.nostr_homed.test_inputs",
+      "depends_on": [],
+      "owner_paths": [
+        "gnome/nostr-homed/tests"
+      ],
+      "rationale": "Unit sources are test-only consumers, not prerequisites of the shipped homed libraries."
     }
   },
   "path_rules": [
@@ -9699,6 +9869,374 @@
         "selection.contract"
       ],
       "reason": "Workflow-only input selects owning execution profile(s) and policy contract validation."
+    },
+    {
+      "prefix": "gnome/nostr-homed/tests",
+      "nodes": [
+        "gnome.nostr_homed.test_inputs"
+      ],
+      "effect": "impact",
+      "reason": "Homed unit sources are test-only inputs; no experimental runtime admission."
+    },
+    {
+      "prefix": "libhanami/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "libmarmot/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip-cas0010/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip04/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip05/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip06/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip11/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip14/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip17/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip19/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip21/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip22/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip23/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip24/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip25/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip27/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip28/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip29/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip30/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip34/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip39/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip40/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip44/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip46/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip47/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip49/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip51/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip55l/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip57/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip58/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip59/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip5f/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip60/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip61/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip70/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip73/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip75/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip77/tests/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip92/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip98/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nip99/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/nipb0/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nips/schema/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "nostr-gobject/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
+    },
+    {
+      "prefix": "gnome/nostr-homed/TestInventory.cmake",
+      "nodes": [
+        "selection.contract"
+      ],
+      "effect": "global",
+      "reason": "Authored CTest ownership metadata changes require broad selection validation."
     }
   ],
   "profiles": {
@@ -11145,9 +11683,9 @@
       "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
       "profiles": [],
       "coverage_gap": "workflow_profile_union",
-      "source_sha256": "64ae85cb2b56c4106f90f71ddde343362a63f645294e3efb84366406017ac43c",
+      "source_sha256": "02522d7a8300f5163015a50801ed9d17fb017524ce31cba8133501a4f1e1692d",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
+      "workflow_sha256": "58314920e2fb6bb5770f179d956a0b351b26d5d14d354af87f9ab98a8cc5e626"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
@@ -11155,7 +11693,7 @@
       "coverage_gap": "workflow_profile_union",
       "source_sha256": "91b074efcb6d38fc9648815b070f8815c4449c81b302c65069b93baa6e7e02d6",
       "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
-      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
+      "workflow_sha256": "58314920e2fb6bb5770f179d956a0b351b26d5d14d354af87f9ab98a8cc5e626"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
