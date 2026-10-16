@@ -205,4 +205,3 @@ jobs:
             build/apps/grotto/grotto.exe
             build/apps/grotto/grotto-daemon.exe
             build/deps/
-
