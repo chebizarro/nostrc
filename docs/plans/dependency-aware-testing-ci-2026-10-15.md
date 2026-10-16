@@ -1,10 +1,10 @@
 # Dependency-aware testing and CI/CD
 
-**Status:** Specification complete; implementation work is underway in scoped worktrees. W1 operational audit recorded, representative baseline incomplete. No integration acceptance or default cutover.
+**Status:** Specification complete; implementation work is underway in scoped worktrees. W1 audit and native root QA (432 passed / 5 skipped) recorded; representative baseline and integrated acceptance incomplete. No default cutover.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
 
-Sections 2–7 retain the implementation specification and historical planning evidence. Current execution progress and refreshed source references are recorded in §8; proposed commands below are not an assertion that they are integrated or available.
+Sections 2–7 retain the implementation specification and historical planning evidence. Current execution progress and refreshed source references are recorded in §§8–9; proposed commands below are not an assertion that they are integrated or available.
 
 ## Goal
 
@@ -1070,3 +1070,13 @@ The final fidelity pass retained the planning response's applicable current-stat
 - **W1 remaining / W11 NOT RUN:** all seven representative clean/incremental workload conditions, five samples per condition, registration/input completeness, cost/savings comparisons, 20 representative PR shadow comparisons, two successful broad replacement integration runs, release dry run, selected-skip/cancellation and merge-group acceptance, external artifact/manual consumers. Historical legacy runs and a tiny script-mode probe do not satisfy these gates.
 - **W12 NOT RUN:** no hook/default/documented-command switch, old requirement removal, schedule removal, workflow rename or duplicate-trigger cleanup. Parent-directed integration verification must precede later docs/default work.
 - **Environment limit:** `bd dolt pull` returned `fetch from origin/main: Error 1105: no remote`; local bead reads/updates succeeded. No direct tracking-file edits, remote sync workaround, destructive build, live MDK run, settings change, merge or push was performed. `.5` remains open for the later phase.
+
+## 9. Phase 2 — native root QA, 2026-10-15 PDT
+
+**Evidence:** [native root QA receipt](../reviews/dependency-aware-testing-ci-2026-10-15-native-root-qa.md), exact source `d9e8c6294a35f04d0c73870d4d27f28990759a24`, fast-forwarded from the integration branch into the assigned `.5` worktree. This includes the staged selector/realization corrections and upstream Signet fixture fix, but not acceptance of the still-concurrent `.3` local adapters or `.4` workflows/inventory.
+
+- **Native root execution:** fresh throwaway build outside all worktrees; Debug/Ninja, all default targets, mandated `NIP55L_SECRET_BACKEND=libsecret` and `GROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service`, private HOME/XDG/session bus and test-only Secret Service. Configure/build/full serial CTest exited 0. Exact registration-to-JUnit accounting: **437 unique registrations, 432 passed, 5 skipped, 0 failed/errors/disabled**; 7 registrations are fixture setups, not additional logical check aliases. No retry/quarantine or production edit.
+- **Skips remain gaps:** TCP endpoint/token absent for `test_nip5f_tcp`; existing Apple registration forces `GNOSTR_SKIP_UI_TESTS=1` for `signer/qr-scanner`, `signer/onboarding`, `signer/ui-layout`, `signer/ui-accessibility`. No GUI/live endpoint acceptance is inferred from CTest exit 0.
+- **Scope/environment:** root default `BUILD_GROUNDHOG=OFF` was retained; Groundhog's backend argument was therefore unused and its tests were NOT RUN. Plain Homebrew `dbus-run-session` initially failed its launchd check-in before configure; an explicit private Unix-socket config then established verified Secret Service ownership. Before/after read-only keychain guards passed. Exact commands, times, environment, artifact hashes and retained preflight diagnostic are in the receipt.
+- **Not selector/integrated acceptance:** parent-reported 112 Python tests and root/433-registration Groundhog zero-unowned probes are distinct evidence. Exact inventory membership/edge gaps still block audits; macOS native profile support remains pending `.4`. Final integrated Oracle/peer review is **DEFERRED** until parent steers after C/D integration; no routing retries were attempted.
+- **No rollout advancement:** this single native sample is not the representative cost baseline, a broad replacement integration run or W11 shadow evidence. W11/W12 and `.5` remain open; defaults, protections, requirements and schedules are unchanged. Docs-only version assessment: **no bump**. No merge back or push.
