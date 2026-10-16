@@ -219,6 +219,83 @@ production sanitizer/hosted proof and W11/W12 remain unmet. No default/enforceme
 threshold, schedule, requirement or protection cutover before W11/operator approval.
 **No component bump:** internal testing/documentation only.
 
+### 2026-10-16 bounded custody checkpoint — final QA/metadata pending
+
+This dated update supersedes earlier *current-status* wording only; all earlier
+counts, failures and source-specific receipts remain historical. The [detailed
+checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-contained-custody-and-retention-checkpoint--final-evidence-pending)
+records sources and hash anchors. Documentation base is `7616080a3`; parent
+QA513CA's fresh full native QA at that source is **PENDING**, not a result.
+B is actively repairing nonmember metadata; await the parent's final checkpoint
+before quoting any replacement full-audit count.
+
+**Explicit contained route, local only.** `scripts/contained-gate.py prepare`
+builds locked native peers (08/09/011), binds binary/context/toolchain/image
+receipts and verifies owned CID lifecycle. `run` admits the distinct
+`groundhog.linux.arm64.prepared011` projection in a contained Linux namespace,
+not legacy native wrapped custody or the original Docker image-build fixtures.
+It is Linux/aarch64, GCC Debug, **not sanitizer coverage**. Its `contexts=[local]`
+means CI/release omit it as `not_executed`; explicit incompatible requests refuse.
+The original ten CI-eligible profiles retain their independent shadow routes.
+Inspect exact interfaces without executing builds:
+
+```sh
+python3 scripts/contained-gate.py --help
+python3 scripts/contained-gate.py prepare --help
+python3 scripts/contained-gate.py run --help
+```
+
+For an intentional, separately provisioned local attempt, the implemented shape
+is below. Variables denote exact committed source, fresh evidence destinations,
+architecture-compatible images and actual preparation receipt/plan paths; these
+are **not runnable acceptance receipts**. Initialize/verify required gitlinks;
+`run --gitlink-source PATH=OBJECT_REPO` optionally supplies exact local objects.
+
+```sh
+python3 scripts/contained-gate.py prepare --source-root "$SOURCE" \
+  --evidence-dir "$PREP_EVIDENCE" --version 011 \
+  --builder-image "$BUILDER_IMAGE" --rust-image "$RUST_IMAGE"
+python3 scripts/test-plan.py plan --repo "$SOURCE" --base "$BASE" \
+  --head "$HEAD_SHA" --context local --mode broad \
+  --profile groundhog.linux.arm64.prepared011 --output "$PLAN"
+python3 scripts/contained-gate.py run --source-root "$SOURCE" \
+  --evidence-dir "$RUN_EVIDENCE" --image "$LINUX_IMAGE" --plan "$PLAN" \
+  --profile groundhog.linux.arm64.prepared011 --peer-receipt "$PEER011_RECEIPT"
+```
+
+The full-root input audit still blocks prepared-profile acceptance. Historical
+raw 011 **18/18**, 08 **3/3**, and 09 **expected incompatibility** are separate
+consumer evidence, not selector/profile/original-image-build success. Earlier
+locked peer builds were revalidated, not rebuilt at the latest SHA. The optional
+separately named selected-closure diagnostic is **DEFERRED / not implemented**;
+no partial audit exception or selection false-negative proof is claimed.
+
+At A `a9d6c8caa`, **348/348 selection regressions** and **13 actual Docker custody
+cases** passed with no skips. Finalization seals retained membership/bytes and
+revalidates after namespace exit; actual escaped-writer deletion/overwrite
+adversaries refuse diagnostic/partial aggregation while retaining failed bytes.
+This does not fix native arbitrary-tree `.23` or legacy `mdk-gate.py`'s nonzero
+`cleanup_unverified`. The original two phase-FIFO causes remain **unknown** despite
+later passes; `60cd24c5c` fixes a separately traced detached Git-maintenance race.
+Parent forensics **8/8** supports `.24` closed **for retention only**, not original
+cause/generic native deadlines. Burst test fix `23ca21c19` restores all 50 unpaced
+cycles with the original strict >50ms / <=2 missed guard; `.11` stays open.
+
+At B `ab5cdbf05`, selected sanitizer primary/fixture closure has **zero semantic
+findings**, but the full audit **fails: 49,158 = 347 unclaimed registrations +
+48,811 nonmember semantic findings**. These are checkpoint-specific findings,
+not test results or final metadata totals. Broad/Homed commits `1cc6af107`,
+`7b77046a0`, `20810a780` add prerequisites/pinned Blueprint, correct refused-rename
+expectations and register/select five Homed units; the parent reports native
+**5/5**, not the four-distro/systemd/FUSE/hosted proof.
+
+The read-only hosted audit at `8a031f443` records voice LSan **120 bytes** with an
+external libsrt-gnutls stack and failed shadow execution, not accepted integration.
+**W11 NOT MET: 0/20 accepted PR comparisons, 0/2 successful broad integrations;
+representative costs, release/protection/operator proof unmet. W12 NOT RUN.**
+No default, enforcement, schedule, threshold/exclusion, required-check or
+protection changes; **no component bump** for these internal tests/docs.
+
 ### Historical post-review verification
 
 At integration `ae36f5a2639ff1c28d6657621b8afb0d81771b2b`, `.6` (workflow

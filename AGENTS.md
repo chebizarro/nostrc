@@ -43,16 +43,33 @@ sanitizer gate through actual separate configure/build/test phases, environment
 fingerprints and input audits; legacy defaults are unchanged. Shared-route
 quarantine/retry overrides fail explicitly. `.16` is closed only for bounded
 unwrapped commands and actual shared Docker phases, not positive wrapped execution.
-All ten authored profiles have independent shadow worker routes (`.21` bounded
-scope closed), not hosted acceptance. `.24` remains open for the original
-full-gate fixture failure/lost trace; a later diagnostic pass is not a causal fix.
-Forensics `967172f77` now preserves failed private fixtures/logs plus command,
-line, phase and call stack; success cleanup is unchanged. The original cause
-remains unknown. Do not claim broad review-clean or complete acceptance. The standalone
-MDK helper always reports `cleanup_complete=false`: otherwise successful command
-phases refuse lifecycle success with nonzero `cleanup_unverified` (scoped cleanup
-errors remain explicit). Historical MDK smoke is command/CTest evidence only, not
-successful arbitrary-tree cleanup, selector custody/finalization or complete coverage.
+All ten CI-eligible profiles have independent shadow worker routes (`.21` bounded
+scope closed), not hosted acceptance. The distinct eleventh profile,
+`groundhog.linux.arm64.prepared011`, is local-only: explicit
+`scripts/contained-gate.py prepare` / `run` implement attested locked 08/09/011
+preparation and contained Linux/arm64 execution with verified CID lifecycle and
+final retained bytes. Raw 011 18/18, 08 3/3 and 09 expected-incompatibility receipts
+are not selector/profile acceptance; the full-root audit blocks admission. The
+optional selected-closure diagnostic is DEFERRED, not implemented. Native
+arbitrary-tree `.23` and legacy MDK `cleanup_unverified` remain unchanged.
+At `a9d6c8caa`, 348/348 selection regressions and 13 actual custody cases passed;
+the original two phase-FIFO failure causes remain unknown. The separately proved
+Git detached-maintenance race was fixed, not attributed to those failures.
+`.24` is closed for failure-evidence retention only, not the unknown original
+cause or generic native deadlines: parent forensics passed 8/8 with a scoped
+cooperative timeout and prelaunch refusal of unsupported timeout commands.
+The burst test retains the original 50ms/two-miss guard; `.11` remains open.
+At `ab5cdbf05`, selected sanitizer semantic findings are zero but the full audit
+fails with 49,158 findings; final B nonmember metadata and parent native QA at
+`7616080a3` are pending, not accepted. Broad/Homed source fixes include five
+registered, native-passing Homed units, not distro/hosted proof. Hosted `8a031f443`
+voice LSan/shadow failures remain; W11 is NOT MET (0/20 PR, 0/2 broad, costs,
+protection/operator proof unmet), W12 NOT RUN. Do not claim broad review-clean or
+complete acceptance. The standalone MDK helper always reports
+`cleanup_complete=false`: otherwise successful command phases refuse lifecycle
+success with nonzero `cleanup_unverified` (scoped cleanup errors remain explicit).
+Historical MDK smoke is command/CTest evidence only, not successful arbitrary-tree
+cleanup, selector custody/finalization or complete coverage.
 
 See `docs/TESTING.md` for current explicit commands and rollout limitations,
 `docs/plans/dependency-aware-testing-ci-2026-10-15.md` for the specification/progress,

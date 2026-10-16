@@ -210,3 +210,170 @@ Observed 2026-10-16 04:16:59 UTC, exact `33a1012767c9db5a46057280178134a544b86af
 `.22` is closed **only by guard/refusal**; full safe wrapped custody is **not implemented**, tracked by `.23` OPEN. The abandoned reserved-group draft left a stubborn wrapped CTest child alive; it is archived outside the repo at `/tmp/nostrc-022-abandoned-wrapper-draft`, **not shipped**, not positive wrapped/custody acceptance. `.24` OPEN tracks the original full-gate fixture invocation's failure/lost trace: the original cause remains unknown and a later diagnostic pass is not a causal fix. Forensics `967172f77` preserves failed private fixtures/logs plus command/line/phase/call stack; success cleanup is unchanged. Four injected failures retained negative exits **1/1/37/1**, and B's fresh full-gate fixture passed, not a causal resolution. `.20` closed as a duplicate, not an implemented fix. `.15`/`.16`/`.17`/`.18`/`.19`/`.21` are closed only for bounded scopes; the final combined result above is bounded regression proof, not full-slice acceptance. `.7`/`.8`/`.9`/original scopes remain open for complete ownership/runtime/header/semantic/profile/platform union, native stress, production sanitizer and hosted evidence. MDK helper **always** has `cleanup_complete=false`; otherwise successful command phases still return nonzero `cleanup_unverified` (explicit scoped failures remain separate). Historical MDK smoke never proves selector custody/finalization or arbitrary-tree cleanup. `.11` remains unresolved.
 
 **W11 NOT MET / W12 NOT RUN:** representative five-sample clean/incremental costs, **20 representative PRs / 2 broad integration runs**, exact release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator cutover proof remain unmet. Keep legacy defaults/gates/triggers/schedules and publisher `disabled`/`shadow`/`enforce` semantics unchanged; do not enable enforcement or remove requirements/protections before W11/operator approval. This is bounded evidence/documentation, not rollout approval.
+
+## 2026-10-16 contained custody and retention checkpoint — final evidence pending
+
+**Docs base:** `7616080a34aa5fd6f19b173b3328d5e350704be1`. This section appends
+current bounded progress without replacing any earlier count, failed receipt or
+source identity. It is **not broad review-clean, profile acceptance or rollout
+approval**. Parent QA513CA's fresh full native QA at that source is **PENDING**;
+B's active nonmember metadata repair also awaits the parent's final checkpoint.
+No result/count from either is inferred here; one focused follow-up will bind
+those final results to their actual sources.
+
+### Sources and implemented contained scope
+
+- A source-coherent checkpoint **`a9d6c8caa6a7435d30399afe771c0ef0ed3d67a0`**:
+  `/tmp/nostrc-a-p2-final-checkpoint.txt` and
+  `/tmp/nostrc-custody-final-checkpoint.json`. B's separate integration source
+  **`ab5cdbf053f67508cb0da219bbd75a11b5d6719b`** is recorded in
+  `/tmp/nostrc-b-a-runtime-integration-checkpoint.json`; A merges it at
+  `ff56cd414`. No independent re-review/approval follows from integration.
+- Explicit `scripts/contained-gate.py prepare` / `run` implement actual locked
+  Cargo preparation for **08/09/011**, with native binary/context/image/toolchain
+  binding and owned non-root CID lifecycle. The distinct profile
+  **`groundhog.linux.arm64.prepared011`** is Linux/aarch64 GCC Debug,
+  instrumentation **none**, `contexts=[local]`, `prepared_peers=[011]`.
+  CI/release omit it as **`not_executed`**; incompatible explicit requests refuse.
+  This eleventh local profile does not replace the ten CI-eligible shadow workers.
+  [TESTING](../TESTING.md#2026-10-16-bounded-custody-checkpoint--final-qametadata-pending)
+  gives help-verified command shapes. No expensive tests/builds were run here.
+- P2 integrity fix **`03212ab83`** seals full retained build/execution membership
+  and bytes before backend publication, preserving nested original log/artifact
+  hashes. The host revalidates actual final bytes **after** owned namespace exit,
+  drain/removal; partial aggregation requires verified attestation. Real escaped
+  TERM-ignoring `setsid` writers that delete/overwrite evidence produce negative
+  diagnostic and partial aggregation with genuine `cleanup_complete=true`;
+  tampered final raw bytes remain retained. The negative fixture's deterministic
+  exit barrier controls attack scheduling, not production sealing/finalization.
+  The earlier probe whose writer died before mutation is **not** fix acceptance.
+
+Peer receipt hashes were verified against the retained files in this docs pass:
+
+| Peer | Preparation receipt SHA-256 | Scope |
+|---|---|---|
+| 08 | `5f2262232e7196dc99bca263075e072c80a3c1a09ed7bd6a704efdbc13dac374` | Earlier actual locked build, revalidated at A source; **not rebuilt**. |
+| 09 | `a97310d94e3fc8d215bc7635649c0e0e0ac82dbca05c91f85282e31a8972321c` | Same bounded preparation/revalidation distinction. |
+| 011 | `5d6fe33d332a32de09a24fdd406bceda1ba9cb29680081f64ce7789578a1ac60` | Same; distinct prepared-native input, not original image-build receipt. |
+
+Exact paths, binary/context hashes, image IDs, CID and final-byte adversarial
+receipts remain in the custody JSON; temporary `/tmp` evidence is not durable
+hosted acceptance storage.
+
+### Raw peer evidence and audits — no promotion
+
+- Raw 011 matrix at **`1405a974a6b163863f48aa9818aa428985da87e9`**:
+  **18/18, zero skips** (15 consumers + 3 fixtures), proof SHA-256
+  `3c6942398d18bcc4666ecff5d1e89b6d44f80feb01c85dac214f749346b93788`.
+  Raw 08 at **`989d286251233aa4b9436199500978cf625c4cb0`**: **3/3, zero skips**,
+  proof `11ffa312f6626846b3dd2dcaf8826a88ee55cc614c3ee80369f387c26addcb79`.
+  At that latter source, separate 09/011 proof
+  `b4c8b312951018de6a928202548f23660801a8ea369c241784eabae99014c0a4`
+  verifies **09 expected incompatibility**, not compatible 09 success.
+  All three proof-file hashes were checked here; these are **raw consumer/CID
+  lifecycle evidence, not selector/profile admission or original Docker builds**.
+- Prepared shared-engine attempt at **`989d28625`** remains **negative**:
+  full-root preaudit **20,977 = 417 unclaimed + 20,560 missing-impact-edge
+  findings**, no external-input findings. It blocks the build; selected
+  postbuild audit was **not run**. Evidence:
+  `/tmp/nostrc-prepared-engine-live/790c780468d14995ac72d6a35f626415/receipt.json`.
+  This is a historical failed audit, **not** a full-root rerun after B integration.
+  Original Docker image-build registrations remain `not_executed`.
+- Optional separately named, explicitly forced prepared011 selected-closure
+  diagnostic: **DEFERRED / NOT IMPLEMENTED**. Approval was conditional on all six
+  review conditions, not a blanket exemption. Historical audit/hash/gaps remain
+  intact; absence of selection false negatives is **UNPROVEN**. No original-profile
+  or sanitizer fallback, complete/release/required-check promotion is authorized.
+- B production `groundhog.linux.sanitizers` at **`ab5cdbf05`**:
+  **412 registrations, 62 primary**, zero selected-primary/fixture-closure
+  semantic findings, but overall input audit **FAILS: 49,158 findings = 347
+  unclaimed registrations + 48,811 nonmember semantic findings** (261 nonmember
+  registrations / 1,923 registration-node pairs). The selected closure's zero
+  does not waive nonmembers or establish full-profile acceptance.
+  `post-input-audit.json` hash in the B checkpoint:
+  `010f0a424c7c4715f3fc30c8c1873790022122ee1adfcc6ea0aad00a26543680`.
+  **B actively fixes nonmember metadata; final counts/source are pending parent
+  checkpoint.** These counts must not be relabeled as final integration totals.
+
+### Regression evidence, distinct causes and bounded retention
+
+At exact **`a9d6c8caa`**, verified retained logs show **348/348 selection tests,
+zero skips, 98.764s**, and **13 actual Docker custody cases, zero skips, 10.552s**.
+Log SHA-256 anchors respectively:
+`ac886859c8a1d1c7bdf13d7458fb463e21ef68a0fc2ffbcbb1e0916f5ff462ce` and
+`55029d63f4e220cbf81d557a94fa2f20008e085991dc72e5f4a2cd5a04364bc9`.
+A also records six shell suites, four statics, full actionlint/ShellCheck and
+whitespace passing. This does not overwrite B's **342 passed / 2 failed of 344**
+at `ab5cdbf05` or the investigative 346-case run's three Git copy/cleanup errors.
+
+The original two phase-FIFO readiness failure causes are **UNKNOWN** despite
+later passes. Instrumented children were alive/ready at 0.12/0.28s, not a recovered
+original failure. `a9d6c8caa` retains early child exit/output/process state and
+fixture under `nostrc-phase-readiness-failure-*`; original 20s guards/assertions
+remain. The separately **proved** Git 2.54 detached-maintenance/repack race is
+fixed by **`60cd24c5c`**, invocation-local `maintenance.autoDetach=false` /
+`gc.autoDetach=false`, with actual Trace2 regression over all three controlled
+helpers. No global settings change; **not attributed to the FIFO failures**.
+
+C handoff `/tmp/nostrc-review-fixes-8133D60A.GiUxAZ/HANDOFF.txt` records:
+
+- **`23ca21c19`** restores the original **50 unpaced store cycles**, nonblocking
+  iteration after each; heartbeat dispatches no work. Original strict **>50ms** /
+  **<=2 missed** guard and **>5 actual callbacks** remain. First/last three-stall
+  controls fail with three misses; burst-sensitive control fails with **49** on
+  native/Linux ASan (not the rejected paced zero-miss result). Native plain,
+  native ASan/UBSan and Linux/arm64 ASan/UBSan each pass one registration/eight
+  GLib cases. **`.11` OPEN: historical hosted cause unknown**, no waiver.
+- **`d1c20feb4`** removes generic native 180s kill deadlines; real case log/JSON
+  precede launch and survive unexpected exit. Only the fixed cooperative helper
+  permits timed observation after readiness: timeout saved, pipe EOF, known
+  nonspawning child actually reaped, helper exit **124**, real Bash ERR/EXIT
+  traps and parent wait. Unsupported timeout commands **refuse before launch**.
+  This is not arbitrary-tree/session-escape custody or a generic native deadline.
+
+The handoff's native/container-local Linux forensics **8/8** is separate from
+actual parent `/tmp/nostrc-final-integration-forensics.log`: **8/8, 71.567s**,
+retaining intentional-failure evidence under
+`/var/folders/mt/rcd9cp6j61sbdjzt0r576yv40000gn/T/nostrc-full-gate-forensics-8ac9ni_4`.
+Parent reports **`.24` CLOSED for retention only** after C's reopened checkpoint;
+the original full-gate fixture cause remains **unknown**. Native arbitrary-tree
+**`.23` OPEN**, legacy CTest cancellation and legacy `mdk-gate.py` remain unchanged:
+`cleanup_complete=false`, nonzero **`cleanup_unverified`** after otherwise
+successful commands. No old smoke or new container proof promotes those scopes.
+
+### Broad/Homed sources, hosted failures and pending final integration
+
+Source-branch commits (inspected directly, not assumed integrated at docs base):
+**`1cc6af107`** adds pinned/checksummed Blueprint 0.22.2, broad BP/fuzz build
+prerequisites, BP metrics opt-in and json-event corpus mapping;
+**`7b77046a0`** corrects the Homed unit to verify idempotence/refused rename;
+**`20810a780`** registers `homed_manifest`, `homed_cache`, `homed_cache_config`,
+`homed_uid_map`, `homed_groups`, with exact selector/set check and
+`--no-tests=error`. Parent reports **native 5/5** for those units; no four-distro,
+systemd/FUSE, full workflow or hosted acceptance. Parent/B own final integration
+and workflow/metadata fingerprint reconciliation. **No component bump** for
+these internal/test-only/docs changes; no shipped API/runtime correction claimed.
+
+Read-only W11 audit `/tmp/nostrc-0cfsg5-w11-audit-20261016T062756Z/SUMMARY.md`
+is tied to hosted **`8a031f443ac84850345a4cf0fb6ab5a8c3b32814`**, not today's
+unmerged source fixes. [Groundhog run 38856570188](https://github.com/chebizarro/nostrc/actions/runs/38856570188)
+failed sanitizer voice LSan **120 bytes** with external **libsrt-gnutls** allocation
+stack (not permission to suppress it); ordinary Groundhog passed.
+[Shadow 38856570439](https://github.com/chebizarro/nostrc/actions/runs/38856570439)
+failed selected workers, broad Homed/BP/fuzz families and aggregates; actual
+validation has `passed=false`, `enforcement_ready=false`,
+`complete_gate_eligible=false`, `diagnostic_eligible=false`. `complete=true`
+describes requested aggregation, **not success**. Local workflow fixes are not a
+hosted rerun. Legacy Grotto success is not PR-comparison/broad acceptance.
+
+**W11 NOT MET:** **0/20 accepted PR comparisons; 0/2 successful broad integrations**.
+Representative seven-workload clean/incremental five-sample costs/savings and
+regression thresholds, exact-tag/package/dry-run release proof, selected-skip /
+cancellation / merge-group proof and no-gap protection/operator approval remain
+unmet. Audited master was unprotected (404), rulesets/rules empty, merge queue
+null; no current-settings change or live refresh is claimed by this docs task.
+**W12 NOT RUN**. No default, `enforce`, schedule/trigger, threshold/exclusion,
+required-check or protection change. Parent final native QA513CA at `7616080a3`
+and final B metadata checkpoint remain explicit **PENDING** follow-up inputs.
+This task edits only the four authorized docs, with no code/tracker/settings,
+Oracle, expensive/full-MDK run, push or merge.
