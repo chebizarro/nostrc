@@ -203,7 +203,13 @@ print('command executed', flush=True)
                 self.assertEqual(receipt["outcome"], expected)
                 self.assertFalse(receipt["diagnostic_eligible"])
                 self.assertNotEqual(receipt["observed_executions"].get("command.actual"), "passed")
-                self.assertTrue((directory / "command-command.actual.log").read_text())
+                log = directory / "command-command.actual.log"
+                self.assertEqual(log.read_bytes(), b"cancelling\n" if expected == "cancelled" else b"waiting\n")
+                status = r._read(str(log) + ".process.json")
+                self.assertEqual(status["outcome"], expected)
+                self.assertEqual(receipt["process_error"], status)
+                self.assertEqual(receipt["job_conclusion"], "failure")
+                self.assertFalse(receipt["complete_gate_eligible"])
 
     def test_command_cli_mixed_selected_skip_stays_failure(self):
         self.cli_run(source_only=False)
