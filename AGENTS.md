@@ -21,48 +21,49 @@ scripts/install-hooks.sh
 
 This installs the fast pre-push hook (static checks, no build; CI builds and tests).
 
-**Staged testing migration (updated 2026-10-16):**
-Explicit diagnostic commands are now implemented: `scripts/test-gate.sh --help`
-and `scripts/test-gate.sh --base <sha> --head <sha> --explain` (plan only).
-`--profile libgo.macos.asan` selects the current standalone macOS/arm64 libgo
-ASan/UBSan diagnostic profile, not native root or complete CI coverage.
-`NOSTRC_SELECTIVE_GATE=1` adds the diagnostic adapter to existing push gates;
-it does not replace them. A successful bounded diagnostic and `aggregate --partial`
-may pass while remaining `complete_gate_eligible=false`; excluded registrations
-(including the native libgo stress case) stay visibly `not_executed`, never passed.
-Missing capabilities and unsupported execution fail visibly. The outer adapter
-supports ordinary unwrapped `command`/`build_contract` checks and legacy CTest
-lanes. Selected non-CTest checks (including mixed lanes) requiring `display` or
-`private_bus` now refuse **before launch**: `.22` is closed by guard/refusal only,
-not a wrapped-execution drain/custody fix. Capabilities are never dropped and no
-execution receipts are fabricated. Other unsupported capabilities stay refused.
-Full safe wrapped custody is unimplemented (`.23` OPEN); legacy CTest cancellation
-is unchanged. Explicit
-`NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` routes the Linux
-sanitizer gate through actual separate configure/build/test phases, environment
-fingerprints and input audits; legacy defaults are unchanged. Shared-route
-quarantine/retry overrides fail explicitly. `.16` is closed only for bounded
-unwrapped commands and actual shared Docker phases, not positive wrapped execution.
-All ten authored profiles have independent shadow worker routes (`.21` bounded
-scope closed), not hosted acceptance. `.24` remains open for the original
-full-gate fixture failure/lost trace; a later diagnostic pass is not a causal fix.
-Forensics `967172f77` now preserves failed private fixtures/logs plus command,
-line, phase and call stack; success cleanup is unchanged. The original cause
-remains unknown. Do not claim broad review-clean or complete acceptance. The standalone
-MDK helper always reports `cleanup_complete=false`: otherwise successful command
-phases refuse lifecycle success with nonzero `cleanup_unverified` (scoped cleanup
-errors remain explicit). Historical MDK smoke is command/CTest evidence only, not
-successful arbitrary-tree cleanup, selector custody/finalization or complete coverage.
+**Staged dependency-aware testing — operational rules:**
+- `scripts/test-gate.sh --help` documents explicit diagnostics; `--explain` is
+  plan-only. Profile-restricted execution is not complete CI coverage;
+  `libgo.macos.asan` is standalone macOS/arm64 libgo ASan/UBSan, not native root.
+  `NOSTRC_SELECTIVE_GATE=1` adds diagnostics to existing push gates, never replaces
+  them. Partial success cannot establish complete-gate or release acceptance.
+- The outer adapter supports ordinary unwrapped `command`/`build_contract` checks
+  and legacy CTest lanes. Missing/unsupported capabilities fail visibly. Selected
+  non-CTest checks needing `display`/`private_bus`, including mixed lanes, refuse
+  **before launch**. Never drop capabilities or fabricate receipts. Safe arbitrary
+  native-tree/wrapped custody is unimplemented; legacy CTest cancellation is unchanged.
+- `NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` explicitly selects
+  separate configure/build/test environments, fingerprints and full input audits.
+  Enforce authored execution options and independent profile/resolved/phase
+  configuration agreement; shared quarantine/retry overrides refuse.
+- Only `groundhog.linux.sanitizers` admits its **exact reviewed nonmember list and
+  required fixture closure**, bound to fresh source/profile/context/export/partition/
+  build/audit identity. Only unclaimed membership findings are removed: omitted
+  targets remain built as required and source/Ninja/header/runtime audited.
+  Omitted registrations stay `not_executed`; `complete=false` and
+  `complete_gate_eligible=false`. Complete/release promotion, including nested
+  receipts, refuses. No selected-only audit fallback or automatic architecture/
+  prepared-profile admission.
+- `scripts/contained-gate.py prepare` / `run` provide attested locked 08/09/011
+  preparation and verified CID lifecycle/final retained bytes. The distinct
+  `groundhog.linux.arm64.prepared011` route is **local-only contained Linux/arm64**,
+  not native arbitrary-tree custody or original Docker image-build execution.
+  Raw peer consumers do not establish selector/profile acceptance; full audits
+  remain required. The optional prepared selected-closure diagnostic is deferred.
+- Legacy `mdk-gate.py` always reports `cleanup_complete=false`; otherwise successful
+  commands return nonzero `cleanup_unverified`, with scoped cleanup errors separate.
+  Do not promote historical smoke into successful arbitrary-tree lifecycle proof.
+- Shadow workflows are additive, not accepted required checks. Publisher
+  `NOSTRC_DEPENDENCY_RELEASE_MODE` is `disabled` by default; `disabled`/`shadow`
+  publication decisions are not validation attestations. No default/enforcement,
+  legacy gate/trigger/schedule or protection cutover before **W11 evidence and
+  operator approval**. Preserve all mandatory requirements below.
 
-See `docs/TESTING.md` for current explicit commands and rollout limitations,
-`docs/plans/dependency-aware-testing-ci-2026-10-15.md` for the specification/progress,
-and `docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md` for
-bounded evidence. Shadow workflows are additive, not accepted required checks.
-Publisher dependency validation uses `NOSTRC_DEPENDENCY_RELEASE_MODE`:
-`disabled` (source default), `shadow`, or `enforce`; disabled/shadow publication
-decisions are not successful validation attestations. Do not enable enforcement
-or remove legacy gates/triggers/schedules before W11 evidence and operator cutover.
-Keep all existing build/test, keychain and push requirements below unchanged.
+Use [TESTING](docs/TESTING.md) for commands and current bounded results, the
+[plan/progress index](docs/plans/dependency-aware-testing-ci-2026-10-15.md#execution-index)
+for acceptance requirements, and the
+[staged receipt](docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
+for source-specific counts, hashes, bead status, historical failures and limits.
 
 ---
 

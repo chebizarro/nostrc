@@ -1,5 +1,10 @@
 # Dependency-aware testing and CI/CD
 
+> **Current progress: [§15](#15-final-focused-progress--2026-10-16-df2b23612).**
+> The status summary immediately below and earlier same-date progress sections
+> are **HISTORICAL / superseded snapshots**. Their pending statements and failed
+> audits retain their original source identities; §15 records completed final gates.
+
 **Status (2026-10-16):** Integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` implements actual separate phase environments/fingerprints/audits, ordinary outer command/build contracts, an explicit shared sanitizer phase route, 98 exact command inputs/87-job accounting and independent workers for all ten authored profiles. This is not production/hosted or W11 acceptance. Review R1 / `.22` is CLOSED **by prelaunch guard/refusal only** at `8179275b2`: selected command/build-contract lanes needing display/private bus, including mixed lanes, are refused without dropping capabilities or fabricating receipts. No drain fix or wrapped positive acceptance; full custody `.23` and unknown full-gate fixture failure/lost-trace `.24` stay OPEN. Parent final combined at `2d64a7ac2`: **307/307 passed, 0 skips, 125.303s**; subsequent changes are docs/failure forensics only. Parent confirms at `97e393cba`: **all six shell suites, four static checkers, full actionlint including ShellCheck and range whitespace passed** (`/tmp/nostrc-phase-final-test-*.log`); no rereview/full-slice acceptance is claimed. Parent native combined **306/306 passed, 0 skips, 146.958s** at `90a1b675f`; production Linux/x86_64 command **306 passed, 0 skips, 405.309s** at `7e3745463` with 99 audited hashes/no gaps. These do not invalidate the wrapped-cancellation adversary or confer full-slice acceptance. Fresh native root build at `7fdadd251` passed, BUILD ONLY/Groundhog OFF. MDK always refuses full lifecycle success; `.11` cause, full union and W11/W12 remain open. No default/enforce/threshold/schedule/protection cutover. Current progress is §13; §§8–12 and earlier review/verification receipts retain their dated SHAs and limits.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
@@ -951,6 +956,13 @@ Rollback restores old broad required jobs before removing the new requirement. K
 
 ### Execution index
 
+**Latest bounded checkpoint (2026-10-16):** [§15](#15-final-focused-progress--2026-10-16-df2b23612)
+records exact sanitizer nonmember/configuration contracts and completed
+A/B/native/parent gates. §14 remains the historical, superseded pending snapshot.
+W2–W10 progress is not full acceptance;
+**W11 NOT MET / W12 NOT RUN**. The index's “Done when” column remains the required
+acceptance contract, not a claim that those conditions have passed.
+
 Sizes describe reviewable implementation slices, not time estimates: S = focused adapter or tests, M = one substantial seam, L = cross-family integration. Split L items into beads before implementation; this index is not a replacement for `bd` tracking.
 
 | Item | Goal | Done when | Key files | Dependencies | Size |
@@ -1152,6 +1164,9 @@ Parent confirms at clean `9c03e7712`: **244/244 Python tests, 0 skips, 58.163s**
 
 ## 13. Bounded phase/adapter handoff — 2026-10-16, 2d64a7ac2
 
+> **HISTORICAL snapshot; current status superseded by [§15](#15-final-focused-progress--2026-10-16-df2b23612).**
+> Preserve the original receipts/negative results below at their recorded sources.
+
 **Source:** `2d64a7ac22bcc08018d4ffdec91fee800f54df6f`, fast-forwarded into the assigned docs worktree. [Bounded phase acceptance](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-bounded-phase-acceptance--2d64a7ac2) records source-specific proof and remaining gates. This supersedes §§11–12's blanket execution refusals, **not their historical receipts**. No runtime/core/inventory/workflow changes; the historical phase review is preserved with an appended guard-only resolution. **No component bump** for internal testing/docs.
 
 | Scope | Implemented / remaining acceptance |
@@ -1169,3 +1184,70 @@ Parent confirms at clean `9c03e7712`: **244/244 Python tests, 0 skips, 58.163s**
 **Native/hosted evidence stays separate:** fresh root configure/all-default-target **BUILD ONLY** at `7fdadd251` passed, external private build/caches and unchanged keychain guards, **Groundhog OFF**. No compiled sources/CMake changed since prior 437-case QA, so no new CTest was requested/run; its **432 passed / 5 skipped** receipt keeps its old SHA. Historical hosted `33a101276` root ASan was Linux **266 passed / 1 skipped**, macOS **267 passed / 1 skipped**, while Debian found no tests. Heartbeat passed those samples but `.11` cause remains unresolved; static cancellation/shadow-routing failures led to `.19`/`.21`, not fresh hosted acceptance.
 
 **Rollout unchanged:** `.7`/`.8`/`.9`, original scopes and `.11` remain open for complete ownership/runtime/header/semantic/profile union, production sanitizer/MDK/hosted evidence and causal heartbeat diagnosis. W11 still requires representative five-sample costs, **20 PR / 2 broad integration runs**, release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator proof; W12 cleanup is NOT RUN. No default, `enforce`, threshold/exclusion, requirement/protection, trigger or schedule change. Parent owns final verification/fix integration and landing; no merge back or push by this docs task.
+
+## 14. Contained custody/retention progress — 2026-10-16, final evidence pending
+
+> **HISTORICAL / superseded pending snapshot**, including the 49,158-findings
+> audit. [§15](#15-final-focused-progress--2026-10-16-df2b23612) records final
+> A/B/native evidence and completed parent gates; the old failed audits stay failed.
+
+**Documentation base:** `7616080a34aa5fd6f19b173b3328d5e350704be1`.
+[Source-grounded checkpoint](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-contained-custody-and-retention-checkpoint--final-evidence-pending)
+records A `a9d6c8caa`, B `ab5cdbf05`, C review fixes and actual parent forensics.
+Earlier §§8–13 counts/statuses/receipts remain historical, not rewritten. This
+section supersedes blanket current refusals only for the new contained Linux
+route; it does not claim full wrapped/native, profile-union or hosted acceptance.
+
+| Execution-index scope | Latest bounded progress / remaining acceptance |
+|---|---|
+| W5–W6 / contained route | Explicit `contained-gate.py prepare` / `run`, attested locked 08/09/011 builds, local-only `groundhog.linux.arm64.prepared011`, inspected CID lifecycle and post-exit retained membership/byte verification. Actual escaped TERM-ignoring writer deletion/overwrite yields negative diagnostic/partial aggregate with cleanup independently true. No arbitrary native-tree claim. |
+| W4–W7 / prepared admission | Revalidated earlier peer builds, not fresh builds. Raw 011 **18/18**, 08 **3/3**, 09 expected incompatibility remain consumer-only evidence. Historical full-root **20,977** findings still record the blocked attempt; no current rerun inferred. Original Docker image-build registrations remain `not_executed`. Optional selected-closure diagnostic **DEFERRED, not implemented**; full-root audit remains mandatory, no absence-of-false-negatives proof. |
+| W4–W7 / sanitizer ownership | At B `ab5cdbf05`, selected primary/fixture closure semantic findings **zero**, full audit **FAILS: 49,158 = 347 unclaimed registrations + 48,811 nonmember semantic findings**. B is actively fixing nonmember metadata; await parent final checkpoint before new counts. No exception or profile acceptance. |
+| W6 / `.23` and legacy MDK | Native arbitrary-tree custody remains OPEN/unsupported. Legacy `mdk-gate.py` unchanged: `cleanup_complete=false`, otherwise successful commands return nonzero `cleanup_unverified`. Container-bounded lifecycle does not promote legacy cleanup. |
+| W5–W6 / original phase failures | A **348/348** selection regressions and **13 actual custody cases**, zero skips, at `a9d6c8caa`; six shell suites/four statics/full actionlint passed. Original two FIFO readiness causes **unknown** despite later passes; new raw child/exit evidence retention keeps original guards. Separate traced Git detached-maintenance race fixed at `60cd24c5c`, no global settings change or FIFO-cause inference. |
+| W6 / `.24` retention | C `d1c20feb4` removes generic native deadlines; fixed cooperative timeout reaps only its known child, unsupported timeout commands refuse before launch. Parent actual forensics **8/8**. `.24` CLOSED **for retention only**, not the unknown original cause or generic native cleanup. |
+| W7 / `.11` | `23ca21c19` restores 50 unpaced store cycles, original strict >50ms / <=2 missed guard and >5 real callbacks; burst-sensitive control fails with 49 misses. Native plain/native ASan/Linux-arm64 ASan bounded cases pass; historical hosted heartbeat cause remains unknown, `.11` OPEN. |
+| W8–W9 / broad and Homed | Source-branch commits `1cc6af107`, `7b77046a0`, `20810a780`: pinned Blueprint/prerequisites/metrics/corpus setup, refused-rename unit correction, five registered Homed units with exact zero-test-refusing selection. Parent reports native **5/5**; not distro/systemd/FUSE or hosted broad acceptance. Final integration/fingerprints belong to parent/B. |
+| W11 | Read-only audit at hosted `8a031f443`: voice LSan 120B with external libsrt-gnutls stack; shadow failed. **NOT MET: 0/20 accepted PR comparisons, 0/2 successful broad integrations**, representative five-sample costs, exact release/package/dry-run and no-gap protection/operator proof unmet. Local source repairs do not retroactively pass hosted runs. |
+| W12 | **NOT RUN**. No default, `enforce`, threshold/exclusion, trigger/schedule, required-check or protection changes. |
+
+**Focused follow-up pending:** parent QA513CA is running fresh full native QA at
+`7616080a3`; no result claimed here. Parent will supply final B metadata audit /
+source identity and integration evidence for one focused documentation follow-up.
+The old root QA counts are not reused as that result. Temporary evidence paths
+and verified hashes are in the staged receipt, not durable hosted acceptance.
+**No component bump:** this docs pass and cited internal/test-only fixes add no
+shipped API/artifact change. No code, tracker or settings edits, Oracle, push or
+merge by this task; parent owns remaining integration/acceptance/landing.
+
+## 15. Final focused progress — 2026-10-16, df2b23612
+
+**Parent integrated source:** `df2b236124254450ac1645146fd0e3a4958a53c7`, not
+master. [Final focused evidence](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-final-focused-checkpoint--df2b23612)
+supersedes §14's pending A/B/native status only; prior SHAs, counts and failed
+audits/wrappers remain unchanged. **Final parent gates completed at unchanged
+`df2b23612`: selection 382/382, zero skips, 104.637s; actual Docker custody
+13/13, zero skips, 12.771s; all six shell suites, four statics, full actionlint
+including ShellCheck and range whitespace PASS**, no new failures/waivers.
+Logs `/tmp/nostrc-final-reviewed-*`; exact suite names are in the staged receipt.
+These integrated-source results remain distinct from A/B/native and hosted proof.
+
+| Index scope | Completed bounded progress / still-required acceptance |
+|---|---|
+| W4–W5 / B metadata | At `8d052ca84`, **412** registrations have zero missing semantic/runtime/header edges; **357/357** selection tests pass. Original arm64/parallel-4 full audit still **FAILS: 347 unclaimed names**. No final-source or authored x86_64 production admission. **83/87** workflow-job mappings remain explicitly unsupported. |
+| W5–W7 / exact diagnostic admission | `919b00173` allows **only `groundhog.linux.sanitizers`**, exact **347 reviewed nonmembers + 65 required fixture closure = 412** fresh registered partition and source/profile/context/export/build/audit binding. Only unclaimed membership is removed; all omitted source/Ninja/header/runtime inputs and required omitted targets remain audited/built. Omissions stay `not_executed`, complete/enforcement false; nested/complete/release promotion rejects. No prepared/arm64 automatic admission or selected-only fallback. |
+| W5–W7 / actual review fixes | `995be8d9e` pins authored **parallelism 2 / timeout 2700s**, including explicit shared-route jobs. Confirmed P2 at `ac222f1c6` allowed rehashed Release receipt versus Debug retained phase; **`db9eb03a6`** independently checks declared profile, resolved/backend and retained phase configuration, with aggregate phase/profile composition. Original contradictory input and consistent Release-phase rewrite both now refuse; no broad rereview. |
+| W5–W6 / exact A QA | At **`db9eb03a6`**, **382/382** selection tests, **13 actual Docker custody cases**, no skips; six shell suites/four statics/actionlint including ShellCheck/whitespace pass. Real miniature configure/build/full audit/CTest and promotion/configuration adversaries establish contract behavior, not production execution or full-root runtime/union. |
+| W8–W9 / BP | `139aaa185` / `adf13917e` (A equivalents `b8975d3d2` / `bf3b5a0ad`) repair report layout/discovery; **14 unchanged actual regular workloads + 14 real report rows**, seven reporting regressions bound to `selection.contract` at `ac222f1c6`. **`.26` CLOSED**, not extended/full broad/W11 cost acceptance. |
+| W8–W9 / Homed and compiler | **Five Homed units pass native and Linux** with mandatory exact listing/negative controls; **`.27` CLOSED**. Group test matches preexisting refuse-rename security; no runtime change or four-distro/systemd/FUSE acceptance. **`.25` CLOSED for compiler defect only**; **`.28` Adw build / `.29` JSON-GLib leak OPEN**, no source fix/waiver claimed. |
+| Compiled root QA | Separate **`a47807050`** fresh configure/all-default build/full serial **437 CTests: 432 pass / 5 existing skips / 0 fail**; phases/wrapper **0**, owned child reaped, bus/socket gone, original-HOME keychain guards **0/0**. Groundhog/Homed opt-ins OFF; not sanitizer/profile-union/arbitrary-tree proof. Previous `7616080a3` wrapper **143 stays failed**. |
+| W11–W12 / hosted | Feature branch pushed, master unchanged at checkpoint; nonpublishing **38873978927** at older `a47807050` remains **QUEUED**, not acceptance. **W11 NOT MET: 0/20 PR, 0/2 broad, cost/release/protection/operator proof unmet; W12 NOT RUN**. Prior `8a031f443` voice/shadow failures unchanged. |
+
+**Unchanged boundaries:** native arbitrary-tree `.23` OPEN, legacy MDK
+`cleanup_unverified`, optional prepared partial diagnostic **DEFERRED**; `.24`
+closed for retention only, original FIFO/heartbeat causes remain unknown.
+Prepared raw consumer receipts are not refreshed or promoted by sanitizer-only
+accounting. No general default/enforce/schedule/required-check/protection changes.
+No component bump: internal tooling/tests/docs only. Parent owns final gates,
+source-specific acceptance and landing; no source/tracker/settings edits, broad
+Oracle/review, push or merge by this docs task.

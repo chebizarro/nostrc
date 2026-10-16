@@ -161,6 +161,10 @@ change, exclusion, retry waiver or runtime correction.
 
 ### Current bounded handoff — 2d64a7ac2, 2026-10-16
 
+> **HISTORICAL snapshot.** Current status is superseded by the
+> [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612).
+> The source-specific results and negatives below are preserved, not relabeled.
+
 Metadata `.17` records **98 exact `selection.contract` inputs**, detects new
 tracked/discoverable helpers and accounts for the independent shadow jobs. Actual
 production Ubuntu 24.04 Linux/x86_64 `static.policy` command execution at
@@ -218,6 +222,161 @@ MDK custody/cleanup, complete ownership/runtime/header/semantic/profile union,
 production sanitizer/hosted proof and W11/W12 remain unmet. No default/enforcement,
 threshold, schedule, requirement or protection cutover before W11/operator approval.
 **No component bump:** internal testing/documentation only.
+
+### 2026-10-16 bounded custody checkpoint — final QA/metadata pending
+
+> **HISTORICAL / superseded pending snapshot**, including the 49,158-findings
+> audit below. See the [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612)
+> for current completed gates and final A/B/native evidence. Pending statements
+> describe only this earlier checkpoint; its failed audits remain failed.
+
+This dated update supersedes earlier *current-status* wording only; all earlier
+counts, failures and source-specific receipts remain historical. The [detailed
+checkpoint](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-contained-custody-and-retention-checkpoint--final-evidence-pending)
+records sources and hash anchors. Documentation base is `7616080a3`; parent
+QA513CA's fresh full native QA at that source is **PENDING**, not a result.
+B is actively repairing nonmember metadata; await the parent's final checkpoint
+before quoting any replacement full-audit count.
+
+**Explicit contained route, local only.** `scripts/contained-gate.py prepare`
+builds locked native peers (08/09/011), binds binary/context/toolchain/image
+receipts and verifies owned CID lifecycle. `run` admits the distinct
+`groundhog.linux.arm64.prepared011` projection in a contained Linux namespace,
+not legacy native wrapped custody or the original Docker image-build fixtures.
+It is Linux/aarch64, GCC Debug, **not sanitizer coverage**. Its `contexts=[local]`
+means CI/release omit it as `not_executed`; explicit incompatible requests refuse.
+The original ten CI-eligible profiles retain their independent shadow routes.
+Inspect exact interfaces without executing builds:
+
+```sh
+python3 scripts/contained-gate.py --help
+python3 scripts/contained-gate.py prepare --help
+python3 scripts/contained-gate.py run --help
+```
+
+For an intentional, separately provisioned local attempt, the implemented shape
+is below. Variables denote exact committed source, fresh evidence destinations,
+architecture-compatible images and actual preparation receipt/plan paths; these
+are **not runnable acceptance receipts**. Initialize/verify required gitlinks;
+`run --gitlink-source PATH=OBJECT_REPO` optionally supplies exact local objects.
+
+```sh
+python3 scripts/contained-gate.py prepare --source-root "$SOURCE" \
+  --evidence-dir "$PREP_EVIDENCE" --version 011 \
+  --builder-image "$BUILDER_IMAGE" --rust-image "$RUST_IMAGE"
+python3 scripts/test-plan.py plan --repo "$SOURCE" --base "$BASE" \
+  --head "$HEAD_SHA" --context local --mode broad \
+  --profile groundhog.linux.arm64.prepared011 --output "$PLAN"
+python3 scripts/contained-gate.py run --source-root "$SOURCE" \
+  --evidence-dir "$RUN_EVIDENCE" --image "$LINUX_IMAGE" --plan "$PLAN" \
+  --profile groundhog.linux.arm64.prepared011 --peer-receipt "$PEER011_RECEIPT"
+```
+
+The full-root input audit still blocks prepared-profile acceptance. Historical
+raw 011 **18/18**, 08 **3/3**, and 09 **expected incompatibility** are separate
+consumer evidence, not selector/profile/original-image-build success. Earlier
+locked peer builds were revalidated, not rebuilt at the latest SHA. The optional
+separately named selected-closure diagnostic is **DEFERRED / not implemented**;
+no partial audit exception or selection false-negative proof is claimed.
+
+At A `a9d6c8caa`, **348/348 selection regressions** and **13 actual Docker custody
+cases** passed with no skips. Finalization seals retained membership/bytes and
+revalidates after namespace exit; actual escaped-writer deletion/overwrite
+adversaries refuse diagnostic/partial aggregation while retaining failed bytes.
+This does not fix native arbitrary-tree `.23` or legacy `mdk-gate.py`'s nonzero
+`cleanup_unverified`. The original two phase-FIFO causes remain **unknown** despite
+later passes; `60cd24c5c` fixes a separately traced detached Git-maintenance race.
+Parent forensics **8/8** supports `.24` closed **for retention only**, not original
+cause/generic native deadlines. Burst test fix `23ca21c19` restores all 50 unpaced
+cycles with the original strict >50ms / <=2 missed guard; `.11` stays open.
+
+At B `ab5cdbf05`, selected sanitizer primary/fixture closure has **zero semantic
+findings**, but the full audit **fails: 49,158 = 347 unclaimed registrations +
+48,811 nonmember semantic findings**. These are checkpoint-specific findings,
+not test results or final metadata totals. Broad/Homed commits `1cc6af107`,
+`7b77046a0`, `20810a780` add prerequisites/pinned Blueprint, correct refused-rename
+expectations and register/select five Homed units; the parent reports native
+**5/5**, not the four-distro/systemd/FUSE/hosted proof.
+
+The read-only hosted audit at `8a031f443` records voice LSan **120 bytes** with an
+external libsrt-gnutls stack and failed shadow execution, not accepted integration.
+**W11 NOT MET: 0/20 accepted PR comparisons, 0/2 successful broad integrations;
+representative costs, release/protection/operator proof unmet. W12 NOT RUN.**
+No default, enforcement, schedule, threshold/exclusion, required-check or
+protection changes; **no component bump** for these internal tests/docs.
+
+### 2026-10-16 final focused checkpoint — df2b23612, bounded scopes only
+
+Parent integration source **`df2b236124254450ac1645146fd0e3a4958a53c7`** is not
+master. This dated section supersedes the preceding pending A/B/native status,
+**not historical receipts**. The [final focused evidence](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-final-focused-checkpoint--df2b23612)
+records exact sources, review fixes and hashes. **Final parent gates completed at
+unchanged `df2b23612`: selection 382/382, zero skips, 104.637s; actual Docker
+custody 13/13, zero skips, 12.771s; all six shell suites** (`test-pre-push.sh`,
+`test-full-gate.sh`, `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`,
+`test-sanitizer-gate.sh`, `test-test-gate.sh`), **four statics, full actionlint including
+ShellCheck and range whitespace PASS**. No new failures/waivers. Logs:
+`/tmp/nostrc-final-reviewed-*`; these completed integrated-source gates are
+separate from A's results below and are not global readiness or hosted acceptance.
+
+- **A `db9eb03a6`: 382/382 selection tests, zero skips; 13 actual Docker custody
+  cases, zero skips; six shell suites, four statics, full actionlint/ShellCheck
+  and whitespace passed.** These are final A-source contract/custody regressions,
+  not production sanitizer or full-root/runtime-union acceptance.
+- **Exact nonmember diagnostic admission only for `groundhog.linux.sanitizers`:**
+  fresh registration partition must equal **347 reviewed nonmembers + 65 required
+  fixture closure = 412**. Only `unclaimed_registration` membership findings are
+  removed for this bounded accounting; omitted source/Ninja/discovered-header/
+  runtime inputs and required omitted build targets stay audited/built. Every
+  omitted registration stays **`not_executed`**, complete/enforcement false;
+  complete/release and nested promotion refuse. Authored **parallelism 2 /
+  timeout 2700s** are required, including explicit shared-route job options.
+  No automatic prepared011 or arm64 admission; no selected-only audit fallback.
+- **Confirmed configuration P2 fixed at `db9eb03a6`:** backend/resolved/retained
+  phase configuration must equal independently declared profile build type;
+  aggregate independently checks phase/profile composition. The review's original
+  rehashed Release-receipt/Debug-phase input now rejects, as does a consistent
+  Release-phase rewrite against the Debug profile. This is a specific resolution,
+  **not broad rereview/approval**. Real miniature configure/build/full audit/CTest
+  and negative promotion/configuration controls are not a production receipt.
+- **B `8d052ca84`:** all **412** configured registrations now have **zero missing
+  semantic/runtime/header edges**, with **357/357** selection tests passed there.
+  Its original arm64/parallel-4 diagnostic **still failed on 347 unclaimed names**;
+  later accounting does not retroactively pass it or attest the final source.
+  **83/87 workflow-job mappings remain explicitly unsupported**. Authored native
+  Linux/x86_64 production execution/audit on final source is **not yet proved**.
+- **Bounded broad repairs:** BP `139aaa185` / `adf13917e` repairs runner/reporting
+  layout and selection-suite discovery: **14 unchanged actual regular workloads,
+  14 real report rows**, seven reporting regressions included in
+  `selection.contract`; `.26` closed. Homed **five units pass on native and
+  Linux**, with mandatory exact listing/negative controls; `.27` closed, not
+  four-distro/systemd/FUSE proof. Group expectations now match the preexisting
+  refuse-rename security contract; no runtime change. `.25` closed for the
+  LibFuzzer compiler defect only. **`.28` Adw build / `.29` JSON-GLib leak OPEN**;
+  no source fix, suppression or waiver is implied.
+
+**Fresh native QA is complete at its own source `a478070509569c26917dd5fb13a548b1f68eade9`:**
+configure/all-default-target build/full serial CTest all exit **0**;
+**437 registrations, 432 passed / 5 existing skips / 0 failures**. Corrected
+wrapper/finalization **0**, direct owned child explicitly reaped, bus daemon and
+socket absent, read-only original-HOME keychain guards **0/0**. Required safe
+backend flags, private HOME/XDG/bus/Secret Service and loopback-only sandbox were
+used. Skips are the unconfigured TCP case and four existing signer UI cases,
+not passed coverage. **Groundhog and Homed opt-ins OFF**: no sanitizer, live peer,
+rendered GUI, selector/profile-union or arbitrary-tree acceptance. The earlier
+`7616080a3` wrapper **143 remains a failure**, not relabeled by this fresh run.
+Report: `/private/tmp/nostrc-final-native-a478070.C6w5fP/report.md`, SHA-256
+`9121379d5b3ff43e27ac5219547d484d0ca55eb90abaf9e4270e2dc407d70aaf`.
+
+At this checkpoint the feature branch is pushed, master unchanged; nonpublishing
+hosted run **38873978927** at older `a47807050` remains **QUEUED**, **not accepted
+execution**. Prior hosted `8a031f443` voice/shadow failures and original FIFO /
+heartbeat unknown causes remain. `.24` closed **for forensics retention only**;
+native arbitrary-tree `.23`, legacy MDK `cleanup_unverified` unchanged; optional
+prepared partial diagnostic **DEFERRED**. **W11 NOT MET: 0/20 PR comparisons,
+0/2 broad integrations, cost/release/protection/operator proof unmet. W12 NOT RUN.**
+No general default/enforce/schedule/protection changes. **No bump:** internal
+tooling/test/doc changes only; this pass edits no source, tracker or settings.
 
 ### Historical post-review verification
 
