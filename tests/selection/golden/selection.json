@@ -60,7 +60,8 @@
     ],
     "mode": "affected",
     "checks": [
-      "groundhog.poll_ui"
+      "groundhog.poll_ui",
+      "sanitizer.groundhog_background"
     ],
     "excluded_prefixes": [
       "mdk",

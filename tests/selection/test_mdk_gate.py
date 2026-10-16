@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -68,6 +69,8 @@ class MDKGateTests(unittest.TestCase):
 
     def root(self, name):
         root = self.base/name
+        (root/'scripts').mkdir(parents=True)
+        shutil.copyfile(HELPER,root/'scripts/mdk-gate.py')
         for d in ('driver','driver-0.9-probe','driver-0.11'):
             path = root/'tests/interop/mdk'/d
             path.mkdir(parents=True)
@@ -75,7 +78,7 @@ class MDKGateTests(unittest.TestCase):
         return root
 
     def start(self, root, versions=('011',), **env):
-        command = [sys.executable,str(HELPER),'run','--source-root',str(root),'--evidence-dir',str(self.evidence)]
+        command = [sys.executable,str(root/'scripts/mdk-gate.py'),'run','--source-root',str(root),'--evidence-dir',str(self.evidence)]
         for version in versions: command += ['--version',version]
         command += ['--',sys.executable,'-c',DRIVER]
         child = subprocess.Popen(command,env=dict(self.env,**env),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)

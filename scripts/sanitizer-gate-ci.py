@@ -459,6 +459,9 @@ def affected(paths, source_root=None, inventory=None):
             observed = job_config((root / WORKFLOW).read_text(), str(root))
             if expected != observed:
                 raise WorkflowError("shared/workflow sanitizer parity mismatch: " + profile)
+    if (not policy.get("enforcement_ready", False) or policy.get("coverage_gaps")) and any(
+            shared.classify(policy, p)["effect"] != "non_execution" for p in paths):
+        return True, "shared sanitizer coverage incomplete: conservative broad sanitizer coverage"
     # During staged migration the existing workflow remains a parity oracle;
     # compare logical registrations rather than retaining a second path filter.
     config = job_config((root / WORKFLOW).read_text(), str(root))
@@ -505,12 +508,19 @@ def shared_config(policy, profile_id, source_root):
         raise WorkflowError("shared sanitizer test parallelism is invalid")
     if not isinstance(config["GH_SAN_SKIP_PATTERN"], str) or not config["GH_SAN_SKIP_PATTERN"]:
         raise WorkflowError("shared sanitizer skip policy is absent")
-    if config.get("GH_SAN_CONFIGURE") != profile.get("configure_args"):
+    if config.get("GH_SAN_CONFIGURE") != expand(profile.get("configure_args")):
         raise WorkflowError("shared sanitizer configure_args disagree with compatibility config")
-    environment = dict(item.split("=", 1) for item in config.get("GH_SAN_ENV", []))
-    environment.pop(TESTS_VAR, None)
-    if environment != expand(profile.get("environment", {})):
-        raise WorkflowError("shared sanitizer environment disagrees with compatibility config")
+    base = profile.get("environment")
+    phases = profile.get("phase_environments")
+    if not isinstance(base, dict) or not isinstance(phases, dict) or set(phases) != {"configure", "build", "test"}:
+        raise WorkflowError("shared sanitizer requires explicit configure/build/test phase environments")
+    for phase, field in (("configure", "GH_SAN_CONFIGURE_ENV"), ("build", "GH_SAN_BUILD_ENV"), ("test", "GH_SAN_ENV")):
+        overlay = phases[phase]
+        if not isinstance(overlay, dict) or any(not isinstance(k, str) or not isinstance(v, str) for env in (base, overlay) for k, v in env.items()):
+            raise WorkflowError("invalid shared sanitizer phase environment: " + phase)
+        environment = dict(item.split("=", 1) for item in config[field])
+        if len(environment) != len(config[field]) or environment != expand(dict(base, **overlay)):
+            raise WorkflowError("shared sanitizer " + phase + " environment disagrees with compatibility config")
     registrations = [name for check in policy["checks"].values()
                      for name in check.get("ctest_tests", {}).get(profile_id, [])]
     if len(registrations) != len(set(registrations)) or set(registrations) != set(config.get("GH_SAN_TESTS", [])):

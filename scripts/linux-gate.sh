@@ -41,9 +41,9 @@
 #   NOSTRC_CTEST_QUARANTINE_PLATFORM=linux  opt in to named G12 baseline failures;
 #                              tests still run; sanitizer reports always block.
 #   JOBS                       build and test parallelism (default: container CPUs).
-#   NOSTRC_SANITIZER_SHARED_PROFILE=ID  opt in to shared config/workflow parity
-#                              and the realized input audit. Missing metadata
-#                              or realization fails; never falls back to legacy.
+#   NOSTRC_SANITIZER_SHARED_PROFILE=ID  reserved shared phase-aware route.
+#                              Currently unsupported: fails before Docker/build,
+#                              never audits a legacy Ninja tree as shared proof.
 #                              Not a W7 acceptance claim or default cutover.
 #   NOSTRC_SANITIZER_TEST_JOBS --sanitizers test parallelism (default: the job's
 #                              ctest --parallel; under more load its ASAN tests
@@ -86,6 +86,11 @@ fi
 SOURCE="$(cd "$1" && pwd)"
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [ "$MODE" = sanitizers ] && [ -n "${NOSTRC_SANITIZER_SHARED_PROFILE:-}" ]; then
+    echo "==> Sanitizer gate: shared phase-aware realization/configure route is unsupported; no legacy Ninja fallback" >&2
+    exit 2
+fi
+
 NATIVE="$(docker info --format '{{.Architecture}}')"
 case "$NATIVE" in
     aarch64|arm64) NATIVE=arm64 ;;
@@ -99,19 +104,13 @@ IMAGE="${NOSTRC_GATE_IMAGE_TAG:-nostrc-linux-ci:$ARCH}"
 VOLUME="nostrc-linux-gate-$ARCH"
 GATE="Linux gate"
 GATE_CONFIG=""
-SHARED_SANITIZER_ARGS=()
-if [ -n "${NOSTRC_SANITIZER_SHARED_PROFILE:-}" ]; then
-    SHARED_SANITIZER_ARGS=(--shared-profile "$NOSTRC_SANITIZER_SHARED_PROFILE"
-                           --inventory "$SOURCE/tests/selection/inventory.json")
-fi
 if [ "$MODE" = sanitizers ]; then
     VOLUME="nostrc-linux-gate-asan-$ARCH"
     GATE="Sanitizer gate"
     # The job as the candidate's CI will run it. Parsed here, before any
     # container starts, so a job this gate cannot reproduce fails at once.
     if ! GATE_CONFIG="$(python3 "$SCRIPTS/sanitizer-gate-ci.py" config \
-            --workflow "$SOURCE/.github/workflows/groundhog-ci.yml" --source-root /work/src \
-            ${SHARED_SANITIZER_ARGS[@]+"${SHARED_SANITIZER_ARGS[@]}"})"; then
+            --workflow "$SOURCE/.github/workflows/groundhog-ci.yml" --source-root /work/src)"; then
         echo "==> $GATE: cannot read the groundhog-sanitizers job; SANITIZER GATE FAILED" >&2
         exit 1
     fi
@@ -296,12 +295,7 @@ echo "==> $GATE: built $BUILT ($(stamp))"
 if [ "$MODE" = sanitizers ]; then
   # The path filter scripts/pre-push runs this stage by must cover every
   # source input of this build (scripts/sanitizer-gate-ci.py check-inputs).
-  AUDIT_ARGS=()
-  if [ -n "${NOSTRC_SANITIZER_SHARED_PROFILE:-}" ]; then
-    AUDIT_ARGS=(--shared-profile "$NOSTRC_SANITIZER_SHARED_PROFILE")
-  fi
-  if ! (cd /work/src && python3 /gate/sanitizer-gate-ci.py check-inputs --build-dir /work/build \
-          ${AUDIT_ARGS[@]+"${AUDIT_ARGS[@]}"}); then
+  if ! (cd /work/src && python3 /gate/sanitizer-gate-ci.py check-inputs --build-dir /work/build); then
     echo "==> $GATE: THE PATH FILTER MISSES INPUTS OF THIS BUILD ($(stamp))"
     exit 1
   fi
@@ -366,7 +360,6 @@ docker run --rm --init --name "$RUN_ID" --label "org.nostrc.gate.run=$RUN_ID" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \
     -e SANITIZER_TEST_JOBS="${NOSTRC_SANITIZER_TEST_JOBS:-}" \
-    -e NOSTRC_SANITIZER_SHARED_PROFILE="${NOSTRC_SANITIZER_SHARED_PROFILE:-}" \
     -e NOSTRC_CTEST_QUARANTINE_PLATFORM="${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}" \
     -e NOSTRC_CTEST_QUARANTINE_FILE=/work/src/scripts/grotto-ci-quarantine.tsv \
     -v "$SOURCE:/src:ro" -v "$SCRIPTS/linux-gate-smoke.sh:/gate/smoke.sh:ro" \
