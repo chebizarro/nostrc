@@ -3873,6 +3873,7 @@
         "{source}/nostr-gobject/meson.build",
         "{source}/nostr-gtk/CMakeLists.txt",
         "{source}/nostr-gtk/meson.build",
+        "{source}/scripts/check-macos-keychain.sh",
         "{source}/scripts/linux-gate.sh",
         "{source}/scripts/mdk-gate.py",
         "{source}/scripts/sanitizer-gate-ci.py",
@@ -3893,8 +3894,10 @@
         "{source}/tests/selection/test_cmake_inventory_compat.py",
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
+        "{source}/tests/selection/test_command_signal_bytes.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
         "{source}/tests/selection/test_git_ranges.py",
+        "{source}/tests/selection/test_local_command_adapter.py",
         "{source}/tests/selection/test_mdk_cleanup.py",
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
@@ -3914,6 +3917,7 @@
         "{source}/tests/selection/test_selector.py",
         "{source}/tests/selection/test_selector_checkout_binding.py",
         "{source}/tests/selection/test_selector_cli.py",
+        "{source}/tests/selection/test_shared_sanitizer_execution.py",
         "{source}/tests/selection/test_workflow_contracts.py"
       ],
       "working_directory": "{source}"
@@ -8947,6 +8951,21 @@
       "matrix_source": "",
       "profiles": [],
       "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:core_asan": {
+      "coverage_gap": "workflow_profile_union",
+      "matrix_source": "",
+      "profiles": []
+    },
+    ".github/workflows/dependency-tests.yml:core_native": {
+      "coverage_gap": "workflow_profile_union",
+      "matrix_source": "",
+      "profiles": []
+    },
+    ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
+      "coverage_gap": "workflow_profile_union",
+      "matrix_source": "",
+      "profiles": []
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
