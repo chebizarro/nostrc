@@ -196,7 +196,8 @@ def normalize_receipt(policy, plan, resolved, raw):
             "checks": checks, "backend_receipt": raw,
             "diagnostic_eligible": raw.get("diagnostic_eligible", False),
             "complete_gate_eligible": raw.get("complete_gate_eligible", False),
-            "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", [])}
+            "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", []),
+            **({"complete": False} if raw.get("complete") is False else {})}
 
 
 def main(argv=None):
