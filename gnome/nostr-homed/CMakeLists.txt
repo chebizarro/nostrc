@@ -274,6 +274,41 @@ if(NOSTR_HOMED_ENABLE_AUTH_CORE AND NOSTR_HOMED_ENABLE_IDENTITY_CORE)
   endif()
 endif()
 
+# Portable manifest/cache unit tests. These compile the two small common
+# sources directly (jansson for the manifest parser; OpenSSL + SQLite for the
+# cache/UID-map/group store) so they do not depend on the experimental roaming
+# runtime, FUSE, D-Bus, libnostr or the nostr_homed_common library. Test-only:
+# no production target or API is added or changed.
+if(NOSTR_HOMED_BUILD_TESTS)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(NH_UNIT_JANSSON REQUIRED IMPORTED_TARGET jansson)
+  find_package(SQLite3 REQUIRED)
+  if(NOT TARGET SQLite3::SQLite3)
+    add_library(SQLite3::SQLite3 INTERFACE IMPORTED)
+    target_include_directories(SQLite3::SQLite3 INTERFACE ${SQLite3_INCLUDE_DIRS})
+    target_link_libraries(SQLite3::SQLite3 INTERFACE ${SQLite3_LIBRARIES})
+  endif()
+  find_package(OpenSSL REQUIRED)
+
+  add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c)
+  target_include_directories(test_manifest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(test_manifest PRIVATE PkgConfig::NH_UNIT_JANSSON)
+  add_test(NAME homed_manifest COMMAND test_manifest)
+
+  foreach(nh_cache_unit cache cache_config uid_map groups)
+    add_executable(test_${nh_cache_unit}
+      tests/unit/test_${nh_cache_unit}.c src/common/nostr_cache.c)
+    target_include_directories(test_${nh_cache_unit} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_${nh_cache_unit} PRIVATE
+      SQLite3::SQLite3 OpenSSL::Crypto)
+    add_test(NAME homed_${nh_cache_unit} COMMAND test_${nh_cache_unit})
+  endforeach()
+  set_tests_properties(homed_manifest homed_cache homed_cache_config
+    homed_uid_map homed_groups
+    PROPERTIES LABELS "nostr-homed;portable;manifest-cache" TIMEOUT 60)
+endif()
+
 # A-owned NSS runtime: the read-only glibc module that projects the identity
 # store's SQLite snapshot into passwd/group. Installs libnss_nostr.so.2 into the
 # system library path plus the nss_nostr.conf sample. Requires the identity core.

@@ -1,0 +1,15 @@
+include_guard(DIRECTORY)
+if(NOT COMMAND nostrc_add_test_owners)
+  return()
+endif()
+
+# Exact registration/input relationships retained from the ab5 production audit.
+if(TEST "test_nip44_convkey")
+  nostrc_add_test_owners("test_nip44_convkey" OWNER nip44.test_inputs)
+endif()
+if(TEST "test_nip44_roundtrip")
+  nostrc_add_test_owners("test_nip44_roundtrip" OWNER nip44.test_inputs)
+endif()
+if(TEST "test_nip44_vectors")
+  nostrc_add_test_owners("test_nip44_vectors" OWNER nip44.test_inputs)
+endif()

@@ -21,8 +21,12 @@ ROOT_PROFILES = {"Linux": "core.linux.asan", "macOS": "core.macos.asan"}
 
 def audited_nodes(check_id):
     audits = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())["audits"]
-    return {node for audit in audits for edge in audit["edges"] + audit.get("compatibility_edges", [])
-            if edge["check"] == check_id for node in edge["required_nodes"]}
+    nodes = {node for audit in audits for edge in audit["edges"] + audit.get("compatibility_edges", [])
+             if edge["check"] == check_id for node in edge["required_nodes"]}
+    nonmembers = json.loads((ROOT / "tests/selection/fixtures/nonmember_audit_edges.json").read_text())
+    nodes.update(node for edge in nonmembers["check_edges"] if edge["check"] == check_id
+                 for node in edge["required_nodes"])
+    return nodes
 
 
 def registrations(policy, profile):

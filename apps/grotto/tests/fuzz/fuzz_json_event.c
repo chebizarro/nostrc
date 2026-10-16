@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -325,8 +326,6 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
 }
 
 #else /* Standalone test harness for AFL or manual testing */
-
-#include <stdio.h>
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
