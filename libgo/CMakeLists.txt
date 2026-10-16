@@ -18,6 +18,9 @@ endfunction()
 cmake_minimum_required(VERSION 3.22)
 # Concurrency primitives inspired by Go: channels, contexts, wait groups, etc.
 project(libgo C)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcTestInventory.cmake")
+endif()
 enable_language(ASM)
 
 if(NOT COMMAND declare_component_version)
@@ -719,3 +722,35 @@ apply_sanitizers(gof_bench_sleep)
 apply_sanitizers(gof_bench_poll_partition)
 
 endif() # NOT WIN32 — skip go_fiber on Windows
+
+# These pairs mirror the actual add_test COMMANDs, including W4 executions
+# sharing targets. Explicit targets also resolve a fresh, not-yet-built tree
+# (CTest omits commands whose executable does not exist yet).
+foreach(_pair
+    "GoContextCancelTest|go_context_cancel_test" "GoChannelTest|go_channel_test"
+    "GoContextTimeoutTest|go_context_timeout_test" "GoTickerTest|go_ticker_test"
+    "GoSelectTest|go_select_test" "GoWaitGroupTest|go_wait_group_test"
+    "GoChannelCloseTest|go_channel_close_test" "GoSelectMultiTest|go_select_multi_test"
+    "GoChannelStressTest|go_channel_stress_test" "GoContextStressTest|go_context_stress_test"
+    "GoSelectClosedTest|go_select_closed_test" "GoSelectCancelTest|go_select_cancel_test"
+    "GoChannelMpmcSlotTest|go_channel_mpmc_slot_test" "GoErrorTest|error_test"
+    "GoRefPtrTest|refptr_test" "GoHashMapTest2|hash_map_test2"
+    "GoIntArrayTest|int_array_test" "GoStringArrayTest|string_array_test"
+    "GoLongAdderStressTest|long_adder_stress_test"
+    "GoFiberBasicTest|gof_test_basic" "GoFiberContextTest|gof_test_context"
+    "GoFiberChanTest|gof_test_chan" "GoFiberChanExtTest|gof_test_chan_ext"
+    "GoFiberIoTest|gof_test_io" "GoFiberIoDeadlockTest|gof_test_io_deadlock"
+    "GoFiberIoTimeoutTest|gof_test_io_timeout" "GoFiberStarvationTest|gof_test_starvation"
+    "GoFiberBasicTestW4|gof_test_basic" "GoFiberChanTestW4|gof_test_chan"
+    "GoFiberChanExtTestW4|gof_test_chan_ext" "GoFiberIoTimeoutTestW4|gof_test_io_timeout"
+    "GoFiberIoDeadlockTestW4|gof_test_io_deadlock" "GoFiberStarvationTestW4|gof_test_starvation")
+  string(REPLACE "|" ";" _pair "${_pair}")
+  list(GET _pair 0 _test)
+  list(GET _pair 1 _target)
+  if(COMMAND nostrc_describe_test AND TEST "${_test}")
+    nostrc_describe_test("${_test}" OWNER libgo TARGETS "${_target}")
+  endif()
+endforeach()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  nostrc_finalize_test_inventory()
+endif()

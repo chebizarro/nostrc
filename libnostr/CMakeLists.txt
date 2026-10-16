@@ -466,3 +466,25 @@ endif()
 set(NOSTR_PKGCONF ${CMAKE_CURRENT_BINARY_DIR}/nostr.pc)
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libnostr.pc.in ${NOSTR_PKGCONF} @ONLY)
 install(FILES ${NOSTR_PKGCONF} DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+if(COMMAND nostrc_describe_test)
+  foreach(_pair
+      "libnostr_core_audit|test_core_audit" "libnostr_parsing_audit|test_parsing_audit"
+      "libnostr_event_validation|test_event_validation" "libnostr_networking_audit|test_networking_audit"
+      "libnostr_subscription_dispatch|test_subscription_dispatch"
+      "libnostr_reconnect_same_second|test_reconnect_same_second"
+      "libnostr_relay_callback_lifetime|test_relay_callback_lifetime"
+      "libnostr_relay_write_unsent|test_relay_write_unsent"
+      "test_relay_teardown_leaks|test_relay_teardown_leaks"
+      "libnostr_connection_teardown_stress|test_connection_teardown_stress"
+      "libnostr_filter_limit_zero|test_filter_limit_zero"
+      "libnostr_store_txn_audit|test_store_txn_audit"
+      "libnostr_crypto_audit|test_crypto_audit" "libnostr_misc_audit|test_misc_audit")
+    string(REPLACE "|" ";" _pair "${_pair}")
+    list(GET _pair 0 _test)
+    list(GET _pair 1 _target)
+    if(TEST "${_test}")
+      nostrc_describe_test("${_test}" OWNER libnostr TARGETS "${_target}")
+    endif()
+  endforeach()
+endif()

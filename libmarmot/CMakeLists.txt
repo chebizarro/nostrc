@@ -412,3 +412,18 @@ if(BUILD_TESTING)
   add_test(NAME marmot_test_interop COMMAND test_marmot_interop
            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
+
+if(COMMAND nostrc_describe_test)
+  get_property(_marmot_tests DIRECTORY PROPERTY TESTS)
+  foreach(_test IN LISTS _marmot_tests)
+    if(_test STREQUAL "marmot_test_interop")
+      nostrc_describe_test("${_test}" OWNER libmarmot TARGETS test_marmot_interop
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/mdk")
+    elseif(_test STREQUAL "marmot_test_media")
+      nostrc_describe_test("${_test}" OWNER libmarmot TARGETS test_media
+        INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/vectors/media")
+    else()
+      nostrc_describe_test("${_test}" OWNER libmarmot)
+    endif()
+  endforeach()
+endif()

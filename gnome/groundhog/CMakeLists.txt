@@ -3741,3 +3741,5 @@ if (BUILD_TESTING)
   endif()
 endif()
 # --- end test isolation ---
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")

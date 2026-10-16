@@ -4,6 +4,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(VersionHelpers)
+include(NostrcTestInventory)
 option(ENABLE_COMPONENT_VERSIONING "Enable generated component version headers" ON)
 
 # Resolve nsync once for the whole tree: prefer the system copy when
@@ -809,3 +810,5 @@ endfunction()
 if(NOT MSVC)
   nostrc_keep_test_asserts("${CMAKE_SOURCE_DIR}")
 endif()
+
+nostrc_finalize_test_inventory()
