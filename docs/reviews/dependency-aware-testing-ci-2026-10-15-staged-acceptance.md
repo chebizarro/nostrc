@@ -377,3 +377,161 @@ required-check or protection change. Parent final native QA513CA at `7616080a3`
 and final B metadata checkpoint remain explicit **PENDING** follow-up inputs.
 This task edits only the four authorized docs, with no code/tracker/settings,
 Oracle, expensive/full-MDK run, push or merge.
+
+## 2026-10-16 final focused checkpoint — df2b23612
+
+**Parent integrated source:** `df2b236124254450ac1645146fd0e3a4958a53c7`, not
+master. This section supersedes the previous checkpoint's pending final A/B/native
+status only; earlier audit failures, counts, SHAs and review inputs remain intact.
+No broad Oracle/review, source/tracker/settings edits, expensive/full-MDK reruns,
+push or merge by this docs task. No component bump: internal tooling/tests/docs.
+
+### Final A contracts and confirmed review resolution
+
+`/tmp/nostrc-a-final-admission-handoff.txt` binds exact A source
+**`db9eb03a6d2e1236f89d9e96ff87df1b622e91b0`** to
+`/tmp/nostrc-a-final-admission-checkpoint.json`, verified SHA-256
+**`dcdbc2dc8448640e37c691ff86ffc5bd004a2484fc2e355af2498d1bb6442cdc`**.
+All checkpoint source-file hashes match that commit; all final verification-log
+hashes were checked in this docs pass. Final A QA: **382/382 selection tests,
+zero skips, 274.217s; 13 actual Docker custody cases, zero skips, 11.778s; six
+shell suites, four statics, actionlint/ShellCheck and whitespace all exit 0**.
+Logs `/tmp/nostrc-a-final-wave2-*` remain distinct from pre-fix 380-test receipts
+and from the parent's still-separate integration gates.
+
+- **`919b00173` exact diagnostic nonmember admission:** **only
+  `groundhog.linux.sanitizers`**, frozen **347 reviewed nonmembers + 65 required
+  fixture closure = 412** expected fresh registrations. Fresh source/profile/
+  context/export/partition/build/audit binding is mandatory. The allowance removes
+  **only `unclaimed_registration` membership findings**; all registrations and
+  omitted targets remain source/Ninja/discovered-header/runtime audited and
+  omitted build targets are built as required. Omissions always remain
+  **`not_executed`**, `complete=false`, `complete_gate_eligible=false`, enforcement
+  false. Complete/release admission and
+  nested receipt/backend/aggregate promotion reject. No selected-only fallback,
+  prepared carryover, arm64 architecture waiver or false-negative-absence proof.
+- **`995be8d9e` effective execution options:** authored **parallelism 2 / timeout
+  2700s** must hold, including explicit shared-route `JOBS`/test-job options.
+  Legacy defaults and other profiles are unchanged; different exports/options
+  reject rather than silently acquiring admission.
+- **Confirmed configuration P2:** bounded review of **`ac222f1c6`** at
+  `/tmp/nostrc-nonmember-review-ac222f1.lsEnDR/REVIEW.md` found a rehashed backend/
+  binding declaring Release while resolved/retained execution remained Debug
+  could normalize and pass partial aggregation. This was **receipt inconsistency**,
+  not evidence of wrong-config execution or a complete/release bypass. Fix
+  **`db9eb03a6`** independently compares backend, resolved and retained phase
+  configuration to the **declared profile build type**; aggregation independently
+  checks retained phase/profile composition. The unchanged original adversary
+  now rejects at adapter and aggregation; a consistently rewritten Release phase
+  also rejects against Debug. Duplicated effective argv flags also refuse.
+  This documents the actual finding/fix, **not a broad rereview or approval**.
+
+Fresh real miniature proof (SHA-256
+`49e981053f24608c7ddbe181ac846e942b70ce589d402be413dd3a60181414c3`)
+is retained at the checkpoint's `miniature.path`: actual configure/build/full
+fixture input audit/CTest and composed phase API pass; omitted binary/header/
+runtime inputs audited, omitted registrations unexecuted, partial aggregation
+passes, complete/release/configuration adversaries refuse. It is **not a
+production sanitizer or arbitrary-tree custody receipt**. No authored native
+Linux/x86_64 production execution/audit on this final source is claimed.
+
+### B final ownership audit — no retroactive pass
+
+`/tmp/nostrc-b-full-root-final-checkpoint.json` records exact
+**`8d052ca8440eba453f951b62f0c799853980c266`**: all **412 configured registrations**
+have **zero missing semantic/runtime/header edges**, closing the earlier 48,811
+missing-edge findings and 1,923 witnessed relationships. **357/357** selection
+tests, zero skips, 104.365s at that source; six shells/four statics/actionlint pass.
+**83 of 87 workflow-job mappings remain explicitly unsupported**, not tested or
+passed; workflow/job fingerprints are accounting evidence, not hosted coverage.
+
+The original full audit still **FAILS on 347 `unclaimed_registration` findings**.
+Verified `post-input-audit.json` SHA-256:
+**`4e65b90e07c0fd26fae54fa6815e156f71643c723f386ebeb3abe36c73aa8436`**.
+Its actual Linux **aarch64**, parallel **4** diagnostic differs from authored
+**x86_64**, parallel **2**. Final A membership accounting neither retroactively
+passes that receipt nor turns it into final-source/native-x86_64 production proof.
+The original `ab5cdbf05` 49,158-findings failure is likewise preserved. Zero gaps
+in this configured graph do not prove all compiler/OS/feature/profile variants.
+B's direct legacy sanitizer diagnostic at `f268e28f8` also remains failed:
+**64/65 passed**, two-instance NoReply/SIGTRAP, no retry/causal fix/waiver; hosted
+`8a031f443` voice LSan 120B and failed shadow remain separate unresolved evidence.
+
+### Actual BP/Homed repairs and remaining broad failures
+
+**BP `.26` CLOSED:** original commits **`139aaa185` / `adf13917e`** (A equivalents
+`b8975d3d2` / `bf3b5a0ad`) fix runner output/report aggregation layout and move
+seven regression cases into selection-suite discovery. `ac222f1c6` binds the
+reporting scripts/fixture/test and five external inputs into `selection.contract`;
+`shared.tests` is a real check dependency, not an audit exception. Evidence
+`/tmp/nostrc-bp-metrics-20261016`: **14 unchanged actual regular workloads exit 0,
+14 real report rows**, per-case metrics/rate artifacts checked; not fabricated
+rows, extended workload completion, hosted broad success or W11 cost baseline.
+
+**Homed `.27` CLOSED:** five actual units (`homed_manifest`, `homed_cache`,
+`homed_cache_config`, `homed_uid_map`, `homed_groups`) pass **native and Linux**;
+mandatory exact-list selection and negative controls reject missing/unexpected
+listing rather than zero-test success. Linux source-bound execution is in B's
+`homed` receipt (opt-in configure/five builds/list/verbatim workflow step, exit 0).
+The group unit matches the **preexisting refuse-rename security contract**;
+no runtime behavior changed. No four-distro/systemd/FUSE/auth/roaming acceptance.
+
+**`.25` CLOSED for compiler defect only** (`snprintf` declaration in LibFuzzer
+build). **`.28` Adw build / `.29` JSON-GLib leak remain OPEN**; no source fix,
+suppression or waiver claimed. These scoped closures do not establish complete
+broad workflow/profile union.
+
+### Fresh native root QA — a47807050, final wrapper 0
+
+**Exact separate source:** `a478070509569c26917dd5fb13a548b1f68eade9`.
+`/private/tmp/nostrc-final-native-a478070.C6w5fP/report.md` SHA-256 verified:
+**`9121379d5b3ff43e27ac5219547d484d0ca55eb90abaf9e4270e2dc407d70aaf`**;
+all **17** listed artifact hashes independently matched their retained bytes.
+Fresh root configure **0 / 9.428s**, all-default-target build **0 / 45.121s**,
+full serial unfiltered CTest **0 / 333.664s**; fresh enumeration/JUnit agree on
+**437 unique registrations: 432 passed, 5 existing skips, 0 failures/errors/disabled**,
+including seven fixture setups. No phase retry/new exclusion/waiver.
+
+Five skipped cases remain unexecuted coverage: `test_nip5f_tcp` (unconfigured
+endpoint/token), `signer/qr-scanner`, `signer/onboarding`, `signer/ui-layout`,
+`signer/ui-accessibility` (existing native UI behavior/disabled cases, exit 77).
+Root Debug/Ninja safe libsecret/Secret-Service backend flags, private mode-0700
+HOME/XDG/runtime/bus/Secret Service, and loopback-only Seatbelt policy were used.
+Native macOS arm64/AppleClang 21/CMake 4.3.2/Ninja 1.13.2; **Groundhog and Homed
+opt-ins OFF**, Groundhog backend unused warning retained.
+
+Corrected temporary wrapper owns a direct child, explicitly waits/reaps it after
+SIGTERM: raw **-15**, shell wait **143** are *service termination*, not wrapper
+failure. Actual child reaped/ECHILD/PID absent; owned session child reaped,
+bus daemon/socket absent; original-HOME read-only keychain guards **0/0**,
+cleanup **0**, final wrapper **0**. Controls distinguish expected termination
+(wrapper 0), unexpected child exit (wrapper 93) and preserved phase failures
+42/43. This is **known-helper cleanup**, not arbitrary-tree custody. Prior
+`7616080a3` wrapper **143 remains failed**; prior wrappers/setup evidence is
+retained unchanged, including the control-only sandbox `ps` refusal before
+native phases. A fresh source-specific pass is not a relabeling/retry cure.
+
+Not established: Groundhog/Homed opt-ins, MDK helper/live peers, sanitizer parity,
+rendered/manual GUI, real provider/public-relay acceptance, complete selector/
+profile/input/runtime union, arbitrary native-tree cleanup, rollout/protection.
+
+### Parent/hosted follow-up — no cutover
+
+Parent at **`df2b23612`** completed **382/382 selection tests, zero skips,
+104.637s**, `/tmp/nostrc-final-reviewed-selection.log` (terminal `Ran 382 tests` /
+`OK` verified). Remaining final shell/actual gates are **PENDING final handoff**;
+A's separately source-attributed suite does not substitute for those results.
+Nonpublishing hosted [run 38873978927](https://github.com/chebizarro/nostrc/actions/runs/38873978927)
+was requested/queued at older **`a47807050`**, **not accepted execution**. Feature
+branch pushed, master unchanged at this checkpoint; no live-result refresh or
+publishing/settings action by this docs task.
+
+Native arbitrary-tree `.23` OPEN, legacy MDK `cleanup_unverified` unchanged,
+optional prepared partial diagnostic **DEFERRED**; no new prepared admission or
+raw-consumer promotion. `.24` closed **for retention only**, original FIFO/
+heartbeat causes remain unknown despite later passes; separately proved Git
+maintenance race fixes do not establish those causes. **W11 NOT MET: 0/20 accepted
+PR comparisons, 0/2 successful broad integrations; cost/release/protection/operator
+proof unmet. W12 NOT RUN.** No general default/enforce/schedule/trigger,
+threshold/exclusion, required-check or protection changes. Parent owns final
+gates, literal pending-status follow-up and landing.

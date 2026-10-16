@@ -59,12 +59,32 @@ Git detached-maintenance race was fixed, not attributed to those failures.
 cause or generic native deadlines: parent forensics passed 8/8 with a scoped
 cooperative timeout and prelaunch refusal of unsupported timeout commands.
 The burst test retains the original 50ms/two-miss guard; `.11` remains open.
-At `ab5cdbf05`, selected sanitizer semantic findings are zero but the full audit
-fails with 49,158 findings; final B nonmember metadata and parent native QA at
-`7616080a3` are pending, not accepted. Broad/Homed source fixes include five
-registered, native-passing Homed units, not distro/hosted proof. Hosted `8a031f443`
-voice LSan/shadow failures remain; W11 is NOT MET (0/20 PR, 0/2 broad, costs,
-protection/operator proof unmet), W12 NOT RUN. Do not claim broad review-clean or
+Final bounded source is integrated at `df2b23612` (not master). A `db9eb03a6`
+passed 382/382 selection, 13 actual Docker cases, six shell suites, four statics
+and actionlint. Only `groundhog.linux.sanitizers` admits the exact reviewed
+347 nonmembers + 65 required closure / 412 fresh partition for incomplete
+diagnostics: only unclaimed membership is removed; all omitted targets remain
+built/audited for source/Ninja/header/runtime and always `not_executed`.
+Complete/release promotion, including nested receipts, refuses. Independent
+profile/resolved/phase configuration composition and authored parallelism 2 /
+timeout 2700 are enforced. No prepared/arm64 automatic admission or final native
+x86_64 production receipt exists. B `8d052ca84` has zero semantic/runtime/header
+gaps across 412 registrations, but its original arm64/parallel-4 audit still
+FAILS on 347 unclaimed names; no retroactive pass. 83/87 job mappings remain
+explicitly unsupported. BP regular 14-workload/report-row repair and Homed five
+native/Linux unit tests are bounded proof, not complete broad/distro acceptance.
+`.25` compiler defect, `.26` BP reporting and `.27` Homed units are closed only
+for their scopes; `.28` Adw build and `.29` JSON-GLib leak remain OPEN.
+Separate native root QA at `a47807050`: fresh configure/all-default build/full
+437 CTests, 432 passed / 5 existing skips / 0 failures, wrapper 0, owned child
+reaped/bus gone/read-only keychain guards 0. Groundhog/Homed opt-ins OFF; not
+sanitizer/profile-union or arbitrary-tree proof. Prior `7616080a3` wrapper 143
+remains failed. Parent selection at `df2b23612` passed 382/382, zero skips;
+remaining final shell/actual gates are pending final handoff.
+Nonpublishing hosted run 38873978927 requested/queued at older `a47807050` is
+not acceptance; feature branch pushed, master unchanged at this checkpoint.
+Hosted `8a031f443` voice LSan/shadow failures remain; W11 NOT MET (0/20 PR,
+0/2 broad, cost/release/protection/operator proof unmet), W12 NOT RUN. Do not claim broad review-clean or
 complete acceptance. The standalone MDK helper always reports
 `cleanup_complete=false`: otherwise successful command phases refuse lifecycle
 success with nonzero `cleanup_unverified` (scoped cleanup errors remain explicit).

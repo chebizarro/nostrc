@@ -296,6 +296,75 @@ representative costs, release/protection/operator proof unmet. W12 NOT RUN.**
 No default, enforcement, schedule, threshold/exclusion, required-check or
 protection changes; **no component bump** for these internal tests/docs.
 
+### 2026-10-16 final focused checkpoint — df2b23612, bounded scopes only
+
+Parent integration source **`df2b236124254450ac1645146fd0e3a4958a53c7`** is not
+master. This dated section supersedes the preceding pending A/B/native status,
+**not historical receipts**. The [final focused evidence](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-final-focused-checkpoint--df2b23612)
+records exact sources, review fixes and hashes. Parent selection at `df2b23612`
+completed **382/382, zero skips, 104.637s**, retained at
+`/tmp/nostrc-final-reviewed-selection.log`. Remaining final shell/actual gates
+are **PENDING final handoff**; A's results below are not substituted for them.
+
+- **A `db9eb03a6`: 382/382 selection tests, zero skips; 13 actual Docker custody
+  cases, zero skips; six shell suites, four statics, full actionlint/ShellCheck
+  and whitespace passed.** These are final A-source contract/custody regressions,
+  not production sanitizer or full-root/runtime-union acceptance.
+- **Exact nonmember diagnostic admission only for `groundhog.linux.sanitizers`:**
+  fresh registration partition must equal **347 reviewed nonmembers + 65 required
+  fixture closure = 412**. Only `unclaimed_registration` membership findings are
+  removed for this bounded accounting; omitted source/Ninja/discovered-header/
+  runtime inputs and required omitted build targets stay audited/built. Every
+  omitted registration stays **`not_executed`**, complete/enforcement false;
+  complete/release and nested promotion refuse. Authored **parallelism 2 /
+  timeout 2700s** are required, including explicit shared-route job options.
+  No automatic prepared011 or arm64 admission; no selected-only audit fallback.
+- **Confirmed configuration P2 fixed at `db9eb03a6`:** backend/resolved/retained
+  phase configuration must equal independently declared profile build type;
+  aggregate independently checks phase/profile composition. The review's original
+  rehashed Release-receipt/Debug-phase input now rejects, as does a consistent
+  Release-phase rewrite against the Debug profile. This is a specific resolution,
+  **not broad rereview/approval**. Real miniature configure/build/full audit/CTest
+  and negative promotion/configuration controls are not a production receipt.
+- **B `8d052ca84`:** all **412** configured registrations now have **zero missing
+  semantic/runtime/header edges**, with **357/357** selection tests passed there.
+  Its original arm64/parallel-4 diagnostic **still failed on 347 unclaimed names**;
+  later accounting does not retroactively pass it or attest the final source.
+  **83/87 workflow-job mappings remain explicitly unsupported**. Authored native
+  Linux/x86_64 production execution/audit on final source is **not yet proved**.
+- **Bounded broad repairs:** BP `139aaa185` / `adf13917e` repairs runner/reporting
+  layout and selection-suite discovery: **14 unchanged actual regular workloads,
+  14 real report rows**, seven reporting regressions included in
+  `selection.contract`; `.26` closed. Homed **five units pass on native and
+  Linux**, with mandatory exact listing/negative controls; `.27` closed, not
+  four-distro/systemd/FUSE proof. Group expectations now match the preexisting
+  refuse-rename security contract; no runtime change. `.25` closed for the
+  LibFuzzer compiler defect only. **`.28` Adw build / `.29` JSON-GLib leak OPEN**;
+  no source fix, suppression or waiver is implied.
+
+**Fresh native QA is complete at its own source `a478070509569c26917dd5fb13a548b1f68eade9`:**
+configure/all-default-target build/full serial CTest all exit **0**;
+**437 registrations, 432 passed / 5 existing skips / 0 failures**. Corrected
+wrapper/finalization **0**, direct owned child explicitly reaped, bus daemon and
+socket absent, read-only original-HOME keychain guards **0/0**. Required safe
+backend flags, private HOME/XDG/bus/Secret Service and loopback-only sandbox were
+used. Skips are the unconfigured TCP case and four existing signer UI cases,
+not passed coverage. **Groundhog and Homed opt-ins OFF**: no sanitizer, live peer,
+rendered GUI, selector/profile-union or arbitrary-tree acceptance. The earlier
+`7616080a3` wrapper **143 remains a failure**, not relabeled by this fresh run.
+Report: `/private/tmp/nostrc-final-native-a478070.C6w5fP/report.md`, SHA-256
+`9121379d5b3ff43e27ac5219547d484d0ca55eb90abaf9e4270e2dc407d70aaf`.
+
+At this checkpoint the feature branch is pushed, master unchanged; nonpublishing
+hosted run **38873978927** was requested/queued at older `a47807050`, **not accepted
+execution**. Prior hosted `8a031f443` voice/shadow failures and original FIFO /
+heartbeat unknown causes remain. `.24` closed **for forensics retention only**;
+native arbitrary-tree `.23`, legacy MDK `cleanup_unverified` unchanged; optional
+prepared partial diagnostic **DEFERRED**. **W11 NOT MET: 0/20 PR comparisons,
+0/2 broad integrations, cost/release/protection/operator proof unmet. W12 NOT RUN.**
+No general default/enforce/schedule/protection changes. **No bump:** internal
+tooling/test/doc changes only; this pass edits no source, tracker or settings.
+
 ### Historical post-review verification
 
 At integration `ae36f5a2639ff1c28d6657621b8afb0d81771b2b`, `.6` (workflow
