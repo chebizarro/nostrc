@@ -81,6 +81,60 @@ class BroadPrerequisiteTests(unittest.TestCase):
                                ("bp-matrix-nightly.yml", "nightly-matrix")):
             self.assertIn("-DNOSTR_ENABLE_METRICS=ON", step(job(workflow, name), "Configure (CMake)"))
 
+    HOMED_UNITS = {
+        "homed_manifest": ("test_manifest", "src/common/nostr_manifest.c"),
+        "homed_cache": ("test_cache", "src/common/nostr_cache.c"),
+        "homed_cache_config": ("test_cache_config", "src/common/nostr_cache.c"),
+        "homed_uid_map": ("test_uid_map", "src/common/nostr_cache.c"),
+        "homed_groups": ("test_groups", "src/common/nostr_cache.c"),
+    }
+
+    def homed_registered_tests(self):
+        """Test names registered by the portable manifest/cache CMake block."""
+        cmake = (WORKFLOWS.parents[1] / "gnome/nostr-homed/CMakeLists.txt").read_text()
+        start = cmake.index("# Portable manifest/cache unit tests.")
+        block = cmake[start:cmake.index("\nendif()\n", start)]
+        # Outside the experimental-roaming runtime, which opens much later.
+        self.assertLess(start, cmake.index("if(NOSTR_HOMED_ENABLE_EXPERIMENTAL_ROAMING)"))
+        self.assertIn("if(NOSTR_HOMED_BUILD_TESTS)", block)
+        names = {m.group(1) for m in re.finditer(r"add_test\(NAME (homed_\w+) COMMAND", block)}
+        loop = re.search(r"foreach\(nh_cache_unit ([\w ]+)\)", block).group(1).split()
+        names = {n for n in names if "${" not in n}
+        self.assertIn("add_test(NAME homed_${nh_cache_unit} COMMAND test_${nh_cache_unit})", block)
+        names |= {"homed_" + unit for unit in loop}
+        return names, block
+
+    def test_homed_unit_registrations_are_real_and_exact(self):
+        names, block = self.homed_registered_tests()
+        self.assertEqual(names, set(self.HOMED_UNITS))
+        root = WORKFLOWS.parents[1] / "gnome/nostr-homed"
+        for test_name, (target, common) in self.HOMED_UNITS.items():
+            with self.subTest(test=test_name):
+                self.assertTrue((root / "tests/unit" / f"{target}.c").is_file())
+                self.assertTrue((root / common).is_file())
+        self.assertIn("add_executable(test_manifest tests/unit/test_manifest.c src/common/nostr_manifest.c)", block)
+        self.assertIn("tests/unit/test_${nh_cache_unit}.c src/common/nostr_cache.c", block)
+        code = "\n".join(line for line in block.splitlines() if not line.lstrip().startswith("#"))
+        for forbidden in ("nostr_homed_common", "FUSE", "libnostr", "nip19"):
+            self.assertNotIn(forbidden, code)
+
+    def test_homed_mandatory_unit_filter_is_exact_and_refuses_zero_tests(self):
+        names, _ = self.homed_registered_tests()
+        unit = step(job("nostr-homed-ci.yml", "build-and-test"), "Run unit tests (nostr-homed)")
+        selector = re.search(r"selector='([^']+)'", unit).group(1)
+        expected = re.search(r"expected='([^']+)'", unit).group(1).split()
+        self.assertEqual(sorted(expected), sorted(names))
+        self.assertTrue(selector.startswith("^") and selector.endswith("$"))
+        self.assertEqual({n for n in names | {"homed_cache_lru", "homed_syncd_cache", "homed_manifest_v2"}
+                          if re.search(selector, n)}, names)
+        # Negative proof: the former unregistered-target filter selects nothing.
+        legacy = "(test_manifest|test_cache|test_cache_config|test_uid_map|test_groups)"
+        self.assertEqual([n for n in names if re.search(legacy, n)], [])
+        self.assertIn("--no-tests=error", unit)
+        self.assertNotIn("|| true", unit)
+        self.assertNotIn("continue-on-error", unit)
+        self.assertIn("-DNOSTR_HOMED_BUILD_TESTS=ON", step(job("nostr-homed-ci.yml", "build-and-test"), "Configure"))
+
     def test_homed_trust_is_limited_to_container_checkout_read(self):
         block = job("nostr-homed-ci.yml", "build-and-test")
         for distro in ("ubuntu-24.04", "debian-bookworm", "fedora-40", "archlinux"):
