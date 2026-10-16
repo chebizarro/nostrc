@@ -137,7 +137,13 @@ def validate_inventory(policy):
                     require((profile, name) not in claimed, f"multiply claimed primary: {profile}/{name}")
                     claimed[profile, name] = ident
         else:
-            require(isinstance(check.get("command"), list) and check["command"] and all(isinstance(x, str) for x in check["command"]), f"{ident}: argument-array command required")
+            require(isinstance(check.get("command"), list) and check["command"] and all(isinstance(x, str) and x and "\x00" not in x for x in check["command"]), f"{ident}: argument-array command required")
+            require(isinstance(check.get("working_directory"), str) and check["working_directory"], f"{ident}: working_directory required")
+            require(isinstance(check.get("environment"), dict) and all(isinstance(k, str) and k and "=" not in k and isinstance(v, str) and "\x00" not in k + v for k, v in check["environment"].items()), f"{ident}: environment required")
+            for field in ("runtime_inputs", "build_targets", "requires", "required_evidence"):
+                values = check.get(field, [])
+                require(isinstance(values, list) and all(isinstance(x, str) and x and "\x00" not in x for x in values) and len(values) == len(set(values)), f"{ident}: invalid {field}")
+            require(expected == "pass", f"{ident}: non-CTest exceptions are unsupported")
     require(isinstance(policy.get("test_overrides", []), list), "invalid test_overrides")
     for alias, members in policy.get("aliases", {}).items():
         require(ID.fullmatch(alias) is not None, "invalid alias")
@@ -421,7 +427,9 @@ def validate_plan(plan, policy):
 
 def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=None, job_conclusions=None, repo=None):
     validate_plan(plan, policy)
-    errors, visible = [], []
+    errors, visible, incomplete_lanes = [], [], []
+    if complete and plan.get("coverage_gaps"):
+        errors.append("inventory coverage/enforcement readiness cannot satisfy complete gate")
     if selection_conclusion != "success" and not (selection_conclusion is None and plan.get("context") == "local"):
         errors.append("selection job was not explicitly successful")
     if complete and (plan.get("partial_profiles") or plan["source_identity"].get("kind") != "committed"):
@@ -459,6 +467,44 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
         for key, value in (("job_conclusion", "success"), ("registration_audit", "passed"), ("input_audit", "passed")):
             if receipt.get(key) != value:
                 errors.append(f"{lane_id}: {key} did not pass")
+        backend = receipt.get("backend_receipt", {})
+        exclusions = receipt.get("baseline_exclusions", backend.get("baseline_exclusions", []))
+        if not isinstance(exclusions, list):
+            errors.append(f"{lane_id}: malformed baseline exclusions")
+            exclusions = []
+        if len(exclusions) > 1:
+            errors.append(f"{lane_id}: duplicate/unapproved baseline exclusions")
+        for exclusion in exclusions:
+            known = next((g for g in policy.get("coverage_gaps", []) if g.get("id") == "libgo_macos_asan_stress_exclusion"), None)
+            if (not isinstance(exclusion, dict) or known is None
+                    or lane["profile"] != "libgo.macos.asan"
+                    or exclusion.get("id") != "libgo_macos_asan_stress_exclusion"
+                    or exclusion.get("profile") != lane["profile"]
+                    or exclusion.get("registrations") != ["GoChannelStressTest"]
+                    or exclusion.get("status") != "not_executed"
+                    or exclusion.get("authority") != "existing_workflow_baseline"
+                    or any(exclusion.get(k) != v for k, v in known.items())
+                    or set(exclusion) != set(known) | {"status", "authority", "target_ids", "audit_build_targets"}
+                    or exclusion.get("audit_build_targets") != ["go_channel_stress_test"]
+                    or not isinstance(exclusion.get("target_ids"), list) or len(exclusion["target_ids"]) != 1
+                    or any("GoChannelStressTest" in c.get("ctest_tests", {}).get(lane["profile"], []) for c in policy["checks"].values())):
+                errors.append(f"{lane_id}: unknown/mismatched baseline exclusion")
+        for field in ("baseline_exclusions", "coverage_gaps", "complete_gate_eligible", "diagnostic_eligible"):
+            if field in receipt and field in backend and receipt[field] != backend[field]:
+                errors.append(f"{lane_id}: contradictory backend {field}")
+        if "coverage_gaps" in receipt and receipt["coverage_gaps"] != plan.get("coverage_gaps", []):
+            errors.append(f"{lane_id}: stale coverage gap accounting")
+        incomplete = (receipt.get("complete_gate_eligible") is False or backend.get("complete_gate_eligible") is False
+                      or receipt.get("baseline_exclusions") or backend.get("baseline_exclusions")
+                      or receipt.get("coverage_gaps") or backend.get("coverage_gaps"))
+        if incomplete:
+            incomplete_lanes.append(lane_id)
+            if complete:
+                errors.append(f"{lane_id}: diagnostic/incomplete receipt cannot satisfy complete gate")
+        # Explicit diagnostic eligibility never overrides missing/skipped checks
+        # or independent worker conclusions checked above/below.
+        if receipt.get("diagnostic_eligible") is False:
+            errors.append(f"{lane_id}: diagnostic execution did not qualify")
         results = receipt.get("checks")
         require(isinstance(results, dict), f"{lane_id}: malformed checks")
         if set(results) != set(lane["checks"]):
@@ -499,6 +545,8 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
     return {"schema_version": 1, "plan_id": plan["plan_id"], "passed": not errors, "errors": errors, "non_clean_results": visible,
             "tested_sha": plan["tested_sha"], "source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
             "mode": plan["effective_mode"], "partial_profiles": plan["partial_profiles"], "complete": complete,
+            "diagnostic_eligible": not errors, "incomplete_lanes": incomplete_lanes,
+            "complete_gate_eligible": bool(complete and not errors and not incomplete_lanes),
             "tag": plan["event"].get("tag") if isinstance(plan["event"], dict) else None,
             "enforcement_ready": plan.get("enforcement_ready", False), "coverage_gaps": plan.get("coverage_gaps", [])}
 
