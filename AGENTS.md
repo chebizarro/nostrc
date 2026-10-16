@@ -31,15 +31,22 @@ it does not replace them. A successful bounded diagnostic and `aggregate --parti
 may pass while remaining `complete_gate_eligible=false`; excluded registrations
 (including the native libgo stress case) stay visibly `not_executed`, never passed.
 Missing capabilities and unsupported execution fail visibly. The outer adapter
-supports ordinary `ctest`/`command`/`build_contract` checks; guarded capabilities
-outside display/private-bus support remain refused. Explicit
+supports ordinary unwrapped `command`/`build_contract` checks and legacy CTest
+lanes. Selected non-CTest checks (including mixed lanes) requiring `display` or
+`private_bus` now refuse **before launch**: `.22` is closed by guard/refusal only,
+not a wrapped-execution drain/custody fix. Capabilities are never dropped and no
+execution receipts are fabricated. Other unsupported capabilities stay refused.
+Full safe wrapped custody is unimplemented (`.23` OPEN); legacy CTest cancellation
+is unchanged. Explicit
 `NOSTRC_SANITIZER_SHARED_PROFILE=groundhog.linux.sanitizers` routes the Linux
 sanitizer gate through actual separate configure/build/test phases, environment
 fingerprints and input audits; legacy defaults are unchanged. Shared-route
-quarantine/retry overrides fail explicitly. Wrapped cancellation evidence loss
-(review R1 / `.22`) is still open pending its fix and verification; do not claim
-review-clean or complete acceptance. All ten authored profiles now have independent
-shadow worker routes, not hosted acceptance. The standalone
+quarantine/retry overrides fail explicitly. `.16` is closed only for bounded
+unwrapped commands and actual shared Docker phases, not positive wrapped execution.
+All ten authored profiles have independent shadow worker routes (`.21` bounded
+scope closed), not hosted acceptance. `.24` remains open for the original
+full-gate fixture failure/lost trace; a later diagnostic pass is not a causal fix.
+Do not claim broad review-clean or complete acceptance. The standalone
 MDK helper always reports `cleanup_complete=false`: otherwise successful command
 phases refuse lifecycle success with nonzero `cleanup_unverified` (scoped cleanup
 errors remain explicit). Historical MDK smoke is command/CTest evidence only, not
