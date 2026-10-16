@@ -35,6 +35,13 @@ SUPPORT_INPUTS = {
     "scripts/test-plan.py",
     "scripts/test_selection.py",
     "scripts/test_selection_realization.py",
+    "scripts/contained-gate.py",
+    "scripts/contained-runner.py",
+    "scripts/test_selection_custody.py",
+    "tests/selection/test_contained_custody_contract.py",
+    "tests/custody/workload.py",
+    "tests/custody/test_contained_linux.py",
+    "tests/custody/test_contained_engine.py",
 }
 
 
