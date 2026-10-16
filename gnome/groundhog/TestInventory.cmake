@@ -8,11 +8,11 @@ endif()
 
 function(_gh_describe name target owner)
   if(TEST "${name}")
-    cmake_parse_arguments(PARSE_ARGV 3 ARG "" "EXPECTED" "INPUTS;REQUIRES")
+    cmake_parse_arguments(PARSE_ARGV 3 ARG "" "EXPECTED" "INPUTS;REQUIRES;TARGETS")
     if(NOT ARG_EXPECTED)
       set(ARG_EXPECTED pass)
     endif()
-    set(_targets "${target}")
+    set(_targets "${target}" ${ARG_TARGETS})
     get_property(_environment TEST "${name}" PROPERTY ENVIRONMENT)
     if(_environment MATCHES "GSETTINGS_SCHEMA_DIR=" AND TARGET groundhog-test-schemas)
       list(APPEND _targets groundhog-test-schemas)
@@ -22,6 +22,74 @@ function(_gh_describe name target owner)
       INPUTS ${ARG_INPUTS} REQUIRES ${ARG_REQUIRES} EXPECTED "${ARG_EXPECTED}")
   endif()
 endfunction()
+
+# Additional runtime paths are taken from registration commands and compile
+# definitions in CMakeLists.txt (not inferred from execution names).
+_gh_describe(groundhog-about test-groundhog-about groundhog.shell_ui)
+_gh_describe(groundhog-about-gui test-groundhog-about groundhog.shell_ui REQUIRES display)
+_gh_describe(groundhog-conversation-view test-groundhog-conversation-view groundhog.unclassified
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/fixtures")
+_gh_describe(groundhog-privacy-summary test-groundhog-privacy-summary groundhog.unclassified
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui/snapshots")
+_gh_describe(groundhog-icons test-groundhog-icons groundhog.unclassified
+  INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/data/ui" "${CMAKE_CURRENT_SOURCE_DIR}/src/ui")
+_gh_describe(groundhog-inbox-setup test-groundhog-inbox-setup groundhog.unclassified
+  INPUTS "${GROUNDHOG_DATA}/relay-suggestions.json")
+_gh_describe(groundhog-background test-groundhog-background groundhog.unclassified
+  TARGETS groundhog INPUTS "${GROUNDHOG_AUTOSTART_DESKTOP}" REQUIRES private_bus)
+_gh_describe(groundhog-background-gui test-groundhog-background groundhog.unclassified
+  TARGETS groundhog INPUTS "${GROUNDHOG_AUTOSTART_DESKTOP}" REQUIRES display)
+_gh_describe(groundhog-bus-probe test-groundhog-bus-probe groundhog.unclassified
+  TARGETS groundhog REQUIRES private_bus)
+_gh_describe(groundhog-two-instance test-groundhog-two-instance groundhog.unclassified
+  TARGETS groundhog REQUIRES private_bus)
+_gh_describe(groundhog-i18n test-groundhog-i18n groundhog.resources TARGETS groundhog-i18n
+  INPUTS "${groundhog_LOCALE_BUILD_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/po"
+    "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop"
+    "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml")
+
+if(TEST groundhog-schema)
+  nostrc_describe_test(groundhog-schema OWNER groundhog.resources TARGETS groundhog-schema
+    INPUTS "${GROUNDHOG_DATA}/org.nostr.Groundhog.gschema.xml"
+      "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.gschema.xml")
+endif()
+if(TEST groundhog-data)
+  nostrc_describe_test(groundhog-data OWNER groundhog.resources TARGETS groundhog
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_data.py" "${GROUNDHOG_DATA}")
+endif()
+if(TEST groundhog-blueprint)
+  nostrc_describe_test(groundhog-blueprint OWNER groundhog.resources
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_blueprint.py" "${GROUNDHOG_DATA}/ui")
+endif()
+if(TEST groundhog-desktop)
+  nostrc_describe_test(groundhog-desktop OWNER groundhog.resources TARGETS groundhog-i18n
+    INPUTS "${GROUNDHOG_DATA}/org.nostr.Groundhog.desktop.in"
+      "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.desktop")
+endif()
+if(TEST groundhog-metainfo)
+  nostrc_describe_test(groundhog-metainfo OWNER groundhog.resources
+    INPUTS "${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml")
+endif()
+if(TEST groundhog-metainfo-merged)
+  nostrc_describe_test(groundhog-metainfo-merged OWNER groundhog.resources TARGETS groundhog-i18n
+    INPUTS "${GROUNDHOG_DATA}/org.nostr.Groundhog.metainfo.xml"
+      "${CMAKE_CURRENT_BINARY_DIR}/org.nostr.Groundhog.metainfo.xml")
+endif()
+if(TEST groundhog-background-desktop)
+  nostrc_describe_test(groundhog-background-desktop OWNER groundhog.resources TARGETS groundhog-i18n
+    INPUTS "${GROUNDHOG_AUTOSTART_DESKTOP}")
+endif()
+if(TEST groundhog-potfiles)
+  nostrc_describe_test(groundhog-potfiles OWNER groundhog.unclassified
+    INPUTS "${CMAKE_SOURCE_DIR}/cmake/nostrc-check-potfiles.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/po/POTFILES" "${CMAKE_CURRENT_SOURCE_DIR}/src"
+      "${GROUNDHOG_DATA}/ui")
+endif()
+if(TEST groundhog-privacy-static)
+  nostrc_describe_test(groundhog-privacy-static OWNER groundhog.unclassified
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/check_privacy.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src" "${GROUNDHOG_DATA}")
+endif()
 
 _gh_describe(groundhog-store-marmot test-groundhog-store-marmot groundhog.mls_store)
 _gh_describe(groundhog-mls-service test-groundhog-mls-service groundhog.mls_service)

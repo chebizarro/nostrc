@@ -191,6 +191,13 @@ add_test(NAME no_bare_assert
 # again. Enforces the parity rule at the top of this file.
 add_test(NAME test_list_parity
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/check_test_parity.sh ${CMAKE_CURRENT_SOURCE_DIR})
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(no_bare_assert OWNER signet
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/check_no_bare_assert.sh" "${CMAKE_CURRENT_SOURCE_DIR}")
+  nostrc_describe_test(test_list_parity OWNER signet
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/check_test_parity.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt" "${CMAKE_CURRENT_SOURCE_DIR}/meson.build")
+endif()
 
 add_test(NAME signet_smoke COMMAND test_signet_smoke)
 add_test(NAME health_readiness COMMAND test_health_readiness)
@@ -224,6 +231,10 @@ add_test(NAME cli_secret_output COMMAND test_cli_secret_output)
 add_test(NAME git_credential COMMAND test_git_credential)
 add_test(NAME signetctl_credentials
   COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh $<TARGET_FILE:signetctl>)
+if(COMMAND nostrc_describe_test)
+  nostrc_describe_test(signetctl_credentials OWNER signet TARGETS signetctl
+    INPUTS "${CMAKE_CURRENT_SOURCE_DIR}/test_signetctl_credentials.sh")
+endif()
 add_test(NAME backup_restore COMMAND test_backup_restore)
 add_test(NAME item3_concurrency COMMAND test_item3_concurrency)
 

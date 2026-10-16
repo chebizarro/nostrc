@@ -103,6 +103,49 @@ class RealizationTests(Project):
         self.assertIn('if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)\n  nostrc_finalize_test_inventory()', libgo)
         self.assertIn('include("${CMAKE_CURRENT_LIST_DIR}/../cmake/NostrcTestInventory.cmake")', libgo)
 
+    def test_generated_command_recovery_is_literal_not_name_mapping(self):
+        self.build = self.build.parent / "build with spaces"
+        realized = self.configure()
+        model = next(t for t in realized["tests"] if t["name"] == "a-model")
+        self.assertEqual(model["command"], [str(self.build / "shared")])
+        self.assertFalse((self.build / "shared").exists())
+        self.assertEqual(r._mapped_targets(model, {}, realized),
+                         [next(t["id"] for t in realized["targets"].values() if t["name"] == "shared")])
+
+    def test_generated_command_lexer_preserves_quoted_arguments(self):
+        text = r'''[=[odd name]=] "/a b/exec" "quote\"line\n" "\$literal" "semi;colon")'''
+        self.assertEqual(r._cmake_literal_arguments(text, 0),
+                         ["odd name", "/a b/exec", 'quote"line\n', "$literal", "semi;colon"])
+        with self.assertRaisesRegex(r.RealizationError, "nonliteral"):
+            r._cmake_literal_arguments('"name" "${dynamic}/exec")', 0)
+
+    def test_native_profile_cannot_mislabel_platform_architecture_or_build(self):
+        import platform
+        other = "windows" if platform.system() != "Windows" else "linux"
+        with self.assertRaisesRegex(r.RealizationError, "platform"):
+            r._validate_native_profile({"platform": other})
+        with self.assertRaisesRegex(r.RealizationError, "architecture"):
+            r._validate_native_profile({"architecture": "not-this-host"})
+        self.profile["build_type"] = "Release"
+        with self.assertRaisesRegex(r.RealizationError, "build type"):
+            self.configure()
+        self.assertFalse((self.build / "nostrc-test-realization.json").exists())
+
+    def test_component_directory_ownership_does_not_use_execution_name(self):
+        for directory, name in (("nips/nip44", "unrelated-looking"), ("mystery", "nip44_test")):
+            path = self.root / directory
+            path.mkdir(parents=True)
+            (path / "CMakeLists.txt").write_text(f'add_test(NAME {name} COMMAND ${{CMAKE_COMMAND}} -E true)\n')
+        cmake = self.root / "CMakeLists.txt"
+        cmake.write_text(cmake.read_text().replace("nostrc_finalize_test_inventory()",
+            "add_subdirectory(nips/nip44)\nadd_subdirectory(mystery)\nnostrc_finalize_test_inventory()"))
+        realized = self.configure()
+        descriptors = {d["name"]: d for d in realized["descriptors"]}
+        self.assertEqual(descriptors["unrelated-looking"]["owner"], ["nip44"])
+        self.assertEqual(descriptors["unrelated-looking"]["owner_authority"], "component_directory")
+        self.assertEqual(descriptors["nip44_test"]["owner"], [])
+        self.assertEqual(descriptors["nip44_test"]["owner_authority"], "unresolved")
+
     def test_groundhog_packaging_and_late_graph_contract(self):
         text = (ROOT / "gnome/groundhog/TestInventory.cmake").read_text()
         for runtime in ("flake.nix", "packaging/archlinux/groundhog/PKGBUILD",
