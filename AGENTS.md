@@ -22,12 +22,23 @@ scripts/install-hooks.sh
 This installs the fast pre-push hook (static checks, no build; CI builds and tests).
 
 **Staged testing migration (2026-10-15):**
-`docs/plans/dependency-aware-testing-ci-2026-10-15.md` is the specification;
-`docs/reviews/dependency-aware-testing-ci-2026-10-15-w1-baseline.md` records the
-W1 operational audit and remaining rollout evidence. Proposed selective commands
-are not an accepted default in this phase. Keep the existing gate, build/test,
-keychain and push requirements below; no schedule or protection cutover is
-approved by the baseline audit.
+Explicit diagnostic commands are now implemented: `scripts/test-gate.sh --help`
+and `scripts/test-gate.sh --base <sha> --head <sha> --explain` (plan only).
+`--profile libgo.macos.asan` selects the current standalone macOS/arm64 libgo
+ASan/UBSan diagnostic profile, not native root or complete CI coverage.
+`NOSTRC_SELECTIVE_GATE=1` adds the diagnostic adapter to existing push gates;
+it does not replace them. Missing capabilities, unsupported checks and incomplete
+coverage must remain visible failures, not bypassed passes.
+
+See `docs/TESTING.md` for current explicit commands and rollout limitations,
+`docs/plans/dependency-aware-testing-ci-2026-10-15.md` for the specification/progress,
+and `docs/reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md` for
+bounded evidence. Shadow workflows are additive, not accepted required checks.
+Publisher dependency validation uses `NOSTRC_DEPENDENCY_RELEASE_MODE`:
+`disabled` (source default), `shadow`, or `enforce`; disabled/shadow publication
+decisions are not successful validation attestations. Do not enable enforcement
+or remove legacy gates/triggers/schedules before W11 evidence and operator cutover.
+Keep all existing build/test, keychain and push requirements below unchanged.
 
 ---
 
