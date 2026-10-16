@@ -83,6 +83,15 @@ def realization_command(args, policy, backend):
         realized = backend.configure_profile(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy))
     else:
         realized = backend.load_realization(args.build_dir, identity)
+    # Stored identity equality is insufficient: another checkout may share the
+    # same commit, or the original build's source may since have advanced.
+    repo_root = Path(args.repo).resolve()
+    source_dir = (repo_root / profile["source_dir"]).resolve()
+    expected_paths = {"repo_root": repo_root, "source_dir": source_dir,
+                      "build_dir": Path(args.build_dir).resolve()}
+    for field, expected in expected_paths.items():
+        if Path(realized[field]).resolve() != expected:
+            raise selection.CheckFailure(f"realization {field} does not match admitted execution checkout: {expected}")
     selection.require(realized["profile_id"] == args.profile and realized["profile"] == profile and realized["inventory_hash"] == selection.digest(policy), "realization policy/profile mismatch")
     if args.command in {"validate", "check-inputs"}:
         audit = backend.check_inputs(policy, realized, identity, after_build=args.after_build)
