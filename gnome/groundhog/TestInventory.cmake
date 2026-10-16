@@ -162,3 +162,14 @@ if(TEST groundhog-mdk011-interop-artifacts-reset)
   nostrc_describe_test(groundhog-mdk011-interop-artifacts-reset
     OWNER testing.framework EXPECTED fixture)
 endif()
+
+# All remaining registrations retain conservative component ownership, but still
+# declare their actual GSETTINGS runtime/producer inputs. Target identity comes
+# from CTest's command and File API, never from a synthesized test-name prefix.
+get_property(_gh_tests DIRECTORY PROPERTY TESTS)
+foreach(_test IN LISTS _gh_tests)
+  get_property(_described TEST "${_test}" PROPERTY NOSTRC_SELECTION_DESCRIBED)
+  if(NOT _described)
+    _gh_describe("${_test}" "" groundhog.unclassified)
+  endif()
+endforeach()

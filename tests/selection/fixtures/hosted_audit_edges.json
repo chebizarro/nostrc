@@ -1,0 +1,1718 @@
+{
+  "schema_version": 1,
+  "scope": "Historical failed production configure audit edges, not passing current execution/header evidence",
+  "audits": [
+    {
+      "profile": "core.linux.asan",
+      "source_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814",
+      "hosted_job": 116829330482,
+      "receipt_sha256": "d367c0655464f578f0f51d5306099a2a749de3518e1723f3134616a40ed0d60f",
+      "evidence_kind": "configure_source_input_audit_failed",
+      "original_gap_count": 6297,
+      "edges": [
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip55l.core"
+          ],
+          "input": "nips/nip55l/src/core/signer_ops.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libmarmot",
+          "test": "marmot_test_interop",
+          "required_nodes": [
+            "marmot.vector_inputs"
+          ],
+          "input": "libmarmot/tests/vectors/mdk/.gitkeep",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "gnome.seahorse"
+          ],
+          "input": "gnome/seahorse/secret_store.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip55l.test_inputs"
+          ],
+          "input": "nips/nip55l/tests/test_signer_approval_service.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip5f"
+          ],
+          "input": "nips/nip5f/src/core/sock_client.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_dbus_contract",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip34",
+          "test": "test-nip34",
+          "required_nodes": [
+            "nip34.test_inputs"
+          ],
+          "input": "nips/nip34/tests/test_nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_connection_idle_writable",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip77",
+          "test": "test_ndb_empty",
+          "required_nodes": [
+            "nip77.test_inputs"
+          ],
+          "input": "nips/nip77/tests/test_ndb_empty.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_nip04_aead",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip04",
+          "test": "test_nip04_error_uniformity",
+          "required_nodes": [
+            "nip04.test_inputs"
+          ],
+          "input": "nips/nip04/tests/test_nip04_error_uniformity.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip05",
+          "test": "test_nip05_parse",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip05",
+          "test": "test_nip05_parse",
+          "required_nodes": [
+            "nip05.test_inputs"
+          ],
+          "input": "nips/nip05/tests/test_nip05_parse.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip06",
+          "test": "test_nip06",
+          "required_nodes": [
+            "nip06.test_inputs"
+          ],
+          "input": "nips/nip06/tests/test_nip06_roundtrip.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip11",
+          "test": "test_nip11",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip11",
+          "test": "test_nip11",
+          "required_nodes": [
+            "nip11.test_inputs"
+          ],
+          "input": "nips/nip11/tests/test_nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip14",
+          "test": "test_nip14",
+          "required_nodes": [
+            "nip14.test_inputs"
+          ],
+          "input": "nips/nip14/tests/test_nip14.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip17",
+          "test": "test_nip17",
+          "required_nodes": [
+            "nip17.test_inputs"
+          ],
+          "input": "nips/nip17/tests/test_nip17.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip17",
+          "test": "test_nip17",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip19",
+          "test": "test_nip19",
+          "required_nodes": [
+            "nip19.test_inputs"
+          ],
+          "input": "nips/nip19/tests/test_nip19.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip21",
+          "test": "test_nip21",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip21",
+          "test": "test_nip21",
+          "required_nodes": [
+            "nip21.test_inputs"
+          ],
+          "input": "nips/nip21/tests/test_nip21.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip22",
+          "test": "test_nip22",
+          "required_nodes": [
+            "nip22.test_inputs"
+          ],
+          "input": "nips/nip22/tests/test_nip22.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip23",
+          "test": "test_nip23",
+          "required_nodes": [
+            "nip23.test_inputs"
+          ],
+          "input": "nips/nip23/tests/test_nip23.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip24",
+          "test": "test_nip24",
+          "required_nodes": [
+            "nip24.test_inputs"
+          ],
+          "input": "nips/nip24/tests/test_nip24.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip25",
+          "test": "test_nip25",
+          "required_nodes": [
+            "nip25.test_inputs"
+          ],
+          "input": "nips/nip25/tests/test_nip25.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip21"
+          ],
+          "input": "nips/nip21/src/nip21.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip27.test_inputs"
+          ],
+          "input": "nips/nip27/tests/test_nip27.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip28",
+          "test": "test_nip28",
+          "required_nodes": [
+            "nip28.test_inputs"
+          ],
+          "input": "nips/nip28/tests/test_nip28.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip30",
+          "test": "test_nip30",
+          "required_nodes": [
+            "nip30.test_inputs"
+          ],
+          "input": "nips/nip30/tests/test_nip30.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip39",
+          "test": "test_nip39",
+          "required_nodes": [
+            "nip39.test_inputs"
+          ],
+          "input": "nips/nip39/tests/test_nip39.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip40",
+          "test": "test_nip40",
+          "required_nodes": [
+            "nip40.test_inputs"
+          ],
+          "input": "nips/nip40/tests/test_nip40.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip44",
+          "test": "test_nip44_convkey",
+          "required_nodes": [
+            "nip44.test_inputs"
+          ],
+          "input": "nips/nip44/tests/test_nip44_convkey.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip46.test_inputs"
+          ],
+          "input": "nips/nip46/tests/test_async_api.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip47.test_inputs"
+          ],
+          "input": "nips/nip47/tests/test_nwc_crypto.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip49",
+          "test": "test_nip49_negative",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip49",
+          "test": "test_nip49_negative",
+          "required_nodes": [
+            "nip49.test_inputs"
+          ],
+          "input": "nips/nip49/tests/test_nip49_negative.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip51",
+          "test": "test_nip51",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip51",
+          "test": "test_nip51",
+          "required_nodes": [
+            "nip51.test_inputs"
+          ],
+          "input": "nips/nip51/tests/test_nip51.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip57",
+          "test": "test_nip57",
+          "required_nodes": [
+            "nip57.test_inputs"
+          ],
+          "input": "nips/nip57/tests/test_nip57.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip58",
+          "test": "test_nip58",
+          "required_nodes": [
+            "nip58.test_inputs"
+          ],
+          "input": "nips/nip58/tests/test_nip58.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip59",
+          "test": "test_nip59",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip59",
+          "test": "test_nip59",
+          "required_nodes": [
+            "nip59.test_inputs"
+          ],
+          "input": "nips/nip59/tests/test_nip59.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip5f.test_inputs"
+          ],
+          "input": "nips/nip5f/tests/test_nip5f_loopback.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip60",
+          "test": "test_nip60",
+          "required_nodes": [
+            "nip60.test_inputs"
+          ],
+          "input": "nips/nip60/tests/test_nip60.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip61",
+          "test": "test_nip61",
+          "required_nodes": [
+            "nip61.test_inputs"
+          ],
+          "input": "nips/nip61/tests/test_nip61.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip70",
+          "test": "test_nip70",
+          "required_nodes": [
+            "nip70.test_inputs"
+          ],
+          "input": "nips/nip70/tests/test_nip70.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip73",
+          "test": "test_nip73",
+          "required_nodes": [
+            "nip73.test_inputs"
+          ],
+          "input": "nips/nip73/tests/test_nip73.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip75",
+          "test": "test_nip75",
+          "required_nodes": [
+            "nip75.test_inputs"
+          ],
+          "input": "nips/nip75/tests/test_nip75.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_nip86_policy",
+          "required_nodes": [
+            "nip86"
+          ],
+          "input": "nips/nip86/src/nip86.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip92",
+          "test": "test_nip92",
+          "required_nodes": [
+            "nip92.test_inputs"
+          ],
+          "input": "nips/nip92/tests/test_nip92.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip98",
+          "test": "test_nip98",
+          "required_nodes": [
+            "nip98.test_inputs"
+          ],
+          "input": "nips/nip98/tests/test_nip98.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip99",
+          "test": "test_nip99",
+          "required_nodes": [
+            "nip99.test_inputs"
+          ],
+          "input": "nips/nip99/tests/test_nip99.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nipb0",
+          "test": "test_nipb0",
+          "required_nodes": [
+            "nipb0.test_inputs"
+          ],
+          "input": "nips/nipb0/tests/test_nipb0.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_integ_event_flow",
+          "required_nodes": [
+            "testkit"
+          ],
+          "input": "tests/testkit/gnostr-testkit.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_relay_connect",
+          "required_nodes": [
+            "testing.framework"
+          ],
+          "input": "Testing/src/mock_relay.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip_cas0010",
+          "test": "test_otel_consumer",
+          "required_nodes": [
+            "nip_cas0010.test_inputs"
+          ],
+          "input": "nips/nip-cas0010/tests/test_otel_consumer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.schema",
+          "test": "test_schema",
+          "required_nodes": [
+            "schema.test_inputs"
+          ],
+          "input": "nips/schema/tests/test_schema.c",
+          "input_kind": "source"
+        }
+      ]
+    },
+    {
+      "profile": "core.macos.asan",
+      "source_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814",
+      "hosted_job": 116829330573,
+      "receipt_sha256": "48309a0192fb93454baaad6b04783e018c06eaa944ff008bd2d66797d6e71b03",
+      "evidence_kind": "configure_source_input_audit_failed",
+      "original_gap_count": 5949,
+      "edges": [
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "MockRelayIntegration",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "Nip46MockRelay",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.testing.framework",
+          "test": "SignerIntegration",
+          "required_nodes": [
+            "nip55l.core"
+          ],
+          "input": "nips/nip55l/src/core/signer_ops.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libmarmot",
+          "test": "marmot_test_interop",
+          "required_nodes": [
+            "marmot.vector_inputs"
+          ],
+          "input": "libmarmot/tests/vectors/mdk/.gitkeep",
+          "input_kind": "runtime"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip55l.test_inputs"
+          ],
+          "input": "nips/nip55l/tests/test_signer_approval_service.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_approval_service",
+          "required_nodes": [
+            "nip5f"
+          ],
+          "input": "nips/nip5f/src/core/sock_client.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip55l",
+          "test": "nip55l_dbus_contract",
+          "required_nodes": [
+            "shared.tests"
+          ],
+          "input": "tests/common/nostrc-test-bus.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "libgo"
+          ],
+          "input": "libgo/src/blocking_executor.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "libnostr"
+          ],
+          "input": "libnostr/src/brown_list.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "nip34"
+          ],
+          "input": "nips/nip34/src/nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.libhanami",
+          "test": "test-hanami-blossom-batch",
+          "required_nodes": [
+            "vendor.nostrdb"
+          ],
+          "input": "third_party/nostrdb/ccan/ccan/crypto/sha256/sha256.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip34",
+          "test": "test-nip34",
+          "required_nodes": [
+            "nip34.test_inputs"
+          ],
+          "input": "nips/nip34/tests/test_nip34.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_connection_idle_writable",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip77",
+          "test": "test_ndb_empty",
+          "required_nodes": [
+            "nip77.test_inputs"
+          ],
+          "input": "nips/nip77/tests/test_ndb_empty.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_nip04_aead",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip04",
+          "test": "test_nip04_error_uniformity",
+          "required_nodes": [
+            "nip04.test_inputs"
+          ],
+          "input": "nips/nip04/tests/test_nip04_error_uniformity.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip05",
+          "test": "test_nip05_parse",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip05",
+          "test": "test_nip05_parse",
+          "required_nodes": [
+            "nip05.test_inputs"
+          ],
+          "input": "nips/nip05/tests/test_nip05_parse.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip06",
+          "test": "test_nip06",
+          "required_nodes": [
+            "nip06.test_inputs"
+          ],
+          "input": "nips/nip06/tests/test_nip06_roundtrip.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip11",
+          "test": "test_nip11",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip11",
+          "test": "test_nip11",
+          "required_nodes": [
+            "nip11.test_inputs"
+          ],
+          "input": "nips/nip11/tests/test_nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip14",
+          "test": "test_nip14",
+          "required_nodes": [
+            "nip14.test_inputs"
+          ],
+          "input": "nips/nip14/tests/test_nip14.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip17",
+          "test": "test_nip17",
+          "required_nodes": [
+            "nip17.test_inputs"
+          ],
+          "input": "nips/nip17/tests/test_nip17.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip17",
+          "test": "test_nip17",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip19",
+          "test": "test_nip19",
+          "required_nodes": [
+            "nip19.test_inputs"
+          ],
+          "input": "nips/nip19/tests/test_nip19.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip21",
+          "test": "test_nip21",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip21",
+          "test": "test_nip21",
+          "required_nodes": [
+            "nip21.test_inputs"
+          ],
+          "input": "nips/nip21/tests/test_nip21.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip22",
+          "test": "test_nip22",
+          "required_nodes": [
+            "nip22.test_inputs"
+          ],
+          "input": "nips/nip22/tests/test_nip22.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip23",
+          "test": "test_nip23",
+          "required_nodes": [
+            "nip23.test_inputs"
+          ],
+          "input": "nips/nip23/tests/test_nip23.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip24",
+          "test": "test_nip24",
+          "required_nodes": [
+            "nip24.test_inputs"
+          ],
+          "input": "nips/nip24/tests/test_nip24.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip25",
+          "test": "test_nip25",
+          "required_nodes": [
+            "nip25.test_inputs"
+          ],
+          "input": "nips/nip25/tests/test_nip25.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip21"
+          ],
+          "input": "nips/nip21/src/nip21.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip27",
+          "test": "test_nip27",
+          "required_nodes": [
+            "nip27.test_inputs"
+          ],
+          "input": "nips/nip27/tests/test_nip27.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip28",
+          "test": "test_nip28",
+          "required_nodes": [
+            "nip28.test_inputs"
+          ],
+          "input": "nips/nip28/tests/test_nip28.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip30",
+          "test": "test_nip30",
+          "required_nodes": [
+            "nip30.test_inputs"
+          ],
+          "input": "nips/nip30/tests/test_nip30.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip39",
+          "test": "test_nip39",
+          "required_nodes": [
+            "nip39.test_inputs"
+          ],
+          "input": "nips/nip39/tests/test_nip39.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip40",
+          "test": "test_nip40",
+          "required_nodes": [
+            "nip40.test_inputs"
+          ],
+          "input": "nips/nip40/tests/test_nip40.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip44",
+          "test": "test_nip44_convkey",
+          "required_nodes": [
+            "nip44.test_inputs"
+          ],
+          "input": "nips/nip44/tests/test_nip44_convkey.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip46",
+          "test": "test_nip46_async_api",
+          "required_nodes": [
+            "nip46.test_inputs"
+          ],
+          "input": "nips/nip46/tests/test_async_api.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip47",
+          "test": "test_nip47_nwc_crypto",
+          "required_nodes": [
+            "nip47.test_inputs"
+          ],
+          "input": "nips/nip47/tests/test_nwc_crypto.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip49",
+          "test": "test_nip49_negative",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip49",
+          "test": "test_nip49_negative",
+          "required_nodes": [
+            "nip49.test_inputs"
+          ],
+          "input": "nips/nip49/tests/test_nip49_negative.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip51",
+          "test": "test_nip51",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip51",
+          "test": "test_nip51",
+          "required_nodes": [
+            "nip51.test_inputs"
+          ],
+          "input": "nips/nip51/tests/test_nip51.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip57",
+          "test": "test_nip57",
+          "required_nodes": [
+            "nip57.test_inputs"
+          ],
+          "input": "nips/nip57/tests/test_nip57.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip58",
+          "test": "test_nip58",
+          "required_nodes": [
+            "nip58.test_inputs"
+          ],
+          "input": "nips/nip58/tests/test_nip58.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip59",
+          "test": "test_nip59",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip59",
+          "test": "test_nip59",
+          "required_nodes": [
+            "nip59.test_inputs"
+          ],
+          "input": "nips/nip59/tests/test_nip59.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "libjson"
+          ],
+          "input": "libjson/src/json.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip5f",
+          "test": "test_nip5f_loopback",
+          "required_nodes": [
+            "nip5f.test_inputs"
+          ],
+          "input": "nips/nip5f/tests/test_nip5f_loopback.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip60",
+          "test": "test_nip60",
+          "required_nodes": [
+            "nip60.test_inputs"
+          ],
+          "input": "nips/nip60/tests/test_nip60.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip61",
+          "test": "test_nip61",
+          "required_nodes": [
+            "nip61.test_inputs"
+          ],
+          "input": "nips/nip61/tests/test_nip61.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip70",
+          "test": "test_nip70",
+          "required_nodes": [
+            "nip70.test_inputs"
+          ],
+          "input": "nips/nip70/tests/test_nip70.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip73",
+          "test": "test_nip73",
+          "required_nodes": [
+            "nip73.test_inputs"
+          ],
+          "input": "nips/nip73/tests/test_nip73.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip75",
+          "test": "test_nip75",
+          "required_nodes": [
+            "nip75.test_inputs"
+          ],
+          "input": "nips/nip75/tests/test_nip75.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.shared.tests",
+          "test": "test_nip86_policy",
+          "required_nodes": [
+            "nip86"
+          ],
+          "input": "nips/nip86/src/nip86.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip92",
+          "test": "test_nip92",
+          "required_nodes": [
+            "nip92.test_inputs"
+          ],
+          "input": "nips/nip92/tests/test_nip92.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip98",
+          "test": "test_nip98",
+          "required_nodes": [
+            "nip98.test_inputs"
+          ],
+          "input": "nips/nip98/tests/test_nip98.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip99",
+          "test": "test_nip99",
+          "required_nodes": [
+            "nip99.test_inputs"
+          ],
+          "input": "nips/nip99/tests/test_nip99.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nipb0",
+          "test": "test_nipb0",
+          "required_nodes": [
+            "nipb0.test_inputs"
+          ],
+          "input": "nips/nipb0/tests/test_nipb0.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip04"
+          ],
+          "input": "nips/nip04/src/nip04.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip06"
+          ],
+          "input": "nips/nip06/src/nip06.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip11"
+          ],
+          "input": "nips/nip11/src/nip11.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip19"
+          ],
+          "input": "nips/nip19/src/bech32.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip44"
+          ],
+          "input": "nips/nip44/src/core/nip44.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip46"
+          ],
+          "input": "nips/nip46/src/core/nip46_envelope.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_event",
+          "required_nodes": [
+            "nip49"
+          ],
+          "input": "nips/nip49/src/core/nip49.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_integ_event_flow",
+          "required_nodes": [
+            "testkit"
+          ],
+          "input": "tests/testkit/gnostr-testkit.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nostr.gobject",
+          "test": "test_nostr_gobject_relay_connect",
+          "required_nodes": [
+            "testing.framework"
+          ],
+          "input": "Testing/src/mock_relay.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.nip_cas0010",
+          "test": "test_otel_consumer",
+          "required_nodes": [
+            "nip_cas0010.test_inputs"
+          ],
+          "input": "nips/nip-cas0010/tests/test_otel_consumer.c",
+          "input_kind": "source"
+        },
+        {
+          "check": "root.asan.schema",
+          "test": "test_schema",
+          "required_nodes": [
+            "schema.test_inputs"
+          ],
+          "input": "nips/schema/tests/test_schema.c",
+          "input_kind": "source"
+        }
+      ]
+    }
+  ]
+}

@@ -54,13 +54,44 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config clang lld python3 \
+            build-essential cmake ninja-build meson pkg-config clang lld python3 python3-pip curl \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
             libjson-glib-dev libgit2-dev libnsync-dev libgtk-4-dev libadwaita-1-dev \
             libsecret-1-dev libgcrypt20-dev libqrencode-dev libsqlite3-dev \
             libsqlcipher-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            libzbar-dev libpeas-dev blueprint-compiler xvfb dbus-x11
+            libzbar-dev libpeas-dev blueprint-compiler xvfb xauth dbus-x11 \
+            gettext locales desktop-file-utils appstream python3-gi gnome-keyring \
+            glib-networking gjs adwaita-icon-theme librsvg2-common \
+            gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-libav
+          sudo localedef -i en_US -f UTF-8 en_US.UTF-8
+      - name: Install pinned Blueprint compiler for application profiles
+        if: runner.os == 'Linux' && (inputs.profile == 'core.linux' || inputs.profile == 'grotto.linux' || inputs.profile == 'groundhog.mdk08')
+        run: |
+          set -euo pipefail
+          curl -fL https://download.gnome.org/sources/blueprint-compiler/0.22/blueprint-compiler-0.22.2.tar.xz -o "$RUNNER_TEMP/blueprint.tar.xz"
+          echo "231d72efbac931c235ac3e022fe94982095c20d88721d9a8dcf60152f2017e07  $RUNNER_TEMP/blueprint.tar.xz" | sha256sum -c
+          mkdir "$RUNNER_TEMP/blueprint"
+          tar -xJf "$RUNNER_TEMP/blueprint.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/blueprint"
+          meson setup "$RUNNER_TEMP/blueprint-build" "$RUNNER_TEMP/blueprint" --prefix=/usr/local \
+            -Dpython.purelibdir="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+          meson compile -C "$RUNNER_TEMP/blueprint-build"
+          sudo meson install -C "$RUNNER_TEMP/blueprint-build"
+          blueprint-compiler --version | grep -x 0.22.2
+      - name: Match standalone libgo Linux CMake toolchain
+        if: runner.os == 'Linux' && inputs.profile == 'libgo.linux.asan'
+        run: python3 -m pip install --break-system-packages 'cmake==3.31.6'
+      - name: Install matching Groundhog sanitizer symbols
+        if: runner.os == 'Linux' && inputs.profile == 'groundhog.linux.sanitizers'
+        run: |
+          set -euo pipefail
+          version="$(dpkg-query -W -f='${Version}' libsecret-1-0)"
+          arch="$(dpkg --print-architecture)"
+          curl --fail --location \
+            "https://ddebs.ubuntu.com/ubuntu/pool/main/libs/libsecret/libsecret-1-0-dbgsym_${version}_${arch}.ddeb" \
+            --output "$RUNNER_TEMP/libsecret-dbgsym.ddeb"
+          sudo dpkg-deb --extract "$RUNNER_TEMP/libsecret-dbgsym.ddeb" /
       - name: Install existing native standalone libgo prerequisites
         if: runner.os == 'macOS' && inputs.profile == 'libgo.macos.asan'
         run: brew install ninja libsoup@3 nsync

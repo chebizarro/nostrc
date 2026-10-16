@@ -617,3 +617,5 @@ set_tests_properties(profile_fetch_stress PROPERTIES
   LABELS "concurrency;profile;stress"
   ENVIRONMENT "NOSTR_TEST_MODE=1"
 )
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/TestInventory.cmake")
