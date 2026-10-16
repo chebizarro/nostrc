@@ -92,11 +92,14 @@ change, exclusion, retry waiver or runtime correction.
   contracts, not the complete production profile union. Signal-capture fix
   `0b1e8705e` additionally retains bytes across actual SIGTERM; parent reports
   **24 Linux / 278 native tests passed**, separately from pending combined gates.
-  The outer `scripts/test-gate.sh` adapter now admits ordinary `ctest`, `command`
-  and `build_contract` checks, including exact-tree/snapshot execution and evidence.
-  Capabilities beyond supported display/private-bus isolation remain refused.
-  **Wrapped cancellation evidence loss remains open as `.22`**; ordinary unwrapped
-  cancellation success is not proof that supported wrappers finalize evidence.
+  The outer `scripts/test-gate.sh` adapter admits ordinary unwrapped `command` /
+  `build_contract` checks and legacy CTest lanes, with exact-tree/snapshot evidence.
+  Guard `8179275b2` **refuses before launch** any selected non-CTest lane requiring
+  `display`/`private_bus`, including mixed CTest/non-CTest selection and capabilities
+  from either profile or check. `.22` closes **by refusal only**: no capability
+  dropping, silent unwrapping or fabricated execution receipts. Other unsupported
+  capabilities stay refused; legacy CTest cancellation is unchanged. Safe wrapped
+  command custody is **not implemented** (`.23` OPEN), not a drain fix.
 - Phase engine `7bd6dc4b4` actually applies separate configure/build/test
   environments, `{source_root}` paths, fingerprints/cache validation and input
   audits, including compatibility application prerequisites/targets. Earlier root
@@ -156,7 +159,7 @@ change, exclusion, retry waiver or runtime correction.
   result/artifact. Do not enable it before W11/operator cutover. This variable
   controls publisher validation, not whether general shadow PR workflows exist.
 
-### Current bounded handoff — 90a1b675f, 2026-10-16
+### Current bounded handoff — 2d64a7ac2, 2026-10-16
 
 Metadata `.17` records **98 exact `selection.contract` inputs**, detects new
 tracked/discoverable helpers and accounts for the independent shadow jobs. Actual
@@ -168,11 +171,22 @@ production Ubuntu 24.04 Linux/x86_64 `static.policy` command execution at
 checkers, full actionlint including ShellCheck and range whitespace passed at
 `83dfea3bb`; these are distinct-source receipts, not reruns by this docs task.
 
-Independent [review `eee130177`](reviews/dependency-aware-testing-ci-2026-10-16-phase-review.md)
-of `83dfea3bb` confirmed one P2 wrapped-cancellation evidence bug (`.22`); its fix
-is in progress, **not resolved/review-clean**. The passing combined suite does
-**not** invalidate that real adversary or grant final full-slice acceptance.
-The review's two known metadata errors remain historical at its source.
+Integration `2d64a7ac22bcc08018d4ffdec91fee800f54df6f` includes the guard-only
+resolution of [review R1](reviews/dependency-aware-testing-ci-2026-10-16-phase-review.md#resolution-status--8179275b2-guard-only):
+`.22` CLOSED at `8179275b2`, with focused **15/15 native and actual Linux passes**
+and **30 refusal combinations**. The original finding at `83dfea3bb` stays intact;
+no rereview or positive wrapped acceptance is claimed. `.16` is CLOSED only for
+bounded unwrapped commands and actual shared Docker phases; `.15`/`.17`/`.18`/
+`.19`/`.21` are closed for their bounded scopes. `.20` closed as a duplicate,
+**not an implemented fix**. The review's metadata errors and the 306-test results
+above retain their original source identities.
+
+**Still open:** `.23` owns full safe wrapped custody. An abandoned reserved-group
+draft left a stubborn wrapped CTest child alive; it is archived outside the repo,
+**not shipped**, not a drain/custody success. `.24` tracks the original full-gate
+fixture invocation's failure/lost trace: a later diagnostic pass is not a causal
+fix. B is improving failure forensics only. Parent's final **307-test combined
+suite is running/pending**; no outcome or final full-slice acceptance is assumed.
 
 Fresh native root configure/all-default-target **build only** at `7fdadd251`
 passed (CMake 4.3.2/Ninja 1.13.2/AppleClang 21, arm64). Logs/hashes and safety
@@ -188,7 +202,7 @@ The dated hosted `33a101276` observations remain separate: root ASan **Linux
 no tests. Heartbeat passed in those samples but `.11` cause remains unresolved.
 Static cancellation and shadow routing failed, leading to `.19`/`.21`; these
 historical jobs do not prove current workers or a clean current integration.
-Full provenance/limits are in the [bounded phase acceptance section](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-bounded-phase-acceptance--90a1b675f).
+Full provenance/limits are in the [bounded phase acceptance section](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-bounded-phase-acceptance--2d64a7ac2).
 MDK custody/cleanup, complete ownership/runtime/header/semantic/profile union,
 production sanitizer/hosted proof and W11/W12 remain unmet. No default/enforcement,
 threshold, schedule, requirement or protection cutover before W11/operator approval.
