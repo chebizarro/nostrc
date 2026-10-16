@@ -60,6 +60,7 @@ def parser():
 
 def realization_command(args, policy, backend):
     """Compose the real realization API; never emulate a configure/audit/run."""
+    selection.require(args.phase in ("configure", "build", "test", "all"), "unknown execution phase")
     plan = selection.read_json(args.plan) if args.plan else None
     if plan is not None:
         selection.validate_plan(plan, policy)
@@ -88,7 +89,7 @@ def realization_command(args, policy, backend):
     # Stored identity equality is insufficient: another checkout may share the
     # same commit, or the original build's source may since have advanced.
     repo_root = Path(args.repo).resolve()
-    source_dir = (repo_root / profile["source_dir"]).resolve()
+    source_dir = (repo_root / backend._expand_source(profile["source_dir"], repo_root)).resolve()
     expected_paths = {"repo_root": repo_root, "source_dir": source_dir,
                       "build_dir": Path(args.build_dir).resolve()}
     for field, expected in expected_paths.items():
@@ -128,7 +129,7 @@ def realization_command(args, policy, backend):
         with logfile.open("x"):
             pass  # reserve this exact attempt; never overwrite previous evidence
         try:
-            process = backend._execute(command, cwd=args.repo, env=dict(os.environ, **profile["environment"]),
+            process = backend._execute(command, cwd=args.repo, env=backend.phase_environment(profile, repo_root, "build"),
                                        log_path=logfile, timeout=args.timeout)
             returncode = process.returncode
         except (subprocess.TimeoutExpired, KeyboardInterrupt, backend.RealizationError) as exc:
@@ -138,6 +139,7 @@ def realization_command(args, policy, backend):
         build_evidence.append(str(logfile))
         if returncode:
             raise selection.CheckFailure(f"selected prerequisite build failed: {returncode}; retained {logfile}")
+    realized = backend.load_realization(args.build_dir, identity)
     audit = backend.check_inputs(policy, realized, identity, after_build=True)
     if not audit["passed"]:
         return audit, 1
@@ -158,8 +160,8 @@ def normalize_receipt(policy, plan, resolved, raw):
     profile_id = resolved["profile_id"]
     lane = next((x for x in plan["lanes"] if x["profile"] == profile_id), None)
     selection.require(lane is not None, "backend returned unselected profile")
-    for key in ("source_identity", "inventory_hash", "profile_fingerprint"):
-        selection.require(raw.get(key) == resolved[key], f"backend receipt identity mismatch: {key}")
+    for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context", "phase_context_hash"):
+        selection.require(raw.get(key) == resolved.get(key), f"backend receipt identity mismatch: {key}")
     selection.require(raw.get("plan_hash") == selection.digest(plan) and raw.get("profile_id") == profile_id, "backend plan/profile identity mismatch")
     selection.require(raw.get("resolved_hash") == resolved["resolved_hash"], "backend resolved identity mismatch")
     selection.require(set(raw.get("checks", {})) == set(lane["checks"]), "backend receipt check accounting mismatch")
@@ -167,6 +169,8 @@ def normalize_receipt(policy, plan, resolved, raw):
     selection.require(isinstance(observed, dict) and set(observed) == set(resolved.get("expected_executions", resolved["tests"])), "backend receipt execution accounting mismatch")
     post = raw.get("input_audit", {})
     selection.require(post.get("passed") and post.get("after_build"), "backend did not retain passing post-build audit")
+    for key in ("phase_context", "phase_context_hash"):
+        selection.require(post.get(key) == resolved.get(key), f"backend input audit identity mismatch: {key}")
     checks = {}
     for ident, record in raw["checks"].items():
         check = policy["checks"][ident]
@@ -178,6 +182,7 @@ def normalize_receipt(policy, plan, resolved, raw):
     return {"schema_version": 1, "plan_id": plan["plan_id"], "inventory_hash": plan["inventory_hash"],
             "source_identity": plan["source_identity"], "lane_id": lane["id"], "profile": profile_id,
             "profile_hash": lane["profile_hash"], "profile_fingerprint": resolved["profile_fingerprint"],
+            "phase_context": resolved.get("phase_context"), "phase_context_hash": resolved.get("phase_context_hash"),
             "registration_audit": "passed", "input_audit": "passed", "job_conclusion": "success" if raw.get("outcome") == "passed" else "failure",
             "checks": checks, "backend_receipt": raw,
             "diagnostic_eligible": raw.get("diagnostic_eligible", False),
