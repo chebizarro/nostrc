@@ -44,13 +44,17 @@ this reads the subset of YAML the workflows use (block mappings, sequences,
 """
 
 import argparse
+import contextlib
 import json
 from pathlib import Path
 import os
 import re
+import runpy
 import shlex
+import signal
 import subprocess
 import sys
+import time
 
 WORKFLOW = ".github/workflows/groundhog-ci.yml"
 JOB = "groundhog-sanitizers"
@@ -572,6 +576,90 @@ def check_inputs(inputs):
     return [p for p in inputs if not any(_under(p, prefix) for prefix in SANITIZER_BUILD_PATHS)]
 
 
+def run_shared(args):
+    """Explicit single-attempt diagnostic; the shared core owns all execution."""
+    import fcntl  # shared Linux/macOS execution only; legacy parsing stays portable
+    root = Path(args.source_root).resolve()
+    evidence = Path(args.evidence_dir).resolve()
+    evidence.mkdir(parents=True, exist_ok=False)
+    config = configuration(root / WORKFLOW, str(root), root / args.inventory, args.shared_profile)
+    if os.environ.get("NOSTRC_CTEST_QUARANTINE_PLATFORM") or os.environ.get("RERUN_MAX"):
+        raise WorkflowError("shared diagnostic does not support quarantine/retry overrides; use the unchanged legacy route")
+    sys.path.insert(0, str(root / "scripts"))
+    cli = runpy.run_path(str(root / "scripts/test-plan.py"))
+    shared = cli["selection"]
+    import test_selection_realization as backend
+    if not callable(getattr(backend, "phase_environment", None)):
+        raise WorkflowError("shared phase-aware core API is unsupported; no legacy Ninja fallback")
+    policy = shared.load_inventory(root / args.inventory)
+    profile = policy["profiles"][args.shared_profile]
+    unsupported = set(profile.get("capabilities", [])) - {"display", "private_bus"}
+    if unsupported:
+        raise WorkflowError("shared diagnostic requires an unimplemented guarded capability: " + str(sorted(unsupported)))
+    for cap, variable in (("display", "DISPLAY"), ("private_bus", "DBUS_SESSION_BUS_ADDRESS")):
+        if cap in profile.get("capabilities", []) and not os.environ.get(variable):
+            raise WorkflowError("shared diagnostic is missing isolated " + cap)
+    jobs = args.test_jobs if args.test_jobs is not None else int(config["GH_SAN_TEST_JOBS"])
+    if args.jobs < 1 or jobs < 1:
+        raise WorkflowError("shared diagnostic parallelism must be positive")
+    head = shared.commit_sha(root, "HEAD")
+    plan = shared.git_plan(root, policy, head=head, base=head, context="local", mode="broad",
+                           event={"kind": "local", "base_sha": head}, profiles=[args.shared_profile])
+    plan_path = evidence / "plan.json"
+    resolved_path = evidence / "resolved.json"
+    shared.write_json(plan_path, plan)
+    common = ["--repo", str(root), "--inventory", args.inventory, "--profile", args.shared_profile,
+              "--plan", str(plan_path), "--build-dir", args.build_dir, "--evidence-dir", str(evidence / "execution"),
+              "--timeout", str(profile["timeout_seconds"])]
+
+    def invoke(name, argv):
+        with (evidence / (name + ".log")).open("x") as log, contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+            status = cli["main"](argv)
+        if status:
+            raise WorkflowError(f"shared core {name} failed ({status}); evidence={evidence}")
+
+    def cancel(signum, frame):
+        raise KeyboardInterrupt("shared diagnostic cancelled")
+    signal.signal(signal.SIGTERM, cancel)
+    # Same filesystem locks/ordering as linux-gate's legacy route. One process
+    # keeps the ambient environment stable through all core phase invocations.
+    locks = Path(args.lock_dir)
+    with (locks / "build.lock").open("a") as build_lock, (locks / "tests.lock").open("a") as tests_lock:
+        fcntl.flock(build_lock, fcntl.LOCK_SH)
+        invoke("resolve", ["resolve", *common, "--configure", "--output", str(resolved_path)])
+        resolved = shared.read_json(resolved_path)
+        if not resolved.get("phase_context_hash"):
+            raise WorkflowError("shared resolution did not retain phase context; no legacy fallback")
+        if set(resolved["primary_tests"]) != set(config["GH_SAN_TESTS"]):
+            raise WorkflowError("shared resolved sanitizer test membership differs from compatibility contract")
+        if not set(config["GH_SAN_TARGETS"]).issubset(resolved["build_targets"]):
+            raise WorkflowError("shared core does not resolve all sanitizer compatibility build targets")
+        invoke("build", ["run", *common, "--resolved", str(resolved_path), "--phase", "build",
+                         "--parallel", str(args.jobs), "--output", str(evidence / "build.json")])
+        invoke("postbuild-inputs", ["check-inputs", "--repo", str(root), "--inventory", args.inventory,
+              "--profile", args.shared_profile, "--build-dir", args.build_dir, "--after-build",
+              "--output", str(evidence / "postbuild-inputs.json")])
+        fcntl.flock(build_lock, fcntl.LOCK_UN)
+        if args.host_signal:
+            # Polling here is the existing host-build coordination protocol,
+            # never a substitute for test/relay readiness or retry-as-success.
+            while not Path(args.host_signal).exists():
+                time.sleep(1)
+        fcntl.flock(build_lock, fcntl.LOCK_EX)
+        fcntl.flock(tests_lock, fcntl.LOCK_EX)
+        invoke("test", ["run", *common, "--resolved", str(resolved_path), "--phase", "test",
+                        "--parallel", str(jobs), "--output", str(evidence / "receipt.json")])
+        forbidden = re.compile(config["GH_SAN_SKIP_PATTERN"].encode())
+        for path in (evidence / "execution").rglob("ctest*.log"):
+            if forbidden.search(path.read_bytes()):
+                raise WorkflowError("shared sanitizer skip/not-run output is forbidden: " + str(path))
+        invoke("aggregate", ["aggregate", "--repo", str(root), "--inventory", args.inventory,
+              "--plan", str(plan_path), "--receipt", str(evidence / "receipt.json"), "--partial",
+              "--output", str(evidence / "aggregate.json")])
+    print(f"shared sanitizer diagnostic passed (single attempt); NOT complete CI/LSan acceptance; evidence={evidence}")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -590,7 +678,26 @@ def main(argv=None):
     chk.add_argument("--workflow")
     chk.add_argument("--shared-profile", help="use shared realized input audit; no legacy fallback")
     chk.add_argument("--inventory", default="tests/selection/inventory.json")
+    run = sub.add_parser("shared-run", help="explicit phase-aware diagnostic; no legacy retry/quarantine fallback")
+    run.add_argument("--source-root", required=True)
+    run.add_argument("--shared-profile", required=True)
+    run.add_argument("--inventory", default="tests/selection/inventory.json")
+    run.add_argument("--build-dir", required=True)
+    run.add_argument("--evidence-dir", required=True)
+    run.add_argument("--lock-dir", required=True)
+    run.add_argument("--host-signal")
+    run.add_argument("--jobs", type=int, default=1)
+    run.add_argument("--test-jobs", type=int)
     args = parser.parse_args(argv)
+    if args.command == "shared-run":
+        try:
+            return run_shared(args)
+        except KeyboardInterrupt:
+            print("sanitizer-gate-ci: shared diagnostic cancelled; retained incomplete evidence", file=sys.stderr)
+            return 130
+        except (OSError, ValueError, WorkflowError, subprocess.SubprocessError) as exc:
+            print("sanitizer-gate-ci: shared diagnostic failed: " + str(exc), file=sys.stderr)
+            return 2
     if args.command == "check-inputs":
         if args.shared_profile:
             # The realization/backend owns the audit. A legacy Ninja-only tree
