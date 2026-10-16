@@ -161,6 +161,10 @@ change, exclusion, retry waiver or runtime correction.
 
 ### Current bounded handoff — 2d64a7ac2, 2026-10-16
 
+> **HISTORICAL snapshot.** Current status is superseded by the
+> [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612).
+> The source-specific results and negatives below are preserved, not relabeled.
+
 Metadata `.17` records **98 exact `selection.contract` inputs**, detects new
 tracked/discoverable helpers and accounts for the independent shadow jobs. Actual
 production Ubuntu 24.04 Linux/x86_64 `static.policy` command execution at
@@ -220,6 +224,11 @@ threshold, schedule, requirement or protection cutover before W11/operator appro
 **No component bump:** internal testing/documentation only.
 
 ### 2026-10-16 bounded custody checkpoint — final QA/metadata pending
+
+> **HISTORICAL / superseded pending snapshot**, including the 49,158-findings
+> audit below. See the [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612)
+> for current completed gates and final A/B/native evidence. Pending statements
+> describe only this earlier checkpoint; its failed audits remain failed.
 
 This dated update supersedes earlier *current-status* wording only; all earlier
 counts, failures and source-specific receipts remain historical. The [detailed
@@ -301,10 +310,14 @@ protection changes; **no component bump** for these internal tests/docs.
 Parent integration source **`df2b236124254450ac1645146fd0e3a4958a53c7`** is not
 master. This dated section supersedes the preceding pending A/B/native status,
 **not historical receipts**. The [final focused evidence](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-final-focused-checkpoint--df2b23612)
-records exact sources, review fixes and hashes. Parent selection at `df2b23612`
-completed **382/382, zero skips, 104.637s**, retained at
-`/tmp/nostrc-final-reviewed-selection.log`. Remaining final shell/actual gates
-are **PENDING final handoff**; A's results below are not substituted for them.
+records exact sources, review fixes and hashes. **Final parent gates completed at
+unchanged `df2b23612`: selection 382/382, zero skips, 104.637s; actual Docker
+custody 13/13, zero skips, 12.771s; all six shell suites** (`test-pre-push.sh`,
+`test-full-gate.sh`, `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`,
+`test-sanitizer-gate.sh`, `test-test-gate.sh`), **four statics, full actionlint including
+ShellCheck and range whitespace PASS**. No new failures/waivers. Logs:
+`/tmp/nostrc-final-reviewed-*`; these completed integrated-source gates are
+separate from A's results below and are not global readiness or hosted acceptance.
 
 - **A `db9eb03a6`: 382/382 selection tests, zero skips; 13 actual Docker custody
   cases, zero skips; six shell suites, four statics, full actionlint/ShellCheck
@@ -356,7 +369,7 @@ Report: `/private/tmp/nostrc-final-native-a478070.C6w5fP/report.md`, SHA-256
 `9121379d5b3ff43e27ac5219547d484d0ca55eb90abaf9e4270e2dc407d70aaf`.
 
 At this checkpoint the feature branch is pushed, master unchanged; nonpublishing
-hosted run **38873978927** was requested/queued at older `a47807050`, **not accepted
+hosted run **38873978927** at older `a47807050` remains **QUEUED**, **not accepted
 execution**. Prior hosted `8a031f443` voice/shadow failures and original FIFO /
 heartbeat unknown causes remain. `.24` closed **for forensics retention only**;
 native arbitrary-tree `.23`, legacy MDK `cleanup_unverified` unchanged; optional

@@ -1,8 +1,12 @@
 # Dependency-aware testing — staged implementation receipt
 
+> **Current bounded evidence: [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612).**
+> Earlier same-date sections are **HISTORICAL / superseded snapshots**, not current
+> pending statuses. Their source-specific negatives and failed audits stay intact.
+
 **Historical integration snapshot:** `017039eea6620caea791162e1646982abf3d69f4`, fast-forwarded into the assigned `.5` worktree. **Tracker:** `nostrc-0cfsg.5`, remains open/in progress. **Status:** explicit tooling/workflow interfaces implemented; **rollout acceptance NOT MET**. Documentation-only version assessment: **no bump**. No settings change, default cutover, schedule removal, merge back or push by this task; parent owns landing/push/cleanup.
 
-The dated [9c03e7712 continuation](#2026-10-16-continuation--integration-9c03e7712), [post-review ae36f5a26 reconciliation](#2026-10-16-post-review-continuation--ae36f5a26) and latest [bounded phase acceptance](#2026-10-16-bounded-phase-acceptance--2d64a7ac2) below record subsequent states. All receipts and outcomes retain their original SHA and meaning, including the failed diagnostic lane and the historical MDK smoke whose cleanup claim is now superseded.
+The dated [9c03e7712 continuation](#2026-10-16-continuation--integration-9c03e7712), [post-review ae36f5a26 reconciliation](#2026-10-16-post-review-continuation--ae36f5a26) and historical [bounded phase acceptance](#2026-10-16-bounded-phase-acceptance--2d64a7ac2) below record subsequent states. All receipts and outcomes retain their original SHA and meaning, including the failed diagnostic lane and the historical MDK smoke whose cleanup claim is now superseded.
 
 ## Evidence and review resolutions
 
@@ -157,6 +161,9 @@ No default/enforce/requirement/schedule/protection cutover is authorized before 
 
 ## 2026-10-16 bounded phase acceptance — 2d64a7ac2
 
+> **HISTORICAL snapshot; current status superseded by the
+> [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612).**
+
 **Integration:** `2d64a7ac22bcc08018d4ffdec91fee800f54df6f`, fast-forward merged for this guard-only reconciliation; the earlier `90a1b675f` handoff and execution results below retain their source identities. The older dated sections retain their receipts/limits; their blanket command/shared-phase refusals describe those earlier sources, not current implementation. **No component bump:** internal testing/metadata/docs. No default, enforcement, schedule, protection, threshold/exclusion or requirement change; no merge back or push by this task.
 
 ### Implemented scope, not complete acceptance
@@ -212,6 +219,11 @@ Observed 2026-10-16 04:16:59 UTC, exact `33a1012767c9db5a46057280178134a544b86af
 **W11 NOT MET / W12 NOT RUN:** representative five-sample clean/incremental costs, **20 representative PRs / 2 broad integration runs**, exact release replacement/dry-run, selected-skip/cancellation/merge-group and no-gap protection/operator cutover proof remain unmet. Keep legacy defaults/gates/triggers/schedules and publisher `disabled`/`shadow`/`enforce` semantics unchanged; do not enable enforcement or remove requirements/protections before W11/operator approval. This is bounded evidence/documentation, not rollout approval.
 
 ## 2026-10-16 contained custody and retention checkpoint — final evidence pending
+
+> **HISTORICAL / superseded pending snapshot**, including the 49,158-findings
+> audit. See the [final focused checkpoint](#2026-10-16-final-focused-checkpoint--df2b23612)
+> for completed final gates and A/B/native results. The old audits stay failed;
+> pending statements below refer only to this earlier source-bound checkpoint.
 
 **Docs base:** `7616080a34aa5fd6f19b173b3328d5e350704be1`. This section appends
 current bounded progress without replacing any earlier count, failed receipt or
@@ -517,12 +529,26 @@ profile/input/runtime union, arbitrary native-tree cleanup, rollout/protection.
 
 ### Parent/hosted follow-up — no cutover
 
-Parent at **`df2b23612`** completed **382/382 selection tests, zero skips,
-104.637s**, `/tmp/nostrc-final-reviewed-selection.log` (terminal `Ran 382 tests` /
-`OK` verified). Remaining final shell/actual gates are **PENDING final handoff**;
-A's separately source-attributed suite does not substitute for those results.
-Nonpublishing hosted [run 38873978927](https://github.com/chebizarro/nostrc/actions/runs/38873978927)
-was requested/queued at older **`a47807050`**, **not accepted execution**. Feature
+**Final parent gates COMPLETE at unchanged
+`df2b236124254450ac1645146fd0e3a4958a53c7`:**
+
+- Selection **382/382, zero skips, 104.637s**:
+  `/tmp/nostrc-final-reviewed-selection.log`.
+- Actual Docker custody **13/13, zero skips, 12.771s**:
+  `/tmp/nostrc-final-reviewed-actual-custody.log`.
+- All six exact shell suites **PASS**: `test-pre-push.sh`, `test-full-gate.sh`,
+  `test-linux-gate-lifecycle.sh`, `test-linux-gate-smoke.sh`,
+  `test-sanitizer-gate.sh`, `test-test-gate.sh`.
+- Four static checkers, full actionlint including ShellCheck, and range whitespace
+  **PASS**. Logs `/tmp/nostrc-final-reviewed-*`; no new failures/waivers.
+
+Completed selection/custody log summaries were checked in this docs pass; parent
+confirms the final remaining gates. These are bounded integrated-source gates,
+not broad review-clean/global readiness or current native Linux/x86_64 production
+verification. A's separately attributed suite and native `a47807050` keep their
+original scopes. Nonpublishing hosted
+[run 38873978927](https://github.com/chebizarro/nostrc/actions/runs/38873978927)
+at older **`a47807050`** remains **QUEUED**, **not accepted execution**. Feature
 branch pushed, master unchanged at this checkpoint; no live-result refresh or
 publishing/settings action by this docs task.
 
@@ -534,4 +560,4 @@ maintenance race fixes do not establish those causes. **W11 NOT MET: 0/20 accept
 PR comparisons, 0/2 successful broad integrations; cost/release/protection/operator
 proof unmet. W12 NOT RUN.** No general default/enforce/schedule/trigger,
 threshold/exclusion, required-check or protection changes. Parent owns final
-gates, literal pending-status follow-up and landing.
+verified tracker export, docs integration, landing/push and owned branch cleanup.
