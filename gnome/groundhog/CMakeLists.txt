@@ -2646,6 +2646,10 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
     endif()
     # The MDK v0.9.0 expected-incompatible probe (KeyPackages only), its own
     # image; MDK09_PROBE_DRIVER replaces it with another command line.
+    option(BUILD_MDK09_PROBE "Register the MDK 0.9 expected-incompatible probe" ON)
+    set(groundhog_mdk09_driver "")
+    set(groundhog_mdk09_fixture "")
+    if(BUILD_MDK09_PROBE)
     set(MDK09_PROBE_DRIVER "" CACHE STRING
         "MDK 0.9.0 probe driver command line; empty: the Docker image the test builds")
     if (MDK09_PROBE_DRIVER)
@@ -2669,11 +2673,16 @@ if (TARGET groundhog-store-marmot AND TARGET groundhog-dm-inbox AND
         set(groundhog_mdk09_driver "${GROUNDHOG_DOCKER} run --rm -i -e MDK_DRIVER_LOG -e MDK_DRIVER_DEADLINE_S --network host ${groundhog_mdk09_image}")
       endif()
     endif()
-    foreach(groundhog_mdk011_case control groundhog-invites-mdk mdk-invites-groundhog
+    endif() # BUILD_MDK09_PROBE: no unrelated Docker lookup in prepared011-only lanes.
+    set(groundhog_mdk011_cases control groundhog-invites-mdk mdk-invites-groundhog
             mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
             media-policy white-noise-voice
             white-noise-dm adopted-commits routing-rotation concurrent-commits polls
-            white-noise-reactions mdk09-probe)
+            white-noise-reactions)
+    if(BUILD_MDK09_PROBE)
+      list(APPEND groundhog_mdk011_cases mdk09-probe)
+    endif()
+    foreach(groundhog_mdk011_case IN LISTS groundhog_mdk011_cases)
       if (groundhog_mdk011_case STREQUAL "mdk-invites-groundhog-gui")
         set(groundhog_mdk011_command test-groundhog-mdk011-interop --gui
             -p /groundhog/mdk011-interop-gui/mdk-invites-groundhog)

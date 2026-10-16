@@ -4502,18 +4502,24 @@
         "{source}/nostr-gtk/TestInventory.cmake",
         "{source}/nostr-gtk/meson.build",
         "{source}/scripts/check-macos-keychain.sh",
+        "{source}/scripts/contained-gate.py",
+        "{source}/scripts/contained-runner.py",
         "{source}/scripts/linux-gate.sh",
         "{source}/scripts/mdk-gate.py",
         "{source}/scripts/sanitizer-gate-ci.py",
         "{source}/scripts/test-gate.sh",
         "{source}/scripts/test-plan.py",
         "{source}/scripts/test_selection.py",
+        "{source}/scripts/test_selection_custody.py",
         "{source}/scripts/test_selection_realization.py",
         "{source}/signet/meson.build",
         "{source}/signet/src/signetctl_main.c",
         "{source}/signet/src/signetd_main.c",
         "{source}/tests/CMakeLists.txt",
         "{source}/tests/TestInventory.cmake",
+        "{source}/tests/custody/test_contained_engine.py",
+        "{source}/tests/custody/test_contained_linux.py",
+        "{source}/tests/custody/workload.py",
         "{source}/tests/selection/fixtures/hosted_audit_edges.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
         "{source}/tests/selection/golden/selection.json",
@@ -4526,6 +4532,7 @@
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
         "{source}/tests/selection/test_command_signal_bytes.py",
+        "{source}/tests/selection/test_contained_custody_contract.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
         "{source}/tests/selection/test_git_ranges.py",
         "{source}/tests/selection/test_local_command_adapter.py",
@@ -4533,6 +4540,7 @@
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
         "{source}/tests/selection/test_phase_environments.py",
+        "{source}/tests/selection/test_prepared_profile_contract.py",
         "{source}/tests/selection/test_production_inventory.py",
         "{source}/tests/selection/test_profile_contracts.py",
         "{source}/tests/selection/test_realization.py",
@@ -4553,6 +4561,62 @@
         "{source}/tests/selection/test_workflow_contracts.py"
       ],
       "working_directory": "{source}"
+    },
+    "prepared011.matrix": {
+      "build_targets": [
+        "test-groundhog-mdk011-interop",
+        "groundhog-test-schemas"
+      ],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux.arm64.prepared011": [
+          "groundhog-mdk011-interop-adopted-commits",
+          "groundhog-mdk011-interop-adopted-welcome",
+          "groundhog-mdk011-interop-concurrent-commits",
+          "groundhog-mdk011-interop-control",
+          "groundhog-mdk011-interop-groundhog-invites-mdk",
+          "groundhog-mdk011-interop-mdk-invites-groundhog",
+          "groundhog-mdk011-interop-mdk-invites-groundhog-gui",
+          "groundhog-mdk011-interop-media-policy",
+          "groundhog-mdk011-interop-polls",
+          "groundhog-mdk011-interop-routing-rotation",
+          "groundhog-mdk011-interop-white-noise-dm",
+          "groundhog-mdk011-interop-white-noise-media",
+          "groundhog-mdk011-interop-white-noise-reactions",
+          "groundhog-mdk011-interop-white-noise-voice",
+          "groundhog-mdk011-interop-white-noise-welcome"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.conversations",
+        "groundhog.media",
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "groundhog.voice",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
+      ],
+      "profiles": [
+        "groundhog.linux.arm64.prepared011"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -4943,6 +5007,12 @@
       "id": "shadow_cutover",
       "reason": "W11 measured baselines, 20 PRs, two broad runs and actual protection cutover NOT RUN; no selective production acceptance.",
       "tracking": "nostrc-0cfsg.5"
+    },
+    {
+      "id": "prepared_peer_linux_contract",
+      "profile": "groundhog.linux.arm64.prepared011",
+      "tracking": "nostrc-0cfsg.9",
+      "reason": "New actual-architecture local-only prepared011 projection; A-owned contained admission/contexts support and attested binary/context/build/toolchain receipts required. Existing Docker fixtures and09 probe not_executed, never passed. Actual prepared consumer/registration/header/runtime union and hosted/nativeMac/original Docker build custody are not established."
     }
   ],
   "enforcement_ready": false,
@@ -6728,6 +6798,54 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "tests/custody/test_contained_engine.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "tests/custody/test_contained_linux.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "tests/custody/workload.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/test_selection_custody.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/contained-runner.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/contained-gate.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
     {
       "effect": "impact",
       "exact": "gnome/groundhog/tests/lsan.supp",
@@ -9636,6 +9754,61 @@
       "setup": ".github/workflows/static-checks.yml",
       "source_dir": ".",
       "timeout_seconds": 3600
+    },
+    "groundhog.linux.arm64.prepared011": {
+      "architecture": "aarch64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus",
+        "prepared_peer"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=ON",
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_MDK011_INTEROP=ON",
+        "-DBUILD_MDK_INTEROP=OFF",
+        "-DBUILD_MDK09_PROBE=OFF",
+        "-DMDK011_INTEROP_DRIVER:STRING=/peers/011/driver"
+      ],
+      "environment": {},
+      "feature_variants": [
+        "mdk011",
+        "prepared_peer"
+      ],
+      "instrumentation": "none",
+      "local_availability": "contained_linux_prepared_peers",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": "contained/prepared-peer-linux-v1",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "contexts": [
+        "local"
+      ],
+      "execution_domain": "prepared_peer_linux_v1",
+      "prepared_peers": [
+        "011"
+      ],
+      "registration_projection": {
+        "included_cases": "existing MDK011 consumers, without MDK09 probe",
+        "not_executed_legacy": [
+          "groundhog-mdk-interop-image",
+          "groundhog-mdk011-interop-image",
+          "groundhog-mdk011-interop-image-mdk09",
+          "groundhog-mdk011-interop-mdk09-probe"
+        ],
+        "reason": "Distinct native-prepared inputs; no original Docker image-build receipt, old-profile coverage, or full root registration union is claimed."
+      }
     }
   },
   "release_components": {

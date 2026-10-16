@@ -126,26 +126,50 @@ if(TEST groundhog-test-gst-registry)
   nostrc_describe_test(groundhog-test-gst-registry OWNER testing.framework EXPECTED fixture)
 endif()
 
+# A configured single native peer file is an execution input, not an image-build
+# receipt. prepared_peer is admitted only by the host-owned contained runtime;
+# file presence here never establishes provenance or lifecycle success.
+function(_gh_mdk_override out_requires out_inputs command_line)
+  set(_requires docker private_bus)
+  set(_inputs "")
+  separate_arguments(_argv UNIX_COMMAND "${command_line}")
+  list(LENGTH _argv _argc)
+  if(_argc EQUAL 1)
+    list(GET _argv 0 _driver)
+    if(IS_ABSOLUTE "${_driver}" AND EXISTS "${_driver}" AND NOT IS_DIRECTORY "${_driver}")
+      set(_requires prepared_peer private_bus)
+      set(_inputs "${_driver}")
+    endif()
+  endif()
+  set(${out_requires} "${_requires}" PARENT_SCOPE)
+  set(${out_inputs} "${_inputs}" PARENT_SCOPE)
+endfunction()
+
+_gh_mdk_override(_mdk08_requires _mdk08_inputs "${MDK_INTEROP_DRIVER}")
+_gh_mdk_override(_mdk011_requires _mdk011_inputs "${MDK011_INTEROP_DRIVER}")
+_gh_mdk_override(_mdk09_requires _mdk09_inputs "${MDK09_PROBE_DRIVER}")
+
 # Legacy directly compiles gh-mls-copy.c; adopted links the shipped MLS UI.
 # Do not refine away those actual inputs (nor its late voice linkage).
 _gh_describe(groundhog-mdk-interop test-groundhog-mdk-interop groundhog.mls_service
-  INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver" REQUIRES docker private_bus)
+  INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver" ${_mdk08_inputs}
+  REQUIRES ${_mdk08_requires})
 foreach(_case control groundhog-invites-mdk mdk-invites-groundhog
     mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
     media-policy white-noise-voice white-noise-dm adopted-commits routing-rotation
     concurrent-commits polls white-noise-reactions)
-  set(_requires docker private_bus)
+  set(_requires ${_mdk011_requires})
   if(_case STREQUAL "mdk-invites-groundhog-gui")
     list(APPEND _requires display)
   endif()
   _gh_describe("groundhog-mdk011-interop-${_case}" test-groundhog-mdk011-interop
-    groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11"
+    groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11" ${_mdk011_inputs}
     REQUIRES ${_requires})
 endforeach()
 _gh_describe(groundhog-mdk011-interop-mdk09-probe test-groundhog-mdk011-interop
   groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11"
-    "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe"
-  REQUIRES docker private_bus EXPECTED mdk09_incompatibility)
+    "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe" ${_mdk011_inputs} ${_mdk09_inputs}
+  REQUIRES ${_mdk011_requires} ${_mdk09_requires} EXPECTED mdk09_incompatibility)
 foreach(_pair
     "groundhog-mdk-interop-image|driver"
     "groundhog-mdk011-interop-image|driver-0.11"
