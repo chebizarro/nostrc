@@ -168,6 +168,43 @@ print('actual command: ' + content, end='', flush=True)
                 receipt, _ = self.gate("--head", head, "--base", self.head, success=False)
                 self.assertIn("unimplemented guarded adapter", receipt["executions"][0]["lanes"][0]["error"])
 
+    def test_wrapped_command_and_mixed_lanes_refuse_before_launch(self):
+        command_check = self.policy["checks"]["command.actual"]
+        for capabilities in (["private_bus"], ["display"], ["private_bus", "display"]):
+            for kinds in (("command",), ("build_contract",), ("command", "ctest"),
+                          ("build_contract", "ctest"), ("command", "build_contract")):
+                for capability_source in ("profile", "check"):
+                    with self.subTest(capabilities=capabilities, kinds=kinds, source=capability_source):
+                        self.policy["profiles"]["local.command"]["capabilities"] = capabilities if capability_source == "profile" else []
+                        checks = {}
+                        for index, kind in enumerate(kinds):
+                            check = dict(nodes=["app"], profiles=["local.command"], kind=kind,
+                                         cost="ordinary", requirement="blocking", expected_outcome="pass")
+                            if kind == "ctest":
+                                check["ctest_tests"] = {"local.command": ["fixture.unit"]}
+                            else:
+                                check.update({key: command_check[key] for key in
+                                    ("command", "working_directory", "environment", "runtime_inputs", "build_targets", "required_evidence")})
+                            checks[f"selected.{index}"] = check
+                        if capability_source == "check":
+                            # A CTest requirement also wraps every command in its lane.
+                            checks[f"selected.{len(kinds) - 1}"]["requires"] = capabilities
+                        self.policy["checks"] = checks
+                        self.save_policy()
+                        head = self.commit()
+                        receipt, directory = self.gate("--head", head, "--base", self.head, success=False)
+                        self.assertEqual(receipt["status"], "failed")
+                        self.assertFalse(receipt["complete"])
+                        lane = receipt["executions"][0]["lanes"][0]
+                        self.assertEqual(lane["status"], "failed")
+                        self.assertEqual(lane["error"], "unsupported cancellation custody: selected command/build_contract lane requires wrappers "
+                                         + str(sorted(capabilities)) + "; not launched")
+                        plan = json.loads((directory / "0/plan.json").read_text())
+                        self.assertEqual(set(plan["selected_checks"]), set(checks))
+                        for artifact in ("lane.log", "resolve.log", "resolved.json", "receipt.json", "submodules.log", "build"):
+                            self.assertFalse(any(directory.rglob(artifact)), artifact)
+                        self.assertEqual(self.git("worktree", "list", "--porcelain").count("worktree "), 1)
+
     def test_native_build_contract_uses_real_configured_targets_and_audit(self):
         self.policy["profiles"]["local.command"].update(compiler="clang" if platform.system() == "Darwin" else "gcc",
             configure_args=["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Debug"])

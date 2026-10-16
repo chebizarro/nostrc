@@ -243,6 +243,9 @@ def host_guard(profile, checks, policy, profile_id):
     unsupported = caps - {"display", "private_bus"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
+    wrapped = caps & {"display", "private_bus"}
+    if wrapped and any(policy["checks"][ident]["kind"] != "ctest" for ident in checks):
+        raise RuntimeError(f"unsupported cancellation custody: selected command/build_contract lane requires wrappers {sorted(wrapped)}; not launched")
     # Never reuse the developer's display/session bus as proof of isolation.
     prefix = []
     if "private_bus" in caps:
