@@ -28,6 +28,9 @@ set -euo pipefail
 {
 
 repo_root="$(git rev-parse --show-toplevel)"
+# Preserve every ref/range for an optional shared broad diagnostic after the
+# legacy gates. Do not replace any existing full-gate requirement during W6.
+refs="$(cat)"
 tmp="$(mktemp -d)"
 checkout=""
 linux_src=""
@@ -143,7 +146,7 @@ sanitizer_gate_wanted() {
     esac
 }
 
-zero_oid=0000000000000000000000000000000000000000
+is_zero_oid() { [[ "$1" =~ ^0+$ ]]; }
 # The macOS stage's rerun history, shared by all worktrees (the Linux stage's
 # is in its Docker volume). --path-format needs git 2.31; an older git echoes
 # the unknown option back, so anything but an absolute path falls back to
@@ -172,11 +175,11 @@ keychain_guard() {
 }
 keychain_guard "before the tests"
 saw_ref=0
-while read -r local_ref local_oid remote_ref remote_oid; do
+while read -r local_ref local_oid _remote_ref remote_oid; do
     [ -n "${local_ref:-}" ] || continue
     saw_ref=1
     # A deleted ref has no candidate tree to validate.
-    [ "$local_oid" != "$zero_oid" ] || continue
+    ! is_zero_oid "$local_oid" || continue
 
     if [ -n "$checkout" ]; then
         remove_worktree "$checkout"
@@ -193,7 +196,7 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     done
 
     base="$remote_oid"
-    if [ "$base" = "$zero_oid" ]; then
+    if is_zero_oid "$base"; then
         base="$(git -C "$repo_root" merge-base "$local_oid" refs/remotes/origin/master 2>/dev/null || true)"
     fi
 
@@ -265,17 +268,21 @@ while read -r local_ref local_oid remote_ref remote_oid; do
     echo "Pre-push verification: macOS CTest run for $local_ref ($local_oid)"
     mkdir -p "$tmp/macos-gate"
     BUILD_DIR="$build" STATE_DIR="$tmp/macos-gate" HISTORY_DIR="$macos_history" \
-        JOBS="${CTEST_PARALLEL_LEVEL:-1}" TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT= \
+        JOBS="${CTEST_PARALLEL_LEVEL:-1}" TEST_REGEX=. DISPLAY_WRAP=0 CTEST_TIMEOUT='' \
         GATE="macOS gate" SUITE="tests" PROGRESS=1 \
         bash "$repo_root/scripts/linux-gate-smoke.sh"
     keychain_guard "after the macOS tests: a test changed it"
     rm -rf "$build"
     finish_stages
-done
+done <<< "$refs"
 
 if [ "$saw_ref" -eq 0 ]; then
     echo "No pre-push refs received - push blocked" >&2
     exit 1
+fi
+if [ "${NOSTRC_SELECTIVE_GATE:-0}" = 1 ]; then
+    printf '%s\n' "$refs" > "$tmp/refs"
+    bash "$repo_root/scripts/test-gate.sh" --repo "$repo_root" --broad --pre-push --refs-file "$tmp/refs"
 fi
 exit
 }
