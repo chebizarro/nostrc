@@ -1,16 +1,99 @@
 # Test Strategy & Suite Documentation
 
-> **Dependency-aware migration (2026-10-15): W1 audit only.** The
-> [plan](plans/dependency-aware-testing-ci-2026-10-15.md) describes proposed
-> commands, not an accepted replacement for current gates. See the
-> [operational baseline](reviews/dependency-aware-testing-ci-2026-10-15-w1-baseline.md)
-> for current workflow/profile identities, advisory/quarantine distinctions,
-> source changes and measurement limits. Existing local defaults and push
-> requirements remain unchanged. The older GNostr CI/nightly table and universal
-> environment wording below are historical guidance, not a verified repository-wide
-> workflow/schedule or execution guarantee: the extended BP workflow is manual-only,
-> while MDK daily and Grotto fuzz weekly schedules still exist. No schedule is removed
-> and no selective command/default is documented as implemented in this phase.
+> **Staged dependency-aware tooling (2026-10-15): implemented, not cut over.**
+> Explicit commands and additive shadow workflows exist; existing local defaults,
+> push requirements and schedules remain authoritative through W11. See the
+> [staged acceptance receipt](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md)
+> and [plan/progress](plans/dependency-aware-testing-ci-2026-10-15.md).
+> The older GNostr CI/nightly table and universal environment wording below remain
+> historical guidance, not a current repository-wide execution guarantee. Extended
+> BP is manual-only; MDK daily and Grotto fuzz weekly schedules still exist.
+
+## Dependency-aware commands — explicit diagnostics
+
+Set `BASE` and `HEAD_SHA` to the exact committed endpoints of the intended range.
+These commands are implemented; successful planning is **not** executed coverage:
+
+```sh
+python3 scripts/test-plan.py --help
+scripts/test-gate.sh --help
+python3 scripts/test-plan.py explain --base "$BASE" --head "$HEAD_SHA" \
+  --context local --profile libgo.macos.asan
+scripts/test-gate.sh --base "$BASE" --head "$HEAD_SHA" \
+  --profile libgo.macos.asan --explain
+scripts/test-gate.sh --broad --explain
+```
+
+Explicit execution is available as `scripts/test-gate.sh --base "$BASE" --head
+"$HEAD_SHA" --profile libgo.macos.asan`; `--broad` requests broad selection but a
+`--profile` restriction is still a partial projection, never complete CI coverage.
+Without `--head`, the adapter handles a private working snapshot; with `--head`,
+it executes that committed tree, not dirty caller files. `--evidence-dir <dir>`
+retains a unique run's plans/adapter/lane evidence; its default parent is the Git
+common directory's `nostrc-test-gate`. `--explain` does not configure/build/test.
+Missing capabilities/unsupported checks fail visibly. Do not bypass them to
+manufacture acceptance or point a raw realization at another checkout.
+
+The planner also implements `plan`, `validate`, `resolve`, `check-inputs`, `run`,
+`aggregate`, and `release-plan`. Use each subcommand's `--help` for the exact flags:
+backend `resolve`/`run` require `--plan <plan.json>` and `--build-dir <dir>`;
+`resolve --configure --profile <id>` creates a fresh realization. Input auditing
+uses `check-inputs --build-dir <dir> --profile <id> --plan <plan.json>` (add
+`--after-build` for discovered headers). These raw commands require the matching
+admitted execution checkout/source identity and are not substitutes for legacy
+push gates. Policy-only `python3 scripts/test-plan.py validate --inventory
+tests/selection/inventory.json` currently exits 0 while reporting
+`enforcement_ready=false`; adding `--strict` exits 1 for retained coverage gaps.
+
+### Current native profile and evidence limits
+
+`libgo.macos.asan` is **standalone libgo**, macOS **arm64**, clang, Debug,
+ASan/UBSan, Ninja, `GOF_PORTABLE_CONTEXT=OFF`, warnings-as-errors; its effective
+`ASAN_OPTIONS=detect_leaks=0` matches the legacy workflow (not LSan acceptance).
+It maps 32 registrations across `libgo.channel` and `libgo.native_standalone`.
+`GoChannelStressTest` is an explicit `.4` coverage gap: its executable is built
+for header-input auditing only and remains **`not_executed`**.
+
+The native CLI receipt at backend `b0a31b0ab` shows 32/32 executions passed in one
+CTest `-I` invocation, zero audit gaps, about 9.14 seconds, **but lane exit 1,
+`job_conclusion=failure`, `complete_gate_eligible=false`**. Complete **and partial**
+aggregation reject that lane. This is execution proof, not green-lane or complete
+acceptance; do not relax eligibility to hide the excluded registration.
+
+Separately, the native root [QA at `d9e8c6294`](reviews/dependency-aware-testing-ci-2026-10-15-native-root-qa.md)
+built all default targets and recorded **432 passed / 5 skipped / 0 failed**.
+Groundhog was OFF; four Apple signer UI cases and the unconfigured TCP case
+skipped. It remains compiled-source evidence, not selector/profile-union,
+Groundhog, live-peer or installed-desktop acceptance. Keep macOS application test
+backends/private bus/Secret Service isolation and read-only keychain guards as
+required by `AGENTS.md`; never change developer keychain defaults/search lists.
+
+### Shadow CI and release staging
+
+- `dependency-tests.yml` is the additive **Dependency tests (shadow)** entrypoint:
+  unfiltered PR/merge-group/integration/tag/manual routing, reusable same-SHA
+  workers, and the always-evaluated `Dependency gate`. It is **not an accepted
+  required check**. `dependency-broad.yml` calls existing broad families, including
+  MDK/fuzz/extended BP; `release-validation.yml` requests exact-SHA broad validation.
+  Their presence is not evidence of successful hosted runs or complete coverage.
+- `NOSTRC_SELECTIVE_GATE=1` adds explicit diagnostic execution to the existing
+  pre-push/full-gate path. Static default checks and existing broad verification
+  requirements remain unchanged; this is not a selective-default switch.
+- Publisher source fallback for `NOSTRC_DEPENDENCY_RELEASE_MODE` is `disabled`.
+  `disabled` does not request the added validation job; `shadow` requests it but
+  does not make its result a publication requirement; both retain existing
+  publisher identity/package safeguards. Their `staged_disabled`/`staged_shadow`
+  publication decisions are **not validation attestations**. `enforce` requires
+  successful exact-SHA broad/complete validation and every applicable package
+  result/artifact. Do not enable it before W11/operator cutover. This variable
+  controls publisher validation, not whether general shadow PR workflows exist.
+
+Complete ownership/profile union, non-CTest execution, guarded live-MDK lifecycle,
+shared sanitizer parity and W11 evidence remain open on `.1`–`.5`; legacy workflow
+ShellCheck cleanup is `.6`. No default/requirement/trigger/schedule removal is
+approved. The current receipt records the confirmed independent-review fixes and
+parent's **172/172 merged tests passed, no skips (34.193s)** at `017039eea`,
+separately from the native execution receipts; no merged-count update is pending.
 
 ## Overview
 

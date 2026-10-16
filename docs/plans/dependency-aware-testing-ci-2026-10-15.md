@@ -1,10 +1,10 @@
 # Dependency-aware testing and CI/CD
 
-**Status:** Specification complete; implementation work is underway in scoped worktrees. W1 audit and native root QA (432 passed / 5 skipped) recorded; representative baseline and integrated acceptance incomplete. No default cutover.
+**Status:** Specification complete; explicit local tooling and shadow/release-staging workflows are integrated at `017039eea`. Review fixes and 172-test regression result confirmed; native root and selected-CLI execution receipts recorded with skips/exclusion limits. Full profile/ownership/live-adapter and W11/W12 acceptance remain incomplete. No default cutover.
 
 **Date:** 2026-10-15 · **Plan tracker:** `nostrc-bunud` · **Implementation epic:** `nostrc-0cfsg` · **Source baseline:** `d25102afa480` (`master`, historical). **W1 audited checkout:** `9b8dc253c`.
 
-Sections 2–7 retain the implementation specification and historical planning evidence. Current execution progress and refreshed source references are recorded in §§8–9; proposed commands below are not an assertion that they are integrated or available.
+Sections 2–7 retain the implementation specification and historical planning evidence. Execution progress is recorded in §§8–10; §10 and `docs/TESTING.md` distinguish implemented explicit commands from still-proposed/unaccepted behavior. The specification alone is not implementation or rollout evidence.
 
 ## Goal
 
@@ -1080,3 +1080,26 @@ The final fidelity pass retained the planning response's applicable current-stat
 - **Scope/environment:** root default `BUILD_GROUNDHOG=OFF` was retained; Groundhog's backend argument was therefore unused and its tests were NOT RUN. Plain Homebrew `dbus-run-session` initially failed its launchd check-in before configure; an explicit private Unix-socket config then established verified Secret Service ownership. Before/after read-only keychain guards passed. Exact commands, times, environment, artifact hashes and retained preflight diagnostic are in the receipt.
 - **Not selector/integrated acceptance:** parent-reported 112 Python tests and root/433-registration Groundhog zero-unowned probes are distinct evidence. Exact inventory membership/edge gaps still block audits; macOS native profile support remains pending `.4`. Final integrated Oracle/peer review is **DEFERRED** until parent steers after C/D integration; no routing retries were attempted.
 - **No rollout advancement:** this single native sample is not the representative cost baseline, a broad replacement integration run or W11 shadow evidence. W11/W12 and `.5` remain open; defaults, protections, requirements and schedules are unchanged. Docs-only version assessment: **no bump**. No merge back or push.
+
+## 10. Staged integration / final documentation receipt
+
+**Current snapshot:** `017039eea6620caea791162e1646982abf3d69f4`. **Bounded evidence:** [staged implementation receipt](../reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md). This supersedes the earlier phases' pending-interface/review status without rewriting their historical execution receipts. **No component bump:** documentation only.
+
+### Implemented and verified, with distinct evidence provenance
+
+- **Explicit commands exist:** `scripts/test-plan.py` and diagnostic `scripts/test-gate.sh` support planning/explain, exact-tree/private-snapshot operation, profile restriction, broad selection and retained evidence. Native `libgo.macos.asan` is standalone arm64 libgo ASan/UBSan, not root/Groundhog. Current command shapes/limitations are in [TESTING](../TESTING.md#dependency-aware-commands--explicit-diagnostics); `.5` reran all CLI helps and bounded explain/validation commands, not another build or broad source review.
+- **Adapters/workflows are integrated, not cut over:** `NOSTRC_SELECTIVE_GATE=1` adds diagnostics to legacy local gates. Additive `dependency-tests.yml`/worker/broad families and `release-validation.yml` provide shadow/same-SHA routing and aggregation. Existing local defaults, broad verification requirements, overlapping legacy triggers and schedules remain through W11. Source presence is not hosted success or required-status acceptance.
+- **Publication is staged:** `NOSTRC_DEPENDENCY_RELEASE_MODE` source fallback is `disabled`; `shadow` runs validation without adding a publication requirement; neither staged publication decision is a passing validation attestation. `enforce` requires successful broad/complete exact-source validation and applicable package results/artifacts. No variable/settings change or authorization to enforce before W11 is made here.
+- **Review resolutions confirmed:** independent review `efd427e90` identified R1/R2. `e7cbf3cf6` binds caller checkout; `726f54fd5` adds actual-source identity and full consumer support-input audit; `b0a31b0ab` fixes build-path alias canonicalization. Fixture helper correction `d132bcc89` and EOF correction `db9bf4543` are integrated. Parent confirms **172/172 selection/regression tests passed, no skips, 34.193s**, all **6 relevant shell suites**, Actions syntax, all repository static checkers and committed-range whitespace passed at `017039eea`. The merged count is no longer pending; no new Oracle or broad review was attempted.
+- **Native receipts are not interchangeable:** root compiled-source evidence at `d9e8c6294` remains **432 passed / 5 skipped / 0 failed**, Groundhog OFF; subsequent changes are tooling/workflows/regression fixtures. Selected native CLI evidence at `b0a31b0ab` actually executed **32/32 passed** in one CTest `-I`, about **9.14s**, with zero audit gaps. Nevertheless **CLI exit 1**, `job_conclusion=failure`, `complete_gate_eligible=false`: excluded `GoChannelStressTest` was built for header audit only and remains `not_executed`. **Both complete and partial aggregation reject.** This is execution proof, not a green lane or a completeness waiver; the prior alias failure remains preserved.
+
+### Acceptance/ownership still open on existing beads
+
+- `.1`/`.2`: complete ownership, exact registration/check membership, runtime/header/semantic-edge and supported-profile union; zero-unowned root/433-Groundhog probes and a narrow zero-gap native audit do not prove the full union.
+- `.2`/`.3`: guarded non-CTest command/build-contract execution; unsupported paths remain visible refusals.
+- `.3`/`.4`: real live-MDK cross-checkout image/driver/container lifecycle, cancellation/locks and hosted broad/release evidence; no fake/live acceptance equivalence.
+- `.3`: central shared Groundhog sanitizer configuration/target/environment/input-audit parity; legacy selector/parser remains until proven replacement.
+- `.2`/`.4`: complete native/compiler/architecture/optional variants; `.4` retains the known native stress execution gap, not an expected-pass exception.
+- `.5`/epic: representative five-sample clean/incremental cost baseline, **20 PR / 2 broad integration runs**, release replacement/dry-run, skip/cancellation/merge-group and no-gap protection/cutover evidence. W12 default/trigger/schedule cleanup remains NOT RUN. `.6` separately tracks existing workflow ShellCheck cleanup.
+
+All scoped beads remain open; no completion/savings/protection claim follows from the passing regression suite or from failed-lane native execution. Final docs pass is documentation-only; parent owns landing/push/branch cleanup after review. No merge back or push by `.5`.
