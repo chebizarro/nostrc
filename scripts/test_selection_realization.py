@@ -1633,12 +1633,26 @@ def _execution_outcomes(junit, names, expected_outcomes):
     return outcomes
 
 
+def _diagnostic_execution_options(resolved, realization, parallel, timeout=None):
+    if not any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1"
+               for e in resolved.get("baseline_exclusions", [])):
+        return None
+    profile = realization["profile"]
+    expected = {"parallel": profile.get("parallelism", 1), "timeout_seconds": profile.get("timeout_seconds")}
+    effective_timeout = expected["timeout_seconds"] if timeout is None else timeout
+    if (type(parallel) is not int or parallel != expected["parallel"]
+            or isinstance(effective_timeout, bool) or effective_timeout != expected["timeout_seconds"]):
+        raise RealizationError("diagnostic nonmember parallel/timeout override differs from authored profile")
+    return expected
+
+
 def build_resolved(resolved, build_dir, parallel=1):
     """Build selected prerequisites before the mandatory post-build audit."""
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("build profile identity mismatch")
     _validate_resolved_phase(resolved, realization)
+    _diagnostic_execution_options(resolved, realization, parallel)
     if not resolved["build_targets"]:
         return {"commands": [], "build_seconds": 0}
     cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
@@ -1809,6 +1823,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         timeout = realization["profile"].get("timeout_seconds")
     if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
         raise RealizationError("execution timeout must be positive")
+    execution_options = _diagnostic_execution_options(resolved, realization, parallel, timeout)
     if realization["profile"].get("execution_domain") == "prepared_peer_linux_v1":
         from test_selection_custody import PreparedContext
         if not isinstance(custody, PreparedContext):
@@ -1852,6 +1867,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "command_specs_hash": resolved.get("command_specs_hash")}
     if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in receipt["baseline_exclusions"]):
         receipt["complete"] = False
+        receipt["execution_options"] = execution_options
         receipt["nonmember_binding"] = _nonmember_binding(realization, {d["name"]: d for d in realization["descriptors"]})
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     if input_audit is None or not input_audit.get("passed") or not input_audit.get("after_build"):

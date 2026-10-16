@@ -112,6 +112,9 @@ def realization_command(args, policy, backend, *, custody=None):
         return resolved, 0
     selection.require(args.evidence_dir is not None, "run requires --evidence-dir")
     selection.require(args.parallel > 0 and (args.timeout is None or args.timeout > 0), "parallel/timeout must be positive")
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
+        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, args.parallel, args.timeout)
+        args.timeout = diagnostic_options["timeout_seconds"]
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)

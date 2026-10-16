@@ -21,7 +21,7 @@ class DiagnosticNonmemberTests(Project):
                             architecture={"aarch64": "arm64"}.get(platform.machine(), platform.machine()),
                             compiler="clang" if platform.system() == "Darwin" else "gcc",
                             build_type="Debug", instrumentation="none", setup="miniature",
-                            local_availability="host", parallelism=1)
+                            local_availability="host", parallelism=1, timeout_seconds=60)
         self.profile["configure_args"] += ["-DCMAKE_BUILD_TYPE=Debug"]
         self.profile["capabilities"] = []
         (self.root / "omitted.c").write_text('#include "omitted.h"\nint main(void) { return OMITTED; }\n')
@@ -219,6 +219,38 @@ nostrc_finalize_test_inventory()'''))
         self.assertEqual(audit["baseline_exclusions"], [])
         self.assertEqual({g["test"] for g in audit["gaps"] if g["kind"] == "unclaimed_registration"}, {"gui", "omitted"})
         self.assertFalse(audit["passed"])
+
+    def test_effective_parallel_timeout_and_recorded_argv_drift_refuse(self):
+        _, resolved, audit, result = self.execute()
+        self.assertEqual(result["backend_receipt"]["execution_options"], {"parallel": 1, "timeout_seconds": 60})
+        with self.assertRaisesRegex(r.RealizationError, "override"):
+            r.build_resolved(resolved, self.build, parallel=2)
+        for options in ({"parallel": 2}, {"timeout": 61}):
+            with self.subTest(options=options), self.assertRaisesRegex(r.RealizationError, "override"):
+                r.run_resolved(resolved, self.build, self.evidence / str(options), input_audit=audit, build=False, **options)
+        plan_file = self.build / "override-plan.json"
+        s.write_json(plan_file, self.plan)
+        for flags in (["--parallel", "2"], ["--parallel", "1", "--timeout", "61"]):
+            args = adapter.parser().parse_args(["run", "--repo", str(self.root), "--profile", nm.NONMEMBER_PROFILE,
+                "--plan", str(plan_file), "--build-dir", str(self.build), "--evidence-dir", str(self.evidence / "override"),
+                "--phase", "build", *flags])
+            with self.assertRaisesRegex(r.RealizationError, "override"):
+                adapter.realization_command(args, self.inventory, r)
+        args = adapter.parser().parse_args(["run", "--repo", str(self.root), "--profile", nm.NONMEMBER_PROFILE,
+            "--plan", str(plan_file), "--build-dir", str(self.build), "--evidence-dir", str(self.evidence / "cli-positive"),
+            "--phase", "all", "--parallel", "1"])
+        cli_result, code = adapter.realization_command(args, self.inventory, r)
+        self.assertEqual(code, 0, cli_result)
+        self.assertEqual(cli_result["backend_receipt"]["execution_options"], {"parallel": 1, "timeout_seconds": 60})
+        self.assertTrue(s.aggregate(self.inventory, self.plan, [cli_result], complete=False)["passed"])
+        for flag in ("--parallel", "--timeout"):
+            bad = copy.deepcopy(result)
+            command = next(c for c in bad["backend_receipt"]["commands"] if c[0] == "ctest")
+            command[command.index(flag) + 1] = "99"
+            self.assertFalse(s.aggregate(self.inventory, self.plan, [bad], complete=False)["passed"])
+        bad = copy.deepcopy(result)
+        bad["backend_receipt"]["execution_options"]["parallel"] = 4
+        self.assertFalse(s.aggregate(self.inventory, self.plan, [bad], complete=False)["passed"])
 
     def test_only_exact_declared_profile_and_real_host_identity_admitted(self):
         for profile in ("groundhog.linux.arm64.prepared011", "groundhog.linux", "unknown"):

@@ -598,7 +598,7 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
         contract = diagnostic_nonmember_contracts(policy).get(lane["profile"])
         if contract is not None:
             try:
-                _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane)
+                _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile)
             except (ValueError, KeyError, TypeError) as exc:
                 errors.append(f"{lane_id}: diagnostic nonmember evidence did not qualify: {exc}")
         for exclusion in exclusions:
@@ -766,7 +766,7 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             "run_id": run_id, "verified_versions": verified}
 
 
-def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane):
+def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
     if (len(exclusions) != 1 or receipt.get("baseline_exclusions") != exclusions
             or receipt.get("complete_gate_eligible") is not False
             or receipt.get("diagnostic_eligible") is not True or receipt.get("complete") is not False):
@@ -798,6 +798,20 @@ def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, la
             or evidence.get("baseline_exclusions") != exclusions
             or not set(exclusions[0]["audit_build_targets"]).issubset(evidence.get("build_targets", []))):
         raise ValueError("nonmember execution binding/incomplete status mismatch")
+    options = {"parallel": profile.get("parallelism", 1), "timeout_seconds": profile.get("timeout_seconds")}
+    if evidence.get("execution_options") != options:
+        raise ValueError("nonmember effective execution options differ from authored profile")
+    commands = evidence.get("commands", [])
+    if not any(command and command[0] == "ctest" for command in commands):
+        raise ValueError("nonmember CTest execution argv missing")
+    for command in commands:
+        if command and command[0] in ("cmake", "ctest"):
+            flags = [("--parallel", options["parallel"])]
+            if command[0] == "ctest" and options["timeout_seconds"] is not None:
+                flags.append(("--timeout", options["timeout_seconds"]))
+            for flag, value in flags:
+                if flag not in command or command[command.index(flag) + 1:command.index(flag) + 2] != [str(value)]:
+                    raise ValueError("nonmember effective argv differs from authored profile")
     executed = set(evidence.get("expected_executions", []))
     if executed & set(contract["registrations"]) or not executed.issubset(contract["required_closure"]):
         raise ValueError("nonmember execution membership overlap")
