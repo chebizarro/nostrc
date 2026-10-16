@@ -5,7 +5,6 @@ import importlib
 import json
 import os
 import subprocess
-import signal
 import time
 from pathlib import Path
 import sys
@@ -80,7 +79,10 @@ def realization_command(args, policy, backend):
                     raise selection.CheckFailure(f"committed-tree execution refuses untracked source input: {os.fsdecode(value)}")
     if args.configure or args.phase == "configure":
         selection.require(identity is not None, "configure requires --plan with execution source identity")
-        realized = backend.configure_profile(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy))
+        profile_checks = [c for c in policy["checks"].values() if args.profile in c["profiles"]]
+        source_only = profile_checks and all(c["kind"] == "command" and not c.get("build_targets") for c in profile_checks)
+        configure = backend.configure_command_profile if source_only else backend.configure_profile
+        realized = configure(args.repo, args.build_dir, args.profile, profile, identity, selection.digest(policy))
     else:
         realized = backend.load_realization(args.build_dir, identity)
     # Stored identity equality is insufficient: another checkout may share the
@@ -123,18 +125,14 @@ def realization_command(args, policy, backend):
         directory.mkdir(parents=True, exist_ok=True)
         logfile = directory / f"build-attempt-{args.attempt}.log"
         started = time.monotonic()
-        with logfile.open("x") as log:
-            process = subprocess.Popen(command, env=dict(os.environ, **profile["environment"]), stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            try:
-                returncode = process.wait(timeout=args.timeout)
-            except (subprocess.TimeoutExpired, KeyboardInterrupt):
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                raise selection.CheckFailure(f"selected build interrupted; retained {logfile}")
+        with logfile.open("x"):
+            pass  # reserve this exact attempt; never overwrite previous evidence
+        try:
+            process = backend._execute(command, cwd=args.repo, env=dict(os.environ, **profile["environment"]),
+                                       log_path=logfile, timeout=args.timeout)
+            returncode = process.returncode
+        except (subprocess.TimeoutExpired, KeyboardInterrupt, backend.RealizationError) as exc:
+            raise selection.CheckFailure(f"selected build interrupted/failed; retained {logfile} and process status: {exc}") from exc
         build_seconds = time.monotonic() - started
         build_commands.append(command)
         build_evidence.append(str(logfile))
@@ -166,12 +164,13 @@ def normalize_receipt(policy, plan, resolved, raw):
     selection.require(raw.get("resolved_hash") == resolved["resolved_hash"], "backend resolved identity mismatch")
     selection.require(set(raw.get("checks", {})) == set(lane["checks"]), "backend receipt check accounting mismatch")
     observed = raw.get("observed_executions", {})
-    selection.require(isinstance(observed, dict) and set(observed) == set(resolved["tests"]), "backend receipt execution accounting mismatch")
+    selection.require(isinstance(observed, dict) and set(observed) == set(resolved.get("expected_executions", resolved["tests"])), "backend receipt execution accounting mismatch")
     post = raw.get("input_audit", {})
     selection.require(post.get("passed") and post.get("after_build"), "backend did not retain passing post-build audit")
     checks = {}
     for ident, record in raw["checks"].items():
-        names = policy["checks"][ident]["ctest_tests"][profile_id]
+        check = policy["checks"][ident]
+        names = check["ctest_tests"][profile_id] if check["kind"] == "ctest" else [ident]
         selection.require(set(record.get("executions", [])) == set(names), "backend primary execution membership mismatch")
         actual_outcome = next((observed[n] for n in sorted(names) if observed[n] != "passed"), "passed")
         selection.require(record.get("outcome") == actual_outcome, "backend check/observed outcome contradiction")
@@ -180,7 +179,10 @@ def normalize_receipt(policy, plan, resolved, raw):
             "source_identity": plan["source_identity"], "lane_id": lane["id"], "profile": profile_id,
             "profile_hash": lane["profile_hash"], "profile_fingerprint": resolved["profile_fingerprint"],
             "registration_audit": "passed", "input_audit": "passed", "job_conclusion": "success" if raw.get("outcome") == "passed" else "failure",
-            "checks": checks, "backend_receipt": raw}
+            "checks": checks, "backend_receipt": raw,
+            "diagnostic_eligible": raw.get("diagnostic_eligible", False),
+            "complete_gate_eligible": raw.get("complete_gate_eligible", False),
+            "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", [])}
 
 
 def main(argv=None):

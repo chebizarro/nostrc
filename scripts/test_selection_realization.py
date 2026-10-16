@@ -52,38 +52,60 @@ def _atomic(path, value):
             os.unlink(name)
 
 
-def _execute(argv, cwd=None, env=None, log_path=None):
+def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
+    """One owned process group; retain logs/status even on SIGTERM or timeout."""
+    previous_handler, process, output = None, None, ""
+    status = {"argv": [str(x) for x in argv], "cwd": str(Path(cwd or Path.cwd()).resolve()),
+              "environment_hash": _hash(env if env is not None else dict(os.environ)), "started": time.time()}
+    def cancel(signum, frame):
+        raise KeyboardInterrupt(f"command cancelled by signal {signum}")
     try:
+        try:
+            previous_handler = signal.signal(signal.SIGTERM, cancel)
+        except ValueError:
+            pass
         process = subprocess.Popen([str(x) for x in argv], cwd=cwd, env=env,
             text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=os.name != "nt")
-    except OSError as exc:
-        raise RealizationError(f"cannot execute {argv[0]}: {exc}") from exc
-    try:
-        output, _ = process.communicate()
-    except BaseException:
-        # Only this command's process group, never sibling jobs or global prune.
-        if os.name != "nt":
+        output, _ = process.communicate(timeout=timeout)
+        status.update(outcome="passed" if process.returncode == 0 else "failed", exit_code=process.returncode)
+        return subprocess.CompletedProcess(argv, process.returncode, output)
+    except BaseException as exc:
+        if process is not None:
+            # Only this command's process group, never siblings or global prune.
+            # Ignore a second cancellation while reaping the owned group.
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            except ValueError:
+                pass
+            try:
+                if os.name != "nt":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
             except ProcessLookupError:
                 pass
+            try:
+                output, _ = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                if os.name != "nt":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+                output, _ = process.communicate()
         else:
-            process.terminate()
-        try:
-            output, _ = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            if os.name != "nt":
-                os.killpg(process.pid, signal.SIGKILL)
-            else:
-                process.kill()
-            output, _ = process.communicate()
+            output = f"cannot execute {argv[0]}: {exc}\n"
+        status.update(outcome="cancelled" if isinstance(exc, KeyboardInterrupt) else "failed",
+                      error=type(exc).__name__ + ": " + str(exc), exit_code=process.returncode if process else None)
+        if isinstance(exc, OSError):
+            raise RealizationError(f"cannot execute {argv[0]}: {exc}") from exc
+        raise
+    finally:
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, previous_handler)
         if log_path:
             Path(log_path).write_text(output)
-        raise
-    if log_path:
-        Path(log_path).write_text(output)
-    return subprocess.CompletedProcess(argv, process.returncode, output)
+            _atomic(str(log_path) + ".process.json", dict(status, ended=time.time()))
 
 
 def _command(argv, cwd=None, env=None):
@@ -144,6 +166,8 @@ def _validate_source_identity(root, identity, build_dir):
     reads the index and files only; it never stages or resets a caller's checkout.
     """
     root, build = Path(root).resolve(), Path(build_dir).resolve()
+    if root.is_relative_to(build):
+        raise RealizationError("build directory cannot contain the admitted source checkout")
     top = Path(os.fsdecode(_git(root, "rev-parse", "--show-toplevel")).strip()).resolve()
     if root != top:
         raise RealizationError("source checkout root is not the canonical Git root")
@@ -428,7 +452,12 @@ def load_realization(build_dir, expected_identity=None):
             raise RealizationError(f"stale realization metadata: {name}")
     if not realization.get("generation_files"):
         raise RealizationError("unbound generation metadata")
-    _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"])
+    if Path(realization["build_dir"]).resolve() != Path(build_dir).resolve():
+        raise RealizationError("realization build directory mismatch")
+    if realization.get("realization_kind") == "command":
+        _validate_native_profile(realization["profile"])
+    else:
+        _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"])
     return realization
 
 
@@ -618,6 +647,181 @@ def _fixture_closure(names, tests, descriptors):
     return sorted(selected)
 
 
+def configure_command_profile(repo_root, build_dir, profile_id, profile, source_identity, inventory_hash):
+    """Source-only command realization; no compiler/build/CTest success claim."""
+    root, build = Path(repo_root).resolve(), Path(build_dir).resolve()
+    identity = _identity(source_identity)
+    _validate_source_identity(root, identity, build)
+    _validate_native_profile(profile)
+    source = (root / profile["source_dir"]).resolve()
+    if not source.is_relative_to(root) or not source.is_dir():
+        raise RealizationError("command source directory escapes/misses checkout")
+    if profile.get("configure_args") or profile.get("instrumentation", "none") != "none":
+        raise RealizationError("source-only commands cannot attest configure/instrumentation")
+    build.mkdir(parents=True, exist_ok=True)
+    marker = build / "nostrc-command-generation.json"
+    _atomic(marker, {"token": uuid.uuid4().hex})
+    result = {"schema_version": 1, "realization_kind": "command", "repo_root": str(root),
+              "source_dir": str(source), "build_dir": str(build), "profile_id": profile_id,
+              "profile": profile, "source_identity": identity, "inventory_hash": inventory_hash,
+              "configuration": "", "targets": {}, "tests": [], "descriptors": [],
+              "cmake": {}, "toolchains": {}, "commands": [], "configure_seconds": 0,
+              "environment_hash": _hash(dict(os.environ, **profile.get("environment", {}))),
+              "generation_files": {str(marker): hashlib.sha256(marker.read_bytes()).hexdigest()}}
+    result["profile_fingerprint"] = _hash(result)
+    _atomic(build / "nostrc-test-realization.json", result)
+    return result
+
+
+def _substitute(value, realization):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise RealizationError("invalid command contract string")
+    value = value.replace("{source}", realization["repo_root"]).replace("{build}", realization["build_dir"])
+    if "{" in value or "}" in value:
+        raise RealizationError("unsupported command substitution (only {source}/{build})")
+    return value
+
+
+def _command_specs(inventory, realization):
+    """Bind authored non-CTest commands to this checkout, targets and executables.
+
+    {source} is the repository root (also for standalone CMake profiles). No
+    implicit cwd, shell interpolation, PATH fallback after resolution, or wildcard.
+    """
+    result = {}
+    targets = {t["name"]: t for t in realization["targets"].values()}
+    env_base = dict(os.environ, **realization["profile"].get("environment", {}))
+    for ident, check in inventory["checks"].items():
+        if check.get("kind") == "ctest" or not _eligible(check, realization["profile_id"]):
+            continue
+        argv = [_substitute(x, realization) for x in check.get("command", [])]
+        if not argv:
+            raise RealizationError(f"empty command: {ident}")
+        cwd = Path(_substitute(check.get("working_directory"), realization))
+        if (not cwd.is_absolute() or not cwd.is_dir()
+                or not any(cwd.resolve().is_relative_to(Path(realization[k])) for k in ("repo_root", "build_dir"))):
+            raise RealizationError(f"command cwd must be inside admitted source/build checkout: {ident}")
+        environment = check.get("environment")
+        if not isinstance(environment, dict) or any(not isinstance(k, str) or not k or "=" in k or "\x00" in k for k in environment):
+            raise RealizationError(f"invalid command environment: {ident}")
+        env = dict(env_base, **{k: _substitute(v, realization) if v else "" for k, v in environment.items()})
+        required = check.get("requires", [])
+        if not set(required).issubset(realization["profile"].get("capabilities", [])):
+            raise RealizationError(f"unavailable command capabilities: {ident}")
+        names = list(check.get("build_targets", []))
+        if check["kind"] == "build_contract":
+            # Build contracts must identify an exact codemodel target set. Keep
+            # arbitrary commands in kind=command, never interpret shell flags.
+            tail = argv[3:]
+            if realization["configuration"] and tail[:2] == ["--config", realization["configuration"]]:
+                tail = tail[2:]
+            if (argv[:3] != ["cmake", "--build", realization["build_dir"]]
+                    or not tail or tail[0] != "--target" or len(tail) < 2
+                    or any(x.startswith("-") for x in tail[1:])):
+                raise RealizationError(f"build_contract requires exact cmake --build/--target contract: {ident}")
+            declared = tail[1:]
+            if len(declared) != len(set(declared)) or (names and sorted(names) != sorted(declared)):
+                raise RealizationError(f"build_contract target disagreement: {ident}")
+            names = declared
+        if any(n not in targets for n in names):
+            raise RealizationError(f"unknown command build target: {ident}")
+        target_ids = _target_closure([targets[n]["id"] for n in names], realization)
+        executable = argv[0]
+        candidate = Path(executable)
+        if candidate.is_absolute():
+            if not candidate.resolve().is_relative_to(Path(realization["repo_root"])) and not candidate.resolve().is_relative_to(Path(realization["build_dir"])):
+                raise RealizationError(f"absolute command executable outside admitted roots: {ident}")
+            executable = str(candidate.resolve())
+            if candidate.is_relative_to(Path(realization["build_dir"])) and executable not in {p for t in target_ids for p in realization["targets"][t]["artifacts"]}:
+                raise RealizationError(f"command executable has no declared producer: {ident}")
+        elif "/" in executable or "\\" in executable:
+            raise RealizationError(f"use explicit {{source}}/{{build}} executable path: {ident}")
+        else:
+            executable = shutil.which(executable, path=env.get("PATH"))
+            if not executable:
+                raise RealizationError(f"command executable unavailable: {ident}")
+        argv[0] = executable
+        inputs = [_substitute(x, realization) for x in check.get("runtime_inputs", [])]
+        # Literal file arguments (not interpreter imports or shell syntax) are
+        # execution inputs too. Never let an argv script evade impact auditing.
+        for argument in argv[1:]:
+            path = Path(argument) if Path(argument).is_absolute() else cwd / argument
+            if (path.is_file() or path.is_symlink()) and path.is_relative_to(Path(realization["repo_root"])):
+                inputs.append(str(path))
+        if check["kind"] == "command" and not check.get("runtime_inputs"):
+            raise RealizationError(f"command requires explicit source runtime_inputs: {ident}")
+        if any(not Path(p).is_absolute() for p in inputs):
+            raise RealizationError(f"command runtime_inputs require root substitutions: {ident}")
+        if Path(executable).is_relative_to(Path(realization["repo_root"])):
+            inputs.append(executable)
+        evidence = check.get("required_evidence", [])
+        if any(not isinstance(p, str) or Path(p).is_absolute() or any(x in ("", ".", "..") for x in p.split("/")) for p in evidence):
+            raise RealizationError(f"required_evidence must be normalized build-relative file paths: {ident}")
+        result[ident] = {"kind": check["kind"], "argv": argv, "cwd": str(cwd.resolve()),
+                         "environment": {k: env[k] for k in environment}, "environment_hash": _hash(env), "inputs": sorted(set(inputs)),
+                         "target_ids": target_ids, "build_targets": sorted(names),
+                         "requires": sorted(required), "required_evidence": evidence}
+    return result
+
+
+def _audit_commands(inventory, realization, specs, after_build):
+    gaps, hashes = [], {}
+    headers = _ninja_headers(realization) if after_build and realization["targets"] else {}
+    for ident, spec in specs.items():
+        check = inventory["checks"][ident]
+        covered = _impact_prerequisites(inventory, check.get("nodes", []))
+        paths = [(p, "runtime") for p in spec["inputs"]]
+        for key in spec["target_ids"]:
+            target = realization["targets"][key]
+            paths += [(s["path"], "generated" if s["generated"] else "source") for s in target["sources"]]
+            if after_build:
+                paths += [(_path(realization["build_dir"], p), "ninja") for p in _command(["ninja", "-C", realization["build_dir"], "-t", "inputs", target["name"]]).splitlines()]
+                discovered = [p for obj, values in headers.items() if f"CMakeFiles/{target['name']}.dir/" in obj.replace("\\", "/") for p in values]
+                paths += [(_path(realization["build_dir"], p), "header") for p in discovered]
+                if not discovered and any(s.get("compiled") for s in target["sources"]):
+                    gaps.append({"kind": "missing_discovered_header_index", "check": ident, "target": target["name"]})
+        expanded = []
+        for value, kind in paths:
+            path = Path(value)
+            if path.is_dir() and kind == "runtime":
+                files = [p for p in path.rglob("*") if p.is_file() or p.is_symlink()]
+                if not files:
+                    gaps.append({"kind": "empty_runtime_directory", "check": ident, "input": value})
+                expanded += [(str(p), kind) for p in files]
+            else:
+                expanded.append((value, kind))
+        for value, kind in sorted(set(expanded)):
+            path = Path(value)
+            if path.is_relative_to(Path(realization["build_dir"])):
+                if kind == "runtime":
+                    if (not spec["target_ids"] or not path.resolve().is_relative_to(Path(realization["build_dir"]))
+                            or (after_build and not path.is_file())):
+                        gaps.append({"kind": "generated_runtime_without_target_or_file", "check": ident, "input": value})
+                    elif after_build:
+                        hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+                continue
+            if not path.is_file():
+                gaps.append({"kind": "missing_input", "check": ident, "input": value})
+                continue
+            relative = _relative(value, realization["repo_root"])
+            if relative is None:
+                if kind not in ("header", "ninja"):
+                    gaps.append({"kind": "external_input", "check": ident, "input": value})
+            elif not path.resolve().is_relative_to(Path(realization["repo_root"])):
+                gaps.append({"kind": "external_symlink_input", "check": ident, "input": value})
+            else:
+                owners, effect = _owners(inventory, relative)
+                if effect != "global" and (effect == "non_execution" or not owners or owners.isdisjoint(covered)):
+                    gaps.append({"kind": "missing_impact_edge", "check": ident, "input": relative})
+            hashes[value] = hashlib.sha256(path.read_bytes()).hexdigest()
+        executable = Path(spec["argv"][0])
+        if after_build and (not executable.is_file() or not os.access(executable, os.X_OK)):
+            gaps.append({"kind": "missing_command_executable", "check": ident})
+        if executable.is_file():
+            hashes[str(executable)] = hashlib.sha256(executable.read_bytes()).hexdigest()
+    return gaps, hashes
+
+
 def resolve_checks(inventory, plan, realization, profile_id):
     """Resolve exact check membership plus fixture/order/runtime/build closure.
 
@@ -640,13 +844,17 @@ def resolve_checks(inventory, plan, realization, profile_id):
                 if name in claims:
                     raise RealizationError(f"multiply claimed primary execution: {name}")
                 claims[name] = ident
+    command_specs = _command_specs(inventory, realization)
+    selected_commands = {}
     checks, primary = {}, set()
     for ident in plan.get("selected_checks", plan.get("checks", [])):
         check = inventory["checks"][ident]
         if not _eligible(check, profile_id):
             continue
         if check.get("kind") != "ctest":
-            raise RealizationError(f"non-CTest execution requires existing adapter: {ident}")
+            selected_commands[ident] = command_specs[ident]
+            checks[ident] = {"tests": [ident], "requirement": check.get("requirement", "blocking")}
+            continue
         names = _membership(check, profile_id)
         if not names:
             raise RealizationError(f"empty selected check: {ident}")
@@ -667,8 +875,16 @@ def resolve_checks(inventory, plan, realization, profile_id):
         ids.update(_mapped_targets(tests[name], desc, realization))
         inputs.update(desc.get("inputs", []))
         capabilities.update(desc.get("requires", []))
+    for spec in selected_commands.values():
+        # A build contract also executes its authored command after targets are
+        # built for the mandatory header audit; never synthesize its outcome.
+        inputs.update(spec["inputs"])
+        capabilities.update(spec["requires"])
+        if spec["kind"] != "build_contract":
+            ids.update(spec["target_ids"])
+    contract_ids = {key for spec in selected_commands.values() if spec["kind"] == "build_contract" for key in spec["target_ids"]}
     audit_ids = {ident for exclusion in exclusions for ident in exclusion["target_ids"]}
-    closure = _target_closure(ids | audit_ids, realization)
+    closure = _target_closure(ids | audit_ids | contract_ids, realization)
     available = set(realization["profile"].get("capabilities", []))
     if not capabilities.issubset(available):
         raise RealizationError(f"unavailable selected capabilities: {sorted(capabilities - available)}")
@@ -678,11 +894,14 @@ def resolve_checks(inventory, plan, realization, profile_id):
         "plan_hash": _hash(plan), "plan_id": plan.get("plan_id", _hash(plan)),
         "profile_hash": _hash(realization["profile"]), "configuration": realization["configuration"],
         "build_dir": realization["build_dir"], "checks": checks,
+        "command_executions": selected_commands, "command_specs_hash": _hash(command_specs),
+        "expected_executions": sorted(selected + list(selected_commands)),
+        "contract_build_targets": sorted({realization["targets"][i]["name"] for i in contract_ids}),
         "tests": selected, "primary_tests": sorted(primary), "support_tests": sorted(set(selected) - primary),
-        "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids | audit_ids}),
+        "target_ids": closure, "build_targets": sorted({realization["targets"][i]["name"] for i in ids | audit_ids | contract_ids}),
         "audit_build_targets": sorted({realization["targets"][i]["name"] for i in audit_ids}),
         "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
-        "complete_gate_eligible": not bool(exclusions),
+        "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
         "runtime_inputs": sorted(inputs), "required_capabilities": sorted(capabilities),
         "expected_outcomes": {n: descriptors.get(n, {}).get("expected", []) for n in selected},
         "registration_hash": _registration_hash(realization["tests"]),
@@ -748,7 +967,7 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
     gaps, fingerprints = [], {}
     def gap(kind, **detail):
         gaps.append({"kind": kind, **detail})
-    headers = _ninja_headers(realization) if after_build else {}
+    headers = _ninja_headers(realization) if after_build and realization.get("realization_kind") != "command" else {}
     claims = {}
     for ident, check in inventory["checks"].items():
         if check.get("kind") != "ctest" or not _eligible(check, realization["profile_id"]):
@@ -891,15 +1110,21 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
                         support_test=support_name, input=relative, input_kind=kind,
                         owners=sorted(check.get("nodes", check.get("impact_nodes", []))),
                         missing_nodes=sorted(input_owners - covered))
-    if after_build and not header_count and any(t["type"] in ("EXECUTABLE", "STATIC_LIBRARY", "SHARED_LIBRARY") for t in realization["targets"].values()):
+    specs = _command_specs(inventory, realization)
+    command_gaps, command_hashes = _audit_commands(inventory, realization, specs, after_build)
+    gaps.extend(command_gaps)
+    fingerprints.update(command_hashes)
+    command_targets = {key for spec in specs.values() for key in spec["target_ids"]}
+    if after_build and not header_count and not command_targets and any(t["type"] in ("EXECUTABLE", "STATIC_LIBRARY", "SHARED_LIBRARY") for t in realization["targets"].values()):
         gap("missing_discovered_header_index")
     result = {"schema_version": 1, "passed": not gaps, "requires_broad": bool(gaps),
         "selective_enforcement": False if gaps or not after_build or exclusions else True,
         "baseline_exclusions": exclusions, "coverage_gaps": inventory.get("coverage_gaps", []),
-        "complete_gate_eligible": not bool(exclusions),
+        "complete_gate_eligible": not bool(exclusions or inventory.get("coverage_gaps")),
         "source_identity": realization["source_identity"], "inventory_hash": realization["inventory_hash"],
         "profile_fingerprint": realization["profile_fingerprint"], "after_build": after_build,
         "gaps": gaps, "input_hashes": fingerprints, "header_entries": header_count,
+        "command_specs_hash": _hash(specs),
         "header_index_hash": _hash(headers) if after_build else None}
     result["audit_hash"] = _hash(result)
     return result
@@ -1026,7 +1251,65 @@ def cli(args, policy):
         return 2
 
 
-def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None,
+def _attempt_directory(resolved, evidence_dir, attempt):
+    return (Path(evidence_dir) / resolved["source_identity"].get("head", resolved["source_identity"].get("sha", resolved["source_identity"].get("tested_sha", "source")))
+            / resolved["profile_id"] / resolved["resolved_hash"] / f"attempt-{attempt}")
+
+
+def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
+    """Retain interrupted/error attempts without ever overwriting prior evidence."""
+    audit = kwargs.get("input_audit")
+    if audit is None or not audit.get("passed") or not audit.get("after_build"):
+        load_realization(build_dir, resolved["source_identity"])
+        raise RealizationError("passing post-build input audit required before execution")
+    directory = _attempt_directory(resolved, evidence_dir, attempt)
+    existed = directory.exists()
+    previous_handler = None
+    def cancel(signum, frame):
+        raise KeyboardInterrupt(f"execution cancelled by signal {signum}")
+    try:
+        # signal handlers belong to the main thread; library callers in worker
+        # threads retain their caller's cancellation mechanism.
+        try:
+            previous_handler = signal.signal(signal.SIGTERM, cancel)
+        except ValueError:
+            pass
+        return _run_resolved(resolved, build_dir, evidence_dir, attempt, **kwargs)
+    except (RealizationError, OSError, KeyboardInterrupt, subprocess.TimeoutExpired) as exc:
+        if existed:
+            raise
+        if not directory.exists():
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "preexecution-failure.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+            raise
+        if not existed:
+            directory.mkdir(parents=True, exist_ok=True)
+            path = directory / "receipt.json"
+            receipt = _read(path) if path.exists() else {}
+            outcome = "cancelled" if isinstance(exc, KeyboardInterrupt) else "failed"
+            observed = receipt.setdefault("observed_executions", {})
+            checks = receipt.setdefault("checks", {})
+            for ident, check in resolved["checks"].items():
+                checks.setdefault(ident, {"outcome": outcome, "executions": check["tests"],
+                    "expected_executions": check["tests"], "observed_executions": []})
+                for name in check["tests"]:
+                    observed.setdefault(name, "missing")
+            receipt.update(outcome=outcome, execution_outcome=outcome, job_conclusion="failure",
+                           diagnostic_eligible=False, complete_gate_eligible=False,
+                           error=str(exc), ended=time.time())
+            receipt.update({k: resolved[k] for k in ("source_identity", "inventory_hash", "profile_id", "profile_fingerprint", "plan_hash", "resolved_hash")})
+            receipt["schema_version"] = 1
+            _atomic(path, receipt)
+            (directory / "execution-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+        if isinstance(exc, (KeyboardInterrupt, subprocess.TimeoutExpired, OSError)):
+            raise RealizationError(f"execution interrupted/failed; retained {directory}: {exc}") from exc
+        raise
+    finally:
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, previous_handler)
+
+
+def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None,
                  build=True, parallel=1, timeout=None, evidence_paths=()):
     """One CTest invocation per profile/attempt; no retries or quarantine policy.
 
@@ -1042,7 +1325,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         raise RealizationError("resolved profile fingerprint mismatch")
     if set(resolved["required_capabilities"]) & {"docker", "external_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
-    directory = Path(evidence_dir) / resolved["source_identity"].get("head", resolved["source_identity"].get("sha", resolved["source_identity"].get("tested_sha", "source"))) / resolved["profile_id"] / resolved["resolved_hash"] / f"attempt-{attempt}"
+    directory = _attempt_directory(resolved, evidence_dir, attempt)
     previous_attempts = []
     for previous in range(1, attempt):
         path = directory.parent / f"attempt-{previous}" / "receipt.json"
@@ -1055,19 +1338,25 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
     directory.mkdir(parents=True, exist_ok=False)
     started = time.time()
     commands = []
-    receipt = {"schema_version": 1, "source_identity": resolved["source_identity"],
+    receipt = {"schema_version": 1, "realization_kind": realization.get("realization_kind", "cmake"),
+        "source_identity": resolved["source_identity"],
         "inventory_hash": resolved["inventory_hash"], "profile_id": resolved["profile_id"],
         "profile_fingerprint": resolved["profile_fingerprint"], "plan_hash": resolved["plan_hash"],
         "resolved_hash": resolved["resolved_hash"], "attempt": attempt,
         "lane_id": resolved["profile_id"], "profile": resolved["profile_id"],
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
         "registration_audit": "passed", "job_conclusion": "success",
-        "expected_executions": resolved["tests"], "support_tests": resolved["support_tests"],
+        "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
         "started": started, "commands": commands, "evidence_dir": str(directory),
         "baseline_exclusions": resolved.get("baseline_exclusions", []),
         "coverage_gaps": resolved.get("coverage_gaps", []),
         "complete_gate_eligible": resolved.get("complete_gate_eligible", True),
-        "audit_build_targets": resolved.get("audit_build_targets", [])}
+        "audit_build_targets": resolved.get("audit_build_targets", []),
+        "required_capabilities": resolved["required_capabilities"],
+        "available_capabilities": realization["profile"].get("capabilities", []),
+        "target_ids": resolved["target_ids"], "build_targets": resolved["build_targets"],
+        "command_specs_hash": resolved.get("command_specs_hash")}
+    _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     if input_audit is None or not input_audit.get("passed") or not input_audit.get("after_build"):
         raise RealizationError("passing post-build input audit required before execution")
     if input_audit.get("baseline_exclusions", []) != resolved.get("baseline_exclusions", []):
@@ -1078,7 +1367,11 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
     for name, digest in input_audit.get("input_hashes", {}).items():
         if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
             raise RealizationError(f"input changed since audit: {name}")
-    receipt["input_audit"] = {k: v for k, v in input_audit.items() if k != "input_hashes"}
+    if input_audit.get("audit_hash") != _hash({k: v for k, v in input_audit.items() if k != "audit_hash"}):
+        raise RealizationError("input audit content hash mismatch")
+    if input_audit.get("command_specs_hash") != resolved.get("command_specs_hash"):
+        raise RealizationError("input audit command contract mismatch")
+    receipt["input_audit"] = input_audit
     receipt["input_audit_status"] = "passed"
     env = dict(os.environ, **realization["profile"].get("environment", {}))
     if _hash(env) != realization["environment_hash"]:
@@ -1090,9 +1383,13 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
             cmd += ["--config", resolved["configuration"]]
         cmd += ["--target", *resolved["build_targets"]]
         commands.append(cmd)
+        _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
         begin = time.monotonic()
-        (directory / "build.log").write_text(_command(cmd, env=env))
+        result = _execute(cmd, env=env, log_path=directory / "build.log", timeout=timeout)
+        if result.returncode:
+            raise RealizationError(f"selected prerequisite build failed: {result.returncode}")
         receipt["build_seconds"] = time.monotonic() - begin
+    _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     query = ["ctest", "--test-dir", str(build_dir), *config, "--show-only=json-v1"]
     if resolved["build_targets"]:
         if realization["cmake"].get("generator", {}).get("name") != "Ninja":
@@ -1100,7 +1397,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         dry_run = _command(["ninja", "-C", str(build_dir), "-n", *resolved["build_targets"]], env=env)
         if "ninja: no work to do." not in dry_run:
             raise RealizationError("selected targets are not up to date; build and re-audit before execution")
-    fresh = json.loads(_command(query, env=env))["tests"]
+    fresh = [] if realization.get("realization_kind") == "command" else json.loads(_command(query, env=env))["tests"]
     if _registration_hash(fresh) != resolved["registration_hash"]:
         raise RealizationError("CTest registrations/properties changed after resolution")
     tests = {t["name"]: t for t in fresh}
@@ -1111,12 +1408,13 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         if not tests[name].get("command"):
             raise RealizationError(f"selected executable/command still unavailable: {name}")
     load_realization(build_dir, resolved["source_identity"])
-    if input_audit.get("header_index_hash") != _hash(_ninja_headers(realization)):
+    headers = {} if realization.get("realization_kind") == "command" else _ninja_headers(realization)
+    if input_audit.get("header_index_hash") != _hash(headers):
         raise RealizationError("discovered header index changed since audit; re-audit after build")
     if _fixture_closure(resolved["primary_tests"], tests, {d["name"]: d for d in realization["descriptors"]}) != resolved["tests"]:
         raise RealizationError("fixture/order closure changed")
     if not resolved["tests"]:
-        receipt.update(outcome="not_applicable", observed_executions=[], checks={})
+        receipt.update(outcome="not_applicable", observed_executions={}, checks={})
     else:
         indices = [str(i + 1) for i, test in enumerate(fresh) if test["name"] in resolved["tests"]]
         selection = directory / "ctest-indices.txt"
@@ -1132,6 +1430,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
         commands.append(cmd)
         begin = time.monotonic()
         # A nonzero exit is retained alongside structured results, never discarded.
+        _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
         process = _execute(cmd, env=env, log_path=directory / "ctest.log")
         receipt["test_seconds"] = time.monotonic() - begin
         receipt["ctest_exit_code"] = process.returncode
@@ -1153,17 +1452,65 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=No
                                                "observed_executions": [n for n in check["tests"] if outcomes[n] != "missing"],
                                                **({"exception_case": "mdk09_incompatibility", "exit_code": 77}
                                                   if any(outcomes[n] == "expected_incompatibility" for n in check["tests"]) else {})}
-                             for ident, check in resolved["checks"].items()}
+                             for ident, check in resolved["checks"].items() if ident not in resolved.get("command_executions", {})}
         receipt["outcome"] = "passed" if not process.returncode and all(o in ("passed", "expected_incompatibility") for o in outcomes.values()) else "failed"
+    # Commands are additional physical executions, not CTest aliases. One failed
+    # support execution still fails the lane even if every primary check passed.
+    specs = resolved.get("command_executions", {})
+    for ident, spec in specs.items():
+        env_command = dict(env, **spec["environment"])
+        if _hash(env_command) != spec["environment_hash"]:
+            raise RealizationError(f"command environment changed: {ident}")
+        for relative in spec["required_evidence"]:
+            path = build_dir / relative
+            if path.exists() or path.is_symlink():
+                raise RealizationError(f"required evidence already exists before command (stale): {ident}/{relative}")
+        commands.append(spec["argv"])
+        logfile = directory / f"command-{ident}.log"
+        _atomic(directory / "receipt.json", dict(receipt, outcome="running", active_command=ident))
+        begin = time.monotonic()
+        process = _execute(spec["argv"], cwd=spec["cwd"], env=env_command, log_path=logfile, timeout=timeout)
+        artifacts, evidence_missing = {}, []
+        for relative in spec["required_evidence"]:
+            path = build_dir / relative
+            if not path.is_file() or not path.resolve().is_relative_to(build_dir):
+                evidence_missing.append(relative)
+                continue
+            copy = directory / "command-evidence" / ident / relative
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, copy)
+            artifacts[relative] = {"path": str(copy), "sha256": hashlib.sha256(copy.read_bytes()).hexdigest()}
+        outcome = "passed" if process.returncode == 0 and not evidence_missing else "failed"
+        receipt["observed_executions"][ident] = outcome
+        receipt["checks"][ident] = {"outcome": outcome, "executions": [ident], "expected_executions": [ident],
+            "observed_executions": [ident], "exit_code": process.returncode, "log": str(logfile),
+            "log_sha256": hashlib.sha256(logfile.read_bytes()).hexdigest(), "argv": spec["argv"],
+            "cwd": spec["cwd"], "environment_hash": spec["environment_hash"], "requires": spec["requires"],
+            "seconds": time.monotonic() - begin, "artifacts": artifacts, "missing_evidence": evidence_missing}
+        if receipt["outcome"] == "not_applicable":
+            receipt["outcome"] = outcome
+        elif outcome != "passed":
+            receipt["outcome"] = "failed"
+    # A command must not change the admitted source or any audited input. Evidence
+    # belongs in the build/evidence directory, never in source fixtures.
+    if specs:
+        load_realization(build_dir, resolved["source_identity"])
+        for name, digest in input_audit.get("input_hashes", {}).items():
+            if not Path(name).is_file() or hashlib.sha256(Path(name).read_bytes()).hexdigest() != digest:
+                raise RealizationError(f"input changed during command execution: {name}")
     receipt["execution_outcome"] = receipt["outcome"]
     receipt["execution_clean_first_attempt"] = attempt == 1 and receipt["execution_outcome"] == "passed"
     if not receipt["complete_gate_eligible"]:
-        receipt["incomplete_reasons"] = ["explicit baseline exclusion prevents complete gate acceptance"]
-        # The current core normalizer/aggregate does not enforce diagnostic flags.
-        # Retain successful primary outcomes, but never emit a successful lane
-        # conclusion that an older consumer could accept as complete coverage.
-        if receipt["outcome"] == "passed":
-            receipt["outcome"] = "failed"
+        receipt["incomplete_reasons"] = (["explicit baseline exclusion prevents complete gate acceptance"]
+                                         if receipt["baseline_exclusions"] else [])
+        # Execution success is diagnostic only. Normalization preserves these
+        # fields and complete aggregation rejects them independently of outcomes.
+        receipt["incomplete_reasons"] += ["inventory/profile union is not complete"] if receipt["coverage_gaps"] else []
+    if (input_audit.get("complete_gate_eligible", True) != receipt["complete_gate_eligible"]
+            or input_audit.get("coverage_gaps", []) != receipt["coverage_gaps"]):
+        receipt["outcome"] = "failed"
+        receipt["incomplete_reasons"] = ["unrecognized diagnostic eligibility: resolution/audit disagree"]
+    receipt["diagnostic_eligible"] = receipt["outcome"] == "passed"
     receipt["previous_attempts"] = previous_attempts
     receipt["clean_first_attempt"] = attempt == 1 and receipt["outcome"] == "passed"
     for ident, result in receipt["checks"].items():
