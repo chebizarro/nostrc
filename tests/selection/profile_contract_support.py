@@ -10,11 +10,12 @@ import re
 
 
 def source_job_blocks(root):
-    """Literal complete job bodies bind setup/steps as well as matrix declarations."""
+    """Bind literal jobs and their full workflow envelope, including inherited inputs."""
     jobs = {}
     for path in sorted((Path(root) / ".github/workflows").iterdir()):
         if path.suffix not in {".yml", ".yaml"}:
             continue
+        workflow_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
         lines = path.read_text().splitlines()
         start = lines.index("jobs:") + 1
         headers = []
@@ -65,7 +66,8 @@ def source_job_blocks(root):
                     matrix.pop()
             key = path.relative_to(root).as_posix() + ":" + name
             jobs[key] = {"matrix_source": "\n".join(matrix),
-                         "source_sha256": hashlib.sha256(("\n".join(block) + "\n").encode()).hexdigest()}
+                         "source_sha256": hashlib.sha256(("\n".join(block) + "\n").encode()).hexdigest(),
+                         "workflow_sha256": workflow_sha256}
     return jobs
 
 
@@ -84,6 +86,8 @@ def validate_job_accounting(policy, root):
         record = records[key]
         if record["matrix_source"] != matrix:
             raise ValueError("workflow matrix changed: " + key)
+        if record.get("workflow_sha256") != blocks[key]["workflow_sha256"]:
+            raise ValueError("workflow source/inherited settings changed: " + key)
         if record.get("source_sha256") != blocks[key]["source_sha256"]:
             raise ValueError("workflow job setup/steps changed: " + key)
         if record.get("coverage_gap") and not record.get("unsupported_reason", "").strip():

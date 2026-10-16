@@ -1,9 +1,12 @@
 """Production source evidence regressions; no miniature or hosted-pass equivalence."""
 import copy
 import json
+import shutil
+import tempfile
+from pathlib import Path
 import unittest
 
-from selector_support import ROOT, s
+from selector_support import ROOT, change, s
 from profile_contract_support import source_job_blocks, validate_job_accounting
 
 
@@ -23,14 +26,17 @@ class ProductionInventory(unittest.TestCase):
 
     def test_all_observed_failed_hosted_source_edges_reach_their_checks(self):
         evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())
-        self.assertEqual(len(evidence["audits"]), 4)
+        self.assertEqual(len(evidence["audits"]), 5)
         for audit in evidence["audits"]:
             if audit["profile"] == "groundhog.linux.sanitizers":
-                self.assertEqual(audit["source_sha"], "b8dd3583766893e3b97e017dc063da5ed1c47413")
+                self.assertIn(audit["source_sha"], {"b8dd3583766893e3b97e017dc063da5ed1c47413", "8cf8cf449b0466dab89e9d2138c7a3140caf3695"})
                 self.assertIn(audit["evidence_kind"], {"native_production_configure_input_audit_failed", "native_production_postbuild_input_audit_failed"})
                 if audit["evidence_kind"] == "native_production_postbuild_input_audit_failed":
-                    self.assertEqual(audit["header_entries"], 7605712)
-                    self.assertEqual(audit["input_hash_count"], 3316)
+                    expected = {
+                        "b8dd3583766893e3b97e017dc063da5ed1c47413": (7605712, 3316, 62942),
+                        "8cf8cf449b0466dab89e9d2138c7a3140caf3695": (10721582, 3333, 80004),
+                    }[audit["source_sha"]]
+                    self.assertEqual((audit["header_entries"], audit["input_hash_count"], audit["original_gap_count"]), expected)
                     self.assertTrue(any(edge["input_kind"] == "header" for edge in audit["edges"]))
                 self.assertEqual(audit["actual_architecture"], "aarch64")
                 self.assertEqual(audit["declared_architecture"], "x86_64")
@@ -44,6 +50,36 @@ class ProductionInventory(unittest.TestCase):
                     self.assertIn(edge["test"], check["ctest_tests"][audit["profile"]])
                     self.assertTrue(set(edge["required_nodes"]) <= self.prerequisites(check["nodes"]))
                     self.assertTrue(set(s.classify(self.policy, edge["input"])["nodes"]) <= self.prerequisites(check["nodes"]))
+
+    def test_real_postbuild_witness_changes_select_their_actual_consumers(self):
+        evidence = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())["audits"][-1]
+        edges = evidence["edges"]
+        self.assertEqual(evidence["receipt_sha256"], "a81f06d544409dc656d6ebf35af9051af2ab3f56b8be299ed95ad4b27417df63")
+        self.assertEqual(len(edges), 557)
+        self.assertEqual(len({edge["check"] for edge in edges}), 26)
+        self.assertEqual(len({(edge["check"], node) for edge in edges for node in edge["required_nodes"]}), 557)
+        plans = {}
+        for edge in edges:
+            path = edge["input"]
+            if path not in plans:
+                plans[path] = s.make_plan(self.policy, [change(path)], head="a" * 40, base="b" * 40, context="ci")
+            with self.subTest(check=edge["check"], input=path):
+                self.assertIn(edge["check"], plans[path]["selected_checks"])
+        schema = "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml"
+        self.assertEqual(plans[schema]["effective_mode"], "affected")
+        self.assertFalse(plans[schema]["broadening_reasons"])
+        self.assertEqual(self.policy["nodes"]["groundhog.unclassified"]["depends_on"], [])
+        self.assertEqual(self.policy["nodes"]["execution.groundhog"]["depends_on"], [])
+
+    def test_schema_selection_regression_detects_removal_of_its_real_check_edge(self):
+        policy = copy.deepcopy(self.policy)
+        check = "sanitizer.groundhog_account"
+        schema = "apps/gnostr/data/schemas/org.gnostr.gnostr.gschema.xml"
+        policy["checks"][check]["nodes"].remove("gnostr")
+        bad = s.make_plan(policy, [change(schema)], head="a" * 40, base="b" * 40, context="ci")
+        self.assertNotIn(check, bad["selected_checks"])
+        good = s.make_plan(self.policy, [change(schema)], head="a" * 40, base="b" * 40, context="ci")
+        self.assertIn(check, good["selected_checks"])
 
     def test_test_vector_edges_do_not_become_production_dependencies(self):
         for node, spec in self.policy["nodes"].items():
@@ -76,6 +112,7 @@ class ProductionInventory(unittest.TestCase):
                          {key: spec["matrix_source"] for key, spec in blocks.items()})
         for key, record in self.policy["workflow_jobs"].items():
             self.assertEqual(record["source_sha256"], blocks[key]["source_sha256"])
+            self.assertEqual(record["workflow_sha256"], blocks[key]["workflow_sha256"])
             self.assertTrue(record["unsupported_reason"].strip(), key)
             self.assertIn("coverage_gap", record)
         bad = copy.deepcopy(self.policy)
@@ -85,6 +122,37 @@ class ProductionInventory(unittest.TestCase):
         bad = copy.deepcopy(self.policy)
         bad["workflow_jobs"][".github/workflows/libgo-ci.yml:build-and-test"]["unsupported_reason"] = ""
         with self.assertRaisesRegex(ValueError, "specific unsupported reason"):
+            validate_job_accounting(bad, ROOT)
+
+    def test_inherited_workflow_inputs_cannot_reuse_stale_job_accounting(self):
+        original = source_job_blocks(ROOT)
+        for field in ("environment", "defaults", "permissions", "call_input_default"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                shutil.copytree(ROOT / ".github/workflows", root / ".github/workflows")
+                filename = "dependency-worker.yml" if field == "call_input_default" else "windows-build.yml"
+                path = root / ".github/workflows" / filename
+                text = path.read_text()
+                if field == "environment":
+                    self.assertIn("BUILD_TYPE: Release", text)
+                    text = text.replace("BUILD_TYPE: Release", "BUILD_TYPE: Debug", 1)
+                elif field == "defaults":
+                    text = text.replace("jobs:\n", "defaults:\n  run:\n    shell: bash\njobs:\n", 1)
+                elif field == "permissions":
+                    self.assertIn("  contents: read", text)
+                    text = text.replace("  contents: read", "  contents: write", 1)
+                else:
+                    text = text.replace("permissions:\n", "      build_type:\n        type: string\n        default: Debug\npermissions:\n", 1)
+                path.write_text(text)
+                changed = source_job_blocks(root)
+                # Effective inherited inputs drift even though every literal job is identical.
+                self.assertEqual({key: block["source_sha256"] for key, block in original.items()},
+                                 {key: block["source_sha256"] for key, block in changed.items()})
+                with self.assertRaisesRegex(ValueError, "source/inherited settings changed"):
+                    validate_job_accounting(self.policy, root)
+        bad = copy.deepcopy(self.policy)
+        bad["workflow_jobs"][".github/workflows/windows-build.yml:build"]["workflow_sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "source/inherited settings changed"):
             validate_job_accounting(bad, ROOT)
 
     def test_worker_repairs_real_hosted_setup_failures_without_waivers(self):
