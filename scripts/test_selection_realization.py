@@ -300,7 +300,9 @@ def _generated_ctest_commands(build):
     return commands
 
 
-def _validate_native_profile(profile, toolchains=None, configuration=None):
+def _validate_native_profile(profile, toolchains=None, configuration=None, compiled_languages=None):
+    if "phase_environments" in profile or "sanitizer_compatibility" in profile:
+        raise RealizationError("phase-specific sanitizer environment metadata is unsupported by this engine; existing adapter required")
     system = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system(), platform.system().lower())
     requested = profile.get("platform")
     if requested and {"darwin": "macos"}.get(requested, requested) != system:
@@ -314,8 +316,36 @@ def _validate_native_profile(profile, toolchains=None, configuration=None):
         raise RealizationError(f"profile build type {profile['build_type']} differs from realized {configuration!r}")
     if toolchains is not None and profile.get("compiler"):
         wanted = {"gcc": {"GNU"}, "clang": {"Clang", "AppleClang"}, "msvc": {"MSVC"}}.get(profile["compiler"], {profile["compiler"]})
-        actual = {t.get("compiler", {}).get("id") for t in toolchains.get("toolchains", []) if t.get("language") in ("C", "CXX")}
-        if not actual or not actual.issubset(wanted):
+        native = {"C", "CXX", "OBJC", "OBJCXX"}
+        entries = toolchains.get("toolchains", [])
+        if not isinstance(entries, list) or any(not isinstance(t, dict) for t in entries):
+            raise RealizationError("invalid native toolchain entries")
+        def compiler_id(entry):
+            value = entry.get("compiler")
+            return value.get("id") if isinstance(value, dict) else None
+        if compiled_languages is None:
+            # Legacy cache/direct caller: absent identities cannot establish that
+            # a language was unused. Fresh codemodel evidence is required.
+            relevant = [t for t in entries if t.get("language") in native]
+            if any(not isinstance(compiler_id(t), str) or not compiler_id(t) for t in relevant):
+                raise RealizationError("compiled-language evidence required for incomplete toolchain identities; configure again")
+            required = {t["language"] for t in relevant}
+        else:
+            if not isinstance(compiled_languages, list) or any(not isinstance(x, str) or not x for x in compiled_languages):
+                raise RealizationError("invalid compiled-language evidence")
+            required = set(compiled_languages) & native
+        if not required:
+            raise RealizationError("no compiled native language establishes the requested compiler identity")
+        actual = set()
+        for language in sorted(required):
+            matching = [t for t in entries if t.get("language") == language]
+            if len(matching) != 1:
+                raise RealizationError(f"missing/ambiguous active toolchain: {language}")
+            compiler = compiler_id(matching[0])
+            if not isinstance(compiler, str) or not compiler:
+                raise RealizationError(f"missing compiler identity for active language: {language}")
+            actual.add(compiler)
+        if not actual.issubset(wanted):
             raise RealizationError(f"profile compiler {profile['compiler']} differs from realized {sorted(actual)}")
 
 
@@ -383,9 +413,15 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
             test["command"] = literal_commands[test["name"]]
     targets = {}
     target_settings = {}
+    compiled_languages = set()
     for ref in configs[0].get("targets", []):
         target = _read(reply_dir / ref["jsonFile"])
         target_settings[target["id"]] = _hash(target)
+        for group in target.get("compileGroups", []):
+            language = group.get("language")
+            if not isinstance(language, str) or not language:
+                raise RealizationError(f"missing compile-group language for {target['name']}")
+            compiled_languages.add(language)
         targets[target["id"]] = {
             "id": target["id"], "name": target["name"], "type": target["type"],
             "artifacts": [_path(build, a["path"]) for a in target.get("artifacts", [])],
@@ -398,7 +434,8 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         }
     toolchains = client.get("toolchains-v1", {})
     tools = _read(reply_dir / toolchains["jsonFile"]) if "jsonFile" in toolchains else {}
-    _validate_native_profile(profile, tools, config_name)
+    compiled_languages = sorted(compiled_languages)
+    _validate_native_profile(profile, tools, config_name, compiled_languages)
     runtime_manifest = {}
     for desc in descriptors["tests"]:
         files = []
@@ -416,7 +453,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
         "configuration": config_name, "targets": targets,
         "tests": ctest.get("tests", []), "descriptors": descriptors["tests"],
         "runtime_file_manifest": runtime_manifest,
-        "toolchains": tools, "cmake": index.get("cmake", {}),
+        "toolchains": tools, "compiled_languages": compiled_languages, "cmake": index.get("cmake", {}),
         "target_settings": target_settings, "environment_hash": _hash(env),
         "tool_versions": {"ctest": _command(["ctest", "--version"]).strip(),
                           "ninja": _command(["ninja", "--version"]).strip()
@@ -426,7 +463,7 @@ def configure_profile(repo_root, build_dir, profile_id, profile, source_identity
     }
     realization["profile_fingerprint"] = _hash({"profile_id": profile_id, "profile": profile,
         "source_identity": identity, "inventory_hash": inventory_hash,
-        "cmake": realization["cmake"], "toolchains": tools,
+        "cmake": realization["cmake"], "toolchains": tools, "compiled_languages": compiled_languages,
         "target_settings": target_settings, "environment_hash": realization["environment_hash"],
         "tool_versions": realization["tool_versions"]})
     # Bind all generated metadata. A later native configure invalidates this file.
@@ -457,7 +494,7 @@ def load_realization(build_dir, expected_identity=None):
     if realization.get("realization_kind") == "command":
         _validate_native_profile(realization["profile"])
     else:
-        _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"])
+        _validate_native_profile(realization["profile"], realization["toolchains"], realization["configuration"], realization.get("compiled_languages"))
     return realization
 
 
