@@ -41,9 +41,10 @@
 #   NOSTRC_CTEST_QUARANTINE_PLATFORM=linux  opt in to named G12 baseline failures;
 #                              tests still run; sanitizer reports always block.
 #   JOBS                       build and test parallelism (default: container CPUs).
-#   NOSTRC_SANITIZER_SHARED_PROFILE=ID  reserved shared phase-aware route.
-#                              Currently unsupported: fails before Docker/build,
-#                              never audits a legacy Ninja tree as shared proof.
+#   NOSTRC_SANITIZER_SHARED_PROFILE=ID  explicit shared phase-aware diagnostic.
+#                              Requires exact workflow/profile parity and the
+#                              phase-aware core; no legacy Ninja fallback.
+#                              Single attempt; quarantine unsupported explicitly.
 #                              Not a W7 acceptance claim or default cutover.
 #   NOSTRC_SANITIZER_TEST_JOBS --sanitizers test parallelism (default: the job's
 #                              ctest --parallel; under more load its ASAN tests
@@ -86,9 +87,30 @@ fi
 SOURCE="$(cd "$1" && pwd)"
 SCRIPTS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+SHARED_PROFILE=""
+SHARED_GIT=""
+SHARED_MOUNTS=()
 if [ "$MODE" = sanitizers ] && [ -n "${NOSTRC_SANITIZER_SHARED_PROFILE:-}" ]; then
-    echo "==> Sanitizer gate: shared phase-aware realization/configure route is unsupported; no legacy Ninja fallback" >&2
-    exit 2
+    SHARED_PROFILE="$NOSTRC_SANITIZER_SHARED_PROFILE"
+    SOURCE="$(cd "$SOURCE" && pwd -P)"
+    if [ -n "${NOSTRC_CTEST_QUARANTINE_PLATFORM:-}${RERUN_MAX:-}" ]; then
+        echo "==> Sanitizer gate: shared diagnostic does not support quarantine/retry overrides; legacy route unchanged" >&2
+        exit 2
+    fi
+    # Validate authored parity before any Docker/build side effects. This does
+    # not attest execution: the container still resolves/audits the exact tree.
+    python3 "$SCRIPTS/sanitizer-gate-ci.py" config --workflow "$SOURCE/.github/workflows/groundhog-ci.yml" \
+        --source-root "$SOURCE" --inventory "$SOURCE/tests/selection/inventory.json" \
+        --shared-profile "$SHARED_PROFILE" >/dev/null || exit 2
+    SHARED_GIT="$(git -C "$SOURCE" rev-parse --git-common-dir)"
+    SHARED_GIT="$(cd "$SOURCE" && cd "$SHARED_GIT" && pwd -P)"
+    # Preserve real Git/worktree/submodule paths, read-only, rather than copying
+    # a tree without its Git identity into the legacy rsync/Ninja cache.
+    SHARED_MOUNTS=(-v "$SOURCE:$SOURCE:ro" -v "$SHARED_GIT:$SHARED_GIT:ro"
+        -e GIT_OPTIONAL_LOCKS=0 -e PYTHONDONTWRITEBYTECODE=1
+        -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e 'GIT_CONFIG_VALUE_0=*')
+    # safe.directory is scoped only to this owned container: its ci UID differs
+    # from the read-only host checkout owner. No developer Git config is edited.
 fi
 
 NATIVE="$(docker info --format '{{.Architecture}}')"
@@ -109,8 +131,15 @@ if [ "$MODE" = sanitizers ]; then
     GATE="Sanitizer gate"
     # The job as the candidate's CI will run it. Parsed here, before any
     # container starts, so a job this gate cannot reproduce fails at once.
+    SHARED_CONFIG_ARGS=()
+    CONFIG_SOURCE=/work/src
+    if [ -n "$SHARED_PROFILE" ]; then
+        CONFIG_SOURCE="$SOURCE"
+        SHARED_CONFIG_ARGS=(--inventory "$SOURCE/tests/selection/inventory.json" --shared-profile "$SHARED_PROFILE")
+    fi
     if ! GATE_CONFIG="$(python3 "$SCRIPTS/sanitizer-gate-ci.py" config \
-            --workflow "$SOURCE/.github/workflows/groundhog-ci.yml" --source-root /work/src)"; then
+            --workflow "$SOURCE/.github/workflows/groundhog-ci.yml" --source-root "$CONFIG_SOURCE" \
+            ${SHARED_CONFIG_ARGS[@]+"${SHARED_CONFIG_ARGS[@]}"})"; then
         echo "==> $GATE: cannot read the groundhog-sanitizers job; SANITIZER GATE FAILED" >&2
         exit 1
     fi
@@ -127,16 +156,19 @@ build_pid=""
 container_started=0
 run_status=failed
 write_receipt() {
-    python3 - "$RUN_STATE/receipt.json" "$RUN_ID" "$MODE" "$ARCH" "$IMAGE" "${IMAGE_ID:-}" "$run_status" "$SOURCE" <<'RECEIPT'
+    python3 - "$RUN_STATE/receipt.json" "$RUN_ID" "$MODE" "$ARCH" "$IMAGE" "${IMAGE_ID:-}" "$run_status" "$SOURCE" "$SHARED_PROFILE" "$VOLUME" <<'RECEIPT'
 import json, os, pathlib, sys
-path, run, mode, arch, tag, image, status, source = sys.argv[1:]
+path, run, mode, arch, tag, image, status, source, profile, volume = sys.argv[1:]
 cidfile = pathlib.Path(path).parent / 'container.id'
 container_id = cidfile.read_text().strip() if cidfile.exists() else None
 with open(path + '.tmp', 'w') as stream:
     json.dump(dict(schema_version=1, run_id=run, container_id=container_id, mode=mode, architecture=arch,
                    image_tag=tag, image_id=image, image_build_complete=bool(image), status=status, source=source,
                    bypasses=['NOSTRC_GATE_LINUX_TESTS=0'] if status == 'bypassed' else [],
-                   source_identity='legacy-unverified', complete=False), stream, sort_keys=True)
+                   source_identity='see-shared-core-evidence' if profile else 'legacy-unverified',
+                   shared_profile=profile or None, volume=volume,
+                   shared_evidence='/work/shared-' + run + '/evidence' if profile else None,
+                   diagnostic=bool(profile), complete=False), stream, sort_keys=True)
 os.replace(path + '.tmp', path)
 RECEIPT
 }
@@ -225,6 +257,16 @@ show_errors() {
   fi
 }
 SECONDS=0
+if [ -n "$SHARED_PROFILE" ]; then
+  ARGS=(shared-run --source-root "$SHARED_SOURCE" --shared-profile "$SHARED_PROFILE"
+    --build-dir "/work/shared-$RUN_ID/build" --evidence-dir "/work/shared-$RUN_ID/evidence"
+    --lock-dir /gate-lock --jobs "$JOBS")
+  if [ -n "$SANITIZER_TEST_JOBS" ]; then ARGS+=(--test-jobs "$SANITIZER_TEST_JOBS"); fi
+  if [ -n "${GATE_WAIT_FILE:-}" ]; then ARGS+=(--host-signal "$GATE_WAIT_FILE"); fi
+  # One private display/bus spans every phase and its environment fingerprint.
+  exec dbus-run-session -- xvfb-run -a -s "-screen 0 1280x800x24" \
+    python3 /gate/sanitizer-gate-ci.py "${ARGS[@]}"
+fi
 # -c: compare content, not times, and do not copy times (-t): a file whose
 # content is unchanged keeps its old timestamp in the volume, so Ninja only
 # rebuilds what the candidate really changed.
@@ -356,6 +398,8 @@ fi
 container_started=1
 docker run --rm --init --name "$RUN_ID" --label "org.nostrc.gate.run=$RUN_ID" \
     --cidfile "$RUN_STATE/container.id" --platform "linux/$ARCH" ${SIGNAL_MOUNT[@]+"${SIGNAL_MOUNT[@]}"} \
+    ${SHARED_MOUNTS[@]+"${SHARED_MOUNTS[@]}"} \
+    -e SHARED_PROFILE="$SHARED_PROFILE" -e SHARED_SOURCE="$SOURCE" -e RUN_ID="$RUN_ID" \
     -e JOBS="${JOBS:-}" -e RUN_TESTS="${NOSTRC_GATE_LINUX_TESTS:-1}" \
     -e STRICT_CFLAGS="$STRICT_CFLAGS" -e SMOKE_EXCLUDE="$SMOKE_EXCLUDE" \
     -e VOLUME="$VOLUME" -e MODE="$MODE" -e GATE="$GATE" -e GATE_CONFIG="$GATE_CONFIG" \

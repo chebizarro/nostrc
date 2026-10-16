@@ -52,7 +52,7 @@ signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 
 
-def stop_descendants(parent):
+def descendants_of(parent):
     # CTest and its tests may create additional process groups. Capture only
     # this live child's ancestry before signalling it (before reparenting),
     # then stop leaves first. Never match by executable name or kill siblings.
@@ -67,7 +67,11 @@ def stop_descendants(parent):
         pid = pending.pop()
         descendants.append(pid)
         pending.extend(children.get(pid, []))
-    for pid in reversed(descendants):
+    return descendants
+
+
+def stop_descendants(parent, captured=None):
+    for pid in reversed(descendants_of(parent) if captured is None else captured):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -84,7 +88,20 @@ def command(argv, *, cwd=None, env=None, log=None):
         try:
             code = active.wait()
         except BaseException:
-            stop_descendants(active.pid)
+            # Give the shared backend its cancellation boundary so it can drain
+            # raw command output and finalize the failed attempt before exit.
+            captured = descendants_of(active.pid)
+            try:
+                os.killpg(active.pid, signal.SIGTERM)
+                # CTest can put tests in separate groups. Capture ancestry
+                # before TERM reparents them; leave the backend itself alive
+                # to drain their pipes and retain cancellation evidence.
+                stop_descendants(active.pid, captured)
+                active.wait(timeout=15)
+            except ProcessLookupError:
+                pass
+            except subprocess.TimeoutExpired:
+                stop_descendants(active.pid)
             raise
         finally:
             # Also reap grandchildren left behind when the direct child exited.
@@ -210,17 +227,19 @@ def materialize_submodules(source, directory, profile, initialized):
     initialized.update(required)
 
 
-def host_guard(profile, checks, policy):
+def host_guard(profile, checks, policy, profile_id):
     host = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     wanted_arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(profile["architecture"], profile["architecture"])
     if {"darwin": "macos"}.get(profile["platform"], profile["platform"]) != host or wanted_arch not in {"native", arch}:
         raise RuntimeError(f"selected platform/architecture requires an unimplemented guarded container/native adapter: {profile['platform']}/{wanted_arch}; host={host}/{arch}")
-    if "phase_environments" in profile:
-        raise RuntimeError("phase-aware execution is unsupported by the current backend; metadata parity is not execution and phase values must not be dropped")
-    if any(policy["checks"][x]["kind"] != "ctest" for x in checks):
-        raise RuntimeError("selected non-CTest checks are not supported by this outer adapter; not bypassed")
+    if any(policy["checks"][x]["kind"] not in {"ctest", "command", "build_contract"} for x in checks):
+        raise RuntimeError("selected check kind is unsupported by this outer adapter; not bypassed")
+    profile_checks = [check for check in policy["checks"].values() if profile_id in check["profiles"]]
+    source_only = bool(profile_checks) and all(check["kind"] == "command" and not check.get("build_targets")
+                                              for check in profile_checks)
     caps = set(profile.get("capabilities", []))
+    caps.update(cap for ident in checks for cap in policy["checks"][ident].get("requires", []))
     unsupported = caps - {"display", "private_bus"}
     if unsupported:
         raise RuntimeError(f"selected capabilities require an unimplemented guarded adapter: {sorted(unsupported)}")
@@ -235,6 +254,9 @@ def host_guard(profile, checks, policy):
             raise RuntimeError("selected display requires xvfb-run")
         prefix += ["xvfb-run", "-a", "-s", "-screen 0 1280x800x24"]
     # Backend defaults must not silently pick a different compiler family.
+    if source_only:
+        # Core source-only realization does not configure or attest a compiler.
+        return prefix, dict(os.environ, **profile.get("environment", {})), True
     compiler = profile["compiler"]
     cc = profile.get("environment", {}).get("CC", {"gcc": "gcc", "clang": "clang"}.get(compiler))
     if not cc or not shutil.which(cc):
@@ -246,7 +268,7 @@ def host_guard(profile, checks, policy):
         flags = profile.get("configure_args", [])
         if "-DNIP55L_SECRET_BACKEND=libsecret" not in flags or "-DGROUNDHOG_STORE_KEY_DEFAULT_BACKEND=secret-service" not in flags:
             raise RuntimeError("host profile lacks mandatory private Secret Service backend configuration")
-    return prefix, dict(os.environ, CC=cc, **{k: v for k, v in profile.get("environment", {}).items() if k != "CC"})
+    return prefix, dict(os.environ, CC=cc, **{k: v for k, v in profile.get("environment", {}).items() if k != "CC"}), False
 
 
 def execute(head, events, number, dirty=False):
@@ -309,8 +331,9 @@ def execute(head, events, number, dirty=False):
             # A failing guard aborts the entire run, not just this lane.
             command(["bash", guard], log=lane_dir / "keychain-before.log")
         try:
-            prefix, env = host_guard(profile, lane["checks"], policy)
-            materialize_submodules(source, lane_dir, profile, submodules_ready)
+            prefix, env, source_only = host_guard(profile, lane["checks"], policy, profile_id)
+            if not source_only:
+                materialize_submodules(source, lane_dir, profile, submodules_ready)
             # Machine-wide, cross-checkout serialization. OS locks release on
             # cancellation; never remove a lock file another waiter has open.
             locks = Path("/tmp") / f"nostrc-test-gate-{os.getuid()}"
@@ -347,7 +370,8 @@ with (directory / "run.log").open("x") as log, contextlib.redirect_stdout(log), 
     sys.exit(cli["main"](sys.argv[1:]))
 '''
                 command(prefix + [sys.executable, "-c", run_api, source / "scripts", "run", *common,
-                                  "--resolved", resolved, "--phase", "all", "--output", result],
+                                  "--resolved", resolved, "--phase", "all", "--timeout", str(profile["timeout_seconds"]),
+                                  "--output", result],
                         env=env, log=lane_dir / "lane.log")
                 receipts.append(result)
             state["status"] = "passed"
