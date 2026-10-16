@@ -21,6 +21,35 @@ class ContainedCustodyContract(unittest.TestCase):
         self.root = Path(temporary.name)
         self.owner = ContainerOwner(self.root / 'owner')
 
+    def test_real_git_housekeeping_finishes_before_controlled_helpers_return(self):
+        import test_selection as selection
+        import test_selection_realization as realization
+        spec = importlib.util.spec_from_file_location('contained_git_foreground',
+            Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        for label, invoke in (('selection', selection.git), ('realization', realization._git), ('contained', gate.git)):
+            with self.subTest(helper=label):
+                root = self.root / label
+                root.mkdir()
+                trace = self.root / (label + '-trace.jsonl')
+                with patch.dict(os.environ, {'GIT_TRACE2_EVENT': str(trace)}):
+                    invoke(root, 'init', '-q')
+                    (root / 'file').write_text('actual Git fixture')
+                    invoke(root, 'add', '.')
+                    invoke(root, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                           '-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=1', 'commit', '-qm', 'foreground proof')
+                events = [json.loads(line) for line in trace.read_text().splitlines()]
+                commit = next(e for e in events if e.get('event') == 'cmd_name' and e.get('name') == 'commit')['sid']
+                exit_index = next(i for i, e in enumerate(events) if e.get('event') == 'exit' and e.get('sid') == commit)
+                children = [e for e in events if e.get('event') == 'child_start' and e['sid'].startswith(commit)]
+                self.assertTrue(children, events)
+                self.assertTrue(all('--detach' not in e.get('argv', []) for e in children), children)
+                for i, event in enumerate(events):
+                    if event.get('event') == 'cmd_name' and event['sid'].startswith(commit + '/'):
+                        self.assertTrue(any(e.get('event') == 'exit' and e.get('sid') == event['sid']
+                                            for e in events[:exit_index]), event)
+
     def test_snapshot_requires_and_verifies_exact_gitlink_object_sources(self):
         spec = importlib.util.spec_from_file_location('contained_gate_contract',
             Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')

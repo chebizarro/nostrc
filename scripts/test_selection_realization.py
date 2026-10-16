@@ -263,7 +263,8 @@ def _identity(source_identity):
 
 def _git(root, *args):
     try:
-        return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.PIPE)
+        return subprocess.check_output(["git", "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+                                        "-C", str(root), *args], stderr=subprocess.PIPE)
     except (OSError, subprocess.CalledProcessError) as exc:
         raise RealizationError(f"cannot validate source checkout: {exc}") from exc
 

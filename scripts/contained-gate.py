@@ -22,7 +22,8 @@ PEERS = {
 
 
 def git(source, *argv):
-    return subprocess.check_output(["git", "-C", str(source), *argv])
+    return subprocess.check_output(["git", "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+                                    "-C", str(source), *argv])
 
 
 def source_identity(source):

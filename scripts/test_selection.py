@@ -308,7 +308,8 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
 
 def git(repo, *args, check=True):
     try:
-        proc = subprocess.run(["git", "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        proc = subprocess.run(["git", "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+                               "-C", str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as exc:
         raise ContractError(f"git unavailable: {exc}") from exc
     if check and proc.returncode:
