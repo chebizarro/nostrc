@@ -20,6 +20,3057 @@
     ]
   },
   "checks": {
+    "root.asan.libgo": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ],
+        "core.linux.asan": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libgo",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.libhanami": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test-hanami-blossom-batch",
+          "test-hanami-blossom-client",
+          "test-hanami-blossom-content-type",
+          "test-hanami-blossom-shim",
+          "test-hanami-blossom-shim-auto",
+          "test-hanami-bud02-auth",
+          "test-hanami-config",
+          "test-hanami-grasp",
+          "test-hanami-index",
+          "test-hanami-integration",
+          "test-hanami-nostr",
+          "test-hanami-odb-backend",
+          "test-hanami-refdb-backend",
+          "test-hanami-server-capability-probe-shim",
+          "test-hanami-transport",
+          "test-hanami-types"
+        ],
+        "core.linux.asan": [
+          "test-hanami-blossom-batch",
+          "test-hanami-blossom-client",
+          "test-hanami-blossom-content-type",
+          "test-hanami-blossom-shim",
+          "test-hanami-blossom-shim-auto",
+          "test-hanami-bud02-auth",
+          "test-hanami-config",
+          "test-hanami-grasp",
+          "test-hanami-index",
+          "test-hanami-integration",
+          "test-hanami-nostr",
+          "test-hanami-odb-backend",
+          "test-hanami-refdb-backend",
+          "test-hanami-server-capability-probe-shim",
+          "test-hanami-transport",
+          "test-hanami-types"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libhanami",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.libmarmot": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "marmot_test_adopted",
+          "marmot_test_adopted_commits",
+          "marmot_test_app_data_update",
+          "marmot_test_commits",
+          "marmot_test_extension",
+          "marmot_test_interop",
+          "marmot_test_kp_lifecycle",
+          "marmot_test_kp_profile",
+          "marmot_test_large_commit_bound",
+          "marmot_test_media",
+          "marmot_test_mls_crypto",
+          "marmot_test_mls_framing",
+          "marmot_test_mls_group",
+          "marmot_test_mls_key_package",
+          "marmot_test_mls_key_schedule",
+          "marmot_test_mls_key_schedule_vectors",
+          "marmot_test_mls_tls",
+          "marmot_test_mls_tree",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_mls_welcome",
+          "marmot_test_protocol",
+          "marmot_test_ratchet_persist",
+          "marmot_test_rfc9420_vectors",
+          "marmot_test_storage",
+          "marmot_test_storage_contract",
+          "marmot_test_types"
+        ],
+        "core.linux.asan": [
+          "marmot_test_adopted",
+          "marmot_test_adopted_commits",
+          "marmot_test_app_data_update",
+          "marmot_test_commits",
+          "marmot_test_extension",
+          "marmot_test_interop",
+          "marmot_test_kp_lifecycle",
+          "marmot_test_kp_profile",
+          "marmot_test_large_commit_bound",
+          "marmot_test_media",
+          "marmot_test_mls_crypto",
+          "marmot_test_mls_framing",
+          "marmot_test_mls_group",
+          "marmot_test_mls_key_package",
+          "marmot_test_mls_key_schedule",
+          "marmot_test_mls_key_schedule_vectors",
+          "marmot_test_mls_tls",
+          "marmot_test_mls_tree",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_mls_welcome",
+          "marmot_test_protocol",
+          "marmot_test_ratchet_persist",
+          "marmot_test_rfc9420_vectors",
+          "marmot_test_storage",
+          "marmot_test_storage_contract",
+          "marmot_test_types"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libmarmot",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.libnostr": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "libnostr_connection_teardown_stress",
+          "libnostr_core_audit",
+          "libnostr_crypto_audit",
+          "libnostr_event_validation",
+          "libnostr_filter_limit_zero",
+          "libnostr_misc_audit",
+          "libnostr_networking_audit",
+          "libnostr_parsing_audit",
+          "libnostr_reconnect_same_second",
+          "libnostr_relay_callback_lifetime",
+          "libnostr_relay_write_unsent",
+          "libnostr_store_txn_audit",
+          "libnostr_subscription_dispatch",
+          "test_relay_teardown_leaks"
+        ],
+        "core.linux.asan": [
+          "libnostr_connection_teardown_stress",
+          "libnostr_core_audit",
+          "libnostr_crypto_audit",
+          "libnostr_event_validation",
+          "libnostr_filter_limit_zero",
+          "libnostr_misc_audit",
+          "libnostr_networking_audit",
+          "libnostr_parsing_audit",
+          "libnostr_reconnect_same_second",
+          "libnostr_relay_callback_lifetime",
+          "libnostr_relay_write_unsent",
+          "libnostr_store_txn_audit",
+          "libnostr_subscription_dispatch",
+          "test_relay_teardown_leaks"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "libnostr",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.marmot.gobject": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "marmot_gobject_test"
+        ],
+        "core.linux.asan": [
+          "marmot_gobject_test"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "marmot.gobject",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip04": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip04_error_uniformity",
+          "test_nip04_secure_roundtrip",
+          "test_nip04_strict",
+          "test_roundtrip"
+        ],
+        "core.linux.asan": [
+          "test_nip04_error_uniformity",
+          "test_nip04_secure_roundtrip",
+          "test_nip04_strict",
+          "test_roundtrip"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip04",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip05": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip05_parse",
+          "test_nip05_resolve_json_errors",
+          "test_nip05_resolve_json_names",
+          "test_nip05_resolve_json_relays"
+        ],
+        "core.linux.asan": [
+          "test_nip05_parse",
+          "test_nip05_resolve_json_errors",
+          "test_nip05_resolve_json_names",
+          "test_nip05_resolve_json_relays"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip05",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip06": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip06"
+        ],
+        "core.linux.asan": [
+          "test_nip06"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip06",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip11": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip11"
+        ],
+        "core.linux.asan": [
+          "test_nip11"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip11",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip14": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip14"
+        ],
+        "core.linux.asan": [
+          "test_nip14"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip14",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip17": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip17"
+        ],
+        "core.linux.asan": [
+          "test_nip17"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip17",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip19": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip19",
+          "test_nip19_tlv"
+        ],
+        "core.linux.asan": [
+          "test_nip19",
+          "test_nip19_tlv"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip19",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip21": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip21"
+        ],
+        "core.linux.asan": [
+          "test_nip21"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip21",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip22": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip22"
+        ],
+        "core.linux.asan": [
+          "test_nip22"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip22",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip23": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip23"
+        ],
+        "core.linux.asan": [
+          "test_nip23"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip23",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip24": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip24"
+        ],
+        "core.linux.asan": [
+          "test_nip24"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip24",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip25": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip25"
+        ],
+        "core.linux.asan": [
+          "test_nip25"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip25",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip27": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip27"
+        ],
+        "core.linux.asan": [
+          "test_nip27"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip27",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip28": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip28"
+        ],
+        "core.linux.asan": [
+          "test_nip28"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip28",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip30": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip30"
+        ],
+        "core.linux.asan": [
+          "test_nip30"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip30",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip34": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test-nip34"
+        ],
+        "core.linux.asan": [
+          "test-nip34"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip34",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip39": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip39"
+        ],
+        "core.linux.asan": [
+          "test_nip39"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip39",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip40": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip40"
+        ],
+        "core.linux.asan": [
+          "test_nip40"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip40",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip44": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip44_convkey",
+          "test_nip44_roundtrip",
+          "test_nip44_vectors"
+        ],
+        "core.linux.asan": [
+          "test_nip44_convkey",
+          "test_nip44_roundtrip",
+          "test_nip44_vectors"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip44",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip46": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip46_async_api",
+          "test_nip46_bunker_connect_auth",
+          "test_nip46_bunker_nip44",
+          "test_nip46_bunker_reply",
+          "test_nip46_bunker_roundtrip",
+          "test_nip46_bunker_sign_event_acl_deny",
+          "test_nip46_bunker_sign_event_cb",
+          "test_nip46_bunker_sign_event_real",
+          "test_nip46_bunker_uri_issue",
+          "test_nip46_c1_hardening",
+          "test_nip46_caller_hardening",
+          "test_nip46_client_api",
+          "test_nip46_client_connect",
+          "test_nip46_client_connect_edge",
+          "test_nip46_e2e_mock",
+          "test_nip46_encryption_detection",
+          "test_nip46_envelope_build",
+          "test_nip46_glib_lifetime",
+          "test_nip46_msg",
+          "test_nip46_msg_comprehensive",
+          "test_nip46_nostrconnect_qr_login",
+          "test_nip46_pending_lifetime",
+          "test_nip46_relay_lifecycle",
+          "test_nip46_request_lifecycle",
+          "test_nip46_response_validation",
+          "test_nip46_rpc_flow_mock",
+          "test_nip46_session_management",
+          "test_nip46_signed_response_admission",
+          "test_nip46_transport_modes",
+          "test_nip46_uri",
+          "test_nip46_uri_comprehensive"
+        ],
+        "core.linux.asan": [
+          "test_nip46_async_api",
+          "test_nip46_bunker_connect_auth",
+          "test_nip46_bunker_nip44",
+          "test_nip46_bunker_reply",
+          "test_nip46_bunker_roundtrip",
+          "test_nip46_bunker_sign_event_acl_deny",
+          "test_nip46_bunker_sign_event_cb",
+          "test_nip46_bunker_sign_event_real",
+          "test_nip46_bunker_uri_issue",
+          "test_nip46_c1_hardening",
+          "test_nip46_caller_hardening",
+          "test_nip46_client_api",
+          "test_nip46_client_connect",
+          "test_nip46_client_connect_edge",
+          "test_nip46_e2e_mock",
+          "test_nip46_encryption_detection",
+          "test_nip46_envelope_build",
+          "test_nip46_glib_lifetime",
+          "test_nip46_msg",
+          "test_nip46_msg_comprehensive",
+          "test_nip46_nostrconnect_qr_login",
+          "test_nip46_pending_lifetime",
+          "test_nip46_relay_lifecycle",
+          "test_nip46_request_lifecycle",
+          "test_nip46_response_validation",
+          "test_nip46_rpc_flow_mock",
+          "test_nip46_session_management",
+          "test_nip46_signed_response_admission",
+          "test_nip46_transport_modes",
+          "test_nip46_uri",
+          "test_nip46_uri_comprehensive"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip46",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip47": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip47_nwc_crypto",
+          "test_nip47_nwc_envelope",
+          "test_nip47_nwc_info",
+          "test_nip47_nwc_session",
+          "test_nip47_nwc_uri",
+          "test_nip47_spec_source"
+        ],
+        "core.linux.asan": [
+          "test_nip47_nwc_crypto",
+          "test_nip47_nwc_envelope",
+          "test_nip47_nwc_info",
+          "test_nip47_nwc_session",
+          "test_nip47_nwc_uri",
+          "test_nip47_spec_source"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip47",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip49": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip49_negative",
+          "test_nip49_payload",
+          "test_nip49_roundtrip",
+          "test_nip49_spec_source",
+          "test_nip49_vectors"
+        ],
+        "core.linux.asan": [
+          "test_nip49_negative",
+          "test_nip49_payload",
+          "test_nip49_roundtrip",
+          "test_nip49_spec_source",
+          "test_nip49_vectors"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip49",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip51": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip51"
+        ],
+        "core.linux.asan": [
+          "test_nip51"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip51",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip55l": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_getrelays",
+          "nip55l_keychain_migration",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostrc-test-bus-selftest",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ],
+        "core.linux.asan": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_fake_secret_service_contract",
+          "nip55l_getrelays",
+          "nip55l_keyring_schema",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostrc-test-bus-selftest",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip55l",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip57": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip57"
+        ],
+        "core.linux.asan": [
+          "test_nip57"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip57",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip58": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip58"
+        ],
+        "core.linux.asan": [
+          "test_nip58"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip58",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip59": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip59",
+          "test_nip59_rng_failure"
+        ],
+        "core.linux.asan": [
+          "test_nip59",
+          "test_nip59_rng_failure"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip59",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip5f": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip5f_loopback",
+          "test_nip5f_negative_env",
+          "test_nip5f_tcp"
+        ],
+        "core.linux.asan": [
+          "test_nip5f_loopback",
+          "test_nip5f_negative_env",
+          "test_nip5f_tcp"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip5f",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip60": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip60"
+        ],
+        "core.linux.asan": [
+          "test_nip60"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip60",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip61": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip61"
+        ],
+        "core.linux.asan": [
+          "test_nip61"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip61",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip70": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip70"
+        ],
+        "core.linux.asan": [
+          "test_nip70"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip70",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip73": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip73"
+        ],
+        "core.linux.asan": [
+          "test_nip73"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip73",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip75": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip75"
+        ],
+        "core.linux.asan": [
+          "test_nip75"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip75",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip77": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_ndb_empty",
+          "test_ndb_integration",
+          "test_ndb_ordering",
+          "test_ndb_perf",
+          "test_ndb_session_e2e",
+          "test_ndb_tie_break",
+          "test_neg_bound",
+          "test_neg_fingerprint",
+          "test_neg_message",
+          "test_neg_session",
+          "test_neg_session_caps",
+          "test_neg_session_need",
+          "test_neg_session_synth",
+          "test_neg_varint"
+        ],
+        "core.linux.asan": [
+          "test_ndb_empty",
+          "test_ndb_integration",
+          "test_ndb_ordering",
+          "test_ndb_perf",
+          "test_ndb_session_e2e",
+          "test_ndb_tie_break",
+          "test_neg_bound",
+          "test_neg_fingerprint",
+          "test_neg_message",
+          "test_neg_session",
+          "test_neg_session_caps",
+          "test_neg_session_need",
+          "test_neg_session_synth",
+          "test_neg_varint"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip77",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip92": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip92"
+        ],
+        "core.linux.asan": [
+          "test_nip92"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip92",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip98": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip98"
+        ],
+        "core.linux.asan": [
+          "test_nip98"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip98",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip99": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nip99"
+        ],
+        "core.linux.asan": [
+          "test_nip99"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip99",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nip_cas0010": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_otel_consumer",
+          "test_otel_encoding",
+          "test_otel_producer",
+          "test_otel_replay",
+          "test_otel_roundtrip"
+        ],
+        "core.linux.asan": [
+          "test_otel_consumer",
+          "test_otel_encoding",
+          "test_otel_producer",
+          "test_otel_replay",
+          "test_otel_roundtrip"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nip_cas0010",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nipb0": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nipb0"
+        ],
+        "core.linux.asan": [
+          "test_nipb0"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nipb0",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.nostr.gobject": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_nostr_gobject_event",
+          "test_nostr_gobject_integ_event_flow",
+          "test_nostr_gobject_lifecycle_leaks",
+          "test_nostr_gobject_main_thread_latency",
+          "test_nostr_gobject_nip19",
+          "test_nostr_gobject_profile_provider_conflict_resolution",
+          "test_nostr_gobject_profile_provider_lru",
+          "test_nostr_gobject_profile_service_batching",
+          "test_nostr_gobject_relay_connect",
+          "test_nostr_gobject_relay_teardown",
+          "test_nostr_gobject_store_contract",
+          "test_nostr_gobject_subscription_eose_order"
+        ],
+        "core.linux.asan": [
+          "test_nostr_gobject_event",
+          "test_nostr_gobject_integ_event_flow",
+          "test_nostr_gobject_lifecycle_leaks",
+          "test_nostr_gobject_main_thread_latency",
+          "test_nostr_gobject_nip19",
+          "test_nostr_gobject_profile_provider_conflict_resolution",
+          "test_nostr_gobject_profile_provider_lru",
+          "test_nostr_gobject_profile_service_batching",
+          "test_nostr_gobject_relay_connect",
+          "test_nostr_gobject_relay_teardown",
+          "test_nostr_gobject_store_contract",
+          "test_nostr_gobject_subscription_eose_order"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "nostr.gobject",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.schema": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "test_schema"
+        ],
+        "core.linux.asan": [
+          "test_schema"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "schema",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.shared.tests": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "GoChannelIncremental",
+          "concurrency_channels",
+          "concurrency_subscription_shutdown",
+          "glib_async_integration",
+          "profile_fetch_simulation",
+          "profile_fetch_stress",
+          "test_connection_idle_writable",
+          "test_connection_recv_drain",
+          "test_connection_shutdown_order",
+          "test_connection_tls_no_resumption",
+          "test_connection_writable_rearm",
+          "test_envelope",
+          "test_envelope_fallback",
+          "test_envelope_parse",
+          "test_event_canonical",
+          "test_event_priority",
+          "test_filters_move_semantics",
+          "test_fuzz_envelope_roundtrip",
+          "test_fuzz_filter_parse",
+          "test_json_event",
+          "test_json_event_fuzzlite",
+          "test_json_filter",
+          "test_json_filter_fuzzlite",
+          "test_json_filter_robust",
+          "test_json_filter_tags",
+          "test_json_int_array",
+          "test_json_parse",
+          "test_json_raw",
+          "test_nip04_aead",
+          "test_nip86_policy",
+          "test_nostr",
+          "test_pool_redial",
+          "test_relay",
+          "test_relay_shutdown",
+          "test_relay_unsubscribe",
+          "test_subscription_backpressure",
+          "test_subscription_backpressure_long",
+          "test_subscription_blocking_depth",
+          "test_subscription_lifecycle"
+        ],
+        "core.linux.asan": [
+          "GoChannelIncremental",
+          "concurrency_channels",
+          "concurrency_subscription_shutdown",
+          "glib_async_integration",
+          "profile_fetch_simulation",
+          "profile_fetch_stress",
+          "test_connection_idle_writable",
+          "test_connection_recv_drain",
+          "test_connection_shutdown_order",
+          "test_connection_tls_no_resumption",
+          "test_connection_writable_rearm",
+          "test_envelope",
+          "test_envelope_fallback",
+          "test_envelope_parse",
+          "test_event_canonical",
+          "test_event_priority",
+          "test_filters_move_semantics",
+          "test_fuzz_envelope_roundtrip",
+          "test_fuzz_filter_parse",
+          "test_json_event",
+          "test_json_event_fuzzlite",
+          "test_json_filter",
+          "test_json_filter_fuzzlite",
+          "test_json_filter_robust",
+          "test_json_filter_tags",
+          "test_json_int_array",
+          "test_json_parse",
+          "test_json_raw",
+          "test_nip04_aead",
+          "test_nip86_policy",
+          "test_nostr",
+          "test_pool_redial",
+          "test_relay",
+          "test_relay_shutdown",
+          "test_relay_unsubscribe",
+          "test_subscription_backpressure",
+          "test_subscription_backpressure_long",
+          "test_subscription_blocking_depth",
+          "test_subscription_lifecycle"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "shared.tests",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "root.asan.testing.framework": {
+      "build_targets": [],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "core.macos.asan": [
+          "MockRelayIntegration",
+          "MockRelayServerBasic",
+          "Nip46MockRelay",
+          "Nip46QRSocket",
+          "SignerIntegration",
+          "TestHarnessExample"
+        ],
+        "core.linux.asan": [
+          "MockRelayIntegration",
+          "MockRelayServerBasic",
+          "Nip46MockRelay",
+          "Nip46QRSocket",
+          "SignerIntegration",
+          "TestHarnessExample"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "testing.framework",
+        "execution.core"
+      ],
+      "profiles": [
+        "core.macos.asan",
+        "core.linux.asan"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_identity": {
+      "build_targets": [
+        "test-groundhog-identity"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-identity"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_account": {
+      "build_targets": [
+        "test-groundhog-account"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-account"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_account_relays": {
+      "build_targets": [
+        "test-groundhog-account-relays"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-account-relays"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_dm_send": {
+      "build_targets": [
+        "test-groundhog-dm-send"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-dm-send"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_relay": {
+      "build_targets": [
+        "test-groundhog-relay"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-relay"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_relay_wire": {
+      "build_targets": [
+        "test-groundhog-relay-wire"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-relay-wire"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_relay_publish": {
+      "build_targets": [
+        "test-groundhog-relay-publish"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-relay-publish"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_relay_publish_wire": {
+      "build_targets": [
+        "test-groundhog-relay-publish-wire"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-relay-publish-wire"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_nip29": {
+      "build_targets": [
+        "test-groundhog-nip29"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-nip29"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_conversations": {
+      "build_targets": [
+        "test-groundhog-conversations"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-conversations"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_dm_inbox": {
+      "build_targets": [
+        "test-groundhog-dm-inbox"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-dm-inbox"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store_key": {
+      "build_targets": [
+        "test-groundhog-store-key"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store-key"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store_key_keyring": {
+      "build_targets": [
+        "test-groundhog-store-key-keyring"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store-key-keyring"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_secret_service_sessions": {
+      "build_targets": [
+        "test-groundhog-secret-service-sessions"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-secret-service-sessions"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_nip46_credentials_keyring": {
+      "build_targets": [
+        "test-groundhog-nip46-credentials-keyring"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-nip46-credentials-keyring"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store": {
+      "build_targets": [
+        "test-groundhog-store"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store_sqlite": {
+      "build_targets": [
+        "test-groundhog-store-sqlite"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store-sqlite"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store_marmot": {
+      "build_targets": [
+        "test-groundhog-store-marmot"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store-marmot"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.mls_store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_store_conversations": {
+      "build_targets": [
+        "test-groundhog-store-conversations"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-store-conversations"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_outbox": {
+      "build_targets": [
+        "test-groundhog-outbox"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-outbox"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_account_store": {
+      "build_targets": [
+        "test-groundhog-account-store"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-account-store"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_link_policy": {
+      "build_targets": [
+        "test-groundhog-link-policy"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-link-policy"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_background": {
+      "build_targets": [
+        "groundhog",
+        "groundhog-test-schemas",
+        "test-groundhog-background"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-background"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "gnome.common",
+        "groundhog.poll_ui",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_notifier": {
+      "build_targets": [
+        "test-groundhog-notifier"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-notifier"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_inbox_setup": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-inbox-setup"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-inbox-setup"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+        "gnome/groundhog/data/relay-suggestions.json"
+      ]
+    },
+    "sanitizer.groundhog_expiry": {
+      "build_targets": [
+        "test-groundhog-expiry"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-expiry"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_auth_policy": {
+      "build_targets": [
+        "test-groundhog-auth-policy"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-auth-policy"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_contact_directory": {
+      "build_targets": [
+        "test-groundhog-contact-directory"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-contact-directory"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_reactions": {
+      "build_targets": [
+        "test-groundhog-reactions"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-reactions"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_reaction_send": {
+      "build_targets": [
+        "test-groundhog-reaction-send"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-reaction-send"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_privacy_e2e": {
+      "build_targets": [
+        "test-groundhog-privacy-e2e"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-privacy-e2e"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_new_message": {
+      "build_targets": [
+        "test-groundhog-new-message"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-new-message"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_requests": {
+      "build_targets": [
+        "test-groundhog-requests"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-requests"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_privacy_summary": {
+      "build_targets": [
+        "test-groundhog-privacy-summary"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-privacy-summary"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/tests/ui/snapshots"
+      ]
+    },
+    "sanitizer.groundhog_conversation_info": {
+      "build_targets": [
+        "test-groundhog-conversation-info"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-conversation-info"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_nip29_service": {
+      "build_targets": [
+        "test-groundhog-nip29-service"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-nip29-service"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.group_ui",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_mls_service": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-mls-service"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-service"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_privacy_mls": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-privacy-mls"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-privacy-mls"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_mls_kp_lifecycle": {
+      "build_targets": [
+        "test-groundhog-mls-kp-lifecycle"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-kp-lifecycle"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_mls_kp_lifecycle_adopted": {
+      "build_targets": [
+        "test-groundhog-mls-kp-lifecycle-adopted"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-kp-lifecycle-adopted"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_net": {
+      "build_targets": [
+        "test-groundhog-net"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-net"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_tls_resumption": {
+      "build_targets": [
+        "test-groundhog-tls-resumption"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-tls-resumption"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_group_ui": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-group-ui"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-group-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.group_ui",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_mls_ui": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-mls-ui"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-ui"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.mls_ui",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_conversation_menu": {
+      "build_targets": [
+        "test-groundhog-conversation-menu"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-conversation-menu"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_multi_send": {
+      "build_targets": [
+        "test-groundhog-multi-send"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-multi-send"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.media",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_media": {
+      "build_targets": [
+        "test-groundhog-media"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_blossom": {
+      "build_targets": [
+        "test-groundhog-blossom"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-blossom"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_media_purge": {
+      "build_targets": [
+        "test-groundhog-media-purge"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-media-purge"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_relay_guard": {
+      "build_targets": [
+        "test-groundhog-relay-guard"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-relay-guard"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_media_cache_binding": {
+      "build_targets": [
+        "test-groundhog-media-cache-binding"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-media-cache-binding"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_attachments": {
+      "build_targets": [
+        "test-groundhog-attachments"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-attachments"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_mls_media": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-mls-media"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-media"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.mls_media",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_mls_files": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-mls-files"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-files"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.conversations",
+        "groundhog.media",
+        "groundhog.mls_files",
+        "groundhog.mls_media",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.groundhog_mls_poll": {
+      "build_targets": [
+        "test-groundhog-mls-poll"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-mls-poll"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.mls_service",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_voice": {
+      "build_targets": [
+        "test-groundhog-voice"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-voice"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified",
+        "groundhog.voice"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/tests/media/fixtures/voice"
+      ]
+    },
+    "sanitizer.groundhog_icons": {
+      "build_targets": [
+        "test-groundhog-icons"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-icons"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/ui",
+        "gnome/groundhog/src/ui"
+      ]
+    },
+    "sanitizer.groundhog_message_reply": {
+      "build_targets": [
+        "test-groundhog-message-reply"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-message-reply"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.groundhog_two_instance_acceptance": {
+      "build_targets": [
+        "groundhog-test-schemas",
+        "test-groundhog-two-instance-acceptance"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "groundhog-two-instance-acceptance"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "groundhog.mls_service",
+        "groundhog.resources",
+        "groundhog.unclassified"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": [
+        "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml"
+      ]
+    },
+    "sanitizer.nostrc_test_bus_selftest": {
+      "build_targets": [
+        "nostrc-test-bus-selftest"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "nostrc-test-bus-selftest"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "nip55l",
+        "shared.tests"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.test_relay_teardown_leaks": {
+      "build_targets": [
+        "test_relay_teardown_leaks"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "test_relay_teardown_leaks"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "libnostr"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
+    "sanitizer.test_connection_recv_drain": {
+      "build_targets": [
+        "test_connection_recv_drain"
+      ],
+      "cost": "ordinary",
+      "ctest_tests": {
+        "groundhog.linux.sanitizers": [
+          "test_connection_recv_drain"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "shared.tests"
+      ],
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
+    },
     "grotto.build_contract": {
       "build_targets": [],
       "command": [
@@ -770,6 +3821,22 @@
     }
   },
   "coverage_gaps": [
+    {
+      "id": "workflow_profile_union",
+      "reason": "Every source job/matrix is accounted in workflow_jobs, but unmapped validation, build, command, publisher and orchestration jobs remain explicit profile-contract gaps; a matrix snapshot is not expanded variant coverage or successful execution. Existing generic profiles are diagnostic, not proof of workflow parity.",
+      "tracking": "nostrc-0cfsg.9"
+    },
+    {
+      "id": "root_asan_execution_contract",
+      "reason": "Two nostrc-ci matrix profiles retain exact configure/command/environment defaults and configured registration memberships. The three existing -E exclusions remain unexecuted gaps, not expected passes. Generic root exclusion admission, named audit/fuzz phases, ambient setup suffixes and dependency-worker routing are not implemented by metadata. Linux registration evidence is arm64 only, not hosted x86_64. No latency-test exclusion is added. Runtime/header/input union and independent macOS failure remain open.",
+      "tracking": "nostrc-0cfsg.9"
+    },
+    {
+      "id": "groundhog_sanitizer_execution_contract",
+      "profile": "groundhog.linux.sanitizers",
+      "reason": "Shared GH_SAN_* configuration and all 62 exact selected registrations match the workflow and an actual Linux/arm64 configure. The other configured registrations are not sanitizer members. Hosted x86_64, sanitizer execution/skip enforcement, post-build headers, runtime/semantic closure and worker routing remain unproven. {source_root} environment expansion must be execution-owner validated before running this profile; no local/runtime safety or skip policy is relaxed. Exact phase_environments are metadata only: shared environment is empty; configure/build environments differ from test. Core plus adapter phase application, expansion and fingerprint admission are pending; this profile is not execution-eligible.",
+      "tracking": "nostrc-0cfsg.9"
+    },
     {
       "id": "libgo_macos_asan_stress_exclusion",
       "profile": "libgo.macos.asan",
@@ -4531,6 +7598,407 @@
     }
   ],
   "profiles": {
+    "core.linux.asan": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "private_bus"
+      ],
+      "compiler": "clang",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_VERBOSE_MAKEFILE=ON",
+        "-DENABLE_NIP19=ON",
+        "-DENABLE_NIP49=ON",
+        "-DENABLE_FUZZING=ON",
+        "-DENABLE_FUZZING_RUNTIME=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DWITH_NOSTRDB=ON",
+        "-DLIBNOSTR_WITH_NOSTRDB=ON",
+        "-DNIP04_STRICT_AEAD_ONLY=ON",
+        "-DBUILD_NOSTR_GTK=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
+      ],
+      "environment": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ASAN_OPTIONS": "detect_leaks=0:detect_odr_violation=0:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTR_RELAY_REPLAY_TTL": "0",
+        "NOSTR_RELAY_SKEW_FUTURE": "0",
+        "NOSTR_RELAY_SKEW_PAST": "0",
+        "CC": "clang",
+        "CXX": "clang++",
+        "LDFLAGS": "'-fuse-ld=lld'"
+      },
+      "feature_variants": [
+        "nip19",
+        "nip49",
+        "nostrdb",
+        "nip04_strict_aead",
+        "fuzzing_runtime"
+      ],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/nostrc-ci.yml:build-and-test",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "workflow_contract": {
+        "matrix": {
+          "os": "ubuntu-latest",
+          "sanitizer": "asan_ubsan"
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "{build}",
+          "-j",
+          "--verbose"
+        ],
+        "audit_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "--output-on-failure",
+          "-R",
+          "libnostr_.*_audit"
+        ],
+        "test_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "--output-on-failure",
+          "-j2",
+          "-E",
+          "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+        ],
+        "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+        "fuzz_commands": [
+          [
+            "{build}/tests/fuzz_event_deserialize",
+            "{source}/tests/fuzz_seeds/events",
+            "-max_total_time=30"
+          ],
+          [
+            "{build}/tests/fuzz_envelope_deserialize",
+            "{source}/tests/fuzz_seeds/envelopes",
+            "-max_total_time=30"
+          ],
+          [
+            "{build}/tests/fuzz_filter_parse",
+            "{source}/tests/fuzz_seeds/filters",
+            "-max_total_time=30"
+          ],
+          [
+            "{build}/tests/fuzz_verify_wrapper",
+            "{source}/tests/fuzz_seeds/events",
+            "-max_total_time=30"
+          ],
+          [
+            "{build}/tests/fuzz_event_parse",
+            "{source}/tests/fuzz_seeds/events",
+            "-max_total_time=30"
+          ]
+        ],
+        "fuzz_environment": {
+          "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+          "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+        },
+        "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
+      }
+    },
+    "core.macos.asan": {
+      "architecture": "arm64",
+      "build_type": "Debug",
+      "capabilities": [
+        "private_bus"
+      ],
+      "compiler": "clang",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_VERBOSE_MAKEFILE=ON",
+        "-DENABLE_NIP19=ON",
+        "-DENABLE_NIP49=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DWITH_NOSTRDB=ON",
+        "-DLIBNOSTR_WITH_NOSTRDB=ON",
+        "-DNIP04_STRICT_AEAD_ONLY=ON",
+        "-DBUILD_NOSTR_GTK=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
+      ],
+      "environment": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ASAN_OPTIONS": "detect_leaks=0:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTR_RELAY_REPLAY_TTL": "0",
+        "NOSTR_RELAY_SKEW_FUTURE": "0",
+        "NOSTR_RELAY_SKEW_PAST": "0",
+        "PKG_CONFIG_PATH": "/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/flatcc/lib/pkgconfig:",
+        "CPPFLAGS": "-I/opt/homebrew/include ",
+        "LDFLAGS": "-L/opt/homebrew/lib "
+      },
+      "feature_variants": [
+        "nip19",
+        "nip49",
+        "nostrdb",
+        "nip04_strict_aead"
+      ],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host",
+      "parallelism": 2,
+      "platform": "macos",
+      "setup": ".github/workflows/nostrc-ci.yml:build-and-test",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "workflow_contract": {
+        "matrix": {
+          "os": "macos-latest",
+          "sanitizer": "asan_ubsan"
+        },
+        "build_command": [
+          "cmake",
+          "--build",
+          "{build}",
+          "-j",
+          "--verbose"
+        ],
+        "audit_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "--output-on-failure",
+          "-R",
+          "libnostr_.*_audit"
+        ],
+        "test_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "--output-on-failure",
+          "-j2",
+          "-E",
+          "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit"
+        ],
+        "ctest_exclude": "test_json_envelope|concurrency_subscription_shutdown_asan|MockRelayUnit",
+        "fuzz_commands": [],
+        "fuzz_environment": {},
+        "prerequisite_environment": "Literal effective defaults from the existing workflow; nonempty inherited Homebrew flag/path suffixes remain an execution/setup gap, not normalized away."
+      }
+    },
+    "groundhog.linux.sanitizers": {
+      "architecture": "x86_64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DGNOSTR_ENABLE_ASAN=ON",
+        "-DGNOSTR_ENABLE_UBSAN=ON"
+      ],
+      "environment": {},
+      "phase_environments": {
+        "configure": {},
+        "build": {},
+        "test": {
+          "GROUNDHOG_SANITIZER_TESTS": "groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "ASAN_OPTIONS": "detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
+          "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1",
+          "G_SLICE": "always-malloc",
+          "LSAN_OPTIONS": "suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+        }
+      },
+      "feature_variants": [],
+      "instrumentation": "asan_ubsan",
+      "local_availability": "host_or_container",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": ".github/workflows/groundhog-ci.yml:groundhog-sanitizers",
+      "source_dir": ".",
+      "timeout_seconds": 2700,
+      "sanitizer_compatibility": {
+        "GH_SAN_BUILD_ENV": [],
+        "GH_SAN_CONFIGURE": [
+          "-G",
+          "Ninja",
+          "-DCMAKE_BUILD_TYPE=Debug",
+          "-DBUILD_TESTING=ON",
+          "-DBUILD_GROUNDHOG=ON",
+          "-DBUILD_NOSTR_GOBJECT=ON",
+          "-DBUILD_NOSTR_GTK=ON",
+          "-DBUILD_APPS=OFF",
+          "-DBUILD_RELAYD=OFF",
+          "-DSIGNET_ENABLE=OFF",
+          "-DGNOSTR_ENABLE_ASAN=ON",
+          "-DGNOSTR_ENABLE_UBSAN=ON"
+        ],
+        "GH_SAN_CONFIGURE_ENV": [],
+        "GH_SAN_ENV": [
+          "GROUNDHOG_SANITIZER_TESTS=groundhog-identity groundhog-account groundhog-account-relays groundhog-dm-send groundhog-relay groundhog-relay-wire groundhog-relay-publish groundhog-relay-publish-wire groundhog-nip29 groundhog-conversations groundhog-dm-inbox groundhog-store-key groundhog-store-key-keyring groundhog-secret-service-sessions groundhog-nip46-credentials-keyring groundhog-store groundhog-store-sqlite groundhog-store-marmot groundhog-store-conversations groundhog-outbox groundhog-account-store groundhog-link-policy groundhog-background groundhog-notifier groundhog-inbox-setup groundhog-expiry groundhog-auth-policy groundhog-contact-directory groundhog-reactions groundhog-reaction-send groundhog-privacy-e2e groundhog-new-message groundhog-requests groundhog-privacy-summary groundhog-conversation-info groundhog-nip29-service groundhog-mls-service groundhog-privacy-mls groundhog-mls-kp-lifecycle groundhog-mls-kp-lifecycle-adopted groundhog-net groundhog-tls-resumption groundhog-group-ui groundhog-mls-ui groundhog-conversation-menu groundhog-multi-send groundhog-media groundhog-blossom groundhog-media-purge groundhog-relay-guard groundhog-media-cache-binding groundhog-attachments groundhog-mls-media groundhog-mls-files groundhog-mls-poll groundhog-voice groundhog-icons groundhog-message-reply groundhog-two-instance-acceptance nostrc-test-bus-selftest test_relay_teardown_leaks test_connection_recv_drain",
+          "ASAN_OPTIONS=detect_leaks=1:halt_on_error=1:verify_asan_link_order=0",
+          "UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1",
+          "G_SLICE=always-malloc",
+          "LSAN_OPTIONS=suppressions={source_root}/gnome/groundhog/tests/lsan.supp:print_suppressions=1"
+        ],
+        "GH_SAN_SKIP_PATTERN": "\\*\\*\\*Skipped|Not Run",
+        "GH_SAN_TARGETS": [
+          "groundhog",
+          "test-groundhog-identity",
+          "test-groundhog-account",
+          "test-groundhog-account-relays",
+          "test-groundhog-dm-send",
+          "test-groundhog-relay",
+          "test-groundhog-relay-wire",
+          "test-groundhog-relay-publish",
+          "test-groundhog-relay-publish-wire",
+          "test-groundhog-nip29",
+          "test-groundhog-conversations",
+          "test-groundhog-dm-inbox",
+          "test-groundhog-store-key",
+          "test-groundhog-store-key-keyring",
+          "test-groundhog-secret-service-sessions",
+          "test-groundhog-nip46-credentials-keyring",
+          "test-groundhog-store",
+          "test-groundhog-store-sqlite",
+          "test-groundhog-store-marmot",
+          "test-groundhog-store-conversations",
+          "test-groundhog-outbox",
+          "test-groundhog-account-store",
+          "test-groundhog-link-policy",
+          "test-groundhog-background",
+          "test-groundhog-notifier",
+          "test-groundhog-inbox-setup",
+          "test-groundhog-expiry",
+          "test-groundhog-auth-policy",
+          "test-groundhog-contact-directory",
+          "test-groundhog-reactions",
+          "test-groundhog-reaction-send",
+          "test-groundhog-privacy-e2e",
+          "test-groundhog-new-message",
+          "test-groundhog-requests",
+          "test-groundhog-privacy-summary",
+          "test-groundhog-conversation-info",
+          "test-groundhog-nip29-service",
+          "test-groundhog-mls-service",
+          "test-groundhog-privacy-mls",
+          "test-groundhog-mls-kp-lifecycle",
+          "test-groundhog-mls-kp-lifecycle-adopted",
+          "test-groundhog-net",
+          "test-groundhog-tls-resumption",
+          "test-groundhog-group-ui",
+          "test-groundhog-mls-ui",
+          "test-groundhog-conversation-menu",
+          "test-groundhog-multi-send",
+          "test-groundhog-media",
+          "test-groundhog-blossom",
+          "test-groundhog-media-purge",
+          "test-groundhog-relay-guard",
+          "test-groundhog-media-cache-binding",
+          "test-groundhog-attachments",
+          "test-groundhog-mls-media",
+          "test-groundhog-mls-files",
+          "test-groundhog-mls-poll",
+          "test-groundhog-voice",
+          "test-groundhog-icons",
+          "test-groundhog-message-reply",
+          "test-groundhog-two-instance-acceptance",
+          "nostrc-test-bus-selftest",
+          "test_relay_teardown_leaks",
+          "test_connection_recv_drain"
+        ],
+        "GH_SAN_TESTS": [
+          "groundhog-identity",
+          "groundhog-account",
+          "groundhog-account-relays",
+          "groundhog-dm-send",
+          "groundhog-relay",
+          "groundhog-relay-wire",
+          "groundhog-relay-publish",
+          "groundhog-relay-publish-wire",
+          "groundhog-nip29",
+          "groundhog-conversations",
+          "groundhog-dm-inbox",
+          "groundhog-store-key",
+          "groundhog-store-key-keyring",
+          "groundhog-secret-service-sessions",
+          "groundhog-nip46-credentials-keyring",
+          "groundhog-store",
+          "groundhog-store-sqlite",
+          "groundhog-store-marmot",
+          "groundhog-store-conversations",
+          "groundhog-outbox",
+          "groundhog-account-store",
+          "groundhog-link-policy",
+          "groundhog-background",
+          "groundhog-notifier",
+          "groundhog-inbox-setup",
+          "groundhog-expiry",
+          "groundhog-auth-policy",
+          "groundhog-contact-directory",
+          "groundhog-reactions",
+          "groundhog-reaction-send",
+          "groundhog-privacy-e2e",
+          "groundhog-new-message",
+          "groundhog-requests",
+          "groundhog-privacy-summary",
+          "groundhog-conversation-info",
+          "groundhog-nip29-service",
+          "groundhog-mls-service",
+          "groundhog-privacy-mls",
+          "groundhog-mls-kp-lifecycle",
+          "groundhog-mls-kp-lifecycle-adopted",
+          "groundhog-net",
+          "groundhog-tls-resumption",
+          "groundhog-group-ui",
+          "groundhog-mls-ui",
+          "groundhog-conversation-menu",
+          "groundhog-multi-send",
+          "groundhog-media",
+          "groundhog-blossom",
+          "groundhog-media-purge",
+          "groundhog-relay-guard",
+          "groundhog-media-cache-binding",
+          "groundhog-attachments",
+          "groundhog-mls-media",
+          "groundhog-mls-files",
+          "groundhog-mls-poll",
+          "groundhog-voice",
+          "groundhog-icons",
+          "groundhog-message-reply",
+          "groundhog-two-instance-acceptance",
+          "nostrc-test-bus-selftest",
+          "test_relay_teardown_leaks",
+          "test_connection_recv_drain"
+        ],
+        "GH_SAN_TEST_JOBS": "2"
+      }
+    },
     "core.linux": {
       "architecture": "x86_64",
       "build_type": "Debug",
@@ -5004,6 +8472,433 @@
           "pattern": "#define SIGNETCTL_VERSION \"([0-9.]+)\""
         }
       ]
+    }
+  },
+  "workflow_jobs": {
+    ".github/workflows/bp-matrix-nightly.yml:nightly-matrix": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/bp-matrix.yml:bp-matrix": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:core": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:libgo": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:hanami": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:gi": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:groundhog": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:grotto": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:nip55l": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:homed": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:signet": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:static": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:appimage": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:windows": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:bp": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:bp_extended": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:fuzz": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:mdk08": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:mdk011": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-broad.yml:broad_gate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:select": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:core": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:grotto": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:groundhog": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:mdk08": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:libgo": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:libgo_native": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:policy": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:broad": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-tests.yml:gate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/dependency-worker.yml:execute": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/gnostr-appimage.yml:build-appimage": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/grotto-ci.yml:signer": {
+      "matrix_source": "matrix:\n        include:\n          - {runner: ubuntu-24.04, mode: native}\n          - {runner: ubuntu-latest, mode: native}\n          - {runner: ubuntu-24.04, mode: asan-ubsan}\n          - {runner: ubuntu-24.04, mode: tsan}",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/grotto-fuzz.yml:select-fuzz": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/grotto-fuzz.yml:fuzz-test": {
+      "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/grotto-fuzz.yml:coverage-report": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-ci.yml:groundhog": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
+      "matrix_source": "",
+      "profiles": [
+        "groundhog.linux.sanitizers"
+      ],
+      "coverage_gap": "groundhog_sanitizer_execution_contract"
+    },
+    ".github/workflows/groundhog-release.yml:identity": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:validation": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:source": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:deb": {
+      "matrix_source": "matrix:\n        # One deb per release: library names differ (libsecp256k1-1 on\n        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does\n        # not install elsewhere. The version carries the distribution;\n        # dpkg names the file _amd64 or _arm64.\n        distro:\n          - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }\n          - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }\n          - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }\n        arch: [x86_64, aarch64]\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:rpm": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:arch": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }\n          # The official archlinux image is x86_64 only. Arch Linux ARM is\n          # what Linux-on-Android setups run (Termux proot-distro archlinux,\n          # chroots), so the aarch64 package is built on an Arch Linux ARM\n          # root: menci/archlinuxarm is rebuilt daily from the official\n          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring\n          # initialised. Pinned by digest; bump it deliberately.\n          - arch: aarch64\n            runner: ubuntu-24.04-arm\n            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:flatpak": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:nix": {
+      "matrix_source": "matrix:\n        include:\n          - { system: x86_64-linux,  runner: ubuntu-24.04 }\n          - { system: aarch64-linux, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:release-aggregate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/groundhog-release.yml:release": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/libgo-ci.yml:build-and-test": {
+      "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        # tsan keeps the default TSAN configuration (single-lock ring);\n        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so\n        # the lock-free channel paths get ThreadSanitizer coverage too\n        # (nostrc-75rv review F8).\n        sanitizer: [asan_ubsan, tsan, tsan_mpmc]",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/libgo-ci.yml:gofiber-linux-sanitizers": {
+      "matrix_source": "matrix:\n        sanitizer: [asan_ubsan, tsan]",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/libgo-ci.yml:fuzz-driver": {
+      "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/libhanami-ci.yml:build-and-test": {
+      "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/libnostr-gi.yml:generate-gir": {
+      "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/marmot-mdk-interop.yml:mdk-interop": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/marmot-mdk011-interop.yml:mdk011-adopted-matrix": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/nip55l-libsecret-ci.yml:refusing-session": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/nostr-homed-ci.yml:build-and-test": {
+      "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/nostrc-ci.yml:build-and-test": {
+      "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
+      "profiles": [
+        "core.linux.asan",
+        "core.macos.asan"
+      ],
+      "coverage_gap": "root_asan_execution_contract"
+    },
+    ".github/workflows/release-validation.yml:identity": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release-validation.yml:validate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:detect-component": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:validation": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:release-aggregate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-source": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-linux": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-linux-daemon-tcp": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-appimage-gnostr": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-snap-gnostr": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-snap-signer": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-snap-daemon": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:create-release": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-flatpak": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-flatpak-gnostr": {
+      "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-macos-signer-dmg": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/release.yml:build-macos-tarball": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/signet-ci.yml:build-and-test": {
+      "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/static-checks.yml:static-checks": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-build.yml:identity": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-build.yml:validation": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-build.yml:build": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-build.yml:release-aggregate": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-build.yml:release": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
+    },
+    ".github/workflows/windows-validation.yml:build": {
+      "matrix_source": "",
+      "profiles": [],
+      "coverage_gap": "workflow_profile_union"
     }
   },
   "schema_version": 1,

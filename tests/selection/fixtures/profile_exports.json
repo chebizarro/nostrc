@@ -1,0 +1,3501 @@
+{
+  "schema_version": 1,
+  "scope": "Actual configure/CTest show-only snapshots, not test execution, source freshness, post-build audit, hosted or rollout acceptance.",
+  "exports": {
+    "root_macos_arm64": {
+      "profile": "core.macos.asan",
+      "source_sha": "e8d2e3d0cc6f155e04fe9991fb8e5b48bbefc965",
+      "actual_architecture": "arm64",
+      "matches_declared_architecture": true,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_VERBOSE_MAKEFILE=ON",
+        "-DENABLE_NIP19=ON",
+        "-DENABLE_NIP49=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DWITH_NOSTRDB=ON",
+        "-DLIBNOSTR_WITH_NOSTRDB=ON",
+        "-DNIP04_STRICT_AEAD_ONLY=ON",
+        "-DBUILD_NOSTR_GTK=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
+      ],
+      "observed_environment": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ASAN_OPTIONS": "detect_leaks=0:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTR_RELAY_REPLAY_TTL": "0",
+        "NOSTR_RELAY_SKEW_FUTURE": "0",
+        "NOSTR_RELAY_SKEW_PAST": "0"
+      },
+      "ctest_sha256": "860b7626e681513c2cffee7522281d33329b811ef4b8f49903777771f87a8c7d",
+      "descriptors_sha256": "2a2dc3f7ec97dd1d6c2db23beb2f93647403f20f17e66abc61c223cbc9043e69",
+      "registrations": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "concurrency_subscription_shutdown_asan",
+        "glib_async_integration",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_getrelays",
+        "nip55l_keychain_migration",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostrc-test-bus-selftest",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/permissions",
+        "signer/trust-tiers",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_recv_drain",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_teardown_leaks",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "fixture_registrations": [
+        "nip55l-test-homes"
+      ],
+      "legacy_excluded_registrations": [
+        "MockRelayUnit",
+        "concurrency_subscription_shutdown_asan",
+        "test_json_envelope"
+      ],
+      "source_owner_membership": {
+        "libgo": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ],
+        "libhanami": [
+          "test-hanami-blossom-batch",
+          "test-hanami-blossom-client",
+          "test-hanami-blossom-content-type",
+          "test-hanami-blossom-shim",
+          "test-hanami-blossom-shim-auto",
+          "test-hanami-bud02-auth",
+          "test-hanami-config",
+          "test-hanami-grasp",
+          "test-hanami-index",
+          "test-hanami-integration",
+          "test-hanami-nostr",
+          "test-hanami-odb-backend",
+          "test-hanami-refdb-backend",
+          "test-hanami-server-capability-probe-shim",
+          "test-hanami-transport",
+          "test-hanami-types"
+        ],
+        "libmarmot": [
+          "marmot_test_adopted",
+          "marmot_test_adopted_commits",
+          "marmot_test_app_data_update",
+          "marmot_test_commits",
+          "marmot_test_extension",
+          "marmot_test_interop",
+          "marmot_test_kp_lifecycle",
+          "marmot_test_kp_profile",
+          "marmot_test_large_commit_bound",
+          "marmot_test_media",
+          "marmot_test_mls_crypto",
+          "marmot_test_mls_framing",
+          "marmot_test_mls_group",
+          "marmot_test_mls_key_package",
+          "marmot_test_mls_key_schedule",
+          "marmot_test_mls_key_schedule_vectors",
+          "marmot_test_mls_tls",
+          "marmot_test_mls_tree",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_mls_welcome",
+          "marmot_test_protocol",
+          "marmot_test_ratchet_persist",
+          "marmot_test_rfc9420_vectors",
+          "marmot_test_storage",
+          "marmot_test_storage_contract",
+          "marmot_test_types"
+        ],
+        "libnostr": [
+          "libnostr_connection_teardown_stress",
+          "libnostr_core_audit",
+          "libnostr_crypto_audit",
+          "libnostr_event_validation",
+          "libnostr_filter_limit_zero",
+          "libnostr_misc_audit",
+          "libnostr_networking_audit",
+          "libnostr_parsing_audit",
+          "libnostr_reconnect_same_second",
+          "libnostr_relay_callback_lifetime",
+          "libnostr_relay_write_unsent",
+          "libnostr_store_txn_audit",
+          "libnostr_subscription_dispatch",
+          "test_relay_teardown_leaks"
+        ],
+        "marmot.gobject": [
+          "marmot_gobject_test"
+        ],
+        "nip04": [
+          "test_nip04_error_uniformity",
+          "test_nip04_secure_roundtrip",
+          "test_nip04_strict",
+          "test_roundtrip"
+        ],
+        "nip05": [
+          "test_nip05_parse",
+          "test_nip05_resolve_json_errors",
+          "test_nip05_resolve_json_names",
+          "test_nip05_resolve_json_relays"
+        ],
+        "nip06": [
+          "test_nip06"
+        ],
+        "nip11": [
+          "test_nip11"
+        ],
+        "nip14": [
+          "test_nip14"
+        ],
+        "nip17": [
+          "test_nip17"
+        ],
+        "nip19": [
+          "test_nip19",
+          "test_nip19_tlv"
+        ],
+        "nip21": [
+          "test_nip21"
+        ],
+        "nip22": [
+          "test_nip22"
+        ],
+        "nip23": [
+          "test_nip23"
+        ],
+        "nip24": [
+          "test_nip24"
+        ],
+        "nip25": [
+          "test_nip25"
+        ],
+        "nip27": [
+          "test_nip27"
+        ],
+        "nip28": [
+          "test_nip28"
+        ],
+        "nip30": [
+          "test_nip30"
+        ],
+        "nip34": [
+          "test-nip34"
+        ],
+        "nip39": [
+          "test_nip39"
+        ],
+        "nip40": [
+          "test_nip40"
+        ],
+        "nip44": [
+          "test_nip44_convkey",
+          "test_nip44_roundtrip",
+          "test_nip44_vectors"
+        ],
+        "nip46": [
+          "test_nip46_async_api",
+          "test_nip46_bunker_connect_auth",
+          "test_nip46_bunker_nip44",
+          "test_nip46_bunker_reply",
+          "test_nip46_bunker_roundtrip",
+          "test_nip46_bunker_sign_event_acl_deny",
+          "test_nip46_bunker_sign_event_cb",
+          "test_nip46_bunker_sign_event_real",
+          "test_nip46_bunker_uri_issue",
+          "test_nip46_c1_hardening",
+          "test_nip46_caller_hardening",
+          "test_nip46_client_api",
+          "test_nip46_client_connect",
+          "test_nip46_client_connect_edge",
+          "test_nip46_e2e_mock",
+          "test_nip46_encryption_detection",
+          "test_nip46_envelope_build",
+          "test_nip46_glib_lifetime",
+          "test_nip46_msg",
+          "test_nip46_msg_comprehensive",
+          "test_nip46_nostrconnect_qr_login",
+          "test_nip46_pending_lifetime",
+          "test_nip46_relay_lifecycle",
+          "test_nip46_request_lifecycle",
+          "test_nip46_response_validation",
+          "test_nip46_rpc_flow_mock",
+          "test_nip46_session_management",
+          "test_nip46_signed_response_admission",
+          "test_nip46_transport_modes",
+          "test_nip46_uri",
+          "test_nip46_uri_comprehensive"
+        ],
+        "nip47": [
+          "test_nip47_nwc_crypto",
+          "test_nip47_nwc_envelope",
+          "test_nip47_nwc_info",
+          "test_nip47_nwc_session",
+          "test_nip47_nwc_uri",
+          "test_nip47_spec_source"
+        ],
+        "nip49": [
+          "test_nip49_negative",
+          "test_nip49_payload",
+          "test_nip49_roundtrip",
+          "test_nip49_spec_source",
+          "test_nip49_vectors"
+        ],
+        "nip51": [
+          "test_nip51"
+        ],
+        "nip55l": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_getrelays",
+          "nip55l_keychain_migration",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostrc-test-bus-selftest",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ],
+        "nip57": [
+          "test_nip57"
+        ],
+        "nip58": [
+          "test_nip58"
+        ],
+        "nip59": [
+          "test_nip59",
+          "test_nip59_rng_failure"
+        ],
+        "nip5f": [
+          "test_nip5f_loopback",
+          "test_nip5f_negative_env",
+          "test_nip5f_tcp"
+        ],
+        "nip60": [
+          "test_nip60"
+        ],
+        "nip61": [
+          "test_nip61"
+        ],
+        "nip70": [
+          "test_nip70"
+        ],
+        "nip73": [
+          "test_nip73"
+        ],
+        "nip75": [
+          "test_nip75"
+        ],
+        "nip77": [
+          "test_ndb_empty",
+          "test_ndb_integration",
+          "test_ndb_ordering",
+          "test_ndb_perf",
+          "test_ndb_session_e2e",
+          "test_ndb_tie_break",
+          "test_neg_bound",
+          "test_neg_fingerprint",
+          "test_neg_message",
+          "test_neg_session",
+          "test_neg_session_caps",
+          "test_neg_session_need",
+          "test_neg_session_synth",
+          "test_neg_varint"
+        ],
+        "nip92": [
+          "test_nip92"
+        ],
+        "nip98": [
+          "test_nip98"
+        ],
+        "nip99": [
+          "test_nip99"
+        ],
+        "nip_cas0010": [
+          "test_otel_consumer",
+          "test_otel_encoding",
+          "test_otel_producer",
+          "test_otel_replay",
+          "test_otel_roundtrip"
+        ],
+        "nipb0": [
+          "test_nipb0"
+        ],
+        "nostr.gobject": [
+          "test_nostr_gobject_event",
+          "test_nostr_gobject_integ_event_flow",
+          "test_nostr_gobject_lifecycle_leaks",
+          "test_nostr_gobject_main_thread_latency",
+          "test_nostr_gobject_nip19",
+          "test_nostr_gobject_profile_provider_conflict_resolution",
+          "test_nostr_gobject_profile_provider_lru",
+          "test_nostr_gobject_profile_service_batching",
+          "test_nostr_gobject_relay_connect",
+          "test_nostr_gobject_relay_teardown",
+          "test_nostr_gobject_store_contract",
+          "test_nostr_gobject_subscription_eose_order"
+        ],
+        "schema": [
+          "test_schema"
+        ],
+        "shared.tests": [
+          "GoChannelIncremental",
+          "concurrency_channels",
+          "concurrency_subscription_shutdown",
+          "glib_async_integration",
+          "profile_fetch_simulation",
+          "profile_fetch_stress",
+          "test_connection_idle_writable",
+          "test_connection_recv_drain",
+          "test_connection_shutdown_order",
+          "test_connection_tls_no_resumption",
+          "test_connection_writable_rearm",
+          "test_envelope",
+          "test_envelope_fallback",
+          "test_envelope_parse",
+          "test_event_canonical",
+          "test_event_priority",
+          "test_filters_move_semantics",
+          "test_fuzz_envelope_roundtrip",
+          "test_fuzz_filter_parse",
+          "test_json_event",
+          "test_json_event_fuzzlite",
+          "test_json_filter",
+          "test_json_filter_fuzzlite",
+          "test_json_filter_robust",
+          "test_json_filter_tags",
+          "test_json_int_array",
+          "test_json_parse",
+          "test_json_raw",
+          "test_nip04_aead",
+          "test_nip86_policy",
+          "test_nostr",
+          "test_pool_redial",
+          "test_relay",
+          "test_relay_shutdown",
+          "test_relay_unsubscribe",
+          "test_subscription_backpressure",
+          "test_subscription_backpressure_long",
+          "test_subscription_blocking_depth",
+          "test_subscription_lifecycle"
+        ],
+        "testing.framework": [
+          "MockRelayIntegration",
+          "MockRelayServerBasic",
+          "Nip46MockRelay",
+          "Nip46QRSocket",
+          "SignerIntegration",
+          "TestHarnessExample"
+        ]
+      },
+      "execution": "configure_and_show_only; no test execution or post-build header audit"
+    },
+    "root_linux_arm64": {
+      "profile": "core.linux.asan",
+      "source_sha": "0510ac94e22d96b32af11362414245d6ca655a27",
+      "actual_architecture": "arm64",
+      "matches_declared_architecture": false,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DCMAKE_VERBOSE_MAKEFILE=ON",
+        "-DENABLE_NIP19=ON",
+        "-DENABLE_NIP49=ON",
+        "-DENABLE_FUZZING=ON",
+        "-DENABLE_FUZZING_RUNTIME=ON",
+        "-DGO_ENABLE_ASAN=ON",
+        "-DGO_ENABLE_UBSAN=ON",
+        "-DGO_WARNINGS_AS_ERRORS=ON",
+        "-DWITH_NOSTRDB=ON",
+        "-DLIBNOSTR_WITH_NOSTRDB=ON",
+        "-DNIP04_STRICT_AEAD_ONLY=ON",
+        "-DBUILD_NOSTR_GTK=OFF",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF"
+      ],
+      "observed_environment": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ASAN_OPTIONS": "detect_leaks=0:detect_odr_violation=0:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1",
+        "TSAN_OPTIONS": "halt_on_error=1",
+        "NOSTR_RELAY_REPLAY_TTL": "0",
+        "NOSTR_RELAY_SKEW_FUTURE": "0",
+        "NOSTR_RELAY_SKEW_PAST": "0",
+        "CC": "clang",
+        "CXX": "clang++",
+        "LDFLAGS": "'-fuse-ld=lld'"
+      },
+      "ctest_sha256": "079760f20cb7fddd6757ea5f4fafeb1637ee21b832a33aa6c1eccd2d1fff9882",
+      "descriptors_sha256": "d1c293842355b5ab59ee791116029a4bd8dd5b000513eab21db13cbf5fb55c1d",
+      "registrations": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "concurrency_subscription_shutdown_asan",
+        "glib_async_integration",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostrc-test-bus-selftest",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/permissions",
+        "signer/trust-tiers",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_recv_drain",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_teardown_leaks",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "fixture_registrations": [
+        "nip55l-test-homes"
+      ],
+      "legacy_excluded_registrations": [
+        "MockRelayUnit",
+        "concurrency_subscription_shutdown_asan",
+        "test_json_envelope"
+      ],
+      "source_owner_membership": {
+        "libgo": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ],
+        "libhanami": [
+          "test-hanami-blossom-batch",
+          "test-hanami-blossom-client",
+          "test-hanami-blossom-content-type",
+          "test-hanami-blossom-shim",
+          "test-hanami-blossom-shim-auto",
+          "test-hanami-bud02-auth",
+          "test-hanami-config",
+          "test-hanami-grasp",
+          "test-hanami-index",
+          "test-hanami-integration",
+          "test-hanami-nostr",
+          "test-hanami-odb-backend",
+          "test-hanami-refdb-backend",
+          "test-hanami-server-capability-probe-shim",
+          "test-hanami-transport",
+          "test-hanami-types"
+        ],
+        "libmarmot": [
+          "marmot_test_adopted",
+          "marmot_test_adopted_commits",
+          "marmot_test_app_data_update",
+          "marmot_test_commits",
+          "marmot_test_extension",
+          "marmot_test_interop",
+          "marmot_test_kp_lifecycle",
+          "marmot_test_kp_profile",
+          "marmot_test_large_commit_bound",
+          "marmot_test_media",
+          "marmot_test_mls_crypto",
+          "marmot_test_mls_framing",
+          "marmot_test_mls_group",
+          "marmot_test_mls_key_package",
+          "marmot_test_mls_key_schedule",
+          "marmot_test_mls_key_schedule_vectors",
+          "marmot_test_mls_tls",
+          "marmot_test_mls_tree",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_mls_welcome",
+          "marmot_test_protocol",
+          "marmot_test_ratchet_persist",
+          "marmot_test_rfc9420_vectors",
+          "marmot_test_storage",
+          "marmot_test_storage_contract",
+          "marmot_test_types"
+        ],
+        "libnostr": [
+          "libnostr_connection_teardown_stress",
+          "libnostr_core_audit",
+          "libnostr_crypto_audit",
+          "libnostr_event_validation",
+          "libnostr_filter_limit_zero",
+          "libnostr_misc_audit",
+          "libnostr_networking_audit",
+          "libnostr_parsing_audit",
+          "libnostr_reconnect_same_second",
+          "libnostr_relay_callback_lifetime",
+          "libnostr_relay_write_unsent",
+          "libnostr_store_txn_audit",
+          "libnostr_subscription_dispatch",
+          "test_relay_teardown_leaks"
+        ],
+        "marmot.gobject": [
+          "marmot_gobject_test"
+        ],
+        "nip04": [
+          "test_nip04_error_uniformity",
+          "test_nip04_secure_roundtrip",
+          "test_nip04_strict",
+          "test_roundtrip"
+        ],
+        "nip05": [
+          "test_nip05_parse",
+          "test_nip05_resolve_json_errors",
+          "test_nip05_resolve_json_names",
+          "test_nip05_resolve_json_relays"
+        ],
+        "nip06": [
+          "test_nip06"
+        ],
+        "nip11": [
+          "test_nip11"
+        ],
+        "nip14": [
+          "test_nip14"
+        ],
+        "nip17": [
+          "test_nip17"
+        ],
+        "nip19": [
+          "test_nip19",
+          "test_nip19_tlv"
+        ],
+        "nip21": [
+          "test_nip21"
+        ],
+        "nip22": [
+          "test_nip22"
+        ],
+        "nip23": [
+          "test_nip23"
+        ],
+        "nip24": [
+          "test_nip24"
+        ],
+        "nip25": [
+          "test_nip25"
+        ],
+        "nip27": [
+          "test_nip27"
+        ],
+        "nip28": [
+          "test_nip28"
+        ],
+        "nip30": [
+          "test_nip30"
+        ],
+        "nip34": [
+          "test-nip34"
+        ],
+        "nip39": [
+          "test_nip39"
+        ],
+        "nip40": [
+          "test_nip40"
+        ],
+        "nip44": [
+          "test_nip44_convkey",
+          "test_nip44_roundtrip",
+          "test_nip44_vectors"
+        ],
+        "nip46": [
+          "test_nip46_async_api",
+          "test_nip46_bunker_connect_auth",
+          "test_nip46_bunker_nip44",
+          "test_nip46_bunker_reply",
+          "test_nip46_bunker_roundtrip",
+          "test_nip46_bunker_sign_event_acl_deny",
+          "test_nip46_bunker_sign_event_cb",
+          "test_nip46_bunker_sign_event_real",
+          "test_nip46_bunker_uri_issue",
+          "test_nip46_c1_hardening",
+          "test_nip46_caller_hardening",
+          "test_nip46_client_api",
+          "test_nip46_client_connect",
+          "test_nip46_client_connect_edge",
+          "test_nip46_e2e_mock",
+          "test_nip46_encryption_detection",
+          "test_nip46_envelope_build",
+          "test_nip46_glib_lifetime",
+          "test_nip46_msg",
+          "test_nip46_msg_comprehensive",
+          "test_nip46_nostrconnect_qr_login",
+          "test_nip46_pending_lifetime",
+          "test_nip46_relay_lifecycle",
+          "test_nip46_request_lifecycle",
+          "test_nip46_response_validation",
+          "test_nip46_rpc_flow_mock",
+          "test_nip46_session_management",
+          "test_nip46_signed_response_admission",
+          "test_nip46_transport_modes",
+          "test_nip46_uri",
+          "test_nip46_uri_comprehensive"
+        ],
+        "nip47": [
+          "test_nip47_nwc_crypto",
+          "test_nip47_nwc_envelope",
+          "test_nip47_nwc_info",
+          "test_nip47_nwc_session",
+          "test_nip47_nwc_uri",
+          "test_nip47_spec_source"
+        ],
+        "nip49": [
+          "test_nip49_negative",
+          "test_nip49_payload",
+          "test_nip49_roundtrip",
+          "test_nip49_spec_source",
+          "test_nip49_vectors"
+        ],
+        "nip51": [
+          "test_nip51"
+        ],
+        "nip55l": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_fake_secret_service_contract",
+          "nip55l_getrelays",
+          "nip55l_keyring_schema",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostrc-test-bus-selftest",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ],
+        "nip57": [
+          "test_nip57"
+        ],
+        "nip58": [
+          "test_nip58"
+        ],
+        "nip59": [
+          "test_nip59",
+          "test_nip59_rng_failure"
+        ],
+        "nip5f": [
+          "test_nip5f_loopback",
+          "test_nip5f_negative_env",
+          "test_nip5f_tcp"
+        ],
+        "nip60": [
+          "test_nip60"
+        ],
+        "nip61": [
+          "test_nip61"
+        ],
+        "nip70": [
+          "test_nip70"
+        ],
+        "nip73": [
+          "test_nip73"
+        ],
+        "nip75": [
+          "test_nip75"
+        ],
+        "nip77": [
+          "test_ndb_empty",
+          "test_ndb_integration",
+          "test_ndb_ordering",
+          "test_ndb_perf",
+          "test_ndb_session_e2e",
+          "test_ndb_tie_break",
+          "test_neg_bound",
+          "test_neg_fingerprint",
+          "test_neg_message",
+          "test_neg_session",
+          "test_neg_session_caps",
+          "test_neg_session_need",
+          "test_neg_session_synth",
+          "test_neg_varint"
+        ],
+        "nip92": [
+          "test_nip92"
+        ],
+        "nip98": [
+          "test_nip98"
+        ],
+        "nip99": [
+          "test_nip99"
+        ],
+        "nip_cas0010": [
+          "test_otel_consumer",
+          "test_otel_encoding",
+          "test_otel_producer",
+          "test_otel_replay",
+          "test_otel_roundtrip"
+        ],
+        "nipb0": [
+          "test_nipb0"
+        ],
+        "nostr.gobject": [
+          "test_nostr_gobject_event",
+          "test_nostr_gobject_integ_event_flow",
+          "test_nostr_gobject_lifecycle_leaks",
+          "test_nostr_gobject_main_thread_latency",
+          "test_nostr_gobject_nip19",
+          "test_nostr_gobject_profile_provider_conflict_resolution",
+          "test_nostr_gobject_profile_provider_lru",
+          "test_nostr_gobject_profile_service_batching",
+          "test_nostr_gobject_relay_connect",
+          "test_nostr_gobject_relay_teardown",
+          "test_nostr_gobject_store_contract",
+          "test_nostr_gobject_subscription_eose_order"
+        ],
+        "schema": [
+          "test_schema"
+        ],
+        "shared.tests": [
+          "GoChannelIncremental",
+          "concurrency_channels",
+          "concurrency_subscription_shutdown",
+          "glib_async_integration",
+          "profile_fetch_simulation",
+          "profile_fetch_stress",
+          "test_connection_idle_writable",
+          "test_connection_recv_drain",
+          "test_connection_shutdown_order",
+          "test_connection_tls_no_resumption",
+          "test_connection_writable_rearm",
+          "test_envelope",
+          "test_envelope_fallback",
+          "test_envelope_parse",
+          "test_event_canonical",
+          "test_event_priority",
+          "test_filters_move_semantics",
+          "test_fuzz_envelope_roundtrip",
+          "test_fuzz_filter_parse",
+          "test_json_event",
+          "test_json_event_fuzzlite",
+          "test_json_filter",
+          "test_json_filter_fuzzlite",
+          "test_json_filter_robust",
+          "test_json_filter_tags",
+          "test_json_int_array",
+          "test_json_parse",
+          "test_json_raw",
+          "test_nip04_aead",
+          "test_nip86_policy",
+          "test_nostr",
+          "test_pool_redial",
+          "test_relay",
+          "test_relay_shutdown",
+          "test_relay_unsubscribe",
+          "test_subscription_backpressure",
+          "test_subscription_backpressure_long",
+          "test_subscription_blocking_depth",
+          "test_subscription_lifecycle"
+        ],
+        "testing.framework": [
+          "MockRelayIntegration",
+          "MockRelayServerBasic",
+          "Nip46MockRelay",
+          "Nip46QRSocket",
+          "SignerIntegration",
+          "TestHarnessExample"
+        ]
+      },
+      "execution": "configure_and_show_only; no test execution or post-build header audit"
+    },
+    "sanitizer_linux_arm64": {
+      "profile": "groundhog.linux.sanitizers",
+      "source_sha": "e8d2e3d0cc6f155e04fe9991fb8e5b48bbefc965",
+      "actual_architecture": "arm64",
+      "matches_declared_architecture": false,
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=OFF",
+        "-DSIGNET_ENABLE=OFF",
+        "-DGNOSTR_ENABLE_ASAN=ON",
+        "-DGNOSTR_ENABLE_UBSAN=ON"
+      ],
+      "observed_environment": {},
+      "ctest_sha256": "41ae00b3e7f091a131aeb8b40c823a8d4aee30a79270e8c532804527139d5a75",
+      "descriptors_sha256": "9d47dc32d942f1eda6f89b21606ed4b49f22bd8c581adc94d0fc3500a112152d",
+      "registrations": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "concurrency_subscription_shutdown_asan",
+        "glib_async_integration",
+        "groundhog-about",
+        "groundhog-about-gui",
+        "groundhog-account",
+        "groundhog-account-backends",
+        "groundhog-account-relays",
+        "groundhog-account-remote-switch",
+        "groundhog-account-store",
+        "groundhog-account-store-gui",
+        "groundhog-account-ui",
+        "groundhog-agent-events",
+        "groundhog-agents-page",
+        "groundhog-attachment-ui",
+        "groundhog-attachments",
+        "groundhog-auth-policy",
+        "groundhog-background",
+        "groundhog-background-desktop",
+        "groundhog-background-gui",
+        "groundhog-blossom",
+        "groundhog-blueprint",
+        "groundhog-bus-probe",
+        "groundhog-composer",
+        "groundhog-contact-directory",
+        "groundhog-conversation-info",
+        "groundhog-conversation-info-gui",
+        "groundhog-conversation-list",
+        "groundhog-conversation-menu",
+        "groundhog-conversation-menu-gui",
+        "groundhog-conversation-view",
+        "groundhog-conversations",
+        "groundhog-data",
+        "groundhog-desktop",
+        "groundhog-diagnostics",
+        "groundhog-dm-inbox",
+        "groundhog-dm-send",
+        "groundhog-e2e-dm",
+        "groundhog-expiry",
+        "groundhog-gdk-frame-tolerance",
+        "groundhog-group-ui",
+        "groundhog-group-ui-gui",
+        "groundhog-i18n",
+        "groundhog-icons",
+        "groundhog-identity",
+        "groundhog-inbox-setup",
+        "groundhog-issue-uploader",
+        "groundhog-launch",
+        "groundhog-link-policy",
+        "groundhog-media",
+        "groundhog-media-cache-binding",
+        "groundhog-media-purge",
+        "groundhog-message-reply",
+        "groundhog-metainfo",
+        "groundhog-metainfo-merged",
+        "groundhog-mls-files",
+        "groundhog-mls-kp-lifecycle",
+        "groundhog-mls-kp-lifecycle-adopted",
+        "groundhog-mls-media",
+        "groundhog-mls-poll",
+        "groundhog-mls-remote",
+        "groundhog-mls-service",
+        "groundhog-mls-ui",
+        "groundhog-mls-ui-gui",
+        "groundhog-multi-send",
+        "groundhog-net",
+        "groundhog-new-message",
+        "groundhog-nip29",
+        "groundhog-nip29-group-list",
+        "groundhog-nip29-service",
+        "groundhog-nip46-credentials-keyring",
+        "groundhog-nip46-credentials-list",
+        "groundhog-nip46-inbox-nak",
+        "groundhog-nip46-nak",
+        "groundhog-nip46-pair-dialog",
+        "groundhog-nip46-pair-nak",
+        "groundhog-nip46-session",
+        "groundhog-nip46-wire",
+        "groundhog-notifier",
+        "groundhog-notifier-gui",
+        "groundhog-onboarding",
+        "groundhog-outbox",
+        "groundhog-packaging-version",
+        "groundhog-poll-ui",
+        "groundhog-portable-singleton",
+        "groundhog-potfiles",
+        "groundhog-preferences",
+        "groundhog-privacy-e2e",
+        "groundhog-privacy-mls",
+        "groundhog-privacy-static",
+        "groundhog-privacy-summary",
+        "groundhog-profile-guard",
+        "groundhog-public-note-post",
+        "groundhog-reaction-send",
+        "groundhog-reactions",
+        "groundhog-relay",
+        "groundhog-relay-guard",
+        "groundhog-relay-publish",
+        "groundhog-relay-publish-wire",
+        "groundhog-relay-wire",
+        "groundhog-remote-feature-matrix",
+        "groundhog-requests",
+        "groundhog-requests-gui",
+        "groundhog-resource",
+        "groundhog-schema",
+        "groundhog-secret-service-sessions",
+        "groundhog-shell",
+        "groundhog-signer-nip46",
+        "groundhog-status-notifier",
+        "groundhog-store",
+        "groundhog-store-conversations",
+        "groundhog-store-key",
+        "groundhog-store-key-keyring",
+        "groundhog-store-marmot",
+        "groundhog-store-sqlite",
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes",
+        "groundhog-tls-resumption",
+        "groundhog-two-instance",
+        "groundhog-two-instance-acceptance",
+        "groundhog-two-instance-remote-acceptance",
+        "groundhog-update-handoff",
+        "groundhog-version",
+        "groundhog-voice",
+        "groundhog-voice-ui",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l-test-homes",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr_gtk_portable_media_lint",
+        "nostr_gtk_portable_media_lint_selftest",
+        "nostr_gtk_portable_potfiles",
+        "nostrc-test-bus-selftest",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/permissions",
+        "signer/trust-tiers",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_recv_drain",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_interop",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip29",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_nostr_gtk_bind_latency_budget",
+        "test_nostr_gtk_bind_latency_perf",
+        "test_nostr_gtk_content_parser",
+        "test_nostr_gtk_markdown_pango",
+        "test_nostr_gtk_media",
+        "test_nostr_gtk_nip34_issue_model",
+        "test_nostr_gtk_nip34_issue_view",
+        "test_nostr_gtk_og_metadata",
+        "test_nostr_gtk_og_preview_card",
+        "test_nostr_gtk_portable",
+        "test_nostr_gtk_portable_i18n",
+        "test_nostr_gtk_reference_card",
+        "test_nostr_gtk_standalone_core",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_teardown_leaks",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "fixture_registrations": [
+        "groundhog-test-gst-registry",
+        "groundhog-test-homes",
+        "nip55l-test-homes"
+      ],
+      "legacy_excluded_registrations": [],
+      "source_owner_membership": {
+        "groundhog.group_ui": [
+          "groundhog-group-ui",
+          "groundhog-group-ui-gui"
+        ],
+        "groundhog.mls_files": [
+          "groundhog-mls-files"
+        ],
+        "groundhog.mls_media": [
+          "groundhog-mls-media"
+        ],
+        "groundhog.mls_service": [
+          "groundhog-mls-poll",
+          "groundhog-mls-remote",
+          "groundhog-mls-service",
+          "groundhog-privacy-mls",
+          "groundhog-two-instance-acceptance",
+          "groundhog-two-instance-remote-acceptance"
+        ],
+        "groundhog.mls_store": [
+          "groundhog-store-marmot"
+        ],
+        "groundhog.mls_ui": [
+          "groundhog-mls-ui",
+          "groundhog-mls-ui-gui"
+        ],
+        "groundhog.poll_ui": [
+          "groundhog-poll-ui"
+        ],
+        "groundhog.resources": [
+          "groundhog-background-desktop",
+          "groundhog-blueprint",
+          "groundhog-data",
+          "groundhog-desktop",
+          "groundhog-i18n",
+          "groundhog-metainfo",
+          "groundhog-metainfo-merged",
+          "groundhog-schema"
+        ],
+        "groundhog.shell_ui": [
+          "groundhog-about",
+          "groundhog-about-gui",
+          "groundhog-launch",
+          "groundhog-version"
+        ],
+        "groundhog.unclassified": [
+          "groundhog-account",
+          "groundhog-account-backends",
+          "groundhog-account-relays",
+          "groundhog-account-remote-switch",
+          "groundhog-account-store",
+          "groundhog-account-store-gui",
+          "groundhog-account-ui",
+          "groundhog-agent-events",
+          "groundhog-agents-page",
+          "groundhog-attachment-ui",
+          "groundhog-attachments",
+          "groundhog-auth-policy",
+          "groundhog-background",
+          "groundhog-background-gui",
+          "groundhog-blossom",
+          "groundhog-bus-probe",
+          "groundhog-composer",
+          "groundhog-contact-directory",
+          "groundhog-conversation-info",
+          "groundhog-conversation-info-gui",
+          "groundhog-conversation-list",
+          "groundhog-conversation-menu",
+          "groundhog-conversation-menu-gui",
+          "groundhog-conversation-view",
+          "groundhog-conversations",
+          "groundhog-diagnostics",
+          "groundhog-dm-inbox",
+          "groundhog-dm-send",
+          "groundhog-e2e-dm",
+          "groundhog-expiry",
+          "groundhog-gdk-frame-tolerance",
+          "groundhog-icons",
+          "groundhog-identity",
+          "groundhog-inbox-setup",
+          "groundhog-issue-uploader",
+          "groundhog-link-policy",
+          "groundhog-media",
+          "groundhog-media-cache-binding",
+          "groundhog-media-purge",
+          "groundhog-message-reply",
+          "groundhog-mls-kp-lifecycle",
+          "groundhog-mls-kp-lifecycle-adopted",
+          "groundhog-multi-send",
+          "groundhog-net",
+          "groundhog-new-message",
+          "groundhog-nip29",
+          "groundhog-nip29-group-list",
+          "groundhog-nip29-service",
+          "groundhog-nip46-credentials-keyring",
+          "groundhog-nip46-credentials-list",
+          "groundhog-nip46-inbox-nak",
+          "groundhog-nip46-nak",
+          "groundhog-nip46-pair-dialog",
+          "groundhog-nip46-pair-nak",
+          "groundhog-nip46-session",
+          "groundhog-nip46-wire",
+          "groundhog-notifier",
+          "groundhog-notifier-gui",
+          "groundhog-onboarding",
+          "groundhog-outbox",
+          "groundhog-portable-singleton",
+          "groundhog-potfiles",
+          "groundhog-preferences",
+          "groundhog-privacy-e2e",
+          "groundhog-privacy-static",
+          "groundhog-privacy-summary",
+          "groundhog-profile-guard",
+          "groundhog-public-note-post",
+          "groundhog-reaction-send",
+          "groundhog-reactions",
+          "groundhog-relay",
+          "groundhog-relay-guard",
+          "groundhog-relay-publish",
+          "groundhog-relay-publish-wire",
+          "groundhog-relay-wire",
+          "groundhog-remote-feature-matrix",
+          "groundhog-requests",
+          "groundhog-requests-gui",
+          "groundhog-resource",
+          "groundhog-secret-service-sessions",
+          "groundhog-shell",
+          "groundhog-signer-nip46",
+          "groundhog-status-notifier",
+          "groundhog-store",
+          "groundhog-store-conversations",
+          "groundhog-store-key",
+          "groundhog-store-key-keyring",
+          "groundhog-store-sqlite",
+          "groundhog-tls-resumption",
+          "groundhog-two-instance",
+          "groundhog-update-handoff"
+        ],
+        "groundhog.voice": [
+          "groundhog-voice",
+          "groundhog-voice-ui"
+        ],
+        "libgo": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoChannelTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
+        ],
+        "libhanami": [
+          "test-hanami-blossom-batch",
+          "test-hanami-blossom-client",
+          "test-hanami-blossom-content-type",
+          "test-hanami-blossom-shim",
+          "test-hanami-blossom-shim-auto",
+          "test-hanami-bud02-auth",
+          "test-hanami-config",
+          "test-hanami-grasp",
+          "test-hanami-index",
+          "test-hanami-integration",
+          "test-hanami-nostr",
+          "test-hanami-odb-backend",
+          "test-hanami-refdb-backend",
+          "test-hanami-server-capability-probe-shim",
+          "test-hanami-transport",
+          "test-hanami-types"
+        ],
+        "libmarmot": [
+          "marmot_test_adopted",
+          "marmot_test_adopted_commits",
+          "marmot_test_app_data_update",
+          "marmot_test_commits",
+          "marmot_test_extension",
+          "marmot_test_interop",
+          "marmot_test_kp_lifecycle",
+          "marmot_test_kp_profile",
+          "marmot_test_large_commit_bound",
+          "marmot_test_media",
+          "marmot_test_mls_crypto",
+          "marmot_test_mls_framing",
+          "marmot_test_mls_group",
+          "marmot_test_mls_key_package",
+          "marmot_test_mls_key_schedule",
+          "marmot_test_mls_key_schedule_vectors",
+          "marmot_test_mls_tls",
+          "marmot_test_mls_tree",
+          "marmot_test_mls_tree_vectors",
+          "marmot_test_mls_welcome",
+          "marmot_test_protocol",
+          "marmot_test_ratchet_persist",
+          "marmot_test_rfc9420_vectors",
+          "marmot_test_storage",
+          "marmot_test_storage_contract",
+          "marmot_test_types"
+        ],
+        "libnostr": [
+          "libnostr_connection_teardown_stress",
+          "libnostr_core_audit",
+          "libnostr_crypto_audit",
+          "libnostr_event_validation",
+          "libnostr_filter_limit_zero",
+          "libnostr_misc_audit",
+          "libnostr_networking_audit",
+          "libnostr_parsing_audit",
+          "libnostr_reconnect_same_second",
+          "libnostr_relay_callback_lifetime",
+          "libnostr_relay_write_unsent",
+          "libnostr_store_txn_audit",
+          "libnostr_subscription_dispatch",
+          "test_relay_teardown_leaks"
+        ],
+        "marmot.gobject": [
+          "marmot_gobject_test"
+        ],
+        "nip04": [
+          "test_interop",
+          "test_nip04_error_uniformity",
+          "test_nip04_secure_roundtrip",
+          "test_nip04_strict",
+          "test_roundtrip"
+        ],
+        "nip05": [
+          "test_nip05_parse",
+          "test_nip05_resolve_json_errors",
+          "test_nip05_resolve_json_names",
+          "test_nip05_resolve_json_relays"
+        ],
+        "nip06": [
+          "test_nip06"
+        ],
+        "nip11": [
+          "test_nip11"
+        ],
+        "nip14": [
+          "test_nip14"
+        ],
+        "nip17": [
+          "test_nip17"
+        ],
+        "nip19": [
+          "test_nip19",
+          "test_nip19_tlv"
+        ],
+        "nip21": [
+          "test_nip21"
+        ],
+        "nip22": [
+          "test_nip22"
+        ],
+        "nip23": [
+          "test_nip23"
+        ],
+        "nip24": [
+          "test_nip24"
+        ],
+        "nip25": [
+          "test_nip25"
+        ],
+        "nip27": [
+          "test_nip27"
+        ],
+        "nip28": [
+          "test_nip28"
+        ],
+        "nip29": [
+          "test_nip29"
+        ],
+        "nip30": [
+          "test_nip30"
+        ],
+        "nip34": [
+          "test-nip34"
+        ],
+        "nip39": [
+          "test_nip39"
+        ],
+        "nip40": [
+          "test_nip40"
+        ],
+        "nip44": [
+          "test_nip44_convkey",
+          "test_nip44_roundtrip",
+          "test_nip44_vectors"
+        ],
+        "nip46": [
+          "test_nip46_async_api",
+          "test_nip46_bunker_connect_auth",
+          "test_nip46_bunker_nip44",
+          "test_nip46_bunker_reply",
+          "test_nip46_bunker_roundtrip",
+          "test_nip46_bunker_sign_event_acl_deny",
+          "test_nip46_bunker_sign_event_cb",
+          "test_nip46_bunker_sign_event_real",
+          "test_nip46_bunker_uri_issue",
+          "test_nip46_c1_hardening",
+          "test_nip46_caller_hardening",
+          "test_nip46_client_api",
+          "test_nip46_client_connect",
+          "test_nip46_client_connect_edge",
+          "test_nip46_e2e_mock",
+          "test_nip46_encryption_detection",
+          "test_nip46_envelope_build",
+          "test_nip46_glib_lifetime",
+          "test_nip46_msg",
+          "test_nip46_msg_comprehensive",
+          "test_nip46_nostrconnect_qr_login",
+          "test_nip46_pending_lifetime",
+          "test_nip46_relay_lifecycle",
+          "test_nip46_request_lifecycle",
+          "test_nip46_response_validation",
+          "test_nip46_rpc_flow_mock",
+          "test_nip46_session_management",
+          "test_nip46_signed_response_admission",
+          "test_nip46_transport_modes",
+          "test_nip46_uri",
+          "test_nip46_uri_comprehensive"
+        ],
+        "nip47": [
+          "test_nip47_nwc_crypto",
+          "test_nip47_nwc_envelope",
+          "test_nip47_nwc_info",
+          "test_nip47_nwc_session",
+          "test_nip47_nwc_uri",
+          "test_nip47_spec_source"
+        ],
+        "nip49": [
+          "test_nip49_negative",
+          "test_nip49_payload",
+          "test_nip49_roundtrip",
+          "test_nip49_spec_source",
+          "test_nip49_vectors"
+        ],
+        "nip51": [
+          "test_nip51"
+        ],
+        "nip55l": [
+          "nip55l_approval_service",
+          "nip55l_cache_concurrency",
+          "nip55l_dbus_contract",
+          "nip55l_dbus_contract_fail_teardown",
+          "nip55l_fake_secret_service_contract",
+          "nip55l_getrelays",
+          "nip55l_keyring_schema",
+          "nip55l_nip44_b64",
+          "nip55l_profile_guard",
+          "nip55l_selector_safety",
+          "nip55l_sign_event_json",
+          "nostrc-test-bus-selftest",
+          "signer/permissions",
+          "signer/trust-tiers"
+        ],
+        "nip57": [
+          "test_nip57"
+        ],
+        "nip58": [
+          "test_nip58"
+        ],
+        "nip59": [
+          "test_nip59",
+          "test_nip59_rng_failure"
+        ],
+        "nip5f": [
+          "test_nip5f_loopback",
+          "test_nip5f_negative_env",
+          "test_nip5f_tcp"
+        ],
+        "nip60": [
+          "test_nip60"
+        ],
+        "nip61": [
+          "test_nip61"
+        ],
+        "nip70": [
+          "test_nip70"
+        ],
+        "nip73": [
+          "test_nip73"
+        ],
+        "nip75": [
+          "test_nip75"
+        ],
+        "nip77": [
+          "test_ndb_empty",
+          "test_ndb_integration",
+          "test_ndb_ordering",
+          "test_ndb_perf",
+          "test_ndb_session_e2e",
+          "test_ndb_tie_break",
+          "test_neg_bound",
+          "test_neg_fingerprint",
+          "test_neg_message",
+          "test_neg_session",
+          "test_neg_session_caps",
+          "test_neg_session_need",
+          "test_neg_session_synth",
+          "test_neg_varint"
+        ],
+        "nip92": [
+          "test_nip92"
+        ],
+        "nip98": [
+          "test_nip98"
+        ],
+        "nip99": [
+          "test_nip99"
+        ],
+        "nip_cas0010": [
+          "test_otel_consumer",
+          "test_otel_encoding",
+          "test_otel_producer",
+          "test_otel_replay",
+          "test_otel_roundtrip"
+        ],
+        "nipb0": [
+          "test_nipb0"
+        ],
+        "nostr.gobject": [
+          "test_nostr_gobject_event",
+          "test_nostr_gobject_integ_event_flow",
+          "test_nostr_gobject_lifecycle_leaks",
+          "test_nostr_gobject_main_thread_latency",
+          "test_nostr_gobject_nip19",
+          "test_nostr_gobject_profile_provider_conflict_resolution",
+          "test_nostr_gobject_profile_provider_lru",
+          "test_nostr_gobject_profile_service_batching",
+          "test_nostr_gobject_relay_connect",
+          "test_nostr_gobject_relay_teardown",
+          "test_nostr_gobject_store_contract",
+          "test_nostr_gobject_subscription_eose_order"
+        ],
+        "nostr.gtk": [
+          "nostr_gtk_portable_media_lint",
+          "nostr_gtk_portable_media_lint_selftest",
+          "nostr_gtk_portable_potfiles",
+          "test_nostr_gtk_bind_latency_budget",
+          "test_nostr_gtk_bind_latency_perf",
+          "test_nostr_gtk_content_parser",
+          "test_nostr_gtk_markdown_pango",
+          "test_nostr_gtk_media",
+          "test_nostr_gtk_nip34_issue_model",
+          "test_nostr_gtk_nip34_issue_view",
+          "test_nostr_gtk_og_metadata",
+          "test_nostr_gtk_og_preview_card",
+          "test_nostr_gtk_portable",
+          "test_nostr_gtk_portable_i18n",
+          "test_nostr_gtk_reference_card",
+          "test_nostr_gtk_standalone_core"
+        ],
+        "packaging.groundhog,version.contract": [
+          "groundhog-packaging-version"
+        ],
+        "schema": [
+          "test_schema"
+        ],
+        "shared.tests": [
+          "GoChannelIncremental",
+          "concurrency_channels",
+          "concurrency_subscription_shutdown",
+          "concurrency_subscription_shutdown_asan",
+          "glib_async_integration",
+          "profile_fetch_simulation",
+          "profile_fetch_stress",
+          "test_connection_idle_writable",
+          "test_connection_recv_drain",
+          "test_connection_shutdown_order",
+          "test_connection_tls_no_resumption",
+          "test_connection_writable_rearm",
+          "test_envelope",
+          "test_envelope_fallback",
+          "test_envelope_parse",
+          "test_event_canonical",
+          "test_event_priority",
+          "test_filters_move_semantics",
+          "test_fuzz_envelope_roundtrip",
+          "test_fuzz_filter_parse",
+          "test_json_envelope",
+          "test_json_event",
+          "test_json_event_fuzzlite",
+          "test_json_filter",
+          "test_json_filter_fuzzlite",
+          "test_json_filter_robust",
+          "test_json_filter_tags",
+          "test_json_int_array",
+          "test_json_parse",
+          "test_json_raw",
+          "test_nip04_aead",
+          "test_nip86_policy",
+          "test_nostr",
+          "test_pool_redial",
+          "test_relay",
+          "test_relay_shutdown",
+          "test_relay_unsubscribe",
+          "test_subscription_backpressure",
+          "test_subscription_backpressure_long",
+          "test_subscription_blocking_depth",
+          "test_subscription_lifecycle"
+        ],
+        "testing.framework": [
+          "MockRelayIntegration",
+          "MockRelayServerBasic",
+          "MockRelayUnit",
+          "Nip46MockRelay",
+          "Nip46QRSocket",
+          "SignerIntegration",
+          "TestHarnessExample"
+        ]
+      },
+      "execution": "configure_and_show_only; no test execution or post-build header audit",
+      "selected_membership": {
+        "groundhog-identity": {
+          "check": "sanitizer.groundhog_identity",
+          "targets": [
+            "test-groundhog-identity"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/identity/test_identity.c"
+          ]
+        },
+        "groundhog-account": {
+          "check": "sanitizer.groundhog_account",
+          "targets": [
+            "test-groundhog-account"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-nip17-inbox.c",
+            "gnome/groundhog/tests/app/test_account_controller.c"
+          ]
+        },
+        "groundhog-account-relays": {
+          "check": "sanitizer.groundhog_account_relays",
+          "targets": [
+            "test-groundhog-account-relays"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_account_relays.c"
+          ]
+        },
+        "groundhog-dm-send": {
+          "check": "sanitizer.groundhog_dm_send",
+          "targets": [
+            "test-groundhog-dm-send"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/tests/app/test_dm_send.c"
+          ]
+        },
+        "groundhog-relay": {
+          "check": "sanitizer.groundhog_relay",
+          "targets": [
+            "test-groundhog-relay"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/relay/test_relay_scope.c"
+          ]
+        },
+        "groundhog-relay-wire": {
+          "check": "sanitizer.groundhog_relay_wire",
+          "targets": [
+            "test-groundhog-relay-wire"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/net/socks5-fixture.c",
+            "gnome/groundhog/tests/relay/test_relay_wire.c"
+          ]
+        },
+        "groundhog-relay-publish": {
+          "check": "sanitizer.groundhog_relay_publish",
+          "targets": [
+            "test-groundhog-relay-publish"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/relay/test_relay_publish.c"
+          ]
+        },
+        "groundhog-relay-publish-wire": {
+          "check": "sanitizer.groundhog_relay_publish_wire",
+          "targets": [
+            "test-groundhog-relay-publish-wire"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/net/socks5-fixture.c",
+            "gnome/groundhog/tests/relay/test_relay_publish_wire.c"
+          ]
+        },
+        "groundhog-nip29": {
+          "check": "sanitizer.groundhog_nip29",
+          "targets": [
+            "test-groundhog-nip29"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/nip29/test_nip29_group.c"
+          ]
+        },
+        "groundhog-conversations": {
+          "check": "sanitizer.groundhog_conversations",
+          "targets": [
+            "test-groundhog-conversations"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_conversation_store.c"
+          ]
+        },
+        "groundhog-dm-inbox": {
+          "check": "sanitizer.groundhog_dm_inbox",
+          "targets": [
+            "test-groundhog-dm-inbox"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_dm_inbox.c"
+          ]
+        },
+        "groundhog-store-key": {
+          "check": "sanitizer.groundhog_store_key",
+          "targets": [
+            "test-groundhog-store-key"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/fake-secret.c",
+            "gnome/groundhog/tests/store/test_store_key.c"
+          ]
+        },
+        "groundhog-store-key-keyring": {
+          "check": "sanitizer.groundhog_store_key_keyring",
+          "targets": [
+            "test-groundhog-store-key-keyring"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/fake-secret.c",
+            "gnome/groundhog/tests/store/test_store_key_keyring.c"
+          ]
+        },
+        "groundhog-secret-service-sessions": {
+          "check": "sanitizer.groundhog_secret_service_sessions",
+          "targets": [
+            "test-groundhog-secret-service-sessions"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/fake-secret.c",
+            "gnome/groundhog/tests/store/test_secret_service_sessions.c"
+          ]
+        },
+        "groundhog-nip46-credentials-keyring": {
+          "check": "sanitizer.groundhog_nip46_credentials_keyring",
+          "targets": [
+            "test-groundhog-nip46-credentials-keyring"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/test_nip46_credentials_keyring.c"
+          ]
+        },
+        "groundhog-store": {
+          "check": "sanitizer.groundhog_store",
+          "targets": [
+            "test-groundhog-store"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/crash-harness.c",
+            "gnome/groundhog/tests/store/test_store.c"
+          ]
+        },
+        "groundhog-store-sqlite": {
+          "check": "sanitizer.groundhog_store_sqlite",
+          "targets": [
+            "test-groundhog-store-sqlite"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/store/test_store.c"
+          ]
+        },
+        "groundhog-store-marmot": {
+          "check": "sanitizer.groundhog_store_marmot",
+          "targets": [
+            "test-groundhog-store-marmot"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.mls_store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c",
+            "gnome/groundhog/tests/store/crash-harness.c",
+            "gnome/groundhog/tests/store/test_store_marmot.c"
+          ]
+        },
+        "groundhog-store-conversations": {
+          "check": "sanitizer.groundhog_store_conversations",
+          "targets": [
+            "test-groundhog-store-conversations"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-reactions.c",
+            "gnome/groundhog/tests/store/crash-harness.c",
+            "gnome/groundhog/tests/store/test_store_conversations.c"
+          ]
+        },
+        "groundhog-outbox": {
+          "check": "sanitizer.groundhog_outbox",
+          "targets": [
+            "test-groundhog-outbox"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/tests/app/test_outbox.c",
+            "gnome/groundhog/tests/store/crash-harness.c"
+          ]
+        },
+        "groundhog-account-store": {
+          "check": "sanitizer.groundhog_account_store",
+          "targets": [
+            "test-groundhog-account-store"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-account-ui.c",
+            "gnome/groundhog/src/app/gh-app-outbox.c",
+            "gnome/groundhog/src/app/gh-contact-directory.c",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/app/gh-send-ui.c",
+            "gnome/groundhog/src/store/gh-store-directory.c",
+            "gnome/groundhog/src/ui/gh-store-status.c",
+            "gnome/groundhog/tests/app/account-store-outbox.c",
+            "gnome/groundhog/tests/app/test_account_store.c",
+            "gnome/groundhog/tests/store/fake-secret.c"
+          ]
+        },
+        "groundhog-link-policy": {
+          "check": "sanitizer.groundhog_link_policy",
+          "targets": [
+            "test-groundhog-link-policy"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/ui/test_link_policy.c"
+          ]
+        },
+        "groundhog-background": {
+          "check": "sanitizer.groundhog_background",
+          "targets": [
+            "groundhog",
+            "groundhog-test-schemas",
+            "test-groundhog-background"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "gnome.common",
+            "groundhog.poll_ui",
+            "groundhog.resources",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/common/gn-session-bus-probe.c",
+            "gnome/common/gn-status-notifier.c",
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-account-ui.c",
+            "gnome/groundhog/src/app/gh-app-outbox.c",
+            "gnome/groundhog/src/app/gh-app-services.c",
+            "gnome/groundhog/src/app/gh-attachment-ui.c",
+            "gnome/groundhog/src/app/gh-blocked-conversations.c",
+            "gnome/groundhog/src/app/gh-contact-directory.c",
+            "gnome/groundhog/src/app/gh-contact-titles.c",
+            "gnome/groundhog/src/app/gh-conversation-actions.c",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-mls-attachment-ui.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/app/gh-send-ui.c",
+            "gnome/groundhog/src/app/gh-tray.c",
+            "gnome/groundhog/src/app/gh-update-handoff.c",
+            "gnome/groundhog/src/main.c",
+            "gnome/groundhog/src/store/gh-store-contacts.c",
+            "gnome/groundhog/src/store/gh-store-directory.c",
+            "gnome/groundhog/src/ui/gh-conversation-info-dialog.c",
+            "gnome/groundhog/src/ui/gh-conversation-menu.c",
+            "gnome/groundhog/src/ui/gh-group-ui.c",
+            "gnome/groundhog/src/ui/gh-mls-ui.c",
+            "gnome/groundhog/src/ui/gh-poll-ui.c",
+            "gnome/groundhog/src/ui/gh-store-status.c",
+            "gnome/groundhog/src/ui/gh-voice-bubble.c",
+            "gnome/groundhog/tests/app/test_background.c",
+            "gnome/groundhog/tests/store/fake-secret.c"
+          ]
+        },
+        "groundhog-notifier": {
+          "check": "sanitizer.groundhog_notifier",
+          "targets": [
+            "test-groundhog-notifier"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/fake-gtk-notifications.c",
+            "gnome/groundhog/tests/app/test_notifier.c"
+          ]
+        },
+        "groundhog-inbox-setup": {
+          "check": "sanitizer.groundhog_inbox_setup",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-inbox-setup"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/data/relay-suggestions.json",
+            "gnome/groundhog/tests/app/test_inbox_setup.c"
+          ]
+        },
+        "groundhog-expiry": {
+          "check": "sanitizer.groundhog_expiry",
+          "targets": [
+            "test-groundhog-expiry"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/tests/app/expiry-send.c",
+            "gnome/groundhog/tests/app/test_expiry.c",
+            "gnome/groundhog/tests/store/crash-harness.c"
+          ]
+        },
+        "groundhog-auth-policy": {
+          "check": "sanitizer.groundhog_auth_policy",
+          "targets": [
+            "test-groundhog-auth-policy"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_auth_policy.c"
+          ]
+        },
+        "groundhog-contact-directory": {
+          "check": "sanitizer.groundhog_contact_directory",
+          "targets": [
+            "test-groundhog-contact-directory"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-contact-directory.c",
+            "gnome/groundhog/src/app/gh-contact-titles.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/store/gh-store-directory.c",
+            "gnome/groundhog/tests/app/test_contact_directory.c"
+          ]
+        },
+        "groundhog-reactions": {
+          "check": "sanitizer.groundhog_reactions",
+          "targets": [
+            "test-groundhog-reactions"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_reactions.c"
+          ]
+        },
+        "groundhog-reaction-send": {
+          "check": "sanitizer.groundhog_reaction_send",
+          "targets": [
+            "test-groundhog-reaction-send"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/tests/app/test_reaction_send.c"
+          ]
+        },
+        "groundhog-privacy-e2e": {
+          "check": "sanitizer.groundhog_privacy_e2e",
+          "targets": [
+            "test-groundhog-privacy-e2e"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-app-outbox.c",
+            "gnome/groundhog/src/app/gh-contact-directory.c",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/store/gh-store-directory.c",
+            "gnome/groundhog/tests/app/fake-gtk-notifications.c",
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c",
+            "gnome/groundhog/tests/privacy/test_privacy_e2e.c",
+            "gnome/groundhog/tests/store/fake-secret.c"
+          ]
+        },
+        "groundhog-new-message": {
+          "check": "sanitizer.groundhog_new_message",
+          "targets": [
+            "test-groundhog-new-message"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/ui/test_new_message.c"
+          ]
+        },
+        "groundhog-requests": {
+          "check": "sanitizer.groundhog_requests",
+          "targets": [
+            "test-groundhog-requests"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-contact-directory.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/store/gh-store-directory.c",
+            "gnome/groundhog/tests/ui/test_requests.c"
+          ]
+        },
+        "groundhog-privacy-summary": {
+          "check": "sanitizer.groundhog_privacy_summary",
+          "targets": [
+            "test-groundhog-privacy-summary"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/ui/snapshots",
+            "gnome/groundhog/tests/ui/test_privacy_summary.c"
+          ]
+        },
+        "groundhog-conversation-info": {
+          "check": "sanitizer.groundhog_conversation_info",
+          "targets": [
+            "test-groundhog-conversation-info"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-conversation-actions.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/store/gh-store-contacts.c",
+            "gnome/groundhog/src/ui/gh-conversation-info-dialog.c",
+            "gnome/groundhog/tests/app/fake-gtk-notifications.c",
+            "gnome/groundhog/tests/ui/test_conversation_info.c"
+          ]
+        },
+        "groundhog-nip29-service": {
+          "check": "sanitizer.groundhog_nip29_service",
+          "targets": [
+            "test-groundhog-nip29-service"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.group_ui",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/nip29/gh-nip29-group-list.c",
+            "gnome/groundhog/src/nip29/gh-nip29-outbox.c",
+            "gnome/groundhog/src/nip29/gh-nip29-service.c",
+            "gnome/groundhog/src/store/gh-store-nip29.c",
+            "gnome/groundhog/src/store/gh-store-reactions.c",
+            "gnome/groundhog/tests/nip29/test_nip29_service.c"
+          ]
+        },
+        "groundhog-mls-service": {
+          "check": "sanitizer.groundhog_mls_service",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-mls-service"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.mls_service",
+            "groundhog.mls_store",
+            "groundhog.resources",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/mls/gh-mls-imeta.c",
+            "gnome/groundhog/src/mls/gh-mls-key-packages.c",
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/src/mls/gh-mls-service.c",
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/src/store/gh-store-mls-identity.c",
+            "gnome/groundhog/src/store/gh-store-mls.c",
+            "gnome/groundhog/src/store/gh-store-reactions.c",
+            "gnome/groundhog/tests/mls/test_mls_service.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c"
+          ]
+        },
+        "groundhog-privacy-mls": {
+          "check": "sanitizer.groundhog_privacy_mls",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-privacy-mls"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.mls_service",
+            "groundhog.mls_store",
+            "groundhog.resources",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/mls/gh-mls-imeta.c",
+            "gnome/groundhog/src/mls/gh-mls-key-packages.c",
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/src/mls/gh-mls-service.c",
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/src/store/gh-store-mls-identity.c",
+            "gnome/groundhog/src/store/gh-store-mls.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c",
+            "gnome/groundhog/tests/privacy/test_privacy_mls.c"
+          ]
+        },
+        "groundhog-mls-kp-lifecycle": {
+          "check": "sanitizer.groundhog_mls_kp_lifecycle",
+          "targets": [
+            "test-groundhog-mls-kp-lifecycle"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.mls_service",
+            "groundhog.mls_store",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/mls/gh-mls-imeta.c",
+            "gnome/groundhog/src/mls/gh-mls-key-packages.c",
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/src/mls/gh-mls-service.c",
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/src/store/gh-store-mls-identity.c",
+            "gnome/groundhog/src/store/gh-store-mls.c",
+            "gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c"
+          ]
+        },
+        "groundhog-mls-kp-lifecycle-adopted": {
+          "check": "sanitizer.groundhog_mls_kp_lifecycle_adopted",
+          "targets": [
+            "test-groundhog-mls-kp-lifecycle-adopted"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.mls_service",
+            "groundhog.mls_store",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/mls/gh-mls-imeta.c",
+            "gnome/groundhog/src/mls/gh-mls-key-packages.c",
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/src/mls/gh-mls-service.c",
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/src/store/gh-store-mls-identity.c",
+            "gnome/groundhog/src/store/gh-store-mls.c",
+            "gnome/groundhog/tests/mls/test_mls_kp_lifecycle.c"
+          ]
+        },
+        "groundhog-net": {
+          "check": "sanitizer.groundhog_net",
+          "targets": [
+            "test-groundhog-net"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/net/socks5-fixture.c",
+            "gnome/groundhog/tests/net/test_relay_soup.c"
+          ]
+        },
+        "groundhog-tls-resumption": {
+          "check": "sanitizer.groundhog_tls_resumption",
+          "targets": [
+            "test-groundhog-tls-resumption"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/net/socks5-fixture.c",
+            "gnome/groundhog/tests/net/test_tls_resumption.c"
+          ]
+        },
+        "groundhog-group-ui": {
+          "check": "sanitizer.groundhog_group_ui",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-group-ui"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.group_ui",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/ui/gh-group-ui.c",
+            "gnome/groundhog/tests/ui/group-send-stub.c",
+            "gnome/groundhog/tests/ui/test_group_ui.c"
+          ]
+        },
+        "groundhog-mls-ui": {
+          "check": "sanitizer.groundhog_mls_ui",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-mls-ui"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.mls_ui",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/ui/gh-group-ui.c",
+            "gnome/groundhog/src/ui/gh-mls-ui.c",
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/ui/group-send-stub.c",
+            "gnome/groundhog/tests/ui/test_mls_ui.c"
+          ]
+        },
+        "groundhog-conversation-menu": {
+          "check": "sanitizer.groundhog_conversation_menu",
+          "targets": [
+            "test-groundhog-conversation-menu"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-blocked-conversations.c",
+            "gnome/groundhog/src/app/gh-conversation-actions.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/store/gh-store-contacts.c",
+            "gnome/groundhog/src/ui/gh-conversation-info-dialog.c",
+            "gnome/groundhog/src/ui/gh-conversation-menu.c",
+            "gnome/groundhog/tests/ui/test_conversation_menu.c"
+          ]
+        },
+        "groundhog-multi-send": {
+          "check": "sanitizer.groundhog_multi_send",
+          "targets": [
+            "test-groundhog-multi-send"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.media",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-expiry.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-message-status.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/app/gh-nip17-file.c",
+            "gnome/groundhog/src/app/gh-outbox.c",
+            "gnome/groundhog/src/media/gh-attachment.c",
+            "gnome/groundhog/src/media/gh-blossom-client.c",
+            "gnome/groundhog/src/media/gh-metadata-strip.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-media.c",
+            "gnome/groundhog/tests/app/test_multi_send.c",
+            "gnome/groundhog/tests/media/blossom-fixture.c"
+          ]
+        },
+        "groundhog-media": {
+          "check": "sanitizer.groundhog_media",
+          "targets": [
+            "test-groundhog-media"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/test_media.c"
+          ]
+        },
+        "groundhog-blossom": {
+          "check": "sanitizer.groundhog_blossom",
+          "targets": [
+            "test-groundhog-blossom"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/media/test_blossom.c",
+            "gnome/groundhog/tests/net/socks5-fixture.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c"
+          ]
+        },
+        "groundhog-media-purge": {
+          "check": "sanitizer.groundhog_media_purge",
+          "targets": [
+            "test-groundhog-media-purge"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/test_media_purge.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c"
+          ]
+        },
+        "groundhog-relay-guard": {
+          "check": "sanitizer.groundhog_relay_guard",
+          "targets": [
+            "test-groundhog-relay-guard"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/relay/test_relay_guard.c"
+          ]
+        },
+        "groundhog-media-cache-binding": {
+          "check": "sanitizer.groundhog_media_cache_binding",
+          "targets": [
+            "test-groundhog-media-cache-binding"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/media/test_cache_binding.c",
+            "gnome/groundhog/tests/net/socks5-fixture.c"
+          ]
+        },
+        "groundhog-attachments": {
+          "check": "sanitizer.groundhog_attachments",
+          "targets": [
+            "test-groundhog-attachments"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/media/test_attachments.c"
+          ]
+        },
+        "groundhog-mls-media": {
+          "check": "sanitizer.groundhog_mls_media",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-mls-media"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.mls_media",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/mls/test_mls_media.c"
+          ]
+        },
+        "groundhog-mls-files": {
+          "check": "sanitizer.groundhog_mls_files",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-mls-files"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.conversations",
+            "groundhog.media",
+            "groundhog.mls_files",
+            "groundhog.mls_media",
+            "groundhog.mls_service",
+            "groundhog.mls_store",
+            "groundhog.resources",
+            "groundhog.store",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/src/app/gh-dm-send.c",
+            "gnome/groundhog/src/app/gh-inbox-lookup.c",
+            "gnome/groundhog/src/app/gh-inbox-resolver.c",
+            "gnome/groundhog/src/app/gh-nip17-envelope.c",
+            "gnome/groundhog/src/media/gh-attachment.c",
+            "gnome/groundhog/src/media/gh-attachments.c",
+            "gnome/groundhog/src/media/gh-blossom-client.c",
+            "gnome/groundhog/src/media/gh-metadata-strip.c",
+            "gnome/groundhog/src/mls/gh-mls-attachments.c",
+            "gnome/groundhog/src/mls/gh-mls-imeta.c",
+            "gnome/groundhog/src/mls/gh-mls-key-packages.c",
+            "gnome/groundhog/src/mls/gh-mls-media.c",
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/src/mls/gh-mls-service.c",
+            "gnome/groundhog/src/store/gh-mls-commits.c",
+            "gnome/groundhog/src/store/gh-store-blossom.c",
+            "gnome/groundhog/src/store/gh-store-conversations.c",
+            "gnome/groundhog/src/store/gh-store-marmot.c",
+            "gnome/groundhog/src/store/gh-store-media.c",
+            "gnome/groundhog/src/store/gh-store-mls-identity.c",
+            "gnome/groundhog/src/store/gh-store-mls.c",
+            "gnome/groundhog/tests/media/blossom-fixture.c",
+            "gnome/groundhog/tests/mls/test_mls_files.c",
+            "gnome/groundhog/tests/net/socks5-fixture.c"
+          ]
+        },
+        "groundhog-mls-poll": {
+          "check": "sanitizer.groundhog_mls_poll",
+          "targets": [
+            "test-groundhog-mls-poll"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.mls_service",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/src/mls/gh-mls-poll.c",
+            "gnome/groundhog/tests/mls/test_mls_poll.c"
+          ]
+        },
+        "groundhog-voice": {
+          "check": "sanitizer.groundhog_voice",
+          "targets": [
+            "test-groundhog-voice"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified",
+            "groundhog.voice"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/media/fixtures/voice",
+            "gnome/groundhog/tests/media/test_voice.c",
+            "gnome/groundhog/tests/privacy/canary-scan.c"
+          ]
+        },
+        "groundhog-icons": {
+          "check": "sanitizer.groundhog_icons",
+          "targets": [
+            "test-groundhog-icons"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/ui",
+            "gnome/groundhog/src/ui",
+            "gnome/groundhog/tests/ui/test_icons.c"
+          ]
+        },
+        "groundhog-message-reply": {
+          "check": "sanitizer.groundhog_message_reply",
+          "targets": [
+            "test-groundhog-message-reply"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/tests/app/test_message_reply.c"
+          ]
+        },
+        "groundhog-two-instance-acceptance": {
+          "check": "sanitizer.groundhog_two_instance_acceptance",
+          "targets": [
+            "groundhog-test-schemas",
+            "test-groundhog-two-instance-acceptance"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "groundhog.mls_service",
+            "groundhog.resources",
+            "groundhog.unclassified"
+          ],
+          "primary_source_inputs": [
+            "gnome/groundhog/data/org.nostr.Groundhog.gschema.xml",
+            "gnome/groundhog/tests/app/test_two_instance_acceptance.c"
+          ]
+        },
+        "nostrc-test-bus-selftest": {
+          "check": "sanitizer.nostrc_test_bus_selftest",
+          "targets": [
+            "nostrc-test-bus-selftest"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "nip55l",
+            "shared.tests"
+          ],
+          "primary_source_inputs": [
+            "tests/common/nostrc-test-bus-selftest.c"
+          ]
+        },
+        "test_relay_teardown_leaks": {
+          "check": "sanitizer.test_relay_teardown_leaks",
+          "targets": [
+            "test_relay_teardown_leaks"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "libnostr"
+          ],
+          "primary_source_inputs": [
+            "libnostr/tests/test_relay_teardown_leaks.c"
+          ]
+        },
+        "test_connection_recv_drain": {
+          "check": "sanitizer.test_connection_recv_drain",
+          "targets": [
+            "test_connection_recv_drain"
+          ],
+          "nodes": [
+            "execution.groundhog",
+            "shared.tests"
+          ],
+          "primary_source_inputs": [
+            "tests/test_connection_recv_drain.c"
+          ]
+        }
+      }
+    }
+  }
+}
