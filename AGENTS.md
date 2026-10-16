@@ -46,7 +46,9 @@ unwrapped commands and actual shared Docker phases, not positive wrapped executi
 All ten authored profiles have independent shadow worker routes (`.21` bounded
 scope closed), not hosted acceptance. `.24` remains open for the original
 full-gate fixture failure/lost trace; a later diagnostic pass is not a causal fix.
-Do not claim broad review-clean or complete acceptance. The standalone
+Forensics `967172f77` now preserves failed private fixtures/logs plus command,
+line, phase and call stack; success cleanup is unchanged. The original cause
+remains unknown. Do not claim broad review-clean or complete acceptance. The standalone
 MDK helper always reports `cleanup_complete=false`: otherwise successful command
 phases refuse lifecycle success with nonzero `cleanup_unverified` (scoped cleanup
 errors remain explicit). Historical MDK smoke is command/CTest evidence only, not

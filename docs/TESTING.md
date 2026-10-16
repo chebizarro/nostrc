@@ -185,8 +185,18 @@ above retain their original source identities.
 draft left a stubborn wrapped CTest child alive; it is archived outside the repo,
 **not shipped**, not a drain/custody success. `.24` tracks the original full-gate
 fixture invocation's failure/lost trace: a later diagnostic pass is not a causal
-fix. B is improving failure forensics only. Parent's final **307-test combined
-suite is running/pending**; no outcome or final full-slice acceptance is assumed.
+fix; the original cause remains unknown. Forensics `967172f77` preserves failed
+private fixtures/logs plus command/line/phase/call stack; success cleanup is
+unchanged. Four injected failures retained negative exits **1/1/37/1**; B's fresh
+full-gate fixture passed, not a causal resolution of the original failure.
+
+Parent final combined suite at `2d64a7ac22bcc08018d4ffdec91fee800f54df6f`:
+**307/307 passed, 0 skips, 125.303s**, `/tmp/nostrc-phase-final-selection.log`.
+Subsequent integration `97e393cba6c8aa3fb3bf076b3862a39482f0e656` adds only
+documentation/failure forensics; final six-shell/four-static/actionlint/whitespace
+gates at that source are **running/pending**, not assumed passed. Earlier 306-test
+native and production Linux proofs above remain source-specific; no full wrapped,
+MDK, enforcement or W11 acceptance follows.
 
 Fresh native root configure/all-default-target **build only** at `7fdadd251`
 passed (CMake 4.3.2/Ninja 1.13.2/AppleClang 21, arm64). Logs/hashes and safety
