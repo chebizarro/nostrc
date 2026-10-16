@@ -91,6 +91,98 @@ sys.exit(19 if os.environ.get('FIXTURE_MODE') == 'fail' else 0)
         del receipt['contained_lifecycle']
         self.assertFalse(selection.aggregate(self.policy, self.plan, [receipt], complete=False)['passed'])
 
+    def test_late_escaped_writer_overwrite_invalidates_final_evidence(self):
+        self.late_evidence_mutation('overwrite')
+
+    def test_late_escaped_writer_deletion_invalidates_final_evidence(self):
+        self.late_evidence_mutation('delete')
+
+    def late_evidence_mutation(self, mode):
+        # This negative fixture holds process exit, not sealing/finalization,
+        # until the real escaped writer acts. No scheduler race or sleep.
+        runner = self.source / 'scripts/contained-runner.py'
+        runner.write_text(runner.read_text().replace("if __name__ == '__main__':", '''original_main = main
+
+def main():
+    code = original_main()
+    import ctypes, select
+    libc = ctypes.CDLL(None, use_errno=True)
+    fd = libc.inotify_init1(0)
+    assert fd >= 0 and libc.inotify_add_watch(fd, b'/work', 0x100 | 0x80) >= 0
+    while not Path('/work/tampered.json').exists():
+        assert select.select([fd], [], [], 30)[0], 'late writer did not act'
+        os.read(fd, 65536)
+    os.close(fd)
+    return code
+
+if __name__ == '__main__':'''))
+        (self.source / 'app/late.py').write_text('''import ctypes,json,os,pathlib,select,signal,sys
+root=pathlib.Path('/work')
+signal.signal(signal.SIGTERM,signal.SIG_IGN)
+libc=ctypes.CDLL(None,use_errno=True)
+fd=libc.inotify_init1(0)
+assert fd>=0 and libc.inotify_add_watch(fd,b'/work',0x100|0x80)>=0
+os.write(int(sys.argv[1]),b'ready');os.close(int(sys.argv[1]))
+while not (root/'backend.json').exists():
+ assert select.select([fd],[],[],30)[0]
+ os.read(fd,65536)
+os.close(fd)
+artifacts=list(root.glob('execution/**/command-evidence/actual/proof.txt'))
+logs=list(root.glob('execution/**/command-actual.log'))
+assert artifacts and logs
+for path in artifacts:
+ if sys.argv[2]=='delete':path.unlink()
+ else:path.write_bytes(b'late artifact\\xff\\n')
+if sys.argv[2]=='overwrite':
+ for path in logs:path.write_bytes(b'late log\\xff\\n')
+(root/'tampered.json').write_text(json.dumps({'mode':sys.argv[2], 'pid':os.getpid(),'pgid':os.getpgrp(),'sid':os.getsid(0)}))
+signal.pause()
+''')
+        (self.source / 'app/check.py').write_text('''import os,pathlib,subprocess,sys
+assert os.environ['DISPLAY'] and os.environ['DBUS_SESSION_BUS_ADDRESS']
+read,write=os.pipe()
+subprocess.Popen([sys.executable,str(pathlib.Path(__file__).with_name('late.py')),str(write),sys.argv[2]],
+ pass_fds=(write,),start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+os.close(write);assert os.read(read,5)==b'ready';os.close(read)
+pathlib.Path(sys.argv[1]).write_text('actual command')
+os.write(1,b'engine ready \\xff\\n')
+''')
+        self.policy['checks']['actual']['runtime_inputs'].append('{source}/app/late.py')
+        self.policy['checks']['actual']['command'].append(mode)
+        (self.source / 'tests/selection/inventory.json').write_text(json.dumps(self.policy))
+        self.git('add', '.')
+        self.git('-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'real late evidence ' + mode)
+        sha = self.git('rev-parse', 'HEAD').decode().strip()
+        self.plan = selection.make_plan(self.policy, [], head=sha, mode='broad', profiles=['contained.command'])
+        self.plan_path.write_text(json.dumps(self.plan))
+        process = subprocess.run(self.command(), capture_output=True, timeout=120)
+        self.assertNotEqual(process.returncode, 0, (process.stdout + process.stderr).decode(errors='replace'))
+        receipt_path = Path(process.stdout.decode().splitlines()[-1])
+        receipt = json.loads(receipt_path.read_text())
+        work = receipt_path.parent / 'work'
+        actor = json.loads((work / 'tampered.json').read_text())
+        self.assertEqual(actor['pid'], actor['pgid'])
+        self.assertEqual(actor['pid'], actor['sid'])
+        self.assertEqual(actor['mode'], mode)
+        self.assertFalse(receipt['diagnostic_eligible'])
+        self.assertFalse(receipt['complete_gate_eligible'])
+        self.assertEqual(receipt['job_conclusion'], 'failure')
+        owner = receipt['contained_lifecycle']['receipt']
+        self.assertTrue(owner['cleanup_complete'], owner)
+        self.assertEqual(owner['status'], 'succeeded')
+        final = receipt['contained_lifecycle']['retained_evidence']
+        self.assertEqual(final['status'], 'failed')
+        self.assertTrue(any(error['reason'] == ('missing' if mode == 'delete' else 'changed') for error in final['errors']))
+        command = receipt['backend_receipt']['checks']['actual']
+        self.assertEqual(command['outcome'], 'passed')
+        log = work / Path(command['log']).relative_to('/work')
+        if mode == 'overwrite':
+            self.assertEqual(log.read_bytes(), b'late log\xff\n')
+            self.assertNotEqual(selection.hashlib.sha256(log.read_bytes()).hexdigest(), command['log_sha256'])
+        else:
+            self.assertIn(b'engine ready \xff\n', log.read_bytes())
+        self.assertFalse(selection.aggregate(self.policy, self.plan, [receipt], complete=False)['passed'])
+
     def mode_plan(self, mode):
         self.policy['checks']['actual']['environment'] = {'FIXTURE_MODE': mode}
         (self.source / 'tests/selection/inventory.json').write_text(json.dumps(self.policy))

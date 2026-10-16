@@ -21,6 +21,35 @@ class ContainedCustodyContract(unittest.TestCase):
         self.root = Path(temporary.name)
         self.owner = ContainerOwner(self.root / 'owner')
 
+    def test_real_git_housekeeping_finishes_before_controlled_helpers_return(self):
+        import test_selection as selection
+        import test_selection_realization as realization
+        spec = importlib.util.spec_from_file_location('contained_git_foreground',
+            Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')
+        gate = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        for label, invoke in (('selection', selection.git), ('realization', realization._git), ('contained', gate.git)):
+            with self.subTest(helper=label):
+                root = self.root / label
+                root.mkdir()
+                trace = self.root / (label + '-trace.jsonl')
+                with patch.dict(os.environ, {'GIT_TRACE2_EVENT': str(trace)}):
+                    invoke(root, 'init', '-q')
+                    (root / 'file').write_text('actual Git fixture')
+                    invoke(root, 'add', '.')
+                    invoke(root, '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                           '-c', 'core.hooksPath=/dev/null', '-c', 'gc.auto=1', 'commit', '-qm', 'foreground proof')
+                events = [json.loads(line) for line in trace.read_text().splitlines()]
+                commit = next(e for e in events if e.get('event') == 'cmd_name' and e.get('name') == 'commit')['sid']
+                exit_index = next(i for i, e in enumerate(events) if e.get('event') == 'exit' and e.get('sid') == commit)
+                children = [e for e in events if e.get('event') == 'child_start' and e['sid'].startswith(commit)]
+                self.assertTrue(children, events)
+                self.assertTrue(all('--detach' not in e.get('argv', []) for e in children), children)
+                for i, event in enumerate(events):
+                    if event.get('event') == 'cmd_name' and event['sid'].startswith(commit + '/'):
+                        self.assertTrue(any(e.get('event') == 'exit' and e.get('sid') == event['sid']
+                                            for e in events[:exit_index]), event)
+
     def test_snapshot_requires_and_verifies_exact_gitlink_object_sources(self):
         spec = importlib.util.spec_from_file_location('contained_gate_contract',
             Path(__file__).resolve().parents[2] / 'scripts/contained-gate.py')
@@ -128,6 +157,47 @@ class ContainedCustodyContract(unittest.TestCase):
         context.control = {'profile': {'execution_domain': 'prepared_peer_linux_v1'}}
         with self.assertRaisesRegex(CustodyError, 'audit profile differs'):
             context.audit_inputs({'profile': {}})
+
+    def test_final_retained_bytes_membership_and_original_claims_are_not_refreshed(self):
+        from test_selection_custody import retained_files, attest_retained_evidence, digest, file_hash
+        (self.root / 'build').mkdir()
+        (self.root / 'execution').mkdir()
+        artifact = self.root / 'build/proof.txt'
+        log = self.root / 'execution/command.log'
+        artifact.write_bytes(b'original')
+        log.write_bytes(b'raw\xff\n')
+        result = {'checks': {'actual': {'log': '/work/execution/command.log', 'log_sha256': file_hash(log),
+            'artifacts': {'proof': {'path': '/work/build/proof.txt', 'sha256': file_hash(artifact)}}}}}
+        sealed = retained_files(self.root)
+        state = {'retained_evidence': sealed, 'retained_evidence_hash': digest(sealed)}
+        artifact.unlink()
+        log.write_bytes(b'tampered\xff\n')
+        (self.root / 'build/late').write_bytes(b'late')
+        final = attest_retained_evidence(self.root, result, state)
+        self.assertEqual(final['status'], 'failed')
+        self.assertEqual({entry['reason'] for entry in final['errors']}, {'missing', 'changed', 'added'})
+        self.assertEqual(log.read_bytes(), b'tampered\xff\n')
+        # Even a recaptured seal cannot replace the receipt's original hashes.
+        sealed = retained_files(self.root)
+        state = {'retained_evidence': sealed, 'retained_evidence_hash': digest(sealed)}
+        final = attest_retained_evidence(self.root, result, state)
+        self.assertEqual(final['status'], 'failed')
+        self.assertTrue(any('original receipt hash' in e['reason'] for e in final['errors']))
+
+    def test_retained_links_cannot_hide_outside_bytes_or_special_files(self):
+        from test_selection_custody import retained_files
+        build = self.root / 'build'
+        build.mkdir()
+        outside = self.root / 'not-retained'
+        outside.write_bytes(b'not sealed')
+        link = build / 'link'
+        link.symlink_to(outside)
+        with self.assertRaises(CustodyError):
+            retained_files(self.root)
+        link.unlink()
+        os.mkfifo(build / 'fifo')
+        with self.assertRaises(CustodyError):
+            retained_files(self.root)
 
     def test_tag_and_partial_id_never_authorize_image(self):
         for value in ('latest', 'image:tag', 'sha256:123', 'a' * 64):

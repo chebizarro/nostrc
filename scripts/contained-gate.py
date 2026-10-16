@@ -22,7 +22,8 @@ PEERS = {
 
 
 def git(source, *argv):
-    return subprocess.check_output(["git", "-C", str(source), *argv])
+    return subprocess.check_output(["git", "-c", "maintenance.autoDetach=false", "-c", "gc.autoDetach=false",
+                                    "-C", str(source), *argv])
 
 
 def source_identity(source):
@@ -238,7 +239,7 @@ def work_json(work, relative):
 def run_lane(args):
     import contextlib
     import test_selection as selection
-    from test_selection_custody import validate_lifecycle
+    from test_selection_custody import validate_lifecycle, attest_retained_evidence
     source = Path(args.source_root).resolve(strict=True)
     identity = source_identity(source)
     if git(source, 'diff', 'HEAD', '--'):
@@ -339,8 +340,8 @@ def run_lane(args):
             'reason': 'distinct prepared-native route; original Docker build not executed'} for name in
             ('groundhog-mdk-interop-image', 'groundhog-mdk011-interop-image', 'groundhog-mdk011-interop-image-mdk09')]
         try:
-            validate_lifecycle(normalized['contained_lifecycle'], plan, args.profile, profile,
-                               normalized.get('profile_fingerprint'))
+            if not owner.receipt['cleanup_complete']:
+                raise CustodyError('cannot attest retained evidence before verified namespace exit')
             runtime_state = normalized['contained_lifecycle']['runtime_state']
             if runtime_state['backend_sha256'] != file_hash(work_file(work, 'backend.json')):
                 raise CustodyError('runtime backend changed before final namespace exit')
@@ -348,13 +349,17 @@ def run_lane(args):
                 raise CustodyError('runtime cache changed before final namespace exit')
             if runtime_state['phase_context_hash'] != normalized['phase_context_hash'] or runtime_state['phase_context'] != normalized['phase_context']:
                 raise CustodyError('runtime/normalized phase context differs')
+            normalized['contained_lifecycle']['retained_evidence'] = attest_retained_evidence(work, normalized, runtime_state)
+            validate_lifecycle(normalized['contained_lifecycle'], plan, args.profile, profile,
+                               normalized.get('profile_fingerprint'), evidence=normalized)
             for path, expected in runtime_state.get('artifacts', {}).items():
                 relative = Path(path).relative_to('/work')
                 if '..' in relative.parts or file_hash(work_file(work, relative)) != expected:
                     raise CustodyError('runtime artifact changed before final namespace exit')
             if code or normalized['contained_lifecycle']['runtime_state']['status'] != 'succeeded':
                 raise CustodyError('contained runtime did not succeed')
-        except (CustodyError, KeyError, TypeError) as exc:
+        except (CustodyError, KeyError, TypeError, ValueError, OSError) as exc:
+            normalized['job_conclusion'] = 'failure'
             normalized['diagnostic_eligible'] = False
             normalized['custody_error'] = str(exc)
             code = 1 if code == 0 else code
