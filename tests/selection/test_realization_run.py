@@ -25,6 +25,15 @@ class ExecutionTests(Project):
         log = (Path(receipt["evidence_dir"]) / "ctest.log").read_text()
         self.assertLess(log.index("z-first"), log.index("a-model"))
 
+    def test_build_path_alias_does_not_change_ctest_working_directory(self):
+        resolved, audit = self.ready()
+        alias = self.build.parent / "build-alias"
+        alias.symlink_to(self.build, target_is_directory=True)
+        receipt = r.run_resolved(resolved, alias, self.evidence, input_audit=audit)
+        self.assertEqual(receipt["outcome"], "passed", receipt)
+        command = next(c for c in receipt["commands"] if c[0] == "ctest")
+        self.assertEqual(command[command.index("--test-dir") + 1], str(self.build))
+
     def test_gui_skip_is_failure_not_acceptance(self):
         resolved, audit = self.ready(["gui"])
         receipt = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)
@@ -47,7 +56,7 @@ class ExecutionTests(Project):
     def test_input_change_after_audit_cannot_reuse_success(self):
         resolved, audit = self.ready()
         (self.root / "shared.h").write_text("#define SHARED 99\n")
-        with self.assertRaisesRegex(r.RealizationError, "input changed since audit"):
+        with self.assertRaisesRegex(r.RealizationError, "source snapshot digest changed"):
             r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)
 
     def test_fixture_failure_retains_non_execution(self):
@@ -67,7 +76,7 @@ class ExecutionTests(Project):
         self.inventory["profiles"] = {"synthetic": self.profile}
         self.plan["inventory_hash"] = r._hash(self.inventory)
         self.plan["plan_id"] = r._hash(self.plan)
-        planfile = self.root / "plan.json"
+        planfile = self.root.parent / "plan.json"
         r._atomic(planfile, self.plan)
         output = self.root.parent / "receipt.json"
         args = SimpleNamespace(profile="synthetic", repo=str(self.root), plan=str(planfile),
@@ -143,11 +152,26 @@ class ExecutionTests(Project):
         resolved, _ = self.ready()
         with (self.root / "main.c").open("a") as stream:
             stream.write("\n/* changed after build */\n")
-        realized = r.load_realization(self.build)
+        realized = self.configure()  # admit the new source, but do not rebuild objects
+        resolved = r.resolve_checks(self.inventory, self.plan, realized, "synthetic")
         audit = self.audit(realized)
         self.assertTrue(audit["passed"], audit["gaps"])
         with self.assertRaisesRegex(r.RealizationError, "not up to date"):
             r.run_resolved(resolved, self.build, self.evidence, input_audit=audit, build=False)
+
+    def test_diagnostic_result_cannot_emit_a_successful_lane(self):
+        resolved, audit = self.ready()
+        # Even a consumer-unrecognized diagnostic flag must fail closed. Exact
+        # baseline record approval is independently covered by exclusion tests.
+        resolved["complete_gate_eligible"] = False
+        raw = r.run_resolved(resolved, self.build, self.evidence, input_audit=audit)
+        self.assertEqual(raw["execution_outcome"], "passed")
+        self.assertEqual(raw["checks"]["a-model"]["outcome"], "passed")
+        self.assertEqual(raw["outcome"], "failed")
+        self.assertEqual(raw["job_conclusion"], "failure")
+        self.assertFalse(raw["complete_gate_eligible"])
+        self.assertFalse(raw["clean_first_attempt"])
+        self.assertTrue(raw["execution_clean_first_attempt"])
 
     def test_live_image_lifecycle_is_not_faked(self):
         resolved, audit = self.ready()
