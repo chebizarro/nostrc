@@ -103,7 +103,7 @@ jobs:
             build-essential cmake ninja-build pkg-config clang llvm \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
-            libnsync-dev libjson-glib-dev
+            libnsync-dev libjson-glib-dev libgit2-dev
 
       - name: Configure with fuzz targets
         run: |
@@ -191,7 +191,7 @@ jobs:
             build-essential cmake ninja-build pkg-config clang llvm \
             libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
             libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
-            libnsync-dev libjson-glib-dev lcov
+            libnsync-dev libjson-glib-dev libgit2-dev lcov
 
       - name: Download all corpus artifacts
         uses: actions/download-artifact@v4

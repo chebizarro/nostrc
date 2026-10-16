@@ -119,6 +119,11 @@ def validate_inventory(policy):
         require(isinstance(profile.get("configure_args"), list) and all(isinstance(x, str) for x in profile["configure_args"]), f"{ident}: configure_args")
         require(isinstance(profile.get("environment"), dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in profile["environment"].items()), f"{ident}: environment")
         require(isinstance(profile.get("capabilities"), list), f"{ident}: capabilities")
+        contexts = profile.get('contexts', ['local', 'ci', 'release'])
+        require(isinstance(contexts, list) and contexts and len(contexts) == len(set(contexts))
+                and all(x in {'local', 'ci', 'release'} for x in contexts), f'{ident}: invalid contexts')
+        if profile.get('execution_domain') == 'prepared_peer_linux_v1':
+            require(contexts == ['local'], f'{ident}: prepared runtime is local-only')
         if "phase_environments" in profile or "sanitizer_compatibility" in profile:
             from test_selection_realization import RealizationError, validate_phase_profile
             try:
@@ -228,11 +233,22 @@ def impact_closure(policy, seeds):
     return witnesses
 
 
+def omitted_context_profiles(policy, context):
+    return [{'id': ident, 'profile_hash': digest(profile), 'context': context,
+             'allowed_contexts': profile['contexts'], 'status': 'not_executed',
+             'reason': 'profile is outside its explicitly admitted execution contexts'}
+            for ident, profile in sorted(policy['profiles'].items())
+            if context not in profile.get('contexts', ['local', 'ci', 'release'])]
+
+
 def make_plan(policy, changes, *, head, base=None, context="local", mode="affected", event=None, profiles=None, broadening=None, base_policies=None, source_identity=None):
     validate_inventory(policy)
     require(context in {"local", "ci", "release"} and mode in {"affected", "broad"}, "invalid context/mode")
     restriction = sorted(set(profiles or []))
     _ids(restriction, policy["profiles"], "profile restriction")
+    omitted = omitted_context_profiles(policy, context)
+    omitted_ids = {p['id'] for p in omitted}
+    require(not (set(restriction) & omitted_ids), 'explicit profile is unsupported in requested context')
     reasons = list(broadening or [])
     if context == "release" and mode != "broad":
         reasons.append("release requires broad validation")
@@ -270,10 +286,12 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
     lanes = []
     for profile, config in sorted(policy["profiles"].items()):
         members = [c for c in selected if profile in policy["checks"][c]["profiles"]]
-        if members and (not restriction or profile in restriction):
+        if members and profile not in omitted_ids and (not restriction or profile in restriction):
             lanes.append({"id": profile, "profile": profile, "profile_hash": digest(config), "checks": members})
     active = {c for lane in lanes for c in lane["checks"]}
-    excluded += [{"check": c, "reason": "outside explicit profile projection"} for c in selected if c not in active]
+    excluded += [{'check': c, 'reason': ('outside admitted execution context: ' + ','.join(sorted(set(policy['checks'][c]['profiles']) & omitted_ids))
+                 if set(policy['checks'][c]['profiles']) & omitted_ids else 'outside explicit profile projection')}
+                 for c in selected if c not in active]
     result = {"schema_version": 1, "context": context, "requested_mode": mode, "effective_mode": effective,
               "base": base, "head": head, "tested_sha": head, "event": event or {},
               "source_identity": source_identity or {"kind": "committed", "sha": head},
@@ -282,6 +300,8 @@ def make_plan(policy, changes, *, head, base=None, context="local", mode="affect
               "excluded_checks": excluded, "witnesses": witnesses, "lanes": lanes,
               "expected_lane_ids": [lane["id"] for lane in lanes], "partial_profiles": restriction,
               "coverage_gaps": policy.get("coverage_gaps", []), "enforcement_ready": policy.get("enforcement_ready", False)}
+    if omitted:
+        result['omitted_profiles'] = omitted
     result["plan_id"] = digest(result)
     return result
 
@@ -417,6 +437,12 @@ def validate_plan(plan, policy):
     identity = plan["source_identity"]
     require(identity.get("kind") in {"committed", "dirty"}, "invalid source identity kind")
     require(identity["kind"] != "dirty" or bool(identity.get("snapshot_digest")), "dirty identity requires content digest")
+    context = plan.get('context')
+    if context is None and all('contexts' not in profile for profile in policy['profiles'].values()):
+        context = 'local'  # Existing unrestricted schema-v1 plans predate context admission.
+    require(context in {'local', 'ci', 'release'}, 'invalid plan context')
+    require(plan.get('omitted_profiles', []) == omitted_context_profiles(policy, context),
+            'omitted context/profile accounting mismatch')
     lanes = plan.get("lanes")
     require(isinstance(lanes, list), "missing lanes")
     seen = set()
@@ -424,6 +450,8 @@ def validate_plan(plan, policy):
         require(lane["id"] == lane["profile"] and lane["id"] not in seen, "duplicate/invalid lane")
         seen.add(lane["id"])
         require(lane["profile"] in policy["profiles"] and lane["profile_hash"] == digest(policy["profiles"][lane["profile"]]), "profile policy mismatch")
+        require(context in policy['profiles'][lane['profile']].get('contexts', ['local', 'ci', 'release']),
+                'lane profile is unsupported in plan context')
         _ids(lane["checks"], policy["checks"], "lane checks")
         require(all(lane["profile"] in policy["checks"][c]["profiles"] for c in lane["checks"]), "ineligible check/profile")
     require(sorted(seen) == plan.get("expected_lane_ids"), "expected lane identity mismatch")
@@ -474,6 +502,16 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             if receipt.get(key) != value:
                 errors.append(f"{lane_id}: {key} did not pass")
         backend = receipt.get("backend_receipt", {})
+        profile = policy["profiles"][lane["profile"]]
+        if profile.get("execution_domain") == "prepared_peer_linux_v1":
+            from test_selection_custody import CustodyError, validate_lifecycle
+            try:
+                validate_lifecycle(receipt.get("contained_lifecycle"), plan, lane["profile"], profile,
+                                   receipt.get("profile_fingerprint"))
+            except (CustodyError, KeyError, TypeError, ValueError) as exc:
+                errors.append(f"{lane_id}: contained lifecycle did not qualify: {exc}")
+            if complete:
+                errors.append(f"{lane_id}: prepared contained route is diagnostic only; original image builds unexecuted")
         exclusions = receipt.get("baseline_exclusions", backend.get("baseline_exclusions", []))
         if not isinstance(exclusions, list):
             errors.append(f"{lane_id}: malformed baseline exclusions")

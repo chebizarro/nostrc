@@ -126,26 +126,50 @@ if(TEST groundhog-test-gst-registry)
   nostrc_describe_test(groundhog-test-gst-registry OWNER testing.framework EXPECTED fixture)
 endif()
 
+# A configured single native peer file is an execution input, not an image-build
+# receipt. prepared_peer is admitted only by the host-owned contained runtime;
+# file presence here never establishes provenance or lifecycle success.
+function(_gh_mdk_override out_requires out_inputs command_line)
+  set(_requires docker private_bus)
+  set(_inputs "")
+  separate_arguments(_argv UNIX_COMMAND "${command_line}")
+  list(LENGTH _argv _argc)
+  if(_argc EQUAL 1)
+    list(GET _argv 0 _driver)
+    if(IS_ABSOLUTE "${_driver}" AND EXISTS "${_driver}" AND NOT IS_DIRECTORY "${_driver}")
+      set(_requires prepared_peer private_bus)
+      set(_inputs "${_driver}")
+    endif()
+  endif()
+  set(${out_requires} "${_requires}" PARENT_SCOPE)
+  set(${out_inputs} "${_inputs}" PARENT_SCOPE)
+endfunction()
+
+_gh_mdk_override(_mdk08_requires _mdk08_inputs "${MDK_INTEROP_DRIVER}")
+_gh_mdk_override(_mdk011_requires _mdk011_inputs "${MDK011_INTEROP_DRIVER}")
+_gh_mdk_override(_mdk09_requires _mdk09_inputs "${MDK09_PROBE_DRIVER}")
+
 # Legacy directly compiles gh-mls-copy.c; adopted links the shipped MLS UI.
 # Do not refine away those actual inputs (nor its late voice linkage).
 _gh_describe(groundhog-mdk-interop test-groundhog-mdk-interop groundhog.mls_service
-  INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver" REQUIRES docker private_bus)
+  INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver" ${_mdk08_inputs}
+  REQUIRES ${_mdk08_requires})
 foreach(_case control groundhog-invites-mdk mdk-invites-groundhog
     mdk-invites-groundhog-gui adopted-welcome white-noise-welcome white-noise-media
     media-policy white-noise-voice white-noise-dm adopted-commits routing-rotation
     concurrent-commits polls white-noise-reactions)
-  set(_requires docker private_bus)
+  set(_requires ${_mdk011_requires})
   if(_case STREQUAL "mdk-invites-groundhog-gui")
     list(APPEND _requires display)
   endif()
   _gh_describe("groundhog-mdk011-interop-${_case}" test-groundhog-mdk011-interop
-    groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11"
+    groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11" ${_mdk011_inputs}
     REQUIRES ${_requires})
 endforeach()
 _gh_describe(groundhog-mdk011-interop-mdk09-probe test-groundhog-mdk011-interop
   groundhog.mls_service INPUTS "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.11"
-    "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe"
-  REQUIRES docker private_bus EXPECTED mdk09_incompatibility)
+    "${CMAKE_SOURCE_DIR}/tests/interop/mdk/driver-0.9-probe" ${_mdk011_inputs} ${_mdk09_inputs}
+  REQUIRES ${_mdk011_requires} ${_mdk09_requires} EXPECTED mdk09_incompatibility)
 foreach(_pair
     "groundhog-mdk-interop-image|driver"
     "groundhog-mdk011-interop-image|driver-0.11"
@@ -162,3 +186,73 @@ if(TEST groundhog-mdk011-interop-artifacts-reset)
   nostrc_describe_test(groundhog-mdk011-interop-artifacts-reset
     OWNER testing.framework EXPECTED fixture)
 endif()
+
+# All remaining registrations retain conservative component ownership, but still
+# declare their actual GSETTINGS runtime/producer inputs. Target identity comes
+# from CTest's command and File API, never from a synthesized test-name prefix.
+# Literal command/target pairs observed in the real 412-registration Linux
+# export. GUI aliases share the actual executable; no name-to-target synthesis.
+set(_gh_remaining_targets
+    "groundhog-account|test-groundhog-account"
+    "groundhog-account-backends|test-groundhog-account-backends"
+    "groundhog-account-relays|test-groundhog-account-relays"
+    "groundhog-account-remote-switch|test-groundhog-account-remote-switch"
+    "groundhog-account-store|test-groundhog-account-store"
+    "groundhog-account-store-gui|test-groundhog-account-store"
+    "groundhog-account-ui|test-groundhog-account-ui"
+    "groundhog-attachment-ui|test-groundhog-attachment-ui"
+    "groundhog-attachments|test-groundhog-attachments"
+    "groundhog-auth-policy|test-groundhog-auth-policy"
+    "groundhog-blossom|test-groundhog-blossom"
+    "groundhog-composer|test-groundhog-composer"
+    "groundhog-contact-directory|test-groundhog-contact-directory"
+    "groundhog-conversation-info|test-groundhog-conversation-info"
+    "groundhog-conversation-info-gui|test-groundhog-conversation-info"
+    "groundhog-conversation-list|test-groundhog-conversation-list"
+    "groundhog-conversation-menu|test-groundhog-conversation-menu"
+    "groundhog-conversation-menu-gui|test-groundhog-conversation-menu"
+    "groundhog-diagnostics|test-groundhog-diagnostics"
+    "groundhog-dm-inbox|test-groundhog-dm-inbox"
+    "groundhog-dm-send|test-groundhog-dm-send"
+    "groundhog-e2e-dm|test-groundhog-e2e-dm"
+    "groundhog-expiry|test-groundhog-expiry"
+    "groundhog-identity|test-groundhog-identity"
+    "groundhog-issue-uploader|test-groundhog-issue-uploader"
+    "groundhog-media-cache-binding|test-groundhog-media-cache-binding"
+    "groundhog-mls-kp-lifecycle|test-groundhog-mls-kp-lifecycle"
+    "groundhog-mls-kp-lifecycle-adopted|test-groundhog-mls-kp-lifecycle-adopted"
+    "groundhog-multi-send|test-groundhog-multi-send"
+    "groundhog-net|test-groundhog-net"
+    "groundhog-new-message|test-groundhog-new-message"
+    "groundhog-nip29-group-list|test-groundhog-nip29-group-list"
+    "groundhog-nip29-service|test-groundhog-nip29-service"
+    "groundhog-nip46-inbox-nak|test-groundhog-nip46-inbox-nak"
+    "groundhog-nip46-pair-dialog|test-groundhog-nip46-pair-dialog"
+    "groundhog-nip46-pair-nak|test-groundhog-nip46-pair-nak"
+    "groundhog-notifier|test-groundhog-notifier"
+    "groundhog-notifier-gui|test-groundhog-notifier"
+    "groundhog-onboarding|test-groundhog-onboarding"
+    "groundhog-outbox|test-groundhog-outbox"
+    "groundhog-preferences|test-groundhog-preferences"
+    "groundhog-privacy-e2e|test-groundhog-privacy-e2e"
+    "groundhog-relay-guard|test-groundhog-relay-guard"
+    "groundhog-remote-feature-matrix|test-groundhog-remote-feature-matrix"
+    "groundhog-requests|test-groundhog-requests"
+    "groundhog-requests-gui|test-groundhog-requests"
+    "groundhog-tls-resumption|test-groundhog-tls-resumption")
+get_property(_gh_tests DIRECTORY PROPERTY TESTS)
+foreach(_test IN LISTS _gh_tests)
+  get_property(_described TEST "${_test}" PROPERTY NOSTRC_SELECTION_DESCRIBED)
+  if(NOT _described)
+    set(_target "")
+    foreach(_pair IN LISTS _gh_remaining_targets)
+      string(REPLACE "|" ";" _parts "${_pair}")
+      list(GET _parts 0 _name)
+      if(_test STREQUAL _name)
+        list(GET _parts 1 _target)
+        break()
+      endif()
+    endforeach()
+    _gh_describe("${_test}" "${_target}" groundhog.unclassified)
+  endif()
+endforeach()

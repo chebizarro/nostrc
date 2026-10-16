@@ -152,8 +152,12 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libgo",
         "libhanami",
-        "execution.core"
+        "libnostr",
+        "nip34",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "core.macos.asan",
@@ -226,8 +230,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "libmarmot",
-        "execution.core"
+        "marmot.vector_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -330,8 +335,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip04",
-        "execution.core"
+        "nip04.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -360,8 +366,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libjson",
         "nip05",
-        "execution.core"
+        "nip05.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -384,8 +392,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip06",
-        "execution.core"
+        "nip06.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -408,8 +417,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libjson",
         "nip11",
-        "execution.core"
+        "nip11.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -432,8 +443,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip14",
-        "execution.core"
+        "nip14.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -456,8 +468,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip17",
-        "execution.core"
+        "nip17.test_inputs",
+        "nip44"
       ],
       "profiles": [
         "core.macos.asan",
@@ -482,8 +496,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip19",
-        "execution.core"
+        "nip19.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -506,8 +521,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip19",
         "nip21",
-        "execution.core"
+        "nip21.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -530,8 +547,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip22",
-        "execution.core"
+        "nip22.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -554,8 +572,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip23",
-        "execution.core"
+        "nip23.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -578,8 +597,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip24",
-        "execution.core"
+        "nip24.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -602,8 +622,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip25",
-        "execution.core"
+        "nip25.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -626,8 +647,11 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip19",
+        "nip21",
         "nip27",
-        "execution.core"
+        "nip27.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -650,8 +674,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip28",
-        "execution.core"
+        "nip28.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -674,8 +699,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip30",
-        "execution.core"
+        "nip30.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -698,8 +724,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip34",
-        "execution.core"
+        "nip34.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -722,8 +749,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip39",
-        "execution.core"
+        "nip39.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -746,8 +774,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip40",
-        "execution.core"
+        "nip40.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -774,8 +803,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip44",
-        "execution.core"
+        "nip44.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -858,8 +888,12 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libjson",
+        "nip04",
+        "nip44",
         "nip46",
-        "execution.core"
+        "nip46.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -892,8 +926,12 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libjson",
+        "nip04",
+        "nip44",
         "nip47",
-        "execution.core"
+        "nip47.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -924,8 +962,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip19",
         "nip49",
-        "execution.core"
+        "nip49.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -948,8 +988,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip44",
         "nip51",
-        "execution.core"
+        "nip51.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -997,8 +1039,17 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "gnome.seahorse",
+        "nip04",
+        "nip06",
+        "nip19",
+        "nip44",
+        "nip49",
         "nip55l",
-        "execution.core"
+        "nip55l.test_inputs",
+        "nip5f",
+        "shared.tests"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1021,8 +1072,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip57",
-        "execution.core"
+        "nip57.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1045,8 +1097,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip58",
-        "execution.core"
+        "nip58.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1071,8 +1124,10 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip44",
         "nip59",
-        "execution.core"
+        "nip59.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1099,8 +1154,12 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "libjson",
+        "nip19",
+        "nip44",
         "nip5f",
-        "execution.core"
+        "nip5f.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1123,8 +1182,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip60",
-        "execution.core"
+        "nip60.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1147,8 +1207,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip61",
-        "execution.core"
+        "nip61.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1171,8 +1232,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip70",
-        "execution.core"
+        "nip70.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1195,8 +1257,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip73",
-        "execution.core"
+        "nip73.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1219,8 +1282,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip75",
-        "execution.core"
+        "nip75.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1269,8 +1333,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip77",
-        "execution.core"
+        "nip77.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1293,8 +1358,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip92",
-        "execution.core"
+        "nip92.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1317,8 +1383,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip98",
-        "execution.core"
+        "nip98.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1341,8 +1408,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip99",
-        "execution.core"
+        "nip99.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1373,8 +1441,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nip_cas0010",
-        "execution.core"
+        "nip_cas0010.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1397,8 +1466,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "nipb0",
-        "execution.core"
+        "nipb0.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1443,8 +1513,17 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
         "nostr.gobject",
-        "execution.core"
+        "testing.framework",
+        "testkit"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1467,8 +1546,9 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
         "schema",
-        "execution.core"
+        "schema.test_inputs"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1567,8 +1647,11 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
-        "shared.tests",
-        "execution.core"
+        "execution.core",
+        "libjson",
+        "nip04",
+        "nip86",
+        "shared.tests"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1601,8 +1684,20 @@
       "expected_outcome": "pass",
       "kind": "ctest",
       "nodes": [
+        "execution.core",
+        "gnome.seahorse",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "nip04",
+        "nip06",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l.core",
         "testing.framework",
-        "execution.core"
+        "vendor.nostrdb"
       ],
       "profiles": [
         "core.macos.asan",
@@ -1625,7 +1720,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1647,7 +1764,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1669,7 +1810,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1691,7 +1854,33 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1713,7 +1902,24 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1735,7 +1941,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1757,7 +1981,24 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1779,7 +2020,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1801,7 +2060,28 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.group_ui",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip29",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1823,7 +2103,26 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1845,7 +2144,36 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1867,6 +2195,7 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "groundhog.store",
         "groundhog.unclassified"
       ],
       "profiles": [
@@ -1889,7 +2218,9 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.store",
+        "groundhog.unclassified",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1911,7 +2242,28 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1933,7 +2285,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -1955,6 +2327,7 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "groundhog.store",
         "groundhog.unclassified"
       ],
       "profiles": [
@@ -1977,7 +2350,47 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.common",
+        "gnome.seahorse",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.group_ui",
+        "groundhog.identity_auth",
+        "groundhog.legacy_harness_inputs",
+        "groundhog.media",
+        "groundhog.mls_media",
+        "groundhog.mls_service",
+        "groundhog.mls_store",
+        "groundhog.mls_ui",
+        "groundhog.net",
+        "groundhog.poll_ui",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.shell_ui",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libmarmot",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip29",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2023,8 +2436,20 @@
       "nodes": [
         "execution.groundhog",
         "groundhog.conversations",
+        "groundhog.relay",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2046,8 +2471,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
         "groundhog.conversations",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2069,8 +2513,33 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2092,7 +2561,26 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2117,10 +2605,24 @@
       "nodes": [
         "execution.groundhog",
         "gnome.common",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.poll_ui",
         "groundhog.resources",
+        "groundhog.shell_ui",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2144,7 +2646,36 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2167,8 +2698,34 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.relay",
         "groundhog.resources",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2193,8 +2750,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
         "groundhog.conversations",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2216,7 +2792,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "shared.tests",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2238,8 +2836,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2261,7 +2878,26 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2283,7 +2919,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2305,8 +2963,33 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2328,7 +3011,15 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.net",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip19",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2350,8 +3041,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2397,8 +3111,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2420,9 +3157,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
         "groundhog.group_ui",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2445,12 +3200,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.mls_service",
         "groundhog.mls_store",
         "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2475,12 +3243,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.mls_service",
         "groundhog.mls_store",
         "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2504,11 +3285,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.mls_service",
         "groundhog.mls_store",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2530,11 +3325,25 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.mls_service",
         "groundhog.mls_store",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2556,7 +3365,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2578,7 +3407,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2601,9 +3450,27 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
         "groundhog.group_ui",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
         "groundhog.resources",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2628,10 +3495,23 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.mls_ui",
         "groundhog.resources",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2655,8 +3535,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.conversations",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "libjson",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2678,10 +3581,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
         "groundhog.conversations",
         "groundhog.media",
+        "groundhog.relay",
+        "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip17",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nip59",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2703,7 +3625,29 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2725,7 +3669,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2747,7 +3715,30 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.conversations",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2769,7 +3760,26 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2791,7 +3801,31 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnostr",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2813,7 +3847,34 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.account_relays",
+        "groundhog.identity_auth",
+        "groundhog.media",
+        "groundhog.net",
+        "groundhog.relay",
+        "groundhog.resources",
+        "groundhog.store",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2836,9 +3897,20 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnostr",
         "groundhog.mls_media",
         "groundhog.resources",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2863,6 +3935,8 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
         "groundhog.conversations",
         "groundhog.media",
         "groundhog.mls_files",
@@ -2871,7 +3945,18 @@
         "groundhog.mls_store",
         "groundhog.resources",
         "groundhog.store",
-        "groundhog.unclassified"
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2919,7 +4004,17 @@
       "nodes": [
         "execution.groundhog",
         "groundhog.unclassified",
-        "groundhog.voice"
+        "groundhog.voice",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2943,7 +4038,11 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "groundhog.legacy_harness_inputs",
+        "groundhog.mls_ui",
+        "groundhog.poll_ui",
         "groundhog.resources",
+        "groundhog.shell_ui",
         "groundhog.unclassified"
       ],
       "profiles": [
@@ -2969,7 +4068,26 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
-        "groundhog.unclassified"
+        "groundhog.relay",
+        "groundhog.unclassified",
+        "libgo",
+        "libjson",
+        "libnostr",
+        "libnostr.metrics_header",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip44",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gobject",
+        "nostr.gtk",
+        "nostrdb",
+        "relayd",
+        "vendor.nostrdb"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -2992,9 +4110,32 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "gnome.common",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.group_ui",
+        "groundhog.legacy_harness_inputs",
+        "groundhog.media",
+        "groundhog.mls_media",
         "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.net",
+        "groundhog.poll_ui",
         "groundhog.resources",
-        "groundhog.unclassified"
+        "groundhog.shell_ui",
+        "groundhog.unclassified",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip29",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
       ],
       "profiles": [
         "groundhog.linux.sanitizers"
@@ -3063,6 +4204,7 @@
       "kind": "ctest",
       "nodes": [
         "execution.groundhog",
+        "libjson",
         "shared.tests"
       ],
       "profiles": [
@@ -3367,12 +4509,52 @@
           "GoStringArrayTest",
           "GoTickerTest",
           "GoWaitGroupTest"
+        ],
+        "libgo.linux.asan": [
+          "GoChannelCloseTest",
+          "GoChannelMpmcSlotTest",
+          "GoChannelStressTest",
+          "GoContextCancelTest",
+          "GoContextStressTest",
+          "GoContextTimeoutTest",
+          "GoErrorTest",
+          "GoFiberBasicTest",
+          "GoFiberBasicTestW4",
+          "GoFiberChanExtTest",
+          "GoFiberChanExtTestW4",
+          "GoFiberChanTest",
+          "GoFiberChanTestW4",
+          "GoFiberContextTest",
+          "GoFiberIoDeadlockTest",
+          "GoFiberIoDeadlockTestW4",
+          "GoFiberIoTest",
+          "GoFiberIoTimeoutTest",
+          "GoFiberIoTimeoutTestW4",
+          "GoFiberStarvationTest",
+          "GoFiberStarvationTestW4",
+          "GoHashMapTest2",
+          "GoIntArrayTest",
+          "GoLongAdderStressTest",
+          "GoRefPtrTest",
+          "GoSelectCancelTest",
+          "GoSelectClosedTest",
+          "GoSelectMultiTest",
+          "GoSelectTest",
+          "GoStringArrayTest",
+          "GoTickerTest",
+          "GoWaitGroupTest"
         ]
       },
       "expected_outcome": "pass",
       "kind": "ctest",
-      "nodes": ["libgo", "execution.libgo"],
-      "profiles": ["libgo.macos.asan"],
+      "nodes": [
+        "libgo",
+        "execution.libgo"
+      ],
+      "profiles": [
+        "libgo.macos.asan",
+        "libgo.linux.asan"
+      ],
       "requirement": "blocking",
       "runtime_inputs": []
     },
@@ -3847,6 +5029,8 @@
         "{source}/.github/workflows/windows-build.yml",
         "{source}/.github/workflows/windows-validation.yml",
         "{source}/CMakeLists.txt",
+        "{source}/Testing/CMakeLists.txt",
+        "{source}/Testing/TestInventory.cmake",
         "{source}/VERSION_MANIFEST.md",
         "{source}/apps/gnostr/CMakeLists.txt",
         "{source}/apps/grotto/CMakeLists.txt",
@@ -3872,18 +5056,28 @@
         "{source}/nostr-gobject/CMakeLists.txt",
         "{source}/nostr-gobject/meson.build",
         "{source}/nostr-gtk/CMakeLists.txt",
+        "{source}/nostr-gtk/TestInventory.cmake",
         "{source}/nostr-gtk/meson.build",
         "{source}/scripts/check-macos-keychain.sh",
+        "{source}/scripts/contained-gate.py",
+        "{source}/scripts/contained-runner.py",
         "{source}/scripts/linux-gate.sh",
         "{source}/scripts/mdk-gate.py",
         "{source}/scripts/sanitizer-gate-ci.py",
         "{source}/scripts/test-gate.sh",
         "{source}/scripts/test-plan.py",
         "{source}/scripts/test_selection.py",
+        "{source}/scripts/test_selection_custody.py",
         "{source}/scripts/test_selection_realization.py",
         "{source}/signet/meson.build",
         "{source}/signet/src/signetctl_main.c",
         "{source}/signet/src/signetd_main.c",
+        "{source}/tests/CMakeLists.txt",
+        "{source}/tests/TestInventory.cmake",
+        "{source}/tests/custody/test_contained_engine.py",
+        "{source}/tests/custody/test_contained_linux.py",
+        "{source}/tests/custody/workload.py",
+        "{source}/tests/selection/fixtures/hosted_audit_edges.json",
         "{source}/tests/selection/fixtures/profile_exports.json",
         "{source}/tests/selection/golden/selection.json",
         "{source}/tests/selection/inventory.json",
@@ -3891,10 +5085,12 @@
         "{source}/tests/selection/realization_support.py",
         "{source}/tests/selection/selector_support.py",
         "{source}/tests/selection/test_aggregation.py",
+        "{source}/tests/selection/test_broad_setup_contracts.py",
         "{source}/tests/selection/test_cmake_inventory_compat.py",
         "{source}/tests/selection/test_command_execution.py",
         "{source}/tests/selection/test_command_output_bytes.py",
         "{source}/tests/selection/test_command_signal_bytes.py",
+        "{source}/tests/selection/test_contained_custody_contract.py",
         "{source}/tests/selection/test_diagnostic_eligibility.py",
         "{source}/tests/selection/test_git_ranges.py",
         "{source}/tests/selection/test_local_command_adapter.py",
@@ -3902,6 +5098,8 @@
         "{source}/tests/selection/test_mdk_detached_cleanup.py",
         "{source}/tests/selection/test_mdk_gate.py",
         "{source}/tests/selection/test_phase_environments.py",
+        "{source}/tests/selection/test_prepared_profile_contract.py",
+        "{source}/tests/selection/test_production_inventory.py",
         "{source}/tests/selection/test_profile_contracts.py",
         "{source}/tests/selection/test_realization.py",
         "{source}/tests/selection/test_realization_exclusions.py",
@@ -3921,6 +5119,62 @@
         "{source}/tests/selection/test_workflow_contracts.py"
       ],
       "working_directory": "{source}"
+    },
+    "prepared011.matrix": {
+      "build_targets": [
+        "test-groundhog-mdk011-interop",
+        "groundhog-test-schemas"
+      ],
+      "cost": "expensive",
+      "ctest_tests": {
+        "groundhog.linux.arm64.prepared011": [
+          "groundhog-mdk011-interop-adopted-commits",
+          "groundhog-mdk011-interop-adopted-welcome",
+          "groundhog-mdk011-interop-concurrent-commits",
+          "groundhog-mdk011-interop-control",
+          "groundhog-mdk011-interop-groundhog-invites-mdk",
+          "groundhog-mdk011-interop-mdk-invites-groundhog",
+          "groundhog-mdk011-interop-mdk-invites-groundhog-gui",
+          "groundhog-mdk011-interop-media-policy",
+          "groundhog-mdk011-interop-polls",
+          "groundhog-mdk011-interop-routing-rotation",
+          "groundhog-mdk011-interop-white-noise-dm",
+          "groundhog-mdk011-interop-white-noise-media",
+          "groundhog-mdk011-interop-white-noise-reactions",
+          "groundhog-mdk011-interop-white-noise-voice",
+          "groundhog-mdk011-interop-white-noise-welcome"
+        ]
+      },
+      "expected_outcome": "pass",
+      "kind": "ctest",
+      "nodes": [
+        "execution.groundhog",
+        "gnome.seahorse",
+        "gnostr",
+        "groundhog.conversations",
+        "groundhog.media",
+        "groundhog.mls_service",
+        "groundhog.mls_ui",
+        "groundhog.resources",
+        "groundhog.unclassified",
+        "groundhog.voice",
+        "nip04",
+        "nip06",
+        "nip11",
+        "nip19",
+        "nip34",
+        "nip46",
+        "nip49",
+        "nip55l",
+        "nostr.gtk",
+        "relayd",
+        "shared.tests"
+      ],
+      "profiles": [
+        "groundhog.linux.arm64.prepared011"
+      ],
+      "requirement": "blocking",
+      "runtime_inputs": []
     }
   },
   "coverage_gaps": [
@@ -3931,20 +5185,375 @@
     },
     {
       "id": "root_asan_execution_contract",
-      "reason": "Two nostrc-ci matrix profiles retain exact configure/command/environment defaults and configured registration memberships. The three existing -E exclusions remain unexecuted gaps, not expected passes. Generic root exclusion admission, named audit/fuzz phases, ambient setup suffixes and dependency-worker routing are not implemented by metadata. Linux registration evidence is arm64 only, not hosted x86_64. No latency-test exclusion is added. Runtime/header/input union and independent macOS failure remain open.",
+      "reason": "Exact Linux/macOS configure and primary memberships are authored; hosted 8a configure audits exposed missing linked-source/test-input edges now repaired per-check from retained evidence. The three legacy exclusions remain not_executed, generic exclusion admission and separate audit/fuzz phases are pending. Fresh exact-source postbuild headers/runtime audits and execution remain required, without new latency exclusions or threshold changes.",
       "tracking": "nostrc-0cfsg.9"
     },
     {
       "id": "groundhog_sanitizer_execution_contract",
       "profile": "groundhog.linux.sanitizers",
-      "reason": "Shared GH_SAN_* configuration and all 62 exact selected registrations match the workflow and an actual Linux/arm64 configure. The other configured registrations are not sanitizer members. Hosted x86_64, sanitizer execution/skip enforcement, post-build headers, runtime/semantic closure and worker routing remain unproven. {source_root} environment expansion must be execution-owner validated before running this profile; no local/runtime safety or skip policy is relaxed. Exact phase_environments are metadata only: shared environment is empty; configure/build environments differ from test. Core plus adapter phase application, expansion and fingerprint admission are pending; this profile is not execution-eligible.",
-      "tracking": "nostrc-0cfsg.9"
+      "reason": "Separate phase application and shared Docker route exist and ten shadow workers are authored. Actual 8a x86_64 shadow configure failed missing gettext; legacy same-SHA sanitizer outcomes differ (one 120B voice LSan failure, one 65-case pass). Full production postbuild header/runtime/semantic closure and safe lifecycle execution remain unaccepted; metadata or miniatures do not establish them.",
+      "tracking": "nostrc-0cfsg.9",
+      "not_selected_registrations": [
+        "GoChannelCloseTest",
+        "GoChannelIncremental",
+        "GoChannelMpmcSlotTest",
+        "GoChannelStressTest",
+        "GoChannelTest",
+        "GoContextCancelTest",
+        "GoContextStressTest",
+        "GoContextTimeoutTest",
+        "GoErrorTest",
+        "GoFiberBasicTest",
+        "GoFiberBasicTestW4",
+        "GoFiberChanExtTest",
+        "GoFiberChanExtTestW4",
+        "GoFiberChanTest",
+        "GoFiberChanTestW4",
+        "GoFiberContextTest",
+        "GoFiberIoDeadlockTest",
+        "GoFiberIoDeadlockTestW4",
+        "GoFiberIoTest",
+        "GoFiberIoTimeoutTest",
+        "GoFiberIoTimeoutTestW4",
+        "GoFiberStarvationTest",
+        "GoFiberStarvationTestW4",
+        "GoHashMapTest2",
+        "GoIntArrayTest",
+        "GoLongAdderStressTest",
+        "GoRefPtrTest",
+        "GoSelectCancelTest",
+        "GoSelectClosedTest",
+        "GoSelectMultiTest",
+        "GoSelectTest",
+        "GoStringArrayTest",
+        "GoTickerTest",
+        "GoWaitGroupTest",
+        "MockRelayIntegration",
+        "MockRelayServerBasic",
+        "MockRelayUnit",
+        "Nip46MockRelay",
+        "Nip46QRSocket",
+        "SignerIntegration",
+        "TestHarnessExample",
+        "concurrency_channels",
+        "concurrency_subscription_shutdown",
+        "concurrency_subscription_shutdown_asan",
+        "glib_async_integration",
+        "groundhog-about",
+        "groundhog-about-gui",
+        "groundhog-account-backends",
+        "groundhog-account-remote-switch",
+        "groundhog-account-store-gui",
+        "groundhog-account-ui",
+        "groundhog-agent-events",
+        "groundhog-agents-page",
+        "groundhog-attachment-ui",
+        "groundhog-background-desktop",
+        "groundhog-background-gui",
+        "groundhog-blueprint",
+        "groundhog-bus-probe",
+        "groundhog-composer",
+        "groundhog-conversation-info-gui",
+        "groundhog-conversation-list",
+        "groundhog-conversation-menu-gui",
+        "groundhog-conversation-view",
+        "groundhog-data",
+        "groundhog-desktop",
+        "groundhog-diagnostics",
+        "groundhog-e2e-dm",
+        "groundhog-gdk-frame-tolerance",
+        "groundhog-group-ui-gui",
+        "groundhog-i18n",
+        "groundhog-issue-uploader",
+        "groundhog-launch",
+        "groundhog-metainfo",
+        "groundhog-metainfo-merged",
+        "groundhog-mls-remote",
+        "groundhog-mls-ui-gui",
+        "groundhog-nip29-group-list",
+        "groundhog-nip46-credentials-list",
+        "groundhog-nip46-inbox-nak",
+        "groundhog-nip46-nak",
+        "groundhog-nip46-pair-dialog",
+        "groundhog-nip46-pair-nak",
+        "groundhog-nip46-session",
+        "groundhog-nip46-wire",
+        "groundhog-notifier-gui",
+        "groundhog-onboarding",
+        "groundhog-packaging-version",
+        "groundhog-poll-ui",
+        "groundhog-portable-singleton",
+        "groundhog-potfiles",
+        "groundhog-preferences",
+        "groundhog-privacy-static",
+        "groundhog-profile-guard",
+        "groundhog-public-note-post",
+        "groundhog-remote-feature-matrix",
+        "groundhog-requests-gui",
+        "groundhog-resource",
+        "groundhog-schema",
+        "groundhog-shell",
+        "groundhog-signer-nip46",
+        "groundhog-status-notifier",
+        "groundhog-two-instance",
+        "groundhog-two-instance-remote-acceptance",
+        "groundhog-update-handoff",
+        "groundhog-version",
+        "groundhog-voice-ui",
+        "libnostr_connection_teardown_stress",
+        "libnostr_core_audit",
+        "libnostr_crypto_audit",
+        "libnostr_event_validation",
+        "libnostr_filter_limit_zero",
+        "libnostr_misc_audit",
+        "libnostr_networking_audit",
+        "libnostr_parsing_audit",
+        "libnostr_reconnect_same_second",
+        "libnostr_relay_callback_lifetime",
+        "libnostr_relay_write_unsent",
+        "libnostr_store_txn_audit",
+        "libnostr_subscription_dispatch",
+        "marmot_gobject_test",
+        "marmot_test_adopted",
+        "marmot_test_adopted_commits",
+        "marmot_test_app_data_update",
+        "marmot_test_commits",
+        "marmot_test_extension",
+        "marmot_test_interop",
+        "marmot_test_kp_lifecycle",
+        "marmot_test_kp_profile",
+        "marmot_test_large_commit_bound",
+        "marmot_test_media",
+        "marmot_test_mls_crypto",
+        "marmot_test_mls_framing",
+        "marmot_test_mls_group",
+        "marmot_test_mls_key_package",
+        "marmot_test_mls_key_schedule",
+        "marmot_test_mls_key_schedule_vectors",
+        "marmot_test_mls_tls",
+        "marmot_test_mls_tree",
+        "marmot_test_mls_tree_vectors",
+        "marmot_test_mls_welcome",
+        "marmot_test_protocol",
+        "marmot_test_ratchet_persist",
+        "marmot_test_rfc9420_vectors",
+        "marmot_test_storage",
+        "marmot_test_storage_contract",
+        "marmot_test_types",
+        "nip55l_approval_service",
+        "nip55l_cache_concurrency",
+        "nip55l_dbus_contract",
+        "nip55l_dbus_contract_fail_teardown",
+        "nip55l_fake_secret_service_contract",
+        "nip55l_getrelays",
+        "nip55l_keyring_schema",
+        "nip55l_nip44_b64",
+        "nip55l_profile_guard",
+        "nip55l_selector_safety",
+        "nip55l_sign_event_json",
+        "nostr_gtk_portable_media_lint",
+        "nostr_gtk_portable_media_lint_selftest",
+        "nostr_gtk_portable_potfiles",
+        "profile_fetch_simulation",
+        "profile_fetch_stress",
+        "signer/permissions",
+        "signer/trust-tiers",
+        "test-hanami-blossom-batch",
+        "test-hanami-blossom-client",
+        "test-hanami-blossom-content-type",
+        "test-hanami-blossom-shim",
+        "test-hanami-blossom-shim-auto",
+        "test-hanami-bud02-auth",
+        "test-hanami-config",
+        "test-hanami-grasp",
+        "test-hanami-index",
+        "test-hanami-integration",
+        "test-hanami-nostr",
+        "test-hanami-odb-backend",
+        "test-hanami-refdb-backend",
+        "test-hanami-server-capability-probe-shim",
+        "test-hanami-transport",
+        "test-hanami-types",
+        "test-nip34",
+        "test_connection_idle_writable",
+        "test_connection_shutdown_order",
+        "test_connection_tls_no_resumption",
+        "test_connection_writable_rearm",
+        "test_envelope",
+        "test_envelope_fallback",
+        "test_envelope_parse",
+        "test_event_canonical",
+        "test_event_priority",
+        "test_filters_move_semantics",
+        "test_fuzz_envelope_roundtrip",
+        "test_fuzz_filter_parse",
+        "test_interop",
+        "test_json_envelope",
+        "test_json_event",
+        "test_json_event_fuzzlite",
+        "test_json_filter",
+        "test_json_filter_fuzzlite",
+        "test_json_filter_robust",
+        "test_json_filter_tags",
+        "test_json_int_array",
+        "test_json_parse",
+        "test_json_raw",
+        "test_ndb_empty",
+        "test_ndb_integration",
+        "test_ndb_ordering",
+        "test_ndb_perf",
+        "test_ndb_session_e2e",
+        "test_ndb_tie_break",
+        "test_neg_bound",
+        "test_neg_fingerprint",
+        "test_neg_message",
+        "test_neg_session",
+        "test_neg_session_caps",
+        "test_neg_session_need",
+        "test_neg_session_synth",
+        "test_neg_varint",
+        "test_nip04_aead",
+        "test_nip04_error_uniformity",
+        "test_nip04_secure_roundtrip",
+        "test_nip04_strict",
+        "test_nip05_parse",
+        "test_nip05_resolve_json_errors",
+        "test_nip05_resolve_json_names",
+        "test_nip05_resolve_json_relays",
+        "test_nip06",
+        "test_nip11",
+        "test_nip14",
+        "test_nip17",
+        "test_nip19",
+        "test_nip19_tlv",
+        "test_nip21",
+        "test_nip22",
+        "test_nip23",
+        "test_nip24",
+        "test_nip25",
+        "test_nip27",
+        "test_nip28",
+        "test_nip29",
+        "test_nip30",
+        "test_nip39",
+        "test_nip40",
+        "test_nip44_convkey",
+        "test_nip44_roundtrip",
+        "test_nip44_vectors",
+        "test_nip46_async_api",
+        "test_nip46_bunker_connect_auth",
+        "test_nip46_bunker_nip44",
+        "test_nip46_bunker_reply",
+        "test_nip46_bunker_roundtrip",
+        "test_nip46_bunker_sign_event_acl_deny",
+        "test_nip46_bunker_sign_event_cb",
+        "test_nip46_bunker_sign_event_real",
+        "test_nip46_bunker_uri_issue",
+        "test_nip46_c1_hardening",
+        "test_nip46_caller_hardening",
+        "test_nip46_client_api",
+        "test_nip46_client_connect",
+        "test_nip46_client_connect_edge",
+        "test_nip46_e2e_mock",
+        "test_nip46_encryption_detection",
+        "test_nip46_envelope_build",
+        "test_nip46_glib_lifetime",
+        "test_nip46_msg",
+        "test_nip46_msg_comprehensive",
+        "test_nip46_nostrconnect_qr_login",
+        "test_nip46_pending_lifetime",
+        "test_nip46_relay_lifecycle",
+        "test_nip46_request_lifecycle",
+        "test_nip46_response_validation",
+        "test_nip46_rpc_flow_mock",
+        "test_nip46_session_management",
+        "test_nip46_signed_response_admission",
+        "test_nip46_transport_modes",
+        "test_nip46_uri",
+        "test_nip46_uri_comprehensive",
+        "test_nip47_nwc_crypto",
+        "test_nip47_nwc_envelope",
+        "test_nip47_nwc_info",
+        "test_nip47_nwc_session",
+        "test_nip47_nwc_uri",
+        "test_nip47_spec_source",
+        "test_nip49_negative",
+        "test_nip49_payload",
+        "test_nip49_roundtrip",
+        "test_nip49_spec_source",
+        "test_nip49_vectors",
+        "test_nip51",
+        "test_nip57",
+        "test_nip58",
+        "test_nip59",
+        "test_nip59_rng_failure",
+        "test_nip5f_loopback",
+        "test_nip5f_negative_env",
+        "test_nip5f_tcp",
+        "test_nip60",
+        "test_nip61",
+        "test_nip70",
+        "test_nip73",
+        "test_nip75",
+        "test_nip86_policy",
+        "test_nip92",
+        "test_nip98",
+        "test_nip99",
+        "test_nipb0",
+        "test_nostr",
+        "test_nostr_gobject_event",
+        "test_nostr_gobject_integ_event_flow",
+        "test_nostr_gobject_lifecycle_leaks",
+        "test_nostr_gobject_main_thread_latency",
+        "test_nostr_gobject_nip19",
+        "test_nostr_gobject_profile_provider_conflict_resolution",
+        "test_nostr_gobject_profile_provider_lru",
+        "test_nostr_gobject_profile_service_batching",
+        "test_nostr_gobject_relay_connect",
+        "test_nostr_gobject_relay_teardown",
+        "test_nostr_gobject_store_contract",
+        "test_nostr_gobject_subscription_eose_order",
+        "test_nostr_gtk_bind_latency_budget",
+        "test_nostr_gtk_bind_latency_perf",
+        "test_nostr_gtk_content_parser",
+        "test_nostr_gtk_markdown_pango",
+        "test_nostr_gtk_media",
+        "test_nostr_gtk_nip34_issue_model",
+        "test_nostr_gtk_nip34_issue_view",
+        "test_nostr_gtk_og_metadata",
+        "test_nostr_gtk_og_preview_card",
+        "test_nostr_gtk_portable",
+        "test_nostr_gtk_portable_i18n",
+        "test_nostr_gtk_reference_card",
+        "test_nostr_gtk_standalone_core",
+        "test_otel_consumer",
+        "test_otel_encoding",
+        "test_otel_producer",
+        "test_otel_replay",
+        "test_otel_roundtrip",
+        "test_pool_redial",
+        "test_relay",
+        "test_relay_shutdown",
+        "test_relay_unsubscribe",
+        "test_roundtrip",
+        "test_schema",
+        "test_subscription_backpressure",
+        "test_subscription_backpressure_long",
+        "test_subscription_blocking_depth",
+        "test_subscription_lifecycle"
+      ],
+      "not_selected_status": "not_executed",
+      "not_selected_reason": "Exact configured registrations outside the legacy shared GH_SAN_TESTS set; not sanitizer members, not expected passes/skips. Generic exclusion admission remains engine-owned.",
+      "configured_source_sha": "b8dd3583766893e3b97e017dc063da5ed1c47413",
+      "native_diagnostic_architecture": "aarch64"
     },
     {
       "id": "libgo_macos_asan_stress_exclusion",
       "profile": "libgo.macos.asan",
-      "registrations": ["GoChannelStressTest"],
-      "reason": "Existing libgo-ci.yml build-and-test macOS ASan/UBSan variant excludes GoChannelStressTest for intermittent timeout. The other 32 registrations are exact check members. This is an explicit coverage gap, not an expected skip, advisory pass or completed check; the realization audit must continue reporting the unclaimed registration until exclusion schema/policy is coordinated. Effective Test-step ASAN_OPTIONS is detect_leaks=0 (overrides the earlier strict_string_checks setting).",
+      "registrations": [
+        "GoChannelStressTest"
+      ],
+      "reason": "Existing libgo-ci.yml macOS ASan variant excludes GoChannelStressTest for intermittent timeout. Audit-only target build is not execution; registration remains not_executed and complete_gate_eligible=false. No causal runtime fix/proof exists; ASAN_OPTIONS=detect_leaks=0 is the effective Test-step environment on both platforms.",
       "tracking": "nostrc-0cfsg.4"
     },
     {
@@ -3956,6 +5565,12 @@
       "id": "shadow_cutover",
       "reason": "W11 measured baselines, 20 PRs, two broad runs and actual protection cutover NOT RUN; no selective production acceptance.",
       "tracking": "nostrc-0cfsg.5"
+    },
+    {
+      "id": "prepared_peer_linux_contract",
+      "profile": "groundhog.linux.arm64.prepared011",
+      "tracking": "nostrc-0cfsg.9",
+      "reason": "New actual-architecture local-only prepared011 projection; A-owned contained admission/contexts support and attested binary/context/build/toolchain receipts required. Existing Docker fixtures and09 probe not_executed, never passed. Actual prepared consumer/registration/header/runtime union and hosted/nativeMac/original Docker build custody are not established."
     }
   ],
   "enforcement_ready": false,
@@ -4483,11 +6098,14 @@
       "rationale": "libgo links nsync and directly includes libnostr/include/nostr/metrics.h. The header is an independent input node so this dependency does not introduce a libgo/libnostr production cycle."
     },
     "libhanami": {
-      "depends_on": [],
+      "depends_on": [
+        "libnostr"
+      ],
       "id": "libhanami",
       "owner_paths": [
         "libhanami"
-      ]
+      ],
+      "rationale": "hanami PUBLIC-links nostr (libhanami/CMakeLists.txt); nip34 test linkage remains check-specific."
     },
     "libjson": {
       "depends_on": [],
@@ -4510,7 +6128,9 @@
     "libnostr.metrics_header": {
       "depends_on": [],
       "id": "libnostr.metrics_header",
-      "owner_paths": ["libnostr/include/nostr/metrics.h"],
+      "owner_paths": [
+        "libnostr/include/nostr/metrics.h"
+      ],
       "rationale": "Shared header input directly consumed by libgo; header ownership must not imply a dependency on the downstream libnostr library."
     },
     "libnostr": {
@@ -5660,11 +7280,15 @@
       ]
     },
     "testing.framework": {
-      "depends_on": [],
+      "depends_on": [
+        "libnostr",
+        "libjson"
+      ],
       "id": "testing.framework",
       "owner_paths": [
         "Testing"
-      ]
+      ],
+      "rationale": "nostr_testing links libnostr and nostr_json; fixture directory is declared in TestInventory.cmake."
     },
     "testkit": {
       "depends_on": [],
@@ -5732,6 +7356,107 @@
     }
   },
   "path_rules": [
+    {
+      "exact": "tests/custody/test_contained_engine.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "tests/custody/test_contained_linux.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "tests/custody/workload.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/test_selection_custody.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/contained-runner.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "exact": "scripts/contained-gate.py",
+      "effect": "global",
+      "nodes": [
+        "selection.contract"
+      ],
+      "reason": "Contained execution authority and adversarial workload source are exact selection.contract inputs; broad validation required."
+    },
+    {
+      "effect": "impact",
+      "exact": "gnome/groundhog/tests/lsan.supp",
+      "nodes": [
+        "execution.groundhog"
+      ],
+      "reason": "Actual LSAN_OPTIONS source template applied to every shared sanitizer test, including non-Groundhog regressions."
+    },
+    {
+      "effect": "impact",
+      "exact": "nostr-gtk/TestInventory.cmake",
+      "nodes": [
+        "nostr.gtk",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/TestInventory.cmake",
+      "nodes": [
+        "shared.tests",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "tests/CMakeLists.txt",
+      "nodes": [
+        "shared.tests",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "Testing/TestInventory.cmake",
+      "nodes": [
+        "testing.framework",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
+    },
+    {
+      "effect": "impact",
+      "exact": "Testing/CMakeLists.txt",
+      "nodes": [
+        "testing.framework",
+        "selection.contract"
+      ],
+      "reason": "Exact additive registration metadata read by production selection.contract tests; retain component ownership."
+    },
     {
       "effect": "impact",
       "exact": "apps/gnostr/CMakeLists.txt",
@@ -5977,7 +7702,9 @@
     },
     {
       "exact": "libnostr/include/nostr/metrics.h",
-      "nodes": ["libnostr.metrics_header"],
+      "nodes": [
+        "libnostr.metrics_header"
+      ],
       "effect": "impact",
       "reason": "Shared metrics declaration header is consumed directly by libgo and its downstream libnostr consumers; do not model a library cycle."
     },
@@ -8496,20 +10223,47 @@
         "-DGOF_PORTABLE_CONTEXT=OFF"
       ],
       "environment": {
-        "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+        "ASAN_OPTIONS": "detect_leaks=0",
         "CC": "clang",
         "CXX": "clang++",
         "TSAN_OPTIONS": "halt_on_error=1",
-        "UBSAN_OPTIONS": "print_stacktrace=1"
+        "UBSAN_OPTIONS": "print_stacktrace=1",
+        "CMAKE_BUILD_TYPE": "Debug"
       },
       "feature_variants": [],
       "instrumentation": "asan_ubsan",
       "local_availability": "host_or_container",
       "parallelism": 2,
       "platform": "linux",
-      "setup": ".github/workflows/libgo-ci.yml:build",
+      "setup": ".github/workflows/libgo-ci.yml:build-and-test",
       "source_dir": "libgo",
-      "timeout_seconds": 3600
+      "timeout_seconds": 3600,
+      "workflow_contract": {
+        "build_command": [
+          "cmake",
+          "--build",
+          "{build}",
+          "-j"
+        ],
+        "cmake_version": "3.31.6",
+        "ctest_exclude": "",
+        "evidence": {
+          "job": 116829330943,
+          "result": "33 passed, 0 skipped; legacy workflow only, not repaired shadow worker acceptance",
+          "source_sha": "8a031f443ac84850345a4cf0fb6ab5a8c3b32814"
+        },
+        "matrix": {
+          "os": "ubuntu-latest",
+          "sanitizer": "asan_ubsan"
+        },
+        "test_command": [
+          "ctest",
+          "--test-dir",
+          "{build}",
+          "--output-on-failure",
+          "-j2"
+        ]
+      }
     },
     "libgo.macos.asan": {
       "architecture": "arm64",
@@ -8517,7 +10271,8 @@
       "capabilities": [],
       "compiler": "clang",
       "configure_args": [
-        "-G", "Ninja",
+        "-G",
+        "Ninja",
         "-DCMAKE_BUILD_TYPE=Debug",
         "-DCMAKE_C_STANDARD=11",
         "-DCMAKE_C_EXTENSIONS=ON",
@@ -8557,6 +10312,61 @@
       "setup": ".github/workflows/static-checks.yml",
       "source_dir": ".",
       "timeout_seconds": 3600
+    },
+    "groundhog.linux.arm64.prepared011": {
+      "architecture": "aarch64",
+      "build_type": "Debug",
+      "capabilities": [
+        "display",
+        "private_bus",
+        "prepared_peer"
+      ],
+      "compiler": "gcc",
+      "configure_args": [
+        "-G",
+        "Ninja",
+        "-DCMAKE_BUILD_TYPE=Debug",
+        "-DBUILD_TESTING=ON",
+        "-DBUILD_GROUNDHOG=ON",
+        "-DBUILD_NOSTR_GOBJECT=ON",
+        "-DBUILD_NOSTR_GTK=ON",
+        "-DBUILD_APPS=OFF",
+        "-DBUILD_RELAYD=ON",
+        "-DSIGNET_ENABLE=OFF",
+        "-DBUILD_MDK011_INTEROP=ON",
+        "-DBUILD_MDK_INTEROP=OFF",
+        "-DBUILD_MDK09_PROBE=OFF",
+        "-DMDK011_INTEROP_DRIVER:STRING=/peers/011/driver"
+      ],
+      "environment": {},
+      "feature_variants": [
+        "mdk011",
+        "prepared_peer"
+      ],
+      "instrumentation": "none",
+      "local_availability": "contained_linux_prepared_peers",
+      "parallelism": 2,
+      "platform": "linux",
+      "setup": "contained/prepared-peer-linux-v1",
+      "source_dir": ".",
+      "timeout_seconds": 3600,
+      "contexts": [
+        "local"
+      ],
+      "execution_domain": "prepared_peer_linux_v1",
+      "prepared_peers": [
+        "011"
+      ],
+      "registration_projection": {
+        "included_cases": "existing MDK011 consumers, without MDK09 probe",
+        "not_executed_legacy": [
+          "groundhog-mdk-interop-image",
+          "groundhog-mdk011-interop-image",
+          "groundhog-mdk011-interop-image-mdk09",
+          "groundhog-mdk011-interop-mdk09-probe"
+        ],
+        "reason": "Distinct native-prepared inputs; no original Docker image-build receipt, old-profile coverage, or full root registration union is claimed."
+      }
     }
   },
   "release_components": {
@@ -8855,309 +10665,497 @@
     ".github/workflows/bp-matrix-nightly.yml:nightly-matrix": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "0fbbfdf89fe0bc07a3e4ac38c68fd73e27fd3fd7a5f422a6ff1dd43c6540ea1a",
+      "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
+      "workflow_sha256": "f1282f0ee7091b0ff5cb5f951ff0c6d1c40dd31fc249558b868ce3bb0ff95130"
     },
     ".github/workflows/bp-matrix.yml:bp-matrix": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "04d0677475294f39e22faa3de88745437587b6a2594ea6b13d05ab69c194e85d",
+      "unsupported_reason": "BP Python driver command, parameter sweep, generated report and artifact contracts have no exact logical command memberships; current hosted configure failure remains unresolved.",
+      "workflow_sha256": "7b1b9cf920224f239240e3a1191c66f297f6bc36009fa53db6c921d65a7313dc"
     },
     ".github/workflows/dependency-broad.yml:core": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "0dcd991324ca0c9834458c71cdd2403b4b539e88f494c4a9b3e09452cc30680a",
+      "unsupported_reason": "Reusable broad core call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:libgo": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "98525fcfd49150135b70cc75144268f68091db184fc365bc3a0cc1d8191df281",
+      "unsupported_reason": "Reusable broad libgo call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:hanami": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "cbd05c97a115341e7a8d23ece98e04d479feae5f3daaa8815c71b9975cb199d5",
+      "unsupported_reason": "Reusable broad hanami call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:gi": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "c17a6372be52ac077f2c2f0b01e834e0a44e1e38ef5a340a9235c9318cea962a",
+      "unsupported_reason": "Reusable broad gi call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:groundhog": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "e19910063a80b07dc663d6c991eabc15deba70176d8d97058f56abeba6d98de7",
+      "unsupported_reason": "Reusable broad groundhog call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:grotto": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "2692fb15aa3047e6682e528ec600b622a9155806623774a03f5f16cc991290d0",
+      "unsupported_reason": "Reusable broad grotto call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:nip55l": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "c62d6a39d23049556fa29439a95160a4a954a1e1878203d8cb5ef6454b30dd48",
+      "unsupported_reason": "Reusable broad nip55l call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:homed": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "6fe402347dd6de6f071c7525670ff2f7c2f068b252a712cd9ce82c1b1a16e47f",
+      "unsupported_reason": "Reusable broad homed call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:signet": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "338abe5f46730202699b8a593b75f642a625c5891798bc96f25fa19add1be28a",
+      "unsupported_reason": "Reusable broad signet call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:static": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "482e7dece7406a0ffd28ba84d940ad3fa1907f32842fb8da91bb02402cc1e913",
+      "unsupported_reason": "Reusable broad static call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:appimage": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "228d1aac3314e7782fbab0f73dff3309c9cea759cd5ef0c581d1860ba69e6174",
+      "unsupported_reason": "Reusable broad appimage call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:windows": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "a1bb05cc88bc760a4b11a19996c8a78a2862ada511281e17ac36ff182134c73e",
+      "unsupported_reason": "Reusable broad windows call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:bp": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "357ce9ed8fbc0dfd17a722301604402ad043f498d7dc89adafcffbf40f16d48c",
+      "unsupported_reason": "Reusable broad bp call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:bp_extended": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "d376286ba8df8852ffbf71105a6e15ff2557558534f9004103a70da1d383346b",
+      "unsupported_reason": "Reusable broad bp_extended call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:fuzz": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "14b9e8ec0e294129f03ee5b8cb6c3d6878a31576147dbcffa1b284afdbceac98",
+      "unsupported_reason": "Reusable broad fuzz call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:mdk08": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "7738defce96ac43486ef2c617e430eb01fbb85b66f4bb9561dada27e4e8735c7",
+      "unsupported_reason": "Reusable broad mdk08 call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:mdk011": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "33ebffc435a52aef630982d95d81cf743ad64517dc1ddc5e78f07a6a69775bf5",
+      "unsupported_reason": "Reusable broad mdk011 call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-broad.yml:broad_gate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "a972cdd2b0d1802fa232d4775cbb5a25eef12d84c407b2bcefae3e0715523d9e",
+      "unsupported_reason": "Reusable broad broad_gate call retains legacy workflow authority; its transitive matrices and exact same-SHA artifacts remain unsupported by selective profile union.",
+      "workflow_sha256": "79d5ce5af5f517d037b83fc5d4c92d3d31172a5ef059202e0a4b8ffe00d383b6"
     },
     ".github/workflows/dependency-tests.yml:core_asan": {
       "coverage_gap": "workflow_profile_union",
       "matrix_source": "",
-      "profiles": []
+      "profiles": [],
+      "source_sha256": "ed7ca94eb6cdec8ea310eab65950c950f97ea7ed12aec3dbcf4092fbc6c507f8",
+      "unsupported_reason": "Shadow core_asan routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:core_native": {
       "coverage_gap": "workflow_profile_union",
       "matrix_source": "",
-      "profiles": []
+      "profiles": [],
+      "source_sha256": "f2fe34a8ee75f27d330dcb9b307c082a05d8cebfb96cf9ac6aec665234a33fd4",
+      "unsupported_reason": "Shadow core_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:groundhog_sanitizers": {
       "coverage_gap": "workflow_profile_union",
       "matrix_source": "",
-      "profiles": []
+      "profiles": [],
+      "source_sha256": "c4b57a17a39a0288bf597d2eafb758b9807368c235bc6d44bd8f7e13dd3f6065",
+      "unsupported_reason": "Shadow groundhog_sanitizers routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:select": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "bdb7c27ff7a41a864000e3985c9bdb944c77382720e4c2f8a3cbbd64ec19b0ed",
+      "unsupported_reason": "Shadow select routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:core": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "e0f225b7c1d9cd1aff129bd137f695af685a2f7951ca0bd87d6fce6e389789e9",
+      "unsupported_reason": "Shadow core routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:grotto": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "6192e436dfe289562e6fd024ab08a1c609b93d221f1215f2a873e9ed19c385f6",
+      "unsupported_reason": "Shadow grotto routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:groundhog": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "699b5d12057ac24c459f5a374b77f548d970dca9c55a02c315bc97594d5a44af",
+      "unsupported_reason": "Shadow groundhog routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:mdk08": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "655465cf7dad5f5b3ccf5c33fdd39b9e34aa59f7d6e8f747fab24c55bd2478d8",
+      "unsupported_reason": "Shadow mdk08 routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:libgo": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "8abf6660c48dff9eb5953f20a5ba06172207807d964625546c440f988aed7980",
+      "unsupported_reason": "Shadow libgo routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:libgo_native": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "e10da16c50218b75cb78e7105011fcb4c7d8aaf101629b6592cb20498fea751d",
+      "unsupported_reason": "Shadow libgo_native routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:policy": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "208e3031a4863b5758aeb0843e73a1f16495c1f40359c099e03b37e16e0404ac",
+      "unsupported_reason": "Shadow policy routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:broad": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "1c4ca529d36e4d9530514b1dda2faa4727062cbcbdda5bfb45665a97cecfb249",
+      "unsupported_reason": "Shadow broad routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-tests.yml:gate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "1398db5eb2b802c62b36f3dfb4ff6f4c6b7d8f2ff369a3474d2c57bcd321cf6c",
+      "unsupported_reason": "Shadow gate routing/selection/aggregation is an orchestration contract, not an independent execution profile; hosted lane receipts and exact selected conclusions still required.",
+      "workflow_sha256": "215dd788507eb2fff04dd3ed70193126006ec642bf949b3689fc8b1415e486e2"
     },
     ".github/workflows/dependency-worker.yml:execute": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "7bdae5d1881fe6596eb4a6b6bcb8f44e70b6a3df758c059679fb34d494057016",
+      "unsupported_reason": "Worker dispatch covers ten authored diagnostic profiles only; setup capability/platform checks and retained receipts are not complete original workflow variant acceptance.",
+      "workflow_sha256": "1cc2f197566eadcd1bd79c1e5e7f6dad3c4de76d89076e9c2dcaa002a1d38cd6"
     },
     ".github/workflows/gnostr-appimage.yml:build-appimage": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "bcaccf9d109601684b8465e8bb3fea4f3b85409656e3f5c06209db4c6c6ac28e",
+      "unsupported_reason": "AppImage x86_64/aarch64 build, bundle and smoke artifacts are not modeled as executable package contracts; generic core/Groundhog profiles do not cover them.",
+      "workflow_sha256": "be7e886ee7ab68b1a7701a813674f4f9e27f591477a66a35b5d96e124e1e5d3a"
     },
     ".github/workflows/grotto-ci.yml:signer": {
       "matrix_source": "matrix:\n        include:\n          - {runner: ubuntu-24.04, mode: native}\n          - {runner: ubuntu-latest, mode: native}\n          - {runner: ubuntu-24.04, mode: asan-ubsan}\n          - {runner: ubuntu-24.04, mode: tsan}",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "2a7f620283dbce0fba38ccabc998f09289fb60dcb52b1901f5ac7824bc4fa4fa",
+      "unsupported_reason": "Grotto distro/native/ASan/UBSan/advisory-TSan variants, dbgsym setup, package smoke and quarantine semantics are not equivalent to the generic grotto.linux diagnostic.",
+      "workflow_sha256": "3c5623e6bad173fed567bf977f236be6d1e5672bb5c351075e63486e8f5d8f10"
     },
     ".github/workflows/grotto-fuzz.yml:select-fuzz": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "bbd6a332b9f292902fabd35f58bf8a8674b70e350434118f8b77a316d8dc6718",
+      "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/grotto-fuzz.yml:fuzz-test": {
       "matrix_source": "matrix:\n        target: ${{ fromJSON(needs.select-fuzz.outputs.targets) }}",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "41321b5f8b3f14958df15a8b9cf11a6037b34d17d927c9ad707e348d60595d49",
+      "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/grotto-fuzz.yml:coverage-report": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "3fefe6a6753499763ba2daf1f2b69d31937cdb365bc2a5f4829287a58ebbe710",
+      "unsupported_reason": "Dynamic fuzz target selection, target-specific seed corpus, libFuzzer execution and coverage artifact union are not modeled as exact command contracts; hosted configure failures remain visible.",
+      "workflow_sha256": "d83e7f677684aab653c34bdab2c99364df0fc687e1d3f0b56dc61ce26f9fff5e"
     },
     ".github/workflows/groundhog-ci.yml:groundhog": {
       "matrix_source": "",
-      "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "profiles": [
+        "groundhog.linux"
+      ],
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "0a51bb0bfd467c571dda1d2987cb2f2a6600e5dfa708be41d3d5b767f2fb39ef",
+      "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
+      "workflow_sha256": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c"
     },
     ".github/workflows/groundhog-ci.yml:groundhog-sanitizers": {
       "matrix_source": "",
       "profiles": [
         "groundhog.linux.sanitizers"
       ],
-      "coverage_gap": "groundhog_sanitizer_execution_contract"
+      "coverage_gap": "groundhog_sanitizer_execution_contract",
+      "source_sha256": "f5b51e4d638bd966ad9c0e44a5fd738c89d03af59dfc8092137ba1e5051cc97c",
+      "unsupported_reason": "Ordinary Groundhog suite/MDK011 application configuration is authored but full registration/runtime/header closure and Docker image custody remain unaccepted.",
+      "workflow_sha256": "5333dff7e6ec84e03bbf7d3926788d77592c1317ab297d9636581c684ad99d6c"
     },
     ".github/workflows/groundhog-release.yml:identity": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "da2e52a73062792e1ddbaba9a917cf2083e67855170d1af62044450e58c44719",
+      "unsupported_reason": "groundhog-release:identity identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:validation": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "722572b7cdb010c34b64e43d62e9e87acec11be6e48ab6cb76da17d290ecf5e6",
+      "unsupported_reason": "groundhog-release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:source": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "fa364540320a32d45836f8c29d0b6816126695b6079cf4bcb89cfe6dd915b052",
+      "unsupported_reason": "groundhog-release:source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:deb": {
       "matrix_source": "matrix:\n        # One deb per release: library names differ (libsecp256k1-1 on\n        # 24.04, -2 on Debian 13, newer on 26.04), so a 24.04 build does\n        # not install elsewhere. The version carries the distribution;\n        # dpkg names the file _amd64 or _arm64.\n        distro:\n          - { image: 'ubuntu:24.04', name: 'Ubuntu 24.04', tag: ubuntu24.04 }\n          - { image: 'ubuntu:26.04', name: 'Ubuntu 26.04', tag: ubuntu26.04 }\n          - { image: 'debian:13',    name: 'Debian 13',    tag: debian13 }\n        arch: [x86_64, aarch64]\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "f43faf10163b0d9b272d544dd6e4c814cbe02be4b324b708ced9d00ae11fa714",
+      "unsupported_reason": "groundhog-release:deb identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:rpm": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "13e7a7f4fcec8e64a85244fc9adad814c5d27ed408376744abb3d0a38235c4b3",
+      "unsupported_reason": "groundhog-release:rpm identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:arch": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64, runner: ubuntu-24.04, image: 'archlinux:latest' }\n          # The official archlinux image is x86_64 only. Arch Linux ARM is\n          # what Linux-on-Android setups run (Termux proot-distro archlinux,\n          # chroots), so the aarch64 package is built on an Arch Linux ARM\n          # root: menci/archlinuxarm is rebuilt daily from the official\n          # ArchLinuxARM-aarch64 rootfs with the archlinuxarm keyring\n          # initialised. Pinned by digest; bump it deliberately.\n          - arch: aarch64\n            runner: ubuntu-24.04-arm\n            image: 'menci/archlinuxarm@sha256:57ed42430d3d3f22beb2983de1aa23396b27fcf33ebf5dd781947cdc1038a640'",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "3c5dc4e05eca2bd8af8e07e759201d5f4fda46955567f7cd5438d230fb042c71",
+      "unsupported_reason": "groundhog-release:arch identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "0e896fb3f7ca2340fbefcab4993c9cb3705424c4f82c75253ec6e010fdae7d90",
+      "unsupported_reason": "groundhog-release:flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:nix": {
       "matrix_source": "matrix:\n        include:\n          - { system: x86_64-linux,  runner: ubuntu-24.04 }\n          - { system: aarch64-linux, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "dc3ec6503c329aacaee1f864e6dc22e2ca8e00ca27608ff3e735ff39d638cb3f",
+      "unsupported_reason": "groundhog-release:nix identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:release-aggregate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "eadae5a01b86b2f2aba03686e911a22c6fa0dbd21f4bb78067dce0312471d8ca",
+      "unsupported_reason": "groundhog-release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/groundhog-release.yml:release": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "c9dbe4fcb59118f40a909bce63a1f68b13df322940d88905da052ca4e5edf87b",
+      "unsupported_reason": "groundhog-release:release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "67196c15df96471b0b016b700ebe168a5bf269313e079e9870bd078bb7ffaec1"
     },
     ".github/workflows/libgo-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        # tsan keeps the default TSAN configuration (single-lock ring);\n        # tsan_mpmc keeps the MPMC slot protocol every other build ships, so\n        # the lock-free channel paths get ThreadSanitizer coverage too\n        # (nostrc-75rv review F8).\n        sanitizer: [asan_ubsan, tsan, tsan_mpmc]",
-      "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "profiles": [
+        "libgo.linux.asan",
+        "libgo.macos.asan"
+      ],
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "b455adbda277286b85ceb4b751b183c19d1115ed008fe1fcefa698cbc090706d",
+      "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
+      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
     },
     ".github/workflows/libgo-ci.yml:gofiber-linux-sanitizers": {
       "matrix_source": "matrix:\n        sanitizer: [asan_ubsan, tsan]",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "79b268fe1b1fd762ca58dabc8a2d5c88a6d42c191cbcee3b6b1ede3256d6d2e5",
+      "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
+      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
     },
     ".github/workflows/libgo-ci.yml:fuzz-driver": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "ae0824e7efc7b4e4c71b3c24a6af0429a246230e8314dd04781afc49952fbb83",
+      "unsupported_reason": "Only Linux/macOS asan_ubsan entries are authored; tsan, tsan_mpmc, W4 exclusion semantics, separate Linux gofiber and root fuzz-driver variants remain unsupported. macOS ASan stress exclusion remains not_executed.",
+      "workflow_sha256": "d7c25a01f516a924001c37e2d9dfc1907f8502f69d82698ed9ceaa1d5c578bc0"
     },
     ".github/workflows/libhanami-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "f5645e4279fd1ba302d589d80b21f9949ca52affa22e524d7f07587bf417f81c",
+      "unsupported_reason": "Ubuntu/macOS standalone libhanami configure, compiler/setup and exact standalone registrations have not been realized as profiles; root check linkage is not standalone parity.",
+      "workflow_sha256": "32f744499c33fe562d5cbca75499d950b2f1494e23ef35e3d9f0cfb36e1c2971"
     },
     ".github/workflows/libnostr-gi.yml:generate-gir": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "682e56341bc4270e392925d265162a0b21fd921502b2f698b756fb3a943eb15d",
+      "unsupported_reason": "Linux/macOS GIR scanner/typelib generation and installed binding smoke contracts lack exact build/runtime input and artifact admission.",
+      "workflow_sha256": "3406c1488d5cb2e0a41ee8ed6206c54417bf3663603b709e3bd7645e045ea121"
     },
     ".github/workflows/marmot-mdk-interop.yml:mdk-interop": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "38c1626b0c23364a08615d0ddc767790edebe8d30b7989dbf8ffdca1d23e2359",
+      "unsupported_reason": "MDK 0.8 image/driver/container lifecycle and complete live matrix custody remain unsupported; historical command/CTest smoke is not successful arbitrary-tree cleanup.",
+      "workflow_sha256": "bf4a316d80b8a96af6c0a28b8fd9029032d5f8c19fc698b67a5ba74fe2d36a5c"
     },
     ".github/workflows/marmot-mdk011-interop.yml:mdk011-adopted-matrix": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "782007abad5e1c166746bcdee279fbda4831d0dbdd06c69c59113606b8f7ed37",
+      "unsupported_reason": "MDK 0.11 adopted case matrix, 0.9 incompatibility probe and image/reset custody remain unsupported; ordinary Groundhog memberships are not full live matrix admission.",
+      "workflow_sha256": "ffa6142b3f663098943519171c4e4f16f32b1695beed9f78e569eb90bd824cac"
     },
     ".github/workflows/nip55l-libsecret-ci.yml:refusing-session": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "cde531cc85793bb625c2f6f6b51e2ac826812333ac4bddb6b00d6119a385fb4d",
+      "unsupported_reason": "Refusing Secret Service private-bus image setup/teardown and exact standalone NIP55L registration contracts are not modeled by generic profiles.",
+      "workflow_sha256": "e3d76999d3f03394575070b68b8f055b95af654e27e17502e786a5f3f15a0627"
     },
     ".github/workflows/nostr-homed-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        include:\n          - distro: ubuntu-24.04\n            image: ubuntu:24.04\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev libgirepository1.0-dev\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: debian-bookworm\n            image: debian:bookworm\n            update: apt-get update\n            install: >-\n              apt-get install -y build-essential cmake pkg-config ninja-build\n              libjansson-dev libglib2.0-dev gir1.2-glib-2.0\n              libsqlite3-dev libcurl4-openssl-dev\n              libfuse3-dev fuse3\n              libssl-dev libsecp256k1-dev\n              libwebsockets-dev libnsync-dev libsodium-dev libsoup-3.0-dev\n          - distro: fedora-40\n            image: fedora:40\n            update: dnf -y update\n            install: >-\n              dnf -y install @development-tools cmake ninja-build pkgconf-pkg-config gcc-c++\n              jansson-devel glib2-devel gobject-introspection-devel\n              sqlite-devel libcurl-devel\n              fuse3-devel\n              openssl-devel libsecp256k1-devel\n              libwebsockets-devel libsodium-devel libsoup3-devel\n          - distro: archlinux\n            image: archlinux:latest\n            update: pacman -Syu --noconfirm\n            install: >-\n              pacman -S --noconfirm base-devel cmake ninja pkgconf\n              jansson glib2 gobject-introspection sqlite curl\n              fuse3\n              openssl libsecp256k1 libwebsockets libsodium libsoup3",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "64ae85cb2b56c4106f90f71ddde343362a63f645294e3efb84366406017ac43c",
+      "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
+      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
     },
     ".github/workflows/nostr-homed-ci.yml:systemd-opensession": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "91b074efcb6d38fc9648815b070f8815c4449c81b302c65069b93baa6e7e02d6",
+      "unsupported_reason": "Debian/Fedora/Ubuntu/Arch distro setup/toolchains and privileged systemd session/runtime contracts are unsupported; no-tests and requested-checkout hosted failures are not passing test acceptance.",
+      "workflow_sha256": "b262ba369c646b2b05e5c96e72f600588fba264dcc4d68ad0d8e09bd64b4ac26"
     },
     ".github/workflows/nostrc-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        os: [ubuntu-latest, macos-latest]\n        sanitizer: [asan_ubsan]",
@@ -9165,132 +11163,210 @@
         "core.linux.asan",
         "core.macos.asan"
       ],
-      "coverage_gap": "root_asan_execution_contract"
+      "coverage_gap": "root_asan_execution_contract",
+      "source_sha256": "3a62b2b339298b5348300b93179a3b7e94666521972433af299a92ca10a0ed06",
+      "unsupported_reason": "Root Linux/macOS ASan profiles exist; three original exclusions, separate audit/fuzz invocations, ambient setup suffixes and complete postbuild/runtime union remain gaps.",
+      "workflow_sha256": "96fd1c4b95f6320466fc9c8f4791c357a49bbc95fccc2d9904561388a9c7dd87"
     },
     ".github/workflows/release-validation.yml:identity": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "018728e60bef09644f5f9f1dee94ae4780c983ce7bf50cee493bd2cc8679184a",
+      "unsupported_reason": "release-validation:identity identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "658c1a65968824b0075ee97586178eb922bc055deef1e63658f34895fdca031b"
     },
     ".github/workflows/release-validation.yml:validate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "9e0ff6378df8f5d44a7bbb32b61683f0c168dd43099ee16506613a38dd93b64b",
+      "unsupported_reason": "release-validation:validate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "658c1a65968824b0075ee97586178eb922bc055deef1e63658f34895fdca031b"
     },
     ".github/workflows/release.yml:detect-component": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "dfe878a6e2a92306f2f3f13a35de5a59a40a1344b1bde277a33d1abc4c8dddbd",
+      "unsupported_reason": "release:detect-component identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:validation": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "d8bc53d229992a4f4100ac571998c80d08710f3aa671996342ae2d3425ddbcc2",
+      "unsupported_reason": "release:validation identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:release-aggregate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "467d840b5956a3974ff69cfad6adaba37918e470380a864872894657f28481cd",
+      "unsupported_reason": "release:release-aggregate identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-source": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "d017b4f9e45c13ddfd6435fbdb11c8c26e09f36fe2d38f12d877e5addc401ef6",
+      "unsupported_reason": "release:build-source identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-linux": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "894e786832f2c44fc2106ad9cac03018768a84d622ddcea978d2da9861f80ab8",
+      "unsupported_reason": "release:build-linux identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-linux-daemon-tcp": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-24.04 }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "5fca21e4b5b215c9e53771afdbfc85075d1ac7bb3fa6d88719d4fad3894d85cf",
+      "unsupported_reason": "release:build-linux-daemon-tcp identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-appimage-gnostr": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "2ec8423c678ae81601f5e0837fac15fb5a660a8d2d13bff25a0edb32103f4b0f",
+      "unsupported_reason": "release:build-appimage-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-snap-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "04a8458e438830df4a0e5d18196bbd5ed4294431190b7177eeeed13cfbc778a2",
+      "unsupported_reason": "release:build-snap-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-snap-signer": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "136cea0c7d27c819fa521b478d4d2d59132e16e51fd501ee13bda614c686e9b3",
+      "unsupported_reason": "release:build-snap-signer identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-snap-daemon": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "b5298108193e3f492f584d831fd675aa18e4a435cd18f608b0999b46c4ee72b0",
+      "unsupported_reason": "release:build-snap-daemon identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:create-release": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "20b27d29797b5a752b50c147ef757644c5c8754e418adeb2776a32ebb2283d0f",
+      "unsupported_reason": "release:create-release identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-flatpak": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "d83e9b96a0631f256dc842efa1b430c9c1a0d4a20de6d738c682b1e703fd8612",
+      "unsupported_reason": "release:build-flatpak identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-flatpak-gnostr": {
       "matrix_source": "matrix:\n        include:\n          - { arch: x86_64,  runner: ubuntu-latest }\n          - { arch: aarch64, runner: ubuntu-24.04-arm }",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "fdbdab5cb8b6cea326e79f6a800ddbd5c65b0e77913be45fcde1eac44f2c5dff",
+      "unsupported_reason": "release:build-flatpak-gnostr identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-macos-signer-dmg": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "f9d67b8b5c0b015d5e739329deec95acbbb9dfe2cc319c75de4f91d4052d7afd",
+      "unsupported_reason": "release:build-macos-signer-dmg identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/release.yml:build-macos-tarball": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "ea18df39988cae1ab16dfa548a4bc756e7e14db26ca712575656d7b965c6b67b",
+      "unsupported_reason": "release:build-macos-tarball identity/validation/build/publication and applicable artifact gating remain legacy contracts; no selective enforcement or release replacement acceptance.",
+      "workflow_sha256": "ae5b7a47dc011dfb9134ae39d9e3db8ad869cb10ffc37dae0e6d453146cbedb7"
     },
     ".github/workflows/signet-ci.yml:build-and-test": {
       "matrix_source": "matrix:\n        passkeys: [ 'OFF', 'ON' ]\n        sqlcipher: [ 'OFF', 'ON' ]\n        build_type: [ 'Debug' ]\n        include:\n          # Exercise binding-race and forced-secret regressions in one test\n          # build; the Release configuration below keeps hooks disabled.\n          - passkeys: 'ON'\n            sqlcipher: 'OFF'\n            build_type: 'Debug'\n            test_hooks: 'ON'\n          # fp-52iq: assurance comes from running tests the way the project is\n          # shipped. Release optimizes signet_core and defines NDEBUG, so cover\n          # the shipped configuration too instead of testing Debug only.\n          - passkeys: 'ON'\n            sqlcipher: 'ON'\n            build_type: 'Release'",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "19ddd1257b4cce4523c3d05b237fa88df808812a2ababa9bbe8ed9545fb4a88a",
+      "unsupported_reason": "Five passkeys/sqlcipher/hooks/build-type Meson variants and daemon/control smoke lack distinct exact profile/membership/runtime contracts.",
+      "workflow_sha256": "8ce7a7d50c35a32ac5fc9813205322bbe920241629fe301761289912b2fef00a"
     },
     ".github/workflows/static-checks.yml:static-checks": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "cf81f0ac0c449c16ac22813a02accc041e759b3eb4440342c49947f98e83d9d9",
+      "unsupported_reason": "selection.contract is only one production command; remaining shell/static/privacy/version/package check commands and their explicit input union are not all authored.",
+      "workflow_sha256": "2ca79e510d276305b55cfa2e6f58505390c671a4147495d5c651992df4be63ed"
     },
     ".github/workflows/windows-build.yml:identity": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "f6eeabb51f4d89cec31c67f9406aacaeec9ad722e1128fc732ded1c14b291506",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
     },
     ".github/workflows/windows-build.yml:validation": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "fa11c431170fcc48672657b53bd593ea3a1d2edc0a61ba7aebc560600e12f49e",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
     },
     ".github/workflows/windows-build.yml:build": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "135b3479d1f1e00856ddcf1b689cd387bd17b70c296c0845f0f7aa55be32edf8",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
     },
     ".github/workflows/windows-build.yml:release-aggregate": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "2fdff2030e691ec6bc489faa66af56732978195339dea4db2e9851a9fd38e380",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
     },
     ".github/workflows/windows-build.yml:release": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "24b31f4e57e7bb4d9a4cfd04999f477caa170c25400d949778116224be2bf896",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "cad83d92eb414a7f126c3c453b07fe232ad89291da3710b39659765b0d59fcfd"
     },
     ".github/workflows/windows-validation.yml:build": {
       "matrix_source": "",
       "profiles": [],
-      "coverage_gap": "workflow_profile_union"
+      "coverage_gap": "workflow_profile_union",
+      "source_sha256": "1bc8e99bc386537de2ff226b1aaaf0b8e040d00b654fa70fd6516950e5e18452",
+      "unsupported_reason": "Windows toolchain/installer/package execution is not supported by the current Linux/macOS realization profiles; publisher identity/artifact contracts remain legacy.",
+      "workflow_sha256": "d69012a314c9ef55f3bf1d8ba4fe0d62f96c910a3237947b1888ccc3bbf42095"
     }
   },
   "schema_version": 1,

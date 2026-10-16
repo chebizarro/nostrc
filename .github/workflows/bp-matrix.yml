@@ -69,7 +69,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
-            libssl-dev libglib2.0-dev libgirepository1.0-dev libcjson-dev \
+            libssl-dev libglib2.0-dev libgirepository1.0-dev libcjson-dev libsodium-dev \
             libsecp256k1-dev libjansson-dev libnsync-dev \
             python3 python3-pip
 

@@ -19,6 +19,12 @@ SANITIZER_HELPER = ROOT / "scripts/sanitizer-gate-ci.py"
 ROOT_PROFILES = {"Linux": "core.linux.asan", "macOS": "core.macos.asan"}
 
 
+def audited_nodes(check_id):
+    audits = json.loads((ROOT / "tests/selection/fixtures/hosted_audit_edges.json").read_text())["audits"]
+    return {node for audit in audits for edge in audit["edges"] + audit.get("compatibility_edges", [])
+            if edge["check"] == check_id for node in edge["required_nodes"]}
+
+
 def registrations(policy, profile):
     return [name for check in policy["checks"].values()
             for name in check.get("ctest_tests", {}).get(profile, [])]
@@ -147,9 +153,9 @@ class ConfiguredMembershipContracts(unittest.TestCase):
             self.assertEqual(len(members), 267 if key == "root_macos_arm64" else 268)
             self.assertEqual(self.policy["profiles"][profile]["configure_args"], export["configure_args"])
             for owners, names in export["source_owner_membership"].items():
-                for check in self.policy["checks"].values():
+                for check_id, check in self.policy["checks"].items():
                     if set(check.get("ctest_tests", {}).get(profile, [])) & set(names):
-                        self.assertEqual(set(check["nodes"]), set(owners.split(",")) | {"execution.core"})
+                        self.assertEqual(set(check["nodes"]), set(owners.split(",")) | {"execution.core"} | audited_nodes(check_id))
             self.assertFalse(set(members) & set(export["fixture_registrations"]))
             self.assertEqual(export["legacy_excluded_registrations"],
                              ["MockRelayUnit", "concurrency_subscription_shutdown_asan", "test_json_envelope"])
@@ -176,7 +182,7 @@ class ConfiguredMembershipContracts(unittest.TestCase):
             check = self.policy["checks"][evidence["check"]]
             self.assertEqual(check["ctest_tests"][profile], [name])
             self.assertEqual(check["build_targets"], evidence["targets"])
-            self.assertEqual(check["nodes"], evidence["nodes"])
+            self.assertEqual(set(check["nodes"]), set(evidence["nodes"]) | {"execution.groundhog"} | audited_nodes(evidence["check"]))
             for source in evidence["primary_source_inputs"]:
                 self.assertTrue(set(s.classify(self.policy, source)["nodes"]) <= set(check["nodes"]))
         self.assertFalse(export["matches_declared_architecture"])
@@ -191,7 +197,11 @@ class ConfiguredMembershipContracts(unittest.TestCase):
         self.assertIn("groundhog", check["build_targets"])
         plan = s.make_plan(self.policy, [{"status": "M", "old_path": source, "new_path": source}],
                            head="0" * 40, context="local")
-        self.assertEqual(plan["selected_checks"], ["groundhog.poll_ui", "sanitizer.groundhog_background"])
+        # Other actual consumers: store-sqlite/two-instance launch the app;
+        # icons explicitly reads the complete src/ui runtime directory.
+        self.assertEqual(plan["selected_checks"], [
+            "groundhog.poll_ui", "sanitizer.groundhog_background", "sanitizer.groundhog_icons",
+            "sanitizer.groundhog_store_sqlite", "sanitizer.groundhog_two_instance_acceptance"])
 
     def test_native_stress_gap_and_all_union_gaps_stay_incomplete(self):
         members = registrations(self.policy, "libgo.macos.asan")

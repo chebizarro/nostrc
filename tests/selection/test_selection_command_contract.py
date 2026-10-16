@@ -21,6 +21,11 @@ SUPPORT_INPUTS = {
     "CMakeLists.txt",
     "VERSION_MANIFEST.md",
     "cmake/NostrcTestInventory.cmake",
+    "Testing/CMakeLists.txt",
+    "Testing/TestInventory.cmake",
+    "tests/CMakeLists.txt",
+    "tests/TestInventory.cmake",
+    "nostr-gtk/TestInventory.cmake",
     "gnome/groundhog/TestInventory.cmake",
     "scripts/check-macos-keychain.sh",
     "scripts/linux-gate.sh",
@@ -30,6 +35,13 @@ SUPPORT_INPUTS = {
     "scripts/test-plan.py",
     "scripts/test_selection.py",
     "scripts/test_selection_realization.py",
+    "scripts/contained-gate.py",
+    "scripts/contained-runner.py",
+    "scripts/test_selection_custody.py",
+    "tests/selection/test_contained_custody_contract.py",
+    "tests/custody/workload.py",
+    "tests/custody/test_contained_linux.py",
+    "tests/custody/test_contained_engine.py",
 }
 
 

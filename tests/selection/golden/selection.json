@@ -20,7 +20,11 @@
     "mode": "affected",
     "checks": [
       "groundhog.about",
-      "groundhog.shell"
+      "groundhog.shell",
+      "sanitizer.groundhog_background",
+      "sanitizer.groundhog_icons",
+      "sanitizer.groundhog_store_sqlite",
+      "sanitizer.groundhog_two_instance_acceptance"
     ],
     "excluded_prefixes": [
       "mdk"
@@ -61,7 +65,10 @@
     "mode": "affected",
     "checks": [
       "groundhog.poll_ui",
-      "sanitizer.groundhog_background"
+      "sanitizer.groundhog_background",
+      "sanitizer.groundhog_icons",
+      "sanitizer.groundhog_store_sqlite",
+      "sanitizer.groundhog_two_instance_acceptance"
     ],
     "excluded_prefixes": [
       "mdk",
@@ -137,7 +144,8 @@
     ],
     "mode": "affected",
     "checks": [
-      "marmot.vectors"
+      "marmot.vectors",
+      "root.asan.libmarmot"
     ],
     "excluded_prefixes": [
       "mdk"
