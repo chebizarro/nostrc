@@ -1,6 +1,14 @@
 name: Groundhog opt-in CI
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   push:
     branches: [main, master]
     paths:
@@ -78,6 +86,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: this job's x86_64 GCC evaluates arguments right to left,
@@ -310,7 +326,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: groundhog-ctest-linux
+          name: ${{ inputs.artifact_prefix }}groundhog-ctest-linux
           path: |
             build/groundhog-ctest.log
             build/groundhog-ctest.xml
@@ -358,6 +374,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install build dependencies
         run: |
@@ -443,7 +467,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: groundhog-asan-ctest-linux
+          name: ${{ inputs.artifact_prefix }}groundhog-asan-ctest-linux
           path: |
             build-asan/groundhog-asan-ctest.log
             build-asan/groundhog-asan-ctest.xml

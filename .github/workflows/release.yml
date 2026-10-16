@@ -25,6 +25,9 @@ on:
         type: boolean
         default: true
 
+permissions:
+  contents: read
+
 jobs:
   detect-component:
     name: Detect release component
@@ -32,30 +35,93 @@ jobs:
     outputs:
       component: ${{ steps.detect.outputs.component }}
       version: ${{ steps.detect.outputs.version }}
+      sha: ${{ steps.detect.outputs.sha }}
+      tag: ${{ steps.detect.outputs.tag }}
     steps:
-      - name: Parse release tag
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release identity and peel tag
         id: detect
-        shell: bash
+        env:
+          DRY_RUN: ${{ !startsWith(github.ref, 'refs/tags/') || inputs.dry_run }}
         run: |
-          set -euo pipefail
-          tag="${GITHUB_REF_NAME}"
+          args=()
+          if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
+          python3 .github/workflows/dependency_contract.py release-identity \
+            --sha "$GITHUB_SHA" --publisher main "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: main-release-identity
+          path: ${{ runner.temp }}/dependency/release.json
+          if-no-files-found: error
 
-          if [[ "${tag}" =~ ^v(.+)$ ]]; then
-            component="global"
-            version="${BASH_REMATCH[1]}"
-          elif [[ "${tag}" =~ ^(.+)-v(.+)$ ]]; then
-            component="${BASH_REMATCH[1]}"
-            version="${BASH_REMATCH[2]}"
-          else
-            # A branch build (workflow_dispatch) packages everything under a
-            # version every format accepts (deb and rpm need a leading digit).
-            component="global"
-            version="0.0.0.git$(echo "${GITHUB_SHA}" | cut -c1-8)"
-          fi
+  # NOSTRC_DEPENDENCY_RELEASE_MODE: disabled (default), shadow, enforce.
+  # Only enable enforce after real checked-in-lane/broad evidence; no validation pass is synthesized.
+  validation:
+    if: vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'shadow' || vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'enforce'
+    needs: detect-component
+    uses: ./.github/workflows/release-validation.yml
+    with:
+      sha: ${{ needs.detect-component.outputs.sha }}
+      tag: ${{ needs.detect-component.outputs.tag }}
+      component: ${{ needs.detect-component.outputs.component }}
+      dry_run: ${{ !startsWith(github.ref, 'refs/tags/') || inputs.dry_run }}
 
-          echo "component=${component}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "Detected component '${component}' at version '${version}'"
+  release-aggregate:
+    name: Require validation and every applicable main package
+    if: always()
+    needs: [detect-component, validation, build-source, build-linux, build-linux-daemon-tcp, build-appimage-gnostr, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      artifact_ids: ${{ steps.gate.outputs.artifact_ids }}
+    steps:
+      - name: Require identity and validation
+        env:
+          IDENTITY: ${{ needs.detect-component.result }}
+          VALIDATION: ${{ needs.validation.result }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          test "$IDENTITY" = success
+          if [[ "$RELEASE_MODE" == enforce ]]; then test "$VALIDATION" = success; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.detect-component.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: main-release-identity
+          path: ${{ runner.temp }}/dependency
+      - uses: actions/download-artifact@v4
+        if: needs.validation.result == 'success'
+        with:
+          name: ${{ needs.validation.outputs.validation_artifact }}
+          path: ${{ runner.temp }}/dependency
+      - name: Verify exact validation, applicable jobs and expected assets
+        id: gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/package-needs.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > "$RUNNER_TEMP/package-artifacts.json"
+          python3 .github/workflows/dependency_contract.py publish-gate --sha "$REQUESTED_SHA" \
+            --publisher main --release-mode "$RELEASE_MODE" --needs "$RUNNER_TEMP/package-needs.json" --artifacts "$RUNNER_TEMP/package-artifacts.json"
+      - name: Retain publication decision (not a validation receipt)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: main-publication-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/publication.json
+          if-no-files-found: warn
 
   build-source:
     name: Build source archive
@@ -66,6 +132,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # git archive leaves submodules out, and the tree does not build
       # without nostrdb and nsync (nostrc-y5cv): archive every tracked file
       # of the superproject and its submodules.
@@ -110,6 +182,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure
@@ -200,6 +278,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install build deps
         run: scripts/ci/install-linux-build-deps.sh --fpm --appimage
       - name: Configure (TCP enabled)
@@ -255,6 +339,7 @@ jobs:
     uses: ./.github/workflows/gnostr-appimage.yml
     with:
       version: ${{ needs.detect-component.outputs.version }}
+      sha: ${{ needs.detect-component.outputs.sha }}
 
   build-snap-gnostr:
     name: Build Snap (gnostr) (${{ matrix.arch }})
@@ -271,6 +356,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Snapcraft only sees its project directory, so the snap is built
       # from the repository root with this snap's recipe in place.
       - name: Select the gnostr recipe
@@ -299,6 +390,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Snapcraft only sees its project directory, so the snap is built
       # from the repository root with this snap's recipe in place.
       - name: Select the grotto recipe
@@ -327,6 +424,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Snapcraft only sees its project directory, so the snap is built
       # from the repository root with this snap's recipe in place.
       - name: Select the grotto-daemon recipe
@@ -342,16 +445,17 @@ jobs:
 
   create-release:
     name: Create GitHub Release and upload artifacts
-    needs: [detect-component, build-source, build-linux, build-linux-daemon-tcp, build-appimage-gnostr, build-snap-gnostr, build-snap-signer, build-snap-daemon, build-flatpak, build-flatpak-gnostr, build-macos-signer-dmg, build-macos-tarball]
+    needs: [detect-component, release-aggregate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     # A workflow_dispatch run publishes only for a tag with dry_run unticked.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && (needs.build-source.result == 'success' || needs.build-linux.result == 'success' || needs.build-linux-daemon-tcp.result == 'success' || needs.build-appimage-gnostr.result == 'success' || needs.build-snap-gnostr.result == 'success' || needs.build-snap-signer.result == 'success' || needs.build-snap-daemon.result == 'success' || needs.build-flatpak.result == 'success' || needs.build-flatpak-gnostr.result == 'success' || needs.build-macos-signer-dmg.result == 'success' || needs.build-macos-tarball.result == 'success') }}
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') && !inputs.dry_run && needs.release-aggregate.result == 'success' && needs.release-aggregate.outputs.publish == 'true' }}
     steps:
-      - name: Download artifacts from this workflow run
+      - name: Download only attested package artifacts from this run
         uses: actions/download-artifact@v4
         with:
+          artifact-ids: ${{ needs.release-aggregate.outputs.artifact_ids }}
           path: dist
           merge-multiple: true
       - name: Publish GitHub Release
@@ -378,6 +482,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
@@ -417,6 +527,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       # Same runtime as the Groundhog Flatpak (groundhog-release.yml).
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
@@ -453,6 +569,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install dependencies
         run: |
           brew update
@@ -489,6 +611,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.detect-component.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.detect-component.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install dependencies
         run: |
           brew update

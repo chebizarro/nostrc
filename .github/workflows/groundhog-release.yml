@@ -34,7 +34,41 @@ env:
   VERSION: ${{ github.ref_name }}
 
 jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.identity.outputs.sha }}
+      tag: ${{ steps.identity.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: identity
+        env:
+          DRY_RUN: ${{ !startsWith(github.ref, 'refs/tags/') || inputs.dry_run }}
+        run: |
+          args=()
+          if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
+          python3 .github/workflows/dependency_contract.py release-identity \
+            --sha "$GITHUB_SHA" --component groundhog --publisher groundhog "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: groundhog-release-identity
+          path: ${{ runner.temp }}/dependency/release.json
+          if-no-files-found: error
+  # Explicit staged rollout; only enforce after checked-in-lane/broad proof.
+  validation:
+    if: vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'shadow' || vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'enforce'
+    needs: identity
+    uses: ./.github/workflows/release-validation.yml
+    with:
+      sha: ${{ needs.identity.outputs.sha }}
+      tag: ${{ needs.identity.outputs.tag }}
+      component: groundhog
+      dry_run: ${{ !startsWith(github.ref, 'refs/tags/') || inputs.dry_run }}
   source:
+    needs: identity
     name: Source archive
     runs-on: ubuntu-24.04
     outputs:
@@ -43,6 +77,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.identity.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - id: v
         run: |
           v="${GITHUB_REF_NAME#groundhog-v}"
@@ -70,7 +110,7 @@ jobs:
 
   deb:
     name: ${{ matrix.distro.name }} package (${{ matrix.arch }})
-    needs: source
+    needs: [source, identity]
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.distro.image }}
     strategy:
@@ -119,7 +159,7 @@ jobs:
 
   rpm:
     name: Fedora package (${{ matrix.arch }})
-    needs: source
+    needs: [source, identity]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -161,7 +201,7 @@ jobs:
 
   arch:
     name: Arch package (${{ matrix.arch }})
-    needs: source
+    needs: [source, identity]
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.image }}
     strategy:
@@ -183,6 +223,12 @@ jobs:
         with:
           sparse-checkout: scripts/ci
           path: ci
+          ref: ${{ needs.identity.outputs.sha }}
+          persist-credentials: false
+      - name: Verify packaging helper checkout
+        env:
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+        run: test "$(git -C ci rev-parse HEAD)" = "$REQUESTED_SHA"
       - uses: actions/download-artifact@v4
         with: { name: source, path: src }
       - name: Build
@@ -200,7 +246,7 @@ jobs:
 
   flatpak:
     name: Flatpak bundle (${{ matrix.arch }})
-    needs: source
+    needs: [source, identity]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -212,6 +258,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.identity.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - name: Install flatpak-builder and the GNOME 51 SDK
         run: |
           set -eux
@@ -242,7 +294,7 @@ jobs:
     # Checks the flake builds on x86_64-linux and aarch64-linux; nothing
     # is uploaded (users build from the flake).
     name: Nix flake (${{ matrix.system }})
-    needs: source
+    needs: [source, identity]
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -254,23 +306,83 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ needs.identity.outputs.sha }}
+          persist-credentials: false
+      - name: Verify package checkout
+        env:
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
       - uses: cachix/install-nix-action@v31
       # A git checkout is a flake without its submodules unless asked.
       - run: nix build '.?submodules=1#groundhog' '.?submodules=1#grotto' --print-out-paths -L
       - run: nix run '.?submodules=1#groundhog' -- --version
 
+  release-aggregate:
+    name: Require validation and every Groundhog package
+    if: always()
+    needs: [identity, validation, source, deb, rpm, arch, flatpak, nix]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      artifact_ids: ${{ steps.gate.outputs.artifact_ids }}
+    steps:
+      - name: Require identity and validation
+        env:
+          IDENTITY: ${{ needs.identity.result }}
+          VALIDATION: ${{ needs.validation.result }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          test "$IDENTITY" = success
+          if [[ "$RELEASE_MODE" == enforce ]]; then test "$VALIDATION" = success; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.identity.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: groundhog-release-identity
+          path: ${{ runner.temp }}/dependency
+      - uses: actions/download-artifact@v4
+        if: needs.validation.result == 'success'
+        with:
+          name: ${{ needs.validation.outputs.validation_artifact }}
+          path: ${{ runner.temp }}/dependency
+      - id: gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/package-needs.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > "$RUNNER_TEMP/package-artifacts.json"
+          python3 .github/workflows/dependency_contract.py publish-gate --sha "$REQUESTED_SHA" \
+            --publisher groundhog --release-mode "$RELEASE_MODE" --needs "$RUNNER_TEMP/package-needs.json" --artifacts "$RUNNER_TEMP/package-artifacts.json"
+      - name: Retain publication decision (not a validation receipt)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: groundhog-publication-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/publication.json
+          if-no-files-found: warn
+
   release:
     name: Publish pre-release
-    needs: [source, deb, rpm, arch, flatpak, nix]
+    needs: [source, release-aggregate]
     # Publish only a complete release: a failed or cancelled package build blocks it.
-    # A workflow_dispatch run publishes only for a tag with dry_run unticked.
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/groundhog-v') && !inputs.dry_run && needs.source.result == 'success' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    # Manual runs, including tag-ref dry runs, never publish Groundhog.
+    if: ${{ always() && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/groundhog-v') && !inputs.dry_run && needs.release-aggregate.result == 'success' && needs.release-aggregate.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          artifact-ids: ${{ needs.release-aggregate.outputs.artifact_ids }}
           path: dist
           merge-multiple: true
       - name: Checksums
@@ -282,6 +394,6 @@ jobs:
           generate_release_notes: false
           body: |
             Groundhog ${{ needs.source.outputs.version }} (alpha) with Grotto, its signer.
-            Packages are built for x86_64 and aarch64 (amd64/arm64). Jobs that failed have no file here: deb (all releases) ${{ needs.deb.result }}, rpm ${{ needs.rpm.result }}, arch ${{ needs.arch.result }}, flatpak ${{ needs.flatpak.result }}, nix ${{ needs.nix.result }}.
+            Packages are built for x86_64 and aarch64 (amd64/arm64); all applicable package jobs passed. Dependency validation rollout: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }} (no complete validation attestation in disabled/shadow mode).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

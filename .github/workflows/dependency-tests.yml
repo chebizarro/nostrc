@@ -1,0 +1,172 @@
+name: Dependency tests (shadow)
+# NOT required yet. Keep legacy required checks, duplicate triggers and schedules through W11.
+on:
+  pull_request:
+    branches: [main, master]
+  merge_group:
+    types: [checks_requested]
+  push:
+    branches: [main, master]
+    tags: ['v*', '**-v*']
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [broad, affected]
+        default: broad
+      base:
+        description: Exact base for diagnostic affected run (absent means broad)
+        type: string
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      mode:
+        type: string
+        default: broad
+      tag:
+        type: string
+        default: ''
+    outputs:
+      validation_artifact:
+        value: ${{ jobs.gate.outputs.validation_artifact }}
+permissions:
+  contents: read
+jobs:
+  select:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      plan_id: ${{ steps.plan.outputs.plan_id }}
+      lanes: ${{ steps.plan.outputs.lanes }}
+      broad: ${{ steps.plan.outputs.broad }}
+      run: ${{ steps.plan.outputs.run }}
+      route: ${{ steps.plan.outputs.route }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select complete Git range or route peeled tag
+        id: plan
+        env:
+          REQUESTED_SHA: ${{ inputs.sha || github.sha }}
+          MODE: ${{ inputs.mode || 'affected' }}
+          TAG: ${{ inputs.tag }}
+        run: python3 .github/workflows/dependency_contract.py select --sha "$REQUESTED_SHA" --mode "$MODE" --tag "$TAG"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dependency-plan-${{ steps.plan.outputs.plan_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/*.json
+          if-no-files-found: error
+  core:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'core.linux')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: core.linux
+  grotto:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'grotto.linux')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: grotto.linux
+  groundhog:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'groundhog.linux')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: groundhog.linux
+  mdk08:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'groundhog.mdk08')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: groundhog.mdk08
+  libgo:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'libgo.linux.asan')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: libgo.linux.asan
+  libgo_native:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'libgo.macos.asan')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: libgo.macos.asan
+  policy:
+    needs: select
+    if: needs.select.outputs.run == 'true' && contains(fromJSON(needs.select.outputs.lanes), 'static.policy')
+    uses: ./.github/workflows/dependency-worker.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+      plan_id: ${{ needs.select.outputs.plan_id }}
+      profile: static.policy
+  broad:
+    needs: select
+    if: needs.select.outputs.broad == 'true'
+    uses: ./.github/workflows/dependency-broad.yml
+    with:
+      sha: ${{ needs.select.outputs.sha }}
+  gate:
+    name: Dependency gate
+    if: always()
+    needs: [select, core, grotto, groundhog, mdk08, libgo, libgo_native, policy, broad]
+    runs-on: ubuntu-24.04
+    outputs:
+      validation_artifact: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Require successful selection
+        env:
+          SELECT_RESULT: ${{ needs.select.result }}
+        run: test "$SELECT_RESULT" = success
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Record existing publisher ownership (not a validation attestation)
+        if: needs.select.outputs.run != 'true'
+        env:
+          ROUTE: ${{ needs.select.outputs.route }}
+        run: |
+          printf 'Tag routed to existing publisher(s): %s\n' "$ROUTE" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v4
+        if: needs.select.outputs.run == 'true'
+        with:
+          name: dependency-plan-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency
+      - uses: actions/download-artifact@v4
+        if: needs.select.outputs.run == 'true'
+        with:
+          pattern: dependency-receipt-${{ needs.select.outputs.plan_id }}-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/receipts
+      - name: Account for every expected lane and actual worker conclusion
+        if: needs.select.outputs.run == 'true'
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ needs.select.outputs.sha }}
+        run: |
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/dependency-needs.json"
+          python3 .github/workflows/dependency_contract.py aggregate --sha "$REQUESTED_SHA" --needs "$RUNNER_TEMP/dependency-needs.json"
+      - uses: actions/upload-artifact@v4
+        if: always() && needs.select.outputs.run == 'true'
+        with:
+          name: dependency-validation-${{ needs.select.outputs.plan_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/validation.json
+          if-no-files-found: warn

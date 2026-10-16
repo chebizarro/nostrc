@@ -66,197 +66,99 @@ on:
 env:
   BUILD_TYPE: Release
 
+permissions:
+  contents: read
+
 jobs:
-  build:
-    name: Build Windows Installer
-    runs-on: windows-latest
-
-    defaults:
-      run:
-        shell: msys2 {0}
-
+  identity:
+    if: startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.identity.outputs.sha }}
+      tag: ${{ steps.identity.outputs.tag }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
-
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
+          fetch-depth: 0
+          persist-credentials: false
+      - id: identity
+        run: python3 .github/workflows/dependency_contract.py release-identity --sha "$GITHUB_SHA" --publisher windows
+      - uses: actions/upload-artifact@v4
         with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            base-devel
-            git
-            mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-gtk4
-            mingw-w64-ucrt-x86_64-libadwaita
-            mingw-w64-ucrt-x86_64-glib2
-            mingw-w64-ucrt-x86_64-json-glib
-            mingw-w64-ucrt-x86_64-jansson
-            mingw-w64-ucrt-x86_64-libsodium
-            mingw-w64-ucrt-x86_64-libsecret
-            mingw-w64-ucrt-x86_64-libwebsockets
-            mingw-w64-ucrt-x86_64-openssl
-            mingw-w64-ucrt-x86_64-curl
-            mingw-w64-ucrt-x86_64-libsoup3
-
-      # mingw-w64-x86_64-nsis 3.13-1 is broken upstream: plugin resolution
-      # finds nothing ("Plugin directories:" empty for every call,
-      # msys2/MINGW-packages#32208). Use the official NSIS binary until the
-      # MSYS2 package is fixed (nostrc-8o95q).
-      - name: Install NSIS (official binary; MSYS2 package is broken)
-        run: |
-          curl -fSL -o /tmp/nsis.zip https://downloads.sourceforge.net/project/nsis/NSIS%203/3.10/nsis-3.10.zip
-          unzip -q /tmp/nsis.zip -d /tmp/nsis-bin
-          echo "MAKENSIS=/tmp/nsis-bin/nsis-3.10/makensis.exe" >> "$GITHUB_ENV"
-
-      - name: Get version
-        id: version
-        run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-          else
-            VERSION="0.0.0-$(git rev-parse --short HEAD)"
-          fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "Building version: ${VERSION}"
-
-      - name: Build nsync from source (if not packaged)
-        run: |
-          if ! pkg-config --exists nsync 2>/dev/null; then
-            # nsync's CMakeLists selects its platform backend from CMAKE_SYSTEM_NAME.
-            # Under MSYS2/MinGW that value is "Windows", so upstream picks the
-            # platform/win32 backend. That backend is written for MSVC and clashes
-            # with MinGW's winpthreads headers (pthread.h/sched.h): it triggers
-            # "sched_yield passed 1 arguments" and redeclares INIT_ONCE /
-            # CRITICAL_SECTION / CONDITION_VARIABLE / nsync_pthread_key_t, so the
-            # build fails. MinGW ships POSIX threads (winpthreads), so we force
-            # nsync onto its POSIX/pthread backend by gating the win32 branch on an
-            # MSVC compiler; GNU/Clang then fall through to nsync's POSIX else-branch
-            # (platform/posix + platform/gcc), which uses only pthreads/sched_yield.
-            git clone --depth 1 --branch 1.29.2 https://github.com/google/nsync.git $HOME/nsync-src
-            # Patch ONLY the platform-source-selection guard (first Windows branch).
-            sed -i '0,/if ("${CMAKE_SYSTEM_NAME}X" STREQUAL "WindowsX")/s//if (("${CMAKE_SYSTEM_NAME}X" STREQUAL "WindowsX") AND ("${CMAKE_C_COMPILER_ID}X" STREQUAL "MSVCX"))/' $HOME/nsync-src/CMakeLists.txt
-            # Fail loudly if upstream layout changed and the patch did not apply,
-            # instead of silently rebuilding the broken win32 backend.
-            grep -qF 'WindowsX") AND ("${CMAKE_C_COMPILER_ID}X" STREQUAL "MSVCX")' $HOME/nsync-src/CMakeLists.txt \
-              || { echo "ERROR: nsync platform-selection patch did not apply"; exit 1; }
-            # nsync 1.29.2 declares cmake_minimum_required(VERSION 2.8.x), which
-            # modern CMake (>=4.0, as on the runner) refuses. Allow it to configure
-            # under the old-policy compatibility shim.
-            cmake -S $HOME/nsync-src -B $HOME/nsync-build -G Ninja \
-              -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-              -DCMAKE_BUILD_TYPE=Release -DNSYNC_ENABLE_TESTS=OFF
-            cmake --build $HOME/nsync-build --target nsync -j
-            # Install C library and headers (skip nsync_cpp which may fail on MinGW)
-            cp $HOME/nsync-build/libnsync.a /ucrt64/lib/ 2>/dev/null || true
-            cp $HOME/nsync-src/public/nsync*.h /ucrt64/include/ 2>/dev/null || true
-            # Create minimal pkg-config file (use printf to avoid heredoc indentation issues).
-            # The POSIX backend pulls in pthread symbols, so advertise -lpthread as a
-            # private (static-link) dependency for downstream consumers.
-            printf '%s\n' \
-              'prefix=/ucrt64' \
-              'libdir=${prefix}/lib' \
-              'includedir=${prefix}/include' \
-              '' \
-              'Name: nsync' \
-              'Description: nsync C library' \
-              'Version: 1.29.2' \
-              'Libs: -L${libdir} -lnsync' \
-              'Libs.private: -lpthread' \
-              'Cflags: -I${includedir}' \
-              > /ucrt64/lib/pkgconfig/nsync.pc
-          fi
-
-      - name: Build secp256k1 from source (if not packaged)
-        run: |
-          if ! pkg-config --exists libsecp256k1 2>/dev/null; then
-            git clone --depth 1 https://github.com/bitcoin-core/secp256k1.git $HOME/secp256k1-src
-            cmake -S $HOME/secp256k1-src -B $HOME/secp256k1-build -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release \
-              -DCMAKE_INSTALL_PREFIX=/ucrt64 \
-              -DSECP256K1_BUILD_TESTS=OFF \
-              -DSECP256K1_BUILD_EXHAUSTIVE_TESTS=OFF \
-              -DSECP256K1_BUILD_BENCHMARK=OFF
-            cmake --build $HOME/secp256k1-build -j
-            cmake --install $HOME/secp256k1-build
-          fi
-
-      - name: Configure CMake
-        run: |
-          cmake -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-            -DCMAKE_INSTALL_PREFIX=build/install \
-            -DBUILD_TESTING=OFF \
-            -DBUILD_TESTING_FRAMEWORK=OFF \
-            -DBUILD_SIGNER_TESTS=OFF \
-            -DLIBNOSTR_BUILD_TESTS=OFF \
-            -DBUILD_NATIVE_HOST=ON \
-            -DBUILD_WINDOWS_INSTALLER=ON \
-            -DBUILD_LIBMARMOT=OFF \
-            -DBUILD_MARMOT_GOBJECT=OFF \
-            -DBUILD_LIBHANAMI=OFF \
-            -DBUILD_GNOSTR_APP=OFF \
-            -DBUILD_GROUNDHOG=OFF \
-            -DBUILD_RELAYD=OFF \
-            -DSIGNET_ENABLE=OFF \
-            -DENABLE_NIP55L=OFF \
-            -DENABLE_NIP5F=OFF \
-            -DENABLE_NIP57=OFF \
-            -DWITH_NOSTRDB=OFF \
-            -DLIBNOSTR_WITH_NOSTRDB=OFF \
-            -DGNOSTR_SIGNER_VERSION=${{ steps.version.outputs.version }}
-
-      - name: Build
-        run: |
-          cmake --build build --parallel $(nproc)
-
-      - name: Bundle dependencies
-        run: |
-          cd apps/grotto/packaging/windows
-          ./bundle-deps.sh --build-dir ../../../../build --output-dir ../../../../build/deps
-
-      - name: Create NSIS installer
-        run: |
-          cd apps/grotto/packaging/windows
-          # The official NSIS binary (see above) resolves its own plugins;
-          # NSIS_PLUGINS is only a fallback for environments whose plugin
-          # layout differs (nostrc-8o95q).
-          "${MAKENSIS}" \
-            -DVERSION=${{ steps.version.outputs.version }} \
-            -DARCH=x64 \
-            -DBUILD_DIR=../../../../build \
-            -DDEPS_DIR=../../../../build/deps \
-            -DNSIS_PLUGINS="${MAKENSIS%/*}/Plugins/x86-unicode" \
-            grotto.nsi
-
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: GNostrSigner-${{ steps.version.outputs.version }}-x64-setup
-          path: apps/grotto/packaging/windows/GNostrSigner-*.exe
+          name: windows-release-identity
+          path: ${{ runner.temp }}/dependency/release.json
           if-no-files-found: error
-
-      - name: Upload portable build
+  # NOSTRC_DEPENDENCY_RELEASE_MODE defaults to disabled until real lane/broad proof.
+  validation:
+    if: vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'shadow' || vars.NOSTRC_DEPENDENCY_RELEASE_MODE == 'enforce'
+    needs: identity
+    uses: ./.github/workflows/release-validation.yml
+    with:
+      sha: ${{ needs.identity.outputs.sha }}
+      tag: ${{ needs.identity.outputs.tag }}
+      component: global
+      dry_run: false
+  build:
+    uses: ./.github/workflows/windows-validation.yml
+    with:
+      sha: ${{ github.sha }}
+  release-aggregate:
+    if: always() && startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push'
+    needs: [identity, validation, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      artifact_ids: ${{ steps.gate.outputs.artifact_ids }}
+    steps:
+      - name: Require identity and validation
+        env:
+          IDENTITY: ${{ needs.identity.result }}
+          VALIDATION: ${{ needs.validation.result }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          test "$IDENTITY" = success
+          if [[ "$RELEASE_MODE" == enforce ]]; then test "$VALIDATION" = success; fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.identity.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release-identity
+          path: ${{ runner.temp }}/dependency
+      - uses: actions/download-artifact@v4
+        if: needs.validation.result == 'success'
+        with:
+          name: ${{ needs.validation.outputs.validation_artifact }}
+          path: ${{ runner.temp }}/dependency
+      - id: gate
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+          REQUESTED_SHA: ${{ needs.identity.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_MODE: ${{ vars.NOSTRC_DEPENDENCY_RELEASE_MODE || 'disabled' }}
+        run: |
+          printf '%s' "$RESULTS" > "$RUNNER_TEMP/package-needs.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" > "$RUNNER_TEMP/package-artifacts.json"
+          python3 .github/workflows/dependency_contract.py publish-gate --sha "$REQUESTED_SHA" \
+            --publisher windows --release-mode "$RELEASE_MODE" --needs "$RUNNER_TEMP/package-needs.json" --artifacts "$RUNNER_TEMP/package-artifacts.json"
+      - name: Retain publication decision (not a validation receipt)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: GNostrSigner-${{ steps.version.outputs.version }}-x64-portable
-          path: |
-            build/apps/grotto/grotto.exe
-            build/apps/grotto/grotto-daemon.exe
-            build/deps/
+          name: windows-publication-decision-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dependency/publication.json
+          if-no-files-found: warn
 
   release:
     name: Create Release
-    needs: build
+    needs: release-aggregate
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: always() && startsWith(github.ref, 'refs/tags/v') && github.event_name == 'push' && needs.release-aggregate.result == 'success' && needs.release-aggregate.outputs.publish == 'true'
 
     permissions:
       contents: write
@@ -265,17 +167,17 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: GNostrSigner-*
+          artifact-ids: ${{ needs.release-aggregate.outputs.artifact_ids }}
           path: artifacts
           merge-multiple: true
 
       - name: Calculate checksums
         run: |
           cd artifacts
-          sha256sum *.exe > SHA256SUMS.txt
+          sha256sum -- *.exe > SHA256SUMS.txt
 
       - name: Create release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/*.exe

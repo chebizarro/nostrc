@@ -1,0 +1,113 @@
+name: Broad validation families
+# Additive shadow replacement. Legacy triggers/schedules remain until W11.
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  core:
+    uses: ./.github/workflows/nostrc-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  libgo:
+    uses: ./.github/workflows/libgo-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  hanami:
+    uses: ./.github/workflows/libhanami-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  gi:
+    uses: ./.github/workflows/libnostr-gi.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  groundhog:
+    uses: ./.github/workflows/groundhog-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  grotto:
+    uses: ./.github/workflows/grotto-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  nip55l:
+    uses: ./.github/workflows/nip55l-libsecret-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  homed:
+    uses: ./.github/workflows/nostr-homed-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  signet:
+    uses: ./.github/workflows/signet-ci.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  static:
+    uses: ./.github/workflows/static-checks.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  appimage:
+    uses: ./.github/workflows/gnostr-appimage.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  windows:
+    uses: ./.github/workflows/windows-validation.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  bp:
+    uses: ./.github/workflows/bp-matrix.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  bp_extended:
+    uses: ./.github/workflows/bp-matrix-nightly.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  fuzz:
+    uses: ./.github/workflows/grotto-fuzz.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  mdk08:
+    uses: ./.github/workflows/marmot-mdk-interop.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  mdk011:
+    uses: ./.github/workflows/marmot-mdk011-interop.yml
+    with:
+      sha: ${{ inputs.sha }}
+      artifact_prefix: validation-
+  broad_gate:
+    name: Broad family accounting
+    if: always()
+    needs: [core, libgo, hanami, gi, groundhog, grotto, nip55l, homed, signet, static, appimage, windows, bp, bp_extended, fuzz, mdk08, mdk011]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every broad family
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          failures = {k: v['result'] for k, v in results.items() if v['result'] != 'success'}
+          if failures:
+              raise SystemExit(str(failures))
+          PY

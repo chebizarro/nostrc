@@ -3,6 +3,14 @@ name: Static checks
 # Repository-wide checks that need no build. The fast pre-push hook
 # (scripts/pre-push) runs the cheap ones before every push.
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   push:
     branches: [main, master]
     paths-ignore:
@@ -26,7 +34,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
+      - name: Selection and workflow contract tests
+        run: python3 -m unittest discover -s tests/selection
       - name: No call modifies a variable another argument uses
         # nostrc-td3b: argument evaluation order is unspecified; x86_64 GCC
         # goes right to left, so such a call breaks only on x86_64 runners.

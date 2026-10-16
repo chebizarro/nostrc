@@ -12,7 +12,16 @@ name: Marmot MDK 0.11 interop (adopted profile)
 # reported Skipped) and is listed as such, never as green. xvfb-run gives
 # the -gui case (the real invitations dialog) a display. On demand and
 # nightly: the image builds compile MDK.
+# Legacy schedule retained until two broad runs and release proof (W11).
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   workflow_dispatch:
   schedule:
     - cron: '47 3 * * *'
@@ -32,7 +41,14 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
           persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install build dependencies
         run: |
@@ -107,7 +123,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: marmot-mdk011-interop
+          name: ${{ inputs.artifact_prefix }}marmot-mdk011-interop
           path: |
             mdk011-interop.log
             mdk011-interop.junit.xml

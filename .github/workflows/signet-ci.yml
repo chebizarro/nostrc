@@ -7,6 +7,14 @@ name: signet CI
 # code paths and their tests are exercised in CI too.
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      artifact_prefix:
+        type: string
+        default: ''
   push:
     branches: [ main, master ]
     paths:
@@ -49,6 +57,14 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          ref: ${{ inputs.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify requested checkout
+        if: inputs.sha != ''
+        shell: bash
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
 
       - name: Install dependencies
         run: |

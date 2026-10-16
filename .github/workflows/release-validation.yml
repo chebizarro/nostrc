@@ -1,0 +1,48 @@
+name: Exact-SHA broad release validation
+on:
+  workflow_call:
+    inputs:
+      sha:
+        type: string
+        required: true
+      tag:
+        type: string
+        default: ''
+      component:
+        type: string
+        required: true
+      dry_run:
+        type: boolean
+        default: true
+    outputs:
+      validation_artifact:
+        value: ${{ jobs.validate.outputs.validation_artifact }}
+permissions:
+  contents: read
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate peeled tag or explicit nonpublishing dry-run identity
+        env:
+          REQUESTED_SHA: ${{ inputs.sha }}
+          TAG: ${{ inputs.tag }}
+          COMPONENT: ${{ inputs.component }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
+          python3 .github/workflows/dependency_contract.py release-identity \
+            --sha "$REQUESTED_SHA" --tag "$TAG" --component "$COMPONENT" "${args[@]}"
+  validate:
+    needs: identity
+    uses: ./.github/workflows/dependency-tests.yml
+    with:
+      sha: ${{ inputs.sha }}
+      mode: broad
+      tag: ${{ inputs.tag }}
