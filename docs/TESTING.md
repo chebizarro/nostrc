@@ -137,8 +137,11 @@ cutover.
 B's `3a7c685e02ba` slice passed **244 tests, six shell suites and static checks**.
 Parent confirms the combined **244/244 tests, 0 skips, 58.163s** at `9c03e7712`
 (`/tmp/nostrc-completion-final-selection.log`) and full actionlint including
-ShellCheck passed. Parent's final shell/static verification is still pending at
-this documentation snapshot; do not infer its outcome from B's earlier pass.
+ShellCheck passed. Parent also confirms all six shell suites passed at that SHA:
+`test-sanitizer-gate.sh`, `test-full-gate.sh`, `test-linux-gate-lifecycle.sh`,
+`test-linux-gate-smoke.sh`, `test-pre-push.sh`, `test-test-gate.sh`; all four static
+checkers and range whitespace passed. These are final combined results, distinct
+from B's earlier pass. Independent review remains **in progress / pending**.
 The older 172-test result at `017039eea` remains a dated historical receipt.
 Current bounded evidence, source-specific hashes and remaining acceptance are in
 the [2026-10-16 continuation](reviews/dependency-aware-testing-ci-2026-10-15-staged-acceptance.md#2026-10-16-continuation--integration-9c03e7712).
