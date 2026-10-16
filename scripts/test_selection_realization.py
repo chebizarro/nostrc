@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -55,11 +56,44 @@ def _atomic(path, value):
 def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
     """Capture exact bytes; cleanup/evidence failures cannot mask the first error."""
     previous_handler, process, output, original = None, None, b"", None
+    chunks, read_errors = [], []
+    drained = threading.Event()
+    capture_ready, pending_signal = False, None
     status = {"argv": [str(x) for x in argv], "cwd": str(Path(cwd or Path.cwd()).resolve()),
               "environment_hash": _hash(env if env is not None else dict(os.environ)), "started": time.time(),
               "output_encoding": "raw bytes", "text_decoding": "utf-8/surrogateescape"}
     def cancel(signum, frame):
+        nonlocal pending_signal
+        # The child can signal immediately after exec, before Popen ownership
+        # and the pipe reader have been installed. Defer only that startup edge.
+        if not capture_ready:
+            pending_signal = signum
+            return
         raise KeyboardInterrupt(f"command cancelled by signal {signum}")
+    def capture():
+        # Python signal handlers run on the main thread. Keeping raw reads here
+        # prevents an exception between kernel pipe consumption and byte retention
+        # from discarding output, with or without a communicate timeout.
+        try:
+            while data := os.read(process.stdout.fileno(), 65536):
+                chunks.append(data)
+        except Exception as error:
+            read_errors.append(error)
+        finally:
+            try:
+                process.stdout.close()
+            except OSError as error:
+                read_errors.append(error)
+            drained.set()
+    def drain(timeout):
+        if not drained.wait(timeout):
+            raise subprocess.TimeoutExpired(argv, timeout, output=b"".join(chunks))
+        if read_errors:
+            raise read_errors[0]
+    def finish(timeout):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        drain(timeout)
+        process.wait(timeout=None if deadline is None else max(0, deadline - time.monotonic()))
     def cleanup_error(stage, error):
         status.setdefault("cleanup_errors", []).append({"stage": stage, "error": type(error).__name__ + ": " + str(error)})
     def signal_owned(force=False):
@@ -90,9 +124,16 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
         except ValueError:
             pass
         process = subprocess.Popen([str(x) for x in argv], cwd=cwd, env=env,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0,
+            start_new_session=os.name != "nt")
         status["child_pid"] = process.pid
-        output, _ = process.communicate(timeout=timeout)
+        reader = threading.Thread(target=capture, name="selection-command-output", daemon=True)
+        reader.start()
+        capture_ready = True
+        if pending_signal is not None:
+            cancel(pending_signal, None)
+        finish(timeout)
+        output = b"".join(chunks)
         status.update(outcome="passed" if process.returncode == 0 else "failed", exit_code=process.returncode)
         # Text consumers keep their existing interface without discarding any
         # byte. Logs below remain raw; no implicit locale/strict decoding occurs.
@@ -114,18 +155,18 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
             try:
                 signal_owned()
                 try:
-                    output, _ = process.communicate(timeout=5)
-                except subprocess.TimeoutExpired as expired:
-                    if isinstance(expired.output, bytes):
-                        output = expired.output
+                    finish(5)
+                except subprocess.TimeoutExpired:
                     signal_owned(force=True)
-                    output, _ = process.communicate(timeout=5)
+                    finish(5)
+                output = b"".join(chunks)
             except Exception as error:
                 cleanup_error("drain_or_reap", error)
                 if isinstance(getattr(error, "output", None), bytes):
                     output = error.output
                 # Do not block forever on a descendant holding the pipe. The
                 # attempt is failed and incomplete cleanup is explicit evidence.
+                # Unbuffered FileIO.close cannot wait on a reader buffer lock.
                 if process.stdout is not None:
                     try:
                         process.stdout.close()
@@ -151,6 +192,8 @@ def _execute(argv, cwd=None, env=None, log_path=None, timeout=None):
             raise error from exc
         raise
     finally:
+        if chunks:
+            output = b"".join(chunks)
         if previous_handler is not None:
             signal.signal(signal.SIGTERM, previous_handler)
         if log_path:
