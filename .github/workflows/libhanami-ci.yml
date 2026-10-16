@@ -81,8 +81,8 @@ jobs:
       - name: Select clang toolchain (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
         run: |
-          echo "CC=clang" >> $GITHUB_ENV
-          echo "CXX=clang++" >> $GITHUB_ENV
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Install dependencies (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -93,19 +93,21 @@ jobs:
                                   libjansson-dev libsecp256k1-dev libwebsockets-dev libsodium-dev \
                                   libssl-dev libcurl4-openssl-dev libglib2.0-dev libsoup-3.0-dev \
                                   libjson-glib-dev libgit2-dev libnsync-dev
-          echo "LDFLAGS='-fuse-ld=lld'" >> $GITHUB_ENV
+          echo "LDFLAGS='-fuse-ld=lld'" >> "$GITHUB_ENV"
 
       - name: Install dependencies (macOS)
         if: startsWith(matrix.os, 'macos')
         run: |
           brew install ninja pkg-config jansson secp256k1 libwebsockets libsodium openssl@3 libsoup@3 nsync flatcc json-glib libgit2 || true
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/flatcc/lib/pkgconfig:${PKG_CONFIG_PATH}" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}" >> $GITHUB_ENV
-          echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}" >> $GITHUB_ENV
+          {
+            echo "PKG_CONFIG_PATH=/opt/homebrew/opt/openssl@3/lib/pkgconfig:/opt/homebrew/opt/libsoup@3/lib/pkgconfig:/opt/homebrew/opt/libwebsockets/lib/pkgconfig:/opt/homebrew/lib/pkgconfig:/opt/homebrew/opt/flatcc/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            echo "CPPFLAGS=-I/opt/homebrew/include ${CPPFLAGS}"
+            echo "LDFLAGS=-L/opt/homebrew/lib ${LDFLAGS}"
+          } >> "$GITHUB_ENV"
 
       - name: Configure libhanami-focused build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} -DCMAKE_VERBOSE_MAKEFILE=ON \
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}" -DCMAKE_VERBOSE_MAKEFILE=ON \
             -DGO_ENABLE_ASAN=ON -DGO_ENABLE_UBSAN=ON -DGO_WARNINGS_AS_ERRORS=ON \
             -DBUILD_LIBHANAMI=ON -DBUILD_LIBMARMOT=OFF -DBUILD_MARMOT_GOBJECT=OFF \
             -DBUILD_NOSTR_GOBJECT=OFF -DBUILD_NOSTR_GTK=OFF -DBUILD_APPS=OFF \

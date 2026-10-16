@@ -213,7 +213,7 @@ jobs:
             --name homed-systemd-test \
             --device /dev/fuse \
             --security-opt apparmor:unconfined \
-            -v $(pwd):/workspace \
+            -v "$(pwd)":/workspace \
             -w /workspace \
             jrei/systemd-ubuntu:24.04
           # Verify container is running
@@ -224,7 +224,7 @@ jobs:
             exit 0
           fi
           # Wait for systemd to finish booting
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if docker exec homed-systemd-test systemctl is-system-running --wait 2>/dev/null; then break; fi
             sleep 1
           done
