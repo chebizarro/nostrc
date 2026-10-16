@@ -5,6 +5,9 @@ import json
 import os
 from pathlib import Path
 import selectors
+import shutil
+import tempfile
+import time
 import signal
 import subprocess
 import sys
@@ -117,6 +120,80 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/build-phase.txt" "$ENV{PHASE_SCOPE}")
       !strstr(getenv("LSAN_OPTIONS"), "/vector.txt:print_suppressions=1")) return 3;
   FILE *f'''))
         self.inventory["path_rules"].append({"exact": "phase-build.cmake", "nodes": [], "effect": "global"})
+
+    def phase_ready(self, selector, descriptor, process):
+        """The 20s boundary also observes early exit and retains failed fixtures."""
+        output, events = bytearray(), []
+        deadline = time.monotonic() + 20
+        stdout_fd = process.stdout.fileno()
+        selector.register(stdout_fd, selectors.EVENT_READ, 'child-output')
+        try:
+            while time.monotonic() < deadline:
+                pending = selector.select(max(0, deadline - time.monotonic()))
+                if not pending:
+                    break
+                events = [event for event in pending if event[0].fd == descriptor]
+                if events:
+                    break
+                data = os.read(stdout_fd, 65536)
+                if not data:
+                    try:
+                        process.wait(timeout=max(0, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        pass
+                    break
+                output.extend(data)
+        finally:
+            selector.unregister(stdout_fd)
+        process.phase_ready_output = bytes(output)
+        if events:
+            return events
+        # Diagnose before cleanup destroys the failing tree or discards stderr.
+        failed = Path(tempfile.mkdtemp(prefix='nostrc-phase-readiness-failure-'))
+        before = process.poll()
+        try:
+            fifo_data = os.read(descriptor, 64).hex()
+        except BlockingIOError:
+            fifo_data = None
+        if before is None:
+            process.send_signal(signal.SIGTERM)
+        try:
+            remaining, _ = process.communicate(timeout=20)
+            output.extend(remaining)
+        except subprocess.TimeoutExpired:
+            pass  # The existing finally block still performs its bounded fallback.
+        (failed / 'child-output.raw').write_bytes(output)
+        r._atomic(failed / 'failure.json', {'argv': process.args, 'pid': process.pid,
+            'exit_before_cancel': before, 'exit_after_cancel': process.poll(), 'fifo_bytes_hex': fifo_data,
+            'readiness_timeout_seconds': 20, 'fixture': str(self.root.parent)})
+        for path in self.root.parent.rglob('*'):
+            relative = path.relative_to(self.root.parent)
+            if '.git' not in relative.parts and path.is_file() and not path.is_symlink():
+                target = failed / 'fixture' / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(path, target)
+        self.phase_failure_evidence = failed
+        print('retained phase-ready failure: ' + str(failed), flush=True)
+        return []
+
+    def test_phase_ready_early_exit_retains_actual_raw_child_failure(self):
+        fifo = self.root.parent / 'early-exit.fifo'
+        os.mkfifo(fifo)
+        descriptor = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, descriptor)
+        with selectors.DefaultSelector() as selector:
+            selector.register(descriptor, selectors.EVENT_READ)
+            process = subprocess.Popen([sys.executable, '-c', "import os;os.write(2,b'pre-ready-\\xff\\n');raise SystemExit(23)"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            try:
+                self.assertFalse(self.phase_ready(selector, descriptor, process))
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.communicate(timeout=20)
+        failure = r._read(self.phase_failure_evidence / 'failure.json')
+        self.assertEqual(failure['exit_after_cancel'], 23)
+        self.assertEqual((self.phase_failure_evidence / 'child-output.raw').read_bytes(), b'pre-ready-\xff\n')
 
     def ready(self):
         realized = self.configure()
@@ -308,10 +385,11 @@ signal.pause()
             selector.register(descriptor, selectors.EVENT_READ)
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             try:
-                self.assertTrue(selector.select(20), "real build never reached phase-ready boundary")
+                self.assertTrue(self.phase_ready(selector, descriptor, process), "real build never reached phase-ready boundary")
                 self.assertEqual(os.read(descriptor, 64), b"ready\n")
                 process.send_signal(signal.SIGTERM)
                 output, _ = process.communicate(timeout=20)
+                output = process.phase_ready_output + output
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -363,10 +441,11 @@ r.run_resolved(r._read(sys.argv[2]), sys.argv[3], sys.argv[4], input_audit=r._re
                 str(resolvedfile), str(self.build), str(self.evidence), str(auditfile)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             try:
-                self.assertTrue(selector.select(20), "CTest never reached phase-ready boundary")
+                self.assertTrue(self.phase_ready(selector, descriptor, process), "CTest never reached phase-ready boundary")
                 self.assertEqual(os.read(descriptor, 64), b"ready\n")
                 process.send_signal(signal.SIGTERM)
                 output, _ = process.communicate(timeout=20)
+                output = process.phase_ready_output + output
             finally:
                 if process.poll() is None:
                     process.kill()
