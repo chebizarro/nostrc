@@ -36,10 +36,8 @@ class CheckoutBindingTests(Project):
         self.inventory["checks"] = {ident.replace("-", "_"): check for ident, check in self.inventory["checks"].items()}
         for check in self.inventory["checks"].values():
             check.update(cost="ordinary", requirement="blocking", expected_outcome="pass")
-        self.git(self.root, "init", "-q")
-        self.git(self.root, "config", "user.name", "Selection Test")
-        self.git(self.root, "config", "user.email", "selection@example.invalid")
-        self.head = self.commit(self.root)
+        # Project owns initial repository setup; keep its git(*args) contract.
+        self.head = self.checkout_git(self.root, "rev-parse", "HEAD")
         self.identity = {"kind": "committed", "sha": self.head}
         self.plan = s.make_plan(self.inventory, [{"status": "M", "old_path": "main.c", "new_path": "main.c"}], head=self.head)
         # Keep generated inputs outside both committed checkouts.
@@ -53,13 +51,13 @@ class CheckoutBindingTests(Project):
         self.binary = self.build / "shared"
         self.binary_before = self.binary.read_bytes()
 
-    def git(self, root, *args):
+    def checkout_git(self, root, *args):
         return subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.PIPE, text=True).strip()
 
     def commit(self, root):
-        self.git(root, "add", "-A")
-        self.git(root, "commit", "-qm", "native checkout binding fixture")
-        return self.git(root, "rev-parse", "HEAD")
+        self.checkout_git(root, "add", "-A")
+        self.checkout_git(root, "commit", "-qm", "native checkout binding fixture")
+        return self.checkout_git(root, "rev-parse", "HEAD")
 
     def clone(self):
         clone = self.root.parent / "other-checkout"
@@ -98,7 +96,7 @@ class CheckoutBindingTests(Project):
         other = self.clone()
         advanced = self.advance()
         self.assertNotEqual(advanced, self.head)
-        self.assertEqual(self.git(other, "rev-parse", "HEAD"), self.head)
+        self.assertEqual(self.checkout_git(other, "rev-parse", "HEAD"), self.head)
         status, error = self.invoke(other)
         self.assertEqual(status, 1, error)
         self.assert_no_execution()
