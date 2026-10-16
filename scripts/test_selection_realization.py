@@ -842,11 +842,80 @@ def _target_closure(ids, realization):
     return sorted(found)
 
 
-def _baseline_exclusions(inventory, realization, tests, descriptors):
-    """Account only the explicitly coordinated pre-existing native baseline gap.
+def _nonmember_binding(realization, descriptors):
+    generation = dict(realization["generation_files"])
+    build = Path(realization["build_dir"])
+    for path in (build / "CMakeCache.txt", build / "build.ninja", build / "CMakeFiles/rules.ninja"):
+        if not path.is_file():
+            raise RealizationError("diagnostic nonmember generation input missing: " + str(path))
+        generation[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return {"source_identity": realization["source_identity"],
+            "inventory_hash": realization["inventory_hash"], "profile_id": realization["profile_id"],
+            "profile_hash": _hash(realization["profile"]),
+            "profile_fingerprint": realization["profile_fingerprint"],
+            "phase_context_hash": realization["phase_context_hash"], "configuration": realization["configuration"],
+            "registration_hash": _registration_hash(realization["tests"]),
+            "descriptors_hash": _hash(descriptors), "generation_hash": _hash(generation),
+            "toolchain_hash": _hash({k: realization[k] for k in ("toolchains", "tool_versions", "target_settings")})}
 
-    coverage_gaps is not a general exclusion language. A new registration/profile
-    exception requires a reviewed contract, not a reason string or wildcard.
+
+def _nonmember_partition(contract, tests, descriptors, authored):
+    required = _fixture_closure(authored, tests, descriptors)
+    if required != contract["required_closure"]:
+        raise RealizationError("diagnostic nonmember required fixture closure changed")
+    if (set(contract["registrations"]) & set(required)
+            or sorted(set(tests) - set(required)) != contract["registrations"]):
+        raise RealizationError("diagnostic nonmember fresh registration partition differs")
+
+
+def _diagnostic_nonmembers(inventory, realization, tests, descriptors):
+    if not inventory.get("diagnostic_nonmembers"):
+        return []
+    from test_selection import NONMEMBER_AUTHORITY, NONMEMBER_ID, diagnostic_nonmember_contracts
+    try:
+        contract = diagnostic_nonmember_contracts(inventory).get(realization["profile_id"])
+    except ValueError as exc:
+        raise RealizationError(str(exc)) from exc
+    if contract is None:
+        return []
+    if descriptors != {d["name"]: d for d in realization["descriptors"]}:
+        raise RealizationError("diagnostic nonmember descriptors require exact generated authority")
+    if (inventory["profiles"][realization["profile_id"]] != realization["profile"]
+            or _hash(inventory) != realization["inventory_hash"]):
+        raise RealizationError("diagnostic nonmember inventory/profile identity mismatch")
+    # No architecture override: the reviewed arm64 witness is provenance only.
+    current = load_realization(realization["build_dir"], realization["source_identity"])
+    if current != realization:
+        raise RealizationError("diagnostic nonmember realization changed")
+    config = ["-C", realization["configuration"]] if realization["configuration"] else []
+    fresh = json.loads(_command(["ctest", "--test-dir", realization["build_dir"], *config, "--show-only=json-v1"],
+        env=phase_environment(realization["profile"], realization["repo_root"], "test")))["tests"]
+    if _registration_hash(fresh) != _registration_hash(realization["tests"]):
+        raise RealizationError("diagnostic nonmember fresh CTest export changed")
+    if len({t["name"] for t in fresh}) != len(fresh):
+        raise RealizationError("duplicate diagnostic CTest registration")
+    authored = [name for check in inventory["checks"].values()
+                if check.get("kind") == "ctest" and _eligible(check, realization["profile_id"])
+                for name in _membership(check, realization["profile_id"])]
+    if len(set(authored)) != len(authored):
+        raise RealizationError("multiply claimed diagnostic primary registration")
+    for name in authored:
+        if name not in tests or descriptors.get(name, {}).get("expected") == ["fixture"] or any(
+                _properties(tests[name]).get(k) for k in ("FIXTURES_SETUP", "FIXTURES_CLEANUP")):
+            raise RealizationError("missing/fixture diagnostic primary registration")
+    _nonmember_partition(contract, tests, descriptors, authored)
+    ids = _target_closure({ident for name in contract["registrations"]
+                          for ident in _mapped_targets(tests[name], descriptors.get(name, {}), realization)}, realization)
+    return [dict(contract, id=NONMEMBER_ID, profile=realization["profile_id"], status="not_executed", authority=NONMEMBER_AUTHORITY,
+                 target_ids=sorted(ids), audit_build_targets=sorted({realization["targets"][i]["name"] for i in ids}),
+                 binding=_nonmember_binding(realization, descriptors))]
+
+
+def _baseline_exclusions(inventory, realization, tests, descriptors):
+    """Account the native baseline gap and exact reviewed diagnostic nonmembers.
+
+    coverage_gaps remains deliberately closed; diagnostic_nonmembers admits only
+    its reviewed profile partition, never source/header/runtime audit gaps.
     """
     ident = "libgo_macos_asan_stress_exclusion"
     profile_id = "libgo.macos.asan"
@@ -915,7 +984,7 @@ def _baseline_exclusions(inventory, realization, tests, descriptors):
             raise RealizationError("baseline exclusion actual sanitizer instrumentation differs")
         applicable.append(dict(record, status="not_executed", authority="existing_workflow_baseline",
                                target_ids=target_ids, audit_build_targets=[targets[0]["name"]]))
-    return applicable
+    return applicable + _diagnostic_nonmembers(inventory, realization, tests, descriptors)
 
 
 def _fixture_closure(names, tests, descriptors):
@@ -1526,6 +1595,8 @@ def check_inputs(inventory, realization, source_identity=None, *, after_build=Fa
         "command_specs_hash": _hash(specs),
         "compatibility_build_targets": sorted(realization["profile"].get("sanitizer_compatibility", {}).get("GH_SAN_TARGETS", [])),
         "header_index_hash": _hash(headers) if after_build else None}
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in exclusions):
+        result["nonmember_binding"] = _nonmember_binding(realization, descriptors)
     if prepared_inputs:
         result['prepared_inputs'] = prepared_inputs
         result['complete_gate_eligible'] = False
@@ -1562,12 +1633,26 @@ def _execution_outcomes(junit, names, expected_outcomes):
     return outcomes
 
 
+def _diagnostic_execution_options(resolved, realization, parallel, timeout=None):
+    if not any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1"
+               for e in resolved.get("baseline_exclusions", [])):
+        return None
+    profile = realization["profile"]
+    expected = {"parallel": profile.get("parallelism", 1), "timeout_seconds": profile.get("timeout_seconds")}
+    effective_timeout = expected["timeout_seconds"] if timeout is None else timeout
+    if (type(parallel) is not int or parallel != expected["parallel"]
+            or isinstance(effective_timeout, bool) or effective_timeout != expected["timeout_seconds"]):
+        raise RealizationError("diagnostic nonmember parallel/timeout override differs from authored profile")
+    return expected
+
+
 def build_resolved(resolved, build_dir, parallel=1):
     """Build selected prerequisites before the mandatory post-build audit."""
     realization = load_realization(build_dir, resolved["source_identity"])
     if realization["profile_fingerprint"] != resolved["profile_fingerprint"]:
         raise RealizationError("build profile identity mismatch")
     _validate_resolved_phase(resolved, realization)
+    _diagnostic_execution_options(resolved, realization, parallel)
     if not resolved["build_targets"]:
         return {"commands": [], "build_seconds": 0}
     cmd = ["cmake", "--build", str(build_dir), "--parallel", str(parallel)]
@@ -1738,6 +1823,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         timeout = realization["profile"].get("timeout_seconds")
     if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
         raise RealizationError("execution timeout must be positive")
+    execution_options = _diagnostic_execution_options(resolved, realization, parallel, timeout)
     if realization["profile"].get("execution_domain") == "prepared_peer_linux_v1":
         from test_selection_custody import PreparedContext
         if not isinstance(custody, PreparedContext):
@@ -1765,6 +1851,7 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "resolved_hash": resolved["resolved_hash"], "attempt": attempt,
         "lane_id": resolved["profile_id"], "profile": resolved["profile_id"],
         "plan_id": resolved["plan_id"], "profile_hash": resolved["profile_hash"],
+        "configuration": resolved["configuration"],
         "phase_context": realization["phase_context"], "phase_context_hash": realization["phase_context_hash"],
         "registration_audit": "passed", "job_conclusion": "running",
         "expected_executions": resolved.get("expected_executions", resolved["tests"]), "support_tests": resolved["support_tests"],
@@ -1778,9 +1865,15 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         "available_capabilities": realization["profile"].get("capabilities", []),
         "target_ids": resolved["target_ids"], "build_targets": resolved["build_targets"],
         "command_specs_hash": resolved.get("command_specs_hash")}
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in receipt["baseline_exclusions"]):
+        receipt["complete"] = False
+        receipt["execution_options"] = execution_options
+        receipt["nonmember_binding"] = _nonmember_binding(realization, {d["name"]: d for d in realization["descriptors"]})
     _atomic(directory / "receipt.json", dict(receipt, outcome="running"))
     if input_audit is None or not input_audit.get("passed") or not input_audit.get("after_build"):
         raise RealizationError("passing post-build input audit required before execution")
+    if "nonmember_binding" in receipt and input_audit.get("nonmember_binding") != receipt["nonmember_binding"]:
+        raise RealizationError("diagnostic nonmember audited generation binding changed")
     if input_audit.get("compatibility_build_targets", []) != resolved.get("compatibility_build_targets", []):
         raise RealizationError("input audit sanitizer_compatibility targets mismatch")
     if input_audit.get("baseline_exclusions", []) != resolved.get("baseline_exclusions", []):
@@ -1824,6 +1917,24 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
     if _registration_hash(fresh) != resolved["registration_hash"]:
         raise RealizationError("CTest registrations/properties changed after resolution")
     tests = {t["name"]: t for t in fresh}
+    for exclusion in resolved.get("baseline_exclusions", []):
+        if exclusion.get("authority") == "reviewed_diagnostic_nonmembers_v1":
+            from test_selection import validate_nonmember_record
+            descriptors = {d["name"]: d for d in realization["descriptors"]}
+            contract = {k: exclusion[k] for k in ("schema_version", "profile_hash", "registrations", "required_closure", "review")}
+            try:
+                validate_nonmember_record(exclusion, contract, _nonmember_binding(realization, descriptors))
+            except ValueError as exc:
+                raise RealizationError(str(exc)) from exc
+            _nonmember_partition(contract, tests, descriptors, contract["required_closure"])
+            if set(exclusion["registrations"]) & set(resolved["tests"]):
+                raise RealizationError("diagnostic nonmember overlaps execution closure")
+            ids = _target_closure({i for name in contract["registrations"]
+                for i in _mapped_targets(tests[name], descriptors.get(name, {}), realization)}, realization)
+            targets = sorted({realization["targets"][i]["name"] for i in ids})
+            if (sorted(ids) != exclusion["target_ids"] or targets != exclusion["audit_build_targets"]
+                    or not set(targets).issubset(resolved["build_targets"])):
+                raise RealizationError("diagnostic nonmember audit target closure changed")
     for name, command in resolved["registered_commands"].items():
         if tests[name].get("command") != command:
             raise RealizationError(f"CTest command changed after resolution: {name}")

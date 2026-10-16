@@ -40,6 +40,78 @@ def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
 
 
+NONMEMBER_PROFILE = "groundhog.linux.sanitizers"
+NONMEMBER_AUTHORITY = "reviewed_diagnostic_nonmembers_v1"
+NONMEMBER_ID = "groundhog_sanitizers_nonmembers"
+NONMEMBER_BINDING_KEYS = {"source_identity", "inventory_hash", "profile_id", "profile_hash",
+                "profile_fingerprint", "phase_context_hash", "configuration",
+                "registration_hash", "descriptors_hash", "generation_hash", "toolchain_hash"}
+
+
+def _nonmember_names(value):
+    return (isinstance(value, list) and bool(value)
+            and all(isinstance(n, str) and n and "\x00" not in n for n in value)
+            and value == sorted(set(value)))
+
+
+def diagnostic_nonmember_contracts(policy):
+    records = policy.get("diagnostic_nonmembers", {})
+    if not isinstance(records, dict) or set(records) - {NONMEMBER_PROFILE}:
+        raise ValueError("unsupported diagnostic nonmember profile")
+    for profile_id, record in records.items():
+        if (not isinstance(record, dict)
+                or set(record) != {"schema_version", "profile_hash", "registrations", "required_closure", "review"}
+                or type(record.get("schema_version")) is not int or record["schema_version"] != 1
+                or profile_id not in policy.get("profiles", {})
+                or record["profile_hash"] != digest(policy["profiles"][profile_id])
+                or not _nonmember_names(record["registrations"]) or not _nonmember_names(record["required_closure"])
+                or set(record["registrations"]) & set(record["required_closure"])):
+            raise ValueError("malformed/stale diagnostic nonmember contract")
+        review = record["review"]
+        if (not isinstance(review, dict) or set(review) != {"source_sha", "post_audit_sha256"}
+                or not re.fullmatch(r"[0-9a-f]{40}", str(review.get("source_sha")))
+                or not re.fullmatch(r"[0-9a-f]{64}", str(review.get("post_audit_sha256")))):
+            raise ValueError("invalid diagnostic nonmember review provenance")
+    return records
+
+
+def validate_nonmember_record(record, contract, identities):
+    """Check accounting at the receipt boundary; execution also checks fresh CTest."""
+    keys = set(contract) | {"id", "profile", "status", "authority", "target_ids", "audit_build_targets", "binding"}
+    if (not isinstance(record, dict) or set(record) != keys
+            or any(record.get(k) != v for k, v in contract.items())
+            or record.get("id") != NONMEMBER_ID or record.get("profile") != NONMEMBER_PROFILE
+            or record.get("status") != "not_executed" or record.get("authority") != NONMEMBER_AUTHORITY
+            or not isinstance(record.get("binding"), dict) or set(record["binding"]) != NONMEMBER_BINDING_KEYS):
+        raise ValueError("missing/mismatched diagnostic nonmember accounting")
+    binding = record["binding"]
+    if binding["profile_id"] != NONMEMBER_PROFILE or binding["profile_hash"] != contract["profile_hash"]:
+        raise ValueError("diagnostic nonmember profile mismatch")
+    for key in NONMEMBER_BINDING_KEYS - {"source_identity", "profile_id", "configuration"}:
+        if not re.fullmatch(r"[0-9a-f]{64}", str(binding[key])):
+            raise ValueError("invalid diagnostic nonmember binding: " + key)
+    if not isinstance(binding["configuration"], str):
+        raise ValueError("invalid diagnostic nonmember configuration")
+    for key, expected in identities.items():
+        if binding.get(key) != expected:
+            raise ValueError("stale diagnostic nonmember binding: " + key)
+    for key in ("target_ids", "audit_build_targets"):
+        # Script-only nonmembers can have no compiled target.
+        value = record[key]
+        if not isinstance(value, list) or any(not isinstance(v, str) or not v for v in value) or value != sorted(set(value)):
+            raise ValueError("invalid diagnostic nonmember targets")
+
+
+def _nested_incomplete(value):
+    """An optimistic wrapper cannot launder nested diagnostic evidence to release."""
+    if isinstance(value, dict):
+        if (value.get("complete_gate_eligible") is False or value.get("baseline_exclusions")
+                or value.get("incomplete_lanes") or value.get("authority") == NONMEMBER_AUTHORITY):
+            return True
+        return any(_nested_incomplete(v) for v in value.values())
+    return isinstance(value, list) and any(_nested_incomplete(v) for v in value)
+
+
 def read_json(path):
     try:
         return json.loads(Path(path).read_text(), object_pairs_hook=_unique_object)
@@ -159,6 +231,10 @@ def validate_inventory(policy):
     for alias, members in policy.get("aliases", {}).items():
         require(ID.fullmatch(alias) is not None, "invalid alias")
         _ids(members, checks, f"alias {alias}")
+    try:
+        diagnostic_nonmember_contracts(policy)
+    except ValueError as exc:
+        raise ContractError(str(exc)) from exc
     return policy
 
 
@@ -519,7 +595,17 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             exclusions = []
         if len(exclusions) > 1:
             errors.append(f"{lane_id}: duplicate/unapproved baseline exclusions")
+        contract = diagnostic_nonmember_contracts(policy).get(lane["profile"])
+        if contract is not None:
+            try:
+                _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile)
+            except (ValueError, KeyError, TypeError) as exc:
+                errors.append(f"{lane_id}: diagnostic nonmember evidence did not qualify: {exc}")
         for exclusion in exclusions:
+            if isinstance(exclusion, dict) and exclusion.get("authority") == NONMEMBER_AUTHORITY:
+                if contract is None:
+                    errors.append(f"{lane_id}: unsupported diagnostic nonmember profile")
+                continue
             known = next((g for g in policy.get("coverage_gaps", []) if g.get("id") == "libgo_macos_asan_stress_exclusion"), None)
             if (not isinstance(exclusion, dict) or known is None
                     or lane["profile"] != "libgo.macos.asan"
@@ -680,10 +766,66 @@ def release_plan(repo, policy, *, head, tag=None, component=None, dry_run=False,
             "run_id": run_id, "verified_versions": verified}
 
 
+def _validate_nonmember_receipt(receipt, backend, exclusions, contract, plan, lane, profile):
+    if (len(exclusions) != 1 or receipt.get("baseline_exclusions") != exclusions
+            or receipt.get("complete_gate_eligible") is not False
+            or receipt.get("diagnostic_eligible") is not True or receipt.get("complete") is not False):
+        raise ValueError("exact nonmember accounting/incomplete flags required")
+    evidence = backend if backend else receipt
+    configuration = profile["build_type"]
+    if (evidence.get("configuration") != configuration
+            or evidence.get("phase_context", {}).get("configuration") != configuration
+            or receipt.get("phase_context") != evidence.get("phase_context")):
+        raise ValueError("nonmember configuration differs from retained phase/profile configuration")
+    expected = {"source_identity": plan["source_identity"], "inventory_hash": plan["inventory_hash"],
+                "profile_id": lane["profile"], "profile_hash": lane["profile_hash"],
+                "profile_fingerprint": receipt["profile_fingerprint"],
+                "configuration": configuration, "phase_context_hash": evidence["phase_context_hash"]}
+    binding = evidence.get("nonmember_binding")
+    if not isinstance(binding, dict) or any(binding.get(k) != v for k, v in expected.items()):
+        raise ValueError("nonmember execution realization binding missing/stale")
+    validate_nonmember_record(exclusions[0], contract, binding)
+    audit = evidence.get("input_audit_details", evidence.get("input_audit"))
+    if (not isinstance(audit, dict) or audit.get("passed") is not True or audit.get("after_build") is not True
+            or audit.get("gaps") != [] or audit.get("selective_enforcement") is not False
+            or audit.get("baseline_exclusions") != exclusions or audit.get("nonmember_binding") != binding
+            or audit.get("complete_gate_eligible") is not False
+            or audit.get("audit_hash") != digest({k: v for k, v in audit.items() if k != "audit_hash"})):
+        raise ValueError("full-root post-build audit missing/stale")
+    for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context_hash"):
+        if audit.get(key) != expected[key]:
+            raise ValueError("nonmember audit identity mismatch: " + key)
+    if (evidence.get("plan_hash") != digest(plan)
+            or evidence.get("complete_gate_eligible") is not False or evidence.get("complete") is not False
+            or evidence.get("diagnostic_eligible") is not True
+            or digest(evidence["phase_context"]) != expected["phase_context_hash"]
+            or audit.get("phase_context") != evidence["phase_context"]
+            or evidence.get("baseline_exclusions") != exclusions
+            or not set(exclusions[0]["audit_build_targets"]).issubset(evidence.get("build_targets", []))):
+        raise ValueError("nonmember execution binding/incomplete status mismatch")
+    options = {"parallel": profile.get("parallelism", 1), "timeout_seconds": profile.get("timeout_seconds")}
+    if evidence.get("execution_options") != options:
+        raise ValueError("nonmember effective execution options differ from authored profile")
+    commands = evidence.get("commands", [])
+    if not any(command and command[0] == "ctest" for command in commands):
+        raise ValueError("nonmember CTest execution argv missing")
+    for command in commands:
+        if command and command[0] in ("cmake", "ctest"):
+            flags = [("--parallel", options["parallel"])]
+            if command[0] == "ctest" and options["timeout_seconds"] is not None:
+                flags.append(("--timeout", options["timeout_seconds"]))
+            for flag, value in flags:
+                if command.count(flag) != 1 or command[command.index(flag) + 1:command.index(flag) + 2] != [str(value)]:
+                    raise ValueError("nonmember effective argv differs from authored profile")
+    executed = set(evidence.get("expected_executions", []))
+    if executed & set(contract["registrations"]) or not executed.issubset(contract["required_closure"]):
+        raise ValueError("nonmember execution membership overlap")
+
+
 def aggregate_release(release, validation, jobs):
     require(isinstance(jobs, dict), "malformed package conclusions")
     errors = []
-    if (not validation.get("passed") or not validation.get("complete")
+    if (not validation.get("passed") or not validation.get("complete") or _nested_incomplete(validation)
             or validation.get("source_identity") != release["source_identity"]
             or validation.get("tested_sha") != release["tested_sha"]
             or validation.get("inventory_hash") != release["inventory_hash"]

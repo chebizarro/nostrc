@@ -112,6 +112,9 @@ def realization_command(args, policy, backend, *, custody=None):
         return resolved, 0
     selection.require(args.evidence_dir is not None, "run requires --evidence-dir")
     selection.require(args.parallel > 0 and (args.timeout is None or args.timeout > 0), "parallel/timeout must be positive")
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
+        diagnostic_options = backend._diagnostic_execution_options(resolved, realized, args.parallel, args.timeout)
+        args.timeout = diagnostic_options["timeout_seconds"]
     # Existing adapters must provision live peers/locks; direct CLI cannot waive them.
     if custody is not None:
         custody.validate(resolved)
@@ -167,6 +170,11 @@ def realization_command(args, policy, backend, *, custody=None):
 def normalize_receipt(policy, plan, resolved, raw):
     """Retain backend evidence and validate it before adding logical lane identity."""
     profile_id = resolved["profile_id"]
+    if any(e.get("authority") == "reviewed_diagnostic_nonmembers_v1" for e in resolved.get("baseline_exclusions", [])):
+        configuration = policy["profiles"][profile_id]["build_type"]
+        selection.require(raw.get("configuration") == resolved.get("configuration") == configuration
+                          == resolved.get("phase_context", {}).get("configuration"),
+                          "backend diagnostic configuration differs from resolved/phase/profile configuration")
     lane = next((x for x in plan["lanes"] if x["profile"] == profile_id), None)
     selection.require(lane is not None, "backend returned unselected profile")
     for key in ("source_identity", "inventory_hash", "profile_fingerprint", "phase_context", "phase_context_hash"):
@@ -196,7 +204,8 @@ def normalize_receipt(policy, plan, resolved, raw):
             "checks": checks, "backend_receipt": raw,
             "diagnostic_eligible": raw.get("diagnostic_eligible", False),
             "complete_gate_eligible": raw.get("complete_gate_eligible", False),
-            "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", [])}
+            "baseline_exclusions": raw.get("baseline_exclusions", []), "coverage_gaps": raw.get("coverage_gaps", []),
+            **({"complete": False} if raw.get("complete") is False else {})}
 
 
 def main(argv=None):
