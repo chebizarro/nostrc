@@ -228,6 +228,8 @@ def materialize_submodules(source, directory, profile, initialized):
 
 
 def host_guard(profile, checks, policy, profile_id):
+    if profile.get("execution_domain") == "prepared_peer_linux_v1":
+        raise RuntimeError("prepared profile requires scripts/contained-gate.py; legacy outer custody is unchanged")
     host = {"Darwin": "macos", "Linux": "linux", "Windows": "windows"}.get(platform.system())
     arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     wanted_arch = {"amd64": "x86_64", "aarch64": "arm64"}.get(profile["architecture"], profile["architecture"])

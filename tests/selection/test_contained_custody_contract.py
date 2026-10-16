@@ -1,0 +1,105 @@
+"""Pure contract/failure tests. Positive lifecycle evidence is tests/custody."""
+import copy
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+from test_selection_custody import ContainerOwner, CustodyError, context_hash, immutable
+
+
+class ContainedCustodyContract(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.owner = ContainerOwner(self.root / 'owner')
+
+    def test_tag_and_partial_id_never_authorize_image(self):
+        for value in ('latest', 'image:tag', 'sha256:123', 'a' * 64):
+            with self.subTest(value=value), self.assertRaises(CustodyError):
+                immutable(value)
+
+    def test_context_rejects_symlinks(self):
+        (self.root / 'link').symlink_to('/tmp')
+        with self.assertRaises(CustodyError):
+            context_hash(self.root)
+
+    def test_context_binds_contents_and_modes(self):
+        source = self.root / 'source'
+        source.mkdir()
+        path = source / 'file'
+        path.write_bytes(b'original')
+        before = context_hash(source)
+        path.write_bytes(b'changed')
+        self.assertNotEqual(before, context_hash(source))
+        before = context_hash(source)
+        path.chmod(0o755)
+        self.assertNotEqual(before, context_hash(source))
+
+    def test_root_operator_is_not_silently_container_root(self):
+        with patch('os.getuid', return_value=0), self.assertRaises(CustodyError):
+            self.owner.create('sha256:' + 'a' * 64, ['/bin/true'])
+
+    def test_host_network_and_pid_authority_not_exposed(self):
+        for network in ('host', 'container:other', 'custom'):
+            with self.subTest(network=network), self.assertRaises(CustodyError):
+                self.owner.create('sha256:' + 'a' * 64, ['/bin/true'], network=network)
+
+    def test_rpc_error_cannot_be_later_promoted_by_absence(self):
+        self.owner.indeterminate = True
+        result = self.owner.finalize()
+        self.assertFalse(result['cleanup_complete'])
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['complete_gate_eligible'])
+
+    def test_binding_is_an_immutable_snapshot_not_a_circular_receipt(self):
+        binding = {'profile': {'id': 'example'}}
+        with patch.object(self.owner, 'create', side_effect=CustodyError('prelaunch failure')):
+            self.owner.run('sha256:' + 'a' * 64, ['/bin/true'], binding=binding)
+        binding['receipt'] = self.owner.receipt
+        binding['profile']['id'] = 'changed'
+        self.assertEqual(self.owner.receipt['binding'], {'profile': {'id': 'example'}})
+        json.dumps(binding)
+
+    def test_unknown_creation_identity_is_not_cleaned_by_name(self):
+        self.owner.receipt['status'] = 'creating'
+        with patch.object(self.owner, 'rpc', side_effect=AssertionError('must not signal guessed identity')):
+            result = self.owner.finalize()
+        self.assertFalse(result['cleanup_complete'])
+        self.assertIn('identity unconfirmed', result['cleanup_errors'][0])
+
+    def test_actual_isolation_mutations_refuse(self):
+        owner = self.owner
+        owner.receipt.update(image_id='sha256:' + 'a' * 64, network='none', mounts=[], argv=['python3', '-c', 'pass'])
+        valid = {'Image': owner.receipt['image_id'], 'Mounts': [],
+                 'Config': {'User': f'{os.getuid()}:{os.getgid()}', 'Entrypoint': ['python3'], 'Cmd': ['-c', 'pass']},
+                 'HostConfig': {'NetworkMode': 'none', 'PidMode': '', 'IpcMode': 'private', 'Privileged': False,
+                   'ReadonlyRootfs': True, 'CapDrop': ['ALL'], 'CapAdd': None, 'SecurityOpt': ['no-new-privileges=true'],
+                   'Init': True, 'Devices': [], 'PortBindings': {}}}
+        mutations = {'NetworkMode': 'host', 'PidMode': 'host', 'IpcMode': 'host', 'Privileged': True,
+                     'ReadonlyRootfs': False, 'CapDrop': [], 'CapAdd': ['SYS_ADMIN'], 'SecurityOpt': [],
+                     'Init': False, 'Devices': ['/dev/kvm'], 'PortBindings': {'80': []}}
+        for key, value in mutations.items():
+            changed = copy.deepcopy(valid)
+            changed['HostConfig'][key] = value
+            with self.subTest(key=key), self.assertRaises(CustodyError):
+                owner.validate_isolation(changed)
+        for field, value in [('Image', 'wrong'), ('Mounts', [{'Source': '/var/run/docker.sock', 'Destination': '/socket', 'RW': True}])]:
+            changed = copy.deepcopy(valid)
+            changed[field] = value
+            with self.subTest(field=field), self.assertRaises(CustodyError):
+                owner.validate_isolation(changed)
+        for key, value in [('User', '0:0'), ('Entrypoint', ['/bin/sh']), ('Cmd', ['wrong'])]:
+            changed = copy.deepcopy(valid)
+            changed['Config'][key] = value
+            with self.subTest(key=key), self.assertRaises(CustodyError):
+                owner.validate_isolation(changed)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1704,7 +1704,7 @@ def run_resolved(resolved, build_dir, evidence_dir, attempt=1, **kwargs):
 
 
 def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=None,
-                 build=True, parallel=1, timeout=None, evidence_paths=()):
+                 build=True, parallel=1, timeout=None, evidence_paths=(), custody=None):
     """One CTest invocation per profile/attempt; no retries or quarantine policy.
 
     Existing platform/MDK adapters still own isolation locks, images and process
@@ -1722,7 +1722,12 @@ def _run_resolved(resolved, build_dir, evidence_dir, attempt=1, *, input_audit=N
         timeout = realization["profile"].get("timeout_seconds")
     if timeout is not None and (type(timeout) not in (int, float) or timeout <= 0):
         raise RealizationError("execution timeout must be positive")
-    if set(resolved["required_capabilities"]) & {"docker", "external_peer"}:
+    if realization["profile"].get("execution_domain") == "prepared_peer_linux_v1":
+        from test_selection_custody import PreparedContext
+        if not isinstance(custody, PreparedContext):
+            raise RealizationError("prepared profile requires live contained runtime custody")
+        custody.validate(resolved)
+    elif custody is not None or set(resolved["required_capabilities"]) & {"docker", "external_peer"}:
         raise RealizationError("live peer/image lifecycle requires the existing guarded adapter; not implemented here")
     directory = _attempt_directory(resolved, evidence_dir, attempt)
     previous_attempts = []

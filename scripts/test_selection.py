@@ -474,6 +474,16 @@ def aggregate(policy, plan, receipts, *, complete=True, selection_conclusion=Non
             if receipt.get(key) != value:
                 errors.append(f"{lane_id}: {key} did not pass")
         backend = receipt.get("backend_receipt", {})
+        profile = policy["profiles"][lane["profile"]]
+        if profile.get("execution_domain") == "prepared_peer_linux_v1":
+            from test_selection_custody import CustodyError, validate_lifecycle
+            try:
+                validate_lifecycle(receipt.get("contained_lifecycle"), plan, lane["profile"], profile,
+                                   receipt.get("profile_fingerprint"))
+            except (CustodyError, KeyError, TypeError, ValueError) as exc:
+                errors.append(f"{lane_id}: contained lifecycle did not qualify: {exc}")
+            if complete:
+                errors.append(f"{lane_id}: prepared contained route is diagnostic only; original image builds unexecuted")
         exclusions = receipt.get("baseline_exclusions", backend.get("baseline_exclusions", []))
         if not isinstance(exclusions, list):
             errors.append(f"{lane_id}: malformed baseline exclusions")
